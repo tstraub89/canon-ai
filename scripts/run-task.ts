@@ -241,6 +241,45 @@ function warnLegacyEnvVars(): void {
     }
 }
 
+// When CANON_WORKTREES_ROOT is set, the orchestrator writes worktrees to a
+// non-default path. Claude Code's permission boundary (`additionalDirectories`
+// in `.claude/settings.json` or `settings.local.json`) must include that path
+// for the architect agent to read/write files inside the worktree. This is a
+// classic dual-edit footgun — set the env var, forget the settings.json
+// update, watch Claude Code silently fail to access the worktree.
+//
+// Fires a warning (not a hard fail) at startup when the env var is set but
+// no settings file declares a matching `additionalDirectories` entry.
+function warnWorktreesRootMismatch(): void {
+    if (!process.env.CANON_WORKTREES_ROOT) return;
+    const candidates = [
+        path.join(REPO_ROOT, '.claude/settings.json'),
+        path.join(REPO_ROOT, '.claude/settings.local.json'),
+    ];
+    const declaredDirs: string[] = [];
+    for (const file of candidates) {
+        if (!fs.existsSync(file)) continue;
+        try {
+            const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+                permissions?: { additionalDirectories?: string[] };
+            };
+            const dirs = parsed.permissions?.additionalDirectories ?? [];
+            for (const dir of dirs) {
+                declaredDirs.push(path.resolve(REPO_ROOT, dir));
+            }
+        } catch { /* malformed JSON; let Claude Code surface that error elsewhere */ }
+    }
+    if (declaredDirs.length === 0) return; // No settings file at all — nothing to mismatch with.
+    const matches = declaredDirs.some(dir => dir === WORKTREES_ROOT);
+    if (matches) return;
+    console.error(
+        `⚠️  CANON_WORKTREES_ROOT is set to ${WORKTREES_ROOT}, but no \`additionalDirectories\` entry in ` +
+        `.claude/settings.json or .claude/settings.local.json matches that path. ` +
+        `Claude Code will not be able to read/write inside the worktree. ` +
+        `Add ${WORKTREES_ROOT} to additionalDirectories in one of those files (settings.local.json is the right place for per-machine overrides).`
+    );
+}
+
 // Project name appears in agent prompts. Resolution order:
 //   1. CANON_PROJECT_NAME env var (explicit override)
 //   2. package.json "name" field (Node projects)
@@ -4049,6 +4088,7 @@ async function main(): Promise<void> {
     process.env.RUN_TASK_ORCHESTRATOR = '1';
     cliArgs = parseArgs(process.argv.slice(2));
     warnLegacyEnvVars();
+    warnWorktreesRootMismatch();
     const skipAgentDeps = cliArgs.ship;
     checkDeps(cliArgs.taskIds, skipAgentDeps);
 

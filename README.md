@@ -131,7 +131,7 @@ Layer 1 is required for Layer 2 to work; Layer 2 is what makes Layer 1 actually 
 ```bash
 # 1. Clone canon-ai into your project (or copy the relevant files manually)
 git clone git@github.com:tstraub89/canon-ai.git
-cp -r canon-ai/{scripts,tasks,docs,AGENTS.md,CLAUDE.md,CODEX.md,.codex,.claude} your-project/
+cp -r canon-ai/{scripts,tasks,docs,AGENTS.md,CLAUDE.md,CODEX.md,.codex,.claude,.canon} your-project/
 cd your-project
 
 # 2. Install the orchestrator's deps (TypeScript + tsx + node:test)

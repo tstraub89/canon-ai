@@ -12,7 +12,7 @@ Runs after task PRs merge to the base branch and before `--ship` archives the ta
 - Syncing dates / timestamps in content files
 - Refreshing build-time caches that don't auto-invalidate
 
-The orchestrator runs the script via `bash` from the repo root. Make it executable (`chmod +x .canon/hooks/post-merge.sh`). The script should:
+The orchestrator runs the script via `bash <hook-path>` from the repo root, so the file does not need to be executable — the bash invocation works regardless of the execute bit. The script should:
 
 - Be self-contained (don't assume the orchestrator passes args or env)
 - Stage and commit any changes it produces (`git add ... && git commit -m "..."`)
