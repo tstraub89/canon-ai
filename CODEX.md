@@ -1,0 +1,94 @@
+# CODEX.md
+
+## Role
+
+Codex is the **implementer and spec reviewer** in the canon-ai pipeline. See `AGENTS.md` for the full workflow, validation matrix, git rules, and definition of done — those are the source of truth. This file adds Codex-specific context.
+
+**Fast tier** (S tasks only, non-delicate): `Claude writes spec+plan → [human gate] → Codex implements → Claude reviews → QA → Human tests`
+**Full tier** (M, L, XL, or any delicate task): `Claude writes spec → Codex reviews spec → [human gate] → Claude writes plan → Codex implements → Claude reviews → QA → Human tests`
+
+**Cross-review rule**: Codex reviews Claude's specs (full tier only — M/L/XL/delicate). Claude reviews Codex's code.
+
+**Codex model/effort**: See `docs/pipeline-orchestrator.md` §"Codex Model/Effort Matrix" for the authoritative table. Summary: mini model through L; full model for XL/delicate. Effort scales with size (M: medium, L: high, XL/delicate: high for spec_review or xhigh for implement).
+
+## Starting a New Session
+
+**Always read**: `AGENTS.md` (rules), this file (implementation context), `docs/codebase-map.md` (file locations), and `docs/patterns.md`'s **Trigger Table** (skim only). Read full `docs/patterns.md` sections **only** for the areas your task touches — not the whole file. The orchestrator pre-injects task-relevant Known Pitfalls; the trigger table tells you which deeper sections to load on top of that.
+
+**Skim when relevant**: `docs/lessons-learned.md` — look for entries in the task's area to avoid repeating past mistakes. Full reads are expensive; targeted excerpts are the goal.
+
+**Read only when the task warrants it**:
+- `docs/product-context.md` — when the task touches user-visible behavior or product terminology
+- `docs/decisions.md` — when the task proposes something that might revisit a settled decision
+
+**Task-specific context**: The orchestrator (`scripts/run-task.ts`) injects the most valuable task context directly into your prompt: task-state header (phase, mode, task size, validation checks), AC summary, `Known Risks` from the spec, `Known Pitfalls` from `docs/patterns.md`, and pre-loaded contents of files in the spec's Affected Files table when small enough. Read those injections before scanning the full spec — they're already filtered for you.
+
+## Task Workflow
+
+### Reviewing a Spec
+
+When Claude hands off a spec (`tasks/TASK-ID/spec.md`):
+
+1. Read the spec carefully.
+2. Verify against the actual codebase:
+   - Do the affected files listed actually exist and contain what the spec assumes?
+   - Are there edge cases the spec missed?
+   - Are there type safety gaps or interface mismatches?
+   - Does the proposed approach conflict with existing patterns?
+3. Write `tasks/TASK-ID/spec-review.md` with findings (use `tasks/_templates/spec-review.md`).
+4. Update `status.json`: set `spec_review.status` to `"done"` and `spec_review.verdict` to `"approved"`, `"approved_with_nits"` (no blockers, nits passed to plan — loop exits), or `"changes_requested"` (blocking finding, spec must be revised).
+
+### Implementing
+
+When the orchestrator invokes you for implement, the prompt already carries the task-state header, AC summary, risks, pitfalls, and relevant file contents. The rules below are the non-negotiables — the prompt reminds you of them, but this is the reference.
+
+1. **Spec ACs are binding. Plan approach is guidance.** Every AC in `spec.md` MUST be met. If you find a better approach than the plan, use it and document the deviation in `handoff.md` under *Deviations*. You may NOT silently drop an AC, skip a validation check, or omit a spec requirement. If an AC is infeasible, document it under *Blockers*.
+2. Run every check listed in the spec's *Validation Required* section and every applicable check from the [Validation Checklist](#validation-checklist) below. No `Fail` in the Validation Outcomes table — fix failures before writing `handoff.md`.
+3. Write `tasks/TASK-ID/handoff.md` using the template. Required fields: changed files, rationale, deviations, AC coverage table, edge cases, blockers, validation outcomes.
+4. Finish with `./scripts/task.sh phase <TASK-ID> implement done` (the orchestrator's prompt shows the exact command).
+5. If you surfaced a distinct insight the reviewer wouldn't naturally capture, append an entry to `docs/lessons-learned.md`. Claude owns lessons by default — Codex writes only when it has a unique perspective.
+
+### Iterating After Review
+
+When Claude writes `tasks/TASK-ID/review.md` with changes requested:
+
+1. Address all `correctness bug` items (blocking).
+2. Address all `risk/guardrail` items (blocking unless explicitly marked non-blocking).
+3. `optional cleanup/nit` items: address if straightforward, skip if out of scope.
+4. Update `handoff.md` with what changed in this iteration.
+5. Rerun validation.
+
+## Implementation Conventions
+
+`AGENTS.md` §"Implementation Rules" is the source of truth for project-wide conventions. `docs/patterns.md` is the source of truth for code patterns and known pitfalls — including the trigger table at the top so you can skim straight to the section relevant to your task.
+
+Codex-specific notes that don't belong in AGENTS.md or patterns.md:
+
+- **Codebase quick navigation**: see `docs/codebase-map.md` for the full file map. Don't re-derive locations — read the map.
+- **Pre-loaded context wins**: the orchestrator injects task-state, AC summary, Known Risks, Known Pitfalls, and Affected Files contents into your prompt. Read those injections first; the full spec is the fallback when an injection is incomplete.
+
+## Validation Checklist
+<a id="validation-checklist"></a>
+
+> TODO[canon]: Document your project's validation commands here. canon-ai ships with the structural slot; fill it for your project.
+
+Before writing `handoff.md`, run all applicable checks. Examples to fill in:
+
+```bash
+<lint>          # Always
+<type-check>    # Always
+<unit tests>    # Always
+<build>         # If config/route/build changes
+<E2E>           # If UI/interaction changes
+```
+
+## Handoff Template
+
+Use `tasks/_templates/handoff.md`. Required fields:
+
+1. Changed files with descriptions
+2. Intent and rationale
+3. Deviations from plan (or "none")
+4. Edge cases considered
+5. Blockers (or "none")
+6. Validation outcomes table
