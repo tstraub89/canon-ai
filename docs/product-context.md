@@ -41,6 +41,18 @@ Rule of thumb: if a non-engineer (product owner, designer, marketing) needed to 
 
 1. ...
 
+## Tiers, Sizes, and Authorization
+
+This section covers how this project uses the canon `task_size` × `delicate` matrix. Canon's general definitions are in [`CLAUDE.md`](../CLAUDE.md) Quick Refs; this section names project-specific surfaces.
+
+### `delicate` flag — project-specific domains
+
+> **TODO[canon]: List the project-specific surfaces that warrant `delicate: true`. Canon's general bar: a regression here has unbounded blast radius — an undetected bug is materially harder to recover from than a normal bug. Common adopter examples: auth, billing, payments, persistent-storage migrations, security-relevant cryptography, regulated-data handling (PHI, PII). Add the surfaces unique to your project.**
+
+- *(domain 1)*
+- *(domain 2)*
+- *(...)*
+
 ## Free vs Paid Feature Split
 
 > *(If your product has tiers — otherwise skip this section.)*
