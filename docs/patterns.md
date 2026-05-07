@@ -9,157 +9,120 @@ This is the project's hard-won implementation knowledge. It has two main section
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
 2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. The orchestrator pre-injects task-relevant pitfalls into Codex's implement prompt; agents still need this file open for spec authorship and code review.
 
-> **canon-ai is a CLI orchestrator.** Patterns here are about modifying canon-ai itself (orchestrator, templates, validation gates). Projects that adopt canon rewrite this file for their own stack.
+> **Layering rule.** This file is **project-specific** — it holds patterns and pitfalls unique to canon-ai's own internals (or, for adopters, unique to their stack). **Canon-supplied universal rules** (agent discipline, harness behavior, spec/review rules of thumb) live in [`AGENTS.md`](../AGENTS.md), [`CLAUDE.md`](../CLAUDE.md), and [`CODEX.md`](../CODEX.md). If you're tempted to add a rule here that would apply to *every* canon project, it belongs in policy, not patterns.
+
+> **canon-ai is a CLI orchestrator.** Patterns here are about modifying canon-ai's own harness internals (orchestrator scripts, templates, validation gates). When dropped into a downstream project, this file is rewritten for that project's stack.
 
 ## Trigger Table — Scan This First
 
 | Area touched | Section in this file | Key files |
 |---|---|---|
-| Adding/modifying orchestrator phase logic | Pipeline Phase Changes / Orchestrator Hot Path | `scripts/run-task.ts` |
-| Adding a new pipeline phase | Pipeline Phase Changes | `scripts/run-task.ts`, `scripts/pipeline-policy.ts`, `scripts/task.sh`, `tasks/_templates/status.json`, `AGENTS.md` |
-| Changing tier / sizing / model selection | Policy Module Changes | `scripts/pipeline-policy.ts`, `tests/pipeline-policy.test.ts` |
-| Modifying handoff / review templates | Template Changes | `tasks/_templates/handoff.md`, `tasks/_templates/review.md` |
-| Adding a validation gate | Validation Gates | `scripts/run-task.ts` (`validateHandoff()`, `autoCommitCode()`) |
-| Status.json shape changes | State Machine Changes | `tasks/_templates/status.json`, `scripts/task.sh`, orchestrator parsers |
-| Working with git worktrees | Worktree Operations | `scripts/run-task.ts` worktree helpers, `scripts/task.sh resolve_task_cwd()` |
-| Spec authorship for orchestration changes | Spec Discipline (canon-on-canon) | `tasks/_templates/spec.md` |
+| Adding/changing a pipeline phase | Phase Addition Discipline | `scripts/run-task.ts` (4 switch statements), `scripts/pipeline-policy.ts`, `scripts/task.sh`, `tasks/_templates/status.json` |
+| Modifying `pipeline-policy.ts` | Pure Policy + Test Discipline | `scripts/pipeline-policy.ts`, `tests/pipeline-policy.test.ts` |
+| Modifying `status.json` shape | State Schema Discipline | `tasks/_templates/status.json`, parsers in `scripts/run-task.ts`, `scripts/task.sh` `cmd_phase()` |
+| Adding/modifying a validation gate | Validation Gate Discipline | `scripts/run-task.ts` (`validateHandoff()`, `autoCommitCode()`), `tests/run-task-validation.test.ts` |
 | Lint / TS suppression / `any` | Lint & Type Safety Policy | (rule, no canonical file) |
 
 ## Patterns
 
-### Pure Routing Policy in `pipeline-policy.ts`
+### Pure Policy + Test Discipline
 
 **Files**: `scripts/pipeline-policy.ts`, `tests/pipeline-policy.test.ts`
 
-**When to use**: Anything that decides *which* model, effort, tier, or loop cap to use for a phase or task.
+**When to apply**: Any change that touches tier detection, sizing, model/effort matrices, or loop-cap defaults.
 
 **The pattern**:
-- Pure functions only — no I/O, no env var reads, no filesystem. Inputs are passed; outputs are returned.
-- Table-driven — matrices for phase × size keyed off `TaskSize`, not chained `if`s.
-- Every routing decision is testable in isolation. Add a row to `pipeline-policy.test.ts` for any new branch.
-- Env-var resolution and legacy-shim warnings stay in `run-task.ts`. The policy module receives a fully resolved `PolicyConfig`.
+- `pipeline-policy.ts` is **side-effect-free**. No I/O, no env reads, no filesystem. Inputs are passed; outputs are returned. Env-var resolution lives in `run-task.ts`; the module receives a fully resolved `PolicyConfig`.
+- Decisions are **table-driven**. Matrices keyed off `TaskSize` × `Phase`. Adding a new branch means adding a table cell, not chaining `if`s.
+- **Every routing decision has a corresponding test row** in `pipeline-policy.test.ts`. A change to `pipeline-policy.ts` without a corresponding test update is a Stage 1 review failure — the table-driven structure exists *so* tests can cover every cell, and skipping the test means coverage drift.
 
-**Anti-pattern**: scattering routing logic across `run-task.ts` with inline `if (size === 'XL' || delicate) ...`. Drift is guaranteed; tests can't cover it. If you find yourself writing routing logic outside `pipeline-policy.ts`, extract it.
+**Anti-pattern**: writing routing logic directly in `run-task.ts` (`if (size === 'XL' || delicate) ...`). Routing drift was the original motivation for extracting this module — don't reintroduce it.
 
-### File-Based Handoff (Not In-Memory)
+### Phase Addition Discipline
 
-**Files**: everything in `tasks/_templates/`, `scripts/run-task.ts` parsers (`parseHandoffFiles()`, etc.)
+**Files**: `scripts/run-task.ts`, `scripts/pipeline-policy.ts`, `scripts/task.sh`, `tasks/_templates/status.json`
 
-**When to use**: Anytime one phase needs to communicate state to the next phase.
+**When to apply**: Anytime a new phase is added to the pipeline (e.g., a new validation gate that warrants its own phase rather than being a sub-step within an existing one).
 
-**The pattern**: Every cross-phase contract is a file with a documented schema in `tasks/_templates/`. Markdown for human-readable artifacts, `status.json` for structured state. The orchestrator parses files, not stdout. Agents don't share memory.
+**The pattern**: Adding a phase touches **all four** of `run-task.ts`'s phase-aware switch statements:
+1. `PHASE_ORDER` constant (defines the linear sequence)
+2. `runPhase()` switch (dispatches to the agent invocation)
+3. `checkAndRoute()` switch (decides what happens after the phase completes)
+4. `canPhaseAdvance()` switch (validates phase-order transitions)
 
-This is what makes session resumption work. Re-running `run-task.ts <id>` from a cold start picks up wherever the filesystem says the task is.
+Plus:
+5. `scripts/task.sh` `cmd_phase()` validation list (so the helper accepts the new phase name)
+6. `tasks/_templates/status.json` (add the new phase entry with a default `status` and `agent`)
+7. If the phase has model/effort needs distinct from existing phases: add it to the matrices in `pipeline-policy.ts` and `tests/pipeline-policy.test.ts`
+8. Document in `AGENTS.md` (handoff sequence + workflow diagram) and any agent-specific implications in `CLAUDE.md` / `CODEX.md`
 
-**Anti-pattern**: passing data through agent stdout, environment variables, or in-memory orchestrator state across a phase boundary. Add a new template section instead.
+**Anti-pattern**: updating only one or two of the switch statements. Missing one produces silent skipping (the orchestrator routes past the phase without running it) or infinite loops (`canPhaseAdvance` rejects but `runPhase` keeps trying).
 
-### `task.sh phase` Over Hand-Editing `status.json`
+### State Schema Discipline
 
-**Files**: `scripts/task.sh` (`cmd_phase()`)
+**Files**: `tasks/_templates/status.json`, parsers in `scripts/run-task.ts`, `scripts/task.sh` `cmd_phase()`
 
-**When to use**: Any time you need to update phase status from outside the orchestrator (manual recovery, conversational Claude marking spec done, post-merge cleanup).
+**When to apply**: Adding a new field to `status.json`, renaming an existing field, or changing the type/shape of a field.
 
-**The pattern**: `./scripts/task.sh phase <id> <phase> <status> [verdict]`. The helper:
-- Validates phase order (prior phases must be `done`).
-- Re-derives the top-level `.status` pointer from `.phases`.
-- Routes to the worktree's `status.json` if a worktree exists.
-- Increments `.iterations` for review phases on `changes_requested` / `needs_re_review`.
+**The pattern**: A status.json change must update three locations atomically:
+1. `tasks/_templates/status.json` — the schema source of truth (and what new tasks are scaffolded from)
+2. Parsers in `scripts/run-task.ts` — anything that reads or writes the field. The orchestrator and `parseStatus()`-style helpers both need updates.
+3. `scripts/task.sh` `cmd_phase()` — if the field affects phase transitions, the helper needs to know about it.
 
-**Anti-pattern**: `jq '.phases.spec.status = "done"' status.json > tmp && mv tmp status.json`. Hand-edits skip the top-level-pointer rederivation; the dispatcher then routes from the wrong phase. **This is the most common silent-corruption source for status.json.**
+For breaking changes (renames, type changes), also: add a migration shim that detects the old shape and either fails loudly or transforms it. Tasks may be in flight when the change lands.
 
-### One Pipeline per Worktree; Bundle Mode for Related Work
+**Anti-pattern**: updating the template but not the parser, or vice versa. The result is silent state corruption (parser writes the new field but old runs read the old field, or vice versa).
 
-**Files**: `scripts/run-task.ts` (bundle mode handling), worktree helpers
+### Validation Gate Discipline
 
-**When to use**: When you have multiple related tasks that should ship together (bundle mode), or multiple genuinely independent tasks (parallel worktrees).
+**Files**: `scripts/run-task.ts` (`validateHandoff()`, `autoCommitCode()`), `tests/run-task-validation.test.ts`
 
-**The pattern for related tasks — bundle mode**: Pass multiple task IDs to one `run-task.ts` invocation: `npx tsx scripts/run-task.ts task-a task-b task-c`. All tasks are processed together per phase (one agent session each). Tier is determined by the most complex task; any M/L/XL/delicate pulls the bundle to full tier. Code-review `changes_requested` reroutes the whole bundle to implement.
+**When to apply**: Adding a new pre-flight check at a phase boundary (e.g., "the handoff Changes table must match the post-commit `git diff`").
 
-**The pattern for independent tasks — separate worktrees**: Each `run-task.ts` invocation operates on its own worktree (its own branch and working folder). Concurrent invocations are safe as long as they don't share a working tree.
+**The pattern**:
+- New checks extend `validateHandoff()` (returns a list of issue strings; non-empty = gate fail) or join the `autoCommitCode()` cross-checks. Both are well-tested entry points.
+- **Tests are mandatory.** Any new validation rule needs a positive case (passing handoff) and a negative case (failing handoff) in `run-task-validation.test.ts`. Edge cases (empty tables, malformed markdown) need explicit test rows.
+- **Failure modes are documented.** A gate that fails should write a clear rejection message to `review.md` (or equivalent) explaining what to fix. Vague failures waste review iterations.
 
-**Anti-pattern**: two `run-task.ts` invocations on the **same branch and folder**. They corrupt each other's git state, status.json, and auto-commit logic — the orchestrator assumes serialized git ops within a checkout. This was a real footgun before worktree isolation landed.
+**Anti-pattern**: adding a check inline in the middle of `runPhase('code_review')` rather than extending `validateHandoff()`. The latter has tests; the former silently bypasses them.
 
-### Worktree Isolation for Implement-Phase Edits
+### Lint & Type Safety Policy
 
-**Files**: `scripts/run-task.ts` worktree helpers, `tasks/_templates/status.json` (`worktree: true`)
-
-**When to use**: Default. Set `worktree: true` (the template default) unless you have a specific reason not to.
-
-**The pattern**: The orchestrator runs from the main checkout. `codex` during implement runs with CWD set to the worktree. Edits land in the worktree until merge. The supervisor's view of `scripts/`, `AGENTS.md`, etc. is shielded — this is what makes canon-on-canon work safely.
-
-**Anti-pattern**: editing the same file in both the main checkout and the worktree during the same task. Merge conflicts on completion, and the orchestrator's mid-run state can desync from the on-disk reality. Pick one — usually the worktree.
-
-## Lint & Type Safety Policy
-
-> Always-applicable rules.
+> Always-applicable rules. *(Same content lives in `AGENTS.md` for canonical reference; reproduced here for convenience when a contributor is reading patterns mid-task.)*
 
 Suppressing lint or type errors is a last resort, not a convenience escape hatch. Each suppression hides a diagnostic that exists to catch real bugs.
 
-**Lint suppression comments**: Never add a suppression without a same-line justification explaining why the rule is wrong for this specific case. If you can't write that justification, the rule is right and the code needs to change.
+**Lint suppression comments**: never add a suppression without a same-line justification explaining why the rule is wrong for this specific case. If you can't write that justification, the rule is right and the code needs to change.
 
-**`any` / dynamic typing**: `any` propagates silently — once it enters a call chain every downstream consumer loses type safety. When the shape is truly unknown at the boundary (CLI subprocess output, JSON parsing of agent artifacts), type as `unknown` and narrow explicitly.
+**`any` / dynamic typing**: `any` propagates silently — once it enters a call chain, every downstream consumer loses type safety. When the shape is truly unknown at the boundary (CLI subprocess output, JSON parsing of agent artifacts), type as `unknown` and narrow explicitly.
 
 ## Known Pitfalls
 
-> Hard-won lessons. Violating them causes subtle bugs.
+> Hard-won lessons specific to canon-ai's internals. Universal agent-discipline pitfalls (handoff verification, test discipline, name-effects-to-delete, etc.) live in [`CLAUDE.md`](../CLAUDE.md). Universal harness-behavior pitfalls (don't hand-edit `status.json`, parallel run-task safety, etc.) live in `CLAUDE.md` Quick Refs and the Validation Matrix in [`AGENTS.md`](../AGENTS.md).
 
-### Don't hand-edit `status.json`'s top-level `status` field.
+### Adding a phase that updates only some switch statements is a silent-skip footgun.
 
-The top-level `.status` pointer is **derived** from `.phases` (first non-`done` phase wins). Hand-editing it produces inconsistent state — `.status` says one phase, `.phases` says another, and the dispatcher routes based on the top-level pointer. The orchestrator may then run the wrong phase, or skip phases. Always go through `./scripts/task.sh phase <id> <phase> <status>`, which updates `.phases` and rederives the pointer atomically. If you're scripting around this, call `cmd_phase()` in `scripts/task.sh` rather than reimplementing.
+`run-task.ts` has four phase-aware switches (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`, `canPhaseAdvance()`). All four must gain a case for the new phase. Missing `runPhase()` → the phase appears in order but nothing runs. Missing `checkAndRoute()` → the orchestrator can't decide what comes next. Missing `canPhaseAdvance()` → the helper rejects the transition while the orchestrator keeps trying. **The failure modes are subtle** — the pipeline may appear to make progress while silently skipping the new phase. Use the Phase Addition Discipline checklist above; reviewers should grep for the phase name across all four switches before approving.
 
-### Don't run two `run-task.ts` invocations on the same branch/folder.
+### Modifying `pipeline-policy.ts` without a matching test row is silent coverage drift.
 
-The orchestrator assumes serialized git operations within a checkout: it auto-commits, switches branches, manages files in the working tree. Two parallel invocations on the **same branch and folder** corrupt each other's status.json, leave half-staged commits, and produce uninterpretable conflicts. This was a real footgun pre-worktree — incidents documented before worktree isolation landed.
+The module is small enough that contributors sometimes treat it as "just data" and skip the test update. But the table-driven structure exists *so* tests can cover every cell — `tests/pipeline-policy.test.ts` is the only thing that catches drift between the matrix's intent and its actual values. A change to a matrix cell without a corresponding test row is a Stage 1 review failure.
 
-**Parallel is safe IF each invocation runs in its own worktree on its own branch.** Worktree isolation is what makes simultaneous task work possible — different worktrees = different working trees = no shared mutable state. **Bundle mode is still the right answer when tasks are *related* and should converge** (multiple IDs to one invocation, one tier, one review loop, one commit history). Use parallel worktree invocations only for genuinely independent tasks.
+### Treat the `delicate` flag as load-bearing for the orchestrator's *own* surfaces.
 
-### Don't edit the same file in both the main checkout and the worktree mid-task.
+When working on canon-ai's harness, `delicate: true` should be set for any task that modifies the orchestrator's hot path (phase routing, auto-commit, validation gates, pipeline policy, status.json schema, worktree machinery). See `docs/product-context.md` "delicate flag — project-specific domains" for the canon-ai list. The bar is "an undetected bug here corrupts every task that runs after the change lands" — true for almost every harness modification.
 
-When `worktree: true`, edits should happen in the worktree. The supervising orchestrator reads from the main checkout (shielding itself from in-flight changes). If you also edit in the main checkout, the merge at task completion produces conflicts and can desync the orchestrator's mid-run state. Pick one location — usually the worktree.
+### Don't introduce orchestrator state that lives only in memory across phases.
 
-### Commit manual changes before invoking `run-task.ts`.
-
-The orchestrator spawns fresh agent sessions that read the working tree from disk. If you have uncommitted edits when you kick off `run-task.ts`, those edits become indistinguishable from agent-authored ones; auto-commit will sweep them into the implement commit, the review will assess them as Codex's work, and the handoff Changes table won't list them. **Commit (or stash) before invoking.**
-
-### Verify handoff claims against the actual diff.
-
-The handoff Changes table is what `autoCommitCode()` and `validateHandoff()` parse to know what should have changed. There are edge cases where edits can slip past these checks — e.g., a manual mid-implement commit that bypasses `autoCommitCode()`'s pre-checks. **As a reviewer, do not trust the Changes table — run `git diff <baseRef>...HEAD` (or `git diff HEAD -- <file>` for spot checks) and confirm what's listed matches what's there.** If you spot a mismatch, that's a Stage 1 finding (handoff did not represent the work accurately), not a Stage 2 nit.
-
-### Reviewer diffs against the task baseline, not `main`, on shared release branches.
-
-When work happens on a shared release branch many commits ahead of `main`, diffing against `main` attributes unrelated work to the current task. The task's baseline is recorded in `status.json`. Diff against that, not `main`, when reviewing.
-
-### Tests change only when intended behavior changes.
-
-If a test fails after a code change and the spec didn't plan a behavior change, **the code is broken — not the test.** Don't update the test to pass against the regression. This is a Stage 2 `correctness bug` even if the test "looks updated to match new code." Behavior changes belong in the spec; tests track behavior.
-
-### Test files are per-feature, not per-helper.
-
-Before naming a new test file in a spec, list existing test files. Consolidate new helpers into one feature-named test file rather than creating a new one per helper. canon-ai currently has three test files; that's plenty for the orchestrator's surface area.
-
-### Name effects to DELETE, not just effects to add.
-
-When a spec replaces a behavior rather than adding alongside, explicitly say "delete lines X–Y" or "remove the old `[function-name]` call." If the spec only describes the new behavior, Codex may leave the old one in place and a silent-no-op regression survives the whole pipeline. **Pair every "Add" bullet with a matching "Remove" bullet when the change supersedes prior code.**
-
-### Delicate-task review must audit cross-cutting guards at every mutation entry point.
-
-When a `delicate: true` task refactors a state/data layer or a phase-routing surface, explicitly verify that all cross-cutting guards (validation, auto-block, reroute, worktree boundary checks) still hold at *every* mutation chokepoint after the refactor — not just at the call sites the spec called out. The orchestrator has many invocation paths; one missed branch can disable a guard silently.
-
-### Don't bypass `--no-verify` or `--no-gpg-sign` to make commits land.
-
-Hooks are doing work. If a pre-commit hook fails, the failure is the signal — fix the underlying issue. `--amend` after a hook failure modifies the *previous* commit (the one that succeeded), not the one that just failed. That can destroy work. Make a new commit after the fix instead.
-
-### Strong-semantic flag names need full-scope sign-off before narrow scoping.
-
-When a flag uses a term that naturally implies full constraint (`delicate`, `locked`, `frozen`, `synced`), the human will read the strong meaning by default. Spec'ing it narrowly creates a hidden mismatch — the flag-name says "all guards apply" but the code only applies a subset. Either verify what the name means *in full*, or pick a less load-bearing name.
+The architectural decision (see `docs/decisions.md` "File-based handoffs between phases") makes resumability and observability load-bearing. Adding in-memory state that bridges phase boundaries — even seemingly innocuous things like "remember the validation result so we don't recompute it" — breaks both. New cross-phase state goes in a file under `tasks/<id>/` with a documented schema in `tasks/_templates/`.
 
 ## Quick Reference: "I Want To..."
 
-| I want to... | Follow this pattern | Start at |
+| I want to... | Section above | Start at |
 |---|---|---|
-| Add a new pipeline phase | Pipeline Phase Changes (Trigger Table) | `scripts/run-task.ts` `PHASE_ORDER` |
-| Change which model a phase uses | Policy Module Changes | `scripts/pipeline-policy.ts` |
-| Add a new validation check at code_review entry | Validation Gates | `scripts/run-task.ts` `validateHandoff()` |
-| Update phase status from a script | `task.sh phase` Over Hand-Editing | `./scripts/task.sh phase` |
-| Add a new structured field to handoff | Template Changes + parser update | `tasks/_templates/handoff.md`, `parseHandoffFiles()` |
-| Run multiple related tasks together | Bundle mode | `npx tsx scripts/run-task.ts a b c` |
+| Add a new pipeline phase | Phase Addition Discipline | `scripts/run-task.ts` `PHASE_ORDER` |
+| Change which model a phase uses | Pure Policy + Test Discipline | `scripts/pipeline-policy.ts` |
+| Add a new validation check at code_review entry | Validation Gate Discipline | `scripts/run-task.ts` `validateHandoff()` |
+| Add a new field to status.json | State Schema Discipline | `tasks/_templates/status.json` |
+| Update phase status from a script | (see CLAUDE.md Quick Refs) | `./scripts/task.sh phase` |
+| Run multiple related tasks together | (see CLAUDE.md Quick Refs — bundle mode) | `npx tsx scripts/run-task.ts a b c` |
