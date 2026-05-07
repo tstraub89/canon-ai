@@ -74,12 +74,14 @@ Canon is two products in one repo, in different states of completion:
 
 The portable structure: orchestration scripts, task templates, agent rules (`AGENTS.md` / `CLAUDE.md` / `CODEX.md`), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs.
 
-**Drop this into any repo and you have:**
+**Drop this into any repo and, after filling in the project-specific scaffolding, you have:**
 
 - A working multi-agent pipeline that runs spec → review → implement → review → QA without intervention
 - Templates for every artifact the pipeline produces
-- The discipline (radical candor, two-stage code review, code-is-canonical, etc.) baked into the agent rules
-- An empty knowledge corpus you fill in as your project's conventions emerge
+- The discipline (low-padding communication norms, two-stage code review, code-is-canonical, etc.) baked into the agent rules
+- A knowledge corpus structure (`docs/patterns.md`, `docs/decisions.md`, `docs/codebase-map.md`) you fill in as your project's conventions emerge
+
+The "after filling in the project-specific scaffolding" caveat matters: canon-ai ships ~48 `TODO[canon]:` markers across the docs and a few in the orchestrator. The pipeline runs without them, but agent prompts will be referencing empty validation matrices and missing patterns until you populate them.
 
 **What you don't get from Layer 1:**
 

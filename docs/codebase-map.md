@@ -30,7 +30,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | What | Where | Notes |
 |---|---|---|
 | _example: project state store_ | `<path>` | Source of truth for shared state |
-| _example: write API hook_ | `<path>` | Binds store actions to React |
+| _example: write API wrapper_ | `<path>` | Binds store actions to whatever surface code consumes them |
 | _example: persistence layer_ | `<path>` | IndexedDB / SQLite / etc. |
 
 ## UI / Components
