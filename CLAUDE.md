@@ -45,7 +45,7 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 **Quick refs you'll use most**:
 - `npx tsx scripts/run-task.ts <id> --step --expect <phase>` — run one phase with a phase-mismatch guard.
 - `MAX_REVIEW_LOOPS=5 npx tsx scripts/run-task.ts <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block.
-- Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **Delicate applies only when the task touches auth, payments, gating, or persistent storage** — not for visual complexity or testing difficulty.
+- Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — common examples: auth, payments, premium gating, persistent storage, anything where a regression has unbounded blast radius. Add domain-specific examples for your project (e.g., medical PHI handling, financial transactions, security-relevant cryptography). The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`).
 - One pipeline at a time. Bundle mode is the mechanism for running related tasks together; a second parallel `run-task.ts` corrupts both branches.
 - **Prefer `task.sh` helpers over hand-editing `status.json`.** `task.sh phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
 

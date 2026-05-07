@@ -65,18 +65,20 @@ Set in `status.json` at task creation:
 | Field | Values | Purpose |
 |---|---|---|
 | `task_size` | `S \| M \| L \| XL` | Drives Codex model + effort selection and the pipeline tier. S is fast-tier; M+ runs the full pipeline (including Codex spec review). |
-| `delicate` | `true \| false` | Forces the XL bucket (full Codex model, xhigh implement effort) regardless of nominal size. Set for any task touching auth, premium gating, payments, persistence, or other security-sensitive flows. |
+| `delicate` | `true \| false` | Forces the XL bucket (full Codex model, xhigh implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | Pauses the pipeline after `spec_review` for human review before planning (default: `true`). |
 | `worktree` | `true \| false` | Opt-in worktree isolation (default: absent/false). See Worktree Isolation below. |
 | `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `task.sh new` from the current git checkout at task creation. |
 
 ### Task sizing guide
 
-| Size | Files touched | Scope |
+> Sizing ranges below are **starting heuristics**. File-count thresholds are project-dependent — a Python data project, a React app, and a Rust system tool all calibrate differently. Recalibrate after ~10 tasks if your S-tasks are routinely too small or your L-tasks too large for the loop caps to make sense.
+
+| Size | Files touched (heuristic) | Scope |
 |---|---|---|
-| S | 1–3 | Single behavior, no cross-context mutations, no auth/payments/storage |
+| S | 1–3 | Single behavior, no cross-context mutations, no sensitive surfaces |
 | M | 4–7 | May touch one context, clear interaction model |
-| L | 8+ | Multiple contexts, new subsystem, or touches auth/payments/storage |
+| L | 8+ | Multiple contexts, new subsystem, or touches a sensitive surface |
 | XL | — | Milestone-scale, staged implementation, multiple L-scope changes |
 
 ## Codex Model/Effort Matrix

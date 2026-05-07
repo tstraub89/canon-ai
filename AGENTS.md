@@ -18,7 +18,11 @@ This file is the source of truth for workflow, quality, validation, and git rule
 
 **Cross-review rule**: Each agent reviews the other's work. Claude writes specs → Codex reviews specs. Codex writes code → Claude reviews code. *No agent reviews its own output.*
 
-**Communication norms**: Use radical candor — direct and caring, not cushioned. Lead with the finding, not a cushion. Drop non-load-bearing praise — "great work overall, but…" adds noise. Hedge only when uncertainty is real; omit hedging words ("might", "possibly") when it isn't. End at the last substantive sentence; no trailing pleasantries. Disagreement is signal — push back on specs and reviews you disagree with, and say why. Direct is not unkind; vague politeness loses information.
+**Communication norms**: Canon ships with a default tone — direct, low-padding, opinion-bearing — because it minimizes the agent failure mode of "vague politeness loses information." The defaults below are recommended, not load-bearing canon — adjust to match your project's culture if needed.
+
+> **Default norms**: Lead with the finding, not a cushion. Drop non-load-bearing praise — "great work overall, but…" adds noise. Hedge only when uncertainty is real; omit hedging words ("might", "possibly") when it isn't. End at the last substantive sentence; no trailing pleasantries. Disagreement is signal — push back on specs and reviews you disagree with, and say why.
+
+What *is* load-bearing canon (regardless of tone preference): agents must surface real disagreement rather than yielding to politeness, and the human must hear about risks/tradeoffs rather than getting filtered output. Tone is project taste; **honest signal is canon discipline**.
 
 **Agent memory**: Both agents read `docs/lessons-learned.md` at session start. During the QA/done step, Claude distills `tasks/TASK-ID/notes.md` into polished entries in `docs/lessons-learned.md`. Raw notes are discarded after distillation.
 
@@ -279,16 +283,31 @@ Validation status in handoff must reflect the final code state — not an earlie
 
 ## Release Rules
 
-### SemVer
-- Patch: bug fixes, internal updates, small features. Agents may apply.
-- Minor: new features. Propose to human; do not bump without approval.
-- Major: forbidden unless explicitly instructed.
+> Canon enforces *workflow* discipline around releases (who proposes, who approves, when commits land). It does NOT enforce a specific versioning scheme or changelog scope — those are project-defined. Edit the project-policy block below to match your conventions; canon's general rules are non-negotiable.
 
-### Changelog
-- `CHANGELOG.md` is strictly end-user facing.
-- Do not include internal, infrastructure, or technical changes.
-- The QA step proposes a draft changelog entry in `done.md`. The human reviews and finalizes the copy, then Claude applies the changelog update and version bump before PR/merge.
-- Changelog + version bump are committed separately from code changes — they are the last commit on the branch.
+### Project policy
+
+> **TODO[canon]: Define for your project. Examples below — pick or replace.**
+>
+> **SemVer interpretation** (which kinds of changes go in which bump tier):
+> - Patch: ...
+> - Minor: ...
+> - Major: ...
+>
+> **Agent authorization** (which tiers agents may bump without explicit human approval):
+> - Patch: agents may bump
+> - Minor: propose, do not bump without approval
+> - Major: human-only (or forbidden, depending on stability stance)
+>
+> **Changelog audience and scope**:
+> - User-facing only? Mixed user + internal? Separate files? (Some projects keep `CHANGELOG.md` strictly user-facing and a `CHANGES.md` for internal; others use a single mixed log per Keep a Changelog.)
+
+### Canon's general rules (non-negotiable)
+
+1. **Agents do not bump versions or land changelog edits without explicit scope authorization.** The project-policy block defines what's pre-authorized; everything else is propose-only.
+2. **The QA step proposes a draft changelog entry in `done.md`**. The human reviews and finalizes the copy, then Claude applies the changelog update + version bump before PR/merge. Agents do not auto-finalize changelog copy — phrasing is a human decision.
+3. **Changelog + version bump are committed separately from code changes** — they are the last commit on the branch. Keeps version-bump commits cherry-pickable / revertable in isolation.
+4. **No major versioning surprises.** If a task introduces a breaking change that the spec didn't flag, raise it during QA before shipping — do not silently assume the change is acceptable.
 
 ## Handoff Validation (Before Merge)
 

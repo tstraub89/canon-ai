@@ -153,7 +153,7 @@ npm test
 npx tsx scripts/run-task.ts my-first-task
 ```
 
-The first 5–10 tasks are the project's calibration period — you'll be writing into `docs/patterns.md` and `docs/decisions.md` constantly as conventions emerge. That's expected. After ~20 tasks, the docs stabilize and the agents become dramatically more reliable because they're operating under accumulated discipline rather than every-time guesses.
+Expect a calibration period. The first several tasks will surface conventions worth writing into `docs/patterns.md` and `docs/decisions.md` — that's the point of those files. The rate of new pattern/decision entries should taper off as the canon accumulates. The exact number of tasks before things feel stable is project-specific; canon hasn't been validated across enough projects to give a confident range.
 
 ## The canon philosophy
 
@@ -165,7 +165,7 @@ The implication for product strategy: **the value of canon compounds with use**.
 
 ## Roadmap
 
-**Phase 1 (now)**: Layer 1 ships. Validate the abstraction by using canon-ai on a fresh greenfield project. Measure friction. Iterate the templates.
+**Phase 1 (now)**: Layer 1 ships. Validate the abstraction by using canon-ai on at least one fresh project. Measure friction. Iterate the templates.
 
 **Phase 2 (next)**: The bootstrap CLI. `canon init` on an existing repo runs Claude over the codebase, generates initial `docs/codebase-map.md` (file inventory + feature wiring), surfaces obvious decisions from git history into `docs/decisions.md`, and identifies recurring patterns into `docs/patterns.md`. The hypothesis: this collapses the 6-month "fill in your canon as you go" cold start.
 
