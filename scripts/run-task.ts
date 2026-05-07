@@ -256,9 +256,6 @@ const config = {
     // Sonnet QA is a deliberate upgrade from haiku — haiku streamed done.md
     // content instead of using the Write tool (regression, 2026-04-18).
     //
-    // Update from Tim: hit 5h limit too much. Downgraded models 
-    // somewhat, leaving opus for spec writing (2026-04-25).
-    //
     // CLAUDE_MODEL (legacy, single var for all non-qa phases) is honored as a
     // fallback when the phase-specific var isn't set — keeps existing shell
     // overrides working through one transition. Drop after next release.
@@ -775,9 +772,9 @@ function ensureWorktree(taskId: string, branch: string): string {
         info('Symlinked node_modules into worktree.');
     }
     // Symlink local/preview env files (gitignored — not in the worktree by
-    // default) so `npm run dev` / `npm run preview` / Vercel CLI work in the
-    // worktree without manual copy. Files already tracked in git (e.g. .env.e2e)
-    // are skipped because they're already present from the git checkout.
+    // default) so dev-server / preview / deploy CLIs work in the worktree
+    // without manual copy. Files already tracked in git are skipped because
+    // they're already present from the git checkout.
     const envFiles = fs.readdirSync(REPO_ROOT).filter((name) =>
         name.startsWith('.env')
         && fs.statSync(path.join(REPO_ROOT, name)).isFile()
@@ -1724,21 +1721,20 @@ Tasks:
 ${taskLines}
 
 For each task:
-1. **Use the Write tool** to create tasks/<id>/done.md — plain-English summary for Tim. Include: what changed, files changed, how to test, test results, decisions made, open questions.
+1. **Use the Write tool** to create tasks/<id>/done.md — plain-English summary for the human. Include: what changed, files changed, how to test, test results, decisions made, open questions.
    ⚠️ CRITICAL: Use the \`Write\` tool — do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.
 2. Include a **Proposed Changelog** section in done.md:
-   - Read the top of CHANGELOG.md (the most recent version section) to calibrate on scope and voice before writing.
-   - Apply the "would a user notice" test to every candidate bullet: if the user stopped using ${config.projectName} tomorrow, would they miss this specific thing? If no, omit it. Don't rationalize ("well, the refactor makes things faster so the user does feel it") — be strict.
-   - **Allowed**: new features, observable behavior changes, bug fixes users hit, performance improvements users feel (e.g., "B&W conversion now runs in parallel with a progress toast").
-   - **NOT allowed**: refactors, file renames, cache-key bumps, state restructures, test changes, dev tooling, worker-count heuristics, internal API shape, validation tightening that doesn't change UX, pipeline/infra work. If a task is entirely one of these, say so explicitly ("no user-facing change — omit from changelog") rather than inventing a bullet.
-   - Implementation mechanics belong in the "What Changed" section above — not in the proposed changelog. Don't waste time polishing changelog copy for things that won't make the cut.
-   - Proposed version bump (patch or minor) with brief rationale.
-   Tim and the /changelog skill finalize both.
+   - Read AGENTS.md §"Release Rules" for the project's changelog audience and SemVer interpretation before writing. Apply the project's defined scope.
+   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.
+   - Apply the "would a user notice" test to every candidate bullet (or the project's equivalent scope test): if a candidate falls outside the project's defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change — omit from changelog") rather than inventing a bullet.
+   - Implementation mechanics belong in the "What Changed" section above — not in the proposed changelog.
+   - Proposed version bump per the project's SemVer interpretation, with brief rationale.
+   The human finalizes both.
 
 After writing all done.md files:
 - Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" Only write to docs/lessons-learned.md if yes. Task-specific details stay in notes.md only.
 - Append one row per task to docs/task-quality-log.md (see that file for column definitions).
-- **Docs freshness**: scan architecture.md, codebase-map.md, patterns.md, product-context.md, ROADMAP.md for anything contradicted by ${isBundle ? 'these tasks' : 'this task'}. Update stale references if found.
+- **Docs freshness**: scan the protected docs in AGENTS.md (architecture.md, codebase-map.md, patterns.md, product-context.md, decisions.md) for anything contradicted by ${isBundle ? 'these tasks' : 'this task'}. Update stale references if found.
 - **Lessons sweep** (periodic — not every task): scan docs/lessons-learned.md. For each entry: promote durable truths to the right permanent doc (patterns.md / decisions.md / AGENTS.md), OR prune entries that turned out to be task-specific after all (just delete them — the detail lives in the task's notes.md). Leave a tombstone only for promoted entries. Do this when lessons-learned exceeds ~15 entries or at the end of a release milestone.
 
 When done, run (use the Bash tool — do not just output the command as text):
