@@ -1,0 +1,59 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+      "WebFetch",
+      "WebSearch",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(wc *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(echo *)",
+      "Bash(grep *)",
+      "Bash(sed *)",
+      "Bash(awk *)",
+      "Bash(xargs *)",
+      "Bash(jq *)",
+      "Bash(node scripts/*)",
+      "Bash(npm run *)",
+      "Bash(npm ci)",
+      "Bash(npx tsx *)",
+      "Bash(npx tsc *)",
+      "Bash(./scripts/task.sh *)",
+      "Bash(bash scripts/*)",
+      "Bash(codex *)",
+      "Monitor"
+    ],
+    "additionalDirectories": [
+      "../dev-worktrees"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && echo '## In-progress tasks' && ./scripts/task.sh list 2>/dev/null || echo '(none)'"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "excludedCommands": [
+      "npm",
+      "npm *",
+      "npx",
+      "npx *"
+    ]
+  }
+}
