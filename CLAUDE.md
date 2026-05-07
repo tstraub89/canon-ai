@@ -17,7 +17,12 @@ Claude operates in two distinct modes:
 
 **Pipeline rule**: Conversational Claude invokes `scripts/run-task.ts` to drive pipeline phases and monitors progress. Use the pipeline Claude session to write `review.md` and `done.md` (and, for full-tier tasks, `plan.md`) — that keeps orchestrator guardrails intact, session resumption working, and the high-level context clean. If you catch yourself reading the diff to assess spec compliance in conversation, stop and kick the phase to the pipeline instead.
 
-**Pipeline infrastructure is conversational Claude's domain.** Changes to `scripts/run-task.ts`, `scripts/task.sh`, task templates, AGENTS.md, this file, or any other orchestration surface are made inline — one session, one commit, no `tasks/<id>/` directory, no Codex routing.
+**Modifying canon's own harness or policy** (the orchestrator scripts, task templates, agent configs, or AGENTS.md / CLAUDE.md / CODEX.md themselves) is allowed both inline and through the pipeline. The split:
+
+- **Trivial** (≤ ~10 lines, no logic change, doc tweak, single-file rename): inline. Canon overhead isn't worth it.
+- **Non-trivial** (new pipeline phase, new validation gate, behavior change in `run-task.ts`, structural template changes): through canon, with worktree isolation. The supervising orchestrator runs from the main checkout while edits land in the worktree, so the pipeline is shielded from edits to itself mid-run.
+
+When a project adopts canon, this same rule applies to *their* modifications of canon's harness/policy in their adoption.
 
 ## Starting a New Session
 
@@ -45,8 +50,8 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 **Quick refs you'll use most**:
 - `npx tsx scripts/run-task.ts <id> --step --expect <phase>` — run one phase with a phase-mismatch guard.
 - `MAX_REVIEW_LOOPS=5 npx tsx scripts/run-task.ts <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block.
-- Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — common examples: auth, payments, premium gating, persistent storage, anything where a regression has unbounded blast radius. Add domain-specific examples for your project (e.g., medical PHI handling, financial transactions, security-relevant cryptography). The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`).
-- One pipeline at a time. Bundle mode is the mechanism for running related tasks together; a second parallel `run-task.ts` corrupts both branches.
+- Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — anything where a regression has unbounded blast radius. The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`). **Project-specific delicate-flag domain examples** (auth, payments, persistent storage, PHI handling, security-relevant cryptography, orchestrator routing logic, etc.) live in [`docs/product-context.md`](docs/product-context.md) — adopters list theirs there.
+- **One pipeline per worktree.** Multiple `run-task.ts` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
 - **Prefer `task.sh` helpers over hand-editing `status.json`.** `task.sh phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
 
 ### Writing a Spec (conversational — all tiers)
@@ -172,7 +177,7 @@ If any condition is not met, write the finding in `review.md` and send it back. 
 
 ## Codebase Navigation
 
-> TODO[canon]: Replace this section with project-specific entry points after the bootstrap pass populates `docs/codebase-map.md`. Until then, read `docs/codebase-map.md` directly for file locations.
+Project-specific file locations live in [`docs/codebase-map.md`](docs/codebase-map.md). Read that doc on session start when orienting; consult its Trigger Table and Feature Wiring Maps when a task touches a new area.
 
 ## Known Patterns & Pitfalls
 
@@ -180,13 +185,7 @@ See `docs/patterns.md` "Known Pitfalls" for the project's hard-won implementatio
 
 ## Commands
 
-> TODO[canon]: Document your project's commands here. Examples to fill in:
-> - `<dev server>` — local development with hot reload
-> - `<build>` — production build
-> - `<lint>` — linter
-> - `<type-check>` — type checking
-> - `<test>` — unit tests
-> - `<test:e2e>` — end-to-end tests
+Project commands (lint, type-check, test, build, dev server, etc.) live in [`docs/architecture.md`](docs/architecture.md) under the "Validation" section, with the matrix categories from `AGENTS.md` bound to actual commands. Read that doc when you need to invoke a check.
 
 ## Pull Requests
 
@@ -198,4 +197,4 @@ See `docs/patterns.md` "Known Pitfalls" for the project's hard-won implementatio
 
 ## CI
 
-> TODO[canon]: Document your CI pipeline structure here.
+Project CI configuration lives in [`docs/architecture.md`](docs/architecture.md) under the Tech Stack → CI subsection. Projects that don't have CI configured will have it marked there.
