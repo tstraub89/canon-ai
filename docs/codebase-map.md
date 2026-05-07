@@ -10,84 +10,114 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 
 **Refresh discipline**: When a task moves or renames a canonical file, update this map in the same PR. The QA phase scans for stale entries and flags them.
 
+> **canon-ai is its own product.** This file describes the canon-ai repo itself (the framework's own internals), not a downstream project that adopts canon. When dropped into a downstream repo, `docs/codebase-map.md` is rewritten to describe that project.
+
 ---
 
 ## Entry Points
 
-> **TODO[canon]: Document the files an agent reads first when orienting.**
-
 | What | Where |
 |---|---|
-| App entry | `<path>` |
-| Core data model / types | `<path>` |
-| Global config / constants | `<path>` |
-| Routes / navigation | `<path>` |
+| Workflow source of truth | `AGENTS.md` |
+| Claude (architect/reviewer) guide | `CLAUDE.md` |
+| Codex (implementer) guide | `CODEX.md` |
+| Project pitch + adoption guide | `README.md` |
+| Current pipeline status / known gaps | `STATUS.md` |
+| Per-task state machine | `tasks/_templates/status.json` |
 
-## State & Data
-
-> **TODO[canon]: Document state-layer files.**
-
-| What | Where | Notes |
-|---|---|---|
-| _example: project state store_ | `<path>` | Source of truth for shared state |
-| _example: write API wrapper_ | `<path>` | Binds store actions to whatever surface code consumes them |
-| _example: persistence layer_ | `<path>` | IndexedDB / SQLite / etc. |
-
-## UI / Components
-
-> **TODO[canon]: Document major UI surfaces.**
+## Pipeline Orchestration
 
 | What | Where | Notes |
 |---|---|---|
-| _example: main canvas_ | `<path>` | |
-| _example: navigation header_ | `<path>` | |
-| _example: shared dialog_ | `<path>` | |
+| Orchestrator (phases, agent invocation, auto-commit, reroute) | `scripts/run-task.ts` | ~5K lines; the load-bearing file |
+| Pure routing policy (tier, sizing, model/effort, loop caps) | `scripts/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
+| Task management helper (status.json updates, phase transitions) | `scripts/task.sh` | jq-driven; agents and humans both use it |
+| Phase routing logic (phase order, transitions) | `scripts/run-task.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
+| Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task.ts` (`autoCommitCode()`) | |
+| Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task.ts` (`validateHandoff()`) | |
+| Handoff Changes-table parser | `scripts/run-task.ts` (`parseHandoffFiles()`) | Regex-based; extracts backtick-wrapped paths |
 
-## Workers / Background
+## Task Lifecycle Artifacts
 
-> **TODO[canon]: Document any worker, queue, or background job files.**
+Every task lives in `tasks/<TASK-ID>/`. Templates live in `tasks/_templates/`.
 
-| What | Where | Notes |
+| What | Where | Author |
 |---|---|---|
-| _example: heavy computation worker_ | `<path>` | |
+| Task state machine | `tasks/_templates/status.json` | Updated by whichever agent acts |
+| Spec template | `tasks/_templates/spec.md` | Claude writes; Codex reviews (full tier) |
+| Spec review template | `tasks/_templates/spec-review.md` | Codex |
+| Plan template | `tasks/_templates/plan.md` | Claude (after spec approval) |
+| Implementation handoff template | `tasks/_templates/handoff.md` | Codex |
+| Code review template (2-stage) | `tasks/_templates/review.md` | Claude |
+| QA / human-facing summary template | `tasks/_templates/done.md` | Claude |
+| Per-task scratchpad | `tasks/_templates/notes.md` | Any agent, any phase |
 
-## API / Backend
+## Protected Docs (Institutional Memory)
 
-> **TODO[canon]: Document API routes / serverless functions / backend handlers.**
+These must stay current — agents read them at session start (per phase rules in `CLAUDE.md` / `CODEX.md`).
 
-| What | Where | Notes |
+| What | Where | Purpose |
 |---|---|---|
+| System overview, tech stack | `docs/architecture.md` | First read when orienting |
+| File locations (this doc) | `docs/codebase-map.md` | Fast index |
+| Settled architectural decisions | `docs/decisions.md` | Don't re-debate without strong cause |
+| Patterns + Known Pitfalls | `docs/patterns.md` | Pitfalls auto-injected into Codex implement prompts |
+| Product / framework context | `docs/product-context.md` | What canon-ai is, who it's for |
+| Pipeline mechanics reference | `docs/pipeline-orchestrator.md` | Flags, env vars, model matrix, reroute, auto-block |
+| Distilled lessons across tasks | `docs/lessons-learned.md` | Promoted from per-task notes during QA |
+| Pipeline health log | `docs/task-quality-log.md` | Spec review outcomes, dropped ACs, failure phases |
+| Per-invocation telemetry | `docs/pipeline-invocations.md` | Auto-appended by `run-task.ts` (duration + tokens) |
 
 ## Tests
 
-> **TODO[canon]: Document test layout.**
+| What | Where | Notes |
+|---|---|---|
+| Pipeline policy table tests | `tests/pipeline-policy.test.ts` | Tier, sizing, model matrix, loop caps |
+| Handoff/git porcelain parser | `tests/run-task-parse-porcelain.test.ts` | Edge cases for git status parsing |
+| Handoff validation logic | `tests/run-task-validation.test.ts` | `validateHandoff()` cases |
+
+Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test files import directly from `scripts/`.
+
+## Configuration
 
 | What | Where | Notes |
 |---|---|---|
-| Unit tests | `<dir>` | |
-| E2E tests | `<dir>` | |
+| Node/TS project metadata, npm scripts | `package.json` | `test`, `type-check`, `task`, `run-task` scripts |
+| TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `scripts/` and `tests/` only |
+| Claude permissions + SessionStart hook | `.claude/settings.json` | Auto-shows in-progress tasks at session start |
+| Codex CLI features (multi-agent, shell snapshot) | `.codex/config.toml` | |
+| Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
+| Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | `../dev-worktrees` |
+| Git ignores | `.gitignore` | |
 
-## Config
+## Public Assets (README only)
 
-> **TODO[canon]: Document config files an agent might need to edit.**
-
-| What | Where | Notes |
-|---|---|---|
+| What | Where |
+|---|---|
+| Logo | `public/canon-logo.webp` |
+| Framework diagram | `public/canon-framework.webp` |
 
 ## Feature Wiring Maps
 
-> Cross-cutting features touch multiple surfaces. Use these as starting checklists, not exhaustive lists.
->
-> **TODO[canon]: Document the wiring trail for common feature types in your project. Examples:**
+> Common changes that touch multiple files. Use as starting checklists, not exhaustive.
 
-**Add a new keyboard shortcut**:
-> `<shortcut-registry>` → `<command-dispatch>` → `<help-doc>` → context menu entry if applicable
+**Add a new pipeline phase**:
+> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task.ts` (`PHASE_ORDER`, `runPhase()` switch, `checkAndRoute()` switch, `canPhaseAdvance()` switch) → `scripts/task.sh` (`cmd_phase()` validation) → `tasks/_templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
 
-**Add a new API endpoint**:
-> `<route-file>` → `<schema-validation>` → `<auth-middleware>` → `<test-file>`
+**Add a new validation check (handoff or pre-flight gate)**:
+> `scripts/run-task.ts` (`validateHandoff()` or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `tasks/_templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)
 
-**Add a gated/premium feature**:
-> `<gating-context>` → `<feature-copy>` → feature implementation → `<analytics-event-map>`
+**Change pipeline tier or sizing rules**:
+> `scripts/pipeline-policy.ts` (the matrix) → `tests/pipeline-policy.test.ts` → `AGENTS.md` (Pipeline Tiers section) → `docs/pipeline-orchestrator.md` (model/effort matrix)
+
+**Change model selection**:
+> `scripts/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
+
+**Add a new task-template field or section**:
+> `tasks/_templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` / `CODEX.md` (authorship rules)
+
+**Promote a lesson into canon**:
+> `tasks/<id>/notes.md` (raw) → `docs/lessons-learned.md` (distilled, during QA) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule
 
 ## Agent Config
 
@@ -96,6 +126,6 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Workflow source of truth | `AGENTS.md` | All agents follow this |
 | Claude instructions | `CLAUDE.md` | Architect + reviewer context |
 | Codex instructions | `CODEX.md` | Implementer context |
-| Agent permissions | `.claude/settings.local.json` | Allowlisted commands |
+| Agent permissions | `.claude/settings.json` | Allowlisted commands |
 | Codex config | `.codex/config.toml` | Multi-agent + shell snapshot |
 | Task artifacts | `tasks/` | Per-task specs, plans, reviews |
