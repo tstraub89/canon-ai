@@ -81,6 +81,14 @@ Set in `status.json` at task creation:
 | L | 8+ | Multiple contexts, new subsystem, or touches a sensitive surface |
 | XL | — | Milestone-scale, staged implementation, multiple L-scope changes |
 
+### Recommended default for the `delicate` flag
+
+Canon's recommended starting policy for when to scope a task as `delicate: true`: *require evidence of real production impact, not theoretical correctness.*
+
+A `delicate` task carries meaningful regression risk on a security-sensitive surface and runs at the most expensive model+effort tier. "It's technically wrong" is not sufficient justification on its own — a hardening pass on auth/payments/storage that no user has ever hit can take significant pipeline time, introduce regression risk, and produce zero customer-visible value. Before scoping any task as `delicate: true`, require at least one confirmed production incident or a concrete upcoming flow that depends on the fix. Note the incident in the spec's *Problem* section.
+
+This is a default — your project can adopt a stricter or looser bar in `docs/decisions.md` if it has different risk tolerance (e.g., a medical-data project with regulatory exposure may want proactive hardening).
+
 ## Codex Model/Effort Matrix
 
 Applied by `getCodexConfig` in `scripts/run-task.ts`:

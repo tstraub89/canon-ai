@@ -1195,7 +1195,9 @@ function extractValidationChecks(taskId: string): string[] {
         if (!section) return [];
         const checks: string[] = [];
         for (const line of section[1].split('\n')) {
-            // Match `- [ ] \`npm run lint\``, `- [x] \`npm run lint\``, or `- [ ] Manual test: ...`
+            // Match any checklist line with a backtick-wrapped command — e.g.
+            // `- [ ] \`npm run lint\``, `- [x] \`pytest tests/\``, or
+            // `- [ ] Manual test: ...`. Project-agnostic; any shell command works.
             const match = line.match(/^-\s+\[[ x]\]\s+`?([^`]+?)`?\s*(?:\(|$)/i);
             if (match?.[1]) checks.push(match[1].trim());
         }
@@ -1535,7 +1537,7 @@ Grounding rule: before you write handoff.md, re-open the files you changed and v
 
 Run ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md and the matrix in AGENTS.md. Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.
 
-**E2E flakiness in your sandbox.** \`npm run test:e2e\` can hit transient failures (cancel-button detach races, dialog-injection timing, example-canvas bootstrap timeouts) that have nothing to do with the code in your spec's Affected Files. **If a failure is in a spec / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md → Blockers (or "Validation Outcomes" Notes column with status \`Fail – unrelated\`), then continue. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.
+**Test flakiness in your sandbox.** Validation suites — especially E2E or integration tests — can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec's Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md → Blockers (or "Validation Outcomes" Notes column with status \`Fail – unrelated\`), then continue. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.
 
 For each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.
 Append to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).
@@ -3459,7 +3461,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<void
                 : isRerouted
                     ? promptImplementReroute(state)
                     : isResume
-                        ? `Your implementation session was interrupted before you could write handoffs. The code changes are already complete in the working tree.\n\nYour only remaining tasks:\n1. Run \`npm run lint && npm run type-check && npm run build\` and record results.\n2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, validation outcomes).\n3. Run task.sh to mark implement done for each task.\n\n${promptImplement(state, 'resume')}`
+                        ? `Your implementation session was interrupted before you could write handoffs. The code changes are already complete in the working tree.\n\nYour only remaining tasks:\n1. Run the project's validation commands (see AGENTS.md "Validation Matrix" and each spec's "Validation Required" section) and record results.\n2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, validation outcomes).\n3. Run task.sh to mark implement done for each task.\n\n${promptImplement(state, 'resume')}`
                         : promptImplement(state, 'fresh');
             const implementCfg = getCodexConfig('implement', tasks);
             await runCodex(

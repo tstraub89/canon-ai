@@ -28,18 +28,6 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
-## Sensitive System Refactors: Require Evidence of Real Production Impact
-
-> *(This is a portable canon-ai discipline — keep it as-is.)*
-
-**Decision**: Large refactors of auth, payments, billing infrastructure, or other delicate surfaces are not undertaken to fix theoretical edge cases. They require demonstrated production impact before justifying the work.
-
-**Why**: A `delicate` task carries meaningful regression risk on a security-sensitive surface. The cost of a regression is unbounded (auth/payment bug = revenue impact + user trust). A theoretically-incorrect-but-never-failing edge case doesn't justify that exposure. "It's technically wrong" is not sufficient on its own for this class of work — bugs that have actually surfaced in production are.
-
-**Rule**: Before scoping any task as `delicate: true` on the auth/payments/billing surface, require at least one confirmed production incident or a concrete upcoming flow that depends on the fix. Note the incident in the spec's *Problem* section.
-
----
-
 > **TODO[canon]: Add real decisions for your project below. Common categories to cover at MVP:**
 >
 > - **Stack** — language, framework, build tool, package manager
