@@ -1,5 +1,7 @@
 # Canon
 
+![Canon](public/canon-logo.webp)
+
 > **The law your agents work under.**
 >
 > A spec-first, multi-agent coding pipeline you drop into any repo.
@@ -11,6 +13,8 @@
 Canon is an opinionated workflow framework for AI-driven software development. It encodes a hard-won discipline — accumulated over many shipped features and many post-mortems — into scripts, templates, and rules that two AI agents (an architect and an implementer) operate under, with a human as the final arbiter.
 
 The goal: make AI coding agents reliably ship correct, on-spec, well-reviewed work without constant babysitting. Not "the agents do everything" — **the agents do the right thing, and the human catches what they miss, and over time the rules absorb every miss so the next miss never happens**.
+
+![Canon framework](public/canon-framework.webp)
 
 That accumulation is the canon. The rules in `AGENTS.md`, the patterns in `docs/patterns.md`, the decisions in `docs/decisions.md` — they're not documentation, they're *enforcement*. Agents read them at session start. The pipeline injects relevant excerpts into prompts. Spec authorship and code review check against them. When a rule is violated and a bug ships, the lesson goes into `docs/lessons-learned.md` and eventually gets promoted into the canon, so the next agent can't make the same mistake.
 
