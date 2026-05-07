@@ -22,7 +22,17 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 const TASKS_DIR = path.join(REPO_ROOT, 'tasks');
 const TASK_SH = path.join(REPO_ROOT, 'scripts/task.sh');
-const WORKTREES_ROOT = path.resolve(REPO_ROOT, '../dev-worktrees');
+
+// Worktree root location. Default is a sibling directory `../dev-worktrees`
+// (keeps task worktrees out of the main repo's working tree). Override via
+// CANON_WORKTREES_ROOT env var — useful when the sibling layout doesn't fit
+// (e.g., monorepos, nested checkouts, projects that prefer in-tree worktrees).
+// If you change this, also update `additionalDirectories` in
+// `.claude/settings.json` to match — Claude Code's permission boundary needs
+// the same path the orchestrator writes to.
+const WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT
+    ? path.resolve(process.env.CANON_WORKTREES_ROOT)
+    : path.resolve(REPO_ROOT, '../dev-worktrees');
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -3022,13 +3032,24 @@ function mergeOpenPRsAndPull(taskIds: string[]): boolean {
  * syncing dates, refreshing a manifest). Runs after PRs merge and before tasks
  * are archived in --ship.
  *
- * Default is a no-op. Override for your project by editing this function: run
- * an `npm run` script (or any shell command), check `git status --porcelain`
- * for changes, and `git add` + `git commit` if anything changed. Keep it
- * non-fatal: log and continue on failure rather than blocking --ship.
+ * Convention: drop a `.canon/hooks/post-merge.sh` script in your project. If it
+ * exists and is executable, the orchestrator runs it via `bash` from REPO_ROOT
+ * after merging PRs. The script should be self-contained: invoke whatever
+ * commands your project needs, stage and commit any changes it produces, and
+ * exit non-zero on hard failure. The orchestrator treats failures as non-fatal
+ * (logs a warning and continues) — your hook should not block --ship for
+ * recoverable issues.
+ *
+ * Absence of the hook is the default; canon-ai itself doesn't ship one.
  */
 function runPostMergeHook(): void {
-    // TODO[canon]: Implement project-specific post-merge work here, or leave as no-op.
+    const hookPath = path.join(REPO_ROOT, '.canon/hooks/post-merge.sh');
+    if (!fs.existsSync(hookPath)) return;
+    info('Running .canon/hooks/post-merge.sh...');
+    const result = runCommand('bash', [hookPath]);
+    if (!result.ok) {
+        warn(`.canon/hooks/post-merge.sh exited non-zero — continuing. stderr: ${result.stderr.slice(0, 400)}`);
+    }
 }
 
 /**
