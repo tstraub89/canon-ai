@@ -70,17 +70,9 @@ Codex-specific notes that don't belong in AGENTS.md or patterns.md:
 ## Validation Checklist
 <a id="validation-checklist"></a>
 
-> TODO[canon]: Document your project's validation commands here. canon-ai ships with the structural slot; fill it for your project.
+Project-specific validation commands live in [`docs/architecture.md`](docs/architecture.md) under the "Validation" section, where each category from `AGENTS.md` §"Validation Matrix" is bound to an actual command.
 
-Before writing `handoff.md`, run all applicable checks. Examples to fill in:
-
-```bash
-<lint>          # Always
-<type-check>    # Always
-<unit tests>    # Always
-<build>         # If config/route/build changes
-<E2E>           # If UI/interaction changes
-```
+Before writing `handoff.md`, run every check listed in the spec's *Validation Required* section AND every applicable check from `docs/architecture.md` based on the change type. Record each as Pass / Fail / N/A in the Validation Outcomes table. Required checks must be Pass or Fail — do not mark them N/A.
 
 ## Handoff Template
 

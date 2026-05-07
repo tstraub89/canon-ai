@@ -212,55 +212,39 @@ If Claude and Codex disagree on approach, escalate to the human with a clear sum
 
 ## Implementation Rules
 
-> Project-specific implementation rules live here. canon-ai ships with structural placeholders; **edit these for your project** in a Bootstrap pass.
+**Project-specific implementation rules live in [`docs/patterns.md`](docs/patterns.md).** Patterns + Known Pitfalls describe how state, styling, testing, performance, gating, assets, analytics, and any other project-specific concerns are handled. Agents read that file at session start; the orchestrator pre-injects task-relevant pitfalls into Codex's implement prompt.
 
-### State, Hooks, and Data Model
-
-> TODO[canon]: Document your project's state-management conventions. Examples: which store/context system is canonical, how new state is added, how to wire mutations through your write API.
-
-### Styling
-
-> TODO[canon]: Document your styling conventions. Examples: CSS Modules vs Tailwind, design tokens, dark mode handling, when inline styles are allowed.
-
-### Performance and Computation
-
-> TODO[canon]: Document where heavy work lives (workers, queues, background jobs) and the rules for moving work off the main path.
-
-### Testing
-
-> TODO[canon]: Document your test runners (unit, integration, E2E), where tests live, and the rules for adding tests to a feature.
-
-### Premium / Gated Features
-
-> TODO[canon]: If your project has paid/gated features, document the gating chokepoint and the rule that all gated features pass through it.
-
-### Asset / Resource Integrity
-
-> TODO[canon]: Document your asset conventions (image formats, allowed sizes, what gets committed vs build-generated).
+The rules below are canon-supplied universals — they apply to every project canon-ai is dropped into.
 
 ### Safe-First Rules
 
-> Always applicable, regardless of stack:
+> Always applicable, regardless of stack.
+>
 > 1. For storage, reload, sync, or data-affecting flows: ship the safer guarded behavior first.
 > 2. Behavior that reloads the app, replaces local state, or dismisses user work must be gated by explicit user action.
 > 3. Prefer shared types over duplicating signatures.
 
-### Analytics and Privacy
+### Lint & Type Safety Policy
 
-> TODO[canon]: Document your analytics event-naming conventions and privacy rules (PII handling, hashing, retention).
+> Always applicable. Suppressing a lint or type error is a last resort, not a convenience escape hatch.
+>
+> 1. **Lint suppression comments**: Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*. If you can't write that justification, the rule is right and the code needs to change.
+> 2. **`any` / dynamic typing**: `any` propagates silently — once it enters a call chain, every downstream consumer loses type safety. When the shape is truly unknown at the boundary (network responses, JSON parsing, third-party callbacks), type as `unknown` and narrow explicitly.
 
 ## Validation Matrix
 
-> Project-specific validation commands live here. canon-ai ships with the structural shape; **edit the right column for your project**.
+The matrix below is the canon-supplied **structural** matrix — it tells agents which *categories* of check apply to which *categories* of change. The structure is universal and ships with canon.
 
-| Change Type | Required Checks |
+| Change Type | Required Check Categories |
 |---|---|
-| Most changes | `<lint>`, `<type-check>`, `<unit tests>` |
-| Routes / config / build | `<full build>` |
-| UI / interaction changes | `<E2E suite>` |
-| Content / SEO / metadata | `<prerender / sitemap / RSS>` |
-| Schema / migration | `<migration runner>` + manual review |
-| Cross-platform | Subset on each platform |
+| Most changes | Linting, type checking, unit tests |
+| Routes / config / build | Full build |
+| UI / interaction changes | End-to-end tests |
+| Content / SEO / metadata | Prerender / sitemap / feed regeneration |
+| Schema / migration | Migration runner + manual review |
+| Cross-platform | Subset of the above on each platform |
+
+**Project-specific command bindings** — what command actually runs for "linting," "type checking," etc. — live in [`docs/architecture.md`](docs/architecture.md) under the "Validation" section. Categories with no project-specific binding (e.g., end-to-end tests on a project with no UI) are marked N/A there.
 
 Validation status in handoff must reflect the final code state — not an earlier intermediate revision.
 
@@ -287,20 +271,9 @@ Validation status in handoff must reflect the final code state — not an earlie
 
 ### Project policy
 
-> **TODO[canon]: Define for your project. Examples below — pick or replace.**
->
-> **SemVer interpretation** (which kinds of changes go in which bump tier):
-> - Patch: ...
-> - Minor: ...
-> - Major: ...
->
-> **Agent authorization** (which tiers agents may bump without explicit human approval):
-> - Patch: agents may bump
-> - Minor: propose, do not bump without approval
-> - Major: human-only (or forbidden, depending on stability stance)
->
-> **Changelog audience and scope**:
-> - User-facing only? Mixed user + internal? Separate files? (Some projects keep `CHANGELOG.md` strictly user-facing and a `CHANGES.md` for internal; others use a single mixed log per Keep a Changelog.)
+**Project-specific versioning and release policy lives in [`docs/decisions.md`](docs/decisions.md)** as a dedicated decision entry. That file defines: SemVer interpretation (what counts as patch/minor/major for *this* project), agent authorization (which tiers agents may bump without human approval), and changelog audience/scope (user-facing, internal, separate files, or none).
+
+Adopters fill `docs/decisions.md` with a "Versioning and release policy" entry as part of bootstrap. Canon's general rules below remain non-negotiable regardless of project policy.
 
 ### Canon's general rules (non-negotiable)
 
