@@ -181,6 +181,6 @@ Proprietary. See `LICENSE`. This may eventually open-source — that decision li
 
 ## Origin
 
-Canon is the result of pulling the multi-agent pipeline out of [GalleryPlanner](https://galleryplanner.com), where it was developed and refined over a year of shipping features. The discipline encoded here was earned the hard way — every rule corresponds to a bug that shipped because the rule wasn't there yet.
+Canon is the result of pulling the multi-agent pipeline out of [GalleryPlanner](https://gallery-planner.com), where it was developed and refined over several months of shipping features. The discipline encoded here was earned the hard way — every rule corresponds to a bug that shipped because the rule wasn't there yet.
 
 That's the asset. The scripts are easy. The accumulated discipline is the moat.
