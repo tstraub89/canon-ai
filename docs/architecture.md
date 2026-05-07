@@ -29,7 +29,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **State machine**: `status.json` per task, with phases as nodes (see `tasks/_templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions (TODO: confirm + document specific workflows once they exist)
+- **CI**: none currently configured. `npm test` and `npm run type-check` are run manually before commits. Adding GitHub Actions is a tracked future task — see `STATUS.md`.
 
 ## High-Level Architecture
 
@@ -124,6 +124,29 @@ The orchestrator drives agent CLIs as subprocesses (`claude` and `codex`). It do
 ### Worktree boundary (when enabled)
 
 When `worktree: true`, the orchestrator creates a git worktree for the task. The supervising `run-task.ts` process runs from the main checkout; agent CLIs (especially `codex` during implement) run with CWD set to the worktree. Edits land in the worktree until merge. The supervisor's view of `scripts/`, `AGENTS.md`, etc. is shielded — this is what makes canon-on-canon work safely.
+
+## Validation
+
+`AGENTS.md` §"Validation Matrix" defines the canon-supplied **categories** of check that apply to different change types. The bindings below say what each category means concretely for canon-ai.
+
+| Category (from AGENTS.md) | canon-ai binding |
+|---|---|
+| Linting | N/A — no linter currently configured. `tsc --strict` catches most of what a linter would. Adding one is a future task. |
+| Type checking | `npm run type-check` (= `tsc -p tsconfig.json --noEmit`) |
+| Unit tests | `npm test` (= `node --test --import tsx tests/**/*.test.ts`) |
+| Full build | N/A — `tsx` runs scripts directly. There is no compile/build step. |
+| End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `run-task.ts`. |
+| Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
+| Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `tasks/_templates/status.json`, update parsers in `run-task.ts`, and add a row to `tests/run-task-validation.test.ts`. |
+| Cross-platform | Node 22.x and 24.x are the supported versions (declared in `package.json` `engines`). Tests are run on whichever is on the developer's machine; future CI should run on both. |
+
+**Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.
+
+## CI
+
+No CI is configured. Validation runs manually: `npm test` and `npm run type-check` before commits. PRs are reviewed locally.
+
+This is a tracked gap. Adding GitHub Actions to run `npm test` + `npm run type-check` on every push is a candidate future task — when added, this section should describe the workflow files in `.github/workflows/` and which gates block merges.
 
 ## Cross-Cutting Concerns
 

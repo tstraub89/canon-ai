@@ -88,6 +88,31 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
+## Versioning and release policy
+
+**Decision**: canon-ai uses SemVer with strict bump-tier definitions; agent authorization scales with bump tier; changelog lives only on `dev`, never on `main`.
+
+**Why**: SemVer is well-understood and matches user expectations for what to expect from a version bump. Tying agent authorization to bump tier means agents can ship low-risk fixes autonomously while breaking changes always involve a human — the bumps that matter most for adopters are gated. Keeping the changelog on `dev` only reflects that `main` is the portable template and `dev` is canon-ai's self-development branch; an internal-facing changelog has no place in the template, and `main` isn't a release target. A future public product would have its own landing-page repo for public changelogs.
+
+**Rule**:
+
+- **SemVer interpretation**:
+  - **Patch**: bug fixes only, no behavior change beyond fixing the bug.
+  - **Minor**: new features (new pipeline phase, new validation gate, new template section, new agent capability) without breaking existing usage.
+  - **Major**: breaking changes — anything that requires adopters to update their `tasks/_templates/`, their `status.json` schema, their workflow expectations, or any canon-supplied policy in a way that breaks existing tasks mid-flight.
+
+- **Agent authorization**:
+  - **Patch**: agents may bump the version and commit the changelog edit autonomously.
+  - **Minor**: agents propose the bump in `done.md` (draft changelog entry); the human reviews before the changelog/version-bump commit lands.
+  - **Major**: human-only. If a task introduces a breaking change that the spec didn't flag, raise it during QA before shipping.
+
+- **Changelog audience and scope**:
+  - `CHANGELOG.md` lives **only on `dev`**, never on `main`. `main` has no changelog; it's the portable template.
+  - Audience is internal (canon-ai contributors). Format follows Keep a Changelog conventions.
+  - Repo is private; no public changelog exists. A future public release would gain its own landing-page repo with a separately maintained public changelog.
+
+---
+
 ## Auto-commit owned by the orchestrator (not the agent)
 
 **Decision**: After Codex's `implement` phase passes validation, the orchestrator (`autoCommitCode()` in `run-task.ts`) parses the handoff Changes table and creates the implement commit. Codex does not run `git commit` itself.
