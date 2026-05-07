@@ -67,15 +67,17 @@ This is what makes session resumption work. Re-running `run-task.ts <id>` from a
 
 **Anti-pattern**: `jq '.phases.spec.status = "done"' status.json > tmp && mv tmp status.json`. Hand-edits skip the top-level-pointer rederivation; the dispatcher then routes from the wrong phase. **This is the most common silent-corruption source for status.json.**
 
-### One Pipeline at a Time; Bundle Mode for Related Work
+### One Pipeline per Worktree; Bundle Mode for Related Work
 
-**Files**: `scripts/run-task.ts` (bundle mode handling)
+**Files**: `scripts/run-task.ts` (bundle mode handling), worktree helpers
 
-**When to use**: When you have multiple related tasks that should ship together.
+**When to use**: When you have multiple related tasks that should ship together (bundle mode), or multiple genuinely independent tasks (parallel worktrees).
 
-**The pattern**: Pass multiple task IDs to one `run-task.ts` invocation: `npx tsx scripts/run-task.ts task-a task-b task-c`. All tasks are processed together per phase (one agent session each phase). The tier is determined by the most complex task; any M/L/XL/delicate pulls the bundle to full tier. Code-review `changes_requested` reroutes the whole bundle to implement.
+**The pattern for related tasks — bundle mode**: Pass multiple task IDs to one `run-task.ts` invocation: `npx tsx scripts/run-task.ts task-a task-b task-c`. All tasks are processed together per phase (one agent session each). Tier is determined by the most complex task; any M/L/XL/delicate pulls the bundle to full tier. Code-review `changes_requested` reroutes the whole bundle to implement.
 
-**Anti-pattern**: starting two parallel `run-task.ts` invocations on different branches. They corrupt each other's git state, status.json, and auto-commit logic. The pipeline assumes serialized git operations.
+**The pattern for independent tasks — separate worktrees**: Each `run-task.ts` invocation operates on its own worktree (its own branch and working folder). Concurrent invocations are safe as long as they don't share a working tree.
+
+**Anti-pattern**: two `run-task.ts` invocations on the **same branch and folder**. They corrupt each other's git state, status.json, and auto-commit logic — the orchestrator assumes serialized git ops within a checkout. This was a real footgun before worktree isolation landed.
 
 ### Worktree Isolation for Implement-Phase Edits
 
@@ -105,9 +107,11 @@ Suppressing lint or type errors is a last resort, not a convenience escape hatch
 
 The top-level `.status` pointer is **derived** from `.phases` (first non-`done` phase wins). Hand-editing it produces inconsistent state — `.status` says one phase, `.phases` says another, and the dispatcher routes based on the top-level pointer. The orchestrator may then run the wrong phase, or skip phases. Always go through `./scripts/task.sh phase <id> <phase> <status>`, which updates `.phases` and rederives the pointer atomically. If you're scripting around this, call `cmd_phase()` in `scripts/task.sh` rather than reimplementing.
 
-### Don't run two `run-task.ts` invocations in parallel.
+### Don't run two `run-task.ts` invocations on the same branch/folder.
 
-The orchestrator assumes serialized git operations: it auto-commits, switches branches, manages worktrees. Two parallel invocations on the same repo (or even on different branches that share git state) corrupt each other's status.json, leave half-staged commits, and produce uninterpretable conflicts. **Bundle mode is the mechanism for processing related tasks together** — pass multiple IDs to one invocation. If you genuinely need parallel work, use separate clones.
+The orchestrator assumes serialized git operations within a checkout: it auto-commits, switches branches, manages files in the working tree. Two parallel invocations on the **same branch and folder** corrupt each other's status.json, leave half-staged commits, and produce uninterpretable conflicts. This was a real footgun pre-worktree — incidents documented before worktree isolation landed.
+
+**Parallel is safe IF each invocation runs in its own worktree on its own branch.** Worktree isolation is what makes simultaneous task work possible — different worktrees = different working trees = no shared mutable state. **Bundle mode is still the right answer when tasks are *related* and should converge** (multiple IDs to one invocation, one tier, one review loop, one commit history). Use parallel worktree invocations only for genuinely independent tasks.
 
 ### Don't edit the same file in both the main checkout and the worktree mid-task.
 
