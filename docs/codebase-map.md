@@ -99,3 +99,10 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Agent permissions | `.claude/settings.local.json` | Allowlisted commands |
 | Codex config | `.codex/config.toml` | Multi-agent + shell snapshot |
 | Task artifacts | `tasks/` | Per-task specs, plans, reviews |
+
+## Applied Remediation Blueprints
+
+| What | Where | Notes |
+|---|---|---|
+| EHDS repo cleanup | `docs/ehds/repo-remediation-plan.md` | GalleryWall-style governance reset for the EHDS tracker repo |
+| EHDS x 27 country factory | `docs/ehds/country-population-system.md` | Systematic country population pipeline and promotion gates |
