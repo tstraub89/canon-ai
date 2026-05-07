@@ -13,12 +13,16 @@ This task adds the missing layer: independent verification at the code-review ph
 
 ## Decision
 
-Extend `validateHandoff()` with a new sub-check, `verifyHandoffAgainstDiff()`, that cross-references the handoff Changes table(s) against `git diff <baseRef>...HEAD --name-only -M` for the task. Two directions, both reportable:
+Add a new bundle-aware function `verifyHandoffAgainstDiff(taskIds: string[], baseRef: string)` that cross-references the union of all bundle members' handoff Changes tables against `git diff <baseRef>...HEAD --name-only -M`. Two directions, both reportable:
 
-1. A file in the handoff Changes table that is **not** in the diff → handoff hallucinated or the change was reverted post-handoff. Issue.
-2. A file in the diff that is **not** in any handoff Changes table → silent edit, the original incident class. Issue.
+1. A file in *any* task's handoff Changes table that is **not** in the diff → handoff hallucinated or the change was reverted post-handoff. Issue.
+2. A file in the diff that is **not** in any task's handoff Changes table → silent edit, the original incident class. Issue.
 
-On failure, reuse the existing rejection path in `runPhase('code_review')`: write the rejection reason into `review.md`, mark `code_review.status = "done"` with `verdict = "changes_requested"`, route back to implement. Codex addresses the mismatch (typically by amending the handoff to match the diff or by reverting/re-doing the unintended changes).
+The check is **bundle-aware by construction** — a file listed only in task A's handoff must not be flagged as missing from task B's. This is why the function takes `taskIds: string[]`, not a single `taskId`.
+
+**Where it runs**: in `runPhase('code_review')`'s pre-flight block, *after* the existing per-task `validateHandoff()` loop and *before* the rejection-write step. It runs **once per pipeline invocation**, not once per task. `validateHandoff(taskId: string)` is unchanged — it keeps its single-task contract for the existing implement-phase auto-advance caller (`tryEvidenceAdvance`), which does not need bundle context.
+
+On failure, reuse the existing rejection path: the bundle-wide issues are appended to *every* bundle member's `review.md` rejection (since a "file in diff but in no handoff" finding cannot be cleanly attributed to one task and the entire bundle reroutes to implement together anyway — see AC-4 for the exact attribution rule). Each task's `code_review.status = "done"` with `verdict = "changes_requested"`, routing the bundle back to implement. Codex addresses the mismatch (typically by amending the handoff to match the diff or by reverting/re-doing the unintended changes).
 
 ## Non-Goals
 
@@ -30,14 +34,14 @@ On failure, reuse the existing rejection path in `runPhase('code_review')`: writ
 
 ## Acceptance Criteria
 
-- [ ] **AC-1**: A new function `verifyHandoffAgainstDiff(taskIds: string[], baseRef: string)` returns `string[]` — empty when handoff and diff agree, populated with one issue message per mismatch when they don't.
-- [ ] **AC-2**: For each file in any task's handoff Changes table (parsed via the existing `parseHandoffFiles()` helper), the function verifies it appears in `git diff <baseRef>...HEAD --name-only -M`. If absent, an issue message names the file and which task's handoff claimed it.
-- [ ] **AC-3**: For each file in `git diff <baseRef>...HEAD --name-only -M`, the function verifies it appears in at least one task's handoff Changes table — except for explicitly exempt paths (see AC-5). If a non-exempt file is missing from all handoffs, an issue message names the file.
-- [ ] **AC-4**: `validateHandoff()` (or whichever existing aggregator runs at code-review entry) calls `verifyHandoffAgainstDiff()` and concatenates its issues into the returned list. Existing rejection logic in `runPhase('code_review')` handles a non-empty list with no further changes.
-- [ ] **AC-5**: Orchestrator-managed artifacts that don't belong in the handoff Changes table by convention are exempt from the "diff has file not in handoff" check. At minimum: `tasks/<id>/handoff.md` itself, and any other artifacts the orchestrator commits as part of the implement-phase commit. Exemption list is documented inline as a constant.
-- [ ] **AC-6**: At least three test rows in `tests/run-task-validation.test.ts`: a positive case (handoff matches diff, no issues), a negative case for each direction (handoff lists file not in diff; diff has file not in handoff). Tests use a synthetic / fixture-style approach — no real git operations required if a thin abstraction makes that practical.
-- [ ] **AC-7**: `validateHandoff()`'s public signature is unchanged. Existing callers continue to work.
-- [ ] **AC-8**: When the new check fails, the rejection reason in `review.md` explicitly identifies which direction failed (handoff→diff or diff→handoff) and which files. Reviewer-readable.
+- [ ] **AC-1**: A new function `verifyHandoffAgainstDiff(taskIds: string[], baseRef: string)` returns `string[]` — empty when the union of handoffs and the diff agree, populated with one issue message per mismatch when they don't. The function takes the full bundle's task IDs in one call so it can compute a bundle-wide union of Changes-table files.
+- [ ] **AC-2**: For each file in any bundle member's handoff Changes table (collected via the existing `parseHandoffFiles()` helper, called once per task ID and unioned), the function verifies it appears in `git diff <baseRef>...HEAD --name-only -M`. If absent, an issue message names the file and which task's handoff claimed it (e.g., `[task-id] file X listed in handoff but not in diff`).
+- [ ] **AC-3**: For each file in `git diff <baseRef>...HEAD --name-only -M`, the function verifies it appears in **at least one** bundle member's handoff Changes table — except for explicitly exempt paths (see AC-5). If a non-exempt file is missing from the bundle-wide union, an issue message names the file. Files listed in *any* bundle member's handoff must not be flagged.
+- [ ] **AC-4**: `runPhase('code_review')`'s pre-flight (in `scripts/run-task.ts`) calls `verifyHandoffAgainstDiff(taskIds, baseRef)` exactly once after the existing per-task `validateHandoff()` loop and before the rejection-write step. If it returns a non-empty list, those bundle-wide issues are appended to **every** bundle member's `preflightFailed` entry (each task's `review.md` rejection includes them) and the bundle reroutes via the existing `runTaskShFor(taskId, 'phase', taskId, 'code_review', 'done', 'changes_requested')` path. Per-task `validateHandoff()` issues continue to be attributed only to the task they came from.
+- [ ] **AC-5**: Files that appear in the pre-code-review diff but are not Codex-authored content (i.e., orchestrator-managed paths the implement-phase commit may include) are exempt from the "diff has file not in handoff" check. The exemption list is documented inline as a constant; the implementer determines the canonical entries empirically from what `autoCommitCode()` lands in the diff. Two clarifications carried forward from spec review: (a) `autoCommitArtifacts()` runs in the *later* artifact-commit path (after `human_review`) and is **not** part of the pre-code-review diff — paths it manages do not need exemption here. (b) Per Codex's spec_review note in `notes.md`, `tasks/<id>/handoff.md` is not committed before code_review and therefore does not appear in the diff to be exempted. The exemption set may end up empty in canon-ai's current implementation; the constant exists as a forward-compatibility seam, with the single source of truth (no scattered string literals) as a hard rule.
+- [ ] **AC-6**: At least three test rows in `tests/run-task-validation.test.ts`: a positive case (handoff matches diff, no issues), a negative case for each direction (handoff lists file not in diff; diff has file not in handoff). Tests use a synthetic / fixture-style approach with the diff input passed in (or stubbed) rather than running real `git diff` in the test — the implementation should expose a thin seam (e.g., the `git diff` call factored into a helper that tests can stub, or the function accepting an injected diff list) to make this practical.
+- [ ] **AC-7**: `validateHandoff(taskId: string)`'s public signature is unchanged. The new bundle-wide check is **not** plumbed through it; it is a sibling check called separately from the code-review pre-flight. Existing callers (`tryEvidenceAdvance` and the per-task pre-flight loop) continue to work without modification.
+- [ ] **AC-8**: When the new check fails, the rejection reason in each affected task's `review.md` explicitly identifies which direction failed (`handoff→diff` or `diff→handoff`) and which files. Bundle-wide issues are clearly marked as bundle-level (e.g., a header line distinguishing them from per-task `validateHandoff()` issues). Reviewer-readable.
 
 ## Design
 
@@ -45,15 +49,16 @@ On failure, reuse the existing rejection path in `runPhase('code_review')`: writ
 
 | File | Change |
 |---|---|
-| `scripts/run-task.ts` | Add `verifyHandoffAgainstDiff()` near `parseHandoffFiles()`. Call it from `validateHandoff()`. Define an inline exemption-list constant for orchestrator-managed paths. |
-| `tests/run-task-validation.test.ts` | Add positive + negative test rows per AC-6. |
+| `scripts/run-task.ts` | Add `verifyHandoffAgainstDiff(taskIds: string[], baseRef: string): string[]` near `parseHandoffFiles()`. Call it from the `case 'code_review'` pre-flight in `runPhase()`, after the per-task `validateHandoff()` loop. Define an inline exemption-list constant for orchestrator-managed paths. Modify the existing `preflightFailed` aggregation to merge bundle-wide issues into each task's entry. |
+| `tests/run-task-validation.test.ts` | Add positive + negative test rows per AC-6. May require a small refactor seam (e.g., factoring the `git diff` shell-out into a helper, or making the diff list an injectable parameter on `verifyHandoffAgainstDiff`) so tests don't need a real git repo. |
 
 ### Interaction Dependencies
 
-- `parseHandoffFiles()` (existing, around `run-task.ts:2464–2483`): reused for parsing. Do not reimplement Changes-table parsing.
-- `autoCommitCode()` (existing, around `run-task.ts:2549–2739`): unchanged. The new check is a *second* layer that runs after auto-commit has landed. Together they form a two-layer guard (pre-commit + post-commit).
-- `validateHandoff()` (existing, around `run-task.ts:3622`): aggregator that the new check joins. Existing checks (Validation Outcomes table, AC Coverage table, required-checks-from-spec) run first; the new check is appended.
-- `runPhase('code_review')` (existing, around `run-task.ts:3601–3681`): unchanged. Its existing handling of non-empty `validateHandoff()` results writes the rejection.
+- `parseHandoffFiles()` (existing, around `run-task.ts:2464–2483`): reused for parsing each bundle member's Changes table. Do not reimplement.
+- `autoCommitCode()` (existing, around `run-task.ts:2549–2739`): unchanged. The new check is a *second* layer that runs after auto-commit has landed. Together they form a two-layer guard (pre-commit + post-commit). Use `autoCommitCode`'s file-collection logic (the `allHandoffFiles` set built from `parseHandoffFiles(taskId)` per task) as the model for the bundle-wide union — same data, different consumer.
+- `validateHandoff(taskId)` (existing, around `run-task.ts:1007–1024`): unchanged. Continues to run per-task in the existing pre-flight loop and from `tryEvidenceAdvance`. The new bundle-wide check is **not** routed through it.
+- `runPhase('code_review')` (existing, around `run-task.ts:3601–3692`): the modification site. The existing pre-flight loop builds `preflightFailed` per task; the new call adds a bundle-wide phase that, on failure, appends the bundle-wide issues to each entry (creating entries for tasks that had no per-task issues). The downstream `review.md` write + `runTaskShFor(...'changes_requested')` calls are unchanged.
+- `getBaseBranch(taskIds)` (existing, used by `autoCommitCode` around `run-task.ts:2607`): the canonical baseRef resolution. Reuse it — do not reimplement.
 
 ### Data Model Changes
 
@@ -61,7 +66,11 @@ None. No new fields in `status.json`, no new artifact templates, no new phase. E
 
 ### Resolving the base ref
 
-The new function needs the task's baseline commit to compute the diff. The orchestrator already tracks this — `autoCommitCode()` uses it for its own checks. The implementation should use the same resolution path (e.g., the task's `base_branch` resolved to the commit where the task's branch diverged). Document the resolution inline; do not hand-roll a new mechanism.
+The new function needs the task's baseline commit to compute the diff. The orchestrator already tracks this — `autoCommitCode()` uses `getBaseBranch(taskIds)` for its own checks. The pre-flight call site must use the same helper (passing `taskIds`, the bundle, not a single ID) so the bundle's shared base branch is used. Document the resolution inline; do not hand-roll a new mechanism.
+
+### Where the diff comes from
+
+The diff is taken in the **active pipeline cwd** — `getActiveCwd(taskIds)` — not `REPO_ROOT`. In worktree mode the post-implement commit lands in the worktree, so a `git diff` rooted at `REPO_ROOT` would see nothing. Use the same cwd-resolution as `autoCommitCode()` and the existing code-review artifact sync block (around `run-task.ts:3646–3662`).
 
 ## Validation Required
 
@@ -77,7 +86,7 @@ The new function needs the task's baseline commit to compute the diff. The orche
 
 ## Known Risks
 
-- **`handoff.md` exemption is load-bearing**: the orchestrator commits `tasks/<id>/handoff.md` as part of the implement-phase commit, but Codex doesn't list its own handoff in the Changes table. Without an exemption, every task fails the check. The implementation must hardcode this exemption (and any similar orchestrator-managed artifacts). This is the easiest way to break the verifier silently — verify the exemption list is correct early.
+- **Exemption set determination is load-bearing**: getting it wrong silently breaks the verifier. The implementer must empirically determine what the orchestrator actually commits between `<baseRef>` and `HEAD` before code_review, and exempt anything that's not Codex-authored content. Per Codex's spec_review investigation, this set may be empty in canon-ai's current implementation (`autoCommitCode()` only stages files in the handoff Changes table; `handoff.md` itself is not pre-committed). Verify empirically rather than assuming — silent breakage is the failure mode.
 - **baseRef detection**: getting the wrong base ref produces wildly wrong diffs (too wide → false positives, too narrow → missed issues). Reuse the same resolution as `autoCommitCode()` to avoid two divergent implementations.
 - **Renamed files**: `git diff --name-only` without `-M` reports renamed files as separate add+delete pairs, which would confuse the cross-check. Use `-M` to get rename detection. Document why if you don't.
 - **Bundle mode**: with multiple tasks bundled, multiple `handoff.md` files exist. The verifier must collect Changes-table entries from *all* of them before deciding whether a diffed file is "in some handoff." `parseHandoffFiles()` already accepts an array of task IDs — use that path.

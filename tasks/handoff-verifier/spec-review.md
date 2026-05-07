@@ -11,15 +11,15 @@
 - Is there a materially simpler solution that changes the shape of the work?
 - Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)
 
-(no concerns / list items)
+(no concerns)
 
 ## Feasibility Check
 
 Does the spec's approach work against the actual codebase?
 
-- [ ] Affected files exist and contain what the spec assumes
-- [ ] Proposed patterns are consistent with existing conventions
-- [ ] No conflicts with existing functionality
+- [x] Affected files exist and contain what the spec assumes
+- [x] Proposed patterns are consistent with existing conventions
+- [x] No conflicts with existing functionality
 
 ## Issues Found
 
@@ -27,22 +27,28 @@ Does the spec's approach work against the actual codebase?
 
 > Things the spec gets wrong about the current codebase.
 
-(none / list items)
+(none)
 
 ### Missing Edge Cases
 
 > Scenarios the spec doesn't account for.
 
-(none / list items)
+(none)
 
 ### Type Safety / Interface Gaps
 
 > Type mismatches, missing interfaces, or signature errors.
 
-(none / list items)
+(none)
+
+### Optional Cleanup / Nit
+
+> Non-blocking observations for the plan phase.
+
+- AC-5 names `autoCommitArtifacts()` as part of the canonical exemption list even though that helper runs in the later artifact-commit path, not the implement-phase code-review gate. The implementation can still use it as a source of orchestrator-managed artifact names, but the spec wording should be tightened so it does not imply those files are part of the pre-review diff.
 
 ## Verdict
 
 - [ ] **Approved** — spec is implementable as written
-- [ ] **Approved with nits** — implementable, but noting observations for plan phase
+- [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)

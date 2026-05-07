@@ -1,14 +1,14 @@
 {
   "id": "handoff-verifier",
   "title": "Verify handoff matches git diff",
-  "status": "spec_review",
+  "status": "implement",
   "created": "2026-05-07",
   "updated": "2026-05-07",
   "branch": "",
   "base_branch": "dev",
   "task_size": "M",
   "delicate": false,
-  "human_spec_gate": true,
+  "human_spec_gate": false,
   "worktree": true,
   "phases": {
     "spec": {
@@ -16,13 +16,13 @@
       "agent": "claude"
     },
     "spec_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0
     },
     "plan": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "implement": {
@@ -45,7 +45,10 @@
     }
   },
   "escalations": [],
-  "sessions": {},
+  "sessions": {
+    "codex": "019e042f-3413-7840-bc1c-069795f256f8",
+    "claude_spec": "b09edc03-6166-473e-b3a5-c698ae8a3a1a"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
 }
