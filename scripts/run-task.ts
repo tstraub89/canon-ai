@@ -430,7 +430,7 @@ function printUsage(): void {
     console.log('  --expect <phase>    Assert current phase before running');
     console.log('  --push              Push branch at human_review');
     console.log('  --pr                Push + create draft PR at human_review');
-    console.log('  --reroute           Reset from human_review back to implement');
+    console.log('  --reroute           Reset from human_review back to implement AND re-invoke the pipeline');
     console.log('  --ship              Merge open PR, pull, archive task, commit+push, clean branches');
 }
 
@@ -815,9 +815,23 @@ function ensureWorktree(taskId: string, branch: string): string {
         git('worktree', 'add', '-b', branch, wt);
     }
     // Symlink node_modules so Codex can run npm scripts without a separate install.
+    // Only attempt this if the project actually uses node_modules (package.json present)
+    // AND the source directory exists in REPO_ROOT — otherwise the symlink dangles and
+    // every test/lint/type-check inside the worktree fails with confusing errors that
+    // look like Codex bugs but are really a pre-flight setup gap.
+    const repoModulesSrc = path.join(REPO_ROOT, 'node_modules');
+    const repoPackageJson = path.join(REPO_ROOT, 'package.json');
     const wtModules = path.join(wt, 'node_modules');
-    if (!fs.existsSync(wtModules)) {
-        fs.symlinkSync(path.join(REPO_ROOT, 'node_modules'), wtModules);
+    if (fs.existsSync(repoPackageJson) && !fs.existsSync(wtModules)) {
+        if (!fs.existsSync(repoModulesSrc)) {
+            die(
+                `Worktree setup aborted: ${REPO_ROOT}/node_modules does not exist, but ` +
+                `package.json does. The orchestrator symlinks node_modules from REPO_ROOT into ` +
+                `each worktree; that requires REPO_ROOT to have its dependencies installed first. ` +
+                `Run \`npm install\` (or \`npm ci\`) in ${REPO_ROOT} and try again.`
+            );
+        }
+        fs.symlinkSync(repoModulesSrc, wtModules);
         info('Symlinked node_modules into worktree.');
     }
     // Symlink local/preview env files (gitignored — not in the worktree by
@@ -2856,6 +2870,39 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
         die(`Auto-commit failed: ${commitResult.stderr || 'unknown error'}`);
     }
     verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
+
+    // Belt-and-suspenders: verify every handoff file's working-tree state is equal to
+    // HEAD after the commit. Catches the silent-partial-commit failure mode where
+    // `git status --porcelain` did not report a file as dirty (so it was never staged
+    // and never committed) but the file on disk still differs from HEAD. The earlier
+    // pre-commit checks all rely on `status`; this post-commit check uses `git diff
+    // HEAD` directly so it remains correct even when status is unreliable (e.g.,
+    // worktree env issues, index races, partial recovery from earlier failures).
+    // Surfaced 2026-05-07 via canon-on-canon iteration 3 of handoff-verifier — the
+    // commit landed with only status.json even though the handoff Changes table
+    // listed scripts/run-task.ts and tests/* with real on-disk changes; the existing
+    // status-based checks all passed. See docs/lessons-learned.md for the incident.
+    const postCommitDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...handoffFiles);
+    if (!postCommitDiff.ok) {
+        appendAutoCommitDebug(taskIds, { ...debug, result: 'post-commit-diff-failed', diffError: postCommitDiff.stderr });
+        die(`Auto-commit verification failed: could not run \`git diff HEAD\` post-commit: ${postCommitDiff.stderr || 'unknown error'}`);
+    }
+    if (postCommitDiff.stdout.trim()) {
+        const stillDifferent = postCommitDiff.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+        appendAutoCommitDebug(taskIds, { ...debug, result: 'post-commit-handoff-still-different', stillDifferent });
+        die(
+            `Auto-commit verification failed: ${stillDifferent.length} handoff file(s) still differ from HEAD after commit:\n` +
+            stillDifferent.map(f => `    ${f}`).join('\n') +
+            `\n  The auto-commit did not capture all working-tree changes — implement-iteration code is on\n` +
+            `  disk but not in any commit. To recover:\n` +
+            `    cd ${cwd}\n` +
+            `    git diff HEAD       # inspect what's missing\n` +
+            `    git add -A -- <files> && git commit -m "<task-title> [<task-id>]"\n` +
+            `  Then re-run the pipeline. (Do NOT bypass this check — it is the last line of defense\n` +
+            `  against shipping a 'successful implement' that's missing the actual implementation.)`
+        );
+    }
+
     appendAutoCommitDebug(taskIds, { ...debug, result: 'committed' });
     const stagedCount = stagedAfter.stdout.trim().split('\n').filter(Boolean).length;
     info(`Auto-committed ${stagedCount} file(s): ${message}`);
@@ -3145,6 +3192,73 @@ function assertLocalBaseInSyncWithOrigin(taskIds: string[]): void {
 }
 
 /**
+ * Verify the local task/<id> branch (if it exists) has been fully pushed to origin.
+ * Aborts --ship if local has commits not on origin — those commits would be lost when
+ * the orchestrator deletes the local branch after teardown.
+ *
+ * No-op when the local branch doesn't exist (already cleaned up, or worktree mode
+ * never used). Treats "origin/<branch> does not exist" as a soft signal: if we just
+ * fetched and origin doesn't have the branch, either it was deleted post-merge
+ * (fine; a successful prior --ship or PR squash-merge) or it was never pushed (bad).
+ * We can't tell which without more state, so we warn and continue rather than block
+ * legitimate post-merge re-runs.
+ */
+function assertTaskBranchPushed(taskId: string): void {
+    const branchName = `task/${taskId}`;
+    if (!branchExistsLocally(branchName)) return;
+
+    const localShaResult = gitSafe('rev-parse', branchName);
+    if (!localShaResult.ok) {
+        warn(`Could not resolve ${branchName}: ${localShaResult.stderr}. Skipping push-verify.`);
+        return;
+    }
+    const localSha = localShaResult.stdout.trim();
+
+    // Refresh remote-tracking ref before comparing.
+    gitSafe('fetch', 'origin', branchName);
+
+    const remoteShaResult = gitSafe('rev-parse', `origin/${branchName}`);
+    if (!remoteShaResult.ok) {
+        warn(
+            `origin/${branchName} not found (${remoteShaResult.stderr.trim() || 'unknown'}). ` +
+            `Continuing — assuming the remote branch was deleted by an earlier merge. ` +
+            `If you have unpushed work on local ${branchName} you wanted to ship, abort with Ctrl+C and push it now.`,
+        );
+        return;
+    }
+    const remoteSha = remoteShaResult.stdout.trim();
+
+    if (localSha !== remoteSha) {
+        die(
+            `--ship aborted: local ${branchName} (${localSha.slice(0, 7)}) diverges from origin/${branchName} (${remoteSha.slice(0, 7)}).\n` +
+            `  Local has commits not on origin. Pushing first prevents work loss; --ship destroys the\n` +
+            `  local branch after merging the PR, so unpushed commits would be unreachable.\n` +
+            `  Push:\n` +
+            `    git push origin ${branchName}\n` +
+            `  Then re-run --ship.`,
+        );
+    }
+}
+
+/**
+ * Verify there is no open PR for the task's branch. Called after mergeOpenPRsAndPull
+ * returned false (no PR was merged this run) — a defensive cross-check against gh
+ * transient issues that might have caused findOpenPRNumber to return null spuriously.
+ */
+function assertNoOpenPRForTask(taskId: string): void {
+    const branchName = `task/${taskId}`;
+    const prNum = findOpenPRNumber(branchName);
+    if (prNum !== null) {
+        die(
+            `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
+            `  This can happen during gh transient hiccups. Re-running --ship usually works; if it\n` +
+            `  keeps failing, merge the PR manually (gh pr merge ${prNum} --squash --delete-branch)\n` +
+            `  and re-run.`,
+        );
+    }
+}
+
+/**
  * Find the number of an open PR whose head branch matches `branch`.
  * Returns null if gh CLI is unavailable, no PR found, or lookup fails.
  */
@@ -3295,12 +3409,35 @@ function shipTasks(taskIds: string[]): void {
         }
     }
 
+    // Pre-flight: every local task branch with unpushed commits is a hard abort.
+    // --ship later tears down the worktree and deletes the local branch; if local
+    // has commits not on origin, those commits are lost forever (gone from any
+    // ref the user can reach). Also covers the case where the PR-merge step below
+    // silently misses a PR for any reason — instead of trusting that flow alone,
+    // we independently verify origin has the local work before any destruction.
+    // Surfaced 2026-05-07 via canon-on-canon dogfood: the iteration-3 rename fix
+    // was committed locally, never pushed, then --ship deleted the branch; only
+    // the dangling commits in `git fsck` survived (with a partial subset of files).
+    for (const taskId of taskIds) {
+        assertTaskBranchPushed(taskId);
+    }
+
     // Flush any telemetry before merging so the PR doesn't pick it up.
     if (taskIds.some(id => readStatus(id).worktree === true)) flushWorktreeTelemetry();
 
     // Merge open PRs and pull; if none found, assert the base is already in sync.
     const merged = mergeOpenPRsAndPull(taskIds);
-    if (!merged) assertLocalBaseInSyncWithOrigin(taskIds);
+    if (!merged) {
+        // No PR was merged this run. That can mean either (a) PR was merged earlier
+        // and remote branch already cleaned up, or (b) findOpenPRNumber missed an
+        // open PR (gh transient issue, or PR state quirk). For (b), proceeding
+        // would destroy local task branches whose work is only in the open PR —
+        // the user's path forward gets harder if we silently archive without the
+        // PR being merged. Independent verification here prevents that class of
+        // silent failure surfaced 2026-05-07.
+        assertLocalBaseInSyncWithOrigin(taskIds);
+        for (const taskId of taskIds) assertNoOpenPRForTask(taskId);
+    }
 
     // Post-merge: project-specific hook (default no-op; edit runPostMergeHook).
     runPostMergeHook();

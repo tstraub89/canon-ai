@@ -42,6 +42,18 @@ When a record references another by ID, computed fields (caches, transforms, eph
 
 ---
 
+### Always cross-check committed state with `git diff HEAD`, not just `git status`, after a programmatic commit
+
+*(2026-05-08, source: canon-on-canon dogfood, fixed inline 2026-05-08)*
+
+Programmatic auto-commit functions that rely on `git status --porcelain` for their pre-flight checks (is-this-file-dirty, is-this-file-staged, etc.) can silently drop a real working-tree change if status reports a file as clean when it isn't. Causes vary — index races, partial recovery from earlier failures, worktree env issues — but the common shape is: the file has uncommitted changes on disk yet `git status` doesn't list it as dirty. The pre-commit checks all pass; the commit lands without the file; the pipeline advances without the actual implementation. To catch this defensively, run a post-commit `git diff HEAD --name-only -- <handoff files>` and abort if any handoff file's working-tree state still differs from HEAD. `git diff HEAD` queries the merkle tree directly rather than the status cache, so it's reliable even when status is unreliable. Canonical example: post-commit verification block in `autoCommitCode()` in `scripts/run-task.ts`. Surfaced via canon-on-canon iteration 3 of `handoff-verifier` (status.json was committed but `scripts/run-task.ts` and `tests/run-task-validation.test.ts` — which had real on-disk changes — were silently dropped from the commit).
+
+### `--ship` must verify local task branch is fully pushed before destroying it
+
+*(2026-05-08, source: canon-on-canon dogfood, fixed inline 2026-05-08)*
+
+`--ship` ends by tearing down the worktree and deleting the local task branch — anything not on origin at that point is unreachable afterward. Don't trust the merge step alone to handle this; if the merge step misses an open PR for any reason (gh transient hiccup, draft state, query parsing quirk), the destruction still runs and unpushed local commits become dangling. Always pre-flight: for each `task/<id>` branch that exists locally, verify `local HEAD == origin HEAD`. If diverged, abort with a clear "push first, then re-run" message. Cross-check separately that no open PR exists for the branch when the merge step returned nothing. Canonical example: `assertTaskBranchPushed()` and `assertNoOpenPRForTask()` in `scripts/run-task.ts`, called at the top of `shipTasks()`. Surfaced via canon-on-canon dogfood — iteration 3's commits were on local task branch only, never pushed, then `--ship` deleted them.
+
 ### Use `--name-status` not `--name-only` when building path sets from git diff
 
 *(2026-05-08, source: handoff-verifier)*
