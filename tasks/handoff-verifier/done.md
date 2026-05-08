@@ -42,8 +42,18 @@ Code review verdict: **Approved with nits**. No correctness bugs, no risk/guardr
 
 ## Open Questions
 
-- The duplicate "FAILED" log banner (bundle-level block + per-task repetition) is minor console noise. Fix in a follow-up nit or leave as-is — no pipeline behavior impact.
-- The spec inaccurately described `parseHandoffFiles()` as accepting an array of IDs. Worth a one-line correction in spec templates or `patterns.md` for future tasks that reference the helper.
+(Both review nits were folded inline before shipping — see "Inline Nit Fixes" below.)
+
+## Inline Nit Fixes (post-review, pre-ship)
+
+Per human direction at the spec gate to fold review nits inline:
+
+1. **Duplicate "FAILED" log banner** — removed the bundle-specific banner in the code-review pre-flight (`scripts/run-task.ts`). The outer aggregation banner already logs each issue with a `[bundle:taskId]` prefix; the inner banner was double-emitting the same content. 2 lines deleted, no logic change. Tests still pass (63/63).
+2. **Spec wording inaccuracy** — corrected `tasks/handoff-verifier/spec.md` Known Risks bullet that claimed `parseHandoffFiles()` accepts an array of task IDs. Actual signature is single-ID (call once per task and union, per AC-2). 1-line wording fix; AC-2 itself was already accurate.
+
+## Environment Gap (separate follow-up)
+
+A real harness gap surfaced during this run, worth tracking as a separate canon task: the worktree was created without `node_modules`, and Codex hit `@esbuild/darwin-arm64` missing during validation. Codex worked through it via creative `tar`-from-cache restoration, but the proper fix is the orchestrator running `npm install` (or a project-agnostic equivalent that detects `package.json`, `requirements.txt`, etc.) on worktree creation. Symlinking project-specific resources (`.env`, `node_modules`, etc.) is one possible approach. Not in scope for this task.
 
 ---
 

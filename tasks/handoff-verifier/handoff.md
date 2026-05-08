@@ -71,6 +71,24 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 - [x] All deviations from plan documented with rationale
 - [ ] Branch is current with `origin/<base>` (worktree branch has no upstream configured and is one commit ahead of `origin/dev`)
 
+## Iteration 2 — addressing review round 1
+
+### Findings addressed
+
+- _spec clarification:_ the amended bundle-mode wording now explicitly points at the existing array form of `parseHandoffFiles()`; the runtime implementation already uses the full bundle `taskIds` list to build the handoff union, so no source-code delta was needed in this reroute.
+- _handoff freshness:_ refreshed this cumulative handoff so it reflects the amended spec while preserving the round-1 implementation record.
+
+### AC deltas (if any)
+
+- None. AC-1 through AC-8 remain met by the current implementation.
+
+### Re-run validation (only checks that re-ran)
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run type-check` | Pass | Re-ran cleanly on the current worktree state. |
+| `npm test` | Pass | Re-ran cleanly; the diff-verifier rows still pass. |
+
 ---
 
 <!--
