@@ -163,6 +163,60 @@ The orchestrator resumes agent sessions across phases instead of spawning fresh 
 
 **Stale Claude session auto-recovery**: A stored Claude session ID can go stale (long usage-limit gaps, workstation rotation, aggressive `~/.claude/projects/` pruning). When `claude --resume <id>` can't find the session, the orchestrator detects the pattern and retries once with a fresh session and the full original prompt.
 
+## Streaming + Stall Detection
+
+Agent invocations stream NDJSON events live rather than blocking on `spawnSync` and parsing post-exit. The `streamProcess` helper in `scripts/run-task.ts` spawns Claude (`--output-format stream-json --verbose`) or Codex (`--json`) with `spawn`, attaches a `readline` reader to stdout, parses each event as it arrives, and renders a one-line tick (`→ Read tasks/X/spec.md`, `← turn completed`) for live progress visibility.
+
+**Stall detection.** Every parsed event resets an idle timer. If the timer fires (no stdout/stderr data for the configured window), the orchestrator escalates: SIGTERM the child, then SIGKILL after a short grace if it doesn't exit. The child is treated as failed regardless of exit code when the watchdog fires.
+
+**Configuration.** `PIPELINE_STALL_TIMEOUT_MS` env var (default 10 minutes — long enough for normal agent reasoning bursts, short enough that a wedged process doesn't sit forever). Override per invocation when running heavier tasks:
+
+```bash
+PIPELINE_STALL_TIMEOUT_MS=1800000 npx tsx scripts/run-task.ts <id>
+```
+
+**Implementation gotcha.** `child.killed` flips `true` the instant `kill('SIGTERM')` is called — it does not tell you whether the child actually exited. The SIGKILL escalation must check a locally-tracked `closed` flag set in the child's `'close'` handler, not `child.killed`. Otherwise the SIGKILL never fires for a truly unresponsive child and the promise hangs.
+
+**What's preserved.** Token counts (parsed from the stream's final `result` event for Claude, accumulated from `turn.completed` events for Codex), session IDs (from `result.session_id` / `thread.started`), and the assistant's final text (mirrored to stdout post-exit, so backgrounded runs and captured logs both surface what the agent said). The stale-resume detection still pattern-matches the captured stderr/stdout combined.
+
+## Per-Iteration Prompt Slimming
+
+Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context; round-1 findings are durable in the artifacts; the round-2+ prompts target only the delta.
+
+**Cumulative artifacts.** `handoff.md` and `review.md` grow by section per round:
+- Round 1 fills the existing template structure.
+- Round 2+ APPENDS a new `## Iteration N` (handoff) or `## Round N` (review) section near the bottom.
+- Earlier sections stay untouched as the cumulative record.
+
+The append-don't-rewrite convention is enforced both in the prompts and via a comment block at the bottom of each template showing the expected shape.
+
+**Slim resumed-session prompts.** Round 2+ prompts for both code review and implement are tight. Code review's slim shape:
+
+```
+[REVIEW ROUND N — verifying iteration N-1's response to round N-1 findings]
+
+Codex appended `## Iteration N-1` to handoff.md addressing your prior round's findings.
+[Resumed session: framing in context. Cold start: re-read spec.md and earlier review.md sections.]
+
+Tasks to re-review: <one-line per task pointing at the specific section>
+
+For each task:
+1. Read `## Iteration N-1` of handoff.md
+2. Read git diff since prior review
+3. Verify each prior finding addressed; flag NEW issues only
+4. APPEND `## Round N` to review.md
+```
+
+The Stage 1 AC table is **not** redone on round 2+ — that gate already passed in round 1. Implement-revision prompts have the same shape, pointing at the new `## Round N-1` of `review.md` instead of the spec/plan.
+
+**Round-3+ tightening.** When the round number reaches 3, the prompt adds a discipline rule: findings must be `correctness bug` or `spec gap` only. No `optional cleanup/nit` and no wording-only changes. Encoded as: "we are tightening, not exploring." Without this, round-by-round wording-quibble creep eats the loop budget.
+
+**Anchor markers.** Slim prompts open with a literal `[ITERATION N]` or `[REVIEW ROUND N]` token. On a resumed session, the model can otherwise drift back to thinking it's finishing the prior round. The marker is a cheap anchor.
+
+**Session-neutral by design.** Slim prompts must work whether the session resumed cleanly or fell back to fresh (stale resume). The way to ensure both: name every file the agent might need (`review.md §Round N`, `handoff.md §Iteration N`, the diff). A resumed session can skip the re-reads; a cold-start fallback re-reads the named files. No special-cased dispatch logic.
+
+**Implementation note.** When a slim prompt instructs "do not re-read spec.md unless a finding requires it" *and* the session is unexpectedly fresh, the agent will dutifully skip the re-read and miss critical context. Always phrase the read instruction conditionally — "if your context is cold, re-read X" — rather than absolutely.
+
 ## Human Reroute
 
 If the human rejects at `human_review`, use `--reroute` to atomically reset `implement`, `code_review`, and `qa` back to pending and resume the pipeline. Reroute sets `phases.implement.rerouted = true` so the next `implement` phase sends Codex an **amended-spec** prompt (read `spec.md` for new Amendment sections, compare against `handoff.md`, update the delta).
