@@ -63,7 +63,7 @@ const ROUTING_TABLE: RoutingRow[] = [
 ];
 
 for (const row of ROUTING_TABLE) {
-    test(`policy: ${row.name}`, () => {
+    void test(`policy: ${row.name}`, () => {
         const p = getPipelinePolicy(row.tasks, TEST_CONFIG);
         assert.equal(p.tier, row.tier, 'tier');
         assert.equal(p.nominalSize, row.nominal, 'nominalSize');
@@ -75,14 +75,14 @@ for (const row of ROUTING_TABLE) {
 
 // ── MAX_REVIEW_LOOPS env override applies uniformly across sizes ───────────
 
-test('policy: MAX_REVIEW_LOOPS override overrides size-aware default', () => {
+void test('policy: MAX_REVIEW_LOOPS override overrides size-aware default', () => {
     for (const size of ['S', 'M', 'L', 'XL'] as TaskSize[]) {
         const p = getPipelinePolicy([s(size)], { ...TEST_CONFIG, maxReviewLoops: 5 });
         assert.equal(p.maxReviewLoops, 5, `size ${size} honors override`);
     }
 });
 
-test('policy: MAX_REVIEW_LOOPS=0 is a valid (suicidal) override', () => {
+void test('policy: MAX_REVIEW_LOOPS=0 is a valid (suicidal) override', () => {
     // Not "null coalesces to default" — 0 is a distinct value the env override
     // can set. Guards against regressions that use `??` vs `||` inversions.
     const p = getPipelinePolicy([s('L')], { ...TEST_CONFIG, maxReviewLoops: 0 });
@@ -111,13 +111,13 @@ const CODEX_MATRIX: CodexRow[] = [
 ];
 
 for (const row of CODEX_MATRIX) {
-    test(`codex matrix: ${row.phase} × ${row.size} → ${row.expected.model}/${row.expected.effort}`, () => {
+    void test(`codex matrix: ${row.phase} × ${row.size} → ${row.expected.model}/${row.expected.effort}`, () => {
         const p = getPipelinePolicy([s(row.size)], TEST_CONFIG);
         assert.deepEqual(p.codex(row.phase), row.expected);
     });
 }
 
-test('codex matrix: delicate M uses XL row (effective size)', () => {
+void test('codex matrix: delicate M uses XL row (effective size)', () => {
     const p = getPipelinePolicy([s('M', true)], TEST_CONFIG);
     assert.deepEqual(p.codex('implement'), { model: 'full', effort: 'xhigh' });
     assert.deepEqual(p.codex('spec_review'), { model: 'full', effort: 'high' });
@@ -134,7 +134,7 @@ const CLAUDE_TABLE: ClaudeRow[] = [
 ];
 
 for (const row of CLAUDE_TABLE) {
-    test(`claude model: ${row.phase} → ${row.expected.model}/${row.expected.effort}`, () => {
+    void test(`claude model: ${row.phase} → ${row.expected.model}/${row.expected.effort}`, () => {
         const p = getPipelinePolicy([s('M')], TEST_CONFIG);
         assert.deepEqual(p.claude(row.phase), row.expected);
     });
@@ -146,7 +146,7 @@ for (const row of CLAUDE_TABLE) {
 // callsites that don't build a full policy. Tests pin their behavior so
 // future refactors can't silently diverge the two surfaces.
 
-test('detectTier: S-only bundle is fast, any other size/delicate is full', () => {
+void test('detectTier: S-only bundle is fast, any other size/delicate is full', () => {
     assert.equal(detectTier([s('S')]), 'fast');
     assert.equal(detectTier([s('S'), s('S')]), 'fast');
     assert.equal(detectTier([s('S', true)]), 'full');
@@ -154,21 +154,21 @@ test('detectTier: S-only bundle is fast, any other size/delicate is full', () =>
     assert.equal(detectTier([s('S'), s('M')]), 'full');
 });
 
-test('isPlanCombined: only S non-delicate', () => {
+void test('isPlanCombined: only S non-delicate', () => {
     assert.equal(isPlanCombined(s('S')), true);
     assert.equal(isPlanCombined(s('S', true)), false);
     assert.equal(isPlanCombined(s('M')), false);
     assert.equal(isPlanCombined(s('XL')), false);
 });
 
-test('getNominalSize / getEffectiveSize: scope vs scope+delicate', () => {
+void test('getNominalSize / getEffectiveSize: scope vs scope+delicate', () => {
     assert.equal(getNominalSize([s('M', true)]), 'M');
     assert.equal(getEffectiveSize([s('M', true)]), 'XL');
     assert.equal(getNominalSize([s('S'), s('L')]), 'L');
     assert.equal(getEffectiveSize([s('S'), s('L')]), 'L');
 });
 
-test('defaultMaxReviewLoops: 3 for S/M, 5 for L/XL', () => {
+void test('defaultMaxReviewLoops: 3 for S/M, 5 for L/XL', () => {
     assert.equal(defaultMaxReviewLoops('S'), 3);
     assert.equal(defaultMaxReviewLoops('M'), 3);
     assert.equal(defaultMaxReviewLoops('L'), 5);
@@ -177,7 +177,7 @@ test('defaultMaxReviewLoops: 3 for S/M, 5 for L/XL', () => {
 
 // ── Empty input (defensive — retry path builds a minimal task list) ────────
 
-test('policy: empty task list falls back to S/fast tier', () => {
+void test('policy: empty task list falls back to S/fast tier', () => {
     // An empty list shouldn't crash. Today it resolves to `S` nominal/effective
     // (no delicate = no promotion, no non-S = fast tier). Not a real runtime case.
     const p = getPipelinePolicy([], TEST_CONFIG);

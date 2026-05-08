@@ -29,7 +29,7 @@ function makeHandoffMap(entries: Record<string, readonly string[]>): Map<string,
     return new Map(Object.entries(entries));
 }
 
-test('validateHandoffAgainstSpec rejects N/A for a required validation check', () => {
+void test('validateHandoffAgainstSpec rejects N/A for a required validation check', () => {
     withTempPair(
         [
             '# Spec',
@@ -60,7 +60,7 @@ test('validateHandoffAgainstSpec rejects N/A for a required validation check', (
     );
 });
 
-test('validateHandoffAgainstSpec matches by canonical command, ignoring spec annotations', () => {
+void test('validateHandoffAgainstSpec matches by canonical command, ignoring spec annotations', () => {
     // Regression: smart-fill-exclude-locked-photos shipped with a spec line like
     // "`npm run test` — including the four new unit tests (3 in optimizer test
     // file, 1 in wall-composition test file)" but the handoff row contained just
@@ -94,7 +94,7 @@ test('validateHandoffAgainstSpec matches by canonical command, ignoring spec ann
     );
 });
 
-test('validateHandoffAgainstSpec allows required checks to pass and optional checks to stay N/A', () => {
+void test('validateHandoffAgainstSpec allows required checks to pass and optional checks to stay N/A', () => {
     withTempPair(
         [
             '# Spec',
@@ -123,7 +123,7 @@ test('validateHandoffAgainstSpec allows required checks to pass and optional che
     );
 });
 
-test('verifyHandoffAgainstDiffFromData passes when handoff and diff agree', () => {
+void test('verifyHandoffAgainstDiffFromData passes when handoff and diff agree', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
         {
@@ -136,7 +136,7 @@ test('verifyHandoffAgainstDiffFromData passes when handoff and diff agree', () =
     assert.deepEqual(issues, []);
 });
 
-test('verifyHandoffAgainstDiffFromData rejects a handoff file missing from diff', () => {
+void test('verifyHandoffAgainstDiffFromData rejects a handoff file missing from diff', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
         {
@@ -152,7 +152,7 @@ test('verifyHandoffAgainstDiffFromData rejects a handoff file missing from diff'
     assert.ok(issues[0].includes('src/bar.ts'));
 });
 
-test('verifyHandoffAgainstDiffFromData rejects a diff file missing from all handoffs', () => {
+void test('verifyHandoffAgainstDiffFromData rejects a diff file missing from all handoffs', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
         {
@@ -167,7 +167,7 @@ test('verifyHandoffAgainstDiffFromData rejects a diff file missing from all hand
     assert.ok(issues[0].includes('src/baz.ts'));
 });
 
-test('verifyHandoffAgainstDiffFromData respects bundle-wide handoff unions', () => {
+void test('verifyHandoffAgainstDiffFromData respects bundle-wide handoff unions', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a', 'task-b'],
         {
@@ -181,7 +181,7 @@ test('verifyHandoffAgainstDiffFromData respects bundle-wide handoff unions', () 
     assert.deepEqual(issues, []);
 });
 
-test('verifyHandoffAgainstDiffFromData passes empty diff and empty handoff cleanly', () => {
+void test('verifyHandoffAgainstDiffFromData passes empty diff and empty handoff cleanly', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
         {
@@ -194,7 +194,7 @@ test('verifyHandoffAgainstDiffFromData passes empty diff and empty handoff clean
     assert.deepEqual(issues, []);
 });
 
-test('verifyHandoffAgainstDiffFromData: rename covered when handoff lists pre-image (old) path', () => {
+void test('verifyHandoffAgainstDiffFromData: rename covered when handoff lists pre-image (old) path', () => {
     // Regression: --name-only -M only emits post-image paths, so a handoff
     // listing the pre-image path used to false-positive on handoff→diff. With
     // --name-status -M and rename-pair handling, either side covers both.
@@ -211,7 +211,7 @@ test('verifyHandoffAgainstDiffFromData: rename covered when handoff lists pre-im
     assert.deepEqual(issues, []);
 });
 
-test('verifyHandoffAgainstDiffFromData: rename covered when handoff lists post-image (new) path', () => {
+void test('verifyHandoffAgainstDiffFromData: rename covered when handoff lists post-image (new) path', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
         {
@@ -225,7 +225,7 @@ test('verifyHandoffAgainstDiffFromData: rename covered when handoff lists post-i
     assert.deepEqual(issues, []);
 });
 
-test('verifyHandoffAgainstDiffFromData: rename uncovered emits one issue naming both paths', () => {
+void test('verifyHandoffAgainstDiffFromData: rename uncovered emits one issue naming both paths', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
         {

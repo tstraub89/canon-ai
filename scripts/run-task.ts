@@ -37,13 +37,21 @@ const WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const PHASE_ORDER = ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review'] as const;
-const PHASE_STATUS_VALUES = ['pending', 'in_progress', 'done', 'changes_requested', 'blocked'] as const;
-const VERDICT_VALUES = ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review'] as const;
+const _PHASE_STATUS_VALUES = ['pending', 'in_progress', 'done', 'changes_requested', 'blocked'] as const;
+const _VERDICT_VALUES = ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review'] as const;
 
 type Phase = (typeof PHASE_ORDER)[number];
-type PhaseStatus = (typeof PHASE_STATUS_VALUES)[number];
-type Verdict = (typeof VERDICT_VALUES)[number] | '';
+type PhaseStatus = (typeof _PHASE_STATUS_VALUES)[number];
+type Verdict = (typeof _VERDICT_VALUES)[number] | '';
 type CurrentPhase = Phase | 'complete';
+
+function isPhaseStatus(value: unknown): value is PhaseStatus {
+    return typeof value === 'string' && _PHASE_STATUS_VALUES.includes(value as PhaseStatus);
+}
+
+function isVerdict(value: unknown): value is Verdict {
+    return typeof value === 'string' && _VERDICT_VALUES.includes(value as (typeof _VERDICT_VALUES)[number]);
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -2067,7 +2075,7 @@ async function runClaude(
 
         const onLine = (line: string): void => {
             let event: Record<string, unknown>;
-            try { event = JSON.parse(line); } catch { return; }
+            try { event = JSON.parse(line) as typeof event; } catch { return; }
             const tick = formatLiveTick(event);
             if (tick) console.log(tick);
             if (event.type === 'assistant') {
@@ -2213,8 +2221,8 @@ async function runCodex(
                 item?: { type?: string; text?: string; name?: string };
                 usage?: { input_tokens?: number; output_tokens?: number };
             };
-            try { event = JSON.parse(line); } catch { return; }
-            const tick = formatLiveTick(event as Record<string, unknown>);
+            try { event = JSON.parse(line) as typeof event; } catch { return; }
+            const tick = formatLiveTick(event);
             if (tick) console.log(tick);
             if (event.type === 'thread.started' && typeof event.thread_id === 'string') {
                 lastCodexSessionId = event.thread_id;
@@ -2277,11 +2285,13 @@ function getCurrentPhase(status: StatusJson): CurrentPhase {
 }
 
 function getPhaseStatus(status: StatusJson, phase: Phase): PhaseStatus {
-    return status.phases[phase]?.status ?? 'pending';
+    const value = status.phases[phase]?.status;
+    return isPhaseStatus(value) ? value : 'pending';
 }
 
 function getVerdict(status: StatusJson, phase: 'spec_review' | 'code_review'): Verdict {
-    return status.phases[phase]?.verdict ?? '';
+    const value = status.phases[phase]?.verdict;
+    return isVerdict(value) ? value : '';
 }
 
 function getIterations(status: StatusJson): number {
@@ -2995,7 +3005,7 @@ function readDocsMap(): Record<string, DocsMapEntry> {
         const entries: Record<string, DocsMapEntry> = {};
         for (const [key, value] of Object.entries(parsed)) {
             if (key.startsWith('_')) continue;
-            if (value && typeof value === 'object' && 'url' in (value as object) && 'section' in (value as object)) {
+            if (value && typeof value === 'object' && 'url' in value && 'section' in value) {
                 entries[key] = value as DocsMapEntry;
             }
         }
