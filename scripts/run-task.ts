@@ -807,6 +807,23 @@ function ensureWorktree(taskId: string, branch: string): string {
         info(`Worktree already exists for branch '${branch}': ${existingWt}`);
         return existingWt;
     }
+    // Pre-flight: verify REPO_ROOT/node_modules exists if package.json does. This
+    // runs BEFORE `git worktree add` so a failed pre-flight leaves no orphan worktree
+    // that later runs would early-return on (line ~800) and silently skip the
+    // node_modules symlink — leaving the worktree in the same broken state we tried
+    // to prevent. If the user follows the abort message and runs `npm install`, the
+    // next run starts fresh with no leftover worktree directory.
+    const repoModulesSrc = path.join(REPO_ROOT, 'node_modules');
+    const repoPackageJson = path.join(REPO_ROOT, 'package.json');
+    if (fs.existsSync(repoPackageJson) && !fs.existsSync(repoModulesSrc)) {
+        die(
+            `Worktree setup aborted: ${REPO_ROOT}/node_modules does not exist, but ` +
+            `package.json does. The orchestrator symlinks node_modules from REPO_ROOT into ` +
+            `each worktree; that requires REPO_ROOT to have its dependencies installed first. ` +
+            `Run \`npm install\` (or \`npm ci\`) in ${REPO_ROOT} and try again.`
+        );
+    }
+
     if (branchExistsLocally(branch)) {
         info(`Creating worktree at ${wt} (branch: ${branch})...`);
         git('worktree', 'add', wt, branch);
@@ -815,22 +832,10 @@ function ensureWorktree(taskId: string, branch: string): string {
         git('worktree', 'add', '-b', branch, wt);
     }
     // Symlink node_modules so Codex can run npm scripts without a separate install.
-    // Only attempt this if the project actually uses node_modules (package.json present)
-    // AND the source directory exists in REPO_ROOT — otherwise the symlink dangles and
-    // every test/lint/type-check inside the worktree fails with confusing errors that
-    // look like Codex bugs but are really a pre-flight setup gap.
-    const repoModulesSrc = path.join(REPO_ROOT, 'node_modules');
-    const repoPackageJson = path.join(REPO_ROOT, 'package.json');
+    // Only attempt when package.json is present (project actually uses node_modules)
+    // and the symlink isn't already there (idempotent for re-runs).
     const wtModules = path.join(wt, 'node_modules');
     if (fs.existsSync(repoPackageJson) && !fs.existsSync(wtModules)) {
-        if (!fs.existsSync(repoModulesSrc)) {
-            die(
-                `Worktree setup aborted: ${REPO_ROOT}/node_modules does not exist, but ` +
-                `package.json does. The orchestrator symlinks node_modules from REPO_ROOT into ` +
-                `each worktree; that requires REPO_ROOT to have its dependencies installed first. ` +
-                `Run \`npm install\` (or \`npm ci\`) in ${REPO_ROOT} and try again.`
-            );
-        }
         fs.symlinkSync(repoModulesSrc, wtModules);
         info('Symlinked node_modules into worktree.');
     }
@@ -2667,9 +2672,36 @@ function verifyHandoffFilesCommitted(
         }
     }
 
+    // Belt-and-suspenders against the silent-omission case: `git diff HEAD` against
+    // every handoff file. If the working tree differs from HEAD on any of them, the
+    // file's current content is not in any commit — even if `git status` (above) and
+    // `git log` (also above) both said it was. Both of those use the status cache;
+    // `git diff HEAD` queries the merkle tree directly. Runs on EVERY return path
+    // (this function is called from autoCommitCode's success path AND from every
+    // early-return path), so the silent-status-omission failure mode is always caught
+    // regardless of which path the auto-commit took. Surfaced 2026-05-07 via canon
+    // iteration 3 of handoff-verifier; this is the canonical defense, not the
+    // duplicate `git diff HEAD` check that originally lived only in autoCommitCode's
+    // success path. See docs/lessons-learned.md for the incident.
+    const wtDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...handoffFiles);
+    if (!wtDiff.ok) {
+        Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
+        appendAutoCommitDebug(taskIds, debug);
+        die(`Auto-commit coverage check failed: \`git diff HEAD\` failed: ${wtDiff.stderr || 'unknown error'}`);
+    }
+    if (wtDiff.stdout.trim()) {
+        const stillDifferent = wtDiff.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+        for (const f of stillDifferent) {
+            // Avoid duplicate messages if status already flagged it as still-dirty.
+            if (missing.some(m => m.startsWith(`${f} —`))) continue;
+            missing.push(`${f} — working tree differs from HEAD (status reported clean — silent-omission failure mode)`);
+        }
+    }
+
     Object.assign(debug, {
         baseRef,
         postCommitStatusRaw: postStatus.stdout,
+        postCommitWtDiffRaw: wtDiff.stdout,
         postCommitMissingCoverage: missing,
     });
 
@@ -2678,7 +2710,7 @@ function verifyHandoffFilesCommitted(
         die(
             `Auto-commit coverage check failed: handoff.md lists files that are neither committed nor cleanly staged for review.\n` +
             missing.map(m => `    ${m}`).join('\n') +
-            `\n  Commit or restore these files before code_review.`
+            `\n  To recover: \`cd ${cwd} && git diff HEAD\` to inspect, then stage and commit the missing changes manually before code_review.`
         );
     }
 }
@@ -2869,40 +2901,10 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
         appendAutoCommitDebug(taskIds, { ...debug, result: 'commit-failed' });
         die(`Auto-commit failed: ${commitResult.stderr || 'unknown error'}`);
     }
+    // verifyHandoffFilesCommitted now also runs `git diff HEAD` and aborts if any
+    // handoff file's working-tree state still differs from HEAD — covering both the
+    // success path (here) and every early-return path above.
     verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-
-    // Belt-and-suspenders: verify every handoff file's working-tree state is equal to
-    // HEAD after the commit. Catches the silent-partial-commit failure mode where
-    // `git status --porcelain` did not report a file as dirty (so it was never staged
-    // and never committed) but the file on disk still differs from HEAD. The earlier
-    // pre-commit checks all rely on `status`; this post-commit check uses `git diff
-    // HEAD` directly so it remains correct even when status is unreliable (e.g.,
-    // worktree env issues, index races, partial recovery from earlier failures).
-    // Surfaced 2026-05-07 via canon-on-canon iteration 3 of handoff-verifier — the
-    // commit landed with only status.json even though the handoff Changes table
-    // listed scripts/run-task.ts and tests/* with real on-disk changes; the existing
-    // status-based checks all passed. See docs/lessons-learned.md for the incident.
-    const postCommitDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...handoffFiles);
-    if (!postCommitDiff.ok) {
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'post-commit-diff-failed', diffError: postCommitDiff.stderr });
-        die(`Auto-commit verification failed: could not run \`git diff HEAD\` post-commit: ${postCommitDiff.stderr || 'unknown error'}`);
-    }
-    if (postCommitDiff.stdout.trim()) {
-        const stillDifferent = postCommitDiff.stdout.split('\n').map(s => s.trim()).filter(Boolean);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'post-commit-handoff-still-different', stillDifferent });
-        die(
-            `Auto-commit verification failed: ${stillDifferent.length} handoff file(s) still differ from HEAD after commit:\n` +
-            stillDifferent.map(f => `    ${f}`).join('\n') +
-            `\n  The auto-commit did not capture all working-tree changes — implement-iteration code is on\n` +
-            `  disk but not in any commit. To recover:\n` +
-            `    cd ${cwd}\n` +
-            `    git diff HEAD       # inspect what's missing\n` +
-            `    git add -A -- <files> && git commit -m "<task-title> [<task-id>]"\n` +
-            `  Then re-run the pipeline. (Do NOT bypass this check — it is the last line of defense\n` +
-            `  against shipping a 'successful implement' that's missing the actual implementation.)`
-        );
-    }
-
     appendAutoCommitDebug(taskIds, { ...debug, result: 'committed' });
     const stagedCount = stagedAfter.stdout.trim().split('\n').filter(Boolean).length;
     info(`Auto-committed ${stagedCount} file(s): ${message}`);
@@ -3207,37 +3209,89 @@ function assertTaskBranchPushed(taskId: string): void {
     const branchName = `task/${taskId}`;
     if (!branchExistsLocally(branchName)) return;
 
-    const localShaResult = gitSafe('rev-parse', branchName);
-    if (!localShaResult.ok) {
-        warn(`Could not resolve ${branchName}: ${localShaResult.stderr}. Skipping push-verify.`);
-        return;
-    }
-    const localSha = localShaResult.stdout.trim();
-
     // Refresh remote-tracking ref before comparing.
     gitSafe('fetch', 'origin', branchName);
 
-    const remoteShaResult = gitSafe('rev-parse', `origin/${branchName}`);
-    if (!remoteShaResult.ok) {
+    const remoteRefResult = gitSafe('rev-parse', '--verify', `origin/${branchName}`);
+    if (!remoteRefResult.ok) {
         warn(
-            `origin/${branchName} not found (${remoteShaResult.stderr.trim() || 'unknown'}). ` +
+            `origin/${branchName} not found (${remoteRefResult.stderr.trim() || 'unknown'}). ` +
             `Continuing — assuming the remote branch was deleted by an earlier merge. ` +
             `If you have unpushed work on local ${branchName} you wanted to ship, abort with Ctrl+C and push it now.`,
         );
         return;
     }
-    const remoteSha = remoteShaResult.stdout.trim();
 
-    if (localSha !== remoteSha) {
-        die(
-            `--ship aborted: local ${branchName} (${localSha.slice(0, 7)}) diverges from origin/${branchName} (${remoteSha.slice(0, 7)}).\n` +
-            `  Local has commits not on origin. Pushing first prevents work loss; --ship destroys the\n` +
-            `  local branch after merging the PR, so unpushed commits would be unreachable.\n` +
-            `  Push:\n` +
-            `    git push origin ${branchName}\n` +
-            `  Then re-run --ship.`,
-        );
+    // Count commits in local branch that are NOT on origin. Strict SHA equality would
+    // false-positive when origin is merely AHEAD of local (e.g., the PR branch was
+    // advanced from another checkout, or remote was force-pushed forward) — that's
+    // safe to delete; the work isn't unique to local. Only block when local has
+    // commits the remote doesn't.
+    const aheadResult = gitSafe('rev-list', '--count', `origin/${branchName}..${branchName}`);
+    if (!aheadResult.ok) {
+        warn(`Could not compute ${branchName} vs origin/${branchName} divergence: ${aheadResult.stderr}. Skipping push-verify.`);
+        return;
     }
+    const ahead = Number.parseInt(aheadResult.stdout.trim(), 10);
+    if (Number.isNaN(ahead) || ahead === 0) return;
+
+    const localSha = gitSafe('rev-parse', branchName).stdout.trim();
+    const remoteSha = gitSafe('rev-parse', `origin/${branchName}`).stdout.trim();
+    die(
+        `--ship aborted: local ${branchName} has ${ahead} commit${ahead === 1 ? '' : 's'} not on origin.\n` +
+        `  Local HEAD: ${localSha.slice(0, 7)} | origin/${branchName}: ${remoteSha.slice(0, 7)}\n` +
+        `  Pushing first prevents work loss — --ship destroys the local branch after merging the PR,\n` +
+        `  so unpushed commits would be unreachable. Push:\n` +
+        `    git push origin ${branchName}\n` +
+        `  Then re-run --ship.`,
+    );
+}
+
+/**
+ * Verify origin/task/<id> no longer exists at the point we're about to ship. A
+ * successful PR merge (via gh pr merge --delete-branch) removes the remote ref,
+ * so its absence is the post-condition we expect when shipping. Presence here —
+ * combined with mergeOpenPRsAndPull() returning false — means either:
+ *   - The remote branch has commits that were never PR'd (someone pushed to it
+ *     directly from another checkout without opening a PR), so its work is not
+ *     in any base-branch merge.
+ *   - A prior merge succeeded but `--delete-branch` failed to drop the remote
+ *     ref (rare — surface this so the operator can clean up manually rather
+ *     than have the safety check pass spuriously next time).
+ * Either way, shipping silently would orphan the remote commits.
+ */
+function assertOriginTaskBranchAbsent(taskId: string): void {
+    const branchName = `task/${taskId}`;
+    // Query origin directly via ls-remote rather than the local tracking ref. When
+    // origin/<branch> was deleted from another checkout, `git fetch --prune origin
+    // <branch>` does NOT prune the stale local tracking ref, so a `rev-parse
+    // origin/<branch>` would still resolve and falsely block. ls-remote talks to
+    // the remote and reports the truth. Caught via codex review of 8c3bb7e.
+    //
+    // Pass the FULL ref `refs/heads/<branch>` rather than just `<branch>`. With the
+    // short form, ls-remote pattern-matches by slash-separated suffix, so
+    // `task/foo` would also match `backup/task/foo`. The full-ref form requires
+    // an exact match. Caught via codex review of 9618171.
+    const lsRemote = gitSafe('ls-remote', '--heads', 'origin', `refs/heads/${branchName}`);
+    if (!lsRemote.ok) {
+        warn(
+            `Could not query origin for ${branchName} (${lsRemote.stderr.trim() || 'unknown'}). ` +
+            `Skipping origin-branch-absence check — re-run --ship when network access is restored if you ` +
+            `want this verified.`,
+        );
+        return;
+    }
+    if (!lsRemote.stdout.trim()) return; // Empty output → branch absent on origin — expected.
+
+    const remoteSha = lsRemote.stdout.trim().split(/\s+/)[0];
+    die(
+        `--ship aborted: origin/${branchName} still exists at ${remoteSha.slice(0, 7)} but no PR was merged this run.\n` +
+        `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
+        `  failed to delete it. Shipping silently would orphan the remote work.\n` +
+        `  Resolve manually:\n` +
+        `    - If unmerged work: open + merge a PR (gh pr create --base <base> --head ${branchName} ...).\n` +
+        `    - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`,
+    );
 }
 
 /**
@@ -3429,14 +3483,24 @@ function shipTasks(taskIds: string[]): void {
     const merged = mergeOpenPRsAndPull(taskIds);
     if (!merged) {
         // No PR was merged this run. That can mean either (a) PR was merged earlier
-        // and remote branch already cleaned up, or (b) findOpenPRNumber missed an
-        // open PR (gh transient issue, or PR state quirk). For (b), proceeding
-        // would destroy local task branches whose work is only in the open PR —
-        // the user's path forward gets harder if we silently archive without the
-        // PR being merged. Independent verification here prevents that class of
-        // silent failure surfaced 2026-05-07.
+        // and the remote branch was already cleaned up by `--delete-branch` on the
+        // prior merge, or (b) findOpenPRNumber missed an open PR (gh transient,
+        // PR state quirk), or (c) the remote task branch exists with commits that
+        // were never PR'd at all (someone pushed to it directly from another
+        // checkout). For (b) and (c), proceeding silently archives the task while
+        // its work is unmerged — destroying any local artifact path back to those
+        // commits and leaving the base branch missing the task's content.
+        // Independent verification here prevents that class of silent failure.
         assertLocalBaseInSyncWithOrigin(taskIds);
         for (const taskId of taskIds) assertNoOpenPRForTask(taskId);
+        // After mergeOpenPRsAndPull(), a successful merge would have invoked
+        // --delete-branch and removed origin/task/<id>. If that branch still exists
+        // here, no merge ever happened for it — abort. The earlier
+        // assertTaskBranchPushed() (count-of-local-commits-ahead-of-origin) misses
+        // this case because origin can be AHEAD of local and have unmerged commits
+        // that are only on the remote, never in the base. Caught via codex review
+        // of fb76257.
+        for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskId);
     }
 
     // Post-merge: project-specific hook (default no-op; edit runPostMergeHook).
