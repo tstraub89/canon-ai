@@ -30,7 +30,7 @@ The QA phase appends a row at the end of every task. The product owner reviews t
 
 | Date | Task | Size | Spec verdict | Spec iter | Review iter | Dropped ACs | Validation gaps | Human reroute? | Notes |
 |---|---|---|---|---|---|---|---|---|---|
-| _(rows land here as tasks ship)_ | | | | | | | | | |
+| 2026-05-07 | handoff-verifier | S | approved_with_nits | 1 | 1 | 0 | 0 | No | Clean 1-iteration implementation; spec-accuracy nit on `parseHandoffFiles()` signature (docs said array, reality is single-ID) |
 
 ---
 

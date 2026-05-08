@@ -38,4 +38,10 @@ When a record references another by ID, computed fields (caches, transforms, eph
 
 ---
 
+### handoff.md is read from disk by the verifier, not from the committed diff
+
+*(2026-05-07, source: handoff-verifier)*
+
+`handoff.md` is written to disk in the worktree during the implement phase but is **not committed** before code_review — only the Codex-authored source files listed in the handoff Changes table land in the auto-commit. Any tool that cross-checks the handoff against `git diff` must read the handoff file directly from disk (`tasks/<id>/handoff.md`) rather than expecting it to appear as a changed file in the diff. Getting this backwards produces a false "in diff but not in handoff" finding for `handoff.md` itself. Canonical example: `verifyHandoffAgainstDiff()` in `scripts/run-task.ts`.
+
 > **TODO[canon]: Real entries land here as tasks ship. New projects start with this file mostly empty — that's fine. The discipline is: after every task QA, ask the "would this have changed how a different task was approached?" question, and only write if yes.**
