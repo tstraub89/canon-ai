@@ -1,6 +1,6 @@
 {
   "name": "canon-ai",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "A spec-first, multi-agent coding pipeline you drop into any repo. The law your agents work under.",
@@ -11,10 +11,13 @@
     "test": "node --test --import tsx tests/**/*.test.ts",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "task": "./scripts/task.sh",
-    "run-task": "tsx scripts/run-task.ts"
+    "run-task": "tsx scripts/run-task.ts",
+    "lint": "eslint scripts/ tests/"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "eslint": "^10.3.0",
+    "typescript-eslint": "^8.59.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

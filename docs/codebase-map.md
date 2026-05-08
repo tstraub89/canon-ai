@@ -83,6 +83,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | What | Where | Notes |
 |---|---|---|
 | Node/TS project metadata, npm scripts | `package.json` | `test`, `type-check`, `task`, `run-task` scripts |
+| ESLint flat config | `eslint.config.mjs` | `@typescript-eslint/recommendedTypeChecked`, `projectService: true` |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `scripts/` and `tests/` only |
 | Claude permissions + SessionStart hook | `.claude/settings.json` | Auto-shows in-progress tasks at session start |
 | Codex CLI features (multi-agent, shell snapshot) | `.codex/config.toml` | |

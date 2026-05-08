@@ -131,7 +131,7 @@ When `worktree: true`, the orchestrator creates a git worktree for the task. The
 
 | Category (from AGENTS.md) | canon-ai binding |
 |---|---|
-| Linting | N/A — no linter currently configured. `tsc --strict` catches most of what a linter would. Adding one is a future task. |
+| Linting | `npm run lint` (= `eslint scripts/ tests/`) — required for all changes |
 | Type checking | `npm run type-check` (= `tsc -p tsconfig.json --noEmit`) |
 | Unit tests | `npm test` (= `node --test --import tsx tests/**/*.test.ts`) |
 | Full build | N/A — `tsx` runs scripts directly. There is no compile/build step. |
