@@ -38,10 +38,12 @@ When a record references another by ID, computed fields (caches, transforms, eph
 
 ---
 
-### handoff.md is read from disk by the verifier, not from the committed diff
-
-*(2026-05-07, source: handoff-verifier)*
-
-`handoff.md` is written to disk in the worktree during the implement phase but is **not committed** before code_review — only the Codex-authored source files listed in the handoff Changes table land in the auto-commit. Any tool that cross-checks the handoff against `git diff` must read the handoff file directly from disk (`tasks/<id>/handoff.md`) rather than expecting it to appear as a changed file in the diff. Getting this backwards produces a false "in diff but not in handoff" finding for `handoff.md` itself. Canonical example: `verifyHandoffAgainstDiff()` in `scripts/run-task.ts`.
-
 > **TODO[canon]: Real entries land here as tasks ship. New projects start with this file mostly empty — that's fine. The discipline is: after every task QA, ask the "would this have changed how a different task was approached?" question, and only write if yes.**
+
+---
+
+### Use `--name-status` not `--name-only` when building path sets from git diff
+
+*(2026-05-08, source: handoff-verifier)*
+
+When comparing a set of file paths against `git diff` output, use `--name-status -M` rather than `--name-only -M`. With `--name-only`, rename detection (`-M`) is active but only the post-image (new) path is emitted — the pre-image (old) path is suppressed. Any code that builds a path set from the diff output and then checks whether a given path is "in the diff" will false-positive on the pre-image path of renamed files. With `--name-status`, rename lines appear as `R<score>\told\tnew` and you must explicitly expand both sides into the path set to treat renames symmetrically. The canonical implementation is `verifyHandoffAgainstDiffFromData()` in `scripts/run-task.ts`. This bit `handoff-verifier` in round 3 after passing round 1 cleanly — `autoCommitCode()` already accepted the pre-image as a valid handoff entry, so the verifier had to match that contract.
