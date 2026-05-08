@@ -8,7 +8,9 @@ build/
 .DS_Store
 .vscode/
 .idea/
+.claude/local.settings.json
 
 # Pipeline scratch
 *.tmp
 .canon-write-test
+
