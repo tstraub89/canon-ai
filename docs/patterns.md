@@ -75,16 +75,17 @@ For breaking changes (renames, type changes), also: add a migration shim that de
 
 ### Validation Gate Discipline
 
-**Files**: `scripts/run-task.ts` (`validateHandoff()`, `autoCommitCode()`), `tests/run-task-validation.test.ts`
+**Files**: `scripts/run-task.ts` (`validateHandoff()`, `autoCommitCode()`, `verifyHandoffAgainstDiff()`), `tests/run-task-validation.test.ts`
 
 **When to apply**: Adding a new pre-flight check at a phase boundary (e.g., "the handoff Changes table must match the post-commit `git diff`").
 
 **The pattern**:
-- New checks extend `validateHandoff()` (returns a list of issue strings; non-empty = gate fail) or join the `autoCommitCode()` cross-checks. Both are well-tested entry points.
+- **Per-task checks**: extend `validateHandoff()` (returns a list of issue strings; non-empty = gate fail) or join the `autoCommitCode()` cross-checks. Both are well-tested entry points.
+- **Bundle-wide checks**: add a sibling function at the same call site (after the per-task loop in the `code_review` pre-flight block). `verifyHandoffAgainstDiff()` is the canonical example — it takes `taskIds: string[]` so it can compute a union across bundle members. Expose a `*FromData` test seam so tests don't need a real git repo.
 - **Tests are mandatory.** Any new validation rule needs a positive case (passing handoff) and a negative case (failing handoff) in `run-task-validation.test.ts`. Edge cases (empty tables, malformed markdown) need explicit test rows.
 - **Failure modes are documented.** A gate that fails should write a clear rejection message to `review.md` (or equivalent) explaining what to fix. Vague failures waste review iterations.
 
-**Anti-pattern**: adding a check inline in the middle of `runPhase('code_review')` rather than extending `validateHandoff()`. The latter has tests; the former silently bypasses them.
+**Anti-pattern**: adding a check inline in the middle of `runPhase('code_review')` without a test seam. Both `validateHandoff()` and `verifyHandoffAgainstDiff()` expose seams — any new sibling should too.
 
 ### Lint & Type Safety Policy
 
@@ -137,7 +138,8 @@ Failure mode if violated: a `git merge` produces conflicts on every descriptive 
 |---|---|---|
 | Add a new pipeline phase | Phase Addition Discipline | `scripts/run-task.ts` `PHASE_ORDER` |
 | Change which model a phase uses | Pure Policy + Test Discipline | `scripts/pipeline-policy.ts` |
-| Add a new validation check at code_review entry | Validation Gate Discipline | `scripts/run-task.ts` `validateHandoff()` |
+| Add a new per-task validation check at code_review entry | Validation Gate Discipline | `scripts/run-task.ts` `validateHandoff()` |
+| Add a new bundle-wide validation check at code_review entry | Validation Gate Discipline | `scripts/run-task.ts` `verifyHandoffAgainstDiff()` (canonical sibling example) |
 | Add a new field to status.json | State Schema Discipline | `tasks/_templates/status.json` |
 | Update phase status from a script | (see CLAUDE.md Quick Refs) | `./scripts/task.sh phase` |
 | Run multiple related tasks together | (see CLAUDE.md Quick Refs — bundle mode) | `npx tsx scripts/run-task.ts a b c` |

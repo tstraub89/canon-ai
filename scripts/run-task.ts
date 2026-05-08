@@ -2482,6 +2482,129 @@ function parseHandoffFiles(taskId: string): string[] {
     return files;
 }
 
+/**
+ * Paths that appear in the pre-code-review diff but are not Codex-authored
+ * content. The current canon-ai implementation may keep this empty.
+ *
+ * Keep this as the single source of truth for preflight exemptions.
+ */
+const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);
+
+type HandoffDiffInputs = {
+    /** Single-path diff entries (M/A/D/T/U statuses from `git diff --name-status`). */
+    diffFiles: readonly string[];
+    /**
+     * Rename (and copy) pairs from `R<score>` / `C<score>` diff lines: `[oldPath, newPath]`.
+     * Treated symmetrically: a handoff entry covers a rename if it lists EITHER side, and a
+     * rename entry is covered iff at least one side is in some bundle handoff (or both sides
+     * are in HANDOFF_DIFF_EXEMPT_PATHS). This avoids false positives when a handoff lists the
+     * pre-image (old) path of a renamed file — which `autoCommitCode()` accepts as valid —
+     * because `--name-status -M` is the only diff form that surfaces the old path at all.
+     */
+    renamePairs?: readonly (readonly [string, string])[];
+    handoffFilesByTask: ReadonlyMap<string, readonly string[]>;
+};
+
+export function verifyHandoffAgainstDiffFromData(
+    taskIds: string[],
+    inputs: HandoffDiffInputs,
+): string[] {
+    const renamePairs = inputs.renamePairs ?? [];
+    // "Covered paths" = anything appearing in the diff: simple-change paths plus
+    // BOTH sides of every rename pair. Used for the handoff→diff direction: a
+    // handoff entry is satisfied if its path matches any covered path.
+    const coveredPaths = new Set<string>(inputs.diffFiles);
+    for (const [oldPath, newPath] of renamePairs) {
+        coveredPaths.add(oldPath);
+        coveredPaths.add(newPath);
+    }
+
+    const handoffFilesByTask = new Map<string, readonly string[]>();
+    const bundleHandoffFiles = new Set<string>();
+
+    for (const taskId of taskIds) {
+        const files = inputs.handoffFilesByTask.get(taskId) ?? [];
+        handoffFilesByTask.set(taskId, files);
+        for (const filePath of files) bundleHandoffFiles.add(filePath);
+    }
+
+    const issues: string[] = [];
+
+    // handoff→diff
+    for (const taskId of taskIds) {
+        const files = handoffFilesByTask.get(taskId) ?? [];
+        for (const filePath of files) {
+            if (!coveredPaths.has(filePath)) {
+                issues.push(`[${taskId}] handoff→diff: ${filePath} listed in handoff but not in diff`);
+            }
+        }
+    }
+
+    // diff→handoff: simple entries
+    for (const filePath of inputs.diffFiles) {
+        if (HANDOFF_DIFF_EXEMPT_PATHS.has(filePath)) continue;
+        if (bundleHandoffFiles.has(filePath)) continue;
+        issues.push(`diff→handoff: ${filePath} in diff but not in any bundle handoff`);
+    }
+
+    // diff→handoff: rename pairs — covered iff either side is in handoff (or both in exempt).
+    // One issue per uncovered rename, naming both paths so reviewer can disambiguate.
+    for (const [oldPath, newPath] of renamePairs) {
+        if (HANDOFF_DIFF_EXEMPT_PATHS.has(oldPath) && HANDOFF_DIFF_EXEMPT_PATHS.has(newPath)) continue;
+        if (bundleHandoffFiles.has(oldPath) || bundleHandoffFiles.has(newPath)) continue;
+        issues.push(`diff→handoff: rename ${oldPath} → ${newPath} — neither path in any bundle handoff`);
+    }
+
+    return issues;
+}
+
+/**
+ * Parse `git diff --name-status -M` output into simple paths and rename pairs.
+ *
+ * Format per line:
+ *   M\tpath              — modified
+ *   A\tpath              — added
+ *   D\tpath              — deleted
+ *   T\tpath              — type change
+ *   U\tpath              — unmerged
+ *   R<score>\told\tnew   — rename (with -M)
+ *   C<score>\told\tnew   — copy (with -C; we don't enable -C but accept the format)
+ *
+ * Why `--name-status` instead of `--name-only`: `--name-only -M` enables rename
+ * *detection* but only emits the post-image (new) path, so a handoff that lists
+ * the pre-image (old) path of a renamed file would false-positive on the
+ * handoff→diff check. `--name-status -M` surfaces both paths in the `R` lines.
+ */
+function parseDiffNameStatus(stdout: string): { diffFiles: string[]; renamePairs: Array<[string, string]> } {
+    const diffFiles: string[] = [];
+    const renamePairs: Array<[string, string]> = [];
+    for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        const parts = line.split('\t');
+        const status = parts[0];
+        if ((status.startsWith('R') || status.startsWith('C')) && parts.length >= 3) {
+            renamePairs.push([parts[1], parts[2]]);
+        } else if (parts.length >= 2) {
+            diffFiles.push(parts[1]);
+        }
+    }
+    return { diffFiles, renamePairs };
+}
+
+export function verifyHandoffAgainstDiff(taskIds: string[], baseRef: string): string[] {
+    const cwd = getActiveCwd(taskIds);
+    const diffResult = gitSafeAtRaw(cwd, 'diff', `${baseRef}...HEAD`, '--name-status', '-M');
+    if (!diffResult.ok) {
+        return [`git diff failed: ${diffResult.stderr || 'unknown error'}`];
+    }
+
+    const { diffFiles, renamePairs } = parseDiffNameStatus(diffResult.stdout);
+    const handoffFilesByTask = new Map<string, readonly string[]>(
+        taskIds.map(taskId => [taskId, parseHandoffFiles(taskId)]),
+    );
+    return verifyHandoffAgainstDiffFromData(taskIds, { diffFiles, renamePairs, handoffFilesByTask });
+}
+
 function appendAutoCommitDebug(taskIds: string[], details: Record<string, unknown>): void {
     const notesPath = path.join(taskDirFor(taskIds[0]), 'notes.md');
     try {
@@ -3617,20 +3740,43 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<void
 
             // Pre-flight: reject obviously invalid handoffs without spending a Claude session.
             // Catches Fail validation results and missing AC Coverage tables deterministically.
-            const preflightFailed: Array<{ taskId: string; issues: string[] }> = [];
+            const preflightFailed: Array<{ taskId: string; issues: string[]; bundleIssues?: string[] }> = [];
             for (const t of tasks) {
                 const issues = validateHandoff(t.taskId);
                 if (issues.length > 0) preflightFailed.push({ taskId: t.taskId, issues });
             }
+            const bundleIssues = verifyHandoffAgainstDiff(taskIds, getBaseBranch(taskIds));
+            if (bundleIssues.length > 0) {
+                for (const taskId of taskIds) {
+                    const existing = preflightFailed.find(entry => entry.taskId === taskId);
+                    if (existing) {
+                        existing.bundleIssues = bundleIssues;
+                    } else {
+                        preflightFailed.push({ taskId, issues: [], bundleIssues });
+                    }
+                }
+            }
             if (preflightFailed.length > 0) {
                 warn('Validation pre-flight FAILED — rejecting handoff without Claude review:');
-                for (const { taskId, issues } of preflightFailed) {
+                for (const { taskId, issues, bundleIssues: taskBundleIssues } of preflightFailed) {
                     for (const issue of issues) warn(`  [${taskId}] ${issue}`);
+                    if (taskBundleIssues) {
+                        for (const issue of taskBundleIssues) warn(`  [bundle:${taskId}] ${issue}`);
+                    }
+                    const perTaskSection = issues.length > 0
+                        ? `${issues.map(i => `- ${i}`).join('\n')}\n`
+                        : '';
+                    const bundleSection = taskBundleIssues && taskBundleIssues.length > 0
+                        ? `\n### Bundle-Level Handoff Verification\n\n` +
+                          `${taskBundleIssues.map(i => `- ${i}`).join('\n')}\n`
+                        : '';
                     const reviewContent =
                         `# Code Review: ${taskId}\n\n` +
                         `## Validation Gate\n\n` +
                         `**BLOCKED — pre-flight rejected handoff before full review:**\n\n` +
-                        `${issues.map(i => `- ${i}`).join('\n')}\n\n` +
+                        perTaskSection +
+                        bundleSection +
+                        `\n` +
                         `## Verdict\n\n- [x] **Changes requested** — fix the above and resubmit handoff.\n`;
                     fs.writeFileSync(path.join(taskDirFor(taskId), 'review.md'), reviewContent);
                     runTaskShFor(taskId, 'phase', taskId, 'code_review', 'done', 'changes_requested');
