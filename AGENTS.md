@@ -89,6 +89,15 @@ Templates live in `tasks/_templates/`. To start a task, use `./scripts/task.sh n
 7. Claude creates `tasks/TASK-ID/done.md` for the human, sets `qa` → `done`
 8. Human tests against `done.md` checklist, sets `human_review` → `done`
 
+**Per-iteration artifact convention.** `handoff.md` and `review.md` are **cumulative across review rounds, not rewritten**. Round 1 fills the existing template structure. On every subsequent revision:
+
+- **Codex appends** a new `## Iteration N — addressing review round N-1` section to `handoff.md` near the bottom (above any final checklist). Earlier iterations stay untouched as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation outcomes.
+- **Claude appends** a new `## Round N — verifying iteration N-1's response to round N-1` section to `review.md`. Do not redo the Stage 1 AC table — that gate already passed in round 1. Include per-finding verification (addressed / still open / no longer relevant) and any NEW issues introduced by the iteration.
+
+The orchestrator's slim resumed-session prompts on round 2+ depend on this convention: they point the agent at the latest section as the scope of the current iteration, rather than re-injecting the full task framing. If an agent rewrites instead of appending, the cumulative record is lost and the slim-prompt mechanism degrades to a fresh full re-prompt.
+
+The artifact templates carry a comment block at the bottom showing the expected per-round shape so the convention survives even when prompts are slim.
+
 ### Pipeline Orchestrator
 
 `scripts/run-task.ts` automates the standard pipeline. It reads `status.json` to determine the current phase, spawns the correct agent CLI (Claude or Codex), and advances through phases automatically — including feedback loops when spec review or code review requests changes. Only conversational Claude invokes it.
