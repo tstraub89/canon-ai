@@ -3267,7 +3267,12 @@ function assertOriginTaskBranchAbsent(taskId: string): void {
     // <branch>` does NOT prune the stale local tracking ref, so a `rev-parse
     // origin/<branch>` would still resolve and falsely block. ls-remote talks to
     // the remote and reports the truth. Caught via codex review of 8c3bb7e.
-    const lsRemote = gitSafe('ls-remote', '--heads', 'origin', branchName);
+    //
+    // Pass the FULL ref `refs/heads/<branch>` rather than just `<branch>`. With the
+    // short form, ls-remote pattern-matches by slash-separated suffix, so
+    // `task/foo` would also match `backup/task/foo`. The full-ref form requires
+    // an exact match. Caught via codex review of 9618171.
+    const lsRemote = gitSafe('ls-remote', '--heads', 'origin', `refs/heads/${branchName}`);
     if (!lsRemote.ok) {
         warn(
             `Could not query origin for ${branchName} (${lsRemote.stderr.trim() || 'unknown'}). ` +
