@@ -430,7 +430,7 @@ function printUsage(): void {
     console.log('  --expect <phase>    Assert current phase before running');
     console.log('  --push              Push branch at human_review');
     console.log('  --pr                Push + create draft PR at human_review');
-    console.log('  --reroute           Reset from human_review back to implement');
+    console.log('  --reroute           Reset from human_review back to implement AND re-invoke the pipeline');
     console.log('  --ship              Merge open PR, pull, archive task, commit+push, clean branches');
 }
 
@@ -815,9 +815,23 @@ function ensureWorktree(taskId: string, branch: string): string {
         git('worktree', 'add', '-b', branch, wt);
     }
     // Symlink node_modules so Codex can run npm scripts without a separate install.
+    // Only attempt this if the project actually uses node_modules (package.json present)
+    // AND the source directory exists in REPO_ROOT — otherwise the symlink dangles and
+    // every test/lint/type-check inside the worktree fails with confusing errors that
+    // look like Codex bugs but are really a pre-flight setup gap.
+    const repoModulesSrc = path.join(REPO_ROOT, 'node_modules');
+    const repoPackageJson = path.join(REPO_ROOT, 'package.json');
     const wtModules = path.join(wt, 'node_modules');
-    if (!fs.existsSync(wtModules)) {
-        fs.symlinkSync(path.join(REPO_ROOT, 'node_modules'), wtModules);
+    if (fs.existsSync(repoPackageJson) && !fs.existsSync(wtModules)) {
+        if (!fs.existsSync(repoModulesSrc)) {
+            die(
+                `Worktree setup aborted: ${REPO_ROOT}/node_modules does not exist, but ` +
+                `package.json does. The orchestrator symlinks node_modules from REPO_ROOT into ` +
+                `each worktree; that requires REPO_ROOT to have its dependencies installed first. ` +
+                `Run \`npm install\` (or \`npm ci\`) in ${REPO_ROOT} and try again.`
+            );
+        }
+        fs.symlinkSync(repoModulesSrc, wtModules);
         info('Symlinked node_modules into worktree.');
     }
     // Symlink local/preview env files (gitignored — not in the worktree by
@@ -2482,6 +2496,129 @@ function parseHandoffFiles(taskId: string): string[] {
     return files;
 }
 
+/**
+ * Paths that appear in the pre-code-review diff but are not Codex-authored
+ * content. The current canon-ai implementation may keep this empty.
+ *
+ * Keep this as the single source of truth for preflight exemptions.
+ */
+const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);
+
+type HandoffDiffInputs = {
+    /** Single-path diff entries (M/A/D/T/U statuses from `git diff --name-status`). */
+    diffFiles: readonly string[];
+    /**
+     * Rename (and copy) pairs from `R<score>` / `C<score>` diff lines: `[oldPath, newPath]`.
+     * Treated symmetrically: a handoff entry covers a rename if it lists EITHER side, and a
+     * rename entry is covered iff at least one side is in some bundle handoff (or both sides
+     * are in HANDOFF_DIFF_EXEMPT_PATHS). This avoids false positives when a handoff lists the
+     * pre-image (old) path of a renamed file — which `autoCommitCode()` accepts as valid —
+     * because `--name-status -M` is the only diff form that surfaces the old path at all.
+     */
+    renamePairs?: readonly (readonly [string, string])[];
+    handoffFilesByTask: ReadonlyMap<string, readonly string[]>;
+};
+
+export function verifyHandoffAgainstDiffFromData(
+    taskIds: string[],
+    inputs: HandoffDiffInputs,
+): string[] {
+    const renamePairs = inputs.renamePairs ?? [];
+    // "Covered paths" = anything appearing in the diff: simple-change paths plus
+    // BOTH sides of every rename pair. Used for the handoff→diff direction: a
+    // handoff entry is satisfied if its path matches any covered path.
+    const coveredPaths = new Set<string>(inputs.diffFiles);
+    for (const [oldPath, newPath] of renamePairs) {
+        coveredPaths.add(oldPath);
+        coveredPaths.add(newPath);
+    }
+
+    const handoffFilesByTask = new Map<string, readonly string[]>();
+    const bundleHandoffFiles = new Set<string>();
+
+    for (const taskId of taskIds) {
+        const files = inputs.handoffFilesByTask.get(taskId) ?? [];
+        handoffFilesByTask.set(taskId, files);
+        for (const filePath of files) bundleHandoffFiles.add(filePath);
+    }
+
+    const issues: string[] = [];
+
+    // handoff→diff
+    for (const taskId of taskIds) {
+        const files = handoffFilesByTask.get(taskId) ?? [];
+        for (const filePath of files) {
+            if (!coveredPaths.has(filePath)) {
+                issues.push(`[${taskId}] handoff→diff: ${filePath} listed in handoff but not in diff`);
+            }
+        }
+    }
+
+    // diff→handoff: simple entries
+    for (const filePath of inputs.diffFiles) {
+        if (HANDOFF_DIFF_EXEMPT_PATHS.has(filePath)) continue;
+        if (bundleHandoffFiles.has(filePath)) continue;
+        issues.push(`diff→handoff: ${filePath} in diff but not in any bundle handoff`);
+    }
+
+    // diff→handoff: rename pairs — covered iff either side is in handoff (or both in exempt).
+    // One issue per uncovered rename, naming both paths so reviewer can disambiguate.
+    for (const [oldPath, newPath] of renamePairs) {
+        if (HANDOFF_DIFF_EXEMPT_PATHS.has(oldPath) && HANDOFF_DIFF_EXEMPT_PATHS.has(newPath)) continue;
+        if (bundleHandoffFiles.has(oldPath) || bundleHandoffFiles.has(newPath)) continue;
+        issues.push(`diff→handoff: rename ${oldPath} → ${newPath} — neither path in any bundle handoff`);
+    }
+
+    return issues;
+}
+
+/**
+ * Parse `git diff --name-status -M` output into simple paths and rename pairs.
+ *
+ * Format per line:
+ *   M\tpath              — modified
+ *   A\tpath              — added
+ *   D\tpath              — deleted
+ *   T\tpath              — type change
+ *   U\tpath              — unmerged
+ *   R<score>\told\tnew   — rename (with -M)
+ *   C<score>\told\tnew   — copy (with -C; we don't enable -C but accept the format)
+ *
+ * Why `--name-status` instead of `--name-only`: `--name-only -M` enables rename
+ * *detection* but only emits the post-image (new) path, so a handoff that lists
+ * the pre-image (old) path of a renamed file would false-positive on the
+ * handoff→diff check. `--name-status -M` surfaces both paths in the `R` lines.
+ */
+function parseDiffNameStatus(stdout: string): { diffFiles: string[]; renamePairs: Array<[string, string]> } {
+    const diffFiles: string[] = [];
+    const renamePairs: Array<[string, string]> = [];
+    for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        const parts = line.split('\t');
+        const status = parts[0];
+        if ((status.startsWith('R') || status.startsWith('C')) && parts.length >= 3) {
+            renamePairs.push([parts[1], parts[2]]);
+        } else if (parts.length >= 2) {
+            diffFiles.push(parts[1]);
+        }
+    }
+    return { diffFiles, renamePairs };
+}
+
+export function verifyHandoffAgainstDiff(taskIds: string[], baseRef: string): string[] {
+    const cwd = getActiveCwd(taskIds);
+    const diffResult = gitSafeAtRaw(cwd, 'diff', `${baseRef}...HEAD`, '--name-status', '-M');
+    if (!diffResult.ok) {
+        return [`git diff failed: ${diffResult.stderr || 'unknown error'}`];
+    }
+
+    const { diffFiles, renamePairs } = parseDiffNameStatus(diffResult.stdout);
+    const handoffFilesByTask = new Map<string, readonly string[]>(
+        taskIds.map(taskId => [taskId, parseHandoffFiles(taskId)]),
+    );
+    return verifyHandoffAgainstDiffFromData(taskIds, { diffFiles, renamePairs, handoffFilesByTask });
+}
+
 function appendAutoCommitDebug(taskIds: string[], details: Record<string, unknown>): void {
     const notesPath = path.join(taskDirFor(taskIds[0]), 'notes.md');
     try {
@@ -2733,6 +2870,39 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
         die(`Auto-commit failed: ${commitResult.stderr || 'unknown error'}`);
     }
     verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
+
+    // Belt-and-suspenders: verify every handoff file's working-tree state is equal to
+    // HEAD after the commit. Catches the silent-partial-commit failure mode where
+    // `git status --porcelain` did not report a file as dirty (so it was never staged
+    // and never committed) but the file on disk still differs from HEAD. The earlier
+    // pre-commit checks all rely on `status`; this post-commit check uses `git diff
+    // HEAD` directly so it remains correct even when status is unreliable (e.g.,
+    // worktree env issues, index races, partial recovery from earlier failures).
+    // Surfaced 2026-05-07 via canon-on-canon iteration 3 of handoff-verifier — the
+    // commit landed with only status.json even though the handoff Changes table
+    // listed scripts/run-task.ts and tests/* with real on-disk changes; the existing
+    // status-based checks all passed. See docs/lessons-learned.md for the incident.
+    const postCommitDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...handoffFiles);
+    if (!postCommitDiff.ok) {
+        appendAutoCommitDebug(taskIds, { ...debug, result: 'post-commit-diff-failed', diffError: postCommitDiff.stderr });
+        die(`Auto-commit verification failed: could not run \`git diff HEAD\` post-commit: ${postCommitDiff.stderr || 'unknown error'}`);
+    }
+    if (postCommitDiff.stdout.trim()) {
+        const stillDifferent = postCommitDiff.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+        appendAutoCommitDebug(taskIds, { ...debug, result: 'post-commit-handoff-still-different', stillDifferent });
+        die(
+            `Auto-commit verification failed: ${stillDifferent.length} handoff file(s) still differ from HEAD after commit:\n` +
+            stillDifferent.map(f => `    ${f}`).join('\n') +
+            `\n  The auto-commit did not capture all working-tree changes — implement-iteration code is on\n` +
+            `  disk but not in any commit. To recover:\n` +
+            `    cd ${cwd}\n` +
+            `    git diff HEAD       # inspect what's missing\n` +
+            `    git add -A -- <files> && git commit -m "<task-title> [<task-id>]"\n` +
+            `  Then re-run the pipeline. (Do NOT bypass this check — it is the last line of defense\n` +
+            `  against shipping a 'successful implement' that's missing the actual implementation.)`
+        );
+    }
+
     appendAutoCommitDebug(taskIds, { ...debug, result: 'committed' });
     const stagedCount = stagedAfter.stdout.trim().split('\n').filter(Boolean).length;
     info(`Auto-committed ${stagedCount} file(s): ${message}`);
@@ -3022,6 +3192,73 @@ function assertLocalBaseInSyncWithOrigin(taskIds: string[]): void {
 }
 
 /**
+ * Verify the local task/<id> branch (if it exists) has been fully pushed to origin.
+ * Aborts --ship if local has commits not on origin — those commits would be lost when
+ * the orchestrator deletes the local branch after teardown.
+ *
+ * No-op when the local branch doesn't exist (already cleaned up, or worktree mode
+ * never used). Treats "origin/<branch> does not exist" as a soft signal: if we just
+ * fetched and origin doesn't have the branch, either it was deleted post-merge
+ * (fine; a successful prior --ship or PR squash-merge) or it was never pushed (bad).
+ * We can't tell which without more state, so we warn and continue rather than block
+ * legitimate post-merge re-runs.
+ */
+function assertTaskBranchPushed(taskId: string): void {
+    const branchName = `task/${taskId}`;
+    if (!branchExistsLocally(branchName)) return;
+
+    const localShaResult = gitSafe('rev-parse', branchName);
+    if (!localShaResult.ok) {
+        warn(`Could not resolve ${branchName}: ${localShaResult.stderr}. Skipping push-verify.`);
+        return;
+    }
+    const localSha = localShaResult.stdout.trim();
+
+    // Refresh remote-tracking ref before comparing.
+    gitSafe('fetch', 'origin', branchName);
+
+    const remoteShaResult = gitSafe('rev-parse', `origin/${branchName}`);
+    if (!remoteShaResult.ok) {
+        warn(
+            `origin/${branchName} not found (${remoteShaResult.stderr.trim() || 'unknown'}). ` +
+            `Continuing — assuming the remote branch was deleted by an earlier merge. ` +
+            `If you have unpushed work on local ${branchName} you wanted to ship, abort with Ctrl+C and push it now.`,
+        );
+        return;
+    }
+    const remoteSha = remoteShaResult.stdout.trim();
+
+    if (localSha !== remoteSha) {
+        die(
+            `--ship aborted: local ${branchName} (${localSha.slice(0, 7)}) diverges from origin/${branchName} (${remoteSha.slice(0, 7)}).\n` +
+            `  Local has commits not on origin. Pushing first prevents work loss; --ship destroys the\n` +
+            `  local branch after merging the PR, so unpushed commits would be unreachable.\n` +
+            `  Push:\n` +
+            `    git push origin ${branchName}\n` +
+            `  Then re-run --ship.`,
+        );
+    }
+}
+
+/**
+ * Verify there is no open PR for the task's branch. Called after mergeOpenPRsAndPull
+ * returned false (no PR was merged this run) — a defensive cross-check against gh
+ * transient issues that might have caused findOpenPRNumber to return null spuriously.
+ */
+function assertNoOpenPRForTask(taskId: string): void {
+    const branchName = `task/${taskId}`;
+    const prNum = findOpenPRNumber(branchName);
+    if (prNum !== null) {
+        die(
+            `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
+            `  This can happen during gh transient hiccups. Re-running --ship usually works; if it\n` +
+            `  keeps failing, merge the PR manually (gh pr merge ${prNum} --squash --delete-branch)\n` +
+            `  and re-run.`,
+        );
+    }
+}
+
+/**
  * Find the number of an open PR whose head branch matches `branch`.
  * Returns null if gh CLI is unavailable, no PR found, or lookup fails.
  */
@@ -3172,12 +3409,35 @@ function shipTasks(taskIds: string[]): void {
         }
     }
 
+    // Pre-flight: every local task branch with unpushed commits is a hard abort.
+    // --ship later tears down the worktree and deletes the local branch; if local
+    // has commits not on origin, those commits are lost forever (gone from any
+    // ref the user can reach). Also covers the case where the PR-merge step below
+    // silently misses a PR for any reason — instead of trusting that flow alone,
+    // we independently verify origin has the local work before any destruction.
+    // Surfaced 2026-05-07 via canon-on-canon dogfood: the iteration-3 rename fix
+    // was committed locally, never pushed, then --ship deleted the branch; only
+    // the dangling commits in `git fsck` survived (with a partial subset of files).
+    for (const taskId of taskIds) {
+        assertTaskBranchPushed(taskId);
+    }
+
     // Flush any telemetry before merging so the PR doesn't pick it up.
     if (taskIds.some(id => readStatus(id).worktree === true)) flushWorktreeTelemetry();
 
     // Merge open PRs and pull; if none found, assert the base is already in sync.
     const merged = mergeOpenPRsAndPull(taskIds);
-    if (!merged) assertLocalBaseInSyncWithOrigin(taskIds);
+    if (!merged) {
+        // No PR was merged this run. That can mean either (a) PR was merged earlier
+        // and remote branch already cleaned up, or (b) findOpenPRNumber missed an
+        // open PR (gh transient issue, or PR state quirk). For (b), proceeding
+        // would destroy local task branches whose work is only in the open PR —
+        // the user's path forward gets harder if we silently archive without the
+        // PR being merged. Independent verification here prevents that class of
+        // silent failure surfaced 2026-05-07.
+        assertLocalBaseInSyncWithOrigin(taskIds);
+        for (const taskId of taskIds) assertNoOpenPRForTask(taskId);
+    }
 
     // Post-merge: project-specific hook (default no-op; edit runPostMergeHook).
     runPostMergeHook();
@@ -3617,20 +3877,43 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<void
 
             // Pre-flight: reject obviously invalid handoffs without spending a Claude session.
             // Catches Fail validation results and missing AC Coverage tables deterministically.
-            const preflightFailed: Array<{ taskId: string; issues: string[] }> = [];
+            const preflightFailed: Array<{ taskId: string; issues: string[]; bundleIssues?: string[] }> = [];
             for (const t of tasks) {
                 const issues = validateHandoff(t.taskId);
                 if (issues.length > 0) preflightFailed.push({ taskId: t.taskId, issues });
             }
+            const bundleIssues = verifyHandoffAgainstDiff(taskIds, getBaseBranch(taskIds));
+            if (bundleIssues.length > 0) {
+                for (const taskId of taskIds) {
+                    const existing = preflightFailed.find(entry => entry.taskId === taskId);
+                    if (existing) {
+                        existing.bundleIssues = bundleIssues;
+                    } else {
+                        preflightFailed.push({ taskId, issues: [], bundleIssues });
+                    }
+                }
+            }
             if (preflightFailed.length > 0) {
                 warn('Validation pre-flight FAILED — rejecting handoff without Claude review:');
-                for (const { taskId, issues } of preflightFailed) {
+                for (const { taskId, issues, bundleIssues: taskBundleIssues } of preflightFailed) {
                     for (const issue of issues) warn(`  [${taskId}] ${issue}`);
+                    if (taskBundleIssues) {
+                        for (const issue of taskBundleIssues) warn(`  [bundle:${taskId}] ${issue}`);
+                    }
+                    const perTaskSection = issues.length > 0
+                        ? `${issues.map(i => `- ${i}`).join('\n')}\n`
+                        : '';
+                    const bundleSection = taskBundleIssues && taskBundleIssues.length > 0
+                        ? `\n### Bundle-Level Handoff Verification\n\n` +
+                          `${taskBundleIssues.map(i => `- ${i}`).join('\n')}\n`
+                        : '';
                     const reviewContent =
                         `# Code Review: ${taskId}\n\n` +
                         `## Validation Gate\n\n` +
                         `**BLOCKED — pre-flight rejected handoff before full review:**\n\n` +
-                        `${issues.map(i => `- ${i}`).join('\n')}\n\n` +
+                        perTaskSection +
+                        bundleSection +
+                        `\n` +
                         `## Verdict\n\n- [x] **Changes requested** — fix the above and resubmit handoff.\n`;
                     fs.writeFileSync(path.join(taskDirFor(taskId), 'review.md'), reviewContent);
                     runTaskShFor(taskId, 'phase', taskId, 'code_review', 'done', 'changes_requested');
