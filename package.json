@@ -12,8 +12,7 @@
     "type-check": "tsc -p tsconfig.json --noEmit",
     "task": "./scripts/task.sh",
     "run-task": "tsx scripts/run-task.ts",
-    "lint": "eslint scripts/ tests/",
-    "setup-hooks": "ln -sf ../../scripts/git-hooks/pre-merge-commit .git/hooks/pre-merge-commit && chmod +x .git/hooks/pre-merge-commit && echo 'Git hooks installed.'"
+    "lint": "eslint scripts/ tests/"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
