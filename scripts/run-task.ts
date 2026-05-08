@@ -3262,12 +3262,23 @@ function assertTaskBranchPushed(taskId: string): void {
  */
 function assertOriginTaskBranchAbsent(taskId: string): void {
     const branchName = `task/${taskId}`;
-    // Refresh first so we don't trip on a stale remote-tracking ref.
-    gitSafe('fetch', '--prune', 'origin', branchName);
-    const remoteRef = gitSafe('rev-parse', '--verify', `origin/${branchName}`);
-    if (!remoteRef.ok) return; // Branch absent on origin — expected.
+    // Query origin directly via ls-remote rather than the local tracking ref. When
+    // origin/<branch> was deleted from another checkout, `git fetch --prune origin
+    // <branch>` does NOT prune the stale local tracking ref, so a `rev-parse
+    // origin/<branch>` would still resolve and falsely block. ls-remote talks to
+    // the remote and reports the truth. Caught via codex review of 8c3bb7e.
+    const lsRemote = gitSafe('ls-remote', '--heads', 'origin', branchName);
+    if (!lsRemote.ok) {
+        warn(
+            `Could not query origin for ${branchName} (${lsRemote.stderr.trim() || 'unknown'}). ` +
+            `Skipping origin-branch-absence check — re-run --ship when network access is restored if you ` +
+            `want this verified.`,
+        );
+        return;
+    }
+    if (!lsRemote.stdout.trim()) return; // Empty output → branch absent on origin — expected.
 
-    const remoteSha = remoteRef.stdout.trim();
+    const remoteSha = lsRemote.stdout.trim().split(/\s+/)[0];
     die(
         `--ship aborted: origin/${branchName} still exists at ${remoteSha.slice(0, 7)} but no PR was merged this run.\n` +
         `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
