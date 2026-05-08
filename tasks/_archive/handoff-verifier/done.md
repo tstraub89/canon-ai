@@ -1,6 +1,6 @@
 # QA Summary: handoff-verifier — Verify handoff matches git diff
 
-> Written by: Claude | Date: 2026-05-07
+> Written by: Claude | Date: 2026-05-08 (updated after Iteration 3 rename-pair fix)
 
 ## What Changed
 
@@ -13,7 +13,7 @@ The new check runs once per pipeline invocation, after the existing per-task val
 | File | What changed |
 |---|---|
 | `scripts/run-task.ts` | Added `HANDOFF_DIFF_EXEMPT_PATHS` constant, `verifyHandoffAgainstDiff()` (runtime), and `verifyHandoffAgainstDiffFromData()` (test seam). Extended code-review pre-flight to run the bundle-wide verifier once and merge its issues into each affected task's preflight entry. |
-| `tests/run-task-validation.test.ts` | Five new test rows via the injected-data seam: positive match, handoff→diff negative, diff→handoff negative, bundle-union behavior, and empty diff+handoff. |
+| `tests/run-task-validation.test.ts` | Seven new test rows via the injected-data seam: positive match, handoff→diff negative, diff→handoff negative, bundle-union behavior, empty diff+handoff, rename preimage covered, and rename pair uncovered. |
 | `tasks/handoff-verifier/status.json` | Pipeline state advanced through implement. |
 
 ## How to Test
@@ -29,16 +29,17 @@ The new check runs once per pipeline invocation, after the existing per-task val
 | Check | Result | Notes |
 |---|---|---|
 | Type-check | Pass | |
-| Unit tests | Pass | 63 tests, 5 new |
+| Unit tests | Pass | 65 tests, 7 new (including rename-pair rows added in Iteration 3) |
 | Lint | N/A | No linter configured for canon-ai |
 | Build | N/A | No build step; scripts run via `tsx` |
 
-Code review verdict: **Approved with nits**. No correctness bugs, no risk/guardrail findings. Two optional nits (duplicate log banners in bundle-failure path; no test for nonempty `HANDOFF_DIFF_EXEMPT_PATHS`) and one spec-accuracy gap (docs described `parseHandoffFiles()` as accepting an array; actual signature is single-ID). None block shipping.
+Code review verdict: **Approved** (after 3 implementation iterations). Round 1 found two optional nits and a spec-accuracy gap (all folded inline or corrected). Round 3 caught a correctness bug: `--name-only -M` suppresses the rename pre-image path, causing false-positive `handoff→diff` failures when a handoff lists the old name of a renamed file. Fixed by switching to `--name-status -M` and expanding rename lines into both paths.
 
 ## Decisions Made
 
 - **Test seam as a separate exported function** (`verifyHandoffAgainstDiffFromData`) rather than threading injectable parameters through the public `verifyHandoffAgainstDiff()` signature. Keeps the public API exact per spec while making synthetic-data tests practical.
 - **Exemption list is currently empty.** The orchestrator's auto-commit only stages files already listed in the handoff Changes table, so no orchestrator-managed paths land in the diff before code_review. The constant exists as a forward-compatibility seam and single source of truth.
+- **`--name-status` not `--name-only`** (Iteration 3 correctness fix). `--name-only` with `-M` suppresses the pre-image path for renames. A handoff that lists the old name of a renamed file — which `autoCommitCode()` accepts as valid — would produce a false-positive `handoff→diff` failure. Switching to `--name-status` and explicitly expanding rename lines to both paths resolves this symmetrically.
 
 ## Open Questions
 
@@ -59,18 +60,8 @@ A real harness gap surfaced during this run, worth tracking as a separate canon 
 
 ## Proposed Changelog
 
-This is a **minor** bump — a new validation gate is added to the code-review pre-flight with no breaking changes to existing workflow, templates, or `status.json` schema. Per decisions.md, minor bumps require human review before the changelog/version-bump commit lands.
+`CHANGELOG.md` already has a v0.1.0 entry that accurately covers this task:
 
-```markdown
-## [next] — 2026-05-07
+> **Added**: Post-commit handoff verification at code-review pre-flight: the pipeline now cross-checks the committed diff against every bundle member's handoff Changes table and rejects with a labelled bundle-level finding when they diverge — catching both hallucinated handoff entries and silent edits not mentioned in any handoff.
 
-### Added
-
-- Post-commit handoff verification at code-review pre-flight: the pipeline now
-  cross-checks the committed diff against every bundle member's handoff Changes
-  table and rejects with a labelled bundle-level finding when they diverge —
-  catching both hallucinated handoff entries and silent edits not mentioned in
-  any handoff.
-```
-
-**Proposed version bump**: minor (e.g., `0.x.0 → 0.(x+1).0`). Please review the changelog copy above and confirm before the version-bump commit lands.
+**No additional changelog edit or version bump needed.** v0.1.0 was cut after code_review passed (before QA completed). The rename-pair fix (Iteration 3) is part of the same feature and does not change the user-visible description. The v0.1.0 entry is the canonical record.

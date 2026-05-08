@@ -8,8 +8,8 @@
 
 | File | What Changed |
 |---|---|
-| `scripts/run-task.ts` | Added `HANDOFF_DIFF_EXEMPT_PATHS`, exported `verifyHandoffAgainstDiff()` plus the test seam `verifyHandoffAgainstDiffFromData()`, and extended the `code_review` pre-flight to run the bundle-wide diff check once per invocation and write bundle-level issues into each affected `review.md`. |
-| `tests/run-task-validation.test.ts` | Added direct tests for the new diff verifier through the injected-data seam: positive match, both mismatch directions, bundle union behavior, and empty-diff handling. |
+| `scripts/run-task.ts` | Added `HANDOFF_DIFF_EXEMPT_PATHS`, rename-aware `verifyHandoffAgainstDiff()`/`verifyHandoffAgainstDiffFromData()`, and extended the `code_review` pre-flight to run the bundle-wide diff check once per invocation and write bundle-level issues into each affected `review.md`. |
+| `tests/run-task-validation.test.ts` | Added direct tests for the new diff verifier through the injected-data seam: positive match, both mismatch directions, bundle union behavior, empty-diff handling, and rename preimage / rename-pair coverage. |
 | `tasks/handoff-verifier/status.json` | Advanced the task state to `implement → done` once implementation and validation completed. |
 
 ## Intent & Rationale
@@ -17,6 +17,8 @@
 The new verifier closes the gap between the handoff Changes table and the actual post-commit diff. The implementation keeps `validateHandoff(taskId)` single-task for its existing caller, and adds a separate bundle-aware diff check at code-review preflight so bundle members are validated together without changing the old API.
 
 The exemption constant is intentionally empty in canon-ai's current flow. `autoCommitCode()` only stages files already listed in the handoff Changes tables, so there are no known orchestrator-managed paths that appear in the pre-review diff and need to be exempted.
+
+The diff side now reads `git diff --name-status -M` so rename preimage paths stay visible. That keeps a handoff entry for the old name valid when a file is renamed during implementation.
 
 ## Deviations from Plan
 
@@ -33,11 +35,11 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 | AC | Status | Notes |
 |---|---|---|
 | AC-1 | Met | `verifyHandoffAgainstDiff(taskIds, baseRef)` returns `string[]`; the runtime API stays exact and delegates to the injected-data seam internally. |
-| AC-2 | Met | Each task’s handoff files are parsed with `parseHandoffFiles(taskId)` and checked against `git diff <baseRef>...HEAD --name-only -M`. Missing files emit `[task-id] handoff→diff` issues. |
-| AC-3 | Met | Diff files are compared against the bundle-wide union of handoff files; any non-exempt file missing from the union emits `diff→handoff` issues. |
+| AC-2 | Met | Each task’s handoff files are parsed with `parseHandoffFiles(taskId)` and checked against `git diff <baseRef>...HEAD --name-status -M`. Rename preimage paths are preserved in the diff path set, and missing files emit `[task-id] handoff→diff` issues. |
+| AC-3 | Met | Diff entries are compared against the bundle-wide union of handoff files; any non-exempt file or rename pair missing from the union emits `diff→handoff` issues, while a file listed in any bundle member’s handoff is not flagged. |
 | AC-4 | Met | `runPhase('code_review')` runs the bundle-wide verifier once after the per-task `validateHandoff()` loop, merges bundle issues into each affected task’s preflight entry, and routes back through the existing changes-requested path. |
 | AC-5 | Met | `HANDOFF_DIFF_EXEMPT_PATHS` is the single source of truth and currently empty. `autoCommitArtifacts()` paths are not part of the pre-code-review diff, and `handoff.md` is read from disk rather than from the diff. |
-| AC-6 | Met | Added five synthetic test rows covering positive, both mismatch directions, bundle union behavior, and empty diff/handoff behavior. |
+| AC-6 | Met | Added seven synthetic test rows covering positive, both mismatch directions, bundle union behavior, empty diff/handoff behavior, and both rename directions. |
 | AC-7 | Met | `validateHandoff(taskId)` is unchanged and still serves the existing callers. |
 | AC-8 | Met | Bundle failures render under a distinct `Bundle-Level Handoff Verification` section in `review.md`, and the emitted issue strings include the direction markers. |
 
@@ -45,7 +47,7 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 - Empty diff and empty handoff pass cleanly.
 - Files listed in one bundle member’s handoff are not flagged just because a sibling task doesn’t list them.
-- Renames stay visible because the diff uses `-M`.
+- Rename preimage paths stay visible because the diff uses `--name-status -M`, and a rename with either side in handoff is treated as covered.
 - `getActiveCwd(taskIds)` is used for the diff command so worktree runs inspect the correct checkout.
 - A `git diff` failure returns a single issue string instead of throwing.
 
@@ -88,6 +90,25 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 |---|---|---|
 | `npm run type-check` | Pass | Re-ran cleanly on the current worktree state. |
 | `npm test` | Pass | Re-ran cleanly; the diff-verifier rows still pass. |
+
+## Iteration 3 — addressing review round 3
+
+### Findings addressed
+
+- _correctness bug:_ rename pairs were treated as flat paths, so a handoff that listed a file's preimage name could still be rejected even though `autoCommitCode()` already accepts that rename as covered. `verifyHandoffAgainstDiff()` now reads `git diff --name-status -M`, expands rename entries into both paths, and treats the pair as covered when either side is in the bundle handoff.
+- _test seam:_ `verifyHandoffAgainstDiffFromData()` now takes raw diff name-status lines so tests can express rename pairs directly instead of flattening them into single paths.
+
+### AC deltas (if any)
+
+- AC-2 / AC-3: now verified against rename-aware diff entries instead of flat path-only output.
+- AC-6: now includes rename-positive and rename-negative synthetic rows.
+
+### Re-run validation (only checks that re-ran)
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run type-check` | Pass | Re-ran cleanly after the rename-pair fix. |
+| `npm test` | Pass | Re-ran cleanly; all 65 tests pass, including the rename rows. |
 
 ---
 
