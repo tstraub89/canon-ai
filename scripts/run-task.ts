@@ -3248,6 +3248,37 @@ function assertTaskBranchPushed(taskId: string): void {
 }
 
 /**
+ * Verify origin/task/<id> no longer exists at the point we're about to ship. A
+ * successful PR merge (via gh pr merge --delete-branch) removes the remote ref,
+ * so its absence is the post-condition we expect when shipping. Presence here —
+ * combined with mergeOpenPRsAndPull() returning false — means either:
+ *   - The remote branch has commits that were never PR'd (someone pushed to it
+ *     directly from another checkout without opening a PR), so its work is not
+ *     in any base-branch merge.
+ *   - A prior merge succeeded but `--delete-branch` failed to drop the remote
+ *     ref (rare — surface this so the operator can clean up manually rather
+ *     than have the safety check pass spuriously next time).
+ * Either way, shipping silently would orphan the remote commits.
+ */
+function assertOriginTaskBranchAbsent(taskId: string): void {
+    const branchName = `task/${taskId}`;
+    // Refresh first so we don't trip on a stale remote-tracking ref.
+    gitSafe('fetch', '--prune', 'origin', branchName);
+    const remoteRef = gitSafe('rev-parse', '--verify', `origin/${branchName}`);
+    if (!remoteRef.ok) return; // Branch absent on origin — expected.
+
+    const remoteSha = remoteRef.stdout.trim();
+    die(
+        `--ship aborted: origin/${branchName} still exists at ${remoteSha.slice(0, 7)} but no PR was merged this run.\n` +
+        `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
+        `  failed to delete it. Shipping silently would orphan the remote work.\n` +
+        `  Resolve manually:\n` +
+        `    - If unmerged work: open + merge a PR (gh pr create --base <base> --head ${branchName} ...).\n` +
+        `    - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`,
+    );
+}
+
+/**
  * Verify there is no open PR for the task's branch. Called after mergeOpenPRsAndPull
  * returned false (no PR was merged this run) — a defensive cross-check against gh
  * transient issues that might have caused findOpenPRNumber to return null spuriously.
@@ -3436,14 +3467,24 @@ function shipTasks(taskIds: string[]): void {
     const merged = mergeOpenPRsAndPull(taskIds);
     if (!merged) {
         // No PR was merged this run. That can mean either (a) PR was merged earlier
-        // and remote branch already cleaned up, or (b) findOpenPRNumber missed an
-        // open PR (gh transient issue, or PR state quirk). For (b), proceeding
-        // would destroy local task branches whose work is only in the open PR —
-        // the user's path forward gets harder if we silently archive without the
-        // PR being merged. Independent verification here prevents that class of
-        // silent failure surfaced 2026-05-07.
+        // and the remote branch was already cleaned up by `--delete-branch` on the
+        // prior merge, or (b) findOpenPRNumber missed an open PR (gh transient,
+        // PR state quirk), or (c) the remote task branch exists with commits that
+        // were never PR'd at all (someone pushed to it directly from another
+        // checkout). For (b) and (c), proceeding silently archives the task while
+        // its work is unmerged — destroying any local artifact path back to those
+        // commits and leaving the base branch missing the task's content.
+        // Independent verification here prevents that class of silent failure.
         assertLocalBaseInSyncWithOrigin(taskIds);
         for (const taskId of taskIds) assertNoOpenPRForTask(taskId);
+        // After mergeOpenPRsAndPull(), a successful merge would have invoked
+        // --delete-branch and removed origin/task/<id>. If that branch still exists
+        // here, no merge ever happened for it — abort. The earlier
+        // assertTaskBranchPushed() (count-of-local-commits-ahead-of-origin) misses
+        // this case because origin can be AHEAD of local and have unmerged commits
+        // that are only on the remote, never in the base. Caught via codex review
+        // of fb76257.
+        for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskId);
     }
 
     // Post-merge: project-specific hook (default no-op; edit runPostMergeHook).
