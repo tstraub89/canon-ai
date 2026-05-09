@@ -54,6 +54,18 @@ Programmatic auto-commit functions that rely on `git status --porcelain` for the
 
 `--ship` ends by tearing down the worktree and deleting the local task branch — anything not on origin at that point is unreachable afterward. Don't trust the merge step alone to handle this; if the merge step misses an open PR for any reason (gh transient hiccup, draft state, query parsing quirk), the destruction still runs and unpushed local commits become dangling. Always pre-flight: for each `task/<id>` branch that exists locally, verify `local HEAD == origin HEAD`. If diverged, abort with a clear "push first, then re-run" message. Cross-check separately that no open PR exists for the branch when the merge step returned nothing. Canonical example: `assertTaskBranchPushed()` and `assertNoOpenPRForTask()` in `scripts/run-task.ts`, called at the top of `shipTasks()`. Surfaced via canon-on-canon dogfood — iteration 3's commits were on local task branch only, never pushed, then `--ship` deleted them.
 
+### Refactor specs need numerical structural caps, not just behavioral goals
+
+*(2026-05-09, source: split-run-task, in-flight observation)*
+
+When a refactor spec targets smaller-tier models (mini-Codex etc.), behavioral goals like "`main.ts` is the orchestration loop, the rest goes to modules" are not enough — smaller models can do every individual extraction correctly while losing the *global invariant* across a long task. The failure mode is structural, not reasoning: the model understands the goal, but can't simultaneously hold "the duplicates have to *die*" and "extract these 80 functions to their new homes" across many turns of a 4500-line refactor. The result: new module files materialize correctly but the original file gets cloned alongside them, leaving two parallel implementations and the orchestration code calling the duplicates rather than the imports.
+
+Prescriptive fix: for refactors targeting any model where the task spans more than ~1000 LOC of mutation, the spec should include **numerical caps** (e.g., "`main.ts` must be ≤ 400 lines after the change"), **explicit allow-lists** for what stays in the gutted file ("only `main()`, the four switches, and top-level error handling — see file:line refs"), and **explicit deletion expectations** ("for every function listed in AC-2 as moving to a module, its original definition in `scripts/run-task.ts` MUST be removed; reviewer greps for its name in `main.ts` post-refactor and fails the AC if it appears"). This pairs with the existing CLAUDE.md "Name effects to DELETE, not just effects to add" rule but applies it at the *whole-file boundary* level, not the per-effect level.
+
+Diagnostic for next time: if a refactor reroutes on a "clone, not split" finding, the spec was under-prescriptive on structural invariants — not the model under-capable on reasoning. A spec patch with caps + allow-lists + deletion expectations is the recovery; bumping the model is the more expensive option that may not even be needed. Worth A/B'ing on the next big refactor if budget allows.
+
+Canonical example: `tasks/split-run-task/review.md` Round 1, Stage 1 Finding 1 — first iteration produced a `main.ts` of 4574 lines (larger than the 4545-line original) with ~80 duplicate utility functions. AC-2's "orchestration loop only" boundary was qualitative, not numerical, and Codex held the extraction discipline but not the deletion discipline. **Status: not yet generalized to a second task — promote to CLAUDE.md spec-writing rules of thumb after the next big refactor confirms the pattern.**
+
 ### Use `--name-status` not `--name-only` when building path sets from git diff
 
 *(2026-05-08, source: handoff-verifier)*
