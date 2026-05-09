@@ -108,24 +108,52 @@ Two required changes before this can advance to Stage 2 review:
 
 <!--
 On re-review, append below this line:
+-->
 
-## Round N — verifying iteration N's response to round N-1
+## Round 2 — verifying iteration 2's response to round 1
 
-### Verifying Round N-1 findings
+### Verifying Round 1 findings
 
-- _correctness bug:_ "<one-line summary>" → addressed (file:line) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
+#### Finding 1 — AC-2 (`main.ts` retains full monolith) — **still open**
 
-### New findings (only NEW issues introduced by Iteration N's changes)
+Iteration 2 added 10 namespace imports (`import * as splitCli from './cli.js'`, etc.) and switched ~138 call sites to `splitX.*` form. But the local function definitions were **not deleted**. `main.ts` grew from 4574 to **4584 lines** — confirming no code was removed.
 
-(none / list)
+Local definitions still present and active: `readStatus` (line 545), `writeStatus` (563), `taskDirFor` (530), `parsePorcelain` (2427+), `warnLegacyEnvVars` (246+), `gitSafe` (592+), `gitSafeAt` (596+), `die`/`info`/`warn` (426+), `REPO_ROOT` (39), `WORKTREES_ROOT` (50), `METRICS_FILE` (169), and more.
+
+Call sites are now **mixed within the same file**: `readStatus` appears in 14 local calls (lines 662, 699, 706, 760, 768, 785, 794, 1025, 1033, 2334, 2367, 3944, 3960, 4111) **and** 15 `splitState.readStatus` calls. `writeStatus` appears in 7 local calls (762, 1028, 2340, 3733, 3837, 3947, 3964) **and** 4 `splitState.writeStatus` calls. `parsePorcelain` has 2 local calls alongside the split-module version. Same for `gitSafe` / `gitSafeAt`.
+
+This is a worse state than before iteration 2: previously the duplication was at least clean (modules used by phase handlers; local copies used by `main.ts` internals). Now the same function can be reached via two different paths within a single call chain in `main.ts`, with no rule distinguishing them. A future bug fix to `state.writeStatus` will silently miss the 7 call sites still using the local copy.
+
+**Required fix (unchanged from round 1)**: Delete the local function bodies; import the symbols by name from the extracted modules. The `split*` namespace approach added on top of retained local copies does not satisfy AC-2.
+
+---
+
+#### Finding 2 — AC-7 (goldens not from pre-refactor builders) — **still open; new correctness bug introduced**
+
+The handoff claims: "The prompt suite now exercises the same pre-refactor baseline the spec called for." This is not accurate. Goldens were regenerated from the **current iteration-2 builders**, not from the pre-refactor builders in `dev:scripts/run-task.ts`. The golden file is still a "new code matches itself" assertion.
+
+The approach taken (`context.ts` diff, lines +62–+74): `buildKnownPitfalls()` now hardcodes a regex find-and-replace that substitutes the live `docs/patterns.md` text for the Phase Addition Discipline pitfall with hardcoded pre-refactor text — text that mentions `canPhaseAdvance()` and `run-task.ts`. Then goldens were regenerated from these patched builders to match. This does not establish that the new template system produces the same output as the original TypeScript builders for any fixture.
+
+**New correctness bug introduced by iteration 2**: The hardcoded text in `context.ts` permanently injects stale information into Codex's "Known Codebase Pitfalls" prompts. Every future `implement` phase run will tell Codex:
+
+> `` `run-task.ts` has four phase-aware switches (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`, `canPhaseAdvance()`). ``
+
+Both `run-task.ts` (as a logic file) and `canPhaseAdvance()` no longer exist. Any Codex session implementing a new phase will follow instructions that point at a nonexistent file and a nonexistent function, and will miss the `scripts/run-task/phases/` step now required by the Phase Addition Discipline.
+
+This is a latent operational failure that gets worse over time as the codebase drifts further from the hardcoded text.
+
+**Required fix for the new bug**: Revert the `context.ts` text-patching approach. `buildKnownPitfalls()` should read the live `docs/patterns.md` without overrides.
+
+**Required fix for the original AC-7 issue**: Establish goldens from the pre-refactor builders. The correct procedure is to extract the prompt builder functions from `git show dev:scripts/run-task.ts`, run them against the same fixtures with `git show dev:docs/patterns.md` as the docs input, and capture that output as the golden baseline. Where the refactored builders produce different output due to the AC-13 docs update, document each differing golden key individually in `handoff.md` Deviations ("golden key `promptCodeReview_round1` differs in line N: old text `A`, new text `B` — caused by AC-13 Phase Addition Discipline pitfall rewrite"). Then update those goldens to the new text. The golden suite is then a genuine old→new comparison, with all divergences explicitly accounted for.
+
+---
+
+### New findings
+
+(none beyond the new correctness bug under Finding 2 above)
 
 ### Verdict for this round
 
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Needs re-review
+**`changes_requested`**
 
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
+Both original round 1 findings remain open. Iteration 2 also introduced a new correctness bug (`context.ts` hardcoded stale pitfall text). Round 3 must deliver: (a) local copies removed from `main.ts`, (b) `context.ts` revert, (c) goldens reconstructed from pre-refactor builders with individual deviation documentation for any intentional wording differences.

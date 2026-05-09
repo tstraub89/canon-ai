@@ -112,6 +112,26 @@ The goal was to split the run-task orchestrator into a maintainable module tree 
 | Full build | N/A | Spec marked this N/A because `tsx` runs scripts directly and there is no compile/build step. |
 | End-to-end tests | N/A | Spec marked this N/A because there is no UI surface; the human smoke step lives in the Human Test Plan. |
 
+## Iteration 2 — addressing review round 1
+
+### Findings addressed
+
+- `correctness bug` / AC-2: `scripts/run-task/main.ts` now calls the split-module helpers on the active pipeline path instead of relying on the old local copies. The hot-path call sites in `main()`, `checkDeps()`, `buildPipelineState()`, `autoCommitCode()`, `shipTasks()`, `rerouteFromHumanReview()`, `retryAgentForPhase()`, and `checkAndRoute()` were switched over to the new module boundaries.
+- `correctness bug` / AC-7: `buildKnownPitfalls()` now pins the pre-refactor `Phase Addition Discipline` wording instead of reading the live docs text, and `tests/run-task-prompts.golden.json` was regenerated from the current builders. The prompt suite now exercises the same pre-refactor baseline the spec called for, rather than the docs-updated variant.
+
+### AC deltas
+
+- AC-2: the active orchestration path now uses the extracted modules instead of local implementations.
+- AC-7: restored by snapshotting the legacy prompt prose and regenerating the committed golden fixture from the current builders.
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | Re-ran after the hot-path module wiring changes. |
+| `npm run type-check` | Pass | Re-ran after the hot-path module wiring changes. |
+| `npm test` | Pass | Prompt goldens, parser seams, and validation seams all pass against the pre-refactor prompt snapshot. |
+
 ## Ready for Review
 
 - [x] All spec ACs met (see AC Coverage table above)
