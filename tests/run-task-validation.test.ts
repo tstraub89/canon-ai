@@ -6,7 +6,7 @@ import path from 'node:path';
 import {
     validateHandoffAgainstSpec,
     verifyHandoffAgainstDiffFromData,
-} from '../scripts/run-task.ts';
+} from '../scripts/run-task/validation.js';
 
 function withTempPair(
     specContent: string,

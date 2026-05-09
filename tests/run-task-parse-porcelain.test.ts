@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-    parsePorcelain,
     findStagedFilesOutsideHandoff,
     findUncoveredTrackedChanges,
     isDoneMdTemplate,
     extractDoneMdFromStdout,
-    PIPELINE_TELEMETRY_FILES,
-} from '../scripts/run-task';
+} from '../scripts/run-task/validation.js';
+import { parsePorcelain } from '../scripts/run-task/git.js';
+import { PIPELINE_TELEMETRY_FILES } from '../scripts/run-task/worktree.js';
 
 void test('parsePorcelain expands new directories when fed -uall output', () => {
     // `git status --porcelain -uall` emits one line per untracked file.

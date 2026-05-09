@@ -1,0 +1,97 @@
+import { info, warn } from '../cli.js';
+import { getCodexConfig, getMaxReviewLoops, isPlanCombined } from '../policy.js';
+import { runCodex } from '../agents/codex.js';
+import { runTaskShFor } from '../task-sh.js';
+import { readStatus, writeStatus } from '../state.js';
+import type { PipelineState, PhaseRunResult } from '../types.js';
+import { promptSpecReview } from '../prompts/index.js';
+
+function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const taskId of taskIds) {
+        const status = readStatus(taskId);
+        const phaseEntry = status.phases.spec_review;
+        if (phaseEntry) phaseEntry.status = 'blocked';
+        status.escalations = status.escalations ?? [];
+        status.escalations.push({ date: today, phase: 'spec_review', iteration_count: iterationCount, reason });
+        status.updated = today;
+        writeStatus(taskId, status);
+    }
+}
+
+export async function runSpecReviewPhase(
+    state: PipelineState,
+    interactive: boolean,
+    resumeId: string | null,
+): Promise<PhaseRunResult> {
+    const { tasks } = state;
+    const taskIds = tasks.map(t => t.taskId);
+
+    if (state.tier === 'fast') {
+        const anyGateOn = tasks.some(t => t.status.human_spec_gate);
+        if (anyGateOn) {
+            for (const t of tasks) {
+                if (t.status.human_spec_gate) {
+                    t.status.human_spec_gate = false;
+                    writeStatus(t.taskId, t.status);
+                }
+            }
+            const specList = taskIds.map(id => `  tasks/${id}/spec.md`).join('\n');
+            const planList = taskIds.map(id => `  tasks/${id}/plan.md`).join('\n');
+            console.log('');
+            console.log('════════════════════════════════════════════════════════');
+            console.log(`  ✋  SPEC GATE — Review before Codex implements.`);
+            console.log('');
+            console.log('  Specs:');
+            console.log(specList);
+            console.log('  Plans:');
+            console.log(planList);
+            console.log('');
+            console.log(`  When ready: npx tsx scripts/run-task.ts ${taskIds.join(' ')}`);
+            console.log('════════════════════════════════════════════════════════');
+            console.log('');
+            process.exit(0);
+        }
+        info('Fast tier: auto-advancing spec_review and plan (written during spec phase).');
+        for (const t of tasks) {
+            runTaskShFor(t.taskId, 'phase', t.taskId, 'spec_review', 'done', 'approved');
+            if (isPlanCombined(t.status)) {
+                runTaskShFor(t.taskId, 'phase', t.taskId, 'plan', 'done');
+            }
+        }
+        return null;
+    }
+
+    const maxSpecIter = tasks.reduce(
+        (max, t) => Math.max(max, t.status.phases.spec_review?.iterations ?? 0),
+        0,
+    );
+    const specReviewLoopCap = getMaxReviewLoops(tasks);
+    if (maxSpecIter >= specReviewLoopCap) {
+        const reason =
+            `Spec review hit ${maxSpecIter} changes_requested iterations in a row ` +
+            `(limit: ${specReviewLoopCap}). Pipeline auto-blocked. A repeated ` +
+            `pushback usually means the spec has a structural or scope issue that ` +
+            `another mechanical revision won't fix — read the latest spec-review.md ` +
+            `and decide whether to revise scope, split the task, or defer. To resume ` +
+            `after fixing: set phases.spec_review.status = "pending" and ` +
+            `phases.spec_review.iterations = 0 in status.json, then re-run the pipeline.`;
+        warn(reason);
+        autoBlockSpecReview(taskIds, maxSpecIter, reason);
+        process.exit(2);
+    }
+
+    info(`Phase: spec_review (Codex reviews spec${state.isBundle ? 's' : ''})`);
+    for (const t of tasks) runTaskShFor(t.taskId, 'phase', t.taskId, 'spec_review', 'in_progress');
+    const isReReview = resumeId !== null;
+    const specReviewPrompt = isReReview
+        ? `The spec${state.isBundle ? 's have' : ' has'} been revised since your last review. Re-read the current spec.md ${state.isBundle ? 'files' : 'file'} from disk and produce a completely fresh review — do not replay or summarise your previous output.\n\n${promptSpecReview(state)}`
+        : promptSpecReview(state);
+    const cfg = getCodexConfig('spec_review', tasks);
+    const result = await runCodex(specReviewPrompt, interactive, resumeId, cfg.model, cfg.effort, {
+        taskId: taskIds.join('+'),
+        phase: 'spec_review',
+        iteration: maxSpecIter,
+    });
+    return { agent: 'codex', sessionId: result.sessionId, exitCode: result.exitCode };
+}
