@@ -50,7 +50,7 @@ Anything that would change if you migrated to a different framework belongs here
         │ npx tsx scripts/run-task.ts <id>
         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Orchestrator (scripts/run-task.ts)                           │
+│  Orchestrator (scripts/run-task/main.ts via scripts/run-task.ts) │
 │   • Reads status.json → determines current phase              │
 │   • Resolves model/effort/loop-cap via pipeline-policy.ts     │
 │   • Spawns agent CLIs (claude / codex) with per-phase prompts │
@@ -107,7 +107,7 @@ Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json`
 
 ### File-based handoff (not in-memory)
 
-Agents do not pass data to each other through memory or stdout. Every handoff is a markdown file with a stable name (`spec.md`, `handoff.md`, `review.md`, etc.) and a documented schema (the `tasks/_templates/` versions). Codex parses `spec.md` headings; Claude parses `handoff.md`'s Changes table via regex (`parseHandoffFiles()` in `run-task.ts`). The orchestrator parses verdict lines.
+Agents do not pass data to each other through memory or stdout. Every handoff is a markdown file with a stable name (`spec.md`, `handoff.md`, `review.md`, etc.) and a documented schema (the `tasks/_templates/` versions). Codex parses `spec.md` headings; Claude parses `handoff.md`'s Changes table via regex (`parseHandoffFiles()` in `scripts/run-task/validation.ts`). The orchestrator parses verdict lines.
 
 This is deliberate. File-based handoff means:
 - Sessions can be resumed cold (re-running `run-task.ts` recovers full state).
@@ -135,9 +135,9 @@ When `worktree: true`, the orchestrator creates a git worktree for the task. The
 | Type checking | `npm run type-check` (= `tsc -p tsconfig.json --noEmit`) |
 | Unit tests | `npm test` (= `node --test --import tsx tests/**/*.test.ts`) |
 | Full build | N/A — `tsx` runs scripts directly. There is no compile/build step. |
-| End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `run-task.ts`. |
+| End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `scripts/run-task/git.ts` and `scripts/run-task/validation.ts`. |
 | Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
-| Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `tasks/_templates/status.json`, update parsers in `run-task.ts`, and add a row to `tests/run-task-validation.test.ts`. |
+| Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `tasks/_templates/status.json`, update parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
 | Cross-platform | Node 22.x and 24.x are the supported versions (declared in `package.json` `engines`). Tests are run on whichever is on the developer's machine; future CI should run on both. |
 
 **Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.

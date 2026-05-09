@@ -17,10 +17,10 @@ This is the project's hard-won implementation knowledge. It has two main section
 
 | Area touched | Section in this file | Key files |
 |---|---|---|
-| Adding/changing a pipeline phase | Phase Addition Discipline | `scripts/run-task.ts` (4 switch statements), `scripts/pipeline-policy.ts`, `scripts/task.sh`, `tasks/_templates/status.json` |
+| Adding/changing a pipeline phase | Phase Addition Discipline | `scripts/run-task/main.ts`, `scripts/pipeline-policy.ts`, `scripts/task.sh`, `tasks/_templates/status.json` |
 | Modifying `pipeline-policy.ts` | Pure Policy + Test Discipline | `scripts/pipeline-policy.ts`, `tests/pipeline-policy.test.ts` |
-| Modifying `status.json` shape | State Schema Discipline | `tasks/_templates/status.json`, parsers in `scripts/run-task.ts`, `scripts/task.sh` `cmd_phase()` |
-| Adding/modifying a validation gate | Validation Gate Discipline | `scripts/run-task.ts` (`validateHandoff()`, `autoCommitCode()`), `tests/run-task-validation.test.ts` |
+| Modifying `status.json` shape | State Schema Discipline | `tasks/_templates/status.json`, parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts`, `scripts/task.sh` `cmd_phase()` |
+| Adding/modifying a validation gate | Validation Gate Discipline | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts`, `scripts/run-task/main.ts`, `tests/run-task-validation.test.ts` |
 | Lint / TS suppression / `any` | Lint & Type Safety Policy | (rule, no canonical file) |
 
 ## Patterns
@@ -32,23 +32,22 @@ This is the project's hard-won implementation knowledge. It has two main section
 **When to apply**: Any change that touches tier detection, sizing, model/effort matrices, or loop-cap defaults.
 
 **The pattern**:
-- `pipeline-policy.ts` is **side-effect-free**. No I/O, no env reads, no filesystem. Inputs are passed; outputs are returned. Env-var resolution lives in `run-task.ts`; the module receives a fully resolved `PolicyConfig`.
+- `pipeline-policy.ts` is **side-effect-free**. No I/O, no env reads, no filesystem. Inputs are passed; outputs are returned. Env-var resolution lives in `scripts/run-task/env.ts`; the module receives a fully resolved `PolicyConfig`.
 - Decisions are **table-driven**. Matrices keyed off `TaskSize` × `Phase`. Adding a new branch means adding a table cell, not chaining `if`s.
 - **Every routing decision has a corresponding test row** in `pipeline-policy.test.ts`. A change to `pipeline-policy.ts` without a corresponding test update is a Stage 1 review failure — the table-driven structure exists *so* tests can cover every cell, and skipping the test means coverage drift.
 
-**Anti-pattern**: writing routing logic directly in `run-task.ts` (`if (size === 'XL' || delicate) ...`). Routing drift was the original motivation for extracting this module — don't reintroduce it.
+**Anti-pattern**: writing routing logic directly in `scripts/run-task/main.ts` (`if (size === 'XL' || delicate) ...`). Routing drift was the original motivation for extracting this module — don't reintroduce it.
 
 ### Phase Addition Discipline
 
-**Files**: `scripts/run-task.ts`, `scripts/pipeline-policy.ts`, `scripts/task.sh`, `tasks/_templates/status.json`
+**Files**: `scripts/run-task/main.ts`, `scripts/run-task/phases/*.ts`, `scripts/pipeline-policy.ts`, `scripts/task.sh`, `tasks/_templates/status.json`
 
 **When to apply**: Anytime a new phase is added to the pipeline (e.g., a new validation gate that warrants its own phase rather than being a sub-step within an existing one).
 
-**The pattern**: Adding a phase touches **all four** of `run-task.ts`'s phase-aware switch statements:
+**The pattern**: Adding a phase touches the orchestrator's phase-aware switches in `scripts/run-task/main.ts`:
 1. `PHASE_ORDER` constant (defines the linear sequence)
 2. `runPhase()` switch (dispatches to the agent invocation)
 3. `checkAndRoute()` switch (decides what happens after the phase completes)
-4. `canPhaseAdvance()` switch (validates phase-order transitions)
 
 Plus:
 5. `scripts/task.sh` `cmd_phase()` validation list (so the helper accepts the new phase name)
@@ -56,17 +55,17 @@ Plus:
 7. If the phase has model/effort needs distinct from existing phases: add it to the matrices in `pipeline-policy.ts` and `tests/pipeline-policy.test.ts`
 8. Document in `AGENTS.md` (handoff sequence + workflow diagram) and any agent-specific implications in `CLAUDE.md` / `CODEX.md`
 
-**Anti-pattern**: updating only one or two of the switch statements. Missing one produces silent skipping (the orchestrator routes past the phase without running it) or infinite loops (`canPhaseAdvance` rejects but `runPhase` keeps trying).
+**Anti-pattern**: updating only one or two of the switch statements. Missing one produces silent skipping (the orchestrator routes past the phase without running it) or inconsistent routing state.
 
 ### State Schema Discipline
 
-**Files**: `tasks/_templates/status.json`, parsers in `scripts/run-task.ts`, `scripts/task.sh` `cmd_phase()`
+**Files**: `tasks/_templates/status.json`, parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts`, `scripts/task.sh` `cmd_phase()`
 
 **When to apply**: Adding a new field to `status.json`, renaming an existing field, or changing the type/shape of a field.
 
 **The pattern**: A status.json change must update three locations atomically:
 1. `tasks/_templates/status.json` — the schema source of truth (and what new tasks are scaffolded from)
-2. Parsers in `scripts/run-task.ts` — anything that reads or writes the field. The orchestrator and `parseStatus()`-style helpers both need updates.
+2. Parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts` — anything that reads or writes the field. The orchestrator and `parseStatus()`-style helpers both need updates.
 3. `scripts/task.sh` `cmd_phase()` — if the field affects phase transitions, the helper needs to know about it.
 
 For breaking changes (renames, type changes), also: add a migration shim that detects the old shape and either fails loudly or transforms it. Tasks may be in flight when the change lands.
@@ -75,12 +74,12 @@ For breaking changes (renames, type changes), also: add a migration shim that de
 
 ### Validation Gate Discipline
 
-**Files**: `scripts/run-task.ts` (`validateHandoff()`, `autoCommitCode()`, `verifyHandoffAgainstDiff()`), `tests/run-task-validation.test.ts`
+**Files**: `scripts/run-task/validation.ts`, `scripts/run-task/git.ts`, `scripts/run-task/main.ts`, `tests/run-task-validation.test.ts`
 
 **When to apply**: Adding a new pre-flight check at a phase boundary (e.g., "the handoff Changes table must match the post-commit `git diff`").
 
 **The pattern**:
-- **Per-task checks**: extend `validateHandoff()` (returns a list of issue strings; non-empty = gate fail) or join the `autoCommitCode()` cross-checks. Both are well-tested entry points.
+- **Per-task checks**: extend `validateHandoff()` (returns a list of issue strings; non-empty = gate fail) or join the `autoCommitCode()` cross-checks. Both are well-tested entry points in `scripts/run-task/validation.ts` and `scripts/run-task/main.ts`.
 - **Bundle-wide checks**: add a sibling function at the same call site (after the per-task loop in the `code_review` pre-flight block). `verifyHandoffAgainstDiff()` is the canonical example — it takes `taskIds: string[]` so it can compute a union across bundle members. Expose a `*FromData` test seam so tests don't need a real git repo.
 - **Tests are mandatory.** Any new validation rule needs a positive case (passing handoff) and a negative case (failing handoff) in `run-task-validation.test.ts`. Edge cases (empty tables, malformed markdown) need explicit test rows.
 - **Failure modes are documented.** A gate that fails should write a clear rejection message to `review.md` (or equivalent) explaining what to fix. Vague failures waste review iterations.
@@ -103,7 +102,7 @@ Suppressing lint or type errors is a last resort, not a convenience escape hatch
 
 ### Adding a phase that updates only some switch statements is a silent-skip footgun.
 
-`run-task.ts` has four phase-aware switches (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`, `canPhaseAdvance()`). All four must gain a case for the new phase. Missing `runPhase()` → the phase appears in order but nothing runs. Missing `checkAndRoute()` → the orchestrator can't decide what comes next. Missing `canPhaseAdvance()` → the helper rejects the transition while the orchestrator keeps trying. **The failure modes are subtle** — the pipeline may appear to make progress while silently skipping the new phase. Use the Phase Addition Discipline checklist above; reviewers should grep for the phase name across all four switches before approving.
+`scripts/run-task/main.ts` has the phase-aware switches (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`). All of them must gain a case for the new phase. Missing `runPhase()` → the phase appears in order but nothing runs. Missing `checkAndRoute()` → the orchestrator can't decide what comes next. **The failure modes are subtle** — the pipeline may appear to make progress while silently skipping the new phase. Use the Phase Addition Discipline checklist above; reviewers should grep for the phase name across the switches in `main.ts` before approving.
 
 ### Modifying `pipeline-policy.ts` without a matching test row is silent coverage drift.
 
@@ -136,10 +135,10 @@ Failure mode if violated: a `git merge` produces conflicts on every descriptive 
 
 | I want to... | Section above | Start at |
 |---|---|---|
-| Add a new pipeline phase | Phase Addition Discipline | `scripts/run-task.ts` `PHASE_ORDER` |
+| Add a new pipeline phase | Phase Addition Discipline | `scripts/run-task/main.ts` `PHASE_ORDER` |
 | Change which model a phase uses | Pure Policy + Test Discipline | `scripts/pipeline-policy.ts` |
-| Add a new per-task validation check at code_review entry | Validation Gate Discipline | `scripts/run-task.ts` `validateHandoff()` |
-| Add a new bundle-wide validation check at code_review entry | Validation Gate Discipline | `scripts/run-task.ts` `verifyHandoffAgainstDiff()` (canonical sibling example) |
+| Add a new per-task validation check at code_review entry | Validation Gate Discipline | `scripts/run-task/validation.ts` `validateHandoff()` |
+| Add a new bundle-wide validation check at code_review entry | Validation Gate Discipline | `scripts/run-task/validation.ts` `verifyHandoffAgainstDiff()` (canonical sibling example) |
 | Add a new field to status.json | State Schema Discipline | `tasks/_templates/status.json` |
 | Update phase status from a script | (see CLAUDE.md Quick Refs) | `./scripts/task.sh phase` |
 | Run multiple related tasks together | (see CLAUDE.md Quick Refs — bundle mode) | `npx tsx scripts/run-task.ts a b c` |

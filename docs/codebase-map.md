@@ -29,13 +29,22 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 
 | What | Where | Notes |
 |---|---|---|
-| Orchestrator (phases, agent invocation, auto-commit, reroute) | `scripts/run-task.ts` | ~5K lines; the load-bearing file |
+| Orchestrator entrypoint | `scripts/run-task.ts` | Thin wrapper that invokes `scripts/run-task/main.ts` |
+| Orchestrator loop, phase dispatch, auto-commit, reroute | `scripts/run-task/main.ts` | Core control flow and phase-aware switches |
+| Per-phase handlers | `scripts/run-task/phases/*.ts` | One file per phase (`spec`, `spec_review`, `plan`, `implement`, `code_review`, `qa`) |
+| Agent runners | `scripts/run-task/agents/*.ts` | Shared subprocess wrappers for Claude and Codex |
+| Prompt builders and templates | `scripts/run-task/prompts/index.ts`, `scripts/run-task/prompts/templates/*.md` | Data prep + Mustache rendering |
+| CLI parsing and logging | `scripts/run-task/cli.ts` | Args, usage, `die` / `info` / `warn` |
+| State I/O and session storage | `scripts/run-task/state.ts` | `status.json`, derived status, task/worktree path helpers |
+| Git plumbing and porcelain parsing | `scripts/run-task/git.ts` | Branch helpers, commits, porcelain parsers |
+| Worktree management and telemetry sync | `scripts/run-task/worktree.ts` | Worktree lifecycle plus pipeline telemetry files |
+| Validation gates and diff checks | `scripts/run-task/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `scripts/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
 | Task management helper (status.json updates, phase transitions) | `scripts/task.sh` | jq-driven; agents and humans both use it |
-| Phase routing logic (phase order, transitions) | `scripts/run-task.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
-| Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task.ts` (`autoCommitCode()`) | |
-| Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task.ts` (`validateHandoff()`) | |
-| Handoff Changes-table parser | `scripts/run-task.ts` (`parseHandoffFiles()`) | Regex-based; extracts backtick-wrapped paths |
+| Phase routing logic (phase order, transitions) | `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
+| Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task/main.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts` | |
+| Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task/validation.ts` | |
+| Handoff Changes-table parser | `scripts/run-task/validation.ts` | Regex-based; extracts backtick-wrapped paths |
 
 ## Task Lifecycle Artifacts
 
@@ -66,7 +75,7 @@ These must stay current — agents read them at session start (per phase rules i
 | Pipeline mechanics reference | `docs/pipeline-orchestrator.md` | Flags, env vars, model matrix, reroute, auto-block |
 | Distilled lessons across tasks | `docs/lessons-learned.md` | Promoted from per-task notes during QA |
 | Pipeline health log | `docs/task-quality-log.md` | Spec review outcomes, dropped ACs, failure phases |
-| Per-invocation telemetry | `docs/pipeline-invocations.md` | Auto-appended by `run-task.ts` (duration + tokens) |
+| Per-invocation telemetry | `docs/pipeline-invocations.md` | Auto-appended by `scripts/run-task/metrics.ts` (duration + tokens) |
 
 ## Tests
 
@@ -103,10 +112,10 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > Common changes that touch multiple files. Use as starting checklists, not exhaustive.
 
 **Add a new pipeline phase**:
-> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task.ts` (`PHASE_ORDER`, `runPhase()` switch, `checkAndRoute()` switch, `canPhaseAdvance()` switch) → `scripts/task.sh` (`cmd_phase()` validation) → `tasks/_templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
+> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `scripts/task.sh` (`cmd_phase()` validation) → `tasks/_templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
 
 **Add a new validation check (handoff or pre-flight gate)**:
-> `scripts/run-task.ts` (`validateHandoff()` or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `tasks/_templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)
+> `scripts/run-task/validation.ts` (or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `tasks/_templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)
 
 **Change pipeline tier or sizing rules**:
 > `scripts/pipeline-policy.ts` (the matrix) → `tests/pipeline-policy.test.ts` → `AGENTS.md` (Pipeline Tiers section) → `docs/pipeline-orchestrator.md` (model/effort matrix)
@@ -115,7 +124,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `scripts/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
 
 **Add a new task-template field or section**:
-> `tasks/_templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` / `CODEX.md` (authorship rules)
+> `tasks/_templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` / `CODEX.md` (authorship rules)
 
 **Promote a lesson into canon**:
 > `tasks/<id>/notes.md` (raw) → `docs/lessons-learned.md` (distilled, during QA) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule

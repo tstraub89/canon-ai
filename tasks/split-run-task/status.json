@@ -1,10 +1,10 @@
 {
   "id": "split-run-task",
   "title": "Split run-task.ts monolith into modules",
-  "status": "implement",
+  "status": "code_review",
   "created": "2026-05-08",
-  "updated": "2026-05-08",
-  "branch": "",
+  "updated": "2026-05-09",
+  "branch": "task/split-run-task",
   "base_branch": "dev",
   "task_size": "L",
   "delicate": false,
@@ -26,14 +26,16 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": false,
+      "reroute_count": 1
     },
     "code_review": {
       "status": "pending",
       "agent": "claude",
-      "verdict": "",
-      "iterations": 0
+      "verdict": "changes_requested",
+      "iterations": 5
     },
     "qa": {
       "status": "pending",
@@ -46,7 +48,8 @@
   },
   "escalations": [],
   "sessions": {
-    "codex": "019e0aac-839f-7471-a3bf-e7bcb72dc98b"
+    "codex": "019e0aac-839f-7471-a3bf-e7bcb72dc98b",
+    "claude_review": "8d0b86e5-31fc-40c6-9eb3-f7a36b4e73cb"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"

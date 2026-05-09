@@ -74,7 +74,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 **Why**: Routing logic was originally spread across `run-task.ts` as inline conditionals. The drift was real — multiple `if (size === 'XL' || delicate) ...` checks that diverged subtly over time. Extracting into a pure module gave us **(1)** a single place to change routing, **(2)** table-driven tests in `tests/pipeline-policy.test.ts` covering every cell of the size × phase matrix, and **(3)** a clean boundary between "what does the env say?" (resolved in `run-task.ts`) and "what should we do?" (decided in `pipeline-policy.ts`). The cost of extraction (one extra import, slightly more ceremony) is paid back the first time a routing rule changes.
 
-**Rule**: Any new routing decision (model choice, effort, tier, loop cap) goes in `pipeline-policy.ts`. Add a row to `pipeline-policy.test.ts`. Do not write inline routing in `run-task.ts`.
+**Rule**: Any new routing decision (model choice, effort, tier, loop cap) goes in `pipeline-policy.ts`. Add a row to `pipeline-policy.test.ts`. Do not write inline routing in `scripts/run-task/main.ts` or the phase modules.
 
 ---
 
@@ -115,7 +115,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ## Auto-commit owned by the orchestrator (not the agent)
 
-**Decision**: After Codex's `implement` phase passes validation, the orchestrator (`autoCommitCode()` in `run-task.ts`) parses the handoff Changes table and creates the implement commit. Codex does not run `git commit` itself.
+**Decision**: After Codex's `implement` phase passes validation, the orchestrator (`autoCommitCode()` in `scripts/run-task/main.ts`) parses the handoff Changes table and creates the implement commit. Codex does not run `git commit` itself.
 
 **Why**: The alternative — Codex manages its own commits — produced two failure modes. **(1)** Inconsistent commit messages, untracked files swept in, partial commits left mid-implement. **(2)** No structural guarantee that the commit matches the handoff. Centralizing the commit step in the orchestrator gave us a single chokepoint to enforce: every dirty file must be in the handoff Changes table; every handoff file must exist or be already-committed. That cross-check is the load-bearing safety property that makes code review meaningful — the reviewer knows the diff and the handoff agree before they start.
 

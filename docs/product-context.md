@@ -94,11 +94,11 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 Canon's general definition (from `CLAUDE.md`): `delicate: true` is for surfaces where a regression has **unbounded blast radius** — an undetected bug is materially harder to recover from than a normal bug. The list below names the canon-ai-specific surfaces where this applies.
 
-- **Orchestrator phase-routing logic** (`scripts/run-task.ts` `PHASE_ORDER`, `runPhase()`, `checkAndRoute()`, `canPhaseAdvance()`). A bug here corrupts every task that runs after the change lands.
+- **Orchestrator phase-routing logic** (`scripts/run-task/main.ts`: `PHASE_ORDER`, `runPhase()`, `checkAndRoute()`). A bug here corrupts every task that runs after the change lands.
 - **Auto-commit logic** (`autoCommitCode()`). Wrong files staged, missed handoff entries, or bypassed checks lead to invisible regressions in code review.
 - **Validation gates** (`validateHandoff()`, future pre-flight checks). A buggy gate either rejects valid work (blocking everyone) or accepts invalid work (silent corruption).
 - **Pipeline policy** (`scripts/pipeline-policy.ts`). Wrong tier, wrong model, wrong loop cap — these affect cost, latency, and reliability for every subsequent task.
-- **Status.json schema or parser changes** (`tasks/_templates/status.json` + parsers in `run-task.ts`). A schema break in flight can leave in-progress tasks unrunnable.
+- **Status.json schema or parser changes** (`tasks/_templates/status.json` + parsers in `scripts/run-task/validation.ts` and `scripts/run-task/state.ts`). A schema break in flight can leave in-progress tasks unrunnable.
 - **Worktree machinery** (worktree creation, sync, cleanup). Bugs here corrupt git state in ways that are slow to detect and expensive to recover from.
 
 Adopters of canon-ai add their own project-specific delicate domains to this list (typically: auth, billing, payments, persistent-storage migrations, security-relevant cryptography, regulated-data handling like PHI or PII).

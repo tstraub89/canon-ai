@@ -15,3 +15,5 @@
 | 2026-05-08T03:22:35.127Z | handoff-verifier | implement | codex | gpt-5.4-mini | 0 | 98.3s | 18583065 | ok |
 | 2026-05-08T04:09:20.055Z | handoff-verifier | code_review | claude | sonnet | 0 | 334.6s | 897304 | ok |
 | 2026-05-08T04:12:48.050Z | handoff-verifier | qa | claude | sonnet | - | 207.7s | 787893 | ok |
+| 2026-05-09T05:20:07.759Z | smoke-split-run-task | spec | claude | opus | - | 113.0s | 459995 | ok |
+| 2026-05-09T05:22:41.068Z | smoke-split-run-task | spec_review | codex | gpt-5.4-mini | 0 | 64.0s | 194496 | ok |

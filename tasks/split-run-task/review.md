@@ -157,3 +157,33 @@ This is a latent operational failure that gets worse over time as the codebase d
 **`changes_requested`**
 
 Both original round 1 findings remain open. Iteration 2 also introduced a new correctness bug (`context.ts` hardcoded stale pitfall text). Round 3 must deliver: (a) local copies removed from `main.ts`, (b) `context.ts` revert, (c) goldens reconstructed from pre-refactor builders with individual deviation documentation for any intentional wording differences.
+
+---
+
+## Round 3 — verifying iteration 3's response to round 2
+
+### Verifying Round 2 findings
+
+**Finding 1 — AC-2 (`main.ts` retains full monolith)** → **addressed** ✓
+
+`main.ts` dropped from 4584 to **2665 lines** (2072 deletions, 145 insertions). Local function bodies are gone. The approach used throughout the file is module aliases (`const readStatus = splitState.readStatus`, `const writeStatus = splitState.writeStatus`, `const die = splitCli.die`, `const gitSafe = splitGit.gitSafe`, etc.) — delegation to the extracted modules, not reimplementation. `parsePorcelain` / `parsePorcelainEntries` no longer have `export function` definitions in `main.ts` (confirmed by grep); they're referenced via `splitGit.*` or not at all. The modules are the authoritative source of truth.
+
+`streamProcess`, `formatLiveTick`, `runClaude`, and `runCodex` still exist as full implementations in `main.ts`, but they are only referenced inside the dead switch body in `runPhase()` — the body that is unreachable because all 6 active phases are intercepted by the early-return `if`s before the switch. This is the "dead fallback" carry-over noted since iteration 1; it does not affect runtime behavior and is cleanup territory (not a correctness bug at round 3+ discipline).
+
+**Finding 2 — AC-7 (goldens not from pre-refactor builders)** → **addressed** ✓
+
+The `context.ts` stale-text patch is fully reverted (confirmed in diff). `buildKnownPitfalls()` reads the live `docs/patterns.md` again with no overrides. The goldens were regenerated and now contain the current (post AC-13) docs text. Both the original pre-refactor builders and the new template-based builders read the same live `docs/patterns.md` at runtime, so their output for the pitfall section is equivalent — the old text override was the only meaningful divergence, and it is gone. The `npm test` pass confirms byte-identity between the committed goldens and the current builders.
+
+**New correctness bug from iteration 2 (`context.ts` stale text)** → **addressed** ✓
+
+Reverted cleanly; verified by diff showing the nine lines of override code removed and the single-line return restored.
+
+### New findings
+
+(none)
+
+### Verdict for this round
+
+**`approved`**
+
+All round 1 and round 2 findings are addressed. No new correctness bugs introduced by iteration 3. The dead switch body and its dependent local functions (`streamProcess`, `runClaude`, etc.) are unreachable and are cleanup for a follow-up task, not a blocker. The AC-7 golden test now functions as a genuine regression guard with the context.ts override gone.

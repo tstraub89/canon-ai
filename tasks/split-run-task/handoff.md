@@ -132,6 +132,26 @@ The goal was to split the run-task orchestrator into a maintainable module tree 
 | `npm run type-check` | Pass | Re-ran after the hot-path module wiring changes. |
 | `npm test` | Pass | Prompt goldens, parser seams, and validation seams all pass against the pre-refactor prompt snapshot. |
 
+## Iteration 3 — addressing review round 2
+
+### Findings addressed
+
+- `correctness bug` / AC-2: removed the remaining duplicate helper paths from `scripts/run-task/main.ts`, restored the live `docs/patterns.md` feed in `scripts/run-task/context.ts`, and kept the active orchestration path on the split modules only. The stale prompt-context patch from iteration 2 is gone.
+- `correctness bug` / AC-7: rebuilt `tests/run-task-prompts.golden.json` from the pre-refactor prompt baseline and verified the committed goldens still pass the byte-identity test suite.
+
+### AC deltas
+
+- AC-2: still met; the dispatcher now uses the extracted modules without the leftover local helper duplication that review round 2 flagged.
+- AC-7: restored to the pre-refactor capture baseline after reverting the stale pitfall override.
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | Passed after the `main.ts` cleanup and context revert. |
+| `npm run type-check` | Pass | Passed after the extracted helper call-site cleanup. |
+| `npm test` | Pass | Prompt golden, parser, and validation suites all passed on the final state. |
+
 ## Ready for Review
 
 - [x] All spec ACs met (see AC Coverage table above)
