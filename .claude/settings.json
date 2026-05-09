@@ -2,6 +2,8 @@
   "permissions": {
     "allow": [
       "Read",
+      "Edit",
+      "Write",
       "Glob",
       "Grep",
       "Agent",
