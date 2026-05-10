@@ -62,9 +62,9 @@ void test('validateHandoffAgainstSpec rejects N/A for a required validation chec
 });
 
 void test('validateHandoffAgainstSpec matches by canonical command, ignoring spec annotations', () => {
-    // Regression: smart-fill-exclude-locked-photos shipped with a spec line like
-    // "`npm run test` — including the four new unit tests (3 in optimizer test
-    // file, 1 in wall-composition test file)" but the handoff row contained just
+    // Regression: a real task shipped with a spec line like
+    // "`npm run test` — including the four new unit tests (3 in parser test
+    // file, 1 in validator test file)" but the handoff row contained just
     // "`npm run test`". The pre-flight rejected the handoff for ~4 implement
     // iterations because the canonicalizer compared full annotated strings.
     withTempPair(
@@ -74,7 +74,7 @@ void test('validateHandoffAgainstSpec matches by canonical command, ignoring spe
             '## Validation Required',
             '',
             '- [x] `npm run lint`',
-            '- [x] `npm run test` — including the four new unit tests (3 in optimizer test file, 1 in wall-composition test file)',
+            '- [x] `npm run test` — including the four new unit tests (3 in parser test file, 1 in validator test file)',
             '- [x] `npm run build`',
             '',
         ].join('\n'),
