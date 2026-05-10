@@ -1313,8 +1313,13 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
     ].join('\n');
 
     warn(`Retrying ${agent} session ${sessionId.slice(0, 8)}... for ${taskId} ${phase}.`);
-    // Implement retries must use the worktree CWD if the task has one.
-    const retryCwd = (agent === 'codex' && phase === 'implement') ? splitWorktree.getActiveCwd([taskId]) : REPO_ROOT;
+    // Retries must use the same cwd as the original phase. Worktree-using
+    // phases (implement, code_review) run in the active worktree when worktree
+    // mode is enabled; spec/spec_review/plan/qa always run in REPO_ROOT.
+    // getActiveCwd falls back to REPO_ROOT when worktree mode is off, so this
+    // is also correct for non-worktree tasks.
+    const isWorktreePhase = phase === 'implement' || phase === 'code_review';
+    const retryCwd = isWorktreePhase ? splitWorktree.getActiveCwd([taskId]) : REPO_ROOT;
     if (agent === 'codex') {
         // Retry phase must be a Codex-run phase. spec_review and implement are
         // the only two; anything else indicates a stored agent mismatch.
