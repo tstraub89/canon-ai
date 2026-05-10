@@ -1,9 +1,9 @@
 {
   "id": "add-ci",
   "title": "Add GitHub Actions CI workflow",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-05-08",
-  "updated": "2026-05-09",
+  "updated": "2026-05-10",
   "branch": "task/add-ci",
   "base_branch": "dev",
   "task_size": "M",
@@ -40,7 +40,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
