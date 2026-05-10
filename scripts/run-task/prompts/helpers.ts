@@ -7,12 +7,12 @@ export const CLAUDE_STARTUP =
     'Skim docs/lessons-learned.md for entries relevant to your task area.\n' +
     'Read docs/architecture.md if the task touches core data flow or state management.\n' +
     'Read docs/product-context.md if the task touches user-visible behavior or Pro features.\n' +
-    'Skip docs/product-owner.md and docs/decisions.md unless the task involves explicit UX tradeoffs.';
+    'Skip docs/decisions.md unless the task involves explicit UX tradeoffs.';
 
 export const CODEX_STARTUP =
     'Read AGENTS.md, docs/patterns.md, and docs/codebase-map.md before starting.\n' +
     'Skim docs/lessons-learned.md for entries relevant to your task area.\n' +
-    'Skip docs/product-owner.md, docs/decisions.md, docs/product-context.md unless the task explicitly involves product or UX decisions.\n' +
+    'Skip docs/decisions.md, docs/product-context.md unless the task explicitly involves product or UX decisions.\n' +
     'Ground every claim in the current file, diff, or artifact before you state it. Do not rely on prior-session memory for code existence, validation results, or completion status.\n' +
     'On resumed sessions, re-read the task-specific files named in the prompt and inspect the current working tree before saying anything is already done.\n' +
     '\n' +
