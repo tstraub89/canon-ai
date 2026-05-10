@@ -497,12 +497,9 @@ cmd_release_init() {
     exit 1
   fi
 
-  local short="v${version%.0}"  # "1.6.0" → "v1.6"
-  if [[ "$version" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
-    short="v${version%.0}"
-  else
-    short="v$version"
-  fi
+  # "1.6.0" → "v1.6"; "1.0.5" → "v1.0.5". `${version%.0}` only strips a
+  # trailing ".0", so non-zero patch versions pass through unchanged.
+  local short="v${version%.0}"
   local branch="release/$short"
 
   # Pre-flight: must be on main, working tree clean.
