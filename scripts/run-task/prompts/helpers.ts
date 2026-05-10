@@ -30,10 +30,13 @@ export function taskList(tasks: TaskContext[]): string {
 }
 
 export function phaseCommands(taskIds: string[], phase: string, status: string, verdict = ''): string {
+    // Single-quote the absolute script path so commands run from repos under
+    // paths with spaces. Mirrors the existing quoting on the `cd` target.
+    const taskScript = `'${REPO_ROOT}/scripts/task.sh'`;
     return taskIds.map(id => {
         const cmd = verdict
-            ? `${REPO_ROOT}/scripts/task.sh phase ${id} ${phase} ${status} ${verdict}`
-            : `${REPO_ROOT}/scripts/task.sh phase ${id} ${phase} ${status}`;
+            ? `${taskScript} phase ${id} ${phase} ${status} ${verdict}`
+            : `${taskScript} phase ${id} ${phase} ${status}`;
         return `(cd '${resolveTaskCwd(id)}' && ${cmd})`;
     }).join('\n');
 }
