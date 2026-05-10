@@ -28,7 +28,7 @@ What *is* load-bearing canon (regardless of tone preference): agents must surfac
 
 **Per-task notes**: Any agent in any phase may append to `tasks/TASK-ID/notes.md` when it encounters surprising codebase behavior, ambiguous specs, implementation pitfalls, or friction worth remembering. Keep entries short (1–3 lines) with the phase name as prefix (e.g., `[spec_review] ...`). These are raw scratchpad observations — the QA step collates and distills them into `docs/lessons-learned.md`.
 
-**Workflow observability**: Two files track pipeline health. `docs/pipeline-invocations.md` is auto-appended by `scripts/run-task.ts` after every agent invocation (duration + tokens). `docs/task-quality-log.md` is appended by Claude during the QA/done step — tracks spec review outcomes, review iterations, dropped ACs, validation gaps, and failure phases. The product owner reviews trends periodically.
+**Workflow observability**: Two files track pipeline health. `docs/pipeline-invocations.md` is auto-appended by `scripts/run-task/metrics.ts` after every agent invocation (duration + tokens). `docs/task-quality-log.md` is appended by Claude during the QA/done step — tracks spec review outcomes, review iterations, dropped ACs, validation gaps, and failure phases. The product owner reviews trends periodically.
 
 ## Workflow
 

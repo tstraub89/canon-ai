@@ -121,13 +121,6 @@
 
 ## 🛠️ Tooling & Dev Experience
 
-- [ ] **`--dry-run` flag for `run-task.ts`** *(noted 2026-05-08 during the `split-run-task` spec)*
-  - **Scope**: A flag that exercises the full orchestrator entry path — argv parsing, status read, prompt build for the next phase — and **prints the rendered prompt to stdout instead of spawning Claude/Codex**. Exits 0 without touching task state.
-  - **Why it's wanted**: (a) Smoke testing the harness after refactors (the `split-run-task` spec wanted this and had to fall back to a weaker smoke); (b) debugging "what does Codex actually see right now?" without burning an LLM call; (c) future CI for the harness — run `--dry-run` against representative tasks and assert the prompt matches a snapshot. The golden-output prompt tests (added in `split-run-task`) cover prompt fidelity at the unit level, but `--dry-run` is the integration-level equivalent: argv → main → dispatcher → prompt builder, end-to-end, no LLM spawn.
-  - **Shape**: add `--dry-run` to `parseArgs`. When set, the dispatcher resolves the next phase as normal but, instead of calling `runClaude` / `runCodex`, prints `[DRY-RUN] phase=<phase>` followed by the rendered prompt and exits. Status writes are also suppressed. Behaves cleanly under `--step` and `--expect` so you can dry-run a specific phase. Bundle mode prints one prompt per phase per task.
-  - **Risks to watch**: status writes during phase setup (e.g., session-id storage) need to be cleanly skippable, not partially applied. Keep dry-run an early branch in `runPhase` rather than threading a flag through every helper.
-  - **Effort**: `S`.
-
 - [ ] **`canon dogfood-report` command** *(framed 2026-05-10 from TokenAnxiety discussion #27, item 9)*
   - **Scope**: A tooling command that produces a structured retrospective on canon's behavior across a set of tasks — iteration counts (current + cumulative), validation gaps, post-closeout fixes, declared-vs-executable drift findings. The shape of report James wrote manually for discussion #27, but generated mechanically from canon's telemetry files + git log.
   - **Why it's wanted**: dogfood reports are how canon learns about itself. James hand-assembled #27 from `task-quality-log.md` + `pipeline-invocations.md` + `lessons-learned.md` + git log of post-closeout commits. That's exactly the kind of synthesis that should be a command, not a manual exercise — both because the manual version is expensive (~half a day per report) and because canon's own observability story should not be "rely on the human to dig through artifacts."

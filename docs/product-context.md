@@ -110,8 +110,8 @@ Adopters of canon-ai add their own project-specific delicate domains to this lis
 ## Business Rules
 
 - **Repo visibility**: canon-ai is a private GitHub repository. Not open-source, not publicly mirrored, not on a registry. Future open-source release would be a separate decision.
-- **Branch policy**: `main` is the portable template — generic, with `TODO[canon]` markers intact. `dev` is canon-ai's self-development branch — fully filled out, including `CHANGELOG.md` once it exists. `dev` never merges to `main`.
-- **Public changelog**: none. The internal `CHANGELOG.md` (if/when it exists) lives only on `dev`. A future product with a public surface would have its own landing-page repo for high-level public changelogs.
+- **Branch policy**: `main` is the portable template — generic, with `TODO[canon]` markers intact. `dev` is canon-ai's self-development branch — fully filled out, including `CHANGELOG.md`. `dev` never merges to `main`.
+- **Public changelog**: none. The internal `CHANGELOG.md` lives only on `dev`. A future product with a public surface would have its own landing-page repo for high-level public changelogs.
 - **License**: Proprietary (`LICENSE` file at repo root). Reconsidered when/if a public release happens.
 
 ## Voice & Tone
@@ -124,9 +124,9 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 
 ## Roadmap (Brief)
 
-- **v0.0.1 (now)**: Initial extraction from the source project. Pipeline built but not yet smoke-tested end-to-end on canon-ai itself.
-- **Near-term**: Hand-fill canon-ai's own docs on `dev`. First canon-on-canon dogfood task (handoff verifier). Production validation via real tasks.
-- **Phase 2**: `canon init` script (auto-populates `docs/` from a target repo's structure). Layer 2 of the product hypothesis.
+- **Current state**: Layer 1 mostly built and dogfooded internally — multiple canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). First external adopter (TokenAnxiety, via vendored submodule) is providing dogfood feedback that's driving the next hardening pass (see open Wave 3 issues).
+- **Near-term**: Address the Wave 3 issues from external dogfooding — canon-version stamping into artifacts, status-counter consistency, validation-result-state nuance, telemetry enforcement. Continue hardening before Phase 2 abstractions land.
+- **Phase 2**: `canon init` script (auto-populates `docs/` from a target repo's structure). Layer 2 of the product hypothesis. Also: canon-as-installable-package work (see `docs/BACKLOG.md`).
 - **Future**: Additional agent-CLI adapters (Gemini, Aider). Skill packaging for Claude Code. Public release decision.
 
 (See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)
