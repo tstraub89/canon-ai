@@ -467,6 +467,9 @@ function mirrorHumanReviewDocsToCwd(cwd: string): void {
         const src = path.join(REPO_ROOT, relPath);
         const dest = path.join(cwd, relPath);
         if (!fs.existsSync(src)) continue;
+        // Skip if the worktree copy has uncommitted changes — preserve QA edits.
+        const dirty = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '--', relPath);
+        if (dirty.ok && dirty.stdout.trim()) continue;
         try {
             fs.mkdirSync(path.dirname(dest), { recursive: true });
             fs.copyFileSync(src, dest);
