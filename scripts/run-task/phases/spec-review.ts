@@ -1,10 +1,18 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { info, warn } from '../cli.js';
 import { getCodexConfig, getMaxReviewLoops, isPlanCombined } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
 import { runTaskShFor } from '../task-sh.js';
-import { readStatus, writeStatus } from '../state.js';
+import { readStatus, resolveTaskCwd, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
+
+function isTemplateUnfilled(content: string | null): boolean {
+    if (content === null) return true;
+    return content.includes('[TASK-ID]');
+}
 
 function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
     const today = new Date().toISOString().slice(0, 10);
@@ -93,5 +101,22 @@ export async function runSpecReviewPhase(
         phase: 'spec_review',
         iteration: maxSpecIter,
     });
+
+    // Mirror the post-run template check that code-review.ts and plan.ts
+    // already run for their artifacts. Catches the failure mode where Codex
+    // marks spec_review done but spec-review.md is still the unfilled
+    // template (observed downstream on intel-001 in TokenAnxiety dogfood,
+    // discussion #27). Reset to pending so the next run retries instead of
+    // silently advancing on a stale phase pointer.
+    for (const t of tasks) {
+        const reviewPath = path.join(resolveTaskCwd(t.taskId), 'tasks', t.taskId, 'spec-review.md');
+        let reviewContent: string | null = null;
+        try { reviewContent = fs.readFileSync(reviewPath, 'utf8'); } catch { /* missing */ }
+        if (isTemplateUnfilled(reviewContent)) {
+            warn(`[${t.taskId}] spec-review.md is still the template after spec_review run — sub-agent did not write it. Resetting to pending for retry.`);
+            runTaskShFor(t.taskId, 'phase', t.taskId, 'spec_review', 'pending');
+        }
+    }
+
     return { agent: 'codex', sessionId: result.sessionId, exitCode: result.exitCode };
 }
