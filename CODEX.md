@@ -66,6 +66,8 @@ Codex-specific notes that don't belong in AGENTS.md or patterns.md:
 
 - **Codebase quick navigation**: see `docs/codebase-map.md` for the full file map. Don't re-derive locations — read the map.
 - **Pre-loaded context wins**: the orchestrator injects task-state, AC summary, Known Risks, Known Pitfalls, and Affected Files contents into your prompt. Read those injections first; the full spec is the fallback when an injection is incomplete.
+- **Scope discipline (see `AGENTS.md` §"Scope Discipline")**: if a fix needs files outside the spec's *Affected Files*, document the gap under *Blockers* in `handoff.md` rather than silently expanding. Same for new modules/services and any dependency-version change — those belong in the spec, not in the implementation. The spec is the contract; the handoff is where you flag if the contract was wrong.
+- **Stay mechanical, keep "why" upstream**: implement against spec + plan + injected context, run validation, report results. Architectural rationale, alternative approaches, and "what next" belong in the spec/plan/review artifacts, not in the implementation diff or handoff prose. If the right move is genuinely unclear, raise it under *Blockers* — don't pick one quietly and explain it later.
 
 ## Validation Checklist
 <a id="validation-checklist"></a>
