@@ -119,7 +119,12 @@ export async function runCodeReviewPhase(
     }, getActiveCwd(taskIds));
 
     for (const t of tasks) {
-        const reviewPath = path.join(taskDirFor(t.taskId), 'review.md');
+        // Read from the active cwd, not REPO_ROOT — Claude just wrote review.md
+        // in the worktree (line 115-119 ran with getActiveCwd) and main.ts's
+        // worktree sync hasn't happened yet. taskDirFor would resolve to
+        // REPO_ROOT and read a stale (likely still-template) copy, falsely
+        // resetting the phase to pending. Mirrors the BLOCKED-write path above.
+        const reviewPath = path.join(resolveTaskCwd(t.taskId), 'tasks', t.taskId, 'review.md');
         let reviewContent: string | null = null;
         try { reviewContent = fs.readFileSync(reviewPath, 'utf8'); } catch { /* missing */ }
         if (isTemplateUnfilled(reviewContent)) {
