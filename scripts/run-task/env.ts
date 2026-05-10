@@ -1,10 +1,33 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const __filename = fileURLToPath(import.meta.url);
 export const __dirname = path.dirname(__filename);
-export const REPO_ROOT = path.resolve(__dirname, '../..');
+
+function resolveRepoRoot(): string {
+    try {
+        const result = spawnSync('git', ['rev-parse', '--git-common-dir'], { encoding: 'utf8' });
+        if (result.error || result.status !== 0) {
+            throw result.error ?? new Error(result.stderr || 'git rev-parse --git-common-dir failed');
+        }
+        const gitCommonDir = result.stdout.trim();
+        if (!gitCommonDir) throw new Error('git rev-parse --git-common-dir returned no path');
+        // `git rev-parse --git-common-dir` returns a relative `.git` path in the
+        // main checkout and an absolute path from a worktree. Resolving first and
+        // then taking the parent directory yields the canonical repo root in both.
+        const resolvedGitCommonDir = path.isAbsolute(gitCommonDir)
+            ? gitCommonDir
+            : path.resolve(process.cwd(), gitCommonDir);
+        return path.dirname(resolvedGitCommonDir);
+    } catch {
+        // Fallback for non-git environments (for example some unit-test runners).
+        return path.resolve(__dirname, '../..');
+    }
+}
+
+export const REPO_ROOT = resolveRepoRoot();
 export const TASKS_DIR = path.join(REPO_ROOT, 'tasks');
 export const TASK_SH = path.join(REPO_ROOT, 'scripts/task.sh');
 

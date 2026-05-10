@@ -9,6 +9,34 @@ export function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
+    const acSectionMatch = handoffContent.match(/## AC Coverage[\s\S]*?(?=\n## |$)/);
+    if (!acSectionMatch) return ['AC Coverage section is missing'];
+
+    const section = acSectionMatch[0];
+    const tableLines = section.split('\n').filter(line => line.trim().startsWith('|'));
+    if (tableLines.length === 0) return ['AC Coverage table is missing or contains no AC rows'];
+
+    const headerLine = tableLines[0];
+    const headers = headerLine.split('|').map(cell => cell.trim()).filter(Boolean);
+    const statusColIdx = headers.findIndex(header => header.toLowerCase() === 'status');
+    if (statusColIdx === -1) return [];
+
+    const dataRows = tableLines.slice(2);
+    if (dataRows.length === 0) return ['AC Coverage table is missing or contains no AC rows'];
+
+    const PLACEHOLDER = 'Met / Partial / Not met';
+    const allPlaceholder = dataRows.every(line => {
+        const cells = line.split('|').map(cell => cell.trim()).filter(Boolean);
+        return (cells[statusColIdx] ?? '') === PLACEHOLDER;
+    });
+
+    if (allPlaceholder) {
+        return ['AC Coverage table only contains template placeholder rows (Status "Met / Partial / Not met") — fill in actual AC statuses'];
+    }
+    return [];
+}
+
 export function validateHandoff(taskId: string): string[] {
     const handoffPath = path.join(taskDirFor(taskId), 'handoff.md');
     const specPath = path.join(taskDirFor(taskId), 'spec.md');
@@ -18,30 +46,7 @@ export function validateHandoff(taskId: string): string[] {
         if (/\|\s*Fail\s*\|/i.test(content)) {
             issues.push('Validation Outcomes table has one or more Fail results');
         }
-        // Parse the AC Coverage section specifically — not the whole document. This
-        // (a) avoids matching unrelated `AC-1` mentions elsewhere in the file, and
-        // (b) lets us reject rows whose Status column is still the template placeholder
-        // `Met / Partial / Not met`. Use line-anchored substring matches rather than
-        // column-by-column parsing so escaped pipes in an AC description (`foo \| bar`,
-        // shell pipelines in code spans, etc.) don't shift the column boundary and
-        // misclassify the row's status. Counting "rows containing the placeholder
-        // status text" against "rows starting with AC-<digit>" is independent of any
-        // pipe inside the description.
-        const acSectionMatch = content.match(/## AC Coverage[\s\S]*?(?=\n## |$)/);
-        if (!acSectionMatch) {
-            issues.push('AC Coverage section is missing');
-        } else {
-            const section = acSectionMatch[0];
-            const acRowCount = (section.match(/^\|\s*AC-\d/gmi) ?? []).length;
-            if (acRowCount === 0) {
-                issues.push('AC Coverage table is missing or contains no AC rows');
-            } else {
-                const placeholderRowCount = (section.match(/^\|\s*AC-\d.*?Met\s*\/\s*Partial\s*\/\s*Not met/gmi) ?? []).length;
-                if (placeholderRowCount === acRowCount) {
-                    issues.push('AC Coverage table only contains template placeholder rows (Status "Met / Partial / Not met") — fill in actual AC statuses');
-                }
-            }
-        }
+        issues.push(...checkAcCoveragePlaceholders(content));
         issues.push(...validateHandoffAgainstSpec(specPath, handoffPath));
     } catch {
         issues.push('handoff.md not found');
