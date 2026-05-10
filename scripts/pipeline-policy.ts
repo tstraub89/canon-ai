@@ -92,11 +92,10 @@ export function getEffectiveSize(tasks: readonly PolicyInput[]): TaskSize {
     return maxSize(tasks);
 }
 
-// Per-size review-loop cap. Defaults bumped 2026-04-30 after the post-v1.5.5
-// quality-log review (see docs/task-quality-log.md §"Review: 2026-04-30"):
-// M+ tasks routinely needed 3-6 spec_review cycles for legitimate convergence
-// (cross-tab-pro-sync 15+, smart-fill-v3-scoring-fidelity 6+2 escalations,
-// frame-library-derived 4+2). The old caps (2 for S/M, 3 for L/XL) were
+// Per-size review-loop cap. Defaults bumped 2026-04-30 after a quality-log
+// review showed M+ tasks routinely needed 3-6 spec_review cycles for
+// legitimate convergence (one L-tier task hit 15+; an M-tier task hit 6+2
+// escalations; another hit 4+2). The old caps (2 for S/M, 3 for L/XL) were
 // auto-blocking real spec convergence and forcing manual MAX_REVIEW_LOOPS
 // overrides. New floor: 3 for S/M (S rarely hits even 1; defensive cushion),
 // 5 for L/XL (matches the manual-override sweet spot). Env override

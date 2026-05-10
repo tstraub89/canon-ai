@@ -1093,7 +1093,7 @@ function routeBackTo(taskIds: string[], targetPhase: Phase): void {
         // the loop skips straight past the un-reset downstream phase to the
         // first still-pending one. That's how changes_requested on code_review
         // used to silently skip the re-review after Codex iterated — the fix
-        // came in alongside smart-fill-v3-scoring-fidelity after the bug bit.
+        // came in after the bug bit a real task.
         for (let i = targetIdx; i < PHASE_ORDER.length; i += 1) {
             const phaseEntry = status.phases[PHASE_ORDER[i]];
             if (phaseEntry) phaseEntry.status = 'pending';
@@ -1161,7 +1161,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
 }
 
 // ── Evidence-based phase advance + one-shot retry ─────────────────────────
-// Background (2026-04-19): Codex "ran" scripts/task.sh phase smart-fill-v3
+// Background (2026-04-19): Codex "ran" scripts/task.sh phase <task-id>
 // implement done in its final summary — but never actually invoked the tool
 // call. Every other action (code edits, validation) was real; only the
 // silent-side-effect bookkeeping command was hallucinated. Pipeline bailed
