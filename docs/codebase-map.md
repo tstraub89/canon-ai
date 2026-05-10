@@ -92,6 +92,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | What | Where | Notes |
 |---|---|---|
 | Node/TS project metadata, npm scripts | `package.json` | `test`, `type-check`, `task`, `run-task` scripts |
+| GitHub Actions CI workflow | `.github/workflows/ci.yml` | Triggers, matrix, audit, lint, type-check, test; see `docs/architecture.md` `## CI` |
 | ESLint flat config | `eslint.config.mjs` | `@typescript-eslint/recommendedTypeChecked`, `projectService: true` |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `scripts/` and `tests/` only |
 | Claude permissions + SessionStart hook | `.claude/settings.json` | Auto-shows in-progress tasks at session start |

@@ -25,6 +25,12 @@ export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
     const dataRows = tableLines.slice(2);
     if (dataRows.length === 0) return ['AC Coverage table is missing or contains no AC rows'];
 
+    const hasAcRow = dataRows.some(line => {
+        const cells = line.split('|').map(cell => cell.trim()).filter(Boolean);
+        return /AC-\d+/i.test(cells[0] ?? '');
+    });
+    if (!hasAcRow) return ['AC Coverage table is missing or contains no AC rows'];
+
     const PLACEHOLDER = 'Met / Partial / Not met';
     const allPlaceholder = dataRows.every(line => {
         const cells = line.split('|').map(cell => cell.trim()).filter(Boolean);

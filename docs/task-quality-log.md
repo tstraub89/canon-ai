@@ -33,6 +33,7 @@ The QA phase appends a row at the end of every task. The product owner reviews t
 | _(rows land here as tasks ship)_ | | | | | | | | | |
 | 2026-05-08 | handoff-verifier | M | approved_with_nits | 1 | 3 | 0 | 0 | No | Rename-pair handling (`--name-only` vs `--name-status`) missed in round 1, caught in round 3; correctness bug fixed before ship |
 | 2026-05-09 | fix-pipeline-bugs | M | approved_with_nits | 1 | 1 | 0 | 0 | No | Five bugs fixed in one pass; one spec-text gap (AC-3c over-specified `PIPELINE_MANAGED_DOCS` consumers) caught in Stage 2 but not blocking |
+| 2026-05-09 | add-ci | M | approved | 1 | 1 | 0 | 0 | No | Clean first pass; stale test count (spec said 58, actual 69) flagged as a spec gap but not blocking; branch protection follow-up in GitHub UI |
 
 ---
 
