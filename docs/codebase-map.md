@@ -22,7 +22,6 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Claude (architect/reviewer) guide | `CLAUDE.md` |
 | Codex (implementer) guide | `CODEX.md` |
 | Project pitch + adoption guide | `README.md` |
-| Current pipeline status / known gaps | `STATUS.md` |
 | Per-task state machine | `tasks/_templates/status.json` |
 
 ## Pipeline Orchestration

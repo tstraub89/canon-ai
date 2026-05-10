@@ -27,4 +27,4 @@
 
 ## [0.0.1] — 2026-05-07
 
-Initial extraction of canon from its embedded source project. Pipeline built but unverified end-to-end. See [`STATUS.md`](STATUS.md).
+Initial extraction of canon from its embedded source project. Pipeline built but unverified end-to-end.

@@ -22,7 +22,7 @@ Canon-ai maintains two permanently divergent branches:
 - `.canon/hooks/README.md` — hook system documentation
 - `.claude/settings.json`, `.codex/config.toml` — agent config templates
 - `tests/`, `tsconfig.json`, `package.json` — framework test harness and tooling
-- `README.md`, `STATUS.md`, `LICENSE`
+- `README.md`, `LICENSE`
 
 ### What stays on `dev` only
 

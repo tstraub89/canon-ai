@@ -59,7 +59,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 4. Create the first task: `./scripts/task.sh new <id> <title>`. Write a spec by hand or with conversational Claude.
 5. Run the pipeline: `npx tsx scripts/run-task.ts <id>`.
 
-> *Future*: a `canon init` script will automate the doc-fill step (Phase 2 of the roadmap; see STATUS.md).
+> *Future*: a `canon init` script will automate the doc-fill step (Phase 2 of the roadmap).
 
 ### Flow 2: Run a task (the standard pipeline lifecycle)
 
@@ -109,7 +109,7 @@ Adopters of canon-ai add their own project-specific delicate domains to this lis
 
 ## Business Rules
 
-- **Repo visibility**: canon-ai is a private GitHub repository. Not open-source, not publicly mirrored, not on a registry. Future open-source release would be a separate decision (see `STATUS.md`).
+- **Repo visibility**: canon-ai is a private GitHub repository. Not open-source, not publicly mirrored, not on a registry. Future open-source release would be a separate decision.
 - **Branch policy**: `main` is the portable template — generic, with `TODO[canon]` markers intact. `dev` is canon-ai's self-development branch — fully filled out, including `CHANGELOG.md` once it exists. `dev` never merges to `main`.
 - **Public changelog**: none. The internal `CHANGELOG.md` (if/when it exists) lives only on `dev`. A future product with a public surface would have its own landing-page repo for high-level public changelogs.
 - **License**: Proprietary (`LICENSE` file at repo root). Reconsidered when/if a public release happens.
@@ -129,4 +129,4 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 - **Phase 2**: `canon init` script (auto-populates `docs/` from a target repo's structure). Layer 2 of the product hypothesis.
 - **Future**: Additional agent-CLI adapters (Gemini, Aider). Skill packaging for Claude Code. Public release decision.
 
-(See `STATUS.md` for the current bootstrap status and `docs/pipeline-orchestrator.md` for orchestrator mechanics.)
+(See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)
