@@ -20,7 +20,7 @@ Anything that would change if you migrated to a different framework belongs here
 ## Tech Stack
 
 - **Language**: TypeScript (strict, ES2022, ESM) — `tsconfig.json`
-- **Runtime**: Node.js 22.x or 24.x — `package.json` `engines`
+- **Runtime**: Node.js 24.x — `package.json` `engines`
 - **Test runner**: Node built-in `node --test` with `tsx` import hook for direct TS execution
 - **Type checker**: `tsc --noEmit` (no build step — `tsx` runs scripts directly)
 - **Shell helpers**: bash + `jq` for status.json updates (`scripts/task.sh`)
@@ -29,7 +29,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **State machine**: `status.json` per task, with phases as nodes (see `tasks/_templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push and PR to `main` and `dev`, with a Node 22.x / 24.x matrix that runs `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, and `npm test`.
+- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push and PR to `main` and `dev`, runs on Node 24.x with `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, and `npm test`.
 
 ## High-Level Architecture
 
@@ -138,7 +138,7 @@ When `worktree: true`, the orchestrator creates a git worktree for the task. The
 | End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `scripts/run-task/git.ts` and `scripts/run-task/validation.ts`. |
 | Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
 | Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `tasks/_templates/status.json`, update parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
-| Cross-platform | Node 22.x and 24.x are the supported versions (declared in `package.json` `engines`). CI runs both via the matrix in `.github/workflows/ci.yml`; locally, tests run on whichever is installed. |
+| Cross-platform | Node 24.x is the supported version (declared in `package.json` `engines`). CI runs 24.x via `.github/workflows/ci.yml`. |
 
 **Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.
 
@@ -148,13 +148,13 @@ CI is configured via `.github/workflows/ci.yml`.
 
 **Triggers**: push to `main` or `dev`, and pull requests targeting `main` or `dev`. Doc-only commits (`docs/**`, `tasks/**`, `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `scripts/task.sh`, `.agent/**`, `.github/**/*.md`) are skipped via `paths-ignore`.
 
-**Matrix**: Node 22.x and Node 24.x.
+**Matrix**: Node 24.x only.
 
 **Each job runs in order**: `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm test`.
 
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 
-**To make CI a hard merge gate**: in GitHub → Settings → Branches, add a protection rule for `main` and `dev` with required status checks `test (22.x)` and `test (24.x)`. Until configured, CI is informational only.
+**To make CI a hard merge gate**: in GitHub → Settings → Branches, add a protection rule for `main` and `dev` with required status check `test (24.x)`. Until configured, CI is informational only.
 
 ## Cross-Cutting Concerns
 
