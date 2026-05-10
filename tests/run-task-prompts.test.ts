@@ -36,9 +36,20 @@ type PromptFixture = {
 
 type GoldenSet = Record<string, string>;
 
-const GOLDENS: GoldenSet = JSON.parse(
-    fs.readFileSync(path.join(process.cwd(), 'tests/run-task-prompts.golden.json'), 'utf8'),
-) as GoldenSet;
+const REPO_ROOT_PLACEHOLDER = '__REPO__';
+
+function normalizeRepoPaths(obj: GoldenSet): GoldenSet {
+    const root = process.cwd();
+    return Object.fromEntries(
+        Object.entries(obj).map(([k, v]) => [k, v.replaceAll(root, REPO_ROOT_PLACEHOLDER)]),
+    );
+}
+
+const GOLDENS: GoldenSet = normalizeRepoPaths(
+    JSON.parse(
+        fs.readFileSync(path.join(process.cwd(), 'tests/run-task-prompts.golden.json'), 'utf8'),
+    ) as GoldenSet,
+);
 
 function writeFixtureTask(fixture: PromptFixture): void {
     const dir = path.join(process.cwd(), 'tasks', fixture.taskId);
@@ -168,7 +179,7 @@ void test('prompt builders remain byte-identical to the captured pre-refactor ou
     }
 
     try {
-        const actual = buildAllPrompts();
+        const actual = normalizeRepoPaths(buildAllPrompts());
         assert.deepEqual(actual, GOLDENS);
     } finally {
         for (const task of [...fixtures.solo, ...fixtures.bundle]) {
