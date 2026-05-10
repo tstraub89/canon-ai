@@ -152,16 +152,26 @@
   - **Workaround for now**: invoke the pipeline from REPO_ROOT, not from inside the worktree. Smoke testing from inside the worktree (which only invokes `--step --expect <phase>` for read-mostly phases) doesn't hit this — full pipeline invocations from a worktree do.
   - **Effort**: `S`. Likely (a) is the right fix — `git rev-parse --git-common-dir` is the canonical "where is this repo's `.git` directory?" query and works correctly from any worktree.
 
-- [ ] **AC Coverage preflight parser should be markdown-table-aware, not regex-based** *(surfaced 2026-05-09 during `split-run-task` PR canon-ai#3 codex-review iteration)*
-  - **Scope**: `validateHandoff()` in `scripts/run-task/validation.ts` checks that the handoff's AC Coverage table has been filled in (not still the template) by counting AC rows vs rows containing the literal template placeholder `Met / Partial / Not met`. The current implementation uses line-anchored regex substring matching, which has known false-positive cases:
+- [ ] **Structured-table parser utility for orchestrator reads** *(originally surfaced 2026-05-09 during `split-run-task` PR canon-ai#3 codex-review iteration as "AC Coverage parser should be markdown-table-aware"; broadened 2026-05-10 during the JSON-vs-markdown artifact-format design discussion)*
+  - **Scope**: The orchestrator reads structured information embedded in markdown tables — AC coverage and validation outcomes today, the architect-review four-question table and per-row audit verdicts when those phases land — using ad-hoc regex. This is brittle and has bitten us before (history below). Replace with a single small markdown-table parser utility (~20–30 lines) that all orchestrator reads route through.
+  - **Why this scope, not just AC**: the same problem will recur for every new artifact that has structured rows the orchestrator must enforce. Solving it once as a utility is cheaper than re-solving it per-table, and gives every future phase a consistent contract for "what does it mean for this row to be filled in."
+  - **Why this matters for the artifact-format question** *(2026-05-10 design call)*: this utility is canon's enforcement mechanism for "the agent must complete this artifact before the phase advances." It's the markdown-only answer to "do we need JSON sidecars + schema validation" — schema validation by structure parsing rather than by JSON schema. With a real parser in place, the orchestrator can refuse to advance on missing or malformed rows, which is most of what JSON schemas would have given us. Conclusion from that call: stay markdown-only, invest here instead of adding a JSON artifact layer.
+  - **Right long-term fix — parser utility shape**:
+    - `parseTable(markdown, sectionHeading)` — finds the named section, locates the table header, returns rows as `{ [columnName]: cellText }` objects (column-named cells, not positional).
+    - Splits on `|` while respecting `\|` escapes (the round-3 failure mode).
+    - Callers compose specific checks against the parsed structure: e.g. `rows.every(r => r['Status'] !== 'Met / Partial / Not met')` for the "filled vs. template" check.
+    - Eliminates all four regex false-positive classes (history below) by structure rather than by regex.
+  - **Where it gets used**:
+    - **Today**: `validateHandoff()` in `scripts/run-task/validation.ts` for both the AC Coverage check and the Validation Outcomes check.
+    - **Future**: architect-review per-question verdict table; per-audit row verdicts in audit artifacts; any new artifact whose acceptance criteria include "the orchestrator must inspect specific rows."
+  - **What it does NOT do**: it's a parser, not a schema validator. Column-presence and value-domain checks stay caller-side. The parser just turns markdown tables into structured rows reliably.
+  - **AC parser regex history (failure modes the new parser must not regress)**:
     1. **Original** (`/\|\s*AC[-\s]/i`): matched the template's *header row* `| AC | Status | Notes |` — let unfilled handoffs pass.
     2. **Round 2** (`/\|\s*AC-\d/i`): matched the template's placeholder row `| AC-1: ... | Met / Partial / Not met |` — same false negative.
     3. **Round 3** (column-based: `/\|\s*AC-\d[^|]*\|\s*([^|]+?)\s*\|/`): broke when an AC description contained an escaped pipe (shell pipelines, `foo \| bar`) — column boundary shifted.
-    4. **Round 4 (current)** (substring: count rows containing `Met / Partial / Not met` literal): false-positive if a handoff's prose quotes the template phrase elsewhere on the row (e.g., notes column says "removed the Met / Partial / Not met placeholder").
-  - **Why it's not blocking**: round 4 catches the actual real-world failure mode (bare template handoff). The remaining false positive (prose-quoted placeholder text) is theoretical — handoffs are written by agents, follow templates, are concise. No real handoff is expected to quote the placeholder phrase in description or notes.
-  - **Right long-term fix**: replace the regex chain with a tiny markdown table parser (~20 lines): find the AC Coverage section, locate the table header row, parse subsequent rows by splitting on `|` while respecting `\|` escapes, inspect the *Status cell only* for the placeholder string. This eliminates all four false-positive classes by structure rather than by regex.
-  - **Note**: the original monolith carried the same regex bug as iterations 1+2 above. The fix landed in `split-run-task` is strictly better (catches the actual real-world bug class) but isn't fully markdown-aware.
-  - **Effort**: `S`.
+    4. **Round 4 (current)** (substring: count rows containing `Met / Partial / Not met` literal): false-positive if a handoff's prose quotes the template phrase elsewhere on the row.
+  - **Why round 4 isn't blocking**: catches the real-world failure mode (bare template handoff). The remaining false positive (prose-quoted placeholder) is theoretical. So this entry is sequencing-flexible — no fire — but worth doing **before** architect-review or the audits framework lands, so those phases use the utility from day one rather than each inventing their own table reads.
+  - **Effort**: `S` for the parser + retrofit of the two existing call sites (AC Coverage, Validation Outcomes). Each new structured-table artifact is then a 1-line call to the same utility — marginal cost approaches zero.
 
 - [ ] **`run-task-prompts.test.ts` golden suite is dev-only — needs to be portable to main** *(surfaced 2026-05-09 during port of `split-run-task` to `main`)*
   - **Scope**: `tests/run-task-prompts.test.ts` + `tests/run-task-prompts.golden.json` were intentionally left off the dev→main port because the goldens are too tightly coupled to the capture environment in two distinct ways:
