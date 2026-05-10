@@ -138,8 +138,8 @@ git clone git@github.com:tstraub89/canon-ai.git
 cp -r canon-ai/{scripts,tasks,docs,AGENTS.md,CLAUDE.md,CODEX.md,.codex,.claude,.canon} your-project/
 cd your-project
 
-# 2. Install the orchestrator's deps (TypeScript + tsx + node:test)
-npm install --save-dev tsx typescript @types/node
+# 2. Install the orchestrator's deps (TypeScript + tsx + node:test + Mustache for prompt rendering)
+npm install --save-dev tsx typescript @types/node mustache @types/mustache
 
 # 3. Set the project name (or rely on your package.json "name" field)
 export CANON_PROJECT_NAME="your-project"
