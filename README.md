@@ -36,7 +36,7 @@ Canon is what happens when you treat those failure modes as engineering problems
 | Agent reinvents an existing pattern | **`docs/patterns.md` trigger table** + Known Pitfalls injected into implement prompts |
 | Agent re-debates a settled decision | **`docs/decisions.md`** — agents read, don't re-propose |
 | Agent forgets a past mistake | **`docs/lessons-learned.md`** — distilled cross-task wisdom that promotes into permanent rules over time |
-| Reviews loop forever on the same disagreement | **Auto-block on runaway review loops** — 3 rounds for S/M, 5 for L/XL, then escalate to human |
+| Reviews loop forever on the same disagreement | **Auto-block on runaway review loops** — per-size caps (see `pipeline-policy.ts`), escalation to human after the cap |
 | Spec drift between conversation and pipeline | **File-based handoff protocol** — every artifact lives in `tasks/<id>/`, no copy-pasting |
 | Sensitive surfaces (auth, payments) get refactored on theoretical grounds | **`delicate: true` flag** that promotes the task to highest-effort tier and triggers extra review discipline |
 
@@ -49,7 +49,7 @@ Canon orchestrates two AI coding CLIs:
 
 A **human** is the product owner: approves specs, runs final behavioral tests, ships.
 
-The orchestrator (`scripts/run-task.ts`, ~4000 lines) drives this. For each task:
+The orchestrator under `scripts/run-task/` drives this. For each task:
 
 ```
 spec → spec_review → human gate → plan → implement → code_review → qa → human_review
@@ -85,7 +85,7 @@ The portable structure: orchestration scripts, task templates, agent rules (`AGE
 - The discipline (low-padding communication norms, two-stage code review, code-is-canonical, etc.) baked into the agent rules
 - A knowledge corpus structure (`docs/patterns.md`, `docs/decisions.md`, `docs/codebase-map.md`) you fill in as your project's conventions emerge
 
-The "after filling in the project-specific scaffolding" caveat matters: canon-ai ships ~48 `TODO[canon]:` markers across the docs and a few in the orchestrator. The pipeline runs without them, but agent prompts will be referencing empty validation matrices and missing patterns until you populate them.
+The "after filling in the project-specific scaffolding" caveat matters: canon-ai ships `TODO[canon]:` markers across the docs and a few in the orchestrator. The pipeline runs without them, but agent prompts will be referencing empty validation matrices and missing patterns until you populate them.
 
 **What you don't get from Layer 1:**
 
@@ -103,14 +103,14 @@ Layer 1 is required for Layer 2 to work; Layer 2 is what makes Layer 1 actually 
 
 ✅ **Built and working in canon-ai today:**
 
-- `scripts/run-task.ts` — full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, --reroute, --ship
+- `scripts/run-task.ts` (entry) + `scripts/run-task/` modules — full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, --reroute, --ship
 - `scripts/pipeline-policy.ts` — pure policy module (tier/sizing/model/effort matrix), table-tested
 - `scripts/task.sh` — task lifecycle helper (new / list / status / phase / reset-spec-review / post-merge-sync / release-init), genericized for non-Node projects
-- `tasks/_templates/` — eight artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
+- `tasks/_templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
 - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — workflow rules and per-agent guidance
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.codex/config.toml` / `.claude/settings.json` — agent CLI configs
-- 58 unit tests passing (`npm test`)
+- Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**
 
