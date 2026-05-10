@@ -24,6 +24,7 @@
     | **breaking-change** | Affected Files include public type surfaces | exported types preserved or deprecations documented |
     | **e2e-locator-coverage** | Diff touches user-visible labels/buttons | every changed label has updated e2e locator (catches the "test deferred while button name changed" pattern) |
     | **citation-grounding** | docs-check flagged any package | every flagged package has a real API cited in handoff. Often inside the omnibus code-review prompt today; extracting it tightens that prompt and gives citations a dedicated artifact. |
+    | **deploy-smoke** | Affected Files include deployment config (vercel.json, next.config.js, route configs) | required preview-environment HTTP checks (`/`, `/login`, key routes); local build pass is not enough for route/config tasks. Surfaced from TokenAnxiety dogfood discussion #27 — ui-001 passed local validation but the Vercel preview exposed 404s from `cleanUrls: true` interacting with rewrite destinations. |
 
     Project-specific audits register their own conditions; canon ships the framework and a couple of generic audits, projects layer on what they need.
   - **Risks to watch**: (a) false positives on legitimate guard consolidation — if a refactor pulls multiple guards into one wrapper, the script flags multiple "DROPPED"; the LLM RELOCATED verdict handles this but the prompt must explicitly check "is the wrapper reachable from every entry point?"; (b) `.canon/guards.json` registry drift — needs a maintenance home, probably appended during the periodic lessons-sweep when a new guard helper is introduced; (c) scope leakage — should the audit grep all of `src/` or just files in spec's Affected Files? Probably all of `src/`, since *unlisted* call sites are exactly where guards get silently dropped.
@@ -127,6 +128,21 @@
   - **Risks to watch**: status writes during phase setup (e.g., session-id storage) need to be cleanly skippable, not partially applied. Keep dry-run an early branch in `runPhase` rather than threading a flag through every helper.
   - **Effort**: `S`.
 
+- [ ] **`canon dogfood-report` command** *(framed 2026-05-10 from TokenAnxiety discussion #27, item 9)*
+  - **Scope**: A tooling command that produces a structured retrospective on canon's behavior across a set of tasks — iteration counts (current + cumulative), validation gaps, post-closeout fixes, declared-vs-executable drift findings. The shape of report James wrote manually for discussion #27, but generated mechanically from canon's telemetry files + git log.
+  - **Why it's wanted**: dogfood reports are how canon learns about itself. James hand-assembled #27 from `task-quality-log.md` + `pipeline-invocations.md` + `lessons-learned.md` + git log of post-closeout commits. That's exactly the kind of synthesis that should be a command, not a manual exercise — both because the manual version is expensive (~half a day per report) and because canon's own observability story should not be "rely on the human to dig through artifacts."
+  - **Shape**: `canon dogfood-report [--since <date>] [--canon-commit <sha>] [--out <path>]` reads:
+    - `docs/task-quality-log.md` for per-task metrics
+    - `docs/pipeline-invocations.md` for run-by-run history
+    - `docs/lessons-learned.md` for distilled lessons (and flags template-only content as suspicious)
+    - `tasks/<id>/status.json` for cumulative counters (depends on issue #32 landing)
+    - `git log --oneline` for post-closeout fixes near each completed task
+    - The `canon` stamp block (depends on issue #31 landing) to bucket findings by governing canon version
+  - Outputs a markdown report following the structure of discussion #27: environment versions, tasks reviewed, what worked, hiccups/bugs, suggested follow-ups, evidence bundle.
+  - **Sequencing dependency**: this command is the *consumer* of issues #31 (canon stamping) and #32 (cumulative counters). Build it after both land, otherwise the report has the same gaps James called out manually.
+  - **Punted to later**: cross-project dogfood report (when canon is a package and TokenAnxiety / GalleryPlanner / others share a schema); LLM-summary mode (Claude reads the raw report and writes the "What Worked / Hiccups" narrative); auto-file-issues mode (each Hiccup section becomes a GitHub issue via `gh issue create`).
+  - **Effort**: `S` for the raw-data report. `M` if combined with LLM-narrative mode.
+
 ## 🐛 Harness Bugs
 
 - [ ] **Smoke-pipeline-on-active-task can clobber unrelated dev commits via cross-tree sync** *(surfaced 2026-05-09 during `split-run-task` smoke)*
@@ -171,7 +187,8 @@
     3. **Round 3** (column-based: `/\|\s*AC-\d[^|]*\|\s*([^|]+?)\s*\|/`): broke when an AC description contained an escaped pipe (shell pipelines, `foo \| bar`) — column boundary shifted.
     4. **Round 4 (current)** (substring: count rows containing `Met / Partial / Not met` literal): false-positive if a handoff's prose quotes the template phrase elsewhere on the row.
   - **Why round 4 isn't blocking**: catches the real-world failure mode (bare template handoff). The remaining false positive (prose-quoted placeholder) is theoretical. So this entry is sequencing-flexible — no fire — but worth doing **before** architect-review or the audits framework lands, so those phases use the utility from day one rather than each inventing their own table reads.
-  - **Effort**: `S` for the parser + retrofit of the two existing call sites (AC Coverage, Validation Outcomes). Each new structured-table artifact is then a 1-line call to the same utility — marginal cost approaches zero.
+  - **Stable validation IDs follow-on** *(framed 2026-05-10 from TokenAnxiety dogfood discussion #27)*: once table parsing is reliable, the *next* brittleness layer is matching validation checks across spec→handoff by **prose label**. James's ui-002 evidence: a mechanically-correct implementation got tripped by a label-mismatch between spec ("`npm run test` — including the four new unit tests (3 in optimizer test file...)") and handoff ("`npm run test`"), causing a false code-review auto-block. The structural fix is to give validation checks stable IDs (e.g. `VAL-1`) in the spec, carry the ID through the handoff row, and compare by ID with prose displayed for humans. Not a separate BACKLOG entry — it's the natural successor to this one. When the parser lands, follow it with a small ID-emitting spec template + ID-matching handoff parser.
+  - **Effort**: `S` for the parser + retrofit of the two existing call sites (AC Coverage, Validation Outcomes). Each new structured-table artifact is then a 1-line call to the same utility — marginal cost approaches zero. Stable-IDs follow-on: `S` once parser exists.
 
 - [ ] **`run-task-prompts.test.ts` golden suite is dev-only — needs to be portable to main** *(surfaced 2026-05-09 during port of `split-run-task` to `main`)*
   - **Scope**: `tests/run-task-prompts.test.ts` + `tests/run-task-prompts.golden.json` were intentionally left off the dev→main port because the goldens are too tightly coupled to the capture environment in two distinct ways:

@@ -120,3 +120,24 @@ Decisions can be reopened, but only with **strong justification and human approv
 **Why**: The alternative — Codex manages its own commits — produced two failure modes. **(1)** Inconsistent commit messages, untracked files swept in, partial commits left mid-implement. **(2)** No structural guarantee that the commit matches the handoff. Centralizing the commit step in the orchestrator gave us a single chokepoint to enforce: every dirty file must be in the handoff Changes table; every handoff file must exist or be already-committed. That cross-check is the load-bearing safety property that makes code review meaningful — the reviewer knows the diff and the handoff agree before they start.
 
 **Rule**: Codex must not run `git commit` during implement. The orchestrator owns the commit. If `autoCommitCode()`'s constraints feel too tight (e.g., a legitimate change needs files outside the handoff table), the fix is to update the handoff, not to bypass the auto-commit.
+
+
+---
+
+## Declared Canon vs Executable Canon as a recurring audit lens
+
+**Decision**: When reviewing canon's own changes (its harness, policy, templates, or rule files), the explicit framing is "does the executable behavior match the declared behavior?" Drift between the two — `AGENTS.md` / `CLAUDE.md` / `CODEX.md` / docs promising one rule while `scripts/run-task/`, `scripts/task.sh`, or templates enforce something weaker, different, or stale — is its own bug class and gets called out as such.
+
+**Why**: TokenAnxiety's first dogfood report (discussion #27, 2026-05-10) surfaced multiple findings that all reduced to declared/executable drift, not philosophical objections to canon:
+- `task.sh` resets `iterations` to 0 on approval — telemetry promised cumulative count, code provides loop-local count. ([scripts/task.sh:344](scripts/task.sh#L344))
+- `code-review.ts` and `plan.ts` reject template-unfilled artifacts; `spec-review.ts` (until commit 27463ce) didn't — the rule was declared uniformly but enforced asymmetrically.
+- `human_review: done` can flip true with unresolved `human_pending` validations — the declared "done means done" contract isn't enforced.
+
+These look like separate bugs at the artifact level. They share a generator: rules added to declared canon without a corresponding executable enforcement, or with an enforcement that drifts as the harness evolves. Naming the pattern explicitly lets reviewers ask one question that catches a family of bugs, rather than re-discovering each instance.
+
+**Rule**: When reviewing changes to canon's harness, policy, or rule files, run the declared/executable check explicitly:
+1. If a change touches `AGENTS.md` / `CLAUDE.md` / `CODEX.md` / `docs/patterns.md` / `docs/decisions.md` to *add or strengthen* a rule, verify the orchestrator/scripts/templates enforce it — and add the enforcement if not. A new declared rule without an executable counterpart is a half-landed change.
+2. If a change touches the executable surface (orchestrator, `task.sh`, templates) to *weaken or alter* a rule, verify the declared canon still describes the executable behavior — and update the docs/rule files if not.
+3. When a real bug surfaces, ask: is this a *one-off failure* (write the fix) or is it a *declared/executable drift* (write the fix AND name the family in the commit message or BACKLOG)? If the latter, look for related drift in adjacent surfaces.
+
+Periodic application: when running an audit on canon (TokenAnxiety-style dogfood, an `architect_review`-shaped pass over the harness, or just a pre-release sweep), explicitly bucket findings as "declared bug," "executable bug," or "drift between the two." The drift bucket is usually the most productive one to mine.
