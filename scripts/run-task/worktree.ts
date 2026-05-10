@@ -61,7 +61,7 @@ export function findExistingWorktreeForBranch(branch: string): string | null {
     return null;
 }
 
-export function ensureWorktree(taskId: string, branch: string): string {
+export function ensureWorktree(taskId: string, branch: string, startPoint?: string): string {
     if (!fs.existsSync(WORKTREES_ROOT)) {
         fs.mkdirSync(WORKTREES_ROOT, { recursive: true });
     }
@@ -90,8 +90,11 @@ export function ensureWorktree(taskId: string, branch: string): string {
         info(`Creating worktree at ${wt} (branch: ${branch})...`);
         git('worktree', 'add', wt, branch);
     } else {
-        info(`Creating worktree at ${wt} (new branch: ${branch})...`);
-        git('worktree', 'add', '-b', branch, wt);
+        const startSuffix = startPoint ? ` from ${startPoint}` : '';
+        info(`Creating worktree at ${wt} (new branch: ${branch}${startSuffix})...`);
+        const args = ['worktree', 'add', '-b', branch, wt];
+        if (startPoint) args.push(startPoint);
+        git(...args);
     }
 
     const wtModules = path.join(wt, 'node_modules');

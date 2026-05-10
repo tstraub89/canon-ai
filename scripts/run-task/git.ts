@@ -134,6 +134,23 @@ export function ensureBranch(taskIds: string[]): void {
 
     const branchName = `task/${taskIds[0]}`;
     const baseBranch = getBaseBranch(taskIds);
+
+    if (useWorktree) {
+        // First-implement worktree case: create task/<id> directly in the
+        // worktree from baseBranch. Never mutate the main checkout's HEAD —
+        // that would violate the documented isolation model where the main
+        // checkout stays on the base branch while implementation, review, and
+        // qa run in ../dev-worktrees/<id>/.
+        ensureWorktree(taskIds[0], branchName, baseBranch);
+        for (const taskId of taskIds) {
+            const s = readStatus(taskId);
+            s.branch = branchName;
+            writeStatus(taskId, s);
+        }
+        info(`Branch recorded: ${branchName} (worktree mode — main checkout untouched)`);
+        return;
+    }
+
     const current = getCurrentBranch();
     const isOnBase = current === baseBranch || current === 'main' || current === 'master';
     if (isOnBase) {
