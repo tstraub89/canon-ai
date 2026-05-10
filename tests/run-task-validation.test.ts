@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+    checkAcCoveragePlaceholders,
     validateHandoffAgainstSpec,
     verifyHandoffAgainstDiffFromData,
 } from '../scripts/run-task/validation.js';
@@ -121,6 +122,37 @@ void test('validateHandoffAgainstSpec allows required checks to pass and optiona
             assert.deepEqual(issues, []);
         },
     );
+});
+
+void test('checkAcCoveragePlaceholders ignores prose in the AC Coverage section', () => {
+    const issues = checkAcCoveragePlaceholders([
+        '## AC Coverage',
+        '',
+        'This prose mentions AC-1 and the phrase Met / Partial / Not met, but it is not a table row.',
+        '',
+        '| AC | Status | Notes |',
+        '|---|---|---|',
+        '| AC-1 | Pass | filled in |',
+        '',
+    ].join('\n'));
+
+    assert.deepEqual(issues, []);
+});
+
+void test('checkAcCoveragePlaceholders flags an all-placeholder table even when Status is last', () => {
+    const issues = checkAcCoveragePlaceholders([
+        '## AC Coverage',
+        '',
+        '| AC | Notes | Status |',
+        '|---|---|---|',
+        '| AC-1 | template row | Met / Partial / Not met |',
+        '| AC-2 | template row | Met / Partial / Not met |',
+        '',
+    ].join('\n'));
+
+    assert.deepEqual(issues, [
+        'AC Coverage table only contains template placeholder rows (Status "Met / Partial / Not met") — fill in actual AC statuses',
+    ]);
 });
 
 void test('verifyHandoffAgainstDiffFromData passes when handoff and diff agree', () => {

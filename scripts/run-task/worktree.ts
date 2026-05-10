@@ -12,8 +12,16 @@ export const PIPELINE_TELEMETRY_FILES = [
     'docs/lessons-learned.md',
 ] as const;
 
+export const PIPELINE_MANAGED_DOCS = [
+    'docs/architecture.md',
+    'docs/codebase-map.md',
+    'docs/decisions.md',
+    'docs/patterns.md',
+    'docs/product-context.md',
+] as const;
+
 export const TASK_ARTIFACT_FILES = new Set([
-    'spec.md', 'spec-review.md', 'plan.md', 'handoff.md', 'review.md', 'done.md',
+    'spec.md', 'spec-review.md', 'plan.md', 'handoff.md', 'review.md', 'done.md', 'notes.md',
 ]);
 
 export function worktreePath(taskId: string): string {
@@ -121,7 +129,8 @@ export function teardownWorktree(taskId: string): void {
 }
 
 export function flushWorktreeTelemetry(): void {
-    const present = PIPELINE_TELEMETRY_FILES.filter(f => fs.existsSync(path.join(REPO_ROOT, f)));
+    const allFiles = [...PIPELINE_TELEMETRY_FILES, ...PIPELINE_MANAGED_DOCS];
+    const present = allFiles.filter(f => fs.existsSync(path.join(REPO_ROOT, f)));
     if (present.length === 0) return;
     const status = gitSafe('status', '--porcelain', ...present);
     if (!status.ok || !status.stdout.trim()) return;
@@ -175,7 +184,7 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
                 if (!needsCopy) {
                     const a = fs.readFileSync(src);
                     const b = fs.readFileSync(dest);
-                    needsCopy = !a.equals(b);
+                    needsCopy = a.length > b.length;
                 }
                 if (needsCopy) {
                     fs.copyFileSync(src, dest);

@@ -32,6 +32,7 @@ export function printUsage(): void {
     console.log('  --pr                Push + create draft PR at human_review');
     console.log('  --reroute           Reset from human_review back to implement AND re-invoke the pipeline');
     console.log('  --ship              Merge open PR, pull, archive task, commit+push, clean branches');
+    console.log('  --dry-run           Print each planned phase and exit without spawning any LLM');
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -52,6 +53,7 @@ export function parseArgs(argv: string[]): CliArgs {
     let pr = false;
     let reroute = false;
     let ship = false;
+    let dryRun = false;
 
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
@@ -81,6 +83,9 @@ export function parseArgs(argv: string[]): CliArgs {
             case '--ship':
                 ship = true;
                 break;
+            case '--dry-run':
+                dryRun = true;
+                break;
             default:
                 if (arg.startsWith('--')) die(`Unknown option: ${arg}`);
                 taskIds.push(arg);
@@ -88,7 +93,7 @@ export function parseArgs(argv: string[]): CliArgs {
     }
 
     if (taskIds.length === 0) die('At least one TASK-ID is required.');
-    return { taskIds, interactive, step, expectPhase, push, pr, reroute, ship };
+    return { taskIds, interactive, step, expectPhase, push, pr, reroute, ship, dryRun };
 }
 
 export function validateTaskId(id: string): void {

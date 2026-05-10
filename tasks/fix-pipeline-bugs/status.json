@@ -1,0 +1,55 @@
+{
+  "id": "fix-pipeline-bugs",
+  "title": "Fix five harness bugs from pipeline refactor",
+  "status": "complete",
+  "created": "2026-05-09",
+  "updated": "2026-05-09",
+  "branch": "task/fix-pipeline-bugs",
+  "base_branch": "dev",
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex": "019e0cf1-36a5-78a3-bf6c-deed4d201ec0",
+    "claude_spec": "6008f640-4af9-4106-8eba-8e9f5f1b0f53",
+    "claude_review": "91476015-dd56-4e94-9774-52496b91ebc3"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
+}

@@ -74,6 +74,7 @@ export type CliArgs = {
     pr: boolean;
     reroute: boolean;
     ship: boolean;
+    dryRun: boolean;
 };
 
 export type TaskContext = {

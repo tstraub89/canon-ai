@@ -72,6 +72,7 @@ let cliArgs: CliArgs = {
     pr: false,
     reroute: false,
     ship: false,
+    dryRun: false,
 };
 let ghAvailable = false;
 // Claude session ID captured after each Claude-run phase for session resumption.
@@ -450,6 +451,175 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     appendAutoCommitDebug(taskIds, { ...debug, result: 'committed' });
     const stagedCount = stagedAfter.stdout.trim().split('\n').filter(Boolean).length;
     info(`Auto-committed ${stagedCount} file(s): ${message}`);
+}
+
+function humanReviewAllowedPath(taskIds: string[], filePath: string): boolean {
+    const telemetryFiles = splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[];
+    const managedDocs = splitWorktree.PIPELINE_MANAGED_DOCS as readonly string[];
+    return taskIds.some(taskId => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) ||
+        telemetryFiles.includes(filePath) ||
+        managedDocs.includes(filePath);
+}
+
+function mirrorHumanReviewDocsToCwd(cwd: string): void {
+    if (cwd === REPO_ROOT) return;
+    for (const relPath of [...splitWorktree.PIPELINE_TELEMETRY_FILES, ...splitWorktree.PIPELINE_MANAGED_DOCS]) {
+        const src = path.join(REPO_ROOT, relPath);
+        const dest = path.join(cwd, relPath);
+        if (!fs.existsSync(src)) continue;
+        try {
+            fs.mkdirSync(path.dirname(dest), { recursive: true });
+            fs.copyFileSync(src, dest);
+        } catch {
+            // Best-effort mirror: the final dirty-set validation below is authoritative.
+        }
+    }
+}
+
+function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
+    mirrorHumanReviewDocsToCwd(cwd);
+
+    const dirtyResult = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+    if (!dirtyResult.ok) {
+        die(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || 'unknown error'}`);
+    }
+
+    const dirtyEntries = splitGit.parsePorcelainEntries(dirtyResult.stdout);
+    if (dirtyEntries.length === 0) {
+        die('Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.');
+    }
+
+    const unexpected = dirtyEntries.filter(entry => !entry.paths.every(pathName => humanReviewAllowedPath(taskIds, pathName)));
+    if (unexpected.length > 0) {
+        die(
+            `Human review commit aborted: working tree has dirty files outside the human_review allowlist.\n` +
+            unexpected.map(entry => `    ${entry.raw}`).join('\n') +
+            `\n  Stage only task artifacts, telemetry, and managed docs before rerunning.`
+        );
+    }
+
+    const stagePaths = new Set<string>();
+    for (const taskId of taskIds) {
+        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
+            stagePaths.add(path.join('tasks', taskId));
+        }
+    }
+    for (const relPath of [...splitWorktree.PIPELINE_TELEMETRY_FILES, ...splitWorktree.PIPELINE_MANAGED_DOCS]) {
+        if (dirtyEntries.some(entry => entry.paths.includes(relPath))) {
+            stagePaths.add(relPath);
+        }
+    }
+
+    if (stagePaths.size === 0) {
+        die('Human review commit aborted: no allowed dirty files found to stage.');
+    }
+
+    const stagedBefore = gitSafeAt(cwd, 'diff', '--cached', '--name-only');
+    if (!stagedBefore.ok) {
+        die(`Human review commit aborted: could not inspect staged files: ${stagedBefore.stderr || 'unknown error'}`);
+    }
+    const stagedBeforeUnexpected = stagedBefore.stdout
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .filter(filePath => !humanReviewAllowedPath(taskIds, filePath));
+    if (stagedBeforeUnexpected.length > 0) {
+        die(
+            `Human review commit aborted: staged files are not covered by the human_review allowlist.\n` +
+            stagedBeforeUnexpected.map(f => `    ${f}`).join('\n') +
+            `\n  Unstage them or list them in the task artifacts before rerunning.`
+        );
+    }
+
+    for (const relPath of stagePaths) {
+        const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath);
+        if (!addResult.ok) {
+            die(`Human review commit aborted: failed to stage ${relPath}: ${addResult.stderr || 'unknown error'}`);
+        }
+    }
+
+    const stagedResult = gitSafeAt(cwd, 'diff', '--cached', '--name-only');
+    if (!stagedResult.ok) {
+        die(`Human review commit aborted: could not inspect staged files after add: ${stagedResult.stderr || 'unknown error'}`);
+    }
+    const stagedNames = stagedResult.stdout.split('\n').map(line => line.trim()).filter(Boolean);
+    if (stagedNames.length === 0) {
+        die('Human review commit aborted: staging produced no commit-ready files.');
+    }
+    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(taskIds, filePath));
+    if (stagedUnexpected.length > 0) {
+        die(
+            `Human review commit aborted: staged files escaped the allowlist.\n` +
+            stagedUnexpected.map(f => `    ${f}`).join('\n')
+        );
+    }
+
+    const branchResult = gitSafeAt(cwd, 'rev-parse', '--abbrev-ref', 'HEAD');
+    if (!branchResult.ok || !branchResult.stdout.trim()) {
+        die(`Human review commit aborted: could not determine the current branch: ${branchResult.stderr || 'unknown error'}`);
+    }
+    const branchName = branchResult.stdout.trim();
+    const baseBranch = getBaseBranch(taskIds);
+    const title = getTitle(splitState.readStatus(taskIds[0]));
+    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
+
+    const commitMessage = `chore: add task artifacts for ${label}`;
+    const commitResult = gitSafeAt(cwd, 'commit', '-m', commitMessage);
+    if (!commitResult.ok) {
+        die(`Human review commit aborted: ${commitResult.stderr || 'unknown error'}`);
+    }
+
+    info(`Committed human_review artifacts on ${branchName}: ${commitMessage}`);
+    info(`Pushing ${branchName}...`);
+    const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
+    if (!pushResult.ok) {
+        die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
+    }
+
+    if (cliArgs.pr) {
+        if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
+        const prResult = splitGit.runCommand('gh', [
+            'pr', 'create',
+            '--draft',
+            '--base', baseBranch,
+            '--head', branchName,
+            '--title', title,
+            '--body', `Auto-generated by canon-ai for ${label}.`,
+        ]);
+        if (!prResult.ok) {
+            die(`Failed to create draft PR: ${prResult.stderr || 'unknown error'}`);
+        }
+        info(`Draft PR created: ${prResult.stdout || branchName}`);
+    }
+}
+
+function printDryRunPlan(state: PipelineState): void {
+    const { tasks } = state;
+    const taskIds = tasks.map(t => t.taskId);
+    const currentPhase = assertSamePhase(taskIds);
+
+    info(`Dry run (${state.tier} tier${state.isBundle ? `, bundle: ${taskIds.join(', ')}` : ''})`);
+    if (currentPhase === 'complete') {
+        info('No phases remain — tasks are already complete.');
+        return;
+    }
+
+    console.log('Planned phases:');
+    const currentIdx = PHASE_ORDER.indexOf(currentPhase);
+    for (const phase of PHASE_ORDER.slice(currentIdx)) {
+        if (phase === 'human_review') continue;
+        if (phase === 'spec_review' && state.tier === 'fast') continue;
+        if (phase === 'spec' || phase === 'plan' || phase === 'code_review' || phase === 'qa') {
+            const cfg = splitPolicy.getClaudeConfig(phase, tasks);
+            console.log(`  - ${phase}: Claude / ${cfg.model} / ${cfg.effort}`);
+            continue;
+        }
+        if (phase === 'spec_review' || phase === 'implement') {
+            const cfg = splitPolicy.getCodexConfig(phase, tasks);
+            console.log(`  - ${phase}: Codex / ${cfg.model} / ${cfg.effort}`);
+        }
+    }
+    console.log('  - human_review: no LLM');
 }
 
 // ── Ship (archive) ─────────────────────────────────────────────────────────
@@ -961,6 +1131,28 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     if ((phase as Phase) === 'qa') {
         return runQaPhase(state, cliArgs.interactive);
     }
+    if ((phase as Phase) === 'human_review') {
+        const taskIds = tasks.map(t => t.taskId);
+        if (cliArgs.push || cliArgs.pr) {
+            const cwd = splitWorktree.getActiveCwd(taskIds);
+            commitHumanReviewFiles(taskIds, cwd);
+            process.exit(0);
+        }
+
+        console.log('');
+        console.log('════════════════════════════════════════════════════════');
+        console.log('  HUMAN REVIEW — no push requested.');
+        console.log('');
+        console.log('  Done files:');
+        for (const taskId of taskIds) {
+            console.log(`  tasks/${taskId}/done.md`);
+        }
+        console.log('');
+        console.log('  Re-run with --push to commit task artifacts and push, or --pr to also create a draft PR.');
+        console.log('════════════════════════════════════════════════════════');
+        console.log('');
+        process.exit(0);
+    }
 
     die(`Unknown phase: ${String(phase)}`);
 }
@@ -1290,8 +1482,18 @@ export async function main(): Promise<void> {
     cliArgs = splitCli.parseArgs(process.argv.slice(2));
     splitEnv.warnLegacyEnvVars();
     splitEnv.warnWorktreesRootMismatch();
-    const skipAgentDeps = cliArgs.ship;
+    const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
     checkDeps(cliArgs.taskIds, skipAgentDeps);
+
+    if (cliArgs.dryRun) {
+        const state = buildPipelineState(cliArgs.taskIds);
+        printDryRunPlan(state);
+        process.exit(0);
+    }
+
+    if (cliArgs.pr && !ghAvailable) {
+        die('--pr requires the gh CLI, but it is not available.');
+    }
 
     if (cliArgs.ship) {
         shipTasks(cliArgs.taskIds);

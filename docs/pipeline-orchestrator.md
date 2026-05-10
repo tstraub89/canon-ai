@@ -27,6 +27,7 @@ Multiple IDs = bundle mode (see below).
 | `--pr` | — | Push + create a draft PR at `human_review`. |
 | `--reroute` | — | Reset a task from `human_review` back to `implement` (post-review fix path). |
 | `--ship` | — | Mark tasks done and move artifacts to `_archive/`. |
+| `--dry-run` | — | Print the planned phases, agents, model, and effort without spawning an LLM. |
 
 **Default is full auto** — without `--step`, the pipeline runs all phases to completion (or to the next human gate).
 
@@ -143,7 +144,7 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 **Auto-commit**: After implement passes validation, the orchestrator auto-commits source files listed in `handoff.md`'s Changes table. If any non-task source files remain dirty after staging, the commit is aborted and the pipeline stops for manual intervention. `handoff.md` must list every changed file including both sides of renames.
 
-At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task artifacts. Changelog and version bump remain a manual human + Claude step.
+At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task artifacts, telemetry, and the managed docs listed in `PIPELINE_MANAGED_DOCS` before pushing. Changelog and version bump remain a manual human + Claude step.
 
 ## Phase Routing + Auto-Block
 
