@@ -128,6 +128,12 @@ Layer 1 is required for Layer 2 to work; Layer 2 is what makes Layer 1 actually 
 - Pre-built docs-check / external-API-citation tooling (project-specific in original)
 - Per-language project bootstrappers (Python / Rust / Go variants)
 
+## Supported platforms
+
+- **macOS** and **Linux** are the supported targets. Canon's helpers (`scripts/task.sh`, worktree setup, etc.) require bash plus standard Unix tools (`jq`, `awk`, `sed`, `grep`).
+- **Windows is not supported.** Worktree setup symlinks `node_modules` and `.env*` files, which commonly fails with `EPERM` on Windows without developer mode or admin shell. Use **WSL2** if you're on Windows; native Windows is untested.
+- **Node**: 22.x or 24.x (declared in `package.json` engines).
+
 ## Getting started
 
 > ⚠️ **Pre-MVP**: Layer 1 works mechanically but the experience of using canon in a fresh project hasn't been validated. The first real test of the abstraction is its dogfooding adoption.
