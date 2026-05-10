@@ -1286,7 +1286,16 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
     const status = splitState.readStatus(taskId);
     const agent = status.phases[phase]?.agent;
     if (!agent || (agent !== 'codex' && agent !== 'claude')) return 'no_session';
-    const sessionId = status.sessions?.[agent] ?? null;
+    // Sessions live in per-phase slots, not a flat-by-agent slot. Map phase to
+    // slot the same way the post-phase storage block does (spec → claude_spec,
+    // code_review → claude_review, codex → codex). plan and qa are one-offs
+    // and have no stored session, so retry returns 'no_session' for them.
+    const slot: SessionSlot | null = agent === 'codex'
+        ? 'codex'
+        : phase === 'spec' ? 'claude_spec'
+        : phase === 'code_review' ? 'claude_review'
+        : null;
+    const sessionId = slot ? (status.sessions?.[slot] ?? null) : null;
     if (!sessionId) {
         warn(`Cannot retry ${phase} for ${taskId}: no ${agent} session ID stored.`);
         return 'no_session';
