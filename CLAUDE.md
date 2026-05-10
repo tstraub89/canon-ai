@@ -109,7 +109,7 @@ Reviews run in **two stages**. Stage 1 is a gate — if it fails, skip Stage 2 e
 
 **Stage 2 — Code quality (only if Stage 1 passed)**:
 
-7. Write findings labeled: `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, `spec gap`.
+7. Write findings labeled: `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, `spec gap`. Reference the spec by AC number and the diff by `file:line` — do not restate AC text or paste large code blocks back at the implementer. Every line in `review.md` should be load-bearing; padding dilutes signal and slows the review-iteration loop.
 8. **Test change rule**: Any change to a test must be directly justified by a spec AC that intentionally changes behavior. If a test was updated to pass against broken behavior (i.e., to accommodate the regression rather than fix it), flag it as `correctness bug`. Tests must only change when behavior is intentionally changing.
 
 Then:

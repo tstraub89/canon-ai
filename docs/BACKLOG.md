@@ -31,6 +31,93 @@
   - **Recommended sequencing**: Build framework + `guard_audit` together as Step 1 in one pipeline-infra session. Don't add a second audit in the same change — let one delicate task validate the shape end-to-end first. The audit phase touches dispatcher routing, so this benefits from one round of grilling against an actual delicate-task spec before code lands. Pipeline-infra-changes-are-inline applies; this is the shape of work that goes inline.
   - **Effort**: `M` (Step 1: framework + first audit). `S` (each subsequent audit).
 
+- [ ] **`architect_review` phase — same-model semantic sign-off between code review and QA** *(designed 2026-05-09 from a multi-session conversation about model portability and review independence)*
+  - **Scope**: Add a new pipeline phase between `code_review` and `qa` that asks a fundamentally different question than code review: "ignoring whether the patch technically works, is this the right *solution shape* for the problem?" Run by Claude (same model as the code reviewer) but in a fresh session with strict context isolation, an opinionated senior-engineer persona, and a forced counterfactual. The phase produces a three-way verdict: `agree`, `concern_for_human_attention` (advance to QA but flag in `done.md`), or `block_due_to_architecture_risk` (halt, route to human via the existing reroute mechanism, no automatic retry).
+  - **Why it's wanted**: code review is line-level — "does this implementation match the spec?" QA is operational — "can we verify behavior with tests?" Neither asks the 30k-ft question: "did this *solve the stated problem*, or did it just satisfy the ACs?" "Are we painting ourselves into a corner?" "Is the spec's framing still right in light of what got built?" Today that check is implicit in the human gate — the human reads `done.md` and either notices semantic drift or doesn't. A structured architect review pre-flags specific shape concerns rather than relying on the human to spot them cold.
+  - **Why same-model is acceptable here (the no-self-review principle, refined)**: canon's no-self-review rule strictly read is "no same-model review of the same question with the same context." Architect review asks a *different question* than code review (solution shape vs. line-level correctness), in a *different context* (fresh session, no code-review rationale, opinionated persona). It is not self-review under the strict reading even though both phases are run by Claude. Persona-shift produces independence of question, not independence of blind spots — accepted weakness. This is the *best* place to relax cross-model purity because the failure modes that matter at 30k ft (corner-painting, scope drift, "satisfied ACs but didn't solve the problem") are intuition-level, not LLM-blind-spot-level. The principle should be promoted into `AGENTS.md` as part of this work so the rule is explicit before the phase ships.
+  - **Triggering rules**:
+    - **Required** for `task_size ∈ {M, L, XL}` and any `delicate: true` task.
+    - **Skipped** for `task_size = S` non-delicate (overhead not justified for tiny patches).
+    - **Bundle mode**: triggered if any task in the bundle would individually trigger it. One architect review per bundle, not per task — the question is about the bundle's overall shape.
+  - **Phase shape and gating**:
+    - Runs only when `code_review.verdict ∈ {approved, approved_with_nits}`. If code review is `changes_requested`, the pipeline iterates implement → code review as today. Architect review is downstream of code-review approval; it never fires against a known-broken state.
+    - **Single-shot, no review-loop.** Architect review is not iterative — its concerns are upstream-of-implementation (spec / plan / shape), not implementation defects. A `block_due_to_architecture_risk` verdict halts and routes to the human, who decides whether to revise spec, replan, or override. No automatic bounce back to Codex (different from `code_review` failures).
+    - `agree` → orchestrator advances to `qa` silently.
+    - `concern_for_human_attention` → orchestrator advances to `qa`, sets a flag the QA prompt reads to surface the concern in `done.md` under a new *Architect concerns* section.
+    - `block_due_to_architecture_risk` → orchestrator halts, prints the concern, exits non-zero. Operator triggers `--reroute` (existing mechanism) to route back to spec/plan, or overrides via manual phase update.
+  - **Inputs (context isolation is load-bearing)**:
+    - `spec.md`, `plan.md` (full).
+    - The diff (`git diff <baseline>...HEAD`).
+    - `code_review.verdict` only — **NOT** the rationale or finding text. Sharing rationale anchors the architect review onto the code review's prior conclusions, defeating the persona-shift. Worth A/B testing whether to share the verdict at all (see Risks).
+    - `handoff.md` (full, including any *Iteration N* sections).
+    - **Explicitly excluded**: `review.md` body, `notes.md`, prior architect-review artifacts.
+  - **Prompt design constraints**:
+    1. **Fresh session, adversarial persona.** "You are a senior engineer pulled in to challenge this result, not bless it. Default disposition is skeptical. If the work looks fine, you must defend that conclusion against your own challenge."
+    2. **Question explicitly different from code review.** Asks: "Did this solve the problem stated in the spec, or just satisfy the ACs?" "Does anything look like a corner-painting choice future work will regret?" "Is the spec itself still the right framing in light of how this came out?" Does NOT ask "is the code correct" or "does the diff match the spec line-by-line."
+    3. **Forced counterfactual.** "What would a senior engineer have done differently if starting from scratch today, knowing what we know now?" Makes the persona do real comparative work and prevents passive acceptance.
+    4. **Output schema forces explicit position.** Three-way verdict mandatory. Free-text concern justification required only on `concern_for_human_attention` or `block_due_to_architecture_risk`. Verdict is not the path of least resistance — the model must actively choose a stance, including a defended `agree`.
+  - **Artifact and status integration**:
+    - New artifact: `tasks/<id>/architect-review.md`. Template carries the four-question structure (problem still correctly framed? solution shape appropriate? hidden future-cost / corner-painting risk? human attention warranted?) plus the verdict and (when non-`agree`) the concern justification.
+    - `status.json` gains `phases.architect_review` with `status` and `verdict` fields, mirroring the existing phase shape so the dispatcher reuses routing logic.
+    - QA prompt updated to read `architect-review.md` and surface non-`agree` concerns under *Architect concerns* in `done.md`.
+    - `docs/task-quality-log.md` gains a column for architect-review verdict and a column for "did it catch something not already in code review or QA." This is how the phase earns its keep empirically.
+  - **What's built (estimated 400–600 lines)**:
+    - `phases.architect_review` field in `status.json` schema + `task.sh` helper.
+    - `runArchitectReviewPhase()` in `run-task.ts` (single-shot dispatch, three-way verdict parsing).
+    - Routing in `checkAndRoute`: `agree` / `concern_for_human_attention` → `qa`; `block_due_to_architecture_risk` → integrate with existing reroute mechanism.
+    - Prompt template (canon-supplied default + project overlay hook).
+    - Artifact template `tasks/_templates/architect-review.md`.
+    - QA prompt update for *Architect concerns* surfacing.
+    - `AGENTS.md` updates: documenting the new phase, the no-self-review principle's "different question, different context" framing, and the three-way verdict.
+    - `CLAUDE.md` updates: pipeline-mode role lists architect review; explicit guidance on the persona, context isolation, and counterfactual.
+    - `docs/task-quality-log.md` schema additions.
+  - **Failure mode to watch — "architect-review-as-cosplay"**: same-model review with a thin persona produces bland approvals that look like signal but aren't. Symptoms: high `agree` rate with vague concerns, the model echoing code review's framing despite isolation, "looks good" with no counterfactual content. Mitigations are all in the prompt: force the counterfactual, exclude code-review rationale, structure the output schema to require explicit position-taking, monitor verdict distribution in the quality log. After 20–30 M/L/XL tasks, audit: did this phase catch issues not already in code review or QA? If not, the prompt or context isolation is too weak — tighten or remove. The phase has to earn its keep.
+  - **Risks to watch**:
+    - **Anchoring on code-review verdict**: even seeing `approved_with_nits` may bias the architect toward agreement. Consider stripping verdict context entirely and only telling the architect "code review has passed; your job is shape, not correctness." Worth A/B testing both variants (with-verdict vs. without-verdict) on the first 10–15 tasks.
+    - **Persona drift across sessions**: opinionated personas tend to soften when given long context. Keep architect-review prompts short and tight; the spec + plan + diff is already a lot of input. Hold the line on excluding code review's rationale and `notes.md`.
+    - **Bundle mode interaction**: triggering on the largest task in a bundle is right. Output is one architect review per bundle, not per task. The schema and prompt must handle multi-task input gracefully.
+    - **Interaction with `--reroute`**: `block_due_to_architecture_risk` should integrate with the existing reroute mechanism rather than introduce a separate halt path. Reroute already routes back to spec/plan; architect-review block routes the same way with the concern as the reroute reason.
+    - **Cost ceiling**: another full-pipeline phase costs tokens. The S-skip rule keeps it off small patches. If real-world cost/value ratio looks bad after the audit, consider gating architect review behind `delicate: true` only rather than M/L/XL broadly.
+  - **Punted to later**:
+    - **Cross-model architect review** (using a third model for this phase) — interesting future direction but adds dependency on model availability and undermines canon's two-model thesis. Revisit if same-model architect review proves too weak after the 20–30-task audit.
+    - **Per-AC architect review** (one verdict per AC vs. one per task) — overkill at this granularity.
+    - **Iterative architect review** — explicitly out of scope; the phase is single-shot by design.
+    - **Architect review on conversational fast-tier specs** — fast tier doesn't have an architect review pass today. Whether to add a lightweight pre-implement architect review on full-tier spec authorship is a separate question; punt until the post-code phase has shipped and we know whether the value is in pre- or post-implement framing.
+  - **Effort**: `M`. Most novel logic is the verdict parsing and three-way routing; the rest follows existing phase patterns. Touches dispatcher routing, so this benefits from one round of grilling against an actual M-tier task spec before code lands. Pipeline-infra-changes-are-inline applies; this is the shape of work that goes inline.
+
+## 📦 Distribution & Portability
+
+- [ ] **Canon as an installable package + `npx canon` CLI** *(framed 2026-05-09 from a multi-session conversation about portability)*
+  - **Scope**: Today canon is "drop these files into your repo." Package canon as an installable npm module with a CLI wrapper so harness logic (orchestrator, scripts, templates) lives outside the host repo while the host keeps only its project-specific memory (`docs/`, `tasks/`, role-file overrides). Adopters get canon updates via `npm update`, not by re-copying ~20 files.
+  - **Why it's wanted**:
+    - **Adoption friction**: existing canon adoption requires copying scripts, templates, role files, AGENTS.md, etc. Updates require manual re-copying and merge-by-eye.
+    - **Tooling isolation**: canon's runtime deps (`tsx`, etc.) shouldn't collide with the host project's `package.json`. `npx canon` keeps canon's runtime out of the host's dependency graph.
+    - **Multi-project use**: developers running canon across multiple projects today maintain N copies of the harness. One package, N projects, shared updates.
+    - **Cleaner separation of concerns**: host repo carries *its* memory (decisions, patterns, codebase map, lessons); canon carries *its* framework. Today they're tangled at the file-system level.
+    - **Collapses canon-ai's main/dev branch split** *(big lift)*: canon-ai (this repo) currently maintains two parallel branches because it's doing two jobs in one tree — *distributing canon* (main has adopter-facing stubs) and *developing canon by using canon* (dev has filled-out `docs/` for canon-ai-as-a-project). The package model splits those jobs cleanly: distribution becomes `npx canon init` writing templated content from the package; canon-ai-the-project keeps its own real `docs/` in a single branch like any other adopter. The "what stays parallel between main and dev" maintenance problem disappears because the templated content lives in the package source, not a sibling branch. This also makes the existing `CLAUDE.md` rule about modifying canon's own harness/policy cleaner to apply — modifying canon = modifying the package, structurally separate from modifying the project.
+    - **Partially absorbs two open harness bugs**: the `autoCommitArtifacts` doc-scope bug and the smoke-sync clobber (both currently in *Harness Bugs* below) stem from the orchestrator ambiguously treating certain `docs/` files as "shared" between worktrees. Once the orchestrator only operates on project artifacts (framework artifacts live in `node_modules`), those ambiguities largely evaporate. Both bugs likely fold into this work rather than getting fixed independently — worth not investing too much in standalone fixes if package extraction is on the near horizon.
+  - **In package vs. in host repo**:
+    - **Package** (`@canon-ai/cli` or similar): orchestrator (`run-task.ts` and helpers), `task.sh` equivalent, all `tasks/_templates/`, role-file *templates*, validation-matrix structure, prompt builders, audit framework (once `guard_audit`/scoped-audits land).
+    - **Host repo**: `docs/architecture.md`, `docs/product-context.md`, `docs/decisions.md`, `docs/codebase-map.md`, `docs/patterns.md`, `docs/lessons-learned.md`, `docs/task-quality-log.md`, `docs/pipeline-invocations.md`, `docs/BACKLOG.md`, all `tasks/<id>/`, and a new `.canon/` directory for project-specific config (validation command bindings, custom audit registry like `.canon/guards.json`, role-file overrides, project-specific delicate-flag domains).
+    - **Awkward middle — role files**: `AGENTS.md`, `CLAUDE.md`, `CODEX.md` must live at repo root because Claude Code, Codex, and (eventually) Gemini CLI auto-load those exact filenames at session start. Resolution: package ships canonical defaults; host repo commits a thin `.canon/overrides.md` that the init/update step concatenates onto defaults at versioned anchor points. This extends the existing project-policy fenced-block convention canon already uses for release rules. Updating canon updates the defaults; the project's overrides survive.
+  - **CLI sketch**:
+    - `npx canon init` — bootstrap a host repo: write role-file stubs, `.canon/` directory, sample `docs/` skeletons.
+    - `npx canon task new <id> "<title>"` — replaces `./scripts/task.sh new`.
+    - `npx canon task run <id> [--step] [--expect <phase>] [--reroute] [--push] [--pr] [--ship]` — replaces `npx tsx scripts/run-task.ts`.
+    - `npx canon task phase <id> <phase> <status> [verdict]` — replaces `./scripts/task.sh phase`.
+    - `npx canon task list` / `npx canon task status <id>` — equivalents of existing helpers.
+    - `npx canon update` — pull canon updates without re-copying files; project overrides survive.
+    - `npx canon migrate` — one-shot for existing in-place adopters: detects in-place canon, moves what's now package-shipped out of the repo, leaves project-shipped content in place, generates `.canon/overrides.md` from the diff between current files and shipping defaults.
+  - **Risks to watch**:
+    - **Dogfooding loop**: canon-ai (this repo) is canon's primary test bed. Once canon is a package, modifying canon via canon's own pipeline becomes "modify the package, publish, update." Slower iteration. Need a linked-dev mode (`npm link`, or a `.canon/canon-source` pointer to a local checkout) to keep canon-on-canon iteration fast. Decide this before publishing.
+    - **Overlay merge contract**: the role-file overlay mechanism is the most delicate part. Concatenation is simple but fragile if upstream defaults change anchors. Needs versioned fenced sections in the defaults that the overlay slots into, with the install/update step detecting overlay drift.
+    - **Doc co-evolution**: today `AGENTS.md` references `docs/architecture.md` etc. by relative path. Once role files are package-shipped and docs are project-shipped, references must resolve correctly from the host repo's POV. Probably fine since role files ship to repo root and docs are in `docs/`, but worth verifying on a real adopter.
+    - **Backward compatibility for existing adopters**: existing in-place canon checkouts shouldn't have to start from scratch. The `npx canon migrate` story is the load-bearing piece here — get it right or adoption stalls.
+  - **Sequencing / dependencies**:
+    - Depends on **role-file decoupling** — the work to cleanly separate "canon-canonical content" from "project-overlay content" inside `AGENTS.md` / `CLAUDE.md` / `CODEX.md`. That's prerequisite design work; without it, the overlay merge contract has nothing clean to anchor against.
+    - Probably also depends on the **scoped-audits framework** landing first, since the audit registry pattern (`.canon/guards.json`) is the prototype for what `.canon/` config looks like more broadly. Building the package after that pattern is established avoids retrofitting.
+  - **Effort**: `L`. Most of the cost is the overlay design + migration story + dev-loop preservation, not the package boilerplate itself. The package extraction is mechanical once the structural separation is done.
+
 ## 🛠️ Tooling & Dev Experience
 
 - [ ] **`--dry-run` flag for `run-task.ts`** *(noted 2026-05-08 during the `split-run-task` spec)*

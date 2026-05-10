@@ -233,6 +233,14 @@ The rules below are canon-supplied universals — they apply to every project ca
 > 2. Behavior that reloads the app, replaces local state, or dismisses user work must be gated by explicit user action.
 > 3. Prefer shared types over duplicating signatures.
 
+### Scope Discipline
+
+> Always applicable to the implementer. The spec is the contract.
+>
+> 1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec's *Affected Files* table, stop, document the gap in `handoff.md` under *Blockers*, and surface it for human attention. Do not silently expand scope.
+> 2. **No unauthorized new abstractions.** Do not introduce new top-level modules, services, packages, or routing layers that the spec did not authorize. Minor refactors *within* an authorized file are fine; new abstractions are an architecture decision and belong in the spec, not in the implementation.
+> 3. **No incidental dependency changes.** Do not add, remove, upgrade, or downgrade dependencies (or their pinned versions) unless the spec explicitly requests it. A version change buried in a feature implementation is a separate decision masquerading as a side effect.
+
 ### Lint & Type Safety Policy
 
 > Always applicable. Suppressing a lint or type error is a last resort, not a convenience escape hatch.
