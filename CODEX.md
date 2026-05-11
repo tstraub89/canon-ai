@@ -4,8 +4,8 @@
 
 Codex is the **implementer and spec reviewer** in the canon-ai pipeline. See `AGENTS.md` for the full workflow, validation matrix, git rules, and definition of done — those are the source of truth. This file adds Codex-specific context.
 
-**Fast tier** (S tasks only, non-delicate): `Claude writes spec+plan → [human gate] → Codex implements → Claude reviews → QA → Human tests`
-**Full tier** (M, L, XL, or any delicate task): `Claude writes spec → Codex reviews spec → [human gate] → Claude writes plan → Codex implements → Claude reviews → QA → Human tests`
+**Fast tier** (S tasks only, non-delicate): `Claude writes spec+plan → [human gate] → Codex implements → runtime validation → Claude reviews → QA → Human tests`
+**Full tier** (M, L, XL, or any delicate task): `Claude writes spec → Codex reviews spec → [human gate] → Claude writes plan → Codex implements → runtime validation → Claude reviews → QA → Human tests`
 
 **Cross-review rule**: Codex reviews Claude's specs (full tier only — M/L/XL/delicate). Claude reviews Codex's code.
 
@@ -48,15 +48,18 @@ When the orchestrator invokes you for implement, the prompt already carries the 
 4. Finish with `./scripts/task.sh phase <TASK-ID> implement done` (the orchestrator's prompt shows the exact command).
 5. If you surfaced a distinct insight the reviewer wouldn't naturally capture, append an entry to `docs/lessons-learned.md`. Claude owns lessons by default — Codex writes only when it has a unique perspective.
 
+After implement, the orchestrator may run registered runtime checks outside Codex's sandbox and append `## Runtime Validation Outcomes` to `handoff.md`. Codex does not edit that section. If runtime validation fails, the next implement-revision prompt includes `## Runtime check failures to address`; read the referenced artifacts before changing code.
+
 ### Iterating After Review
 
-When Claude writes `tasks/TASK-ID/review.md` with changes requested:
+When Claude writes `tasks/TASK-ID/review.md` with changes requested, or when runtime validation reroutes with check failures:
 
 1. Address all `correctness bug` items (blocking).
 2. Address all `risk/guardrail` items (blocking unless explicitly marked non-blocking).
-3. `optional cleanup/nit` items: address if straightforward, skip if out of scope.
-4. Update `handoff.md` with what changed in this iteration.
-5. Rerun validation.
+3. For runtime failures, read `tasks/<id>/runtime-check-output/...` before proposing a fix; fix the product/code path, not the check, unless the spec authorizes a check change.
+4. `optional cleanup/nit` items: address if straightforward, skip if out of scope.
+5. Update `handoff.md` with what changed in this iteration.
+6. Rerun validation you can run locally; runtime checks rerun after implement closes.
 
 ## Implementation Conventions
 

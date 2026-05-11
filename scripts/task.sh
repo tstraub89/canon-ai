@@ -69,9 +69,9 @@ Commands:
   status <TASK-ID>        Show detailed status of a task
   phase <TASK-ID> <phase> <status> [verdict]
                           Update a task phase
-                          Phases: spec, spec_review, plan, implement, code_review, qa, human_review
+                          Phases: spec, spec_review, plan, implement, runtime_validation, code_review, qa, human_review
                           Status: pending, in_progress, done, changes_requested, blocked
-                          Verdict (optional, spec_review/code_review only):
+                          Verdict (optional, spec_review/runtime_validation/code_review only):
                             approved, approved_with_nits, changes_requested, needs_re_review
   reset-spec-review <TASK-ID>
                           Fully clear router-relevant state for a fresh
@@ -228,9 +228,12 @@ cmd_list() {
     # malformed/legacy status file can't make `list` and the orchestrator
     # disagree on where a task is.
     phase=$(jq -r '
-      def phase_order: ["spec","spec_review","plan","implement","code_review","qa","human_review"];
+      def phase_order: ["spec","spec_review","plan","implement","runtime_validation","code_review","qa","human_review"];
       . as $doc |
-      (phase_order | map(select(($doc.phases[.]?.status // "pending") != "done")) | first // "complete")
+      def phase_status($p):
+        if $p == "runtime_validation" and ($doc.phases[$p]? == null) then "done"
+        else ($doc.phases[$p]?.status // "pending") end;
+      (phase_order | map(select(phase_status(.) != "done")) | first // "complete")
     ' "$status_file")
     printf "%-25s %-40s %s\n" "$id" "$title" "$phase"
   done
@@ -256,15 +259,15 @@ cmd_phase() {
   check_jq
   local id="${1:?Task ID required}"
   validate_task_id "$id"
-  local phase="${2:?Phase required (spec, spec_review, plan, implement, code_review, qa, human_review)}"
+  local phase="${2:?Phase required (spec, spec_review, plan, implement, runtime_validation, code_review, qa, human_review)}"
   local status="${3:?Status required (pending, in_progress, done, changes_requested, blocked)}"
   local verdict="${4:-}"
 
   # Validate phase
   case "$phase" in
-    spec|spec_review|plan|implement|code_review|qa|human_review) ;;
+    spec|spec_review|plan|implement|runtime_validation|code_review|qa|human_review) ;;
     *)
-      echo "Error: invalid phase '$phase'. Must be one of: spec, spec_review, plan, implement, code_review, qa, human_review"
+      echo "Error: invalid phase '$phase'. Must be one of: spec, spec_review, plan, implement, runtime_validation, code_review, qa, human_review"
       exit 1
       ;;
   esac
@@ -292,8 +295,8 @@ cmd_phase() {
 
   # Validate verdict usage
   if [ -n "$verdict" ]; then
-    if [ "$phase" != "spec_review" ] && [ "$phase" != "code_review" ]; then
-      echo "Error: verdict is only valid for spec_review and code_review phases"
+    if [ "$phase" != "spec_review" ] && [ "$phase" != "runtime_validation" ] && [ "$phase" != "code_review" ]; then
+      echo "Error: verdict is only valid for spec_review, runtime_validation, and code_review phases"
       exit 1
     fi
     case "$verdict" in
@@ -309,10 +312,14 @@ cmd_phase() {
   if [ "$status" != "pending" ]; then
     local prior_check
     prior_check=$(jq -r --arg phase "$phase" '
-      def phase_order: ["spec","spec_review","plan","implement","code_review","qa","human_review"];
+      def phase_order: ["spec","spec_review","plan","implement","runtime_validation","code_review","qa","human_review"];
+      . as $doc |
+      def phase_status($p):
+        if $p == "runtime_validation" and ($doc.phases[$p]? == null) then "done"
+        else ($doc.phases[$p]?.status // "pending") end;
       (phase_order | to_entries | map(select(.value == $phase)) | first.key) as $idx |
       if $idx > 0 then
-        [ phase_order[:$idx][] as $p | select(.phases[$p].status != "done") | $p ] |
+        [ phase_order[:$idx][] as $p | select(phase_status($p) != "done") | $p ] |
         if length > 0 then "blocked:" + join(",") else "ok" end
       else "ok" end
     ' "$status_file")
@@ -332,13 +339,25 @@ cmd_phase() {
   # is "complete". This means `--reroute` and `--ship` don't need to touch the
   # top-level pointer — they rewrite phase statuses and derivation does the rest.
   jq --arg phase "$phase" --arg status "$status" --arg date "$today" --arg verdict "$verdict" \
-    'def phase_order: ["spec","spec_review","plan","implement","code_review","qa","human_review"];
+    'def phase_order: ["spec","spec_review","plan","implement","runtime_validation","code_review","qa","human_review"];
+     def phase_status($doc; $p):
+       if $p == "runtime_validation" and ($doc.phases[$p]? == null) then "done"
+       else ($doc.phases[$p]?.status // "pending") end;
      def derive_top_level:
        . as $doc |
-       (phase_order | map(select(($doc.phases[.]?.status // "pending") != "done")) | first // "complete");
+       (phase_order | map(select(phase_status($doc; .) != "done")) | first // "complete");
+     (if .phases[$phase] == null then
+        .phases[$phase] = (
+          if $phase == "runtime_validation" then
+            {"status": "pending", "agent": "orchestrator", "verdict": "", "iterations": 0}
+          else
+            {"status": "pending", "agent": ""}
+          end
+        )
+      else . end) |
      .phases[$phase].status = $status | .updated = $date |
      if ($verdict != "") and (.phases[$phase] | has("verdict")) then .phases[$phase].verdict = $verdict else . end |
-     (if ($phase == "code_review" or $phase == "spec_review")
+     (if ($phase == "code_review" or $phase == "spec_review" or $phase == "runtime_validation")
        then .phases[$phase].iterations = (.phases[$phase].iterations // 0) |
          if ($verdict == "changes_requested" or $verdict == "needs_re_review") then .phases[$phase].iterations += 1
          elif ($verdict == "approved" or $verdict == "approved_with_nits") then .phases[$phase].iterations = 0
@@ -385,10 +404,13 @@ cmd_reset_spec_review() {
   # and drop claude_spec session id so the router can't resume the old
   # changes_requested context.
   local tmp="${status_file}.tmp"
-  jq 'def phase_order: ["spec","spec_review","plan","implement","code_review","qa","human_review"];
+  jq 'def phase_order: ["spec","spec_review","plan","implement","runtime_validation","code_review","qa","human_review"];
+      def phase_status($doc; $p):
+        if $p == "runtime_validation" and ($doc.phases[$p]? == null) then "done"
+        else ($doc.phases[$p]?.status // "pending") end;
       def derive_top_level:
         . as $doc |
-        (phase_order | map(select(($doc.phases[.]?.status // "pending") != "done")) | first // "complete");
+        (phase_order | map(select(phase_status($doc; .) != "done")) | first // "complete");
       .phases.spec.status = "done" |
       .phases.spec_review.status = "pending" |
       .phases.spec_review.iterations = 0 |
