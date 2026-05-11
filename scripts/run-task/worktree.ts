@@ -17,6 +17,7 @@ export const PIPELINE_MANAGED_DOCS = [
     'docs/codebase-map.md',
     'docs/decisions.md',
     'docs/patterns.md',
+    'docs/pipeline-orchestrator.md',
     'docs/product-context.md',
 ] as const;
 
