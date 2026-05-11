@@ -346,13 +346,13 @@
     - **`--update-goldens` mode** for deliberate regeneration.
   - **Effort**: `S` for the rebuild done right (~1 day). The test infrastructure changes are the bulk of the work; capturing fresh goldens is mechanical after that.
 
-- [ ] **`--pr` retry fails when commit+push succeeded but `gh pr create` failed transiently** *(surfaced 2026-05-11 via CodeRabbit review of PR #39)*
+- [x] **`--pr` retry fails when commit+push succeeded but `gh pr create` failed transiently** *(fixed inline 2026-05-11 — early-exit retry path in `commitHumanReviewFiles` + extracted `createDraftPRForTask` helper)* *(surfaced 2026-05-11 via CodeRabbit review of PR #39)*
   - **Scope**: `commitHumanReviewFiles` (called by both `--push` and `--pr`) opens with a `git status --porcelain` check and dies with "no dirty task artifacts" if the working tree is clean. If a `--pr` run commits and pushes successfully but `gh pr create` fails transiently (network blip, rate limit), rerunning `--pr` hits this early die — the tree is clean, the commit+push already landed, and the function never reaches the PR creation block. The documented retry path is broken.
   - **Fix shape**: detect the "already pushed, PR not yet created" state and skip to the PR creation block. Simplest signal: if the tree is clean AND `origin/<branchName>` exists AND no open PR exists for this branch, proceed directly to `gh pr create`. Alternatively, split `commitHumanReviewFiles` from `pushAndMaybePR` so each step is independently idempotent.
   - **Workaround for now**: run `gh pr create --draft --base <base> --head task/<id>` manually.
   - **Effort**: `S`.
 
-- [ ] **`--ship` uses synthesized `task/<id>` branch name instead of `status.branch`** *(surfaced 2026-05-11 via CodeRabbit review of PR #39)*
+- [x] **`--ship` uses synthesized `task/<id>` branch name instead of `status.branch`** *(fixed inline 2026-05-11 — new `resolveTaskBranchName` helper used at all 4 call sites)* *(surfaced 2026-05-11 via CodeRabbit review of PR #39)*
   - **Scope**: `verifyLocalBranchPushed` and `assertNoUnpushedWork` in `scripts/run-task/main.ts` hardcode `const branchName = task/${taskId}` rather than reading `status.branch`. The orchestrator records the actual branch in `status.branch` via `ensureBranch` — including cases where the user was on a non-base branch and the pipeline stayed on it. If `status.branch` holds a custom name (e.g. `feature/my-thing`), `--ship` verifies the wrong branch, issues push/delete commands against a non-existent ref, and archives the task without confirming the real branch landed.
   - **Fix shape**: read `status.branch` first; fall back to synthesized `task/<id>` when unset. One-line change per call site.
   - **Effort**: `S`.
@@ -362,3 +362,9 @@
   - **Fix shape**: `resolveTaskCwd` needs to be bundle-aware — secondary tasks in a bundle should resolve to the primary task's worktree path. Likely requires threading the full `taskIds` array (or a "primary task" pointer) through the resolution logic, or storing the worktree path explicitly in each task's `status.json` during `ensureBranch`.
   - **Note**: only affects explicit `worktree: true` bundles; `worktree` defaults to absent/false and single-task worktrees are unaffected.
   - **Effort**: `M` (touches state resolution, ensureBranch, and likely the worktree setup path).
+
+- [x] **Code-review preflight loops on task artifacts in branch diff (canon-ai issue [#41](https://github.com/tstraub89/canon-ai/issues/41))** *(filed 2026-05-11 by James/TokenAnxiety; fixed inline same day — `isPipelineOwnedTaskArtifact` exemption in `verifyHandoffAgainstDiffFromData`)*
+  - **Scope**: `verifyHandoffAgainstDiff` compares `git diff <base>...HEAD --name-status -M` against the handoff Changes table and rejects any diff file not listed. Task artifacts under `tasks/<id>/` that are committed to the task branch (TokenAnxiety's adoption pattern) get flagged as uncovered diff files, routing back to implement. Each implement retry appends iteration sections to handoff/notes — feeding the loop. Canon-on-canon flow committed task artifacts to base branch pre-preflight so they didn't appear in the diff; adopter flows that don't do that hit the loop.
+  - **Fix shape**: Added `isPipelineOwnedTaskArtifact(filePath, taskIds)` helper that returns true if the path starts with `tasks/<active-id>/` for any task in the active bundle. Used to skip both the `diff→handoff` check and the rename-pair check. Pipeline-owned task artifacts are pipeline-managed, not part of the implementation under review.
+  - **Tests added**: 4 cases — James's repro from the issue; per-active-task scoping (other tasks still flagged); narrow exemption (app/source still strictly required); rename-pair exemption (archive moves).
+  - **Effort**: `S` (~10 lines + 4 tests).
