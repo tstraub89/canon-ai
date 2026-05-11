@@ -487,13 +487,20 @@ export async function runRuntimeValidationPhase(
         }
 
         const currentStatus = readStatus(task.taskId);
+        // Lifetime counter for both the write-path decision (h2 baseline vs h3
+        // re-run) AND the artifact directory naming. Using iterations_total
+        // (monotonic) ensures each iteration's artifacts land in a unique
+        // `iter-N/` subdirectory, so later loops don't overwrite earlier
+        // failures' traces — historical handoff sections still resolve their
+        // referenced paths. The spec originally proposed deriving the directory
+        // name from `iterations_current_loop` ("matches review-artifact
+        // convention") but review.md is cumulative-in-one-file, not
+        // per-directory, so the analogy didn't hold. Codex P2 on PR #43 caught
+        // the resulting overwrite hazard.
         const priorIterations = currentStatus.phases.runtime_validation?.iterations_total
             ?? currentStatus.phases.runtime_validation?.iterations
             ?? 0;
-        const artifactIteration = currentStatus.phases.runtime_validation?.iterations_current_loop
-            ?? currentStatus.phases.runtime_validation?.iterations
-            ?? 0;
-        const artifactLoopIteration = artifactIteration + 1;
+        const artifactLoopIteration = priorIterations + 1;
         const results: CheckRunResult[] = [];
         for (const check of selected) {
             const result = await runCheck(task.taskId, check, artifactLoopIteration);
