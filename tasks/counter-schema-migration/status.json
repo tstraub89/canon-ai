@@ -1,10 +1,10 @@
 {
   "id": "counter-schema-migration",
   "title": "Status counter schema migration (iterations_current_loop + iterations_total + 3 sibling fields)",
-  "status": "implement",
+  "status": "runtime_validation",
   "created": "2026-05-11",
   "updated": "2026-05-11",
-  "branch": "",
+  "branch": "task/counter-schema-migration",
   "base_branch": "dev",
   "task_size": "L",
   "delicate": false,
@@ -26,7 +26,7 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "runtime_validation": {

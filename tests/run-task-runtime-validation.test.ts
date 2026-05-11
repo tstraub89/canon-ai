@@ -203,19 +203,36 @@ void test('runtime validation: passing, failing, filtered, and timeout checks wr
 void test('runtime validation: latest re-run result wins', async () => {
     const taskId = createTask('rerun');
     try {
-        await runPhase(taskId, [{ name: 'rerun-check', command: 'node -e "console.error(\'first\'); process.exit(1)"' }]);
-        fs.appendFileSync(handoffPath(taskId), '\n## Iteration 2 — addressing runtime validation\n\n### Findings addressed\n\n- fixed\n');
-        const status = readStatusFile(taskId);
-        status.phases.implement = { status: 'done', agent: 'codex' };
-        status.phases.runtime_validation = { status: 'pending', agent: 'orchestrator', verdict: 'changes_requested', iterations: 1 };
-        fs.writeFileSync(statusPath(taskId), `${JSON.stringify(status, null, 2)}\n`);
+        await runPhase(taskId, [{ name: 'rerun-check', command: 'node -e "console.log(\'first pass ok\')"' }]);
+        const approvedStatus = readStatusFile(taskId);
+        assert.equal(approvedStatus.phases.runtime_validation?.iterations_current_loop, 0);
+        assert.equal(approvedStatus.phases.runtime_validation?.iterations_total, 1);
+        assert.equal(approvedStatus.phases.runtime_validation?.changes_requested_total, 0);
 
-        await runPhase(taskId, [{ name: 'rerun-check', command: 'node -e "console.error(\'second\')"' }]);
+        fs.appendFileSync(handoffPath(taskId), '\n## Iteration 2 — addressing runtime validation\n\n### Findings addressed\n\n- fixed\n');
+        const rerunStatus = readStatusFile(taskId);
+        rerunStatus.phases.implement = { status: 'done', agent: 'codex' };
+        rerunStatus.phases.runtime_validation = {
+            status: 'pending',
+            agent: 'orchestrator',
+            verdict: 'approved',
+            iterations: 0,
+            iterations_current_loop: 0,
+            iterations_total: 1,
+            changes_requested_total: 0,
+            auto_block_count: 0,
+        };
+        fs.writeFileSync(statusPath(taskId), `${JSON.stringify(rerunStatus, null, 2)}\n`);
+
+        await runPhase(taskId, [{ name: 'rerun-check', command: 'node -e "console.error(\'second\'); process.exit(1)"' }]);
         const handoff = readHandoff(taskId);
         assert.match(handoff, /### Re-run runtime validation/);
         const latest = computeLatestRuntimeResults(handoff);
-        assert.equal(latest.get('rerun-check')?.result, 'Pass');
-        assert.equal(readStatusFile(taskId).phases.runtime_validation?.iterations, 0);
+        assert.equal(latest.get('rerun-check')?.result, 'Fail');
+        const finalStatus = readStatusFile(taskId);
+        assert.equal(finalStatus.phases.runtime_validation?.iterations_current_loop, 1);
+        assert.equal(finalStatus.phases.runtime_validation?.iterations_total, 2);
+        assert.equal(finalStatus.phases.runtime_validation?.changes_requested_total, 1);
     } finally {
         cleanupTask(taskId);
     }

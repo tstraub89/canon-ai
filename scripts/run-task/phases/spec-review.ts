@@ -5,7 +5,7 @@ import { info, warn } from '../cli.js';
 import { getCodexConfig, getMaxReviewLoops, isPlanCombined } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
 import { runTaskShFor } from '../task-sh.js';
-import { readStatus, resolveTaskCwd, writeStatus } from '../state.js';
+import { autoBlockPhase, resolveTaskCwd, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
 
@@ -14,17 +14,8 @@ function isTemplateUnfilled(content: string | null): boolean {
     return content.includes('[TASK-ID]');
 }
 
-function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
-    const today = new Date().toISOString().slice(0, 10);
-    for (const taskId of taskIds) {
-        const status = readStatus(taskId);
-        const phaseEntry = status.phases.spec_review;
-        if (phaseEntry) phaseEntry.status = 'blocked';
-        status.escalations = status.escalations ?? [];
-        status.escalations.push({ date: today, phase: 'spec_review', iteration_count: iterationCount, reason });
-        status.updated = today;
-        writeStatus(taskId, status);
-    }
+export function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
+    autoBlockPhase(taskIds, 'spec_review', iterationCount, reason);
 }
 
 export async function runSpecReviewPhase(
@@ -71,7 +62,12 @@ export async function runSpecReviewPhase(
     }
 
     const maxSpecIter = tasks.reduce(
-        (max, t) => Math.max(max, t.status.phases.spec_review?.iterations ?? 0),
+        (max, t) => Math.max(
+            max,
+            t.status.phases.spec_review?.iterations_current_loop
+                ?? t.status.phases.spec_review?.iterations
+                ?? 0,
+        ),
         0,
     );
     const specReviewLoopCap = getMaxReviewLoops(tasks);
@@ -83,7 +79,7 @@ export async function runSpecReviewPhase(
             `another mechanical revision won't fix — read the latest spec-review.md ` +
             `and decide whether to revise scope, split the task, or defer. To resume ` +
             `after fixing: set phases.spec_review.status = "pending" and ` +
-            `phases.spec_review.iterations = 0 in status.json, then re-run the pipeline.`;
+            `phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
         warn(reason);
         autoBlockSpecReview(taskIds, maxSpecIter, reason);
         process.exit(2);

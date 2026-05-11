@@ -27,7 +27,9 @@ export async function runPlanPhase(
     const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'plan',
-        iteration: tasks[0].status.phases.plan?.iterations,
+        iteration: tasks[0].status.phases.plan?.iterations_current_loop
+            ?? tasks[0].status.phases.plan?.iterations
+            ?? 0,
     });
     for (const t of tasks) {
         const planPath = path.join(taskDirFor(t.taskId), 'plan.md');

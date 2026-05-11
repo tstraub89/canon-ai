@@ -25,7 +25,7 @@ export async function runCodeReviewPhase(
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
     verifyBranch(taskIds);
-    const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
+    const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
     const codeReviewLoopCap = getMaxReviewLoops(tasks);
     if (maxIter >= codeReviewLoopCap) {
         const reason =
@@ -34,7 +34,7 @@ export async function runCodeReviewPhase(
             `tasks/<id>/review.md — if the same finding keeps recurring, the spec ` +
             `or approach may need revisiting rather than another implementation pass. ` +
             `To resume after fixing: set phases.code_review.status = "pending" and ` +
-            `phases.code_review.iterations = 0 in status.json, then re-run the pipeline.`;
+            `phases.code_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
         warn(reason);
         autoBlockPhase(taskIds, 'code_review', maxIter, reason);
         process.exit(2);

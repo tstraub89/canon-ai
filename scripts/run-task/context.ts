@@ -145,8 +145,8 @@ export function buildImplementStateHeader(state: PipelineState, mode: ImplementM
     const taskIds = tasks.map(t => t.taskId);
     const primary = tasks[0];
 
-    const maxCodeReviewIter = tasks.reduce((max, task) => Math.max(max, task.iterations), 0);
-    const maxRuntimeIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations), 0);
+    const maxCodeReviewIter = tasks.reduce((max, task) => Math.max(max, task.iterations_current_loop), 0);
+    const maxRuntimeIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations_current_loop), 0);
     const revisionExplain = maxCodeReviewIter > 0 && maxRuntimeIter > 0
         ? `addressing code-review feedback (iteration ${maxCodeReviewIter + 1}) and runtime validation failures — read tasks/<id>/review.md and the runtime failure section below`
         : maxCodeReviewIter > 0

@@ -29,6 +29,10 @@ export function readStatus(taskId: string): StatusJson {
             agent: 'orchestrator',
             verdict: 'approved',
             iterations: 0,
+            iterations_current_loop: 0,
+            iterations_total: 0,
+            changes_requested_total: 0,
+            auto_block_count: 0,
         };
     }
     return parsed;
@@ -73,7 +77,10 @@ export function autoBlockPhase(
     for (const taskId of taskIds) {
         const status = readStatus(taskId);
         const phaseEntry = status.phases[phase];
-        if (phaseEntry) phaseEntry.status = 'blocked';
+        if (phaseEntry) {
+            phaseEntry.status = 'blocked';
+            phaseEntry.auto_block_count = (phaseEntry.auto_block_count ?? 0) + 1;
+        }
         status.escalations = status.escalations ?? [];
         status.escalations.push({ date: today, phase, iteration_count: iterationCount, reason });
         status.updated = today;

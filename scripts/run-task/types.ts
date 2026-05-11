@@ -31,6 +31,10 @@ export type PhaseEntry = {
     agent: string;
     verdict?: Verdict;
     iterations?: number;
+    iterations_current_loop?: number;
+    iterations_total?: number;
+    changes_requested_total?: number;
+    auto_block_count?: number;
     rerouted?: boolean;
     reroute_count?: number;
 };
@@ -82,7 +86,11 @@ export type TaskContext = {
     title: string;
     specReviewVerdict: Verdict;
     iterations: number;
+    iterations_current_loop: number;
+    iterations_total: number;
     runtimeIterations: number;
+    runtimeIterations_current_loop: number;
+    runtimeIterations_total: number;
     rerouteCount: number;
     status: StatusJson;
 };

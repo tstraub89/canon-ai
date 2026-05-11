@@ -131,7 +131,8 @@ function getVerdict(status: StatusJson, phase: 'spec_review' | 'runtime_validati
 }
 
 function getIterations(status: StatusJson): number {
-    return status.phases.code_review?.iterations ?? 0;
+    const codeReview = status.phases.code_review;
+    return codeReview?.iterations_current_loop ?? codeReview?.iterations ?? 0;
 }
 
 function getTitle(status: StatusJson): string {
@@ -143,15 +144,28 @@ function getTitle(status: StatusJson): string {
 export function buildPipelineState(taskIds: string[]): PipelineState {
     const statuses = taskIds.map(splitState.readStatus);
     const tier = splitPolicy.detectTier(statuses);
-    const tasks: TaskContext[] = taskIds.map((taskId, i) => ({
-        taskId,
-        title: getTitle(statuses[i]),
-        specReviewVerdict: getVerdict(statuses[i], 'spec_review'),
-        iterations: getIterations(statuses[i]),
-        runtimeIterations: statuses[i].phases.runtime_validation?.iterations ?? 0,
-        rerouteCount: statuses[i].phases.implement?.reroute_count ?? 0,
-        status: statuses[i],
-    }));
+    const tasks: TaskContext[] = taskIds.map((taskId, i) => {
+        const status = statuses[i];
+        const codeReview = status.phases.code_review;
+        const runtimeValidation = status.phases.runtime_validation;
+        const codeReviewCurrentLoop = codeReview?.iterations_current_loop ?? codeReview?.iterations ?? 0;
+        const codeReviewTotal = codeReview?.iterations_total ?? codeReview?.iterations ?? 0;
+        const runtimeCurrentLoop = runtimeValidation?.iterations_current_loop ?? runtimeValidation?.iterations ?? 0;
+        const runtimeTotal = runtimeValidation?.iterations_total ?? runtimeValidation?.iterations ?? 0;
+        return {
+            taskId,
+            title: getTitle(status),
+            specReviewVerdict: getVerdict(status, 'spec_review'),
+            iterations: codeReviewCurrentLoop,
+            iterations_current_loop: codeReviewCurrentLoop,
+            iterations_total: codeReviewTotal,
+            runtimeIterations: runtimeCurrentLoop,
+            runtimeIterations_current_loop: runtimeCurrentLoop,
+            runtimeIterations_total: runtimeTotal,
+            rerouteCount: status.phases.implement?.reroute_count ?? 0,
+            status,
+        };
+    });
     return { tasks, tier, isBundle: taskIds.length > 1 };
 }
 
@@ -1397,7 +1411,20 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
         }
         const retryTasks: TaskContext[] = [{
             taskId, title: status.title ?? taskId, specReviewVerdict: '',
-            iterations: 0, runtimeIterations: status.phases.runtime_validation?.iterations ?? 0, rerouteCount: 0, status,
+            iterations: 0,
+            iterations_current_loop: 0,
+            iterations_total: 0,
+            runtimeIterations: status.phases.runtime_validation?.iterations_current_loop
+                ?? status.phases.runtime_validation?.iterations
+                ?? 0,
+            runtimeIterations_current_loop: status.phases.runtime_validation?.iterations_current_loop
+                ?? status.phases.runtime_validation?.iterations
+                ?? 0,
+            runtimeIterations_total: status.phases.runtime_validation?.iterations_total
+                ?? status.phases.runtime_validation?.iterations
+                ?? 0,
+            rerouteCount: 0,
+            status,
         }];
         const cfg = splitPolicy.getCodexConfig(phase, retryTasks);
         await splitCodex.runCodex(prompt, false, sessionId, cfg.model, cfg.effort, undefined, retryCwd);
@@ -1408,7 +1435,20 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
         }
         const retryTasks: TaskContext[] = [{
             taskId, title: status.title ?? taskId, specReviewVerdict: '',
-            iterations: 0, runtimeIterations: status.phases.runtime_validation?.iterations ?? 0, rerouteCount: 0, status,
+            iterations: 0,
+            iterations_current_loop: 0,
+            iterations_total: 0,
+            runtimeIterations: status.phases.runtime_validation?.iterations_current_loop
+                ?? status.phases.runtime_validation?.iterations
+                ?? 0,
+            runtimeIterations_current_loop: status.phases.runtime_validation?.iterations_current_loop
+                ?? status.phases.runtime_validation?.iterations
+                ?? 0,
+            runtimeIterations_total: status.phases.runtime_validation?.iterations_total
+                ?? status.phases.runtime_validation?.iterations
+                ?? 0,
+            rerouteCount: 0,
+            status,
         }];
         const cfg = splitPolicy.getClaudeConfig(phase, retryTasks);
         await splitClaude.runClaude(prompt, false, sessionId, cfg.model, cfg.effort, undefined, retryCwd);
@@ -1518,7 +1558,12 @@ async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
             const anyChangesRequested = statuses.some(s => getVerdict(s, 'runtime_validation') === 'changes_requested');
             if (anyChangesRequested) {
                 const maxRuntimeIter = statuses.reduce(
-                    (max, s) => Math.max(max, s.phases.runtime_validation?.iterations ?? 0),
+                    (max, s) => Math.max(
+                        max,
+                        s.phases.runtime_validation?.iterations_current_loop
+                            ?? s.phases.runtime_validation?.iterations
+                            ?? 0,
+                    ),
                     0,
                 );
                 info(`Runtime validation requested changes (iteration ${maxRuntimeIter}) — routing back to implement`);

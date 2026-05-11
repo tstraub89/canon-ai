@@ -346,10 +346,12 @@ cmd_phase() {
      def derive_top_level:
        . as $doc |
        (phase_order | map(select(phase_status($doc; .) != "done")) | first // "complete");
-     (if .phases[$phase] == null then
+      (if .phases[$phase] == null then
         .phases[$phase] = (
           if $phase == "runtime_validation" then
-            {"status": "pending", "agent": "orchestrator", "verdict": "", "iterations": 0}
+            {"status": "pending", "agent": "orchestrator", "verdict": "", "iterations": 0,
+             "iterations_current_loop": 0, "iterations_total": 0,
+             "changes_requested_total": 0, "auto_block_count": 0}
           else
             {"status": "pending", "agent": ""}
           end
@@ -358,9 +360,19 @@ cmd_phase() {
      .phases[$phase].status = $status | .updated = $date |
      if ($verdict != "") and (.phases[$phase] | has("verdict")) then .phases[$phase].verdict = $verdict else . end |
      (if ($phase == "code_review" or $phase == "spec_review" or $phase == "runtime_validation")
-       then .phases[$phase].iterations = (.phases[$phase].iterations // 0) |
-         if ($verdict == "changes_requested" or $verdict == "needs_re_review") then .phases[$phase].iterations += 1
-         elif ($verdict == "approved" or $verdict == "approved_with_nits") then .phases[$phase].iterations = 0
+       then .phases[$phase].iterations_current_loop //= (.phases[$phase].iterations // 0) |
+         .phases[$phase].iterations_total //= (.phases[$phase].iterations // 0) |
+         .phases[$phase].changes_requested_total //= 0 |
+         .phases[$phase].auto_block_count //= 0 |
+         if ($verdict == "changes_requested" or $verdict == "needs_re_review") then
+           .phases[$phase].iterations_current_loop += 1 |
+           .phases[$phase].iterations_total += 1 |
+           .phases[$phase].changes_requested_total += 1 |
+           .phases[$phase].iterations = .phases[$phase].iterations_current_loop
+         elif ($verdict == "approved" or $verdict == "approved_with_nits") then
+           .phases[$phase].iterations_total += 1 |
+           .phases[$phase].iterations_current_loop = 0 |
+           .phases[$phase].iterations = 0
          else . end
        else . end) |
      .status = derive_top_level' \
@@ -414,6 +426,7 @@ cmd_reset_spec_review() {
       .phases.spec.status = "done" |
       .phases.spec_review.status = "pending" |
       .phases.spec_review.iterations = 0 |
+      .phases.spec_review.iterations_current_loop = 0 |
       .phases.spec_review.verdict = "" |
       (if (.sessions // {}) | has("claude_spec") then del(.sessions.claude_spec) else . end) |
       .updated = (now | strftime("%Y-%m-%d")) |
