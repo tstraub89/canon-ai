@@ -1,0 +1,57 @@
+{
+  "id": "counter-schema-migration",
+  "title": "Status counter schema migration (iterations_current_loop + iterations_total + 3 sibling fields)",
+  "status": "spec_review",
+  "created": "2026-05-11",
+  "updated": "2026-05-11",
+  "branch": "",
+  "base_branch": "dev",
+  "task_size": "L",
+  "delicate": false,
+  "human_spec_gate": true,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "pending",
+      "agent": "codex",
+      "verdict": "",
+      "iterations": 0
+    },
+    "plan": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "runtime_validation": {
+      "status": "pending",
+      "agent": "orchestrator",
+      "verdict": "",
+      "iterations": 0
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {},
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
+}
