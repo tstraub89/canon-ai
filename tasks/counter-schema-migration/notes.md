@@ -1,5 +1,2 @@
-# Notes
-
-Raw observations from any phase. Prefix with phase name. Distilled into `docs/lessons-learned.md` during QA.
-
-<!-- Append below this line -->
+[spec_review] `runtime-validation.ts` still writes the h2/h3 decision from `writeRuntimeResults()` using the current-loop counter path; the spec only talks about `setRuntimeValidationPhase()`, so the PR #37 shadowing bug would survive unless that caller changes too.
+[spec_review] `spec-review.ts` has a bespoke `autoBlockSpecReview()` helper; it does not go through `state.ts autoBlockPhase()`, so the new `auto_block_count` field would stay stale for spec_review unless this helper is migrated too.

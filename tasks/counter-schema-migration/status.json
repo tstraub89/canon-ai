@@ -1,14 +1,14 @@
 {
   "id": "counter-schema-migration",
   "title": "Status counter schema migration (iterations_current_loop + iterations_total + 3 sibling fields)",
-  "status": "spec_review",
+  "status": "implement",
   "created": "2026-05-11",
   "updated": "2026-05-11",
   "branch": "",
   "base_branch": "dev",
   "task_size": "L",
   "delicate": false,
-  "human_spec_gate": true,
+  "human_spec_gate": false,
   "worktree": true,
   "phases": {
     "spec": {
@@ -16,13 +16,13 @@
       "agent": "claude"
     },
     "spec_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0
     },
     "plan": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "implement": {
@@ -51,7 +51,10 @@
     }
   },
   "escalations": [],
-  "sessions": {},
+  "sessions": {
+    "codex": "019e188a-95c2-7ed2-a155-4b4a780f441f",
+    "claude_spec": "bdef9e8c-9130-4d5d-8cfe-f351fcc9bfbe"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
 }
