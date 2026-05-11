@@ -90,6 +90,16 @@
 
 *The four entries below were originally filed as GH issues #31–#34, promoted to BACKLOG per the [BACKLOG-vs-issues decision](decisions.md). Each is independently buildable; sequencing notes call out cross-dependencies.*
 
+**Cluster execution plan** *(decided 2026-05-10; minimize delicate scope per cost concern)* — the Wave 3 entries plus the structured-table parser are sequenced as five sub-bundles, only one delicate:
+
+| Sub-bundle | Size | Delicate | Contents | Sequencing | Status |
+|---|---|---|---|---|---|
+| **1a-0 parser** | S | no | Structured-table parser utility + retrofit AC coverage + validation outcomes | First; blocks 1a-2 | spec'ing |
+| **1a-1 counters** | M | no | Counter schema augment (`iterations_current_loop`/`iterations_total`/`changes_requested_total`/`auto_block_count`/`verdict_source`); `iterations` stays as alias | Parallel with 1a-0 | pending |
+| **1a-2 gates** | M | **yes** | Centralized invariant-gate helper for `task.sh phase done`; artifact-exists + template-check + verdict-parseable rules | After 1a-0 | pending |
+| **1b** | M | no | Validation result enum extension + QA telemetry verification (gate consumers) | After 1a-2 | pending |
+| **1c** | M | no | Canon snapshot stamping | Anytime | pending |
+
 - [ ] **Canon snapshot stamping in task status/handoff artifacts** *(framed 2026-05-10 from discussion #27, item 8)*
   - **Scope**: Add a `canon` block to `status.json` (and a corresponding section in `handoff.md`) at task creation that records the canon version governing this task. TokenAnxiety vendors canon-ai through a git submodule (`vendor/canon-ai`), pinned to a specific commit — different canon commits enforce different rules, ship different templates, route through different orchestrator logic. Task artifacts today say *what happened*, not *what canon governed it*. From the discussion: "If a different Canon snapshot was active during a run, the artifacts do not prove it. That should probably become an explicit field in `status.json` or the handoff."
   - **Shape**:
