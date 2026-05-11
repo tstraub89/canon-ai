@@ -33,7 +33,10 @@ export async function runQaPhase(
 
     if (!state.isBundle && result.capturedStdout) {
         const taskId = taskIds[0];
-        const donePath = path.join(taskDirFor(taskId), 'done.md');
+        // Use the active worktree cwd so the salvage write lands in the same tree
+        // Claude wrote to. taskDirFor() is not worktree-aware; a REPO_ROOT write
+        // would be clobbered milliseconds later by syncWorktreeArtifacts.
+        const donePath = path.join(getActiveCwd(taskIds), 'tasks', taskId, 'done.md');
         if (isDoneMdTemplate(donePath)) {
             const salvaged = extractDoneMdFromStdout(result.capturedStdout);
             if (salvaged) {

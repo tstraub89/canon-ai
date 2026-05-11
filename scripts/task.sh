@@ -154,6 +154,11 @@ cmd_new() {
     exit 1
   fi
   validate_task_id "$id"
+  # Reject newlines — embedded LF breaks the sed substitution pattern
+  if [[ "$title" == *$'\n'* ]]; then
+    echo "Error: title must be single-line (no embedded newlines)."
+    exit 1
+  fi
   local task_dir="$TASKS_DIR/$id"
 
   if [ -d "$task_dir" ]; then
@@ -461,6 +466,13 @@ cmd_post_merge_sync() {
   current="$(git branch --show-current 2>/dev/null || echo '')"
   if [ "$current" != "$target_branch" ]; then
     echo "Error: post-merge-sync expects you to be on '$target_branch' (you are on '$current')."
+    exit 1
+  fi
+
+  # Refuse to run if there are uncommitted local changes — the hard-reset path
+  # would silently destroy them. Mirrors the guard in cmd_release_init.
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "Error: working tree is dirty. Commit or stash local changes before running post-merge-sync."
     exit 1
   fi
 
