@@ -76,6 +76,8 @@ Project-specific validation commands live in [`docs/architecture.md`](docs/archi
 
 Before writing `handoff.md`, run every check listed in the spec's *Validation Required* section AND every applicable check from `docs/architecture.md` based on the change type. Record each as Pass / Fail / N/A in the Validation Outcomes table. Required checks must be Pass or Fail — do not mark them N/A.
 
+**Check column format**: copy the exact text from the spec's *Validation Required* checklist entry into the Check cell. If the spec says `` `lint` (`npm run lint`) ``, the handoff row must say `` `lint` (`npm run lint`) `` — not just `` `npm run lint` ``. The orchestrator matches by the short name (first backtick token); any mismatch causes a false pre-flight failure.
+
 ## Handoff Template
 
 Use `tasks/_templates/handoff.md`. Required fields:

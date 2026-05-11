@@ -89,7 +89,13 @@ export function validateHandoff(taskId: string): string[] {
 export function canonicalizeValidationCheck(value: string): string {
     const backtickMatch = value.match(/`([^`]+)`/);
     const base = backtickMatch ? backtickMatch[1] : value.split(/\s+[—–-]\s+/)[0];
-    return base.replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const normalized = base.replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    // If the token looks like a command (contains spaces, e.g. "npm run lint"), use
+    // the last word as the canonical key so it matches the short-name form ("lint").
+    if (normalized.includes(' ')) {
+        return normalized.split(' ').at(-1) ?? normalized;
+    }
+    return normalized;
 }
 
 export function parseValidationRequiredChecks(specPath: string): string[] {
