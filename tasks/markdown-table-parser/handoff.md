@@ -155,3 +155,19 @@ On revision rounds, append below this line:
 - `npm run lint` — Pass
 - `npm run type-check` — Pass
 - `npm test` — Fail, unrelated to this task: `tests/run-task-prompts.test.ts` still fails in this worktree when it tries to create `/Users/tstraub/canon-ai/canon-ai-dev/tasks/prompt-fixture-a` and gets `EPERM`
+
+## Iteration 6 — addressing review round 2
+
+### Findings addressed
+
+- No task-scope code finding was raised in the review artifact available in this worktree. The only remaining blocker is the unrelated `npm test` failure in `tests/run-task-prompts.test.ts`, which is outside this task's affected files and is now reflected accurately in the handoff.
+
+### AC deltas (if any)
+
+- None. Parser and validation code remain unchanged.
+
+### Re-run validation (only checks that re-ran)
+
+- `npm run lint` — Pass
+- `npm run type-check` — Pass
+- `npm test` — Fail, unrelated to this task: `tests/run-task-prompts.test.ts` still fails in this worktree when it tries to create `/Users/tstraub/canon-ai/canon-ai-dev/tasks/prompt-fixture-a` and gets `EPERM`
