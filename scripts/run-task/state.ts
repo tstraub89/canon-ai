@@ -5,7 +5,8 @@ import { REPO_ROOT, TASKS_DIR, WORKTREES_ROOT } from './env.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type SessionSlot, type StatusJson } from './types.js';
 
 export function taskDirFor(taskId: string): string {
-    return path.join(TASKS_DIR, taskId);
+    const tasksDir = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR;
+    return path.join(tasksDir, taskId);
 }
 
 export function resolveTaskCwd(taskId: string): string {
@@ -14,6 +15,9 @@ export function resolveTaskCwd(taskId: string): string {
 }
 
 export function statusFileFor(taskId: string): string {
+    if (process.env.CANON_TASKS_DIR_OVERRIDE) {
+        return path.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, 'status.json');
+    }
     return path.join(resolveTaskCwd(taskId), 'tasks', taskId, 'status.json');
 }
 
