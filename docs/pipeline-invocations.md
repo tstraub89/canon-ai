@@ -26,3 +26,7 @@
 | 2026-05-10T03:00:33.492Z | add-ci | implement | codex | gpt-5.4-mini | 0 | 187.5s | 3798009 | ok |
 | 2026-05-10T03:03:11.428Z | add-ci | code_review | claude | sonnet | 0 | 157.6s | 595863 | ok |
 | 2026-05-10T03:05:03.859Z | add-ci | qa | claude | sonnet | - | 112.4s | 671280 | ok |
+| 2026-05-11T03:33:27.479Z | markdown-table-parser | implement | codex | gpt-5.4-mini | 0 | 241.7s | 1778053 | ok |
+| 2026-05-11T03:34:19.018Z | markdown-table-parser | implement | codex | gpt-5.4-mini | 1 | 51.2s | 2453605 | ok |
+| 2026-05-11T03:34:52.026Z | markdown-table-parser | implement | codex | gpt-5.4-mini | 2 | 32.7s | 3064056 | ok |
+| 2026-05-11T03:35:17.343Z | markdown-table-parser | implement | codex | gpt-5.4-mini | 3 | 23.9s | 3581481 | ok |
