@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { parseTable } from './markdown-table.js';
+import { parseTable, parseTableH3, extractSectionBodies } from './markdown-table.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { taskDirFor } from './state.js';
@@ -30,18 +30,56 @@ export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
     return [];
 }
 
+// Compute the *current* result for each named validation check in a cumulative
+// handoff. Starts with the original `## Validation Outcomes` table, then walks
+// `## Iteration N` sections in order, overriding per check name with any rows
+// found in the iteration's `### Re-run validation` h3 subsection. The result
+// is the latest-recorded outcome per check.
+export function computeLatestValidationResults(handoffContent: string): Map<string, ValidationOutcomeRow> {
+    const latest = new Map<string, ValidationOutcomeRow>();
+    const baseline = parseTable(handoffContent, 'Validation Outcomes');
+    for (const row of baseline) {
+        const check = (row['Check'] ?? '').trim();
+        if (!check) continue;
+        latest.set(canonicalizeValidationCheck(check), {
+            check,
+            result: row['Result'] ?? '',
+            notes: row['Notes'] ?? '',
+        });
+    }
+
+    const iterationBodies = extractSectionBodies(handoffContent, /^## Iteration\b/);
+    for (const body of iterationBodies) {
+        const reruns = parseTableH3(body, 'Re-run validation (only checks that re-ran)')
+            .concat(parseTableH3(body, 'Re-run validation'));
+        for (const row of reruns) {
+            const check = (row['Check'] ?? '').trim();
+            if (!check) continue;
+            latest.set(canonicalizeValidationCheck(check), {
+                check,
+                result: row['Result'] ?? '',
+                notes: row['Notes'] ?? '',
+            });
+        }
+    }
+
+    return latest;
+}
+
 export function validateHandoff(taskId: string): string[] {
     const handoffPath = path.join(taskDirFor(taskId), 'handoff.md');
     const specPath = path.join(taskDirFor(taskId), 'spec.md');
     const issues: string[] = [];
     try {
         const content = fs.readFileSync(handoffPath, 'utf8');
-        const validationRows = parseValidationOutcomeRows(handoffPath);
-        if (validationRows.some(row => row.result.trim().toLowerCase() === 'fail')) {
+        const latestResults = computeLatestValidationResults(content);
+        const hasFail = Array.from(latestResults.values())
+            .some(row => row.result.trim().toLowerCase() === 'fail');
+        if (hasFail) {
             issues.push('Validation Outcomes table has one or more Fail results');
         }
         issues.push(...checkAcCoveragePlaceholders(content));
-        issues.push(...validateHandoffAgainstSpec(specPath, handoffPath));
+        issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults));
     } catch {
         issues.push('handoff.md not found');
     }
@@ -97,14 +135,27 @@ export function isNAResult(result: string): boolean {
     return /^n\/?a\b/i.test(result.trim());
 }
 
-export function validateHandoffAgainstSpec(specPath: string, handoffPath: string): string[] {
+export function validateHandoffAgainstSpec(
+    specPath: string,
+    handoffPath: string,
+    latestResults?: Map<string, ValidationOutcomeRow>,
+): string[] {
     const requiredChecks = parseValidationRequiredChecks(specPath);
     if (requiredChecks.length === 0) return [];
 
-    const rows = parseValidationOutcomeRows(handoffPath);
-    const rowMap = new Map<string, ValidationOutcomeRow>();
-    for (const row of rows) {
-        rowMap.set(canonicalizeValidationCheck(row.check), row);
+    let rowMap: Map<string, ValidationOutcomeRow>;
+    if (latestResults) {
+        rowMap = latestResults;
+    } else {
+        // Fallback for callers that don't yet pass cumulative results.
+        // Reads the handoff and computes latest-per-check so that this
+        // function is correct even when called standalone.
+        try {
+            const content = fs.readFileSync(handoffPath, 'utf8');
+            rowMap = computeLatestValidationResults(content);
+        } catch {
+            rowMap = new Map<string, ValidationOutcomeRow>();
+        }
     }
 
     const issues: string[] = [];

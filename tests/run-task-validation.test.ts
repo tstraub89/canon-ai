@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
     checkAcCoveragePlaceholders,
+    computeLatestValidationResults,
     validateHandoffAgainstSpec,
     verifyHandoffAgainstDiffFromData,
 } from '../scripts/run-task/validation.js';
@@ -273,4 +274,159 @@ void test('verifyHandoffAgainstDiffFromData: rename uncovered emits one issue na
     assert.ok(issues[0].includes('src/old-name.ts'));
     assert.ok(issues[0].includes('src/new-name.ts'));
     assert.ok(issues[0].includes('diff→handoff'));
+});
+
+// ─── Cumulative-handoff bug #1: validateHandoff must respect later iteration re-runs ───
+
+void test('computeLatestValidationResults: original Fail overridden by iteration Pass', () => {
+    const handoff = [
+        '# Implementation Handoff: x',
+        '',
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Fail | flaky |',
+        '',
+        '## Iteration 2 — addressing review round 1',
+        '',
+        '### Re-run validation (only checks that re-ran)',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Pass | resolved |',
+        '',
+    ].join('\n');
+
+    const latest = computeLatestValidationResults(handoff);
+    const row = latest.get('npm test');
+    assert.ok(row, 'should have npm test result');
+    assert.equal(row.result, 'Pass');
+});
+
+void test('computeLatestValidationResults: latest iteration wins when multiple iterations re-run same check', () => {
+    const handoff = [
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Fail | original |',
+        '',
+        '## Iteration 2 — round 1',
+        '',
+        '### Re-run validation',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Pass | iter 2 |',
+        '',
+        '## Iteration 3 — round 2',
+        '',
+        '### Re-run validation',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Fail | regressed iter 3 |',
+        '',
+    ].join('\n');
+
+    const latest = computeLatestValidationResults(handoff);
+    assert.equal(latest.get('npm test')!.result, 'Fail', 'latest iteration result wins');
+});
+
+void test('computeLatestValidationResults: check not re-run keeps baseline result', () => {
+    const handoff = [
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm run lint` | Pass | |',
+        '| `npm test` | Fail | flaky |',
+        '',
+        '## Iteration 2 — round 1',
+        '',
+        '### Re-run validation',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Pass | resolved |',
+        '',
+    ].join('\n');
+
+    const latest = computeLatestValidationResults(handoff);
+    assert.equal(latest.get('npm run lint')!.result, 'Pass');
+    assert.equal(latest.get('npm test')!.result, 'Pass');
+});
+
+void test('validateHandoff: cumulative handoff with all checks resolved in later iteration passes', () => {
+    const handoffContent = [
+        '## Changes',
+        '',
+        '| File | What |',
+        '|---|---|',
+        '| `src/x.ts` | new |',
+        '',
+        '## AC Coverage',
+        '',
+        '| AC | Status | Notes |',
+        '|---|---|---|',
+        '| AC-1: thing | Met | done |',
+        '',
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Fail | flaky in round 1 |',
+        '',
+        '## Iteration 2 — addressing review round 1',
+        '',
+        '### Re-run validation (only checks that re-ran)',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Pass | fixed |',
+        '',
+    ].join('\n');
+
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm test`', ''].join('\n'),
+        handoffContent,
+        (specPath, handoffPath) => {
+            const latest = computeLatestValidationResults(handoffContent);
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath, latest);
+            assert.deepEqual(issues, [], `expected no issues; got ${JSON.stringify(issues)}`);
+        },
+    );
+});
+
+void test('validateHandoff: cumulative handoff where re-run still fails reports diagnostic', () => {
+    const handoffContent = [
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Fail | original |',
+        '',
+        '## Iteration 2 — round 1',
+        '',
+        '### Re-run validation',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Fail | still broken |',
+        '',
+    ].join('\n');
+
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm test`', ''].join('\n'),
+        handoffContent,
+        (specPath, handoffPath) => {
+            const latest = computeLatestValidationResults(handoffContent);
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath, latest);
+            assert.ok(
+                issues.some(i => i.includes('did not pass')),
+                `expected fail diagnostic; got ${JSON.stringify(issues)}`,
+            );
+        },
+    );
 });

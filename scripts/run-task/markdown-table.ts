@@ -54,6 +54,109 @@ function isHeadingBoundary(line: string): boolean {
     return /^#{1,2}\s/.test(line);
 }
 
+// Returns the body text of every section whose H2 heading line matches `pattern`.
+// Body excludes the heading line itself; spans to the next H1/H2 heading or EOF.
+// Headings inside HTML comment blocks (`<!-- ... -->`) are skipped — those are
+// template placeholders, not real sections. Useful for cumulative artifacts
+// (handoff iteration sections, review round sections) where the orchestrator
+// needs to evaluate the *latest* of multiple same-level sections.
+export function extractSectionBodies(markdown: string, pattern: RegExp): string[] {
+    const lines = markdown.split('\n');
+    const bodies: string[] = [];
+    let activeStart = -1;
+    let inHtmlComment = false;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+
+        // Track HTML comment block state. A comment opened on a line stays open
+        // for the rest of that line; a `-->` token closes it for subsequent
+        // lines. We only need block-level tracking for skipping headings, so
+        // single-line `<!-- ... -->` on one line doesn't affect headings on
+        // other lines.
+        const opensComment = /<!--/.test(line);
+        const closesComment = /-->/.test(line);
+        const startsInComment = inHtmlComment;
+        if (opensComment && !closesComment) inHtmlComment = true;
+        else if (closesComment && !opensComment) inHtmlComment = false;
+        else if (opensComment && closesComment) {
+            // Both on the same line — net state unchanged from before this line.
+            // (If we were already in a comment, the `-->` closes it. If not,
+            // the `<!--` opens and the same line's `-->` closes. Either way,
+            // the *next* line is outside a comment block.)
+            inHtmlComment = false;
+        }
+
+        // Skip if this line is inside an HTML comment block as of its start.
+        if (startsInComment) continue;
+        // Also skip a heading that lives on the same line as a comment opener
+        // (defensive — unusual but cheap to handle).
+        if (opensComment && !closesComment) continue;
+
+        const isH2 = /^## /.test(line);
+        const isH1 = /^# /.test(line);
+        if (isH2 || isH1) {
+            if (activeStart !== -1) {
+                bodies.push(lines.slice(activeStart, i).join('\n'));
+                activeStart = -1;
+            }
+            if (isH2 && pattern.test(line)) {
+                activeStart = i + 1;
+            }
+        }
+    }
+    if (activeStart !== -1) bodies.push(lines.slice(activeStart).join('\n'));
+    return bodies;
+}
+
+// Like parseTable but matches H3 (`### <heading>`) instead of H2. Scoped within
+// the input string the caller passes — typically a body returned by
+// extractSectionBodies. Used for iteration-section subsections like
+// `### Re-run validation` inside a `## Iteration N` body.
+export function parseTableH3(markdown: string, sectionHeading: string): Array<Record<string, string>> {
+    const lines = markdown.split('\n');
+    const headingIndex = lines.findIndex(line => line.trimEnd() === `### ${sectionHeading}`);
+    if (headingIndex === -1) return [];
+
+    let tableStart = -1;
+    let sectionEnd = lines.length;
+    for (let index = headingIndex + 1; index < lines.length; index += 1) {
+        if (/^#{1,3}\s/.test(lines[index])) {
+            sectionEnd = index;
+            break;
+        }
+        if (tableStart === -1 && lines[index].trimStart().startsWith('|')) {
+            tableStart = index;
+        }
+    }
+    if (tableStart === -1 || tableStart >= sectionEnd) return [];
+
+    const headerCells = normalizeCells(lines[tableStart]);
+    if (headerCells.length === 0) return [];
+
+    let rowStart = tableStart + 1;
+    if (rowStart < sectionEnd) {
+        const separatorCells = normalizeCells(lines[rowStart]);
+        if (isSeparatorRow(separatorCells)) rowStart += 1;
+    }
+
+    const rows: Array<Record<string, string>> = [];
+    for (let index = rowStart; index < sectionEnd; index += 1) {
+        const line = lines[index];
+        if (!line.trimStart().startsWith('|')) break;
+
+        const cells = normalizeCells(line);
+        if (isSeparatorRow(cells)) continue;
+
+        const row: Record<string, string> = {};
+        for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+            row[headerCells[cellIndex]] = cells[cellIndex] ?? '';
+        }
+        rows.push(row);
+    }
+
+    return rows;
+}
+
 export function parseTable(markdown: string, sectionHeading: string): Array<Record<string, string>> {
     const lines = markdown.split('\n');
     const headingIndex = lines.findIndex(line => isSectionHeading(line, sectionHeading));
