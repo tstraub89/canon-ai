@@ -1198,10 +1198,17 @@ interface EvidenceResult {
 export function extractCheckedVerdict(content: string): Verdict | null {
     const roundBodies = splitMarkdownTable.extractSectionBodies(content, /^## Round\b/);
     const scope = roundBodies.length > 0 ? roundBodies[roundBodies.length - 1] : content;
-    if (/^- \[x\] \*\*Approved\*\*/mi.test(scope)) return 'approved';
-    if (/^- \[x\] \*\*Approved with nits\*\*/mi.test(scope)) return 'approved_with_nits';
-    if (/^- \[x\] \*\*Changes requested\*\*/mi.test(scope)) return 'changes_requested';
-    if (/^- \[x\] \*\*Needs re-review\*\*/mi.test(scope)) return 'needs_re_review';
+    // Templates are inconsistent: `## Final Verdict` (round 1) uses bolded labels
+    // (`**Approved**`), but the `## Round N` re-review template uses unbolded
+    // labels (`- [x] Approved`). Accept both so evidence auto-advance works on
+    // both round-1 and round-N+ reviews.
+    //
+    // Order matters: check "Approved with nits" *before* plain "Approved" so the
+    // shorter prefix doesn't shadow the longer phrase when bold markers are absent.
+    if (/^- \[x\] (?:\*\*)?Approved with nits(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved_with_nits';
+    if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved';
+    if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'changes_requested';
+    if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'needs_re_review';
     return null;
 }
 

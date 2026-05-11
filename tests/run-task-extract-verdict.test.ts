@@ -157,3 +157,59 @@ void test('extractCheckedVerdict: real ## Round 2 after HTML-commented placehold
     ].join('\n');
     assert.equal(extractCheckedVerdict(content), 'changes_requested');
 });
+
+// ─── Codex PR #36 P2 regression: unbolded template checkboxes ───
+
+void test('extractCheckedVerdict: round-N template uses unbolded checkboxes (template inconsistency)', () => {
+    // The `## Round N` re-review template ships with unbolded labels
+    // (- [x] Approved), unlike round-1's bolded `## Final Verdict` template.
+    // Pre-fix regex required bold and silently failed on populated re-reviews.
+    const content = [
+        '## Final Verdict',
+        '',
+        '- [ ] **Approved**',
+        '- [x] **Changes requested**',
+        '',
+        '## Round 2 — verifying iteration 2',
+        '',
+        '### Verdict for this round',
+        '',
+        '- [x] Approved',
+        '- [ ] Approved with nits',
+        '- [ ] Changes requested',
+        '- [ ] Needs re-review',
+    ].join('\n');
+    assert.equal(extractCheckedVerdict(content), 'approved');
+});
+
+void test('extractCheckedVerdict: unbolded "Approved with nits" must not be shadowed by plain "Approved"', () => {
+    const content = [
+        '## Round 2',
+        '',
+        '- [ ] Approved',
+        '- [x] Approved with nits',
+        '- [ ] Changes requested',
+    ].join('\n');
+    assert.equal(extractCheckedVerdict(content), 'approved_with_nits');
+});
+
+void test('extractCheckedVerdict: bolded "Approved with nits" also wins over plain Approved (regression)', () => {
+    const content = [
+        '## Final Verdict',
+        '',
+        '- [ ] **Approved**',
+        '- [x] **Approved with nits**',
+        '- [ ] **Changes requested**',
+    ].join('\n');
+    assert.equal(extractCheckedVerdict(content), 'approved_with_nits');
+});
+
+void test('extractCheckedVerdict: unbolded Needs re-review in round-N', () => {
+    const content = [
+        '## Round 2',
+        '',
+        '- [ ] Approved',
+        '- [x] Needs re-review',
+    ].join('\n');
+    assert.equal(extractCheckedVerdict(content), 'needs_re_review');
+});
