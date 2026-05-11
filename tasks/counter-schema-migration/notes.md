@@ -1,3 +1,4 @@
 [spec_review] `runtime-validation.ts` still writes the h2/h3 decision from `writeRuntimeResults()` using the current-loop counter path; the spec only talks about `setRuntimeValidationPhase()`, so the PR #37 shadowing bug would survive unless that caller changes too.
 [spec_review] `spec-review.ts` has a bespoke `autoBlockSpecReview()` helper; it does not go through `state.ts autoBlockPhase()`, so the new `auto_block_count` field would stay stale for spec_review unless this helper is migrated too.
 [implement] `scripts/task.sh` does not honor `CANON_TASKS_DIR_OVERRIDE`, so shell-path tests need to run from a temp cwd that contains a `tasks/` subtree.
+[implement-revision] `resolveTaskCwd()` was still bound to the import-time worktree root constant, so the runtime-validation regression needed a live `CANON_WORKTREES_ROOT` lookup to stay in-sandbox.

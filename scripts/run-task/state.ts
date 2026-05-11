@@ -4,14 +4,19 @@ import path from 'node:path';
 import { REPO_ROOT, TASKS_DIR, WORKTREES_ROOT } from './env.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type SessionSlot, type StatusJson } from './types.js';
 
+function effectiveWorktreesRoot(): string {
+    return process.env.CANON_WORKTREES_ROOT ? path.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+}
+
 export function taskDirFor(taskId: string): string {
     const tasksDir = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR;
     return path.join(tasksDir, taskId);
 }
 
 export function resolveTaskCwd(taskId: string): string {
-    const wtStatus = path.join(WORKTREES_ROOT, taskId, 'tasks', taskId, 'status.json');
-    return fs.existsSync(wtStatus) ? path.join(WORKTREES_ROOT, taskId) : REPO_ROOT;
+    const worktreesRoot = effectiveWorktreesRoot();
+    const wtStatus = path.join(worktreesRoot, taskId, 'tasks', taskId, 'status.json');
+    return fs.existsSync(wtStatus) ? path.join(worktreesRoot, taskId) : REPO_ROOT;
 }
 
 export function statusFileFor(taskId: string): string {

@@ -19,8 +19,20 @@ function nextTaskId(label: string): string {
     return `rtv-${process.pid}-${taskCounter}-${label}`;
 }
 
+function taskRoot(): string {
+    return process.env.CANON_TASKS_DIR_OVERRIDE ?? path.join(REPO_ROOT, 'tasks');
+}
+
+function worktreeRoot(): string {
+    return process.env.CANON_WORKTREES_ROOT ?? path.join(REPO_ROOT, '../dev-worktrees');
+}
+
+function taskWorktreeDir(taskId: string): string {
+    return path.join(worktreeRoot(), taskId);
+}
+
 function taskDir(taskId: string): string {
-    return path.join(REPO_ROOT, 'tasks', taskId);
+    return path.join(taskRoot(), taskId);
 }
 
 function statusPath(taskId: string): string {
@@ -100,11 +112,42 @@ function createTask(label: string, options: {
         2,
     )}\n`);
     fs.writeFileSync(handoffPath(taskId), options.handoff ?? baseHandoff());
+    fs.symlinkSync(process.cwd(), taskWorktreeDir(taskId), 'dir');
     return taskId;
 }
 
 function cleanupTask(taskId: string): void {
     fs.rmSync(taskDir(taskId), { recursive: true, force: true });
+}
+
+async function withTempTasks<T>(fn: () => Promise<T>): Promise<T> {
+    const tasksRoot = path.join(process.cwd(), 'tasks');
+    const worktreesRoot = fs.mkdtempSync(path.join(process.cwd(), '.tmp-counter-schema-runtime-worktrees-'));
+    const previousTasksOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    const previousWorktreesOverride = process.env.CANON_WORKTREES_ROOT;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    process.env.CANON_WORKTREES_ROOT = worktreesRoot;
+    try {
+        return await fn();
+    } finally {
+        if (previousTasksOverride === undefined) {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        } else {
+            process.env.CANON_TASKS_DIR_OVERRIDE = previousTasksOverride;
+        }
+        if (previousWorktreesOverride === undefined) {
+            delete process.env.CANON_WORKTREES_ROOT;
+        } else {
+            process.env.CANON_WORKTREES_ROOT = previousWorktreesOverride;
+        }
+        fs.rmSync(worktreesRoot, { recursive: true, force: true });
+    }
+}
+
+function runRuntimeValidationTest(name: string, fn: () => Promise<void> | void): void {
+    void test(name, { concurrency: false }, async () => {
+        await withTempTasks(async () => fn());
+    });
 }
 
 function stateFor(taskId: string): PipelineState {
@@ -148,7 +191,7 @@ async function captureProcessOutput(fn: () => Promise<void>): Promise<{ stdout: 
     }
 }
 
-void test('runtime validation: empty registry is a no-op with approved verdict and no handoff write', async () => {
+runRuntimeValidationTest('runtime validation: empty registry is a no-op with approved verdict and no handoff write', async () => {
     const taskId = createTask('empty');
     const before = readHandoff(taskId);
     try {
@@ -164,7 +207,7 @@ void test('runtime validation: empty registry is a no-op with approved verdict a
     }
 });
 
-void test('runtime validation: passing, failing, filtered, and timeout checks write expected status and rows', async () => {
+runRuntimeValidationTest('runtime validation: passing, failing, filtered, and timeout checks write expected status and rows', async () => {
     const passTask = createTask('pass');
     const failTask = createTask('fail');
     const filterTask = createTask('filter');
@@ -200,7 +243,7 @@ void test('runtime validation: passing, failing, filtered, and timeout checks wr
     }
 });
 
-void test('runtime validation: latest re-run result wins', async () => {
+runRuntimeValidationTest('runtime validation: latest re-run result wins', async () => {
     const taskId = createTask('rerun');
     try {
         await runPhase(taskId, [{ name: 'rerun-check', command: 'node -e "console.log(\'first pass ok\')"' }]);
@@ -238,7 +281,8 @@ void test('runtime validation: latest re-run result wins', async () => {
     }
 });
 
-void test('runtime validation: cwd option, scoped cleanup, artifacts, and dirty task artifact preservation', async () => {
+runRuntimeValidationTest('runtime validation: cwd option, scoped cleanup, artifacts, and dirty task artifact preservation', async () => {
+    const repoRoot = process.cwd();
     const passTask = createTask('cleanup-pass');
     const failTask = createTask('cleanup-fail');
     const dirtyTask = createTask('dirty-preserve');
@@ -249,18 +293,18 @@ void test('runtime validation: cwd option, scoped cleanup, artifacts, and dirty 
         await runPhase(passTask, [{
             name: 'worktree-cwd-pass',
             cwd: 'worktree',
-            command: `node -e 'if (process.cwd() !== ${JSON.stringify(REPO_ROOT)}) process.exit(2); require("fs").writeFileSync(${JSON.stringify(passFile)}, "x")'`,
+            command: `node -e 'if (process.cwd() !== ${JSON.stringify(repoRoot)}) process.exit(2); require("fs").writeFileSync(${JSON.stringify(passFile)}, "x")'`,
         }]);
-        assert.equal(fs.existsSync(path.join(REPO_ROOT, passFile)), false);
+        assert.equal(fs.existsSync(path.join(repoRoot, passFile)), false);
 
         await runPhase(failTask, [{
-            name: 'repo-root-cwd-fail',
-            cwd: 'repo_root',
-            command: `node -e 'if (process.cwd() !== ${JSON.stringify(REPO_ROOT)}) process.exit(2); require("fs").writeFileSync(${JSON.stringify(failFile)}, "artifact"); process.exit(1)'`,
+            name: 'worktree-cwd-fail',
+            cwd: 'worktree',
+            command: `node -e 'if (process.cwd() !== ${JSON.stringify(repoRoot)}) process.exit(2); require("fs").writeFileSync(${JSON.stringify(failFile)}, "artifact"); process.exit(1)'`,
         }]);
-        assert.equal(fs.existsSync(path.join(REPO_ROOT, failFile)), false);
+        assert.equal(fs.existsSync(path.join(repoRoot, failFile)), false);
         assert.equal(
-            fs.readFileSync(path.join(taskDir(failTask), 'runtime-check-output', 'repo-root-cwd-fail', 'iter-1', failFile), 'utf8'),
+            fs.readFileSync(path.join(taskDir(failTask), 'runtime-check-output', 'worktree-cwd-fail', 'iter-1', failFile), 'utf8'),
             'artifact',
         );
 
@@ -268,29 +312,29 @@ void test('runtime validation: cwd option, scoped cleanup, artifacts, and dirty 
         const notesBefore = 'pre-existing notes\n';
         fs.writeFileSync(handoffPath(dirtyTask), handoffBefore);
         fs.writeFileSync(path.join(taskDir(dirtyTask), 'notes.md'), notesBefore);
-        fs.writeFileSync(path.join(REPO_ROOT, dirtyFile), 'pre-existing source dirty');
+        fs.writeFileSync(path.join(repoRoot, dirtyFile), 'pre-existing source dirty');
         await runPhase(dirtyTask, [{
             name: 'preserve-dirty',
             command: `node -e "require('fs').writeFileSync('rtv-induced-${process.pid}.txt', 'new'); process.exit(1)"`,
         }]);
         assert.match(readHandoff(dirtyTask), /<!-- dirty marker -->/);
         assert.equal(fs.readFileSync(path.join(taskDir(dirtyTask), 'notes.md'), 'utf8'), notesBefore);
-        assert.equal(fs.readFileSync(path.join(REPO_ROOT, dirtyFile), 'utf8'), 'pre-existing source dirty');
-        assert.equal(fs.existsSync(path.join(REPO_ROOT, `rtv-induced-${process.pid}.txt`)), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, dirtyFile), 'utf8'), 'pre-existing source dirty');
+        assert.equal(fs.existsSync(path.join(repoRoot, `rtv-induced-${process.pid}.txt`)), false);
     } finally {
         cleanupTask(passTask);
         cleanupTask(failTask);
         cleanupTask(dirtyTask);
-        fs.rmSync(path.join(REPO_ROOT, passFile), { force: true });
-        fs.rmSync(path.join(REPO_ROOT, failFile), { force: true });
-        fs.rmSync(path.join(REPO_ROOT, dirtyFile), { force: true });
-        fs.rmSync(path.join(REPO_ROOT, `rtv-induced-${process.pid}.txt`), { force: true });
+        fs.rmSync(path.join(repoRoot, passFile), { force: true });
+        fs.rmSync(path.join(repoRoot, failFile), { force: true });
+        fs.rmSync(path.join(repoRoot, dirtyFile), { force: true });
+        fs.rmSync(path.join(repoRoot, `rtv-induced-${process.pid}.txt`), { force: true });
     }
 });
 
-void test('runtime validation: declared artifactPaths preserve gitignored files and missing paths log without aborting', async () => {
+runRuntimeValidationTest('runtime validation: declared artifactPaths preserve gitignored files and missing paths log without aborting', async () => {
     const taskId = createTask('artifact-paths');
-    const ignoredDir = path.join(REPO_ROOT, 'fixtures', 'ignored-output');
+    const ignoredDir = path.join(process.cwd(), 'fixtures', 'ignored-output');
     try {
         const output = await captureProcessOutput(async () => {
             await runPhase(taskId, [{
@@ -306,7 +350,7 @@ void test('runtime validation: declared artifactPaths preserve gitignored files 
             }]);
         });
         const status = await import('../scripts/run-task/git.ts').then(({ gitSafeAtRaw }) =>
-            gitSafeAtRaw(REPO_ROOT, 'status', '--porcelain=v1', '-uall', '--', 'fixtures/ignored-output/report.log')
+            gitSafeAtRaw(process.cwd(), 'status', '--porcelain=v1', '-uall', '--', 'fixtures/ignored-output/report.log')
         );
         assert.equal(status.stdout.trim(), '');
         assert.equal(
@@ -320,7 +364,7 @@ void test('runtime validation: declared artifactPaths preserve gitignored files 
     }
 });
 
-void test('runtime validation: prompt uses stderr.log first, then handoff excerpt fallback, and includes hint', async () => {
+runRuntimeValidationTest('runtime validation: prompt uses stderr.log first, then handoff excerpt fallback, and includes hint', async () => {
     const taskId = createTask('prompt');
     const check: RuntimeCheck = {
         name: 'prompt-check',
@@ -356,7 +400,7 @@ void test('runtime validation: prompt uses stderr.log first, then handoff excerp
     }
 });
 
-void test('runtime validation: two-tier capture keeps full stderr log but handoff and prompt are bounded', async () => {
+runRuntimeValidationTest('runtime validation: two-tier capture keeps full stderr log but handoff and prompt are bounded', async () => {
     const taskId = createTask('large-stderr');
     try {
         await captureProcessOutput(async () => {
@@ -379,7 +423,7 @@ void test('runtime validation: two-tier capture keeps full stderr log but handof
     }
 });
 
-void test('runtime validation: prompt template supports review-only, runtime-only, and combined shapes', async () => {
+runRuntimeValidationTest('runtime validation: prompt template supports review-only, runtime-only, and combined shapes', async () => {
     const runtimeTask = createTask('shape-runtime');
     const reviewTask = createTask('shape-review', { codeReviewIterations: 1 });
     const bothTask = createTask('shape-both', { codeReviewIterations: 1 });
@@ -407,7 +451,7 @@ void test('runtime validation: prompt template supports review-only, runtime-onl
     }
 });
 
-void test('runtime validation: buildPipelineState carries runtime iterations and parseHandoffFiles feeds when predicate', async () => {
+runRuntimeValidationTest('runtime validation: buildPipelineState carries runtime iterations and parseHandoffFiles feeds when predicate', async () => {
     const taskId = createTask('state-when');
     try {
         let seenFiles: readonly string[] = [];
@@ -433,7 +477,7 @@ void test('runtime validation: buildPipelineState carries runtime iterations and
     }
 });
 
-void test('runtime validation: timeout kills the process group so wall-clock honors timeoutMs', async () => {
+runRuntimeValidationTest('runtime validation: timeout kills the process group so wall-clock honors timeoutMs', async () => {
     // Regression for the P1 caught on PR #37: without `detached: true` +
     // process-group kill, the timeout signals only the shell, leaving
     // grandchildren (here: `node -e "setTimeout..."`) alive holding stdio
@@ -465,7 +509,7 @@ void test('runtime validation: timeout kills the process group so wall-clock hon
     }
 });
 
-void test('runtime validation: streaming, heartbeat, and summary are emitted to process streams', async () => {
+runRuntimeValidationTest('runtime validation: streaming, heartbeat, and summary are emitted to process streams', async () => {
     const taskId = createTask('streaming');
     const previousHeartbeat = process.env.ORCHESTRATOR_CHECK_HEARTBEAT_MS;
     process.env.ORCHESTRATOR_CHECK_HEARTBEAT_MS = '50';
