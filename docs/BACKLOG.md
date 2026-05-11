@@ -86,6 +86,90 @@
     - **Architect review on conversational fast-tier specs** — fast tier doesn't have an architect review pass today. Whether to add a lightweight pre-implement architect review on full-tier spec authorship is a separate question; punt until the post-code phase has shipped and we know whether the value is in pre- or post-implement framing.
   - **Effort**: `M`. Most novel logic is the verdict parsing and three-way routing; the rest follows existing phase patterns. Touches dispatcher routing, so this benefits from one round of grilling against an actual M-tier task spec before code lands. Pipeline-infra-changes-are-inline applies; this is the shape of work that goes inline.
 
+### Wave 3 cluster — follow-ups from TokenAnxiety dogfood discussion #27
+
+*The four entries below were originally filed as GH issues #31–#34, promoted to BACKLOG per the [BACKLOG-vs-issues decision](decisions.md). Each is independently buildable; sequencing notes call out cross-dependencies.*
+
+- [ ] **Canon snapshot stamping in task status/handoff artifacts** *(framed 2026-05-10 from discussion #27, item 8)*
+  - **Scope**: Add a `canon` block to `status.json` (and a corresponding section in `handoff.md`) at task creation that records the canon version governing this task. TokenAnxiety vendors canon-ai through a git submodule (`vendor/canon-ai`), pinned to a specific commit — different canon commits enforce different rules, ship different templates, route through different orchestrator logic. Task artifacts today say *what happened*, not *what canon governed it*. From the discussion: "If a different Canon snapshot was active during a run, the artifacts do not prove it. That should probably become an explicit field in `status.json` or the handoff."
+  - **Shape**:
+    ```json
+    "canon": {
+      "upstream_repo": "tstraub89/canon-ai",
+      "upstream_commit": "<short SHA at task new time>",
+      "orchestrator_commit": "<downstream commit containing scripts/run-task/>",
+      "codex_cli": "<from codex --version>",
+      "claude_code": "<from claude --version>"
+    }
+    ```
+  - **Detection logic must handle two modes**:
+    - **Native canon-ai** (this repo): `upstream_commit` = `git rev-parse HEAD`, `orchestrator_commit` = same.
+    - **Vendored canon** (e.g. TokenAnxiety's `vendor/canon-ai`): `upstream_commit` = submodule HEAD, `orchestrator_commit` = downstream repo HEAD. Detection: if `scripts/run-task/main.ts` resolves to a path under `vendor/<dir>`, or any directory containing a `.git` *file* (not folder) pointing to a separate gitdir, it's vendored.
+  - **Behavior**:
+    - `task.sh new` writes the `canon` block into the initial `status.json`.
+    - `run-task.ts` re-captures the snapshot on each invocation and stores it (so tasks created before this feature still get stamped on next pipeline run).
+    - `handoff.md` template gains a "Canon Governance" section that references the `status.json` `canon` values.
+    - Missing CLI binaries (codex/claude not installed) record `"<unavailable>"` rather than failing.
+  - **Why this matters**: turns future dogfood reports from archaeology into normal telemetry. The `canon dogfood-report` BACKLOG entry depends on this.
+  - **Affected files**: `scripts/task.sh`, `scripts/run-task/state.ts`, `scripts/run-task/types.ts`, `tasks/_templates/status.json`, `tasks/_templates/handoff.md`.
+  - **Sequencing**: Independent of other Wave 3 entries. Reasonable first thing to land from this cluster.
+  - **Effort**: `M`. Schema change + write logic + vendored-mode detection.
+
+- [ ] **Status counter consistency + artifact-invariant gate before phase advancement** *(framed 2026-05-10 from discussion #27, items 1+3+8; verified bug at `scripts/task.sh:344`)*
+  - **Scope**: Two related failure modes that both reduce to "status.json can disagree with reality." Fix together — they share schema changes and an invariant-gate framework.
+  - **Failure mode 1 — Iterations reset to 0 on approval** *(verified bug)*: `scripts/task.sh:344` resets `iterations` to 0 when verdict is `approved`/`approved_with_nits`. By design — the field models the *current loop*, which resets between cycles. But this destroys the cumulative count needed for trend analysis. James's ui-001 has an escalation record saying spec review hit 3 consecutive `changes_requested` rounds, but final `spec_review.iterations` is 0. `code_review.iterations` is also 0 despite review.md having a Round 2.
+  - **Failure mode 2 — Phase status can disagree with artifact** *(partially fixed; broader gap remains)*: PR #29 (commit 27463ce) added a post-Codex template check for `spec-review.md`. But the broader invariant — "phase status = done implies a real artifact with a real verdict" — is enforced ad hoc per phase. Examples from discussion #27:
+    - intel-001: `spec_review.status = done` while spec-review.md was untouched template (fixed by 27463ce).
+    - ui-002: `human_review: done` while validation outcomes had unresolved `human_pending` rows (different shape, same family — covered partially by the validation result states entry below).
+  - **Schema additions on `phases.<phase>`**:
+    | Field | Semantics |
+    |---|---|
+    | `iterations_current_loop` | Replaces current `iterations`. Resets on approval. |
+    | `iterations_total` | Monotonic, never resets. |
+    | `changes_requested_total` | Count of `changes_requested` verdicts across all loops. |
+    | `auto_block_count` | Count of auto-blocks for this phase. |
+    | `verdict_source` | `"agent"` \| `"human"` \| `"auto_fast_tier"` — distinguishes who set the verdict. |
+
+    Backward-compat: keep `iterations` as an alias for `iterations_current_loop` during a deprecation window; `task.sh phase` writes both until adopters migrate. Same augment-then-deprecate pattern as the `.canon/config.json` migration.
+  - **Pre-advance invariant gate**: Centralized helper called by `task.sh phase <id> <phase> done`:
+    - If phase requires an artifact (spec, plan, spec-review, handoff, review, done): artifact must exist AND not match `isTemplateUnfilled`.
+    - If phase has a verdict field: verdict must be non-empty AND parseable from artifact.
+    - Reject with non-zero exit; orchestrator surfaces the rejection and resets phase to `pending`.
+    - The Structured-table parser utility (separate BACKLOG entry, in Harness Bugs section) is the prerequisite for the verdict-extraction half — parse handoff/review tables reliably, then enforce.
+  - **Affected files**: `scripts/task.sh` (counter logic + invariant gate), `scripts/run-task/state.ts` + `types.ts` (schema), `scripts/run-task/validation.ts` (invariant-gate primitives), `tasks/_templates/status.json` (schema example), new test file or extension of existing tests (coverage).
+  - **Sequencing**: Depends on the structured-table parser utility for the verdict-extraction part of the invariant gate. The counter migration can land independently.
+  - **Effort**: `M`. Heaviest schema work from #27. Multiple other Wave 3 entries (validation result states, QA telemetry) depend on the invariant-gate framework this entry establishes.
+
+- [ ] **Extend validation result enum: `human_pending`, `deferred_by_spec`, `not_configured`** *(framed 2026-05-10 from discussion #27, item 5)*
+  - **Scope**: Validation results today are effectively `pass | fail | N/A`. James's ui-002 dogfood evidence shows this enum is too coarse: OAuth and Safari/Firefox checks were correctly flagged as human-only, but the task was still marked complete and approved before those provider/browser checks were actually done. `done.md` says human testing is pending; `status.json` says `human_review: done`. `Pass`, `N/A`, and `Human pending` are categorically different. Conflating them lets a task close on incomplete evidence.
+  - **Proposed enum**:
+    | Value | Semantics |
+    |---|---|
+    | `pass` | Agent ran the check; it passed. |
+    | `fail` | Agent ran the check; it failed. |
+    | `not_configured` | Check doesn't apply to this task type (replaces most current `N/A` uses). |
+    | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Task cannot close until resolved. |
+    | `deferred_by_spec` | Explicitly out of scope per spec. Requires spec citation in the row's notes. |
+    | `blocked` | Check would have run but infrastructure unavailable (CI down, network out). Triage required. |
+  - **Behavior changes**:
+    - Handoff Validation Outcomes table parser recognizes all new states.
+    - `human_review: done` requires zero `human_pending` rows in any task in the bundle, OR an explicit waiver from a human in done.md ("Acknowledged: <list of human_pending items> deferred to post-merge follow-up by [reason]").
+    - QA prompt surfaces `human_pending` items in done.md under a "Human Verification Required" section so the human sees them before they think they're done.
+  - **Affected files**: `scripts/run-task/validation.ts`, `scripts/run-task/prompts/templates/qa-*.md`, `tasks/_templates/handoff.md` (Validation Outcomes legend), `AGENTS.md` (validation matrix docs), `tests/run-task-validation.test.ts`.
+  - **Sequencing**: Depends on the counters+invariants entry for the invariant-gate primitives (`human_review: done` rejection logic). Otherwise independent.
+  - **Effort**: `M`. Self-contained but touches multiple surfaces.
+
+- [ ] **QA completion requires task-quality-log row + lessons distillation** *(framed 2026-05-10 from discussion #27, item 7)*
+  - **Scope**: Canon designates three workflow-observability files (`docs/pipeline-invocations.md`, `docs/task-quality-log.md`, `docs/lessons-learned.md`). The QA prompt assigns ownership but doesn't enforce. From the discussion: "`docs/task-quality-log.md` only has ui-001 even though ui-002 is marked complete. `docs/lessons-learned.md` still contains only template/example content despite multiple durable lessons." The supposed source of truth becomes incomplete, with no signal distinguishing "no lesson worth recording" from "QA forgot."
+  - **Pre-advance invariant on `qa.status = done`**:
+    - For each task in the bundle: `docs/task-quality-log.md` has at least one row matching the task id AND modified since the qa phase started.
+    - For each task: `done.md` has a "Lessons" section. Empty list is allowed but must be explicit: "Lessons: none — routine task."
+    - `docs/pipeline-invocations.md` has a row matching the current invocation.
+    - Reject with non-zero exit; rejection messages are actionable (name the file, name the missing row, link to the template).
+  - **Affected files**: `scripts/task.sh` (qa-done invariants), `scripts/run-task/validation.ts` (telemetry-presence helpers), `tasks/_templates/done.md` (explicit Lessons section heading), `tests/run-task-validation.test.ts`.
+  - **Sequencing**: Depends on the counters+invariants entry for the centralized invariant-gate framework. Without that framework, this is a one-off check in `task.sh`.
+  - **Effort**: `S` (once the invariant-gate framework exists).
+
 ## 📦 Distribution & Portability
 
 - [ ] **`canon init` bootstrap + canon-as-installable-package** *(reframed 2026-05-10 from strategy memo #30, original portability framing 2026-05-09)*
@@ -151,14 +235,14 @@
   - **Later additions** (each when its feature lands):
     - `.canon/guards.json` — guard helper registry for `guard_audit` (already noted in the scoped-audits BACKLOG entry).
     - `.canon/audits/` — project-defined audit definitions extending the canon-shipped set.
-    - `.canon/validation-bindings.json` — structured replacement for prose validation matrix with stable check IDs. Pairs with Wave 3 issue #33. Could either live here as a separate file or be the `validation_bindings` field in `config.json` expanded — defer until #33's spec.
+    - `.canon/validation-bindings.json` — structured replacement for prose validation matrix with stable check IDs. Pairs with the **validation result states** entry in the Wave 3 cluster above. Could either live here as a separate file or be the `validation_bindings` field in `config.json` expanded — defer until that entry's spec.
     - `.canon/overrides/AGENTS.md`, `.canon/overrides/CLAUDE.md`, `.canon/overrides/CODEX.md` — host's overlay onto canon-supplied defaults. Canon-as-package world only; doesn't make sense before package extraction since canon-ai *is* the source of truth today.
   - **Explicitly NOT in `.canon/`**:
     - `.claude/`, `.codex/` — tool-specific configs that exist regardless of canon. Conflating them with canon governance creates a wrong coupling.
     - `docs/` — knowledge corpus, not machinery. Different purpose, different audience (humans read docs; canon machinery reads `.canon/`).
     - `tasks/<id>/` — production task artifacts, not config.
     - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` at repo root — must stay at repo root because Claude Code and Codex auto-load those filenames. The *overrides* go into `.canon/overrides/` (later, package-only).
-  - **Replace-vs-augment tension**: When `.canon/config.json` lands, does it *replace* the validation matrix in `AGENTS.md` or *augment* it? Replace is cleaner but breaks adopters' existing setups (canon-ai's `AGENTS.md` becomes wrong, prose matrix needs to move). Augment is backwards-compatible but maintains two sources of truth (drift risk). **Recommended path**: augment first (`config.json` wins when present, prose matrix is fallback), then deprecate the prose matrix after one release. Same pattern as the `iterations` → `iterations_current_loop` migration in Wave 3 issue #32.
+  - **Replace-vs-augment tension**: When `.canon/config.json` lands, does it *replace* the validation matrix in `AGENTS.md` or *augment* it? Replace is cleaner but breaks adopters' existing setups (canon-ai's `AGENTS.md` becomes wrong, prose matrix needs to move). Augment is backwards-compatible but maintains two sources of truth (drift risk). **Recommended path**: augment first (`config.json` wins when present, prose matrix is fallback), then deprecate the prose matrix after one release. Same pattern as the `iterations` → `iterations_current_loop` migration in the **status counter consistency** Wave 3 entry above.
   - **Risks to watch**:
     - **Drift with prose docs**: during the augment-then-deprecate window, prose matrix and `.canon/config.json` can disagree. Validation matrix lookups must check `.canon/config.json` first and warn (not error) if prose drift is detected.
     - **Discoverability**: putting config in a hidden directory hides it from casual reading. `README.md` and `AGENTS.md` must point to `.canon/config.json` as the source of truth so new contributors find it.
@@ -175,11 +259,11 @@
     - `docs/task-quality-log.md` for per-task metrics
     - `docs/pipeline-invocations.md` for run-by-run history
     - `docs/lessons-learned.md` for distilled lessons (and flags template-only content as suspicious)
-    - `tasks/<id>/status.json` for cumulative counters (depends on issue #32 landing)
+    - `tasks/<id>/status.json` for cumulative counters (depends on the **status counter consistency** Wave 3 entry landing)
     - `git log --oneline` for post-closeout fixes near each completed task
-    - The `canon` stamp block (depends on issue #31 landing) to bucket findings by governing canon version
+    - The `canon` stamp block (depends on the **canon snapshot stamping** Wave 3 entry landing) to bucket findings by governing canon version
   - Outputs a markdown report following the structure of discussion #27: environment versions, tasks reviewed, what worked, hiccups/bugs, suggested follow-ups, evidence bundle.
-  - **Sequencing dependency**: this command is the *consumer* of issues #31 (canon stamping) and #32 (cumulative counters). Build it after both land, otherwise the report has the same gaps James called out manually.
+  - **Sequencing dependency**: this command is the *consumer* of the **canon snapshot stamping** and **status counter consistency** Wave 3 entries. Build it after both land, otherwise the report has the same gaps James called out manually.
   - **Punted to later**: cross-project dogfood report (when canon is a package and TokenAnxiety / GalleryPlanner / others share a schema); LLM-summary mode (Claude reads the raw report and writes the "What Worked / Hiccups" narrative); auto-file-issues mode (each Hiccup section becomes a GitHub issue via `gh issue create`).
   - **Effort**: `S` for the raw-data report. `M` if combined with LLM-narrative mode.
 
