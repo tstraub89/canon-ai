@@ -9,7 +9,6 @@ on:
       - 'CODEX.md'
       - 'docs/**'
       - 'tasks/**'
-      - 'scripts/task.sh'
       - '.agent/**'
       - '.github/**/*.md'
   pull_request:
@@ -20,7 +19,6 @@ on:
       - 'CODEX.md'
       - 'docs/**'
       - 'tasks/**'
-      - 'scripts/task.sh'
       - '.agent/**'
       - '.github/**/*.md'
 
