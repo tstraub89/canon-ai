@@ -27,3 +27,8 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec_review] Runtime-validation reroutes need their own implement prompt state: current `TaskContext.iterations` is derived from code_review iterations only, so a runtime-only failure can look like a fresh implement pass.
 
 [spec_review] `git status --porcelain -uall` excludes ignored files; runtime artifact preservation cannot rely only on status deltas if e2e reports/traces live in ignored paths.
+
+[implement] In linked worktrees, resolving repo root via `git rev-parse --git-common-dir` points at the supervising checkout's `.git` parent, not the active worktree. Use `git rev-parse --show-toplevel` when paths/artifacts must be worktree-local.
+
+[implement] Cleanup tests that assert `git status` delta behavior must write non-ignored fixture paths; ignored `*.tmp` files do not appear in porcelain output and therefore cannot exercise scoped delta cleanup.
+

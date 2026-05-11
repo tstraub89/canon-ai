@@ -83,7 +83,8 @@ The orchestrator is a long-running TypeScript process. It spawns agent CLIs as s
 6. **Plan**: orchestrator spawns Claude with the plan prompt. Claude writes `plan.md`.
 7. **Implement**: orchestrator spawns Codex with the implement prompt + spec + plan. Codex edits files in the worktree (or main checkout if `worktree: false`), writes `handoff.md`. Orchestrator runs hallucination check.
 8. **Auto-commit**: `autoCommitCode()` parses every handoff Changes table → `allHandoffFiles` set. Verifies dirty tree matches handoff (every dirty file is listed; every listed file exists). Stages and commits with task-titled message.
-9. **Code review**: orchestrator runs `validateHandoff()` pre-flight (no `Fail` rows, AC coverage table populated, all required validations present). If pass, spawns Claude with the review prompt. Claude writes `review.md` (Stage 1 + Stage 2). On `changes_requested`, routes back to implement.
+9. **Runtime validation**: orchestrator runs registered `RUNTIME_CHECKS` from `pipeline-policy.ts` against the committed worktree — e2e suites, deploy smoke, anything requiring a browser or live service that Codex's sandbox cannot execute. Results written to `## Runtime Validation Outcomes` in `handoff.md`. On any Fail/Timeout, routes back to implement with captured output in the revision prompt. Empty registry → no-op, advances immediately.
+10. **Code review**: orchestrator runs `validateHandoff()` pre-flight (no `Fail` rows, AC coverage table populated, all required validations present, orchestrator runtime results checked). If pass, spawns Claude with the review prompt. Claude writes `review.md` (Stage 1 + Stage 2). On `changes_requested`, routes back to implement.
 10. **QA**: Claude writes `done.md`, distills `notes.md` into `lessons-learned.md` entries, appends row to `task-quality-log.md`.
 11. **Human review**: human tests against `done.md`, marks `phases.human_review.status = "done"`.
 
@@ -165,7 +166,7 @@ Anthropic's `claude` CLI supports `--resume <session-id>`. The orchestrator stor
 ### Auto-block / reroute
 
 Two mechanisms halt or redirect the pipeline:
-- **`autoBlockPhase()`**: when `MAX_REVIEW_LOOPS` is hit on `spec_review` or `code_review`. Sets phase status to `blocked`, appends to `task-quality-log.md`, exits with code 2. Manual intervention required (reset phase + iterations).
+- **`autoBlockPhase()`**: when `MAX_REVIEW_LOOPS` is hit on `spec_review`, `runtime_validation`, or `code_review`. Sets phase status to `blocked`, appends to `task-quality-log.md`, exits with code 2. Manual intervention required (reset phase + iterations). `runtime_validation.iterations` and `code_review.iterations` are independent counters — each has its own cap.
 - **`routeBackTo()`**: on `changes_requested` verdicts. Flips the target phase and all downstream to `pending`. Loop re-enters the routed phase next iteration.
 
 ### Validation gates

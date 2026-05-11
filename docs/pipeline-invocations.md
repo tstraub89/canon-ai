@@ -45,3 +45,10 @@
 | 2026-05-11T12:17:07.556Z | runtime-validation-phase | spec_review | codex | gpt-5.5 | 3 | 72.3s | 7159825 | ok |
 | 2026-05-11T12:18:35.534Z | runtime-validation-phase | spec | claude | opus | - | 87.9s | 1178283 | ok |
 | 2026-05-11T12:20:41.617Z | runtime-validation-phase | spec_review | codex | gpt-5.5 | 4 | 126.0s | 7571802 | ok |
+| 2026-05-11T12:36:23.725Z | runtime-validation-phase | plan | claude | sonnet | - | 520.9s | 1449400 | ok |
+| 2026-05-11T12:36:46.156Z | prompt-fidelity-tests | implement | codex | gpt-5.4-mini | 0 | 264.1s | 2545749 | ok |
+| 2026-05-11T12:48:15.319Z | prompt-fidelity-tests | code_review | claude | sonnet | 2 | 179.9s | 332751 | ok |
+| 2026-05-11T13:01:04.132Z | prompt-fidelity-tests | qa | claude | sonnet | - | 139.0s | 556318 | ok |
+| 2026-05-11T13:07:50.734Z | runtime-validation-phase | implement | codex | gpt-5.5 | 0 | 1886.9s | 29028864 | ok |
+| 2026-05-11T13:17:28.082Z | runtime-validation-phase | code_review | claude | sonnet | 0 | 577.0s | 2012438 | ok |
+| 2026-05-11T13:21:26.896Z | runtime-validation-phase | qa | claude | sonnet | - | 238.7s | 1110652 | ok |

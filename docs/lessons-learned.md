@@ -61,3 +61,23 @@ Canonical example: `tasks/_archive/split-run-task/review.md` Round 1, Stage 1 Fi
 ### ~~Verify internal function names exist before referencing them in spec ACs~~
 
 *(promoted to `CLAUDE.md` "Spec-writing rules of thumb" — 2026-05-11)*
+
+### Never use blanket git stash/clean inside a pipeline phase
+
+*(2026-05-11, source: runtime-validation-phase)*
+
+After `implement` closes and `autoCommitCode()` runs, only the source files listed in the handoff Changes table are committed. Task artifacts — `tasks/<id>/handoff.md`, `tasks/<id>/notes.md`, `tasks/<id>/status.json` — are typically uncommitted dirty files in the worktree. A blanket `git stash --include-untracked`, `git clean -fd`, or similar invocation will erase them; `syncWorktreeArtifacts()` then propagates the erasure to the main checkout, permanently losing handoff history.
+
+Fix: any phase that needs to clean up after itself must use a pre/post `git status --porcelain=v1 -uall` delta (`postDirty \ preDirty`) and only touch paths in that delta. Explicitly exclude anything under `tasks/` from the cleanup set regardless of what the delta contains. Never use `git stash` or `git clean` in orchestrator-phase code. Canonical implementation: `scripts/run-task/phases/runtime-validation.ts` AC-11 scoped cleanup.
+
+### Use `git rev-parse --show-toplevel` for repo root in linked worktrees
+
+*(2026-05-11, source: runtime-validation-phase)*
+
+In a linked worktree, `git rev-parse --git-common-dir` resolves to the supervising checkout's `.git` parent — not the active worktree. Any phase that needs paths local to the active worktree (artifact directories, cwd resolution, `package.json` location) must use `git rev-parse --show-toplevel` instead. The common-dir form is correct only when you explicitly want the supervising repo's root (e.g., reading canon's own policy files). See `scripts/run-task/env.ts` — `REPO_ROOT` was patched from common-dir to show-toplevel in this task.
+
+### Porcelain-delta cleanup tests must use non-gitignored fixture paths
+
+*(2026-05-11, source: runtime-validation-phase)*
+
+`git status --porcelain -uall` does not surface gitignored files by design. Tests that verify scoped delta cleanup by writing `*.tmp` files (or other extensions matching `.gitignore` patterns) will find an empty delta and pass vacuously — they never actually exercise the cleanup path. Write fixture files with names that are not gitignored (e.g., `fixture-output.txt`, `test-check-artifact.log`) so `git status` surfaces them in the delta and the cleanup assertion has something to verify.
