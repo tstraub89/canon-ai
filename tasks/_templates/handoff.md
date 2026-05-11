@@ -46,11 +46,7 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass / Fail / N/A | |
-| `<type-check>` | Pass / Fail / N/A | |
-| `<unit tests>` | Pass / Fail / N/A | |
-| `<E2E>` | Pass / Fail / N/A | |
-| `<build>` | Pass / Fail / N/A | |
+| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / N/A | |
 
 ## Ready for Review
 

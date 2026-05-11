@@ -299,7 +299,7 @@ void test('computeLatestValidationResults: original Fail overridden by iteration
     ].join('\n');
 
     const latest = computeLatestValidationResults(handoff);
-    const row = latest.get('npm test');
+    const row = latest.get('test');
     assert.ok(row, 'should have npm test result');
     assert.equal(row.result, 'Pass');
 });
@@ -331,7 +331,7 @@ void test('computeLatestValidationResults: latest iteration wins when multiple i
     ].join('\n');
 
     const latest = computeLatestValidationResults(handoff);
-    assert.equal(latest.get('npm test')!.result, 'Fail', 'latest iteration result wins');
+    assert.equal(latest.get('test')!.result, 'Fail', 'latest iteration result wins');
 });
 
 void test('computeLatestValidationResults: check not re-run keeps baseline result', () => {
@@ -354,8 +354,8 @@ void test('computeLatestValidationResults: check not re-run keeps baseline resul
     ].join('\n');
 
     const latest = computeLatestValidationResults(handoff);
-    assert.equal(latest.get('npm run lint')!.result, 'Pass');
-    assert.equal(latest.get('npm test')!.result, 'Pass');
+    assert.equal(latest.get('lint')!.result, 'Pass');
+    assert.equal(latest.get('test')!.result, 'Pass');
 });
 
 void test('validateHandoff: cumulative handoff with all checks resolved in later iteration passes', () => {
