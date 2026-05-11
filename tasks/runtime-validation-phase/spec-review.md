@@ -4,45 +4,32 @@
 
 ## Shape Check
 
-> Strategic read of the spec itself — does it solve the right problem in the right shape? **Silence is the default**; only write here if something is actually off. A concern here is the lead reason for a `changes_requested` verdict.
-
-- Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)
-- Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)
-- Is there a materially simpler solution that changes the shape of the work?
-- Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)
-
-(no concerns / list items)
+No concerns.
 
 ## Feasibility Check
 
 Does the spec's approach work against the actual codebase?
 
-- [ ] Affected files exist and contain what the spec assumes
-- [ ] Proposed patterns are consistent with existing conventions
-- [ ] No conflicts with existing functionality
+- [x] Affected files exist and contain what the spec assumes
+- [x] Proposed patterns are consistent with existing conventions
+- [x] No conflicts with existing functionality
 
 ## Issues Found
 
 ### Correctness Issues
 
-> Things the spec gets wrong about the current codebase.
-
-(none / list items)
+- **Non-blocking nit:** The affected-files row for `scripts/run-task/prompts/index.ts` + `implement-revisions.md` says the template uses Handlebars conditional blocks (`tasks/runtime-validation-phase/spec.md:198`), but the current renderer imports and calls Mustache (`scripts/run-task/prompts/render.ts:1`). The specific `{{#hasReviewFindings}}...{{/hasReviewFindings}}` section syntax named in the spec is Mustache-compatible, so this is implementable, but the plan should avoid any Handlebars-only helpers or assumptions.
 
 ### Missing Edge Cases
 
-> Scenarios the spec doesn't account for.
-
-(none / list items)
+- **Non-blocking nit:** AC-12 requires the reroute prompt to include `artifactReadingHint` when set (`tasks/runtime-validation-phase/spec.md:141`), while the affected-files row says the prompt builder computes the runtime-failure list from `computeLatestRuntimeResults` parsed from handoff (`tasks/runtime-validation-phase/spec.md:198`). Since the handoff row format in AC-5 does not carry `artifactReadingHint`, the plan should explicitly source the hint from `RUNTIME_CHECKS` by check name, or persist it in the runtime result data.
 
 ### Type Safety / Interface Gaps
 
-> Type mismatches, missing interfaces, or signature errors.
-
-(none / list items)
+- **Non-blocking nit:** AC-4 defines the new phase entrypoint as `runRuntimeValidationPhase(taskIds, ctx, checks?)` with `checks?: readonly RuntimeCheck[]` as the test seam (`tasks/runtime-validation-phase/spec.md:55-56`), but the affected-files table lists `runRuntimeValidationPhase(taskIds, ctx)` only (`tasks/runtime-validation-phase/spec.md:194`). The AC is clear enough to implement; update the plan signature from AC-4 rather than the shortened table row.
 
 ## Verdict
 
 - [ ] **Approved** — spec is implementable as written
-- [ ] **Approved with nits** — implementable, but noting observations for plan phase
+- [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)

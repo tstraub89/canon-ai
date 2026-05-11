@@ -1,14 +1,14 @@
 {
   "id": "runtime-validation-phase",
   "title": "Runtime validation phase — orchestrator-run checks between implement and code_review",
-  "status": "spec_review",
+  "status": "plan",
   "created": "2026-05-11",
   "updated": "2026-05-11",
   "branch": "",
   "base_branch": "dev",
   "task_size": "M",
   "delicate": true,
-  "human_spec_gate": true,
+  "human_spec_gate": false,
   "worktree": true,
   "phases": {
     "spec": {
@@ -16,9 +16,9 @@
       "agent": "claude"
     },
     "spec_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0
     },
     "plan": {
@@ -44,8 +44,18 @@
       "agent": "human"
     }
   },
-  "escalations": [],
-  "sessions": {},
+  "escalations": [
+    {
+      "date": "2026-05-11",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations = 0 in status.json, then re-run the pipeline."
+    }
+  ],
+  "sessions": {
+    "codex": "019e16e5-0d9a-78f3-8201-0b84d2fc50dd",
+    "claude_spec": "d4a1c2d9-fb68-40c5-8ff5-833afdf75683"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
 }
