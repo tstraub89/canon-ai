@@ -54,7 +54,7 @@ export function buildContextBlock(taskIds: string[]): string {
 }
 
 export function buildKnownPitfalls(): string {
-    const patternsPath = path.join(REPO_ROOT, 'docs/patterns.md');
+    const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path.join(REPO_ROOT, 'docs/patterns.md');
     try {
         const content = fs.readFileSync(patternsPath, 'utf8');
         const match = content.match(/## Known Pitfalls\n\n([\s\S]*?)(?:\n## |\n---|\n# |$)/);
