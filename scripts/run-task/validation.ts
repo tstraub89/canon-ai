@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { parseTable } from './markdown-table.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { taskDirFor } from './state.js';
@@ -10,32 +11,18 @@ export function escapeRegExp(value: string): string {
 }
 
 export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
-    const acSectionMatch = handoffContent.match(/## AC Coverage[\s\S]*?(?=\n## |$)/);
-    if (!acSectionMatch) return ['AC Coverage section is missing'];
+    if (!handoffContent.split('\n').some(line => line.trimEnd() === '## AC Coverage')) {
+        return ['AC Coverage section is missing'];
+    }
 
-    const section = acSectionMatch[0];
-    const tableLines = section.split('\n').filter(line => line.trim().startsWith('|'));
-    if (tableLines.length === 0) return ['AC Coverage table is missing or contains no AC rows'];
+    const rows = parseTable(handoffContent, 'AC Coverage');
+    if (rows.length === 0) return ['AC Coverage table is missing or contains no AC rows'];
 
-    const headerLine = tableLines[0];
-    const headers = headerLine.split('|').map(cell => cell.trim()).filter(Boolean);
-    const statusColIdx = headers.findIndex(header => header.toLowerCase() === 'status');
-    if (statusColIdx === -1) return [];
-
-    const dataRows = tableLines.slice(2);
-    if (dataRows.length === 0) return ['AC Coverage table is missing or contains no AC rows'];
-
-    const hasAcRow = dataRows.some(line => {
-        const cells = line.split('|').map(cell => cell.trim()).filter(Boolean);
-        return /AC-\d+/i.test(cells[0] ?? '');
-    });
+    const hasAcRow = rows.some(row => /AC-\d+/i.test(Object.values(row)[0] ?? ''));
     if (!hasAcRow) return ['AC Coverage table is missing or contains no AC rows'];
 
     const PLACEHOLDER = 'Met / Partial / Not met';
-    const allPlaceholder = dataRows.every(line => {
-        const cells = line.split('|').map(cell => cell.trim()).filter(Boolean);
-        return (cells[statusColIdx] ?? '') === PLACEHOLDER;
-    });
+    const allPlaceholder = rows.every(row => (row['Status'] ?? '') === PLACEHOLDER);
 
     if (allPlaceholder) {
         return ['AC Coverage table only contains template placeholder rows (Status "Met / Partial / Not met") — fill in actual AC statuses'];
@@ -49,7 +36,8 @@ export function validateHandoff(taskId: string): string[] {
     const issues: string[] = [];
     try {
         const content = fs.readFileSync(handoffPath, 'utf8');
-        if (/\|\s*Fail\s*\|/i.test(content)) {
+        const validationRows = parseValidationOutcomeRows(handoffPath);
+        if (validationRows.some(row => row.result.trim().toLowerCase() === 'fail')) {
             issues.push('Validation Outcomes table has one or more Fail results');
         }
         issues.push(...checkAcCoveragePlaceholders(content));
@@ -91,19 +79,11 @@ export type ValidationOutcomeRow = {
 export function parseValidationOutcomeRows(handoffPath: string): ValidationOutcomeRow[] {
     try {
         const content = fs.readFileSync(handoffPath, 'utf8');
-        const lines = content.split('\n');
-        const tableStart = lines.findIndex(line => line.includes('| Check |'));
-        if (tableStart === -1) return [];
-        const rows: ValidationOutcomeRow[] = [];
-        for (let index = tableStart + 2; index < lines.length; index += 1) {
-            const line = lines[index];
-            if (!line.startsWith('|')) break;
-            const cells = line.split('|').map(c => c.trim()).filter(Boolean);
-            if (cells.length < 2) continue;
-            const [check, result, notes = ''] = cells;
-            rows.push({ check, result, notes });
-        }
-        return rows;
+        return parseTable(content, 'Validation Outcomes').map(row => ({
+            check: row['Check'] ?? '',
+            result: row['Result'] ?? '',
+            notes: row['Notes'] ?? '',
+        }));
     } catch {
         return [];
     }
@@ -213,14 +193,11 @@ export function parseHandoffFiles(taskId: string): string[] {
     } catch {
         return [];
     }
+    const rows = parseTable(content, 'Changes');
     const files: string[] = [];
-    const lines = content.split('\n');
-    const tableStart = lines.findIndex(line => /^\|\s*File\s*\|/i.test(line));
-    if (tableStart === -1) return [];
-    for (let index = tableStart + 2; index < lines.length; index += 1) {
-        const line = lines[index];
-        if (!line.startsWith('|')) break;
-        const match = line.match(/\|\s*`([^`]+)`/);
+    for (const row of rows) {
+        const firstColumn = Object.values(row)[0] ?? '';
+        const match = firstColumn.match(/`([^`]+)`/);
         if (match?.[1]) files.push(match[1]);
     }
     return files;
