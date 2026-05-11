@@ -120,6 +120,7 @@ function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
         title: 'Prompt fidelity fixture',
         specReviewVerdict: '',
         iterations: 0,
+        runtimeIterations: 0,
         rerouteCount: 0,
         status: makeStatus(),
         ...overrides,
