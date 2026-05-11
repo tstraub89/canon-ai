@@ -8,7 +8,7 @@ import { runTaskShFor } from '../task-sh.js';
 import { extractDoneMdFromStdout, isDoneMdTemplate } from '../validation.js';
 import { getActiveCwd } from '../worktree.js';
 import { verifyBranch } from '../git.js';
-import { readStatus, taskDirFor } from '../state.js';
+import { readStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptQa } from '../prompts/index.js';
 

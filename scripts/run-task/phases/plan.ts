@@ -8,11 +8,7 @@ import { runTaskShFor } from '../task-sh.js';
 import { taskDirFor } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptPlan } from '../prompts/index.js';
-
-function isTemplateUnfilled(content: string | null): boolean {
-    if (content === null) return true;
-    return content.includes('[TASK-ID]');
-}
+import { isTemplateUnfilled } from '../validation.js';
 
 export async function runPlanPhase(
     state: PipelineState,

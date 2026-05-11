@@ -18,7 +18,6 @@ import * as splitGit from './git.js';
 import * as splitWorktree from './worktree.js';
 import * as splitPolicy from './policy.js';
 import * as splitValidation from './validation.js';
-import * as splitMarkdownTable from './markdown-table.js';
 import * as splitTaskSh from './task-sh.js';
 import * as splitClaude from './agents/claude.js';
 import * as splitCodex from './agents/codex.js';
@@ -1263,42 +1262,14 @@ interface EvidenceResult {
     note: string;
 }
 
-// Match "- [x] **Approved**" and variants in a review artifact.
-//
-// Review artifacts are cumulative: round 1 uses the top-level Stage 1 / Stage 2 /
-// `## Final Verdict` structure; subsequent rounds append `## Round N — ...` h2
-// sections each containing their own `### Verdict for this round` checkboxes.
-// On multi-round reviews we must read only the *latest* round's verdict —
-// otherwise a stale round-1 "Approved" can advance the pipeline even after a
-// later round flipped to "Changes requested".
-export function extractCheckedVerdict(content: string): Verdict | null {
-    const roundBodies = splitMarkdownTable.extractSectionBodies(content, /^## Round\b/);
-    const scope = roundBodies.length > 0 ? roundBodies[roundBodies.length - 1] : content;
-    // Templates are inconsistent: `## Final Verdict` (round 1) uses bolded labels
-    // (`**Approved**`), but the `## Round N` re-review template uses unbolded
-    // labels (`- [x] Approved`). Accept both so evidence auto-advance works on
-    // both round-1 and round-N+ reviews.
-    //
-    // Order matters: check "Approved with nits" *before* plain "Approved" so the
-    // shorter prefix doesn't shadow the longer phrase when bold markers are absent.
-    if (/^- \[x\] (?:\*\*)?Approved with nits(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved_with_nits';
-    if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved';
-    if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'changes_requested';
-    if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'needs_re_review';
-    return null;
-}
+// `extractCheckedVerdict` was moved to scripts/run-task/validation.ts so the
+// phase gate (1a-2) can call it without creating a circular import from
+// main.ts. Re-exported here for back-compat with `tests/run-task-extract-verdict.test.ts`.
+export const extractCheckedVerdict = splitValidation.extractCheckedVerdict;
 
 function readArtifact(taskId: string, name: string): string | null {
     const p = path.join(taskDirFor(taskId), name);
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
-}
-
-// Return whether an artifact still looks like the unfilled template.
-// [TASK-ID] is the canonical sentinel since it survives in every template
-// file and `scripts/task.sh new` substitutes it on creation.
-function isTemplateUnfilled(content: string | null): boolean {
-    if (content === null) return true;
-    return content.includes('[TASK-ID]');
 }
 
 function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
@@ -1333,7 +1304,7 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
         }
         case 'code_review': {
             const content = readArtifact(taskId, 'review.md');
-            if (isTemplateUnfilled(content)) return { advanced: false, note: 'review.md is missing or still the template' };
+            if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'review.md is missing or still the template' };
             const verdict = extractCheckedVerdict(content!);
             if (!verdict) return { advanced: false, note: 'no verdict box checked in review.md' };
             splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'code_review', 'done', verdict);
@@ -1341,7 +1312,7 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
         }
         case 'spec_review': {
             const content = readArtifact(taskId, 'spec-review.md');
-            if (isTemplateUnfilled(content)) return { advanced: false, note: 'spec-review.md is missing or still the template' };
+            if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'spec-review.md is missing or still the template' };
             const verdict = extractCheckedVerdict(content!);
             if (!verdict) return { advanced: false, note: 'no verdict box checked in spec-review.md' };
             splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'spec_review', 'done', verdict);
@@ -1349,13 +1320,13 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
         }
         case 'plan': {
             const content = readArtifact(taskId, 'plan.md');
-            if (isTemplateUnfilled(content)) return { advanced: false, note: 'plan.md is missing or still the template' };
+            if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'plan.md is missing or still the template' };
             splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'plan', 'done');
             return { advanced: true, note: 'plan.md is populated' };
         }
         case 'spec': {
             const content = readArtifact(taskId, 'spec.md');
-            if (isTemplateUnfilled(content)) return { advanced: false, note: 'spec.md is missing or still the template' };
+            if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'spec.md is missing or still the template' };
             splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'spec', 'done');
             return { advanced: true, note: 'spec.md is populated' };
         }

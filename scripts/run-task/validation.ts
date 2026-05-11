@@ -5,6 +5,7 @@ import { parseTable, parseTableH3, extractSectionBodies } from './markdown-table
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { taskDirFor } from './state.js';
+import type { Phase, Verdict } from './types.js';
 
 export function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -268,6 +269,22 @@ const DONE_MD_TEMPLATE_SENTINELS = [
     '`src/...` — brief note',
 ];
 
+// Generic template-detector for the most common task-artifact templates
+// (spec.md, plan.md, spec-review.md, review.md). The `[TASK-ID]` sentinel
+// is present in every template's header and survives into rendered tasks
+// until an agent rewrites the file substantively. A `null` content (file
+// missing on disk) is also treated as "unfilled" so callers can do a
+// single check rather than guarding for null first.
+//
+// Centralized here in validation.ts (rather than the duplicated copies
+// previously in main.ts, code-review.ts, spec-review.ts, plan.ts) so that
+// 1a-2's `checkPhaseGate` and existing post-Codex template guards share
+// one definition.
+export function isTemplateUnfilled(content: string | null): boolean {
+    if (content === null) return true;
+    return content.includes('[TASK-ID]');
+}
+
 export function isDoneMdTemplate(donePath: string): boolean {
     let content: string;
     try {
@@ -283,6 +300,121 @@ export function extractDoneMdFromStdout(stdout: string): string {
     if (!trimmed) return '';
     if (!/^#\s+(QA Summary|Completion Summary)\b/m.test(trimmed)) return '';
     return trimmed + '\n';
+}
+
+// Match `- [x] **Approved**` and variants in a review/spec-review artifact.
+//
+// Review artifacts are cumulative: round 1 uses the top-level Stage 1 / Stage 2 /
+// `## Final Verdict` structure; subsequent rounds append `## Round N — ...` h2
+// sections each containing their own `### Verdict for this round` checkboxes.
+// On multi-round reviews we must read only the *latest* round's verdict —
+// otherwise a stale round-1 "Approved" can advance the pipeline even after a
+// later round flipped to "Changes requested".
+//
+// Templates are inconsistent: `## Final Verdict` (round 1) uses bolded labels
+// (`**Approved**`), but the `## Round N` re-review template uses unbolded
+// labels (`- [x] Approved`). Accept both so evidence auto-advance works on
+// both round-1 and round-N+ reviews.
+export function extractCheckedVerdict(content: string): Verdict | null {
+    const roundBodies = extractSectionBodies(content, /^## Round\b/);
+    const scope = roundBodies.length > 0 ? roundBodies[roundBodies.length - 1] : content;
+    // Order matters: check "Approved with nits" *before* plain "Approved" so the
+    // shorter prefix doesn't shadow the longer phrase when bold markers are absent.
+    if (/^- \[x\] (?:\*\*)?Approved with nits(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved_with_nits';
+    if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved';
+    if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'changes_requested';
+    if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'needs_re_review';
+    return null;
+}
+
+// 1a-2 phase gate.
+//
+// Centralized invariant check called before `task.sh phase <id> <phase> done`
+// accepts the transition. Per BACKLOG §"Status counter consistency + artifact-
+// invariant gate before phase advancement": each phase that produces an
+// artifact requires that artifact to exist and be substantively filled
+// (not the unfilled template). Each phase that has a verdict requires that
+// verdict to be non-empty AND, when the verdict lives in the artifact,
+// parseable from the artifact and consistent with what's being recorded
+// in status.json.
+//
+// Replaces the scattered post-Codex template checks in phases/spec-review.ts,
+// phases/code-review.ts, phases/plan.ts — those still fire today but the
+// gate now also covers the manual `task.sh phase` path so operators can't
+// silently advance a phase whose artifact is template-only.
+
+export type PhaseGateResult = { ok: true } | { ok: false; reason: string };
+
+type PhaseGateConfig = {
+    artifactName?: string;
+    requiresVerdict?: boolean;
+    verdictMustMatchArtifact?: boolean;
+    // Phase-specific template detector. Defaults to isTemplateUnfilled.
+    // qa.done.md uses a stricter multi-sentinel detector.
+    customTemplateCheck?: (artifactPath: string) => boolean;
+};
+
+const PHASE_GATE_CONFIG: Record<Phase, PhaseGateConfig> = {
+    spec: { artifactName: 'spec.md' },
+    spec_review: { artifactName: 'spec-review.md', requiresVerdict: true, verdictMustMatchArtifact: true },
+    plan: { artifactName: 'plan.md' },
+    implement: { artifactName: 'handoff.md' },
+    // runtime_validation has no per-task artifact file — the phase's results
+    // live in a section appended to handoff.md by the orchestrator. The
+    // gate doesn't require a verdict here because (a) the orchestrator's
+    // direct setRuntimeValidationPhase() writes always include a verdict
+    // and bypass task.sh entirely, and (b) the existing task.sh CLI
+    // contract treats verdict as optional for runtime_validation (see
+    // the verdict-validation block earlier in cmd_phase). Tightening this
+    // would break documented manual-repair paths without adding real
+    // enforcement against the orchestrator's own writes.
+    runtime_validation: {},
+    code_review: { artifactName: 'review.md', requiresVerdict: true, verdictMustMatchArtifact: true },
+    qa: { artifactName: 'done.md', customTemplateCheck: isDoneMdTemplate },
+    human_review: {},
+};
+
+export function checkPhaseGate(taskId: string, phase: Phase, verdict?: string): PhaseGateResult {
+    const config = PHASE_GATE_CONFIG[phase];
+
+    if (config.artifactName) {
+        const artifactPath = path.join(taskDirFor(taskId), config.artifactName);
+        let content: string;
+        try {
+            content = fs.readFileSync(artifactPath, 'utf8');
+        } catch {
+            return { ok: false, reason: `${config.artifactName} is missing for phase '${phase}'` };
+        }
+
+        const isTemplate = config.customTemplateCheck
+            ? config.customTemplateCheck(artifactPath)
+            : isTemplateUnfilled(content);
+        if (isTemplate) {
+            return { ok: false, reason: `${config.artifactName} is still the unfilled template for phase '${phase}'` };
+        }
+
+        if (config.verdictMustMatchArtifact) {
+            if (!verdict) {
+                return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
+            }
+            const extracted = extractCheckedVerdict(content);
+            if (!extracted) {
+                return { ok: false, reason: `${config.artifactName} has no checked verdict checkbox` };
+            }
+            if (extracted !== verdict) {
+                return { ok: false, reason: `verdict mismatch: status.json wants '${verdict}', ${config.artifactName} has '${extracted}'` };
+            }
+        }
+    }
+
+    if (config.requiresVerdict && !config.verdictMustMatchArtifact) {
+        // Verdict required but not parseable from an artifact (runtime_validation).
+        if (!verdict) {
+            return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
+        }
+    }
+
+    return { ok: true };
 }
 
 export function parseHandoffFiles(taskId: string): string[] {

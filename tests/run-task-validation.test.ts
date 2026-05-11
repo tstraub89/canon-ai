@@ -507,3 +507,149 @@ void test('verifyHandoffAgainstDiffFromData: rename whose either side is a pipel
 // in main.ts. Manual smoke covered by routine canon-on-canon ship cycles.
 // (Not adding a unit test here — the fallback path is exercised by every
 // existing task in the repo whose status.branch is absent.)
+
+// ─── 1a-2 phase gate ───
+// checkPhaseGate fires before task.sh advances a phase to `done`. Each
+// case below tests one accept/reject branch of the gate. The CLI wrapper
+// (check-phase-gate.ts) is just argv parsing + exit-code mapping around
+// this function; integration test via task.sh would duplicate the unit
+// coverage.
+
+import { checkPhaseGate } from '../scripts/run-task/validation.js';
+
+function withTempTaskDir(
+    fn: (taskId: string, taskDirRoot: string) => void,
+): void {
+    // Build tasks/<id>/ under a temp root so checkPhaseGate's taskDirFor()
+    // resolves there via CANON_TASKS_DIR_OVERRIDE — same pattern
+    // prompt-fidelity-tests uses to point production reads at a temp
+    // fixture dir.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-gate-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const taskId = `phase-gate-task`;
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    const prevOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        fn(taskId, taskDir);
+    } finally {
+        if (prevOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+void test('checkPhaseGate: spec phase accepts a filled spec.md', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), '# Spec: real task — Real Title\n\n## Problem\n\nReal problem.\n');
+        const result = checkPhaseGate(taskId, 'spec');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+void test('checkPhaseGate: spec phase rejects a template-only spec.md', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), '# Spec: [TASK-ID] — [Title]\n\n## Problem\n\nDescribe...\n');
+        const result = checkPhaseGate(taskId, 'spec');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /spec\.md is still the unfilled template/);
+    });
+});
+
+void test('checkPhaseGate: spec phase rejects when spec.md is missing', () => {
+    withTempTaskDir(taskId => {
+        const result = checkPhaseGate(taskId, 'spec');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /spec\.md is missing/);
+    });
+});
+
+void test('checkPhaseGate: code_review accepts when review.md is filled AND verdict matches checked box', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), [
+            '# Code Review: real task',
+            '',
+            '## Final Verdict',
+            '',
+            '- [x] **Approved**',
+            '- [ ] **Changes requested**',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'code_review', 'approved');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+void test('checkPhaseGate: code_review rejects when verdict argument disagrees with checked box in review.md', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), [
+            '# Code Review: real task',
+            '',
+            '## Final Verdict',
+            '',
+            '- [x] **Changes requested**',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'code_review', 'approved');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /verdict mismatch/);
+    });
+});
+
+void test('checkPhaseGate: code_review rejects when review.md has no checked verdict box', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), [
+            '# Code Review: real task',
+            '',
+            '## Final Verdict',
+            '',
+            '- [ ] **Approved**',
+            '- [ ] **Changes requested**',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'code_review', 'approved');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /no checked verdict checkbox/);
+    });
+});
+
+void test('checkPhaseGate: code_review rejects when verdict is not provided', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), '# Code Review: real task\n\n- [x] **Approved**\n');
+        const result = checkPhaseGate(taskId, 'code_review', undefined);
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /requires a verdict argument/);
+    });
+});
+
+void test('checkPhaseGate: runtime_validation has no gate (CLI contract: verdict optional, orchestrator writes always include one)', () => {
+    // The gate does not enforce a verdict on runtime_validation manual
+    // transitions — the orchestrator's setRuntimeValidationPhase() bypasses
+    // task.sh entirely and always provides a verdict via its direct write
+    // path. Manual `task.sh phase X runtime_validation done` without a
+    // verdict is treated as a deliberate repair action by the operator.
+    withTempTaskDir(taskId => {
+        assert.deepEqual(checkPhaseGate(taskId, 'runtime_validation', 'approved'), { ok: true });
+        assert.deepEqual(checkPhaseGate(taskId, 'runtime_validation', undefined), { ok: true });
+    });
+});
+
+void test('checkPhaseGate: qa rejects done.md template via the multi-sentinel detector', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'done.md'), [
+            '# QA Summary: real task',
+            '',
+            '## What Changed',
+            '',
+            'One paragraph, plain English. No code jargon.',  // sentinel from isDoneMdTemplate
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'qa');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /done\.md is still the unfilled template/);
+    });
+});
+
+void test('checkPhaseGate: human_review has no artifact + no verdict requirement (always accepts)', () => {
+    withTempTaskDir(taskId => {
+        const result = checkPhaseGate(taskId, 'human_review');
+        assert.deepEqual(result, { ok: true });
+    });
+});

@@ -8,6 +8,7 @@ set -euo pipefail
 
 TASKS_DIR="tasks"
 TEMPLATES_DIR="$TASKS_DIR/_templates"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 check_jq() {
   if ! command -v jq &>/dev/null; then
@@ -332,6 +333,29 @@ cmd_phase() {
       local blocked_phases="${prior_check#blocked:}"
       echo "Error: cannot mark $phase as $status — prior phases not done: $blocked_phases"
       exit 1
+    fi
+  fi
+
+  # 1a-2 phase gate: when transitioning to `done`, run the centralized
+  # invariant check (artifact exists + not template + verdict matches
+  # artifact for phases that have one). The TS helper exits non-zero with
+  # a clear reason on rejection, which propagates here via `set -e`.
+  # Skip for runtime_validation when the orchestrator writes its own
+  # status block directly (the gate runs in TS-space there).
+  # Skip-gate escape hatch for test fixtures that don't materialize artifacts.
+  # Production callers should never set CANON_SKIP_PHASE_GATE.
+  if [ "$status" = "done" ] && [ -z "${CANON_SKIP_PHASE_GATE:-}" ]; then
+    if command -v npx &>/dev/null; then
+      # Route the gate's artifact reads through CANON_TASKS_DIR_OVERRIDE so it
+      # inspects the same worktree the status write will land in. Without this,
+      # the gate resolves taskDirFor() against REPO_ROOT and would see stale or
+      # missing artifacts when the task is running in a linked worktree —
+      # rejecting valid transitions OR approving from the wrong tree. Caught
+      # via Codex review on the 1a-2 inline change.
+      CANON_TASKS_DIR_OVERRIDE="$task_cwd/$TASKS_DIR" \
+        npx tsx "$SCRIPT_DIR/run-task/check-phase-gate.ts" "$id" "$phase" "$verdict"
+    else
+      echo "Warning: npx not found — skipping phase gate. Install Node 24.x to enforce." >&2
     fi
   fi
 

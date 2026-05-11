@@ -8,14 +8,9 @@ import { runClaude } from '../agents/claude.js';
 import { runTaskShFor } from '../task-sh.js';
 import { getActiveCwd, isWorktreeEnabled } from '../worktree.js';
 import { autoBlockPhase, resolveTaskCwd, taskDirFor } from '../state.js';
-import { validateHandoff, verifyHandoffAgainstDiff } from '../validation.js';
+import { isTemplateUnfilled, validateHandoff, verifyHandoffAgainstDiff } from '../validation.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptCodeReview } from '../prompts/index.js';
-
-function isTemplateUnfilled(content: string | null): boolean {
-    if (content === null) return true;
-    return content.includes('[TASK-ID]');
-}
 
 export async function runCodeReviewPhase(
     state: PipelineState,

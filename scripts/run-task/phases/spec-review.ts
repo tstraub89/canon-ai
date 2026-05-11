@@ -8,11 +8,7 @@ import { runTaskShFor } from '../task-sh.js';
 import { autoBlockPhase, resolveTaskCwd, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
-
-function isTemplateUnfilled(content: string | null): boolean {
-    if (content === null) return true;
-    return content.includes('[TASK-ID]');
-}
+import { isTemplateUnfilled } from '../validation.js';
 
 export function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
     autoBlockPhase(taskIds, 'spec_review', iterationCount, reason);

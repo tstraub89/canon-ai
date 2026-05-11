@@ -97,6 +97,10 @@ function runTaskSh(root: string, args: string[]): string {
         env: {
             PATH: process.env.PATH ?? '',
             HOME: process.env.HOME ?? '',
+            // Counter-schema tests don't materialize phase artifacts; bypass the
+            // gate so we can exercise the jq counter math directly. The gate's
+            // own tests (run-task-validation.test.ts) cover its enforcement.
+            CANON_SKIP_PHASE_GATE: '1',
         },
         encoding: 'utf8',
     });
