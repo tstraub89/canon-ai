@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { REPO_ROOT } from '../scripts/run-task/env.js';
 import {
     promptCodeReview,
     promptImplement,
@@ -39,20 +40,19 @@ type GoldenSet = Record<string, string>;
 const REPO_ROOT_PLACEHOLDER = '__REPO__';
 
 function normalizeRepoPaths(obj: GoldenSet): GoldenSet {
-    const root = process.cwd();
     return Object.fromEntries(
-        Object.entries(obj).map(([k, v]) => [k, v.replaceAll(root, REPO_ROOT_PLACEHOLDER)]),
+        Object.entries(obj).map(([k, v]) => [k, v.replaceAll(REPO_ROOT, REPO_ROOT_PLACEHOLDER)]),
     );
 }
 
 const GOLDENS: GoldenSet = normalizeRepoPaths(
     JSON.parse(
-        fs.readFileSync(path.join(process.cwd(), 'tests/run-task-prompts.golden.json'), 'utf8'),
+        fs.readFileSync(path.join(REPO_ROOT, 'tests/run-task-prompts.golden.json'), 'utf8'),
     ) as GoldenSet,
 );
 
 function writeFixtureTask(fixture: PromptFixture): void {
-    const dir = path.join(process.cwd(), 'tasks', fixture.taskId);
+    const dir = path.join(REPO_ROOT, 'tasks', fixture.taskId);
     fs.mkdirSync(dir, { recursive: true });
 
     fs.writeFileSync(
@@ -85,7 +85,7 @@ function writeFixtureTask(fixture: PromptFixture): void {
 }
 
 function removeFixtureTask(taskId: string): void {
-    fs.rmSync(path.join(process.cwd(), 'tasks', taskId), { recursive: true, force: true });
+    fs.rmSync(path.join(REPO_ROOT, 'tasks', taskId), { recursive: true, force: true });
 }
 
 function buildFixtureSet(): Record<string, PromptFixture[]> {
