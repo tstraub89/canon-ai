@@ -255,6 +255,8 @@ Write the feedback into `spec.md` as an Amendment section (or update `review.md`
 
 ## Shipping & Post-Merge Reconciliation
 
+**Normal sequence**: `--pr` (push + draft PR) → PR merges → `--ship` (archive + cleanup). `--ship` is post-merge only; running it before the PR merges archives the task without the implementation branch landing.
+
 `--ship` archives the task dir to `tasks/_archive/<id>/`, removes the worktree (if any), and marks the task complete.
 
 **Always rebase local main on `origin/main` before invoking `--ship`.** When a worktree-implemented PR squash-merges, `origin/main` picks up `tasks/<id>/` files from the squash commit. If `--ship` runs before local rebases, the task directory ends up in both `tasks/<id>/` and `tasks/_archive/<id>/` and needs manual reconciliation.

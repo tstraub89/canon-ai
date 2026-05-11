@@ -127,6 +127,16 @@ After code review passes:
 3. Append a row to `docs/task-quality-log.md` (see that file for column definitions).
 4. If this task produced a reusable insight, append an entry to `docs/lessons-learned.md`.
 
+### Opening a PR (at human_review)
+
+Once the task reaches `human_review`, open the draft PR with:
+
+```bash
+npx tsx scripts/run-task.ts <id> --pr
+```
+
+`--pr` pushes the task branch and creates a draft PR targeting `base_branch` (recorded in `status.json` at task creation — typically `dev`). Do not use `--ship` here; `--ship` is post-merge cleanup only, run after the PR merges.
+
 ## Spec Authorship Guidelines
 
 When writing specs:
