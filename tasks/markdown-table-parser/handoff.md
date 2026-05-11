@@ -107,3 +107,17 @@ On revision rounds, append below this line:
 ### Re-run validation (only checks that re-ran)
 
 - None. No code changes were required for this round; the existing unrelated `npm test` blocker remains the same.
+
+## Iteration 3 — addressing review round 2
+
+### Findings addressed
+
+- No task-scope code finding was raised in the review artifact available in this worktree. The only blocking issue remains the unrelated `npm test` failure in `tests/run-task-prompts.test.ts`, which is outside this task's affected files and was already documented.
+
+### AC deltas (if any)
+
+- None. Parser and validation code remain unchanged.
+
+### Re-run validation (only checks that re-ran)
+
+- None. No task-scope code changes were made in this iteration.
