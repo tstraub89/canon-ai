@@ -1,11 +1,11 @@
 {
   "name": "canon-ai",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "A spec-first, multi-agent coding pipeline you drop into any repo. The law your agents work under.",
   "engines": {
-    "node": "22.x || 24.x"
+    "node": "24.x"
   },
   "scripts": {
     "test": "node --test --import tsx tests/**/*.test.ts",
