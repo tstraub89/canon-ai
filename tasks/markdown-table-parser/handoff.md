@@ -93,3 +93,17 @@ On revision rounds, append below this line:
 |---|---|---|
 | `<lint>` | Pass | |
 -->
+
+## Iteration 2 — addressing review round 1
+
+### Findings addressed
+
+- No task-scope code finding was raised in round 1. The only blocker was the unrelated `npm test` failure in `tests/run-task-prompts.test.ts`, which is outside this task's affected files and remains documented below.
+
+### AC deltas (if any)
+
+- None. The parser implementation and validation retrofits are unchanged from iteration 1.
+
+### Re-run validation (only checks that re-ran)
+
+- None. No code changes were required for this round; the existing unrelated `npm test` blocker remains the same.
