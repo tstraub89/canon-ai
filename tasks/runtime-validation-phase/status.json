@@ -1,0 +1,51 @@
+{
+  "id": "runtime-validation-phase",
+  "title": "Runtime validation phase — orchestrator-run checks between implement and code_review",
+  "status": "spec_review",
+  "created": "2026-05-11",
+  "updated": "2026-05-11",
+  "branch": "",
+  "base_branch": "dev",
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": true,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "pending",
+      "agent": "codex",
+      "verdict": "",
+      "iterations": 0
+    },
+    "plan": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {},
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
+}
