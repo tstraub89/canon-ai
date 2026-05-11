@@ -1130,7 +1130,18 @@ function rerouteFromHumanReview(taskIds: string[]): void {
             implement.reroute_count = (implement.reroute_count ?? 0) + 1;
         }
         const codeReview = status.phases.code_review;
-        if (codeReview) { codeReview.status = 'pending'; codeReview.verdict = ''; codeReview.iterations = 0; }
+        if (codeReview) {
+            codeReview.status = 'pending';
+            codeReview.verdict = '';
+            // Reset the loop counter so the next review pass starts fresh.
+            // Preserve iterations_total / changes_requested_total / auto_block_count
+            // — those are monotonic across reroutes. Writes both the new field and
+            // the legacy `iterations` alias for back-compat readers. Caught
+            // post-implementation: forgotten consumer from the counter-schema-migration
+            // grep audit.
+            codeReview.iterations_current_loop = 0;
+            codeReview.iterations = 0;
+        }
         const qa = status.phases.qa;
         if (qa) qa.status = 'pending';
         const humanReview = status.phases.human_review;
