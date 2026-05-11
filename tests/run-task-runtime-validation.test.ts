@@ -416,6 +416,38 @@ void test('runtime validation: buildPipelineState carries runtime iterations and
     }
 });
 
+void test('runtime validation: timeout kills the process group so wall-clock honors timeoutMs', async () => {
+    // Regression for the P1 caught on PR #37: without `detached: true` +
+    // process-group kill, the timeout signals only the shell, leaving
+    // grandchildren (here: `node -e "setTimeout..."`) alive holding stdio
+    // pipes open. The `close` event then waits for the grandchild's natural
+    // exit, so a 100ms timeout test actually takes the full grandchild
+    // duration to return. This test asserts wall-clock, not just the handoff
+    // row (which is capped at timeoutMs by the elapsed-recording branch).
+    const taskId = createTask('timeout-walltime');
+    try {
+        const start = Date.now();
+        await runPhase(taskId, [{
+            name: 'long-grandchild',
+            // Shell launches `node`; node holds a 10s timer. If only the
+            // shell is killed, this returns in ~10s. With process-group
+            // kill, it returns in timeoutMs + KILL_GRACE_MS (~200ms).
+            command: 'node -e "setTimeout(() => {}, 10000)"',
+            timeoutMs: 100,
+        }]);
+        const elapsedMs = Date.now() - start;
+        // Generous upper bound to absorb CI jitter: 100ms timeout + 3s grace
+        // + slack. Pre-fix this assertion fails at ~10s.
+        assert.ok(
+            elapsedMs < 5000,
+            `expected wall-clock < 5000ms, got ${elapsedMs}ms (pre-fix: ~10000ms because grandchild survived shell kill)`,
+        );
+        assert.equal(readStatusFile(taskId).phases.runtime_validation?.verdict, 'changes_requested');
+    } finally {
+        cleanupTask(taskId);
+    }
+});
+
 void test('runtime validation: streaming, heartbeat, and summary are emitted to process streams', async () => {
     const taskId = createTask('streaming');
     const previousHeartbeat = process.env.ORCHESTRATOR_CHECK_HEARTBEAT_MS;
