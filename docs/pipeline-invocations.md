@@ -52,3 +52,11 @@
 | 2026-05-11T13:07:50.734Z | runtime-validation-phase | implement | codex | gpt-5.5 | 0 | 1886.9s | 29028864 | ok |
 | 2026-05-11T13:17:28.082Z | runtime-validation-phase | code_review | claude | sonnet | 0 | 577.0s | 2012438 | ok |
 | 2026-05-11T13:21:26.896Z | runtime-validation-phase | qa | claude | sonnet | - | 238.7s | 1110652 | ok |
+| 2026-05-11T19:39:10.035Z | counter-schema-migration | spec_review | codex | gpt-5.4-mini | 0 | 154.7s | 903222 | ok |
+| 2026-05-11T19:41:47.211Z | counter-schema-migration | spec | claude | opus | - | 157.1s | 1033974 | ok |
+| 2026-05-11T19:43:56.140Z | counter-schema-migration | spec_review | codex | gpt-5.4-mini | 1 | 128.9s | 1909991 | ok |
+| 2026-05-11T19:52:50.059Z | counter-schema-migration | plan | claude | sonnet | - | 376.1s | 1104356 | ok |
+| 2026-05-11T20:04:45.674Z | counter-schema-migration | implement | codex | gpt-5.4-mini | 0 | 715.4s | 12689269 | ok |
+| 2026-05-11T20:12:06.104Z | counter-schema-migration | implement | codex | gpt-5.4-mini | 1 | 439.9s | 17169664 | ok |
+| 2026-05-11T20:14:08.881Z | counter-schema-migration | code_review | claude | sonnet | 1 | 122.3s | 264926 | ok |
+| 2026-05-11T20:18:00.003Z | counter-schema-migration | qa | claude | sonnet | - | 231.1s | 1020591 | ok |

@@ -166,7 +166,7 @@ Anthropic's `claude` CLI supports `--resume <session-id>`. The orchestrator stor
 ### Auto-block / reroute
 
 Two mechanisms halt or redirect the pipeline:
-- **`autoBlockPhase()`**: when `MAX_REVIEW_LOOPS` is hit on `spec_review`, `runtime_validation`, or `code_review`. Sets phase status to `blocked`, appends to `task-quality-log.md`, exits with code 2. Manual intervention required (reset phase + iterations). `runtime_validation.iterations` and `code_review.iterations` are independent counters — each has its own cap.
+- **`autoBlockPhase()`**: when `MAX_REVIEW_LOOPS` is hit on `spec_review`, `runtime_validation`, or `code_review`. Sets phase status to `blocked`, appends to `task-quality-log.md`, exits with code 2. Manual intervention required (reset phase + `iterations_current_loop`; see recovery below). `runtime_validation.iterations_current_loop` and `code_review.iterations_current_loop` are independent loop counters — each has its own cap. Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
 - **`routeBackTo()`**: on `changes_requested` verdicts. Flips the target phase and all downstream to `pending`. Loop re-enters the routed phase next iteration.
 
 ### Validation gates

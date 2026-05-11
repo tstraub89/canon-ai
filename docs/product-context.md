@@ -73,7 +73,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things â
 
 1. Pipeline halts (auto-block, manual Ctrl+C, or unexpected error).
 2. Human inspects `tasks/<id>/status.json` and the latest artifact written.
-3. Resolve manually: reset the relevant phase via `./scripts/task.sh phase <id> <phase> pending`, or set `iterations` back to 0 if a loop cap was hit, or escalate to a human reroute.
+3. Resolve manually: reset the relevant phase via `./scripts/task.sh phase <id> <phase> pending`, or set `iterations_current_loop` back to 0 if a loop cap was hit (preserves `iterations_total` and `auto_block_count`), or escalate to a human reroute.
 4. Re-run `npx tsx scripts/run-task.ts <id>`. The orchestrator picks up from the new phase state.
 
 ### Flow 4: Self-improvement (canon-on-canon)

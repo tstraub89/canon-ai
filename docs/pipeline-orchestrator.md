@@ -153,7 +153,7 @@ At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task ar
 
 After `spec_review`, `runtime_validation`, or `code_review`, the orchestrator checks the verdict. If `changes_requested`, it loops back to the prior agent automatically (up to `MAX_REVIEW_LOOPS`).
 
-**Auto-block on runaway loops**: If spec review, runtime validation, or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. The iteration counter resets to `0` when the phase eventually approves. Runtime validation and code review keep independent counters, so a task can spend iterations in each phase without a shared global budget.
+**Auto-block on runaway loops**: If spec review, runtime validation, or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased. Runtime validation and code review keep independent counters, so a task can spend iterations in each phase without a shared global budget.
 
 ## Runtime Validation Phase
 

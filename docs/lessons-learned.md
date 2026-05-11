@@ -81,3 +81,9 @@ In a linked worktree, `git rev-parse --git-common-dir` resolves to the supervisi
 *(2026-05-11, source: runtime-validation-phase)*
 
 `git status --porcelain -uall` does not surface gitignored files by design. Tests that verify scoped delta cleanup by writing `*.tmp` files (or other extensions matching `.gitignore` patterns) will find an empty delta and pass vacuously — they never actually exercise the cleanup path. Write fixture files with names that are not gitignored (e.g., `fixture-output.txt`, `test-check-artifact.log`) so `git status` surfaces them in the delta and the cleanup assertion has something to verify.
+
+### Shell scripts that lack a CANON_TASKS_DIR_OVERRIDE need a real tasks/ subtree in the test cwd
+
+*(2026-05-11, source: counter-schema-migration)*
+
+`scripts/task.sh` reads paths relative to the cwd and does not honor `CANON_TASKS_DIR_OVERRIDE`. Tests that exercise its jq logic (e.g., counter verdict transitions, reset helpers) must therefore run from a temp cwd that contains a `tasks/` subtree — typically a minimal mirror of the worktree's own `tasks/` directory created with `mkdtempSync`. Creating the temp root inside `process.cwd()` (the current worktree) keeps it writable in sandbox environments. The test fixture should symlink `worktreesRoot/<taskId> → process.cwd()` so any path that resolves through the worktrees root also lands in the writable sandbox. Without this setup, the shell path exercises file-not-found failures instead of the intended counter logic.

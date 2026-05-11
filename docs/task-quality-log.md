@@ -35,6 +35,7 @@ The QA phase appends a row at the end of every task. The product owner reviews t
 | 2026-05-09 | fix-pipeline-bugs | M | approved_with_nits | 1 | 1 | 0 | 0 | No | Five bugs fixed in one pass; one spec-text gap (AC-3c over-specified `PIPELINE_MANAGED_DOCS` consumers) caught in Stage 2 but not blocking |
 | 2026-05-09 | add-ci | M | approved | 1 | 1 | 0 | 0 | No | Clean first pass; stale test count (spec said 58, actual 69) flagged as a spec gap but not blocking; branch protection follow-up in GitHub UI |
 | 2026-05-11 | runtime-validation-phase | M delicate | approved_with_nits | 5 (auto-blocked at 3, reset+2 more) | 0 | 0 | 0 | No | Complex spec — AC-9b, AC-11 artifact preservation, AC-12b template composability all emerged iteratively through spec review; clean single-pass implementation once spec settled |
+| 2026-05-11 | counter-schema-migration | L | approved | 1 | 2 | 0 | 0 | No | Round 1 blocked by sandbox write-path failure in runtime-validation regression test; round 2 clean. Nit: `cwd: 'repo_root'` test case dropped for sandbox compat (coverage gap, non-blocking). Docs-impact items (pipeline-orchestrator.md, decisions.md) not in handoff — updated inline at QA. |
 
 ---
 
