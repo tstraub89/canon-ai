@@ -1,7 +1,7 @@
 {
   "id": "prompt-fidelity-tests",
   "title": "Prompt-fidelity regression test suite rebuild",
-  "status": "implement",
+  "status": "complete",
   "created": "2026-05-11",
   "updated": "2026-05-11",
   "branch": "",
@@ -26,22 +26,28 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
+    },
+    "runtime_validation": {
+      "status": "done",
+      "agent": "orchestrator",
+      "verdict": "approved",
+      "iterations": 0
     }
   },
   "escalations": [],
