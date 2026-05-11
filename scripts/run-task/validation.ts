@@ -305,6 +305,19 @@ export function parseHandoffFiles(taskId: string): string[] {
 
 const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);
 
+// Pipeline-owned task artifacts (anything under `tasks/<active-id>/`) never need
+// to appear in the handoff Changes table — they describe the implementation,
+// they are not part of it. Pre-existing canon-on-canon flows hide this because
+// the orchestrator commits task artifacts to the base branch before code_review
+// runs, so they don't appear in `git diff base...HEAD`. Adopters that commit
+// task artifacts to the task branch (TokenAnxiety's pattern, surfaced via
+// canon-ai issue #41) hit a preflight loop where Codex iterating to address
+// nonexistent findings just appends more iteration sections to handoff/notes,
+// triggering the same rejection again.
+function isPipelineOwnedTaskArtifact(filePath: string, taskIds: readonly string[]): boolean {
+    return taskIds.some(id => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`));
+}
+
 export type HandoffDiffInputs = {
     diffFiles: readonly string[];
     renamePairs?: readonly (readonly [string, string])[];
@@ -342,12 +355,17 @@ export function verifyHandoffAgainstDiffFromData(
 
     for (const filePath of inputs.diffFiles) {
         if (HANDOFF_DIFF_EXEMPT_PATHS.has(filePath)) continue;
+        if (isPipelineOwnedTaskArtifact(filePath, taskIds)) continue;
         if (bundleHandoffFiles.has(filePath)) continue;
         issues.push(`diff→handoff: ${filePath} in diff but not in any bundle handoff`);
     }
 
     for (const [oldPath, newPath] of renamePairs) {
         if (HANDOFF_DIFF_EXEMPT_PATHS.has(oldPath) && HANDOFF_DIFF_EXEMPT_PATHS.has(newPath)) continue;
+        // Either side being a pipeline-owned task artifact is enough — pipeline
+        // artifacts move within/between task dirs all the time (e.g., archive
+        // moves) and never belong in a handoff Changes table.
+        if (isPipelineOwnedTaskArtifact(oldPath, taskIds) || isPipelineOwnedTaskArtifact(newPath, taskIds)) continue;
         if (bundleHandoffFiles.has(oldPath) || bundleHandoffFiles.has(newPath)) continue;
         issues.push(`diff→handoff: rename ${oldPath} → ${newPath} — neither path in any bundle handoff`);
     }

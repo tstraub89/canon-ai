@@ -430,3 +430,80 @@ void test('validateHandoff: cumulative handoff where re-run still fails reports 
         },
     );
 });
+
+// ─── Issue #41 regression: pipeline-owned task artifacts must be exempt ───
+
+void test('verifyHandoffAgainstDiffFromData: tasks/<active-id>/* artifacts in diff do not require handoff entries', () => {
+    // From canon-ai issue #41 (James / TokenAnxiety stack-radar-001): task
+    // artifacts in tasks/<id>/ that get committed to the task branch appear
+    // in `git diff base...HEAD` and used to be flagged as uncovered diff
+    // files. Codex would route back to implement, the next pass appended
+    // more iteration sections to handoff/notes, the preflight rejected
+    // again — preflight loop.
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['demo-task'],
+        {
+            diffFiles: ['apps/web/src/Page.tsx', 'tasks/demo-task/spec.md', 'tasks/demo-task/status.json'],
+            handoffFilesByTask: makeHandoffMap({
+                'demo-task': ['apps/web/src/Page.tsx'],
+            }),
+        },
+    );
+    assert.deepEqual(issues, []);
+});
+
+void test('verifyHandoffAgainstDiffFromData: tasks/<active-id>/* exemption is per-active-task; other tasks/<id>/ paths still flagged', () => {
+    // Strict-scope guard: only paths under tasks/<id>/ for an ACTIVE bundle
+    // task get exempted. Random tasks/other-id/ paths in the diff should
+    // still be rejected so accidental cross-task edits don't slip through.
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['demo-task'],
+        {
+            diffFiles: ['tasks/demo-task/spec.md', 'tasks/some-other-task/notes.md'],
+            handoffFilesByTask: makeHandoffMap({
+                'demo-task': [],
+            }),
+        },
+    );
+    assert.equal(issues.length, 1);
+    assert.ok(issues[0].includes('tasks/some-other-task/notes.md'));
+});
+
+void test('verifyHandoffAgainstDiffFromData: app/source changes still strictly required in handoff', () => {
+    // Adjacent guarantee: the exemption is narrow. Source files outside
+    // tasks/<id>/ must still appear in the handoff Changes table.
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['demo-task'],
+        {
+            diffFiles: ['apps/web/src/Page.tsx', 'tasks/demo-task/handoff.md'],
+            handoffFilesByTask: makeHandoffMap({
+                'demo-task': [],
+            }),
+        },
+    );
+    assert.equal(issues.length, 1);
+    assert.ok(issues[0].includes('apps/web/src/Page.tsx'));
+});
+
+void test('verifyHandoffAgainstDiffFromData: rename whose either side is a pipeline-owned task artifact is exempt', () => {
+    // Archive moves (tasks/<id>/ → tasks/_archive/<id>/) and pre-archive
+    // edits show up as renames in `git diff -M`. Pipeline-owned paths on
+    // either side keep the rename out of the rejection set.
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['demo-task'],
+        {
+            diffFiles: [],
+            renamePairs: [['tasks/demo-task/notes.md', 'tasks/demo-task/notes.archived.md']],
+            handoffFilesByTask: makeHandoffMap({
+                'demo-task': [],
+            }),
+        },
+    );
+    assert.deepEqual(issues, []);
+});
+
+// ─── PR #39 CodeRabbit finding #2: --ship branch name resolution ───
+// resolveTaskBranchName is internal; we test it indirectly via the call sites
+// in main.ts. Manual smoke covered by routine canon-on-canon ship cycles.
+// (Not adding a unit test here — the fallback path is exercised by every
+// existing task in the repo whose status.branch is absent.)
