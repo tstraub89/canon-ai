@@ -208,10 +208,17 @@ async function runCheck(taskId: string, check: RuntimeCheck, artifactIteration: 
     let killTimer: NodeJS.Timeout | null = null;
     let spawnError: Error | null = null;
 
+    // `detached: true` puts the child shell in its own process group. On
+    // timeout we signal the entire group (`process.kill(-pid, sig)`) so that
+    // grandchildren spawned by the shell (e.g. `npm run test:e2e` → playwright
+    // → browser drivers) are also terminated. Without this, killing only the
+    // shell leaves grandchildren alive holding stdio pipes open, and the
+    // orchestrator hangs waiting for `close` instead of enforcing `timeoutMs`.
     const child = spawn(check.command, {
         shell: true,
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
     });
 
     const appendDiagnostic = (message: string): void => {
@@ -246,11 +253,24 @@ async function runCheck(taskId: string, check: RuntimeCheck, artifactIteration: 
         lastOutputAt = now;
     }, heartbeatMs);
 
+    // Kill the entire process group (negative pid). See `detached: true`
+    // comment on spawn above. Fall back to single-process kill if for some
+    // reason the child has no pid (spawn failed before pid was assigned).
+    const killTree = (signal: NodeJS.Signals): void => {
+        if (typeof child.pid === 'number') {
+            try { process.kill(-child.pid, signal); return; } catch {
+                // ESRCH means the group is already gone; ignore.
+                // EPERM should not happen for our own process group; fall through to single-child kill.
+            }
+        }
+        child.kill(signal);
+    };
+
     const timeout = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
+        killTree('SIGTERM');
         killTimer = setTimeout(() => {
-            if (child.exitCode === null) child.kill('SIGKILL');
+            if (child.exitCode === null) killTree('SIGKILL');
         }, KILL_GRACE_MS);
     }, timeoutMs);
 
