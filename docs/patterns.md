@@ -131,6 +131,10 @@ A future canon improvement could automate this with `.gitattributes merge=ours` 
 
 Failure mode if violated: a `git merge` produces conflicts on every descriptive doc, the human resolves them by picking one side (always wrong because *both* sides are correct for their respective branches), and the merged branch ends up with content that's incorrect for its layer (filled content lands on main, or stubs land on dev). Recovery requires reverting the merge.
 
+### Use `--name-status`, not `--name-only`, when building path sets from `git diff`
+
+When parsing `git diff -M` output to build a set of changed paths, use `--name-status` instead of `--name-only`. With `--name-only`, rename detection is active but only the post-image path is emitted — the pre-image path is silently suppressed. Any code that checks "is this path in the diff" will false-negative on the pre-image of a renamed file. With `--name-status`, rename lines appear as `R<score>\told\tnew`; expand both sides into the path set. Canonical implementation: `verifyHandoffAgainstDiffFromData()` in `scripts/run-task/validation.ts`.
+
 ## Quick Reference: "I Want To..."
 
 | I want to... | Section above | Start at |

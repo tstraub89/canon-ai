@@ -149,6 +149,7 @@ When writing specs:
 - **E2E tests change only when intended behavior changes**: If an E2E test fails after a code change and the behavior change was not planned, the *code* is broken — not the test. Don't update the test to pass against the regression.
 - **Test files are per-feature, not per-helper**: Before naming a new test file in a spec, list existing test files. Consolidate new helpers into one feature-named test file rather than creating a new one per helper.
 - **Strong-semantic mode names need product-owner sign-off on full scope before narrow scoping**: When a mode or toggle uses a term that naturally implies full constraint ("locked", "linked", "synced", "frozen", "fixed"), the human will read the strong meaning by default. Spec'ing it narrowly creates a hidden mismatch that surfaces in human testing as a code-review reroute. Verify what the name means *in full*, or pick a less load-bearing name.
+- **Verify that symbols named in spec ACs actually exist in the codebase**: Before marking spec done, grep for every function or symbol referenced by name in an AC. A name that doesn't exist causes Codex to implement against the actual code shape while noting the mismatch — the review loop then has to adjudicate whether the AC or the implementation is wrong, burning an unnecessary iteration.
 
 ### Code-review rules of thumb
 
