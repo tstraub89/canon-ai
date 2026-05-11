@@ -92,7 +92,7 @@ This is a default — your project can adopt a stricter or looser bar in `docs/d
 
 ## Codex Model/Effort Matrix
 
-Applied by `getCodexConfig` in `scripts/run-task.ts`:
+Applied by `getCodexConfig` in `scripts/run-task/policy.ts`:
 
 | Phase | S | M | L | XL / delicate |
 |---|---|---|---|---|
@@ -166,7 +166,7 @@ The orchestrator resumes agent sessions across phases instead of spawning fresh 
 
 ## Streaming + Stall Detection
 
-Agent invocations stream NDJSON events live rather than blocking on `spawnSync` and parsing post-exit. The `streamProcess` helper in `scripts/run-task.ts` spawns Claude (`--output-format stream-json --verbose`) or Codex (`--json`) with `spawn`, attaches a `readline` reader to stdout, parses each event as it arrives, and renders a one-line tick (`→ Read tasks/X/spec.md`, `← turn completed`) for live progress visibility.
+Agent invocations stream NDJSON events live rather than blocking on `spawnSync` and parsing post-exit. The `streamProcess` helper in `scripts/run-task/agents/stream.ts` spawns Claude (`--output-format stream-json --verbose`) or Codex (`--json`) with `spawn`, attaches a `readline` reader to stdout, parses each event as it arrives, and renders a one-line tick (`→ Read tasks/X/spec.md`, `← turn completed`) for live progress visibility.
 
 **Stall detection.** Every parsed event resets an idle timer. If the timer fires (no stdout/stderr data for the configured window), the orchestrator escalates: SIGTERM the child, then SIGKILL after a short grace if it doesn't exit. The child is treated as failed regardless of exit code when the watchdog fires.
 
@@ -241,6 +241,7 @@ Changes to `scripts/run-task.ts`, `scripts/task.sh`, task templates, `AGENTS.md`
 - `AGENTS.md` — workflow rules, roles, escalation, validation, git/release.
 - `CLAUDE.md` — Claude phase-specific guidance (spec authorship, code review, QA).
 - `CODEX.md` — Codex phase-specific guidance (implementation, handoff, spec review).
-- `scripts/run-task.ts` — the orchestrator implementation.
+- `scripts/run-task.ts` — orchestrator entry stub.
+- `scripts/run-task/` — orchestrator implementation (main, dispatchers, phase handlers, agents, policy, state, worktree, validation, prompts).
 - `scripts/task.sh` — task management helper (requires `jq`).
 - `scripts/pipeline-policy.ts` — pure routing policy (tier, model/effort, loop caps).
