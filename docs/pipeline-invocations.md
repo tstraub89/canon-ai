@@ -36,3 +36,12 @@
 | 2026-05-11T04:27:47.535Z | markdown-table-parser | implement | codex | gpt-5.4-mini | 1 | 78.0s | 8830426 | ok |
 | 2026-05-11T04:28:16.081Z | markdown-table-parser | implement | codex | gpt-5.4-mini | 2 | 28.1s | 9709841 | ok |
 | 2026-05-11T04:28:40.043Z | markdown-table-parser | implement | codex | gpt-5.4-mini | 3 | 23.5s | 10617262 | ok |
+| 2026-05-11T11:59:48.997Z | runtime-validation-phase | spec_review | codex | gpt-5.5 | 0 | 219.3s | 1289664 | ok |
+| 2026-05-11T12:02:35.666Z | runtime-validation-phase | spec | claude | opus | - | 166.6s | 1033625 | ok |
+| 2026-05-11T12:05:04.145Z | runtime-validation-phase | spec_review | codex | gpt-5.5 | 1 | 148.4s | 2990773 | ok |
+| 2026-05-11T12:07:16.047Z | runtime-validation-phase | spec | claude | opus | - | 131.9s | 1059076 | ok |
+| 2026-05-11T12:10:15.668Z | runtime-validation-phase | spec_review | codex | gpt-5.5 | 2 | 179.6s | 5864587 | ok |
+| 2026-05-11T12:11:40.927Z | runtime-validation-phase | spec | claude | opus | - | 85.2s | 932983 | ok |
+| 2026-05-11T12:17:07.556Z | runtime-validation-phase | spec_review | codex | gpt-5.5 | 3 | 72.3s | 7159825 | ok |
+| 2026-05-11T12:18:35.534Z | runtime-validation-phase | spec | claude | opus | - | 87.9s | 1178283 | ok |
+| 2026-05-11T12:20:41.617Z | runtime-validation-phase | spec_review | codex | gpt-5.5 | 4 | 126.0s | 7571802 | ok |
