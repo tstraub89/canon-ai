@@ -39,7 +39,8 @@ The tier is determined by the largest task size in the run. Task size is set in 
 **Fast tier** (all tasks S, non-delicate):
 ```
 Claude writes spec+plan → [human spec gate] → Codex implements →
-Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human tests
+Orchestrator runtime validation → Claude reviews code ↔ Codex iterates →
+Claude writes QA summary → Human tests
 ```
 - Spec and plan are written in one Claude session.
 - Codex spec_review is skipped; the human spec gate replaces it.
@@ -48,7 +49,8 @@ Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human te
 **Full tier** (any task M, L, XL, or delicate):
 ```
 Claude writes spec → Codex reviews spec → [human spec gate] → Claude writes plan →
-Codex implements → Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human tests
+Codex implements → Orchestrator runtime validation → Claude reviews code ↔
+Codex iterates → Claude writes QA summary → Human tests
 ```
 - Spec and plan are written in separate Claude sessions.
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe. Silence is the default — a real shape concern becomes the lead reason for `changes_requested`; no concern leaves the section empty and review proceeds.
@@ -84,10 +86,13 @@ Templates live in `tasks/_templates/`. To start a task, use `./scripts/task.sh n
 2. Codex reads spec, writes `tasks/TASK-ID/spec-review.md` with findings, sets `spec_review` → `done` (or `changes_requested`)
 3. Claude creates `tasks/TASK-ID/plan.md`, sets `plan` → `done`
 4. Codex implements, creates `tasks/TASK-ID/handoff.md`, sets `implement` → `done`
-5. Claude reads handoff + diff, creates `tasks/TASK-ID/review.md`, sets `code_review` → `done`
-6. If changes requested: Codex iterates, updates `handoff.md`, Claude re-reviews
-7. Claude creates `tasks/TASK-ID/done.md` for the human, sets `qa` → `done`
-8. Human tests against `done.md` checklist, sets `human_review` → `done`
+5. Orchestrator runs registered runtime checks, writes `## Runtime Validation Outcomes` to `handoff.md` when checks run, and sets `runtime_validation` → `done`. On failure, it routes back to implement with the same loop-cap semantics as code review.
+6. Claude reads handoff + diff, creates `tasks/TASK-ID/review.md`, sets `code_review` → `done`
+7. If changes requested: Codex iterates, updates `handoff.md`, Claude re-reviews
+8. Claude creates `tasks/TASK-ID/done.md` for the human, sets `qa` → `done`
+9. Human tests against `done.md` checklist, sets `human_review` → `done`
+
+**Validation authority boundary**: Codex authors `## Validation Outcomes` for checks it ran in its sandbox. The orchestrator authors `## Runtime Validation Outcomes` for registered runtime checks it ran outside Codex's sandbox. Neither actor edits the other's section.
 
 **Per-iteration artifact convention.** `handoff.md` and `review.md` are **cumulative across review rounds, not rewritten**. Round 1 fills the existing template structure. On every subsequent revision:
 
@@ -116,7 +121,7 @@ Task management helper (requires `jq`) — used by both agents:
 
 The pipeline produces three categories of changes. Each has a clear owner:
 
-1. **Code changes**: Codex writes the files during implement. The orchestrator commits them after implement passes validation, before handing off to code_review. Commit message: `<task title> [<TASK-ID>]`.
+1. **Code changes**: Codex writes the files during implement. The orchestrator commits them after implement passes Codex-reported static validation and before runtime_validation/code_review. Commit message: `<task title> [<TASK-ID>]`.
 
 2. **Task artifacts** (`tasks/TASK-ID/`): Committed once at the end, after human_review approves. A single commit bundles spec, plan, reviews, handoff, done, and notes. Commit message: `chore: add task artifacts for <TASK-ID>`.
 
@@ -126,7 +131,7 @@ The pipeline produces three categories of changes. Each has a clear owner:
 
 | When | What | Who |
 |---|---|---|
-| After implement passes validation | Code changes | Orchestrator (auto) |
+| After implement passes static validation | Code changes | Orchestrator (auto) |
 | After human_review approves | Task artifacts | Orchestrator or human |
 | Before PR / merge | Changelog + version bump | Human + Claude |
 

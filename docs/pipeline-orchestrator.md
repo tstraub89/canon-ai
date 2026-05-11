@@ -38,7 +38,8 @@ The tier is set by the largest task in the run. Task size is set in `status.json
 **Fast tier** (all tasks S, non-delicate):
 ```
 Claude writes spec+plan → [human spec gate] → Codex implements →
-Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human tests
+Orchestrator runtime validation → Claude reviews code ↔ Codex iterates →
+Claude writes QA summary → Human tests
 ```
 
 - Spec and plan are written in one Claude session.
@@ -48,7 +49,8 @@ Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human te
 **Full tier** (any task M, L, XL, or `delicate`):
 ```
 Claude writes spec → Codex reviews spec → [human spec gate] → Claude writes plan →
-Codex implements → Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human tests
+Codex implements → Orchestrator runtime validation → Claude reviews code ↔
+Codex iterates → Claude writes QA summary → Human tests
 ```
 
 - Spec and plan are written in separate Claude sessions.
@@ -120,7 +122,8 @@ Codex model overrides:
 |---|---|---|
 | `CODEX_MODEL_MINI` | `gpt-5.4-mini` | Codex model for S/M/L non-delicate phases. |
 | `CODEX_MODEL_FULL` | `gpt-5.5` | Codex model for XL or delicate phases. |
-| `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
+| `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review`, `runtime_validation`, and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
+| `ORCHESTRATOR_CHECK_TIMEOUT_MS` | `600000` | Global timeout for runtime validation checks. Per-check `timeoutMs` in `RUNTIME_CHECKS` wins. |
 
 ## Worktree Isolation
 
@@ -130,7 +133,7 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 **Main repo stays on its base**: In worktree mode, the orchestrator creates the `task/<id>` branch directly in the worktree. The main repo never checks out the task branch.
 
-**Artifact sync**: After each agent phase, task artifact files (`spec.md`, `spec-review.md`, `plan.md`, `handoff.md`, `review.md`, `done.md`) are synced from the worktree back to the main repo's `tasks/<id>/` so the pipeline can read them. The sync is delete-aware.
+**Artifact sync**: After each agent phase, task artifact files (`spec.md`, `spec-review.md`, `plan.md`, `handoff.md`, `review.md`, `done.md`) are synced from the worktree back to the main repo's `tasks/<id>/` so the pipeline can read them. The sync is delete-aware. Runtime validation artifacts under `tasks/<id>/runtime-check-output/` stay in the active worktree for the next implement iteration and are intentionally gitignored.
 
 **Telemetry flush**: Telemetry files (`docs/pipeline-invocations.md`, `docs/task-quality-log.md`, `docs/lessons-learned.md`) accumulate via two paths in worktree mode and get flushed to main at `--push`, `--pr`, and `--ship`.
 
@@ -148,9 +151,35 @@ At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task ar
 
 ## Phase Routing + Auto-Block
 
-After `spec_review` or `code_review`, the orchestrator checks the verdict. If `changes_requested`, it loops back to the prior agent automatically (up to `MAX_REVIEW_LOOPS`).
+After `spec_review`, `runtime_validation`, or `code_review`, the orchestrator checks the verdict. If `changes_requested`, it loops back to the prior agent automatically (up to `MAX_REVIEW_LOOPS`).
 
-**Auto-block on runaway review loops**: If either review phase returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. The iteration counter resets to `0` when the phase eventually approves. A repeated review pushback almost always means the spec has a structural or scope issue another mechanical revision won't fix.
+**Auto-block on runaway loops**: If spec review, runtime validation, or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. The iteration counter resets to `0` when the phase eventually approves. Runtime validation and code review keep independent counters, so a task can spend iterations in each phase without a shared global budget.
+
+## Runtime Validation Phase
+
+`runtime_validation` runs after `implement` auto-commits the Codex-authored source changes and before `code_review`. It is orchestrator-owned: Codex writes `## Validation Outcomes` for checks it ran in its sandbox, while the orchestrator writes `## Runtime Validation Outcomes` for checks that need the orchestrator environment.
+
+Runtime checks are registered in `scripts/pipeline-policy.ts`:
+
+```ts
+export type RuntimeCheck = {
+    name: string;
+    command: string;
+    timeoutMs?: number;
+    cwd?: 'worktree' | 'repo_root';
+    when?: (status: PolicyInput, affectedFiles: readonly string[]) => boolean;
+    artifactPaths?: readonly string[];
+    artifactReadingHint?: string;
+};
+
+export const RUNTIME_CHECKS: RuntimeCheck[] = [
+    { name: 'orchestrator-phase-smoke', command: 'echo orchestrator-phase-smoke-ok' },
+];
+```
+
+Checks run sequentially per task. `cwd` defaults to the active task worktree; `repo_root` runs from the supervising checkout. `when` receives the task status plus the files parsed from the handoff Changes table. If the registry is empty, or every check filters out, the phase marks `runtime_validation` approved and writes no handoff section.
+
+Runtime output streams live to the operator. Full `stdout.log` and `stderr.log` are preserved on Fail/Timeout under `tasks/<id>/runtime-check-output/<check>/iter-N/`; the handoff table keeps only a short stderr excerpt plus the artifact path. On Pass, check-induced dirty paths are cleaned and the scratch artifact directory is removed. Cleanup is scoped to paths that became dirty during the check and never uses blanket `git stash` or `git clean`, so pre-existing task artifacts are preserved.
 
 If the human authorizes more iterations, override via env var rather than hand-editing `status.json`:
 
@@ -208,7 +237,7 @@ For each task:
 4. APPEND `## Round N` to review.md
 ```
 
-The Stage 1 AC table is **not** redone on round 2+ — that gate already passed in round 1. Implement-revision prompts have the same shape, pointing at the new `## Round N-1` of `review.md` instead of the spec/plan.
+The Stage 1 AC table is **not** redone on round 2+ — that gate already passed in round 1. Implement-revision prompts are composable: code-review reroutes point at the new `## Round N-1` of `review.md`, runtime-validation reroutes include `## Runtime check failures to address`, and combined reroutes include both sections.
 
 **Round-3+ tightening.** When the round number reaches 3, the prompt adds a discipline rule: findings must be `correctness bug` or `spec gap` only. No `optional cleanup/nit` and no wording-only changes. Encoded as: "we are tightening, not exploring." Without this, round-by-round wording-quibble creep eats the loop budget.
 

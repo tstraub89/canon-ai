@@ -93,7 +93,7 @@ Invoked by the orchestrator (pipeline session only).
 2. Write `plan.md` with ordered implementation steps.
 3. Reference specific files, existing patterns, and code examples from the codebase.
 4. Update `status.json`: set `plan.status` to `"done"`.
-5. Orchestrator advances to Codex implementation.
+5. Orchestrator advances to Codex implementation. After implement, the orchestrator runs any registered runtime validation checks before code review.
 
 ### Reviewing Code
 
@@ -101,7 +101,7 @@ Reviews run in **two stages**. Stage 1 is a gate — if it fails, skip Stage 2 e
 
 **Stage 1 — Spec compliance (gate)**:
 1. Read `handoff.md` for changed files, rationale, and deviations.
-2. **Validation gate**: Verify the Validation Outcomes table has no `Fail` results and all applicable checks were run. Missing or failed = Stage 1 fail.
+2. **Validation gate**: Verify the Codex-authored Validation Outcomes table has no `Fail` results and all applicable checks were run. Also read the orchestrator-authored Runtime Validation Outcomes section if present; failed runtime checks should have routed back before code review. Missing or failed = Stage 1 fail.
 3. Read the actual diff (`git diff main...HEAD` or individual files).
 4. **AC cross-reference**: Fill the Stage 1 AC table in `review.md` with **every** AC from `spec.md`. Missing an AC from the table is itself a Stage 1 fail — no skipping.
 5. **Dropped sections check**: Non-goals respected? Known Risks addressed or accepted? Human Test Plan satisfiable? Any dropped section = Stage 1 fail.

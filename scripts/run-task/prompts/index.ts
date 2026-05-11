@@ -5,9 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../env.js';
 import { getBaseBranch } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
+import { RUNTIME_CHECKS } from '../../pipeline-policy.js';
+import { computeLatestRuntimeResults } from '../validation.js';
+import { resolveTaskCwd } from '../state.js';
+import { sanitizeRuntimeCheckName } from '../phases/runtime-validation.js';
 import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
-import type { PipelineState } from '../types.js';
+import type { PipelineState, TaskContext } from '../types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -135,23 +139,91 @@ export function promptImplement(state: PipelineState, mode: 'fresh' | 'resume' =
 export function promptImplementRevisions(state: PipelineState): string {
     const { tasks } = state;
     const stateHeader = buildImplementStateHeader(state, 'revision');
-    const iterationN = tasks.reduce((m, t) => Math.max(m, t.iterations), 0) + 1;
-    const priorRound = iterationN - 1;
-    const reviewLines = tasks.map(t =>
-        `- \`${t.taskId}\` → read \`tasks/${t.taskId}/review.md\` (most recent \`## Round ${priorRound}\` section only — earlier rounds are already addressed)`
-    ).join('\n');
+    const maxCodeReviewIter = tasks.reduce((m, t) => Math.max(m, t.iterations), 0);
+    const maxRuntimeIter = tasks.reduce((m, t) => Math.max(m, t.runtimeIterations), 0);
+    const hasReviewFindings = maxCodeReviewIter > 0;
+    const hasRuntimeFailures = maxRuntimeIter > 0;
+    const iterationN = Math.max(maxCodeReviewIter, maxRuntimeIter) + 1;
+    const priorRound = maxCodeReviewIter;
+    const iterBanner = hasReviewFindings && hasRuntimeFailures
+        ? `[ITERATION ${iterationN} — addressing code review round ${priorRound} and runtime validation failures]`
+        : hasReviewFindings
+            ? `[ITERATION ${iterationN} — addressing code review round ${priorRound}]`
+            : `[ITERATION ${iterationN} — addressing runtime validation failures]`;
+    const handoffAppend = hasReviewFindings && hasRuntimeFailures
+        ? `## Iteration ${iterationN} — addressing review round ${priorRound} and runtime validation`
+        : hasReviewFindings
+            ? `## Iteration ${iterationN} — addressing review round ${priorRound}`
+            : `## Iteration ${iterationN} — addressing runtime validation`;
+    const reviewLines = hasReviewFindings
+        ? tasks.map(t =>
+            `- \`${t.taskId}\` → read \`tasks/${t.taskId}/review.md\` (most recent \`## Round ${priorRound}\` section only — earlier rounds are already addressed)`
+        ).join('\n')
+        : '';
+    const runtimeFailureEntries = hasRuntimeFailures
+        ? buildRuntimeFailureEntries(tasks)
+        : [];
 
     return render('implement-revisions.md', {
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of related tasks' : `task "${tasks[0].taskId}"`,
         stateHeader,
         startup: CODEX_STARTUP,
+        iterBanner,
+        handoffAppend,
+        hasReviewFindings,
+        hasRuntimeFailures,
         iterationN,
         priorRound,
         reviewLines,
+        runtimeFailureEntries,
         tightenLine: iterationN >= 3 ? ` (note: round ${iterationN} is tightening — prefer to defer nits).` : '',
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'implement', 'done'),
     });
+}
+
+function stderrExcerptFromNotes(notes: string): string {
+    const withoutArtifacts = notes.replace(/;\s*artifacts:.*$/s, '');
+    const firstSeparator = withoutArtifacts.indexOf(';');
+    if (firstSeparator === -1) return '';
+    return withoutArtifacts.slice(firstSeparator + 1).trim().replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+}
+
+function buildRuntimeFailureEntries(tasks: readonly TaskContext[]): object[] {
+    const entries: object[] = [];
+    for (const task of tasks) {
+        if (task.runtimeIterations <= 0) continue;
+        const handoffPath = path.join(resolveTaskCwd(task.taskId), 'tasks', task.taskId, 'handoff.md');
+        let handoffContent = '';
+        try {
+            handoffContent = fs.readFileSync(handoffPath, 'utf8');
+        } catch {
+            // Missing handoff is handled downstream by the implementer as a blocker.
+        }
+        const latestRuntimeResults = computeLatestRuntimeResults(handoffContent);
+        for (const row of latestRuntimeResults.values()) {
+            if (row.result !== 'Fail' && row.result !== 'Timeout') continue;
+            const safeName = sanitizeRuntimeCheckName(row.check);
+            const artifactPath = `tasks/${task.taskId}/runtime-check-output/${safeName}/iter-${task.runtimeIterations}/`;
+            const stderrLogPath = path.join(resolveTaskCwd(task.taskId), artifactPath, 'stderr.log');
+            let stderrContent: string;
+            try {
+                stderrContent = fs.readFileSync(stderrLogPath).subarray(0, 2048).toString('utf8');
+            } catch {
+                stderrContent = `${stderrExcerptFromNotes(row.notes)}\n[stderr.log missing — using truncated handoff excerpt]`.trim();
+            }
+            const hint = RUNTIME_CHECKS.find(check => check.name === row.check)?.artifactReadingHint ?? '';
+            entries.push({
+                taskId: task.taskId,
+                checkName: row.check,
+                artifactPath,
+                stderrContent,
+                hasHint: hint.length > 0,
+                artifactReadingHint: hint,
+            });
+        }
+    }
+    return entries;
 }
 
 export function promptImplementReroute(state: PipelineState): string {

@@ -120,6 +120,49 @@ export type ValidationOutcomeRow = {
     notes: string;
 };
 
+export type RuntimeOutcomeRow = {
+    check: string;
+    result: string;
+    elapsed: string;
+    notes: string;
+};
+
+function cleanRuntimeCheckName(value: string): string {
+    return value.trim().replace(/^`|`$/g, '');
+}
+
+export function computeLatestRuntimeResults(handoffContent: string): Map<string, RuntimeOutcomeRow> {
+    const latest = new Map<string, RuntimeOutcomeRow>();
+    const baseline = parseTable(handoffContent, 'Runtime Validation Outcomes');
+    for (const row of baseline) {
+        const check = cleanRuntimeCheckName(row['Check'] ?? '');
+        if (!check) continue;
+        latest.set(check, {
+            check,
+            result: row['Result'] ?? '',
+            elapsed: row['Elapsed'] ?? '',
+            notes: row['Notes'] ?? '',
+        });
+    }
+
+    const iterationBodies = extractSectionBodies(handoffContent, /^## Iteration\b/);
+    for (const body of iterationBodies) {
+        const reruns = parseTableH3(body, 'Re-run runtime validation');
+        for (const row of reruns) {
+            const check = cleanRuntimeCheckName(row['Check'] ?? '');
+            if (!check) continue;
+            latest.set(check, {
+                check,
+                result: row['Result'] ?? '',
+                elapsed: row['Elapsed'] ?? '',
+                notes: row['Notes'] ?? '',
+            });
+        }
+    }
+
+    return latest;
+}
+
 export function parseValidationOutcomeRows(handoffPath: string): ValidationOutcomeRow[] {
     try {
         const content = fs.readFileSync(handoffPath, 'utf8');

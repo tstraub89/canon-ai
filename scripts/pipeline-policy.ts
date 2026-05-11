@@ -190,3 +190,17 @@ export function getPipelinePolicy(
         claude: (phase) => claudeMat[phase][effectiveSize],
     };
 }
+
+export type RuntimeCheck = {
+    name: string;
+    command: string;
+    timeoutMs?: number;
+    cwd?: 'worktree' | 'repo_root';
+    when?: (status: PolicyInput, affectedFiles: readonly string[]) => boolean;
+    artifactPaths?: readonly string[];
+    artifactReadingHint?: string;
+};
+
+export const RUNTIME_CHECKS: RuntimeCheck[] = [
+    { name: 'orchestrator-phase-smoke', command: 'echo orchestrator-phase-smoke-ok' },
+];

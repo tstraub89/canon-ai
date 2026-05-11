@@ -145,9 +145,16 @@ export function buildImplementStateHeader(state: PipelineState, mode: ImplementM
     const taskIds = tasks.map(t => t.taskId);
     const primary = tasks[0];
 
+    const maxCodeReviewIter = tasks.reduce((max, task) => Math.max(max, task.iterations), 0);
+    const maxRuntimeIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations), 0);
+    const revisionExplain = maxCodeReviewIter > 0 && maxRuntimeIter > 0
+        ? `addressing code-review feedback (iteration ${maxCodeReviewIter + 1}) and runtime validation failures — read tasks/<id>/review.md and the runtime failure section below`
+        : maxCodeReviewIter > 0
+            ? `addressing code-review feedback (iteration ${maxCodeReviewIter + 1}) — read tasks/<id>/review.md`
+            : `addressing runtime validation failures (iteration ${maxRuntimeIter + 1}) — read the runtime failure section below`;
     const modeExplain: Record<ImplementMode, string> = {
         fresh: 'first implementation pass — no prior work on this phase',
-        revision: `addressing code-review feedback (iteration ${primary.iterations + 1}) — read tasks/<id>/review.md`,
+        revision: revisionExplain,
         reroute: `spec was amended after human_review (reroute #${primary.rerouteCount}) — re-read spec.md for new sections`,
         resume: 'previous implement pass was interrupted after code changes were made — finish validation + handoff only',
     };

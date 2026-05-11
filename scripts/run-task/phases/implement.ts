@@ -9,7 +9,11 @@ import { commitTaskArtifactsToBase, gitSafeAtRaw, parsePorcelain, ensureBranch }
 import { runTaskShFor } from '../task-sh.js';
 import { getActiveCwd, isWorktreeEnabled, TASK_ARTIFACT_FILES } from '../worktree.js';
 import { autoBlockPhase, readStatus, taskDirFor, writeStatus } from '../state.js';
-import type { PipelineState, PhaseRunResult } from '../types.js';
+import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
+
+export function shouldUseImplementRevision(tasks: readonly Pick<TaskContext, 'iterations' | 'runtimeIterations'>[]): boolean {
+    return tasks.some(t => t.iterations > 0 || t.runtimeIterations > 0);
+}
 
 export async function runImplementPhase(
     state: PipelineState,
@@ -40,7 +44,7 @@ export async function runImplementPhase(
     }
 
     const activeCwd = getActiveCwd(taskIds);
-    const isRevision = tasks.some(t => t.iterations > 0);
+    const isRevision = shouldUseImplementRevision(tasks);
     const isRerouted = tasks.some(t => t.status.phases.implement?.rerouted === true);
     const wasImplementInProgress = tasks.some(t => t.status.phases.implement?.status === 'in_progress');
     const phaseLabel = isRevision ? ', revision' : isRerouted ? ', reroute (spec amended)' : '';
