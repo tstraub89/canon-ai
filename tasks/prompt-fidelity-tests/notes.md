@@ -1,5 +1,1 @@
-# Notes
-
-Raw observations from any phase. Prefix with phase name. Distilled into `docs/lessons-learned.md` during QA.
-
-<!-- Append below this line -->
+[implement] `REPO_ROOT` resolves to the canonical checkout root, not the writable worktree root. Test fixtures that need to write committed artifacts should use `process.cwd()`/`path.resolve(...)` instead of `REPO_ROOT` for the file path itself.
