@@ -17,6 +17,7 @@ import * as splitGit from './git.js';
 import * as splitWorktree from './worktree.js';
 import * as splitPolicy from './policy.js';
 import * as splitValidation from './validation.js';
+import * as splitMarkdownTable from './markdown-table.js';
 import * as splitTaskSh from './task-sh.js';
 import * as splitClaude from './agents/claude.js';
 import * as splitCodex from './agents/codex.js';
@@ -1187,11 +1188,20 @@ interface EvidenceResult {
 }
 
 // Match "- [x] **Approved**" and variants in a review artifact.
-function extractCheckedVerdict(content: string): Verdict | null {
-    if (/^- \[x\] \*\*Approved\*\*/mi.test(content)) return 'approved';
-    if (/^- \[x\] \*\*Approved with nits\*\*/mi.test(content)) return 'approved_with_nits';
-    if (/^- \[x\] \*\*Changes requested\*\*/mi.test(content)) return 'changes_requested';
-    if (/^- \[x\] \*\*Needs re-review\*\*/mi.test(content)) return 'needs_re_review';
+//
+// Review artifacts are cumulative: round 1 uses the top-level Stage 1 / Stage 2 /
+// `## Final Verdict` structure; subsequent rounds append `## Round N — ...` h2
+// sections each containing their own `### Verdict for this round` checkboxes.
+// On multi-round reviews we must read only the *latest* round's verdict —
+// otherwise a stale round-1 "Approved" can advance the pipeline even after a
+// later round flipped to "Changes requested".
+export function extractCheckedVerdict(content: string): Verdict | null {
+    const roundBodies = splitMarkdownTable.extractSectionBodies(content, /^## Round\b/);
+    const scope = roundBodies.length > 0 ? roundBodies[roundBodies.length - 1] : content;
+    if (/^- \[x\] \*\*Approved\*\*/mi.test(scope)) return 'approved';
+    if (/^- \[x\] \*\*Approved with nits\*\*/mi.test(scope)) return 'approved_with_nits';
+    if (/^- \[x\] \*\*Changes requested\*\*/mi.test(scope)) return 'changes_requested';
+    if (/^- \[x\] \*\*Needs re-review\*\*/mi.test(scope)) return 'needs_re_review';
     return null;
 }
 
