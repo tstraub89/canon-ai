@@ -3,6 +3,12 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.4.3] — 2026-05-11
+
+### Fixed
+
+- Handoff iteration sections now contribute their own `### Changes` tables to the diff/auto-commit file set, so files introduced in later review rounds are no longer falsely rejected as missing from the handoff.
+
 ## [0.4.2] — 2026-05-11
 
 ### Fixed
