@@ -10,6 +10,18 @@
 |---|---|
 | `<path>` | ... |
 
+## Canon Governance
+
+The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
+
+| Field | Source |
+|---|---|
+| Upstream repo | `status.json.canon.upstream_repo` |
+| Upstream commit | `status.json.canon.upstream_commit` |
+| Orchestrator commit | `status.json.canon.orchestrator_commit` |
+| Codex CLI | `status.json.canon.codex_cli` |
+| Claude Code | `status.json.canon.claude_code` |
+
 ## Intent & Rationale
 
 Brief explanation of the approach taken and why.

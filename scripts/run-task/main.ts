@@ -21,6 +21,7 @@ import * as splitValidation from './validation.js';
 import * as splitTaskSh from './task-sh.js';
 import * as splitClaude from './agents/claude.js';
 import * as splitCodex from './agents/codex.js';
+import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = splitEnv.REPO_ROOT;
@@ -1650,6 +1651,7 @@ export async function main(): Promise<void> {
     }
 
     const { taskIds } = cliArgs;
+    refreshCanonSnapshotsAtPaths(taskIds.map(splitState.statusFileFor));
     const initialState = buildPipelineState(taskIds);
 
     info(initialState.isBundle

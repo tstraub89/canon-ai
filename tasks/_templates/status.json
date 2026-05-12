@@ -6,6 +6,13 @@
   "updated": "",
   "branch": "",
   "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "",
+    "orchestrator_commit": "",
+    "codex_cli": "",
+    "claude_code": ""
+  },
   "task_size": "M",
   "delicate": false,
   "human_spec_gate": true,

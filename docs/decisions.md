@@ -28,6 +28,16 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
+## Canon provenance stamp recorded in `status.json`
+
+**Decision**: Every task records a canon provenance stamp in `status.json.canon`, and task artifacts should reference that field rather than duplicating canon metadata in `handoff.md` or elsewhere.
+
+**Why**: Canon's behavior changes with the checkout that's governing the run: templates, routing, and guardrails all move with the canon commit. Without a first-class stamp, the artifacts prove what happened but not which canon snapshot governed it. That makes dogfood analysis, support, and postmortems guesswork. Writing the stamp at task creation and refreshing it before real orchestrator work preserves a durable provenance trail without forcing the handoff to become a second source of truth.
+
+**Rule**: New task-facing provenance should read from `status.json.canon`. The canonical upstream repo slug lives in `CANON_UPSTREAM_REPO` in `scripts/run-task/canon-snapshot.ts`; do not duplicate that value in docs or handoff artifacts unless you're explicitly pointing back to the symbol.
+
+---
+
 ## Two distinct agents (Claude + Codex), never reviewing own output
 
 **Decision**: Claude is the architect/reviewer/QA. Codex is the implementer/spec-reviewer. Each agent reviews the *other*'s output, never its own.

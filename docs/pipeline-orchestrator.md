@@ -141,6 +141,17 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 **Bundle constraint**: All tasks in a bundle must agree on `worktree`.
 
+## Canon Snapshot Stamping
+
+Every task carries a provenance snapshot in `status.json.canon`. `task.sh new` stamps it when the task is created, and the orchestrator refreshes it again before any real phase work begins so older tasks pick up the current canon checkout and CLI versions on the next pipeline run.
+
+- Native checkouts record the canon checkout SHA in both `upstream_commit` and `orchestrator_commit`.
+- Vendored checkouts record the submodule SHA in `upstream_commit` and the host repo SHA in `orchestrator_commit`.
+- Missing `codex` or `claude` binaries record `<unavailable>` instead of failing the run.
+- `--dry-run` is read-only and does not refresh the snapshot.
+
+See `scripts/run-task/canon-snapshot.ts` for the capture logic and `scripts/run-task/types.ts` for the `canon` shape.
+
 ## Auto-Branch + Auto-Commit
 
 **Auto-branch**: The orchestrator creates a `task/<TASK-ID>` branch before the implement phase and records it in `status.json`.

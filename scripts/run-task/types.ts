@@ -46,6 +46,14 @@ export type Escalation = {
     reason: string;
 };
 
+export type CanonStamp = {
+    upstream_repo: string;
+    upstream_commit: string;
+    orchestrator_commit: string;
+    codex_cli: string;
+    claude_code: string;
+};
+
 export type StatusJson = {
     id: string;
     title?: string;
@@ -58,6 +66,7 @@ export type StatusJson = {
     delicate?: boolean;
     human_spec_gate?: boolean;
     worktree?: boolean;
+    canon?: CanonStamp;
     phases: Partial<Record<Phase, PhaseEntry>>;
     escalations?: Escalation[];
     sessions?: {

@@ -9,6 +9,8 @@ set -euo pipefail
 TASKS_DIR="tasks"
 TEMPLATES_DIR="$TASKS_DIR/_templates"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TSX_BIN="$REPO_ROOT_DIR/node_modules/.bin/tsx"
 
 check_jq() {
   if ! command -v jq &>/dev/null; then
@@ -53,6 +55,28 @@ resolve_task_cwd() {
     return
   fi
   echo "."
+}
+
+run_tsx() {
+  local cache_dir="${TMPDIR:-/tmp}/canon-ai-npm-cache"
+  mkdir -p "$cache_dir"
+  if [ -x "$TSX_BIN" ]; then
+    if [ -n "${CANON_TASKS_DIR_OVERRIDE:-}" ]; then
+      env npm_config_cache="$cache_dir" CANON_TASKS_DIR_OVERRIDE="$CANON_TASKS_DIR_OVERRIDE" "$TSX_BIN" "$@"
+    else
+      env npm_config_cache="$cache_dir" "$TSX_BIN" "$@"
+    fi
+  else
+    if [ -n "${CANON_TASKS_DIR_OVERRIDE:-}" ]; then
+      env npm_config_cache="$cache_dir" CANON_TASKS_DIR_OVERRIDE="$CANON_TASKS_DIR_OVERRIDE" npx tsx "$@"
+    else
+      env npm_config_cache="$cache_dir" npx tsx "$@"
+    fi
+  fi
+}
+
+tsx_available() {
+  [ -x "$TSX_BIN" ] || command -v npx &>/dev/null
 }
 
 usage() {
@@ -198,6 +222,14 @@ cmd_new() {
   jq --arg id "$id" --arg title "$title" --arg date "$today" --arg base "$base_branch" \
     '.id = $id | .title = $title | .created = $date | .updated = $date | .base_branch = $base' \
     "$task_dir/status.json" > "$tmp" && mv "$tmp" "$task_dir/status.json"
+
+  # Stamp the canon provenance snapshot immediately so new tasks have a first-
+  # class record of the canon checkout and CLI versions governing them.
+  if tsx_available; then
+    run_tsx "$SCRIPT_DIR/run-task/canon-snapshot.ts" "$task_dir/status.json"
+  else
+    echo "Warning: neither repo-local tsx nor npx is available — created task without canon snapshot refresh." >&2
+  fi
 
   echo "Created task: $task_dir"
   echo "Files:"
@@ -345,7 +377,7 @@ cmd_phase() {
   # Skip-gate escape hatch for test fixtures that don't materialize artifacts.
   # Production callers should never set CANON_SKIP_PHASE_GATE.
   if [ "$status" = "done" ] && [ -z "${CANON_SKIP_PHASE_GATE:-}" ]; then
-    if command -v npx &>/dev/null; then
+    if tsx_available; then
       # Route the gate's artifact reads through CANON_TASKS_DIR_OVERRIDE so it
       # inspects the same worktree the status write will land in. Without this,
       # the gate resolves taskDirFor() against REPO_ROOT and would see stale or
@@ -353,9 +385,9 @@ cmd_phase() {
       # rejecting valid transitions OR approving from the wrong tree. Caught
       # via Codex review on the 1a-2 inline change.
       CANON_TASKS_DIR_OVERRIDE="$task_cwd/$TASKS_DIR" \
-        npx tsx "$SCRIPT_DIR/run-task/check-phase-gate.ts" "$id" "$phase" "$verdict"
+        run_tsx "$SCRIPT_DIR/run-task/check-phase-gate.ts" "$id" "$phase" "$verdict"
     else
-      echo "Warning: npx not found — skipping phase gate. Install Node 24.x to enforce." >&2
+      echo "Warning: neither repo-local tsx nor npx is available — skipping phase gate. Install Node 24.x to enforce." >&2
     fi
   fi
 
