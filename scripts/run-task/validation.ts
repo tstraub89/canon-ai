@@ -551,9 +551,7 @@ export function checkPhaseGate(
         try {
             handoffContent = fs.readFileSync(handoffPath, 'utf8');
         } catch {
-            // No handoff to inspect — implement phase probably didn't run yet.
-            // The prior-phase-done check in task.sh catches that case earlier.
-            return { ok: true };
+            return { ok: false, reason: `closing human_review requires a handoff.md — none found in ${taskDir}` };
         }
         const pending = countHumanPendingChecks(handoffContent);
         if (pending.length === 0) return { ok: true };
