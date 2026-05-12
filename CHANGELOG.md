@@ -3,6 +3,12 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.4.5] — 2026-05-12
+
+### Fixed
+
+- `resolveTaskCwd` (state.ts) and `getActiveCwd` (worktree.ts) no longer die when `branch` is empty on a fresh task. The `die()` call was outside the `if (branch)` guard, so both Situation A (fresh task, no branch yet) and Situation B (branch set but worktree missing) hit the same error path. Moving `die()` inside the branch guard preserves the fail-closed behavior for missing worktrees while allowing `checkDeps`-era `statusFileFor` calls to complete normally before `ensureBranch` runs.
+
 ## [0.4.4] — 2026-05-12
 
 ### Fixed
