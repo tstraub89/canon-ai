@@ -86,6 +86,12 @@ On revision rounds, append below this line:
 
 ## Iteration N — addressing review round N-1
 
+### Changes
+
+| File | What Changed |
+|---|---|
+| `<path>` | ... |
+
 ### Findings addressed
 
 - _correctness bug:_ "<one-line summary>" → fixed at file:line

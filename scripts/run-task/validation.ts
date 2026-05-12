@@ -585,14 +585,19 @@ export function parseHandoffFiles(taskId: string): string[] {
     } catch {
         return [];
     }
-    const rows = parseTable(content, 'Changes');
-    const files: string[] = [];
-    for (const row of rows) {
-        const firstColumn = Object.values(row)[0] ?? '';
-        const match = firstColumn.match(/`([^`]+)`/);
-        if (match?.[1]) files.push(match[1]);
+    const files = new Set<string>();
+    const tables = [
+        parseTable(content, 'Changes'),
+        ...extractSectionBodies(content, /^## Iteration\b/).map(body => parseTableH3(body, 'Changes')),
+    ];
+    for (const rows of tables) {
+        for (const row of rows) {
+            const firstColumn = Object.values(row)[0] ?? '';
+            const match = firstColumn.match(/`([^`]+)`/);
+            if (match?.[1]) files.add(match[1]);
+        }
     }
-    return files;
+    return [...files];
 }
 
 const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);
