@@ -3,6 +3,15 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.4.2] — 2026-05-11
+
+### Fixed
+
+- Shared-doc sync now uses a shared registry for telemetry and managed docs, fails closed when the supervising checkout has diverged, and compares file content instead of byte length before mirroring worktree edits back to the supervising checkout.
+- Human-review auto-commit now stages the protected managed docs through the same shared-doc registry instead of relying on a separate allowlist.
+- Added regression coverage for linked-worktree root resolution, the load-bearing harness extractors, and the shared-doc sync guardrails.
+- Canon now documents the tested `CODEX_MODEL_MINI` / `CODEX_MODEL_FULL` defaults in the orchestrator docs and README instead of changing runtime behavior.
+
 ## [0.4.1] — 2026-05-11
 
 ### Fixed
