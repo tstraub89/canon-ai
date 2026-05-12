@@ -810,7 +810,7 @@ void test('checkPhaseGate: human_review rejects when handoff.md is missing', () 
     withTempTaskDir(taskId => {
         const result = checkPhaseGate(taskId, 'human_review');
         assert.equal(result.ok, false);
-        assert.match((result as { ok: false; reason: string }).reason, /handoff\.md/);
+        assert.match(result.reason, /handoff\.md/);
     });
 });
 
@@ -1022,7 +1022,7 @@ void test('checkPhaseGate human_review: rejects when handoff is missing entirely
     withTempTaskDir(taskId => {
         const result = checkPhaseGate(taskId, 'human_review');
         assert.equal(result.ok, false);
-        assert.match((result as { ok: false; reason: string }).reason, /handoff\.md/);
+        assert.match(result.reason, /handoff\.md/);
     });
 });
 
