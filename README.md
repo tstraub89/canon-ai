@@ -165,6 +165,9 @@ npm test
 npx tsx scripts/run-task.ts my-first-task
 ```
 
+Canon is tested with `CODEX_MODEL_MINI=gpt-5.4-mini` and `CODEX_MODEL_FULL=gpt-5.5`.
+If your local Codex CLI uses different model names, set those env vars explicitly.
+
 Expect a calibration period. The first several tasks will surface conventions worth writing into `docs/patterns.md` and `docs/decisions.md` — that's the point of those files. The rate of new pattern/decision entries should taper off as the canon accumulates. The exact number of tasks before things feel stable is project-specific; canon hasn't been validated across enough projects to give a confident range.
 
 ## The canon philosophy

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { info, warn, die } from './cli.js';
 import { REPO_ROOT, WORKTREES_ROOT } from './env.js';
-import { git, gitSafe, gitSafeAt, getCurrentBranch } from './git.js';
+import { git, gitSafe, gitSafeAt, gitSafeAtRaw, getCurrentBranch } from './git.js';
 import { readStatus } from './state.js';
 
 export const PIPELINE_TELEMETRY_FILES = [
@@ -20,6 +20,8 @@ export const PIPELINE_MANAGED_DOCS = [
     'docs/pipeline-orchestrator.md',
     'docs/product-context.md',
 ] as const;
+
+export const PIPELINE_SHARED_DOCS = [...PIPELINE_TELEMETRY_FILES, ...PIPELINE_MANAGED_DOCS] as const;
 
 export const TASK_ARTIFACT_FILES = new Set([
     'spec.md', 'spec-review.md', 'plan.md', 'handoff.md', 'review.md', 'done.md', 'notes.md',
@@ -48,6 +50,46 @@ export function getActiveCwd(taskIds: string[]): string {
         );
     }
     return REPO_ROOT;
+}
+
+export type SharedDocSyncResult = {
+    ok: boolean;
+    reason?: string;
+};
+
+export function canMirrorSharedDocs(sourceCwd: string, destinationCwd: string): SharedDocSyncResult {
+    const destinationDirty = gitSafeAtRaw(destinationCwd, 'status', '--porcelain=v1', '-uall', '--', ...PIPELINE_SHARED_DOCS);
+    if (!destinationDirty.ok) {
+        return {
+            ok: false,
+            reason: `could not inspect destination shared-doc state in ${destinationCwd}: ${destinationDirty.stderr || 'unknown error'}`,
+        };
+    }
+    if (destinationDirty.stdout.trim()) {
+        const firstDirty = destinationDirty.stdout.trim().split('\n')[0]?.trim() ?? 'unknown change';
+        return {
+            ok: false,
+            reason: `destination checkout has local changes in shared docs (${firstDirty})`,
+        };
+    }
+
+    const sourceHead = gitSafeAtRaw(sourceCwd, 'rev-parse', 'HEAD');
+    if (!sourceHead.ok || !sourceHead.stdout.trim()) {
+        return { ok: false, reason: `could not read source HEAD in ${sourceCwd}: ${sourceHead.stderr || 'unknown error'}` };
+    }
+
+    const destinationHead = gitSafeAtRaw(destinationCwd, 'rev-parse', 'HEAD');
+    if (!destinationHead.ok || !destinationHead.stdout.trim()) {
+        return { ok: false, reason: `could not read destination HEAD in ${destinationCwd}: ${destinationHead.stderr || 'unknown error'}` };
+    }
+
+    const ancestry = gitSafeAtRaw(sourceCwd, 'merge-base', '--is-ancestor', destinationHead.stdout.trim(), sourceHead.stdout.trim());
+    if (ancestry.ok) return { ok: true };
+
+    return {
+        ok: false,
+        reason: `destination branch has diverged from source HEAD (${destinationHead.stdout.trim().slice(0, 7)} is not an ancestor of ${sourceHead.stdout.trim().slice(0, 7)})`,
+    };
 }
 
 export function findExistingWorktreeForBranch(branch: string): string | null {
@@ -137,7 +179,7 @@ export function teardownWorktree(taskId: string): void {
 }
 
 export function flushWorktreeTelemetry(): void {
-    const allFiles = [...PIPELINE_TELEMETRY_FILES, ...PIPELINE_MANAGED_DOCS];
+    const allFiles = [...PIPELINE_SHARED_DOCS];
     const present = allFiles.filter(f => fs.existsSync(path.join(REPO_ROOT, f)));
     if (present.length === 0) return;
     const status = gitSafe('status', '--porcelain', ...present);
@@ -185,7 +227,12 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
     for (const taskId of taskIds) {
         const wt = worktreePath(taskId);
         if (!fs.existsSync(wt)) continue;
-        for (const relPath of PIPELINE_TELEMETRY_FILES) {
+        const mirrorResult = canMirrorSharedDocs(wt, REPO_ROOT);
+        if (!mirrorResult.ok) {
+            warn(`Skipping shared-doc sync for ${taskId}: ${mirrorResult.reason}`);
+            continue;
+        }
+        for (const relPath of PIPELINE_SHARED_DOCS) {
             if (relPath === 'docs/pipeline-invocations.md') continue;
             const src = path.join(wt, relPath);
             const dest = path.join(REPO_ROOT, relPath);

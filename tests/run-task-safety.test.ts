@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+import { REPO_ROOT } from '../scripts/run-task/env.js';
+import { buildHumanReviewStagePaths } from '../scripts/run-task/main.js';
 import { ensureBranch, ensureCheckedOutBaseBranch } from '../scripts/run-task/git.js';
 import { commitArchiveChanges } from '../scripts/run-task/main.js';
 import { resolveTaskCwd } from '../scripts/run-task/state.js';
+
+const TSX_LOADER = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
 
 function withTempDir(prefix: string, fn: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -102,9 +107,13 @@ function withFakeGitEnv<T>(
     }
 }
 
-function runNodeInline(script: string, env: NodeJS.ProcessEnv): { status: number | null; stderr: string; stdout: string } {
-    const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', script], {
-        cwd: process.cwd(),
+function runNodeInline(
+    script: string,
+    env: NodeJS.ProcessEnv,
+    cwd = process.cwd(),
+): { status: number | null; stderr: string; stdout: string } {
+    const result = spawnSync(process.execPath, ['--import', TSX_LOADER, '-e', script], {
+        cwd,
         env,
         encoding: 'utf8',
     });
@@ -342,5 +351,138 @@ void test('getActiveCwd fails closed when a worktree-backed bundle has no availa
 
         assert.notEqual(result.status, 0);
         assert.match(result.stderr, /Worktree for task 'bundle-task' is expected but missing/);
+    });
+});
+
+void test('REPO_ROOT stays anchored to the supervising checkout when imported from a linked worktree', () => {
+    withTempDir('run-task-root-regression-', dir => {
+        const worktreeDir = path.join(dir, 'linked-worktree');
+        const addResult = spawnSync('git', ['worktree', 'add', '--detach', worktreeDir, 'HEAD'], {
+            cwd: REPO_ROOT,
+            encoding: 'utf8',
+        });
+        assert.equal(addResult.status, 0, addResult.stderr ?? addResult.stdout ?? 'git worktree add failed');
+
+        try {
+            const result = runNodeInline([
+                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/env.ts')).href)})`,
+                '.then(m => { console.log(m.REPO_ROOT); })',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join(''), process.env, worktreeDir);
+
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(result.stdout.trim(), REPO_ROOT);
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+                cwd: REPO_ROOT,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('buildHumanReviewStagePaths includes protected docs in the human_review commit set', () => {
+    const paths = buildHumanReviewStagePaths(['task-a'], [
+        {
+            raw: '?? tasks/task-a/handoff.md',
+            indexStatus: '?',
+            worktreeStatus: '?',
+            paths: ['tasks/task-a/handoff.md'],
+        },
+        {
+            raw: ' M docs/architecture.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/architecture.md'],
+        },
+        {
+            raw: ' M docs/codebase-map.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/codebase-map.md'],
+        },
+        {
+            raw: ' M docs/decisions.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/decisions.md'],
+        },
+        {
+            raw: ' M docs/patterns.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/patterns.md'],
+        },
+        {
+            raw: ' M docs/product-context.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/product-context.md'],
+        },
+    ]);
+
+    assert.deepEqual(paths, [
+        'tasks/task-a',
+        'docs/architecture.md',
+        'docs/codebase-map.md',
+        'docs/decisions.md',
+        'docs/patterns.md',
+        'docs/product-context.md',
+    ]);
+});
+
+void test('syncWorktreeTelemetry skips shared-doc mirroring when repo checkout has diverged', () => {
+    withTempDir('run-task-sync-regression-', dir => {
+        const repoDir = path.join(dir, 'repo');
+        const worktreesRoot = path.join(dir, 'dev-worktrees');
+        const worktreeDir = path.join(worktreesRoot, 'task-a');
+        fs.mkdirSync(repoDir, { recursive: true });
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+
+        const runGit = (args: string[], cwd = repoDir): string => {
+            const result = spawnSync('git', args, {
+                cwd,
+                encoding: 'utf8',
+            });
+            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
+            return result.stdout.trim();
+        };
+
+        runGit(['init', '-b', 'main']);
+        runGit(['config', 'user.email', 'canon@example.com']);
+        runGit(['config', 'user.name', 'Canon Bot']);
+        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'repo v1\n', 'utf8');
+        runGit(['add', 'docs/architecture.md']);
+        runGit(['commit', '-m', 'initial']);
+
+        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'worktree v2\n', 'utf8');
+
+        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'repo v2\n', 'utf8');
+        runGit(['add', 'docs/architecture.md']);
+        runGit(['commit', '-m', 'repo diverges']);
+
+        try {
+            const syncScript = [
+                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('');
+            const result = runNodeInline(syncScript, {
+                ...process.env,
+                CANON_WORKTREES_ROOT: worktreesRoot,
+            }, repoDir);
+
+            assert.equal(result.status, 0, result.stderr);
+            assert.match(result.stderr, /Skipping shared-doc sync for task-a/);
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'repo v2\n');
+            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'worktree v2\n');
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+                cwd: repoDir,
+                encoding: 'utf8',
+            });
+        }
     });
 });

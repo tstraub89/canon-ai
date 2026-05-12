@@ -47,6 +47,7 @@ type StatusJson = splitTypes.StatusJson;
 type CliArgs = splitTypes.CliArgs;
 type TaskContext = splitTypes.TaskContext;
 type PipelineState = splitTypes.PipelineState;
+type PorcelainEntry = splitGit.PorcelainEntry;
 
 // Stall detection: if no stdout/stderr data arrives within this window, the
 // child is assumed hung and gets killed. Override with PIPELINE_STALL_TIMEOUT_MS.
@@ -471,16 +472,13 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
 }
 
 function humanReviewAllowedPath(taskIds: string[], filePath: string): boolean {
-    const telemetryFiles = splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[];
-    const managedDocs = splitWorktree.PIPELINE_MANAGED_DOCS as readonly string[];
     return taskIds.some(taskId => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) ||
-        telemetryFiles.includes(filePath) ||
-        managedDocs.includes(filePath);
+        splitWorktree.PIPELINE_SHARED_DOCS.some(pathName => pathName === filePath);
 }
 
 function mirrorHumanReviewDocsToCwd(cwd: string): void {
     if (cwd === REPO_ROOT) return;
-    for (const relPath of [...splitWorktree.PIPELINE_TELEMETRY_FILES, ...splitWorktree.PIPELINE_MANAGED_DOCS]) {
+    for (const relPath of splitWorktree.PIPELINE_SHARED_DOCS) {
         const src = path.join(REPO_ROOT, relPath);
         const dest = path.join(cwd, relPath);
         if (!fs.existsSync(src)) continue;
@@ -494,6 +492,21 @@ function mirrorHumanReviewDocsToCwd(cwd: string): void {
             // Best-effort mirror: the final dirty-set validation below is authoritative.
         }
     }
+}
+
+export function buildHumanReviewStagePaths(taskIds: string[], dirtyEntries: readonly PorcelainEntry[]): string[] {
+    const stagePaths = new Set<string>();
+    for (const taskId of taskIds) {
+        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
+            stagePaths.add(path.join('tasks', taskId));
+        }
+    }
+    for (const relPath of splitWorktree.PIPELINE_SHARED_DOCS) {
+        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === relPath))) {
+            stagePaths.add(relPath);
+        }
+    }
+    return [...stagePaths];
 }
 
 function createDraftPRForTask(taskIds: string[], branchName: string): void {
@@ -557,17 +570,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         );
     }
 
-    const stagePaths = new Set<string>();
-    for (const taskId of taskIds) {
-        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
-            stagePaths.add(path.join('tasks', taskId));
-        }
-    }
-    for (const relPath of [...splitWorktree.PIPELINE_TELEMETRY_FILES, ...splitWorktree.PIPELINE_MANAGED_DOCS]) {
-        if (dirtyEntries.some(entry => entry.paths.includes(relPath))) {
-            stagePaths.add(relPath);
-        }
-    }
+    const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, dirtyEntries));
 
     if (stagePaths.size === 0) {
         die('Human review commit aborted: no allowed dirty files found to stage.');

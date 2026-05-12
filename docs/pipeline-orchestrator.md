@@ -125,6 +125,10 @@ Codex model overrides:
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review`, `runtime_validation`, and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
 | `ORCHESTRATOR_CHECK_TIMEOUT_MS` | `600000` | Global timeout for runtime validation checks. Per-check `timeoutMs` in `RUNTIME_CHECKS` wins. |
 
+These Codex defaults are the repo-tested assumptions for canon-ai. If your local
+`codex` CLI exposes different model identifiers, set `CODEX_MODEL_MINI` and
+`CODEX_MODEL_FULL` explicitly rather than changing the orchestrator contract.
+
 ## Worktree Isolation
 
 Set `"worktree": true` in `status.json` to run Codex's implement, code_review, and qa phases in a git worktree sibling directory rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree.
