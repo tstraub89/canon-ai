@@ -6,9 +6,17 @@ For **operational** guidance — how to drive the pipeline, common command patte
 
 `AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *orchestration internals*.
 
-## Invocation surface
+## Operator
 
-Only conversational Claude (the human's session) runs the orchestrator. Pipeline-phase Claude and Codex are spawned by it and never invoke it themselves.
+The operator is the session a human drives canon from — writes specs conversationally for fast-tier tasks, invokes `run-task.ts`, monitors pipeline progress, decides next moves.
+
+Canon is designed for **Claude Code (or a human shell) as operator**. Pipeline-phase agents (Claude and Codex sessions spawned by `run-task.ts` for `spec_review` / `plan` / `implement` / `code_review` / `qa`) are independent sessions and never invoke the orchestrator themselves.
+
+Codex can technically operate canon — it has shell access to run `run-task.ts` — but canon was not designed for this. Codex CLI's session model is optimized for execution tasks, not the extended coordination across phases that operating canon requires. Using Codex as operator also pushes Codex toward conversational tasks (spec drafting, multi-turn discussion with the human) that canon assigns to Claude; once that line blurs, cross-model independence erodes operationally even if it survives technically. The likely outcome is worse, not better, output.
+
+If you find yourself wanting Codex as operator, use Claude Code instead and lean on Codex for the phases canon assigns to it (spec review, implementation, code review). That's canon's intended division of labor.
+
+## Invocation surface
 
 ```bash
 npx tsx scripts/run-task.ts <task-id> [<task-id> ...]
