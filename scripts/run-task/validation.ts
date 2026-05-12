@@ -99,19 +99,19 @@ export function canonicalizeValidationCheck(value: string): string {
     return normalized;
 }
 
-export function parseValidationRequiredChecks(specPath: string): string[] {
+export function parseValidationRequiredChecks(specPath: string): string[] | null {
     try {
         const content = fs.readFileSync(specPath, 'utf8');
         const section = content.match(/## Validation Required\n\n([\s\S]*?)(?:\n## |\n# |$)/);
-        if (!section) return [];
+        if (!section) return null;
         const checks: string[] = [];
         for (const line of section[1].split('\n')) {
             const match = line.match(/^-\s+\[x\]\s+(.+?)\s*$/i);
             if (match?.[1]) checks.push(match[1].trim());
         }
-        return checks;
+        return checks.length > 0 ? checks : null;
     } catch {
-        return [];
+        return null;
     }
 }
 
@@ -252,6 +252,9 @@ export function validateHandoffAgainstSpec(
     latestResults?: Map<string, ValidationOutcomeRow>,
 ): string[] {
     const requiredChecks = parseValidationRequiredChecks(specPath);
+    if (requiredChecks === null) {
+        return ['Validation Required section is missing from spec.md'];
+    }
     if (requiredChecks.length === 0) return [];
 
     let rowMap: Map<string, ValidationOutcomeRow>;
@@ -582,14 +585,19 @@ export function parseHandoffFiles(taskId: string): string[] {
     } catch {
         return [];
     }
-    const rows = parseTable(content, 'Changes');
-    const files: string[] = [];
-    for (const row of rows) {
-        const firstColumn = Object.values(row)[0] ?? '';
-        const match = firstColumn.match(/`([^`]+)`/);
-        if (match?.[1]) files.push(match[1]);
+    const files = new Set<string>();
+    const tables = [
+        parseTable(content, 'Changes'),
+        ...extractSectionBodies(content, /^## Iteration\b/).map(body => parseTableH3(body, 'Changes')),
+    ];
+    for (const rows of tables) {
+        for (const row of rows) {
+            const firstColumn = Object.values(row)[0] ?? '';
+            const match = firstColumn.match(/`([^`]+)`/);
+            if (match?.[1]) files.add(match[1]);
+        }
     }
-    return files;
+    return [...files];
 }
 
 const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);

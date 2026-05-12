@@ -155,17 +155,26 @@ export function ensureBranch(taskIds: string[]): void {
     }
 
     const current = getCurrentBranch();
-    const isOnBase = current === baseBranch || current === 'main' || current === 'master';
-    if (isOnBase) {
-        if (branchExistsLocally(branchName)) {
-            info(`Branch '${branchName}' already exists — checking out.`);
-            git('checkout', branchName);
-        } else {
-            info(`Creating branch '${branchName}' off ${current}...`);
-            git('checkout', '-b', branchName);
+    if (current !== branchName && current !== baseBranch) {
+        if (!branchExistsLocally(baseBranch)) {
+            die(
+                `Task '${taskIds[0]}' declares base branch '${baseBranch}', but the current checkout is '${current}' ` +
+                `and '${baseBranch}' is not available locally. Check out the declared base branch first or fetch it, then re-run.`,
+            );
         }
-    } else if (current !== branchName) {
-        info(`On branch '${current}' (not '${baseBranch}', not '${branchName}'). Staying on it.`);
+        info(`Switching from '${current}' to declared base '${baseBranch}' before creating '${branchName}'...`);
+        git('checkout', baseBranch);
+    }
+
+    const checkoutBase = getCurrentBranch();
+    if (branchExistsLocally(branchName)) {
+        info(`Branch '${branchName}' already exists — checking out.`);
+        git('checkout', branchName);
+    } else if (checkoutBase === baseBranch) {
+        info(`Creating branch '${branchName}' off ${baseBranch}...`);
+        git('checkout', '-b', branchName);
+    } else {
+        die(`Unable to create '${branchName}': expected to be on '${baseBranch}', but are on '${checkoutBase}'.`);
     }
 
     const resolvedBranch = getCurrentBranch();
@@ -175,6 +184,21 @@ export function ensureBranch(taskIds: string[]): void {
         writeStatus(taskId, s);
     }
     info(`Branch recorded: ${resolvedBranch}`);
+}
+
+export function ensureCheckedOutBaseBranch(taskIds: string[]): string {
+    const baseBranch = getBaseBranch(taskIds);
+    const current = getCurrentBranch();
+    if (current === baseBranch) return baseBranch;
+    if (!branchExistsLocally(baseBranch)) {
+        die(
+            `Task bundle targets base branch '${baseBranch}', but the current checkout is '${current}' ` +
+            `and '${baseBranch}' is not available locally. Check out the declared base branch first or fetch it, then re-run.`,
+        );
+    }
+    info(`Switching from '${current}' to base branch '${baseBranch}' before shipping...`);
+    git('checkout', baseBranch);
+    return baseBranch;
 }
 
 export function verifyBranch(taskIds: string[]): void {

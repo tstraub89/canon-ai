@@ -3,28 +3,24 @@ name: CI
 on:
   push:
     branches: [main, dev]
-    paths:
-      - '**'
-      - '!AGENTS.md'
-      - '!CLAUDE.md'
-      - '!CODEX.md'
-      - '!docs/**'
-      - '!tasks/**'
-      - 'tasks/_templates/**'
-      - '!.agent/**'
-      - '!.github/**/*.md'
+    paths-ignore:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'CODEX.md'
+      - 'docs/**'
+      - 'tasks/**'
+      - '.agent/**'
+      - '.github/**/*.md'
   pull_request:
     branches: [main, dev]
-    paths:
-      - '**'
-      - '!AGENTS.md'
-      - '!CLAUDE.md'
-      - '!CODEX.md'
-      - '!docs/**'
-      - '!tasks/**'
-      - 'tasks/_templates/**'
-      - '!.agent/**'
-      - '!.github/**/*.md'
+    paths-ignore:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'CODEX.md'
+      - 'docs/**'
+      - 'tasks/**'
+      - '.agent/**'
+      - '.github/**/*.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

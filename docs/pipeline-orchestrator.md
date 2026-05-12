@@ -125,6 +125,10 @@ Codex model overrides:
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review`, `runtime_validation`, and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
 | `ORCHESTRATOR_CHECK_TIMEOUT_MS` | `600000` | Global timeout for runtime validation checks. Per-check `timeoutMs` in `RUNTIME_CHECKS` wins. |
 
+These Codex defaults are the repo-tested assumptions for canon-ai. If your local
+`codex` CLI exposes different model identifiers, set `CODEX_MODEL_MINI` and
+`CODEX_MODEL_FULL` explicitly rather than changing the orchestrator contract.
+
 ## Worktree Isolation
 
 Set `"worktree": true` in `status.json` to run Codex's implement, code_review, and qa phases in a git worktree sibling directory rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree.
@@ -141,6 +145,17 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 **Bundle constraint**: All tasks in a bundle must agree on `worktree`.
 
+## Canon Snapshot Stamping
+
+Every task carries a provenance snapshot in `status.json.canon`. `task.sh new` stamps it when the task is created, and the orchestrator refreshes it again before any real phase work begins so older tasks pick up the current canon checkout and CLI versions on the next pipeline run.
+
+- Native checkouts record the canon checkout SHA in both `upstream_commit` and `orchestrator_commit`.
+- Vendored checkouts record the submodule SHA in `upstream_commit` and the host repo SHA in `orchestrator_commit`.
+- Missing `codex` or `claude` binaries record `<unavailable>` instead of failing the run.
+- `--dry-run` is read-only and does not refresh the snapshot.
+
+See `scripts/run-task/canon-snapshot.ts` for the capture logic and `scripts/run-task/types.ts` for the `canon` shape.
+
 ## Auto-Branch + Auto-Commit
 
 **Auto-branch**: The orchestrator creates a `task/<TASK-ID>` branch before the implement phase and records it in `status.json`.
@@ -153,7 +168,7 @@ At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task ar
 
 After `spec_review`, `runtime_validation`, or `code_review`, the orchestrator checks the verdict. If `changes_requested`, it loops back to the prior agent automatically (up to `MAX_REVIEW_LOOPS`).
 
-**Auto-block on runaway loops**: If spec review, runtime validation, or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. The iteration counter resets to `0` when the phase eventually approves. Runtime validation and code review keep independent counters, so a task can spend iterations in each phase without a shared global budget.
+**Auto-block on runaway loops**: If spec review, runtime validation, or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased. Runtime validation and code review keep independent counters, so a task can spend iterations in each phase without a shared global budget.
 
 ## Runtime Validation Phase
 

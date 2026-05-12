@@ -4,11 +4,7 @@
 # See DEVELOPMENT.md for the branch strategy.
 
 CURRENT=$(git branch --show-current)
-MERGE_HEAD_REF=$(git rev-parse -q --verify MERGE_HEAD 2>/dev/null || true)
-MERGING=""
-if [ -n "$MERGE_HEAD_REF" ]; then
-  MERGING=$(git name-rev --name-only "$MERGE_HEAD_REF" 2>/dev/null | sed 's|remotes/origin/||')
-fi
+MERGING=$(git name-rev --name-only "$MERGE_HEAD" 2>/dev/null | sed 's|remotes/origin/||')
 
 if { [[ "$CURRENT" == "main" && "$MERGING" == *"dev"* ]] ||
      [[ "$CURRENT" == "dev"  && "$MERGING" == *"main"* ]]; }; then

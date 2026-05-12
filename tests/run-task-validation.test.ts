@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
     checkAcCoveragePlaceholders,
     computeLatestValidationResults,
+    parseHandoffFiles,
     validateHandoffAgainstSpec,
     verifyHandoffAgainstDiffFromData,
 } from '../scripts/run-task/validation.js';
@@ -29,6 +30,28 @@ function withTempPair(
 
 function makeHandoffMap(entries: Record<string, readonly string[]>): Map<string, readonly string[]> {
     return new Map(Object.entries(entries));
+}
+
+function withTempTaskHandoff(
+    taskId: string,
+    handoffContent: string,
+    fn: () => void,
+): void {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-handoff-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'handoff.md'), handoffContent);
+
+    const prevOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        fn();
+    } finally {
+        if (prevOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 }
 
 void test('validateHandoffAgainstSpec rejects N/A for a required validation check', () => {
@@ -58,6 +81,58 @@ void test('validateHandoffAgainstSpec rejects N/A for a required validation chec
             assert.equal(issues.length, 1);
             assert.match(issues[0], /required checks cannot be skipped/);
             assert.match(issues[0], /npm run test:e2e/);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec fails closed when Validation Required is missing', () => {
+    withTempPair(
+        [
+            '# Spec',
+            '',
+            '## Overview',
+            '',
+            'This spec forgets to declare validation requirements.',
+            '',
+        ].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run lint` | Pass | ok |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, ['Validation Required section is missing from spec.md']);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec fails closed when Validation Required exists but lists no checked items', () => {
+    withTempPair(
+        [
+            '# Spec',
+            '',
+            '## Validation Required',
+            '',
+            '- [ ] `npm run lint`',
+            '- [ ] `npm run test`',
+            '',
+        ].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run lint` | Pass | ok |',
+            '| `npm run test` | Pass | ok |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, ['Validation Required section is missing from spec.md']);
         },
     );
 });
@@ -167,6 +242,90 @@ void test('verifyHandoffAgainstDiffFromData passes when handoff and diff agree',
         },
     );
     assert.deepEqual(issues, []);
+});
+
+void test('parseHandoffFiles unions baseline Changes and iteration Changes tables', () => {
+    withTempTaskHandoff('union-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/base.ts` | baseline change |',
+        '',
+        '## Iteration 2 — addressing review round 1',
+        '',
+        '### Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/iter.ts` | new file added in iteration 2 |',
+        '',
+        '### Findings addressed',
+        '',
+        '- _correctness bug:_ "example" → fixed',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseHandoffFiles('union-task'), ['src/base.ts', 'src/iter.ts']);
+    });
+});
+
+void test('parseHandoffFiles preserves single-round handoff behavior', () => {
+    withTempTaskHandoff('baseline-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/only.ts` | single-round change |',
+        '',
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm run lint` | Pass | fixture |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseHandoffFiles('baseline-task'), ['src/only.ts']);
+    });
+});
+
+void test('verifyHandoffAgainstDiffFromData accepts iteration-added files covered by iteration Changes tables', () => {
+    withTempTaskHandoff('iter-diff-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/base.ts` | baseline change |',
+        '',
+        '## Iteration 2 — addressing review round 1',
+        '',
+        '### Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/iter.ts` | iteration-added file |',
+        '',
+        '### Findings addressed',
+        '',
+        '- _correctness bug:_ "example" → fixed',
+        '',
+    ].join('\n'), () => {
+        const issues = verifyHandoffAgainstDiffFromData(
+            ['iter-diff-task'],
+            {
+                diffFiles: ['src/base.ts', 'src/iter.ts'],
+                handoffFilesByTask: makeHandoffMap({
+                    'iter-diff-task': parseHandoffFiles('iter-diff-task'),
+                }),
+            },
+        );
+        assert.deepEqual(issues, []);
+    });
 });
 
 void test('verifyHandoffAgainstDiffFromData rejects a handoff file missing from diff', () => {
