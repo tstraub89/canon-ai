@@ -3,6 +3,26 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.4.0] — 2026-05-11
+
+### Added
+
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`) and a POSIX-safe `npm test` glob so `main` / `dev` now run lint, type-check, audit, and unit tests in CI.
+- `scripts/run-task.ts` split into focused modules under `scripts/run-task/`, and prompt prose moved into Mustache templates with golden-output regression coverage.
+- `--dry-run` on `run-task`: prints the planned phases, agents, models, and effort without spawning an LLM session.
+- New `runtime_validation` phase between `implement` and `code_review`, with a `RUNTIME_CHECKS` registry and orchestrator-owned shell execution.
+- New iterative counter fields on `spec_review`, `code_review`, and `runtime_validation`: `iterations_current_loop`, `iterations_total`, `changes_requested_total`, and `auto_block_count`.
+- Prompt-fidelity regression suite plus `CANON_TASKS_DIR_OVERRIDE` and `CANON_PATTERNS_MD_PATH` test hooks.
+- Canon provenance stamping in `status.json.canon`, plus the `Canon Governance` section in `handoff.md`.
+
+### Fixed
+
+- Worktree telemetry and task-artifact sync no longer clobber main-checkout files with shorter worktree copies; `notes.md` is mirrored, `human_review` exits cleanly when done, and `REPO_ROOT` resolves correctly in linked worktrees.
+- The centralized AC Coverage check now parses the markdown table instead of pattern-matching prose, eliminating false positives.
+- Runtime validation no longer writes a second top-level baseline after a reroute; it keys the re-run path off `iterations_total`.
+- `cmd_reset_spec_review` now preserves cumulative counters instead of zeroing them, and `--reroute` resets only the current loop counter.
+- `task.sh phase` and `--ship` now honor the active task worktree, and the shell wrapper prefers the repo-local `tsx` binary before falling back to `npx`.
+
 ## [0.3.0] — 2026-05-10
 
 ### Added
