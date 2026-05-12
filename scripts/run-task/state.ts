@@ -50,12 +50,12 @@ export function resolveTaskCwd(taskId: string): string {
             if (branch) {
                 const existing = findExistingWorktreeForBranch(branch);
                 if (existing) return existing;
+                die(
+                    `Worktree for task '${taskId}' is expected but missing.\n` +
+                    `  Looked for ${directWorktree} and a worktree for branch '${branch}'.\n` +
+                    `  Restore or recreate the worktree before continuing.`,
+                );
             }
-            die(
-                `Worktree for task '${taskId}' is expected but missing.\n` +
-                `  Looked for ${directWorktree} and a worktree for branch '${branch || '(missing)'}'.\n` +
-                `  Restore or recreate the worktree before continuing.`,
-            );
         }
     } catch {
         // No readable status metadata — fall through to the main checkout.
