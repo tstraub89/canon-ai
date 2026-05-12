@@ -3,6 +3,13 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.4.4] — 2026-05-12
+
+### Fixed
+
+- Runtime-validation retry prompts now reference the correct artifact directory (`iter-N`) using the monotonic `runtimeIterations_total` counter instead of the per-loop `runtimeIterations` counter, which resets to 0 on approval. Previously, any runtime-validation failure after a successful first cycle would point Codex at a non-existent or stale path.
+- Closing `human_review` without a `handoff.md` present now fails closed with an explicit error instead of silently returning `ok: true`. Previously, `--ship` could archive a task with no validation evidence when the implement phase had not produced a handoff.
+
 ## [0.4.3] — 2026-05-11
 
 ### Fixed
