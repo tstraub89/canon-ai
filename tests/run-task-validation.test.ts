@@ -62,6 +62,58 @@ void test('validateHandoffAgainstSpec rejects N/A for a required validation chec
     );
 });
 
+void test('validateHandoffAgainstSpec fails closed when Validation Required is missing', () => {
+    withTempPair(
+        [
+            '# Spec',
+            '',
+            '## Overview',
+            '',
+            'This spec forgets to declare validation requirements.',
+            '',
+        ].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run lint` | Pass | ok |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, ['Validation Required section is missing from spec.md']);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec fails closed when Validation Required exists but lists no checked items', () => {
+    withTempPair(
+        [
+            '# Spec',
+            '',
+            '## Validation Required',
+            '',
+            '- [ ] `npm run lint`',
+            '- [ ] `npm run test`',
+            '',
+        ].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run lint` | Pass | ok |',
+            '| `npm run test` | Pass | ok |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, ['Validation Required section is missing from spec.md']);
+        },
+    );
+});
+
 void test('validateHandoffAgainstSpec matches by canonical command, ignoring spec annotations', () => {
     // Regression: a real task shipped with a spec line like
     // "`npm run test` — including the four new unit tests (3 in parser test

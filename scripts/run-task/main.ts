@@ -913,6 +913,26 @@ function runPostMergeHook(): void {
     }
 }
 
+export function commitArchiveChanges(
+    taskIds: string[],
+    baseBranch: string,
+    stagedPaths: readonly string[],
+): { committed: boolean; stderr?: string } {
+    for (const p of stagedPaths) gitSafe('add', '-A', '--', p);
+    const staged = gitSafe('diff', '--cached', '--name-only');
+    if (!staged.stdout.trim()) return { committed: false };
+
+    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
+    const commitResult = gitSafe('commit', '-m', `chore: archive ${label}`);
+    if (!commitResult.ok) {
+        return { committed: false, stderr: commitResult.stderr || 'unknown error' };
+    }
+
+    info(`Pushing ${baseBranch}...`);
+    git('push', 'origin', baseBranch);
+    return { committed: true };
+}
+
 /**
  * If the base branch is a release branch (release/v<X.Y>) and gh is available,
  * extract the version from package.json and create a GitHub release tag.
@@ -1031,6 +1051,8 @@ function shipTasks(taskIds: string[]): void {
     // Flush any telemetry before merging so the PR doesn't pick it up.
     if (taskIds.some(id => splitState.readStatus(id).worktree === true)) splitWorktree.flushWorktreeTelemetry();
 
+    splitGit.ensureCheckedOutBaseBranch(taskIds);
+
     // Merge open PRs and pull; if none found, assert the base is already in sync.
     const merged = mergeOpenPRsAndPull(taskIds);
     if (!merged) {
@@ -1069,17 +1091,14 @@ function shipTasks(taskIds: string[]): void {
         const status = splitState.readStatus(taskId);
         const hasWorktree = status.worktree === true;
 
-        // Teardown before writeStatus so the write targets REPO_ROOT — ensuring
-        // the archived tasks/<id>/status.json has the final completed state, not
-        // the stale last-committed snapshot.
+        // Teardown before the final write so the worktree can disappear cleanly.
         if (hasWorktree) splitWorktree.teardownWorktree(taskId);
 
         status.updated = new Date().toISOString().slice(0, 10);
         const humanReview = status.phases.human_review;
         if (humanReview) humanReview.status = 'done';
-        // writeStatus() derives top-level .status — with every phase now 'done',
-        // it becomes 'complete'. No direct assignment needed.
-        splitState.writeStatus(taskId, status);
+        // Write directly to the supervising checkout now that the worktree is gone.
+        splitState.writeStatusToFile(path.join(REPO_ROOT, 'tasks', taskId, 'status.json'), status);
 
         const src = taskDirFor(taskId);
         const dest = path.join(archiveDir, taskId);
@@ -1101,13 +1120,9 @@ function shipTasks(taskIds: string[]): void {
         path.join(REPO_ROOT, 'docs', 'lessons-learned.md'),
         path.join(REPO_ROOT, 'docs', 'task-quality-log.md'),
     ]);
-    for (const p of stagedPaths) gitSafe('add', '-A', '--', p);
-    const staged = gitSafe('diff', '--cached', '--name-only');
-    if (staged.stdout.trim()) {
-        const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
-        gitSafe('commit', '-m', `chore: archive ${label}`);
-        info(`Pushing ${baseBranch}...`);
-        git('push', 'origin', baseBranch);
+    const archiveCommit = commitArchiveChanges(taskIds, baseBranch, stagedPaths);
+    if (archiveCommit.stderr) {
+        die(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}`);
     }
 
     // Delete local task branches (safe to force — squash-merged).

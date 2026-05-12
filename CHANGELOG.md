@@ -3,6 +3,15 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.4.1] — 2026-05-11
+
+### Fixed
+
+- `--ship` now fails closed across worktree teardown and archive commit handling, instead of dropping the final `status.json` write or continuing after a failed archive commit.
+- Task branch creation now honors the declared `status.base_branch` strictly, and the ship path checks out the real base branch before merge/archive work.
+- Worktree-backed bundle tasks now resolve to the correct worktree instead of silently falling back to `REPO_ROOT`.
+- `validateHandoffAgainstSpec()` now rejects specs that omit `## Validation Required` or leave it empty, so handoff validation cannot be bypassed by an empty section.
+
 ## [0.4.0] — 2026-05-11
 
 ### Added
