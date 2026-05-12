@@ -15,6 +15,11 @@
 | 2026-05-08T03:22:35.127Z | handoff-verifier | implement | codex | gpt-5.4-mini | 0 | 98.3s | 18583065 | ok |
 | 2026-05-08T04:09:20.055Z | handoff-verifier | code_review | claude | sonnet | 0 | 334.6s | 897304 | ok |
 | 2026-05-08T04:12:48.050Z | handoff-verifier | qa | claude | sonnet | - | 207.7s | 787893 | ok |
+| 2026-05-08T17:35:25.599Z | adopt-eslint | spec_review | codex | gpt-5.4-mini | 0 | 75.8s | 511499 | ok |
+| 2026-05-08T17:42:00.484Z | adopt-eslint | plan | claude | sonnet | - | 143.9s | 547996 | ok |
+| 2026-05-08T17:50:30.769Z | adopt-eslint | implement | codex | gpt-5.4-mini | 0 | 509.5s | 6390098 | ok |
+| 2026-05-08T17:54:32.659Z | adopt-eslint | code_review | claude | sonnet | 0 | 240.0s | 1067039 | ok |
+| 2026-05-08T17:56:23.543Z | adopt-eslint | qa | claude | sonnet | - | 110.6s | 662989 | ok |
 | 2026-05-09T05:20:07.759Z | smoke-split-run-task | spec | claude | opus | - | 113.0s | 459995 | ok |
 | 2026-05-09T05:22:41.068Z | smoke-split-run-task | spec_review | codex | gpt-5.4-mini | 0 | 64.0s | 194496 | ok |
 | 2026-05-10T02:39:49.609Z | add-ci | spec_review | codex | gpt-5.4-mini | 0 | 88.7s | 560735 | ok |
