@@ -241,9 +241,9 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
                 if (fs.lstatSync(src).isSymbolicLink()) continue;
                 let needsCopy = !fs.existsSync(dest);
                 if (!needsCopy) {
-                    const a = fs.readFileSync(src);
-                    const b = fs.readFileSync(dest);
-                    needsCopy = a.length > b.length;
+                    const sourceContent = fs.readFileSync(src, 'utf8');
+                    const destinationContent = fs.readFileSync(dest, 'utf8');
+                    needsCopy = sourceContent !== destinationContent;
                 }
                 if (needsCopy) {
                     fs.copyFileSync(src, dest);

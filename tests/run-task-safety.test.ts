@@ -486,3 +486,54 @@ void test('syncWorktreeTelemetry skips shared-doc mirroring when repo checkout h
         }
     });
 });
+
+void test('syncWorktreeTelemetry copies shared docs even when the new content is the same length', () => {
+    withTempDir('run-task-sync-same-length-', dir => {
+        const repoDir = path.join(dir, 'repo');
+        const worktreesRoot = path.join(dir, 'dev-worktrees');
+        const worktreeDir = path.join(worktreesRoot, 'task-a');
+        fs.mkdirSync(repoDir, { recursive: true });
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+
+        const runGit = (args: string[], cwd = repoDir): string => {
+            const result = spawnSync('git', args, {
+                cwd,
+                encoding: 'utf8',
+            });
+            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
+            return result.stdout.trim();
+        };
+
+        runGit(['init', '-b', 'main']);
+        runGit(['config', 'user.email', 'canon@example.com']);
+        runGit(['config', 'user.name', 'Canon Bot']);
+        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'alpha beta\n', 'utf8');
+        runGit(['add', 'docs/architecture.md']);
+        runGit(['commit', '-m', 'initial']);
+
+        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'omega zeta\n', 'utf8');
+
+        try {
+            const syncScript = [
+                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('');
+            const result = runNodeInline(syncScript, {
+                ...process.env,
+                CANON_WORKTREES_ROOT: worktreesRoot,
+            }, repoDir);
+
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'omega zeta\n');
+            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'alpha beta\n');
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+                cwd: repoDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
