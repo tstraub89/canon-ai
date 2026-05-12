@@ -3,24 +3,33 @@ name: CI
 on:
   push:
     branches: [main, dev]
-    paths-ignore:
-      - 'AGENTS.md'
-      - 'CLAUDE.md'
-      - 'CODEX.md'
-      - 'docs/**'
-      - 'tasks/**'
-      - '.agent/**'
-      - '.github/**/*.md'
+    # `paths-ignore` doesn't support re-includes, so we use `paths` with
+    # negative globs to opt out of doc / task paths AND a final positive
+    # entry to re-include `tasks/_templates/**` — template changes affect
+    # generated artifacts and ARE covered by the test suite, so CI must
+    # run for them. Caught via CodeRabbit P2 on PR #45.
+    paths:
+      - '**'
+      - '!AGENTS.md'
+      - '!CLAUDE.md'
+      - '!CODEX.md'
+      - '!docs/**'
+      - '!tasks/**'
+      - 'tasks/_templates/**'
+      - '!.agent/**'
+      - '!.github/**/*.md'
   pull_request:
     branches: [main, dev]
-    paths-ignore:
-      - 'AGENTS.md'
-      - 'CLAUDE.md'
-      - 'CODEX.md'
-      - 'docs/**'
-      - 'tasks/**'
-      - '.agent/**'
-      - '.github/**/*.md'
+    paths:
+      - '**'
+      - '!AGENTS.md'
+      - '!CLAUDE.md'
+      - '!CODEX.md'
+      - '!docs/**'
+      - '!tasks/**'
+      - 'tasks/_templates/**'
+      - '!.agent/**'
+      - '!.github/**/*.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

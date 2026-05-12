@@ -4,7 +4,13 @@
 # See DEVELOPMENT.md for the branch strategy.
 
 CURRENT=$(git branch --show-current)
-MERGING=$(git name-rev --name-only "$MERGE_HEAD" 2>/dev/null | sed 's|remotes/origin/||')
+# Git provides MERGE_HEAD as a ref/file during a merge, not as a shell env var.
+# `git rev-parse MERGE_HEAD` resolves the ref to the commit SHA; from there
+# `git name-rev` gives us the human-readable branch name. Earlier `"$MERGE_HEAD"`
+# form expanded to empty so the guard never fired. Caught via CodeRabbit P1 on
+# PR #45.
+MERGE_HEAD_SHA=$(git rev-parse MERGE_HEAD 2>/dev/null)
+MERGING=$(git name-rev --name-only "$MERGE_HEAD_SHA" 2>/dev/null | sed 's|remotes/origin/||')
 
 if { [[ "$CURRENT" == "main" && "$MERGING" == *"dev"* ]] ||
      [[ "$CURRENT" == "dev"  && "$MERGING" == *"main"* ]]; }; then
