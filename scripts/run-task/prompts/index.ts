@@ -204,7 +204,7 @@ function buildRuntimeFailureEntries(tasks: readonly TaskContext[]): object[] {
         for (const row of latestRuntimeResults.values()) {
             if (row.result !== 'Fail' && row.result !== 'Timeout') continue;
             const safeName = sanitizeRuntimeCheckName(row.check);
-            const artifactPath = `tasks/${task.taskId}/runtime-check-output/${safeName}/iter-${task.runtimeIterations}/`;
+            const artifactPath = `tasks/${task.taskId}/runtime-check-output/${safeName}/iter-${task.runtimeIterations_total}/`;
             const stderrLogPath = path.join(resolveTaskCwd(task.taskId), artifactPath, 'stderr.log');
             let stderrContent: string;
             try {
