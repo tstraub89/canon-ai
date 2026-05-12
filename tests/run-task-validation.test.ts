@@ -806,10 +806,11 @@ void test('checkPhaseGate: qa rejects done.md template via the multi-sentinel de
     });
 });
 
-void test('checkPhaseGate: human_review has no artifact + no verdict requirement (always accepts)', () => {
+void test('checkPhaseGate: human_review rejects when handoff.md is missing', () => {
     withTempTaskDir(taskId => {
         const result = checkPhaseGate(taskId, 'human_review');
-        assert.deepEqual(result, { ok: true });
+        assert.equal(result.ok, false);
+        assert.match((result as { ok: false; reason: string }).reason, /handoff\.md/);
     });
 });
 
@@ -1017,10 +1018,11 @@ void test('checkPhaseGate human_review: accepts when no human_pending rows exist
     });
 });
 
-void test('checkPhaseGate human_review: accepts when handoff is missing entirely (prior-phase check catches that)', () => {
+void test('checkPhaseGate human_review: rejects when handoff is missing entirely (fail closed)', () => {
     withTempTaskDir(taskId => {
         const result = checkPhaseGate(taskId, 'human_review');
-        assert.deepEqual(result, { ok: true });
+        assert.equal(result.ok, false);
+        assert.match((result as { ok: false; reason: string }).reason, /handoff\.md/);
     });
 });
 
