@@ -993,6 +993,27 @@ function shipTasks(taskIds: string[]): void {
         }
     }
 
+    // 1b human_review invariant: --ship advances human_review.status directly
+    // (line ~1057) and bypasses task.sh, so the checkPhaseGate enforcement on
+    // task.sh wouldn't catch unresolved human_pending checks. Run the gate
+    // here explicitly. Only fires for tasks still at human_review (not those
+    // already at `complete` — those have already passed the gate). Caught
+    // via Codex review on the 1b inline change.
+    for (const taskId of taskIds) {
+        const currentPhase = getCurrentPhase(splitState.readStatus(taskId));
+        if (currentPhase !== 'human_review') continue;
+        const taskCwd = splitWorktree.getActiveCwd([taskId]);
+        const gateResult = splitValidation.checkPhaseGate(
+            taskId,
+            'human_review',
+            undefined,
+            path.join(taskCwd, 'tasks'),
+        );
+        if (!gateResult.ok) {
+            splitCli.die(`--ship aborted for '${taskId}': ${gateResult.reason}`);
+        }
+    }
+
     // Pre-flight: every local task branch with unpushed commits is a hard abort.
     // --ship later tears down the worktree and deletes the local branch; if local
     // has commits not on origin, those commits are lost forever (gone from any
