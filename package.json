@@ -8,11 +8,12 @@
     "node": "24.x"
   },
   "scripts": {
-    "test": "node --test --import tsx tests/**/*.test.ts",
+    "test": "node --test --import tsx tests/*.test.ts",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "task": "./scripts/task.sh",
     "run-task": "tsx scripts/run-task.ts",
-    "lint": "eslint scripts/ tests/"
+    "lint": "eslint scripts/ tests/",
+    "setup-hooks": "ln -sf ../../scripts/git-hooks/pre-merge-commit .git/hooks/pre-merge-commit && chmod +x .git/hooks/pre-merge-commit && echo 'Git hooks installed.'"
   },
   "devDependencies": {
     "@types/mustache": "^4.2.6",

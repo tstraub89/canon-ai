@@ -22,11 +22,26 @@ export function extractAffectedFiles(taskId: string): string[] {
     }
 }
 
+function isSafeRepoPath(file: string): boolean {
+    if (path.isAbsolute(file) || file.includes('..')) return false;
+    const resolved = path.resolve(REPO_ROOT, file);
+    if (!resolved.startsWith(REPO_ROOT + path.sep)) return false;
+    // For existing files, also verify realpath to catch symlinks escaping the tree.
+    try {
+        const real = fs.realpathSync(resolved);
+        if (!real.startsWith(REPO_ROOT + path.sep)) return false;
+    } catch {
+        // File doesn't exist yet (new file) — path check passed, allow.
+    }
+    return true;
+}
+
 export function buildContextBlock(taskIds: string[]): string {
     const allFiles = new Map<string, string>();
     for (const taskId of taskIds) {
         for (const file of extractAffectedFiles(taskId)) {
             if (allFiles.has(file)) continue;
+            if (!isSafeRepoPath(file)) continue;
             const filePath = path.join(REPO_ROOT, file);
             try {
                 allFiles.set(file, fs.readFileSync(filePath, 'utf8'));
@@ -91,6 +106,7 @@ export function summarizePreloadStatus(taskIds: string[]): string {
     for (const taskId of taskIds) {
         for (const file of extractAffectedFiles(taskId)) {
             if (files.has(file)) continue;
+            if (!isSafeRepoPath(file)) continue;
             const filePath = path.join(REPO_ROOT, file);
             try {
                 files.set(file, fs.statSync(filePath).size);
@@ -145,8 +161,8 @@ export function buildImplementStateHeader(state: PipelineState, mode: ImplementM
     const taskIds = tasks.map(t => t.taskId);
     const primary = tasks[0];
 
-    const maxCodeReviewIter = tasks.reduce((max, task) => Math.max(max, task.iterations), 0);
-    const maxRuntimeIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations), 0);
+    const maxCodeReviewIter = tasks.reduce((max, task) => Math.max(max, task.iterations_current_loop), 0);
+    const maxRuntimeIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations_current_loop), 0);
     const revisionExplain = maxCodeReviewIter > 0 && maxRuntimeIter > 0
         ? `addressing code-review feedback (iteration ${maxCodeReviewIter + 1}) and runtime validation failures — read tasks/<id>/review.md and the runtime failure section below`
         : maxCodeReviewIter > 0

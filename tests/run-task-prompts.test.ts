@@ -115,15 +115,29 @@ function makeStatus(overrides: Partial<StatusJson> = {}): StatusJson {
 }
 
 function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
-    return {
+    const task = {
         taskId: TASK_ID,
         title: 'Prompt fidelity fixture',
-        specReviewVerdict: '',
+        specReviewVerdict: '' as TaskContext['specReviewVerdict'],
         iterations: 0,
+        iterations_current_loop: 0,
+        iterations_total: 0,
         runtimeIterations: 0,
+        runtimeIterations_current_loop: 0,
+        runtimeIterations_total: 0,
         rerouteCount: 0,
         status: makeStatus(),
         ...overrides,
+    };
+    return {
+        ...task,
+        iterations: task.iterations ?? 0,
+        iterations_current_loop: task.iterations_current_loop ?? task.iterations ?? 0,
+        iterations_total: task.iterations_total ?? task.iterations_current_loop ?? task.iterations ?? 0,
+        runtimeIterations: task.runtimeIterations ?? 0,
+        runtimeIterations_current_loop: task.runtimeIterations_current_loop ?? task.runtimeIterations ?? 0,
+        runtimeIterations_total:
+            task.runtimeIterations_total ?? task.runtimeIterations_current_loop ?? task.runtimeIterations ?? 0,
     };
 }
 
@@ -169,9 +183,9 @@ before(() => {
     baseState = makeState(baseTask);
     specRevisionState = makeState(makeTask({ specReviewVerdict: 'changes_requested' }));
     planState = makeState(makeTask({ specReviewVerdict: 'approved' }));
-    iterState = makeState(makeTask({ iterations: 1 }));
+    iterState = makeState(makeTask({ iterations: 1, iterations_current_loop: 1, iterations_total: 1 }));
     rerouteState = makeState(makeTask({ rerouteCount: 1, specReviewVerdict: 'approved' }));
-    codeReviewRoundNState = makeState(makeTask({ iterations: 1 }));
+    codeReviewRoundNState = makeState(makeTask({ iterations: 1, iterations_current_loop: 1, iterations_total: 1 }));
 });
 
 after(() => {

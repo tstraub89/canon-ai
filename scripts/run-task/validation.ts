@@ -5,6 +5,7 @@ import { parseTable, parseTableH3, extractSectionBodies } from './markdown-table
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { taskDirFor } from './state.js';
+import type { Phase, Verdict } from './types.js';
 
 export function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -180,8 +181,69 @@ export function isPassResult(result: string): boolean {
     return result.trim().toLowerCase().startsWith('pass');
 }
 
+// Legacy `N/A` value. Pre-enum tasks use it for "doesn't apply." Kept as a
+// recognized state forever — adopters mid-flight have it in their handoffs.
 export function isNAResult(result: string): boolean {
     return /^n\/?a\b/i.test(result.trim());
+}
+
+// 1b validation-result enum extensions.
+//
+// Replaces the binary pass/fail (+ ambiguous N/A) classification with
+// finer-grained states surfaced from TokenAnxiety's ui-002 dogfood report:
+// human-only checks (OAuth, cross-browser, deployed-only smoke) were being
+// approved before the human actually ran them, because there was no enum
+// state distinguishing "agent skipped this because it can't run it" from
+// "this passed" or "this doesn't apply."
+
+// `not_configured` — the spec doesn't require this check for this task
+// type. Replaces most current N/A uses on a forward-looking basis.
+export function isNotConfiguredResult(result: string): boolean {
+    return /^not[_ -]?configured\b/i.test(result.trim());
+}
+
+// `human_pending` — only a human can run this check (OAuth, cross-browser,
+// deployed-only smoke). Task cannot close `human_review` until resolved
+// unless the human writes an explicit waiver in done.md.
+export function isHumanPendingResult(result: string): boolean {
+    return /^human[_ -]?pending\b/i.test(result.trim());
+}
+
+// `deferred_by_spec` — explicitly out of scope per the spec. Requires
+// spec citation in the row's Notes column to be valid.
+export function isDeferredBySpecResult(result: string): boolean {
+    return /^deferred[_ -]?by[_ -]?spec\b/i.test(result.trim());
+}
+
+// `blocked` — check would have run but infrastructure was unavailable
+// (CI down, network out). Distinct from `fail` (real defect) — triage
+// is required before deciding pass/fail. Treated as a soft fail in
+// validateHandoffAgainstSpec so the operator notices.
+export function isBlockedResult(result: string): boolean {
+    return /^blocked\b/i.test(result.trim());
+}
+
+// `fail` — explicit failure (catches "Fail" / "FAIL" / "failed" variants).
+// Used by validateHandoffAgainstSpec to surface failures explicitly.
+export function isFailResult(result: string): boolean {
+    return /^fail/i.test(result.trim());
+}
+
+// `pending` — verdict not yet recorded for the row. Validation result
+// rows that are still in the template state or blank get this. Treated
+// as "missing" by validateHandoffAgainstSpec.
+//
+// CRITICAL: `isPassResult` is prefix-based — `Pass / Fail / ...` would
+// otherwise be parsed as a real Pass, silently approving untouched
+// template rows. The `/\bPass\s*\/\s*Fail\b/i` check catches both the
+// legacy template (`Pass / Fail / N/A`) and the 1b template (which
+// adds more result names after `Pass / Fail / ...`). Codex P1 on the
+// 1b inline change.
+export function isPendingResult(result: string): boolean {
+    const trimmed = result.trim();
+    if (!trimmed) return true;
+    if (/\bPass\s*\/\s*Fail\b/i.test(trimmed)) return true;
+    return false;
 }
 
 export function validateHandoffAgainstSpec(
@@ -215,16 +277,65 @@ export function validateHandoffAgainstSpec(
             issues.push(`Validation Required item missing from handoff.md: ${required}`);
             continue;
         }
-        if (isNAResult(row.result)) {
-            issues.push(`Validation Required item marked N/A in handoff.md: ${required}`);
+        const note = row.notes ? ` (${row.notes})` : '';
+
+        // Required items in `pending` template state count as missing — the
+        // agent didn't actually fill in the row.
+        if (isPendingResult(row.result)) {
+            issues.push(`Validation Required item missing from handoff.md: ${required}`);
+            continue;
+        }
+        if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
+            issues.push(`Validation Required item marked ${row.result} in handoff.md: ${required} (required checks cannot be skipped — adjust spec or run the check)`);
+            continue;
+        }
+        // `deferred_by_spec` valid only with a spec citation in Notes.
+        if (isDeferredBySpecResult(row.result)) {
+            if (!/spec[:.-]/i.test(row.notes ?? '')) {
+                issues.push(`Validation Required item marked deferred_by_spec without a spec citation in Notes: ${required}`);
+            }
+            continue;
+        }
+        // `human_pending` is a soft state — valid in handoff (the human will
+        // pick this up at human_review). NOT a validateHandoffAgainstSpec
+        // failure. The `human_review.done` gate enforces zero human_pending
+        // before the task closes.
+        if (isHumanPendingResult(row.result)) {
+            continue;
+        }
+        // `blocked` is a hard fail at the handoff layer — infrastructure
+        // unavailable means the check status is unknown, which is not a
+        // valid "I ran it" state.
+        if (isBlockedResult(row.result)) {
+            issues.push(`Validation Required item marked blocked in handoff.md: ${required}${note} — triage required (CI/network/infrastructure)`);
             continue;
         }
         if (!isPassResult(row.result)) {
-            const note = row.notes ? ` (${row.notes})` : '';
             issues.push(`Validation Required item did not pass in handoff.md: ${required} — ${row.result}${note}`);
         }
     }
     return issues;
+}
+
+// Count `human_pending` rows in a handoff's Validation Outcomes table (latest
+// iteration's results, computed via the cumulative reader). Used by
+// `checkPhaseGate` to gate `human_review.done` — a task closing the human
+// gate with unresolved human_pending checks is closing on incomplete
+// evidence (TokenAnxiety ui-002 pattern).
+export function countHumanPendingChecks(handoffContent: string): { check: string; notes: string }[] {
+    const latest = computeLatestValidationResults(handoffContent);
+    const pending: { check: string; notes: string }[] = [];
+    for (const row of latest.values()) {
+        if (isHumanPendingResult(row.result)) pending.push({ check: row.check, notes: row.notes });
+    }
+    return pending;
+}
+
+// Detects an operator-written waiver for human_pending checks in done.md.
+// Pattern: a line starting with "Acknowledged:" — case-insensitive, leading
+// whitespace allowed. The human types this to explicitly defer follow-up.
+export function hasHumanPendingWaiver(doneContent: string): boolean {
+    return /^\s*acknowledged\s*:/im.test(doneContent);
 }
 
 function autoCommitAllowedSourceBypass(filePath: string): boolean {
@@ -268,6 +379,22 @@ const DONE_MD_TEMPLATE_SENTINELS = [
     '`src/...` — brief note',
 ];
 
+// Generic template-detector for the most common task-artifact templates
+// (spec.md, plan.md, spec-review.md, review.md). The `[TASK-ID]` sentinel
+// is present in every template's header and survives into rendered tasks
+// until an agent rewrites the file substantively. A `null` content (file
+// missing on disk) is also treated as "unfilled" so callers can do a
+// single check rather than guarding for null first.
+//
+// Centralized here in validation.ts (rather than the duplicated copies
+// previously in main.ts, code-review.ts, spec-review.ts, plan.ts) so that
+// 1a-2's `checkPhaseGate` and existing post-Codex template guards share
+// one definition.
+export function isTemplateUnfilled(content: string | null): boolean {
+    if (content === null) return true;
+    return content.includes('[TASK-ID]');
+}
+
 export function isDoneMdTemplate(donePath: string): boolean {
     let content: string;
     try {
@@ -283,6 +410,168 @@ export function extractDoneMdFromStdout(stdout: string): string {
     if (!trimmed) return '';
     if (!/^#\s+(QA Summary|Completion Summary)\b/m.test(trimmed)) return '';
     return trimmed + '\n';
+}
+
+// Match `- [x] **Approved**` and variants in a review/spec-review artifact.
+//
+// Review artifacts are cumulative: round 1 uses the top-level Stage 1 / Stage 2 /
+// `## Final Verdict` structure; subsequent rounds append `## Round N — ...` h2
+// sections each containing their own `### Verdict for this round` checkboxes.
+// On multi-round reviews we must read only the *latest* round's verdict —
+// otherwise a stale round-1 "Approved" can advance the pipeline even after a
+// later round flipped to "Changes requested".
+//
+// Templates are inconsistent: `## Final Verdict` (round 1) uses bolded labels
+// (`**Approved**`), but the `## Round N` re-review template uses unbolded
+// labels (`- [x] Approved`). Accept both so evidence auto-advance works on
+// both round-1 and round-N+ reviews.
+export function extractCheckedVerdict(content: string): Verdict | null {
+    const roundBodies = extractSectionBodies(content, /^## Round\b/);
+    const scope = roundBodies.length > 0 ? roundBodies[roundBodies.length - 1] : content;
+    // Order matters: check "Approved with nits" *before* plain "Approved" so the
+    // shorter prefix doesn't shadow the longer phrase when bold markers are absent.
+    if (/^- \[x\] (?:\*\*)?Approved with nits(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved_with_nits';
+    if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved';
+    if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'changes_requested';
+    if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'needs_re_review';
+    return null;
+}
+
+// 1a-2 phase gate.
+//
+// Centralized invariant check called before `task.sh phase <id> <phase> done`
+// accepts the transition. Per BACKLOG §"Status counter consistency + artifact-
+// invariant gate before phase advancement": each phase that produces an
+// artifact requires that artifact to exist and be substantively filled
+// (not the unfilled template). Each phase that has a verdict requires that
+// verdict to be non-empty AND, when the verdict lives in the artifact,
+// parseable from the artifact and consistent with what's being recorded
+// in status.json.
+//
+// Replaces the scattered post-Codex template checks in phases/spec-review.ts,
+// phases/code-review.ts, phases/plan.ts — those still fire today but the
+// gate now also covers the manual `task.sh phase` path so operators can't
+// silently advance a phase whose artifact is template-only.
+
+export type PhaseGateResult = { ok: true } | { ok: false; reason: string };
+
+type PhaseGateConfig = {
+    artifactName?: string;
+    requiresVerdict?: boolean;
+    verdictMustMatchArtifact?: boolean;
+    // Phase-specific template detector. Defaults to isTemplateUnfilled.
+    // qa.done.md uses a stricter multi-sentinel detector.
+    customTemplateCheck?: (artifactPath: string) => boolean;
+};
+
+const PHASE_GATE_CONFIG: Record<Phase, PhaseGateConfig> = {
+    spec: { artifactName: 'spec.md' },
+    spec_review: { artifactName: 'spec-review.md', requiresVerdict: true, verdictMustMatchArtifact: true },
+    plan: { artifactName: 'plan.md' },
+    implement: { artifactName: 'handoff.md' },
+    // runtime_validation has no per-task artifact file — the phase's results
+    // live in a section appended to handoff.md by the orchestrator. The
+    // gate doesn't require a verdict here because (a) the orchestrator's
+    // direct setRuntimeValidationPhase() writes always include a verdict
+    // and bypass task.sh entirely, and (b) the existing task.sh CLI
+    // contract treats verdict as optional for runtime_validation (see
+    // the verdict-validation block earlier in cmd_phase). Tightening this
+    // would break documented manual-repair paths without adding real
+    // enforcement against the orchestrator's own writes.
+    runtime_validation: {},
+    code_review: { artifactName: 'review.md', requiresVerdict: true, verdictMustMatchArtifact: true },
+    qa: { artifactName: 'done.md', customTemplateCheck: isDoneMdTemplate },
+    // human_review's gate logic lives in checkPhaseGate's switch below — it
+    // can't be expressed by the standard artifact/verdict config because the
+    // rule cross-references handoff.md (validation outcomes) + done.md
+    // (waiver text).
+    human_review: {},
+};
+
+function resolveTaskDirForValidation(taskId: string, taskDirOverride?: string): string {
+    return taskDirOverride ? path.join(taskDirOverride, taskId) : taskDirFor(taskId);
+}
+
+export function checkPhaseGate(
+    taskId: string,
+    phase: Phase,
+    verdict?: string,
+    taskDirOverride?: string,
+): PhaseGateResult {
+    const config = PHASE_GATE_CONFIG[phase];
+    const taskDir = resolveTaskDirForValidation(taskId, taskDirOverride);
+
+    if (config.artifactName) {
+        const artifactPath = path.join(taskDir, config.artifactName);
+        let content: string;
+        try {
+            content = fs.readFileSync(artifactPath, 'utf8');
+        } catch {
+            return { ok: false, reason: `${config.artifactName} is missing for phase '${phase}'` };
+        }
+
+        const isTemplate = config.customTemplateCheck
+            ? config.customTemplateCheck(artifactPath)
+            : isTemplateUnfilled(content);
+        if (isTemplate) {
+            return { ok: false, reason: `${config.artifactName} is still the unfilled template for phase '${phase}'` };
+        }
+
+        if (config.verdictMustMatchArtifact) {
+            if (!verdict) {
+                return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
+            }
+            const extracted = extractCheckedVerdict(content);
+            if (!extracted) {
+                return { ok: false, reason: `${config.artifactName} has no checked verdict checkbox` };
+            }
+            if (extracted !== verdict) {
+                return { ok: false, reason: `verdict mismatch: status.json wants '${verdict}', ${config.artifactName} has '${extracted}'` };
+            }
+        }
+    }
+
+    if (config.requiresVerdict && !config.verdictMustMatchArtifact) {
+        // Verdict required but not parseable from an artifact (runtime_validation).
+        if (!verdict) {
+            return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
+        }
+    }
+
+    // human_review.done: reject if any handoff validation row is human_pending
+    // and the operator hasn't written an explicit waiver in done.md. Catches
+    // the TokenAnxiety ui-002 pattern (task closed before the human ran OAuth
+    // / cross-browser / deployed-only smoke checks).
+    if (phase === 'human_review') {
+        const handoffPath = path.join(taskDir, 'handoff.md');
+        let handoffContent: string;
+        try {
+            handoffContent = fs.readFileSync(handoffPath, 'utf8');
+        } catch {
+            // No handoff to inspect — implement phase probably didn't run yet.
+            // The prior-phase-done check in task.sh catches that case earlier.
+            return { ok: true };
+        }
+        const pending = countHumanPendingChecks(handoffContent);
+        if (pending.length === 0) return { ok: true };
+
+        const donePath = path.join(taskDir, 'done.md');
+        let doneContent = '';
+        try { doneContent = fs.readFileSync(donePath, 'utf8'); } catch { /* missing — fall through */ }
+        if (hasHumanPendingWaiver(doneContent)) return { ok: true };
+
+        const list = pending.map(p => `    - ${p.check}${p.notes ? ` (${p.notes})` : ''}`).join('\n');
+        return {
+            ok: false,
+            reason:
+                `human_review cannot close with ${pending.length} unresolved human_pending check${pending.length === 1 ? '' : 's'}:\n${list}\n` +
+                `  Resolve: either run the check and update its row in handoff.md to Pass/Fail, ` +
+                `or add an explicit waiver to done.md (a line beginning with "Acknowledged: ...") ` +
+                `documenting the deferral and rationale.`,
+        };
+    }
+
+    return { ok: true };
 }
 
 export function parseHandoffFiles(taskId: string): string[] {

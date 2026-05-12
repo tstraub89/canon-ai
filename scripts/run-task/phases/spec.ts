@@ -21,7 +21,9 @@ export async function runSpecPhase(
         const result = await runClaude(promptSpecRevision(state), interactive, resumeId, cfg.model, cfg.effort, {
             taskId: taskIds.join('+'),
             phase: 'spec',
-            iteration: tasks[0].status.phases.spec?.iterations,
+            iteration: tasks[0].status.phases.spec?.iterations_current_loop
+                ?? tasks[0].status.phases.spec?.iterations
+                ?? 0,
         });
         return { agent: 'claude', sessionId: result.sessionId, exitCode: result.exitCode };
     }
@@ -33,7 +35,9 @@ export async function runSpecPhase(
     const result = await runClaude(promptSpec(state), interactive, null, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'spec',
-        iteration: tasks[0].status.phases.spec?.iterations,
+        iteration: tasks[0].status.phases.spec?.iterations_current_loop
+            ?? tasks[0].status.phases.spec?.iterations
+            ?? 0,
     });
     return { agent: 'claude', sessionId: result.sessionId, exitCode: result.exitCode };
 }

@@ -55,9 +55,9 @@ void test('validateHandoffAgainstSpec rejects N/A for a required validation chec
         ].join('\n'),
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.deepEqual(issues, [
-                'Validation Required item marked N/A in handoff.md: `npm run test:e2e`',
-            ]);
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /required checks cannot be skipped/);
+            assert.match(issues[0], /npm run test:e2e/);
         },
     );
 });
@@ -507,3 +507,414 @@ void test('verifyHandoffAgainstDiffFromData: rename whose either side is a pipel
 // in main.ts. Manual smoke covered by routine canon-on-canon ship cycles.
 // (Not adding a unit test here — the fallback path is exercised by every
 // existing task in the repo whose status.branch is absent.)
+
+// ─── 1a-2 phase gate ───
+// checkPhaseGate fires before task.sh advances a phase to `done`. Each
+// case below tests one accept/reject branch of the gate. The CLI wrapper
+// (check-phase-gate.ts) is just argv parsing + exit-code mapping around
+// this function; integration test via task.sh would duplicate the unit
+// coverage.
+
+import { checkPhaseGate } from '../scripts/run-task/validation.js';
+
+function withTempTaskDir(
+    fn: (taskId: string, taskDirRoot: string) => void,
+): void {
+    // Build tasks/<id>/ under a temp root so checkPhaseGate's taskDirFor()
+    // resolves there via CANON_TASKS_DIR_OVERRIDE — same pattern
+    // prompt-fidelity-tests uses to point production reads at a temp
+    // fixture dir.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-gate-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const taskId = `phase-gate-task`;
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    const prevOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        fn(taskId, taskDir);
+    } finally {
+        if (prevOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+void test('checkPhaseGate: spec phase accepts a filled spec.md', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), '# Spec: real task — Real Title\n\n## Problem\n\nReal problem.\n');
+        const result = checkPhaseGate(taskId, 'spec');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+void test('checkPhaseGate: spec phase rejects a template-only spec.md', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), '# Spec: [TASK-ID] — [Title]\n\n## Problem\n\nDescribe...\n');
+        const result = checkPhaseGate(taskId, 'spec');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /spec\.md is still the unfilled template/);
+    });
+});
+
+void test('checkPhaseGate: spec phase rejects when spec.md is missing', () => {
+    withTempTaskDir(taskId => {
+        const result = checkPhaseGate(taskId, 'spec');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /spec\.md is missing/);
+    });
+});
+
+void test('checkPhaseGate: code_review accepts when review.md is filled AND verdict matches checked box', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), [
+            '# Code Review: real task',
+            '',
+            '## Final Verdict',
+            '',
+            '- [x] **Approved**',
+            '- [ ] **Changes requested**',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'code_review', 'approved');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+void test('checkPhaseGate: code_review rejects when verdict argument disagrees with checked box in review.md', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), [
+            '# Code Review: real task',
+            '',
+            '## Final Verdict',
+            '',
+            '- [x] **Changes requested**',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'code_review', 'approved');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /verdict mismatch/);
+    });
+});
+
+void test('checkPhaseGate: code_review rejects when review.md has no checked verdict box', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), [
+            '# Code Review: real task',
+            '',
+            '## Final Verdict',
+            '',
+            '- [ ] **Approved**',
+            '- [ ] **Changes requested**',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'code_review', 'approved');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /no checked verdict checkbox/);
+    });
+});
+
+void test('checkPhaseGate: code_review rejects when verdict is not provided', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), '# Code Review: real task\n\n- [x] **Approved**\n');
+        const result = checkPhaseGate(taskId, 'code_review', undefined);
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /requires a verdict argument/);
+    });
+});
+
+void test('checkPhaseGate: runtime_validation has no gate (CLI contract: verdict optional, orchestrator writes always include one)', () => {
+    // The gate does not enforce a verdict on runtime_validation manual
+    // transitions — the orchestrator's setRuntimeValidationPhase() bypasses
+    // task.sh entirely and always provides a verdict via its direct write
+    // path. Manual `task.sh phase X runtime_validation done` without a
+    // verdict is treated as a deliberate repair action by the operator.
+    withTempTaskDir(taskId => {
+        assert.deepEqual(checkPhaseGate(taskId, 'runtime_validation', 'approved'), { ok: true });
+        assert.deepEqual(checkPhaseGate(taskId, 'runtime_validation', undefined), { ok: true });
+    });
+});
+
+void test('checkPhaseGate: qa rejects done.md template via the multi-sentinel detector', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'done.md'), [
+            '# QA Summary: real task',
+            '',
+            '## What Changed',
+            '',
+            'One paragraph, plain English. No code jargon.',  // sentinel from isDoneMdTemplate
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'qa');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /done\.md is still the unfilled template/);
+    });
+});
+
+void test('checkPhaseGate: human_review has no artifact + no verdict requirement (always accepts)', () => {
+    withTempTaskDir(taskId => {
+        const result = checkPhaseGate(taskId, 'human_review');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+// ─── 1b validation result enum + human_review gate ───
+
+import {
+    countHumanPendingChecks,
+    hasHumanPendingWaiver,
+    isHumanPendingResult,
+    isBlockedResult,
+    isDeferredBySpecResult,
+    isNotConfiguredResult,
+    isPendingResult,
+} from '../scripts/run-task/validation.js';
+
+void test('result enum: state-detector helpers recognize each new value (case + delim variants)', () => {
+    assert.ok(isHumanPendingResult('human_pending'));
+    assert.ok(isHumanPendingResult('Human Pending'));
+    assert.ok(isHumanPendingResult('HUMAN-PENDING'));
+    assert.ok(isBlockedResult('blocked'));
+    assert.ok(isBlockedResult('BLOCKED'));
+    assert.ok(isDeferredBySpecResult('deferred_by_spec'));
+    assert.ok(isDeferredBySpecResult('Deferred By Spec'));
+    assert.ok(isNotConfiguredResult('not_configured'));
+    assert.ok(isNotConfiguredResult('Not Configured'));
+    assert.ok(isPendingResult(''));
+    assert.ok(isPendingResult('Pass / Fail / N/A'));  // template-row state
+    assert.equal(isHumanPendingResult('pass'), false);
+    assert.equal(isBlockedResult('human_pending'), false);
+});
+
+void test('validateHandoffAgainstSpec: human_pending on a required check is accepted (soft state)', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run e2e:safari`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run e2e:safari` | human_pending | Safari unavailable on Linux CI |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, []);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: blocked on a required check fails with triage-required message', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | blocked | CI infra down |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /blocked/);
+            assert.match(issues[0], /triage required/);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: deferred_by_spec without a spec citation in Notes is rejected', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | deferred_by_spec | wasn\'t needed |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /without a spec citation/);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: deferred_by_spec with a spec citation in Notes is accepted', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | deferred_by_spec | Spec: §Non-Goals explicitly defers this. |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, []);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: not_configured on a required check fails (cannot skip)', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | not_configured | (intent: skip) |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /required checks cannot be skipped/);
+        },
+    );
+});
+
+void test('countHumanPendingChecks: returns matching rows with check name + notes', () => {
+    const handoff = [
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm run lint` | Pass | clean |',
+        '| `npm run e2e:safari` | human_pending | needs macOS Safari |',
+        '| `npm run e2e:firefox` | human_pending |  |',
+        '| `npm run test` | Fail | unrelated |',
+        '',
+    ].join('\n');
+    const pending = countHumanPendingChecks(handoff);
+    assert.equal(pending.length, 2);
+    assert.equal(pending[0].check, '`npm run e2e:safari`');
+    assert.match(pending[0].notes, /macOS Safari/);
+    assert.equal(pending[1].check, '`npm run e2e:firefox`');
+});
+
+void test('hasHumanPendingWaiver: matches an "Acknowledged:" line in done.md', () => {
+    assert.ok(hasHumanPendingWaiver('## Decisions\n\nAcknowledged: Safari/Firefox e2e deferred to post-merge by team agreement.\n'));
+    assert.ok(hasHumanPendingWaiver('   acknowledged: deferred  '));  // leading whitespace + lowercase ok
+    assert.equal(hasHumanPendingWaiver('## Done\n\nAll good.\n'), false);
+});
+
+void test('checkPhaseGate human_review: rejects when handoff has unresolved human_pending and no waiver', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run e2e:safari` | human_pending | needs Safari |',
+            '',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'human_review');
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+            assert.match(result.reason, /human_review cannot close/);
+            assert.match(result.reason, /e2e:safari/);
+            assert.match(result.reason, /add an explicit waiver/);
+        }
+    });
+});
+
+void test('checkPhaseGate human_review: accepts when handoff has human_pending but done.md has waiver', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run e2e:safari` | human_pending | needs Safari |',
+            '',
+        ].join('\n'));
+        fs.writeFileSync(path.join(taskDir, 'done.md'), [
+            '# Done',
+            '',
+            'Acknowledged: Safari e2e deferred to post-merge — covered by Firefox locally.',
+            '',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'human_review');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+void test('checkPhaseGate human_review: accepts when no human_pending rows exist', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run lint` | Pass | clean |',
+            '| `npm run test` | Pass | 50/50 |',
+            '',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'human_review');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+void test('checkPhaseGate human_review: accepts when handoff is missing entirely (prior-phase check catches that)', () => {
+    withTempTaskDir(taskId => {
+        const result = checkPhaseGate(taskId, 'human_review');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
+void test('checkPhaseGate human_review: honors an explicit task root override for worktree callers', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-gate-override-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const taskId = 'phase-gate-worktree';
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm run e2e:safari` | human_pending | needs Safari |',
+        '',
+    ].join('\n'));
+    const result = checkPhaseGate(taskId, 'human_review', undefined, tasksRoot);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+        assert.match(result.reason, /human_review cannot close/);
+        assert.match(result.reason, /e2e:safari/);
+    }
+});
+
+void test('regression: isPendingResult catches 1b template sentinel so untouched rows do not silently pass', () => {
+    // Codex P1 on the 1b inline change: isPassResult is prefix-based, so the
+    // new template cell `Pass / Fail / not_configured / human_pending / ...`
+    // would otherwise be parsed as a Pass. isPendingResult must catch it.
+    assert.ok(isPendingResult('Pass / Fail / N/A'));  // legacy template
+    assert.ok(isPendingResult('Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked'));  // 1b template
+    assert.ok(isPendingResult('  Pass / Fail / not_configured  '));  // whitespace tolerant
+    assert.equal(isPendingResult('Pass'), false);
+    assert.equal(isPendingResult('pass'), false);
+});
+
+void test('regression: validateHandoffAgainstSpec rejects a row with the 1b template Result cell', () => {
+    // Belt-and-suspenders: prove the end-to-end behavior (untouched template
+    // row → required check reported as missing, not silently passing).
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run lint`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run lint` | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /missing from handoff/);
+        },
+    );
+});

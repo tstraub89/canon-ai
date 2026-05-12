@@ -102,7 +102,7 @@ export async function runClaude(
                 onLine,
             });
 
-            if (useResumeId && CLAUDE_RESUME_NOT_FOUND_RE.test(result.capturedStderr + result.capturedStdout)) {
+            if (useResumeId && CLAUDE_RESUME_NOT_FOUND_RE.test(result.capturedStderr)) {
                 return { resumeNotFound: true, result: null };
             }
 

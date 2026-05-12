@@ -40,16 +40,30 @@ function setRuntimeValidationPhase(
         agent: 'orchestrator',
         verdict: '',
         iterations: 0,
+        iterations_current_loop: 0,
+        iterations_total: 0,
+        changes_requested_total: 0,
+        auto_block_count: 0,
     };
     const entry = taskStatus.phases.runtime_validation;
     entry.status = status;
     entry.agent = 'orchestrator';
+    entry.iterations_current_loop = entry.iterations_current_loop ?? entry.iterations ?? 0;
+    entry.iterations_total = entry.iterations_total ?? entry.iterations ?? 0;
+    entry.changes_requested_total = entry.changes_requested_total ?? 0;
+    entry.auto_block_count = entry.auto_block_count ?? 0;
     if (verdict) {
         entry.verdict = verdict;
-        entry.iterations = entry.iterations ?? 0;
-        if (verdict === 'changes_requested') entry.iterations += 1;
-        if (verdict === 'approved') entry.iterations = 0;
+        if (verdict === 'changes_requested') {
+            entry.iterations_current_loop += 1;
+            entry.iterations_total += 1;
+            entry.changes_requested_total += 1;
+        } else if (verdict === 'approved') {
+            entry.iterations_total += 1;
+            entry.iterations_current_loop = 0;
+        }
     }
+    entry.iterations = entry.iterations_current_loop;
     taskStatus.updated = new Date().toISOString().slice(0, 10);
     writeStatus(taskId, taskStatus);
 }
@@ -429,7 +443,7 @@ export async function runRuntimeValidationPhase(
     checks?: readonly RuntimeCheck[],
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
-    const maxIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations), 0);
+    const maxIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations_current_loop), 0);
     const runtimeLoopCap = getMaxReviewLoops(tasks);
     if (maxIter >= runtimeLoopCap) {
         const reason =
@@ -437,7 +451,7 @@ export async function runRuntimeValidationPhase(
             `(limit: ${runtimeLoopCap}). Pipeline auto-blocked. Read ` +
             `tasks/<id>/handoff.md and tasks/<id>/runtime-check-output/ for the failing ` +
             `runtime checks. To resume after fixing: set phases.runtime_validation.status = "pending" ` +
-            `and phases.runtime_validation.iterations = 0 in status.json, then re-run the pipeline.`;
+            `and phases.runtime_validation.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
         warn(reason);
         autoBlockPhase(taskIds, 'runtime_validation', maxIter, reason);
         process.exit(2);
@@ -473,11 +487,23 @@ export async function runRuntimeValidationPhase(
         }
 
         const currentStatus = readStatus(task.taskId);
-        const priorIterations = currentStatus.phases.runtime_validation?.iterations ?? 0;
-        const artifactIteration = priorIterations + 1;
+        // Lifetime counter for both the write-path decision (h2 baseline vs h3
+        // re-run) AND the artifact directory naming. Using iterations_total
+        // (monotonic) ensures each iteration's artifacts land in a unique
+        // `iter-N/` subdirectory, so later loops don't overwrite earlier
+        // failures' traces — historical handoff sections still resolve their
+        // referenced paths. The spec originally proposed deriving the directory
+        // name from `iterations_current_loop` ("matches review-artifact
+        // convention") but review.md is cumulative-in-one-file, not
+        // per-directory, so the analogy didn't hold. Codex P2 on PR #43 caught
+        // the resulting overwrite hazard.
+        const priorIterations = currentStatus.phases.runtime_validation?.iterations_total
+            ?? currentStatus.phases.runtime_validation?.iterations
+            ?? 0;
+        const artifactLoopIteration = priorIterations + 1;
         const results: CheckRunResult[] = [];
         for (const check of selected) {
-            const result = await runCheck(task.taskId, check, artifactIteration);
+            const result = await runCheck(task.taskId, check, artifactLoopIteration);
             results.push(result);
             if (result.result !== 'Pass') anyFailed = true;
         }

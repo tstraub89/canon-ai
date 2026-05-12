@@ -11,8 +11,10 @@ import { getActiveCwd, isWorktreeEnabled, TASK_ARTIFACT_FILES } from '../worktre
 import { autoBlockPhase, readStatus, taskDirFor, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 
-export function shouldUseImplementRevision(tasks: readonly Pick<TaskContext, 'iterations' | 'runtimeIterations'>[]): boolean {
-    return tasks.some(t => t.iterations > 0 || t.runtimeIterations > 0);
+export function shouldUseImplementRevision(
+    tasks: readonly Pick<TaskContext, 'iterations_current_loop' | 'runtimeIterations_current_loop'>[],
+): boolean {
+    return tasks.some(t => t.iterations_current_loop > 0 || t.runtimeIterations_current_loop > 0);
 }
 
 export async function runImplementPhase(
@@ -69,7 +71,7 @@ export async function runImplementPhase(
         {
             taskId: taskIds.join('+'),
             phase: 'implement',
-            iteration: tasks[0].iterations,
+            iteration: tasks[0].iterations_current_loop,
         },
         activeCwd,
     );
@@ -98,7 +100,7 @@ export async function runImplementPhase(
                     writeStatus(taskId, s);
                 }
             }
-            autoBlockPhase(taskIds, 'implement', tasks[0].iterations + 1,
+            autoBlockPhase(taskIds, 'implement', tasks[0].iterations_current_loop + 1,
                 'Revision iteration produced no source-file diff — Codex resumed-session hallucination signature. Stored session cleared. Re-run pipeline for a fresh attempt, or apply the fix inline.');
             process.exit(2);
         }

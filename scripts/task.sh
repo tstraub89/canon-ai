@@ -8,6 +8,9 @@ set -euo pipefail
 
 TASKS_DIR="tasks"
 TEMPLATES_DIR="$TASKS_DIR/_templates"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TSX_BIN="$REPO_ROOT_DIR/node_modules/.bin/tsx"
 
 check_jq() {
   if ! command -v jq &>/dev/null; then
@@ -52,6 +55,28 @@ resolve_task_cwd() {
     return
   fi
   echo "."
+}
+
+run_tsx() {
+  local cache_dir="${TMPDIR:-/tmp}/canon-ai-npm-cache"
+  mkdir -p "$cache_dir"
+  if [ -x "$TSX_BIN" ]; then
+    if [ -n "${CANON_TASKS_DIR_OVERRIDE:-}" ]; then
+      env npm_config_cache="$cache_dir" CANON_TASKS_DIR_OVERRIDE="$CANON_TASKS_DIR_OVERRIDE" "$TSX_BIN" "$@"
+    else
+      env npm_config_cache="$cache_dir" "$TSX_BIN" "$@"
+    fi
+  else
+    if [ -n "${CANON_TASKS_DIR_OVERRIDE:-}" ]; then
+      env npm_config_cache="$cache_dir" CANON_TASKS_DIR_OVERRIDE="$CANON_TASKS_DIR_OVERRIDE" npx tsx "$@"
+    else
+      env npm_config_cache="$cache_dir" npx tsx "$@"
+    fi
+  fi
+}
+
+tsx_available() {
+  [ -x "$TSX_BIN" ] || command -v npx &>/dev/null
 }
 
 usage() {
@@ -154,6 +179,11 @@ cmd_new() {
     exit 1
   fi
   validate_task_id "$id"
+  # Reject newlines — embedded LF breaks the sed substitution pattern
+  if [[ "$title" == *$'\n'* ]]; then
+    echo "Error: title must be single-line (no embedded newlines)."
+    exit 1
+  fi
   local task_dir="$TASKS_DIR/$id"
 
   if [ -d "$task_dir" ]; then
@@ -192,6 +222,14 @@ cmd_new() {
   jq --arg id "$id" --arg title "$title" --arg date "$today" --arg base "$base_branch" \
     '.id = $id | .title = $title | .created = $date | .updated = $date | .base_branch = $base' \
     "$task_dir/status.json" > "$tmp" && mv "$tmp" "$task_dir/status.json"
+
+  # Stamp the canon provenance snapshot immediately so new tasks have a first-
+  # class record of the canon checkout and CLI versions governing them.
+  if tsx_available; then
+    run_tsx "$SCRIPT_DIR/run-task/canon-snapshot.ts" "$task_dir/status.json"
+  else
+    echo "Warning: neither repo-local tsx nor npx is available — created task without canon snapshot refresh." >&2
+  fi
 
   echo "Created task: $task_dir"
   echo "Files:"
@@ -330,6 +368,29 @@ cmd_phase() {
     fi
   fi
 
+  # 1a-2 phase gate: when transitioning to `done`, run the centralized
+  # invariant check (artifact exists + not template + verdict matches
+  # artifact for phases that have one). The TS helper exits non-zero with
+  # a clear reason on rejection, which propagates here via `set -e`.
+  # Skip for runtime_validation when the orchestrator writes its own
+  # status block directly (the gate runs in TS-space there).
+  # Skip-gate escape hatch for test fixtures that don't materialize artifacts.
+  # Production callers should never set CANON_SKIP_PHASE_GATE.
+  if [ "$status" = "done" ] && [ -z "${CANON_SKIP_PHASE_GATE:-}" ]; then
+    if tsx_available; then
+      # Route the gate's artifact reads through CANON_TASKS_DIR_OVERRIDE so it
+      # inspects the same worktree the status write will land in. Without this,
+      # the gate resolves taskDirFor() against REPO_ROOT and would see stale or
+      # missing artifacts when the task is running in a linked worktree —
+      # rejecting valid transitions OR approving from the wrong tree. Caught
+      # via Codex review on the 1a-2 inline change.
+      CANON_TASKS_DIR_OVERRIDE="$task_cwd/$TASKS_DIR" \
+        run_tsx "$SCRIPT_DIR/run-task/check-phase-gate.ts" "$id" "$phase" "$verdict"
+    else
+      echo "Warning: neither repo-local tsx nor npx is available — skipping phase gate. Install Node 24.x to enforce." >&2
+    fi
+  fi
+
   local today
   today=$(date +%Y-%m-%d)
   local tmp="${status_file}.tmp"
@@ -346,10 +407,12 @@ cmd_phase() {
      def derive_top_level:
        . as $doc |
        (phase_order | map(select(phase_status($doc; .) != "done")) | first // "complete");
-     (if .phases[$phase] == null then
+      (if .phases[$phase] == null then
         .phases[$phase] = (
           if $phase == "runtime_validation" then
-            {"status": "pending", "agent": "orchestrator", "verdict": "", "iterations": 0}
+            {"status": "pending", "agent": "orchestrator", "verdict": "", "iterations": 0,
+             "iterations_current_loop": 0, "iterations_total": 0,
+             "changes_requested_total": 0, "auto_block_count": 0}
           else
             {"status": "pending", "agent": ""}
           end
@@ -358,9 +421,19 @@ cmd_phase() {
      .phases[$phase].status = $status | .updated = $date |
      if ($verdict != "") and (.phases[$phase] | has("verdict")) then .phases[$phase].verdict = $verdict else . end |
      (if ($phase == "code_review" or $phase == "spec_review" or $phase == "runtime_validation")
-       then .phases[$phase].iterations = (.phases[$phase].iterations // 0) |
-         if ($verdict == "changes_requested" or $verdict == "needs_re_review") then .phases[$phase].iterations += 1
-         elif ($verdict == "approved" or $verdict == "approved_with_nits") then .phases[$phase].iterations = 0
+       then .phases[$phase].iterations_current_loop //= (.phases[$phase].iterations // 0) |
+         .phases[$phase].iterations_total //= (.phases[$phase].iterations // 0) |
+         .phases[$phase].changes_requested_total //= 0 |
+         .phases[$phase].auto_block_count //= 0 |
+         if ($verdict == "changes_requested" or $verdict == "needs_re_review") then
+           .phases[$phase].iterations_current_loop += 1 |
+           .phases[$phase].iterations_total += 1 |
+           .phases[$phase].changes_requested_total += 1 |
+           .phases[$phase].iterations = .phases[$phase].iterations_current_loop
+         elif ($verdict == "approved" or $verdict == "approved_with_nits") then
+           .phases[$phase].iterations_total += 1 |
+           .phases[$phase].iterations_current_loop = 0 |
+           .phases[$phase].iterations = 0
          else . end
        else . end) |
      .status = derive_top_level' \
@@ -414,6 +487,7 @@ cmd_reset_spec_review() {
       .phases.spec.status = "done" |
       .phases.spec_review.status = "pending" |
       .phases.spec_review.iterations = 0 |
+      .phases.spec_review.iterations_current_loop = 0 |
       .phases.spec_review.verdict = "" |
       (if (.sessions // {}) | has("claude_spec") then del(.sessions.claude_spec) else . end) |
       .updated = (now | strftime("%Y-%m-%d")) |
@@ -448,6 +522,13 @@ cmd_post_merge_sync() {
   current="$(git branch --show-current 2>/dev/null || echo '')"
   if [ "$current" != "$target_branch" ]; then
     echo "Error: post-merge-sync expects you to be on '$target_branch' (you are on '$current')."
+    exit 1
+  fi
+
+  # Refuse to run if there are uncommitted local changes — the hard-reset path
+  # would silently destroy them. Mirrors the guard in cmd_release_init.
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "Error: working tree is dirty. Commit or stash local changes before running post-merge-sync."
     exit 1
   fi
 

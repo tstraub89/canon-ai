@@ -6,17 +6,51 @@
   "updated": "",
   "branch": "",
   "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "",
+    "orchestrator_commit": "",
+    "codex_cli": "",
+    "claude_code": ""
+  },
   "task_size": "M",
   "delicate": false,
   "human_spec_gate": true,
   "worktree": true,
   "phases": {
     "spec": { "status": "pending", "agent": "claude" },
-    "spec_review": { "status": "pending", "agent": "codex", "verdict": "", "iterations": 0 },
+    "spec_review": {
+      "status": "pending",
+      "agent": "codex",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
     "plan": { "status": "pending", "agent": "claude" },
     "implement": { "status": "pending", "agent": "codex" },
-    "runtime_validation": { "status": "pending", "agent": "orchestrator", "verdict": "", "iterations": 0 },
-    "code_review": { "status": "pending", "agent": "claude", "verdict": "", "iterations": 0 },
+    "runtime_validation": {
+      "status": "pending",
+      "agent": "orchestrator",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
     "qa": { "status": "pending", "agent": "claude" },
     "human_review": { "status": "pending", "agent": "human" }
   },

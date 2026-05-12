@@ -19,10 +19,11 @@ export function recordMetric(entry: MetricEntry): void {
             '',
         ].join('\n'));
     }
+    const safeCell = (v: string) => v.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
     const dur = (entry.durationMs / 1000).toFixed(1) + 's';
     const tok = entry.tokens != null ? String(entry.tokens) : '-';
     fs.appendFileSync(
         METRICS_FILE,
-        `| ${new Date().toISOString()} | ${entry.taskId} | ${entry.phase} | ${entry.agent} | ${entry.model} | ${entry.iteration ?? '-'} | ${dur} | ${tok} | ${entry.status} |\n`
+        `| ${new Date().toISOString()} | ${entry.taskId} | ${entry.phase} | ${entry.agent} | ${safeCell(entry.model)} | ${entry.iteration ?? '-'} | ${dur} | ${tok} | ${entry.status} |\n`
     );
 }

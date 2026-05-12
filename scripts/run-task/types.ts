@@ -31,6 +31,10 @@ export type PhaseEntry = {
     agent: string;
     verdict?: Verdict;
     iterations?: number;
+    iterations_current_loop?: number;
+    iterations_total?: number;
+    changes_requested_total?: number;
+    auto_block_count?: number;
     rerouted?: boolean;
     reroute_count?: number;
 };
@@ -40,6 +44,14 @@ export type Escalation = {
     phase: Phase;
     iteration_count?: number;
     reason: string;
+};
+
+export type CanonStamp = {
+    upstream_repo: string;
+    upstream_commit: string;
+    orchestrator_commit: string;
+    codex_cli: string;
+    claude_code: string;
 };
 
 export type StatusJson = {
@@ -54,6 +66,7 @@ export type StatusJson = {
     delicate?: boolean;
     human_spec_gate?: boolean;
     worktree?: boolean;
+    canon?: CanonStamp;
     phases: Partial<Record<Phase, PhaseEntry>>;
     escalations?: Escalation[];
     sessions?: {
@@ -82,7 +95,11 @@ export type TaskContext = {
     title: string;
     specReviewVerdict: Verdict;
     iterations: number;
+    iterations_current_loop: number;
+    iterations_total: number;
     runtimeIterations: number;
+    runtimeIterations_current_loop: number;
+    runtimeIterations_total: number;
     rerouteCount: number;
     status: StatusJson;
 };

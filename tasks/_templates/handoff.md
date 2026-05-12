@@ -10,6 +10,18 @@
 |---|---|
 | `<path>` | ... |
 
+## Canon Governance
+
+The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
+
+| Field | Source |
+|---|---|
+| Upstream repo | `status.json.canon.upstream_repo` |
+| Upstream commit | `status.json.canon.upstream_commit` |
+| Orchestrator commit | `status.json.canon.orchestrator_commit` |
+| Codex CLI | `status.json.canon.codex_cli` |
+| Claude Code | `status.json.canon.claude_code` |
+
 ## Intent & Rationale
 
 Brief explanation of the approach taken and why.
@@ -42,11 +54,23 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 ## Validation Outcomes
 
-> All applicable checks must pass before submitting for review. If a check appears in spec.md's Validation Required section, it must be recorded as Pass or Fail here — do not mark a required check N/A. Use N/A only for checks that the spec did not require, and explain why in Notes. Failed checks must be fixed — do not submit with failures. Move unresolved failures to Blockers.
+> All applicable checks must record a result before submitting for review. Result values:
+>
+> | Value | Use when |
+> |---|---|
+> | `Pass` | Agent ran the check; it passed. |
+> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
+> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
+> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
+> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
+> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
+> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
+>
+> Required checks (those in spec.md's Validation Required section) cannot be marked `N/A` or `not_configured` — adjust the spec or run the check.
 
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / N/A | |
+| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
 
 ## Ready for Review
 

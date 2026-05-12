@@ -8,14 +8,9 @@ import { runClaude } from '../agents/claude.js';
 import { runTaskShFor } from '../task-sh.js';
 import { getActiveCwd, isWorktreeEnabled } from '../worktree.js';
 import { autoBlockPhase, resolveTaskCwd, taskDirFor } from '../state.js';
-import { validateHandoff, verifyHandoffAgainstDiff } from '../validation.js';
+import { isTemplateUnfilled, validateHandoff, verifyHandoffAgainstDiff } from '../validation.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptCodeReview } from '../prompts/index.js';
-
-function isTemplateUnfilled(content: string | null): boolean {
-    if (content === null) return true;
-    return content.includes('[TASK-ID]');
-}
 
 export async function runCodeReviewPhase(
     state: PipelineState,
@@ -25,7 +20,7 @@ export async function runCodeReviewPhase(
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
     verifyBranch(taskIds);
-    const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
+    const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
     const codeReviewLoopCap = getMaxReviewLoops(tasks);
     if (maxIter >= codeReviewLoopCap) {
         const reason =
@@ -34,7 +29,7 @@ export async function runCodeReviewPhase(
             `tasks/<id>/review.md — if the same finding keeps recurring, the spec ` +
             `or approach may need revisiting rather than another implementation pass. ` +
             `To resume after fixing: set phases.code_review.status = "pending" and ` +
-            `phases.code_review.iterations = 0 in status.json, then re-run the pipeline.`;
+            `phases.code_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
         warn(reason);
         autoBlockPhase(taskIds, 'code_review', maxIter, reason);
         process.exit(2);

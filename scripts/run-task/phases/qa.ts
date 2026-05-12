@@ -8,7 +8,7 @@ import { runTaskShFor } from '../task-sh.js';
 import { extractDoneMdFromStdout, isDoneMdTemplate } from '../validation.js';
 import { getActiveCwd } from '../worktree.js';
 import { verifyBranch } from '../git.js';
-import { readStatus, taskDirFor } from '../state.js';
+import { readStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptQa } from '../prompts/index.js';
 
@@ -26,12 +26,17 @@ export async function runQaPhase(
     const result = await runClaude(promptQa(state), interactive, null, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'qa',
-        iteration: tasks[0].status.phases.qa?.iterations,
+        iteration: tasks[0].status.phases.qa?.iterations_current_loop
+            ?? tasks[0].status.phases.qa?.iterations
+            ?? 0,
     }, getActiveCwd(taskIds));
 
     if (!state.isBundle && result.capturedStdout) {
         const taskId = taskIds[0];
-        const donePath = path.join(taskDirFor(taskId), 'done.md');
+        // Use the active worktree cwd so the salvage write lands in the same tree
+        // Claude wrote to. taskDirFor() is not worktree-aware; a REPO_ROOT write
+        // would be clobbered milliseconds later by syncWorktreeArtifacts.
+        const donePath = path.join(getActiveCwd(taskIds), 'tasks', taskId, 'done.md');
         if (isDoneMdTemplate(donePath)) {
             const salvaged = extractDoneMdFromStdout(result.capturedStdout);
             if (salvaged) {

@@ -17,6 +17,7 @@ export const PIPELINE_MANAGED_DOCS = [
     'docs/codebase-map.md',
     'docs/decisions.md',
     'docs/patterns.md',
+    'docs/pipeline-orchestrator.md',
     'docs/product-context.md',
 ] as const;
 
@@ -154,7 +155,10 @@ export function syncWorktreeArtifacts(taskIds: string[]): void {
         if (!fs.existsSync(wtDir)) continue;
         const wtFiles = new Set(
             fs.readdirSync(wtDir).filter(f => {
-                try { return fs.statSync(path.join(wtDir, f)).isFile(); } catch { return false; }
+                try {
+                    const st = fs.lstatSync(path.join(wtDir, f));
+                    return st.isFile() && !st.isSymbolicLink();
+                } catch { return false; }
             })
         );
         for (const name of TASK_ARTIFACT_FILES) {
@@ -183,6 +187,7 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
             const dest = path.join(REPO_ROOT, relPath);
             if (!fs.existsSync(src)) continue;
             try {
+                if (fs.lstatSync(src).isSymbolicLink()) continue;
                 let needsCopy = !fs.existsSync(dest);
                 if (!needsCopy) {
                     const a = fs.readFileSync(src);

@@ -8,11 +8,7 @@ import { runTaskShFor } from '../task-sh.js';
 import { taskDirFor } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptPlan } from '../prompts/index.js';
-
-function isTemplateUnfilled(content: string | null): boolean {
-    if (content === null) return true;
-    return content.includes('[TASK-ID]');
-}
+import { isTemplateUnfilled } from '../validation.js';
 
 export async function runPlanPhase(
     state: PipelineState,
@@ -27,7 +23,9 @@ export async function runPlanPhase(
     const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'plan',
-        iteration: tasks[0].status.phases.plan?.iterations,
+        iteration: tasks[0].status.phases.plan?.iterations_current_loop
+            ?? tasks[0].status.phases.plan?.iterations
+            ?? 0,
     });
     for (const t of tasks) {
         const planPath = path.join(taskDirFor(t.taskId), 'plan.md');
