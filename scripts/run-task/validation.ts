@@ -229,6 +229,17 @@ export function isFailResult(result: string): boolean {
     return /^fail/i.test(result.trim());
 }
 
+// `fail – unrelated` — the check failed, but the failure is outside the
+// task's Affected Files (pre-existing flake, unrelated test, environment
+// issue). Codex is instructed to write this state when a required check
+// fails for reasons it must not fix. Accepted in validateHandoffAgainstSpec
+// ONLY when Notes is non-empty — the agent must name the failing test/file
+// so the reviewer can assess. Unlike `blocked`, this is a deliberate "I ran
+// it, it failed, it's not mine" declaration.
+export function isUnrelatedFailResult(result: string): boolean {
+    return /^fail\s*[–—-]\s*unrelated\b/i.test(result.trim());
+}
+
 // `pending` — verdict not yet recorded for the row. Validation result
 // rows that are still in the template state or blank get this. Treated
 // as "missing" by validateHandoffAgainstSpec.
@@ -311,6 +322,18 @@ export function validateHandoffAgainstSpec(
         // valid "I ran it" state.
         if (isBlockedResult(row.result)) {
             issues.push(`Validation Required item marked blocked in handoff.md: ${required}${note} — triage required (CI/network/infrastructure)`);
+            continue;
+        }
+        // `fail – unrelated` is accepted only when Notes contains a specific
+        // test/file reference (a path with `/`, a filename with `.ext`, or a
+        // `file:line` ref). A vague note like "pre-existing flake" or "see
+        // logs" is rejected — it's indistinguishable from a masked real
+        // failure. The reviewer then assesses credibility at code_review.
+        if (isUnrelatedFailResult(row.result)) {
+            const hasFileRef = /[/]|\w+\.\w+|:\d+/.test(row.notes ?? '');
+            if (!hasFileRef) {
+                issues.push(`Validation Required item marked Fail – unrelated without a specific test/file reference in Notes (must name the failing test file or path): ${required}`);
+            }
             continue;
         }
         if (!isPassResult(row.result)) {

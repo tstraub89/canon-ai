@@ -3,6 +3,12 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.5.0] — 2026-05-13
+
+### Added
+
+- New `Fail – unrelated` validation result state. When a required check fails due to a pre-existing flake or test outside the task's Affected Files, Codex can now record `Fail – unrelated` in the Validation Outcomes table instead of blocking on a `Fail`. The state is accepted by `validateHandoffAgainstSpec` only when Notes contains a specific test/file reference (a path, file extension, or `file:line`); vague notes are rejected. The code-review prompt now explicitly instructs Claude to assess whether the explanation is credible and the failure is genuinely out of scope.
+
 ## [0.4.5] — 2026-05-12
 
 ### Fixed

@@ -13,6 +13,7 @@ Read the actual diff: `git diff {{{baseBranch}}}...HEAD` (or read the changed fi
 Also check for cross-task interactions — unintended coupling or conflicts between tasks.{{/isBundle}}
 
 **Validation gate**: verify each handoff.md Validation Outcomes table has no Fail results and all applicable checks were run.
+`Fail – unrelated` rows are permitted only when the Notes column names the specific failing test/file — assess whether the explanation is credible and the failure is genuinely outside the task's Affected Files.
 Treat a required check marked N/A as a failure of the handoff.
 
 **On plan deviations**: Codex may deviate from plan.md if the deviation is documented with justification in handoff.md. Treat documented deviations as design decisions to evaluate — not automatic violations. Ask: is the AC still met? Is the approach sound?
