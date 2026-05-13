@@ -324,13 +324,14 @@ export function validateHandoffAgainstSpec(
             issues.push(`Validation Required item marked blocked in handoff.md: ${required}${note} — triage required (CI/network/infrastructure)`);
             continue;
         }
-        // `fail – unrelated` is accepted only when Notes contains a specific
-        // test/file reference (a path with `/`, a filename with `.ext`, or a
-        // `file:line` ref). A vague note like "pre-existing flake" or "see
-        // logs" is rejected — it's indistinguishable from a masked real
-        // failure. The reviewer then assesses credibility at code_review.
+        // `fail – unrelated` is accepted only when Notes contains a filename
+        // with an extension (`\w+\.\w+`, e.g. `foo.test.ts`) or a line ref
+        // (`:\d+`, e.g. `file:42`). A bare `/` is intentionally excluded —
+        // it matches prose like "CI/network flake" without naming a real
+        // test file. A vague note like "pre-existing flake" is rejected.
+        // The reviewer then assesses credibility at code_review.
         if (isUnrelatedFailResult(row.result)) {
-            const hasFileRef = /[/]|\w+\.\w+|:\d+/.test(row.notes ?? '');
+            const hasFileRef = /\w+\.\w+|:\d+/.test(row.notes ?? '');
             if (!hasFileRef) {
                 issues.push(`Validation Required item marked Fail – unrelated without a specific test/file reference in Notes (must name the failing test file or path): ${required}`);
             }

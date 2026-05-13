@@ -886,22 +886,24 @@ void test('validateHandoffAgainstSpec: Fail – unrelated without notes is rejec
 });
 
 void test('validateHandoffAgainstSpec: Fail – unrelated with vague notes (no file ref) is rejected', () => {
-    withTempPair(
-        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
-        [
-            '## Validation Outcomes',
-            '',
-            '| Check | Result | Notes |',
-            '|---|---|---|',
-            '| `npm run test` | Fail – unrelated | pre-existing flake |',
-            '',
-        ].join('\n'),
-        (specPath, handoffPath) => {
-            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.equal(issues.length, 1);
-            assert.match(issues[0], /Fail.*unrelated.*without a specific test\/file reference/);
-        },
-    );
+    for (const vague of ['pre-existing flake', 'CI/network flake', 'unit/e2e failure', 'see logs']) {
+        withTempPair(
+            ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+            [
+                '## Validation Outcomes',
+                '',
+                '| Check | Result | Notes |',
+                '|---|---|---|',
+                `| \`npm run test\` | Fail – unrelated | ${vague} |`,
+                '',
+            ].join('\n'),
+            (specPath, handoffPath) => {
+                const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+                assert.equal(issues.length, 1, `expected rejection for notes: "${vague}"`);
+                assert.match(issues[0], /Fail.*unrelated.*without a specific test\/file reference/);
+            },
+        );
+    }
 });
 
 void test('validateHandoffAgainstSpec: human_pending on a required check is accepted (soft state)', () => {
