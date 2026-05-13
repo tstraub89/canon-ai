@@ -3,6 +3,12 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.5.1] — 2026-05-13
+
+### Fixed
+
+- `run-task-safety.test.ts`: the `REPO_ROOT stays anchored` test now skips instead of failing with EPERM when `git worktree add` is blocked by the environment (Codex sandbox or linked-worktree filesystem restrictions). A write probe against `REPO_ROOT/.git/` at module load determines whether the test can run; the regression guard is preserved on all environments where it can.
+
 ## [0.5.0] — 2026-05-13
 
 ### Added
