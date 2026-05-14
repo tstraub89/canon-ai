@@ -1399,10 +1399,10 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
     if (!agent || (agent !== 'codex' && agent !== 'claude')) return 'no_session';
     // Sessions live in per-phase slots, not a flat-by-agent slot. Map phase to
     // slot the same way the post-phase storage block does (spec → claude_spec,
-    // code_review → claude_review, codex → codex). plan and qa are one-offs
-    // and have no stored session, so retry returns 'no_session' for them.
+    // spec_review → codex_spec_review, code_review → claude_review, implement → codex).
+    // plan and qa are one-offs with no stored session; retry returns 'no_session'.
     const slot: SessionSlot | null = agent === 'codex'
-        ? 'codex'
+        ? (phase === 'spec_review' ? 'codex_spec_review' : 'codex')
         : phase === 'spec' ? 'claude_spec'
         : phase === 'code_review' ? 'claude_review'
         : null;
