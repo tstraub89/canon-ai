@@ -1,14 +1,14 @@
 You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.
 
 {{{stateHeader}}}
-{{{roundBanner}}}A human reviewed your previous implementation and sent it back with additional feedback. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is **not** a resume of an interrupted session: your previous work shipped, the human tried it, and now there's more to do.
+{{{roundBanner}}}{{{preamble}}}
 
-{{{startup}}}
-{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}
+{{#startup}}{{{startup}}}
+{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}
 Tasks with amended specs:
 {{{taskLines}}}
 
-Grounding rule: re-open the amended spec and the current handoff before changing anything. Session memory is stale by design on reroute rounds.
+{{{groundingRule}}}
 
 **How to approach this:**
 1. Read tasks/<id>/spec.md top-to-bottom. Scan for any section added after the original spec (e.g. "Amendment", "Round N", "Follow-up", "Post-review"). Those are the new requirements.

@@ -14,8 +14,9 @@ export async function runCodex(
     effort: string,
     metricsContext?: { taskId: string; phase: string; iteration?: number },
     cwd = REPO_ROOT,
+    wrapForResume = true, // set false when the prompt is already purpose-built for a resumed session
 ): Promise<CodexRunResult> {
-    const effectivePrompt = resumeId ? toResumePrompt(prompt) : prompt;
+    const effectivePrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
     info(resumeId ? `Calling Codex (resuming ${resumeId.slice(0, 8)}...)...` : 'Calling Codex...');
     info(`Model: ${model} | Effort: ${effort}`);
 

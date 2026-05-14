@@ -3,6 +3,24 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.6.0] — 2026-05-14
+
+### Fixed
+
+- **Reroute session prompt**: `--reroute` with an existing Codex session now sends a purpose-built resumed-reroute prompt instead of routing through the generic `toResumePrompt` wrapper. The cold-session prompt said "session memory is stale by design" while `toResumePrompt` prepended "project context loaded, skip startup re-reads" — a direct contradiction that caused Codex to anchor on stale spec context. The new prompt (when `isResumedSession=true`) omits startup boilerplate already in context, uses a session-aware preamble, and tells Codex its codebase context is valid but the spec has changed. Cold reroutes (no prior session) are unchanged.
+- **Spec-review / implement session isolation**: `spec_review` and `implement` now use separate Codex session slots (`codex_spec_review` vs `codex`). Previously both wrote to the same slot, so on full-tier tasks the spec_review session ID (project root: REPO_ROOT) would be read by fresh implement (project root: worktree). If the spec_review session was still live, Codex would resume it in the wrong directory. Sessions are now structurally isolated at the slot level, with a `shouldResume` gate in `implement.ts` as an additional guard.
+
+### Added
+
+- `promptImplementResume()` extracted from inline string in `implement.ts` into its own function in `prompts/index.ts`, completing the one-function-per-implement-mode pattern (`fresh`, `resume`, `revision`, `reroute`).
+- `wrapForResume` parameter on `runCodex()` (default `true`) — allows purpose-built resumed prompts to bypass `toResumePrompt` wrapping while still using `codex exec resume` to preserve session context. Currently used only by resumed reroutes.
+
+### Changed
+
+- `--reroute` CLI output now prints a warning that `spec.md` amendments must be written to the main repo (not the worktree path), and that `review.md` alone is insufficient — Codex reads `spec.md` as the contract. Worktree copies are overwritten by the implement-phase sync.
+- `pipeline-orchestrator.md` §Human Reroute clarifies the same main-repo-only requirement and removes the ambiguous "or update `review.md` for small tweaks" language.
+- `CODEX.md` and `tasks/_templates/handoff.md` now document file-revert behavior: `git restore` is blocked by the sandbox (requires `.git/index.lock`); byte-perfect reverts use `git show origin/<base>:<path>` instead. Perfect reverts (net-zero in diff) must be removed from all prior Changes tables; imperfect reverts (residual diff remains) must be listed in the current iteration's table.
+
 ## [0.5.1] — 2026-05-13
 
 ### Fixed

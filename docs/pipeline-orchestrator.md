@@ -274,7 +274,7 @@ The Stage 1 AC table is **not** redone on round 2+ — that gate already passed 
 
 If the human rejects at `human_review`, use `--reroute` to atomically reset `implement`, `code_review`, and `qa` back to pending and resume the pipeline. Reroute sets `phases.implement.rerouted = true` so the next `implement` phase sends Codex an **amended-spec** prompt (read `spec.md` for new Amendment sections, compare against `handoff.md`, update the delta).
 
-Write the feedback into `spec.md` as an Amendment section (or update `review.md` for small tweaks) before rerouting so Codex has a concrete target.
+Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the main repo** (not the worktree) as an Amendment section. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract. The main-repo spec is synced into the worktree at the start of implement, so any amendment written to the worktree path will be overwritten.
 
 ## Shipping & Post-Merge Reconciliation
 
