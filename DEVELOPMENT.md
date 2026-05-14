@@ -33,31 +33,39 @@ Canon-ai maintains two permanently divergent branches:
 
 ### Syncing changes to `main`
 
-When work on `dev` produces framework improvements (script changes, bug fixes, new tooling), port them to `main` via a staging branch and PR. The staging branch lets you strip dev-only file changes before the commit lands on `main`.
+When work on `dev` produces framework improvements (script changes, bug fixes, new tooling), port them to `main` via a staging branch and PR.
+
+**Use `git checkout origin/dev -- <files>`, not cherry-pick.** Because the two branches have permanently diverged histories, cherry-picking a dev commit always produces three-way merge conflicts in `package.json`, `package-lock.json`, and any file that has independent edits on both branches. Copying file state directly bypasses the merge entirely.
 
 ```bash
-# 1. Create a staging branch off main (not dev)
-git checkout -b port/<version-or-description> main
+# 1. Fetch latest and create a staging branch off current main tip
+git fetch origin
+git checkout -b port/<version-or-description> origin/main
 
-# 2. Cherry-pick the release commit (or commits) from dev
-git cherry-pick --no-commit <commit-sha>
+# 2. Copy the framework files from dev (no merge, no conflicts)
+git checkout origin/dev -- \
+  AGENTS.md CLAUDE.md CODEX.md \
+  package.json package-lock.json \
+  scripts/ \
+  tasks/_templates/ \
+  tests/ \
+  tsconfig.json
+# Add docs/pipeline-orchestrator.md or other framework docs if changed:
+# git checkout origin/dev -- docs/pipeline-orchestrator.md
 
-# 3. Unstage and discard any dev-only file changes
-git restore --staged CHANGELOG.md && git checkout -- CHANGELOG.md
-# Repeat for any filled-in docs, task artifacts, or DEVELOPMENT.md if touched
-
-# 4. Commit and push
+# 3. Commit and push
 git commit -m "chore: port <description> to main"
 git push -u origin port/<version-or-description>
 
-# 5. Open a PR from port/<...> → main and merge after review
+# 4. Open a PR from port/<...> → main and merge after review
+gh pr create --base main --title "chore: port <description> to main"
 ```
 
-**What to include in the PR**: scripts, templates, agent policy docs (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`), stub docs under `docs/` (only if the change is framework-level — e.g. a new section added to a template file), `tasks/_templates/`, `tests/`, `package.json`.
+**What to include**: scripts, templates, agent policy docs, stub docs (only framework-level changes), `tasks/_templates/`, `tests/`, `package.json`, `package-lock.json`.
 
-**What to exclude**: `CHANGELOG.md`, `DEVELOPMENT.md`, filled-in `docs/` (architecture, codebase-map, decisions, etc.), `tasks/` outside `_templates/`, any canon-ai-specific telemetry or pipeline-invocations files.
+**What to exclude** (never copy these from dev): `CHANGELOG.md`, `DEVELOPMENT.md`, filled-in `docs/` (architecture, codebase-map, decisions, patterns, etc.), `tasks/` outside `_templates/`.
 
-Never cherry-pick commits that only touch dev-only files — those have nothing to land on `main`.
+`docs/` needs judgment — stub/template files belong on main, filled-in canon-ai-specific files do not. When in doubt, diff `origin/main:docs/<file>` against `origin/dev:docs/<file>` and only port if the change is to the template structure, not to canon-ai-specific content.
 
 ## Git Hook Setup
 
