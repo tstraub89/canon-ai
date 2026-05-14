@@ -33,14 +33,31 @@ Canon-ai maintains two permanently divergent branches:
 
 ### Syncing changes to `main`
 
-When work on `dev` produces framework improvements (script changes, bug fixes, new tooling), cherry-pick those commits to `main`:
+When work on `dev` produces framework improvements (script changes, bug fixes, new tooling), port them to `main` via a staging branch and PR. The staging branch lets you strip dev-only file changes before the commit lands on `main`.
 
 ```bash
-git checkout main
-git cherry-pick <commit-sha>
+# 1. Create a staging branch off main (not dev)
+git checkout -b port/<version-or-description> main
+
+# 2. Cherry-pick the release commit (or commits) from dev
+git cherry-pick --no-commit <commit-sha>
+
+# 3. Unstage and discard any dev-only file changes
+git restore --staged CHANGELOG.md && git checkout -- CHANGELOG.md
+# Repeat for any filled-in docs, task artifacts, or DEVELOPMENT.md if touched
+
+# 4. Commit and push
+git commit -m "chore: port <description> to main"
+git push -u origin port/<version-or-description>
+
+# 5. Open a PR from port/<...> → main and merge after review
 ```
 
-Never cherry-pick commits that only touch dev-only files (filled-in docs, task artifacts, CHANGELOG).
+**What to include in the PR**: scripts, templates, agent policy docs (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`), stub docs under `docs/` (only if the change is framework-level — e.g. a new section added to a template file), `tasks/_templates/`, `tests/`, `package.json`.
+
+**What to exclude**: `CHANGELOG.md`, `DEVELOPMENT.md`, filled-in `docs/` (architecture, codebase-map, decisions, etc.), `tasks/` outside `_templates/`, any canon-ai-specific telemetry or pipeline-invocations files.
+
+Never cherry-pick commits that only touch dev-only files — those have nothing to land on `main`.
 
 ## Git Hook Setup
 
