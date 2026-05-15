@@ -113,7 +113,7 @@ export function runUpgrade(cwd: string, pkgDir: string): UpgradeResult {
 
     // Update .canon/version to match the installed package
     const versionPath = join(cwd, '.canon', 'version');
-    const newVersion = process.env['CANON_VERSION'] ?? 'dev';
+    const newVersion = process.env.CANON_VERSION ?? 'dev';
     const currentVersion = existsSync(versionPath) ? readFileSync(versionPath, 'utf8').trim() : null;
     if (currentVersion !== newVersion) {
         mkdirSync(dirname(versionPath), { recursive: true });
