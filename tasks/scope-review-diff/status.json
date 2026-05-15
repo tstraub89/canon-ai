@@ -3,13 +3,13 @@
   "title": "Scope code-review diff to task delta in prompt",
   "status": "implement",
   "created": "2026-05-14",
-  "updated": "2026-05-14",
+  "updated": "2026-05-15",
   "branch": "",
   "base_branch": "dev",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "8f87f37e219fa849fe27099540a888ab328438d8",
-    "orchestrator_commit": "8f87f37e219fa849fe27099540a888ab328438d8",
+    "upstream_commit": "be23ee17c8848830af8ffdbf6a1b56c4fbd74190",
+    "orchestrator_commit": "be23ee17c8848830af8ffdbf6a1b56c4fbd74190",
     "codex_cli": "codex-cli 0.130.0",
     "claude_code": "2.1.139 (Claude Code)"
   },
