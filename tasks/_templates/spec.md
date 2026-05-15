@@ -47,7 +47,7 @@ Which checks apply (from `AGENTS.md` validation matrix). Edit the list below to 
 
 - [ ] `<lint>`
 - [ ] `<type-check>`
-- [ ] `<unit tests>`
+- [ ] `<unit tests>` — run the full suite; check here means "suite runs clean," not "new tests were added"
 - [ ] `<build>`
 - [ ] `<E2E>`
 

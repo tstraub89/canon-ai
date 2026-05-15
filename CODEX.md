@@ -82,6 +82,8 @@ Project-specific validation commands live in [`docs/architecture.md`](docs/archi
 
 Before writing `handoff.md`, run every check listed in the spec's *Validation Required* section AND every applicable check from `docs/architecture.md` based on the change type. Record each as Pass / Fail / N/A in the Validation Outcomes table. Required checks must be Pass or Fail — do not mark them N/A.
 
+**Unit tests specifically**: if a unit test suite exists (`npm test` or equivalent), run it — always, regardless of whether the spec adds new test cases. "No new unit tests required" means no new cases are being authored, not that the existing suite can be skipped. A spec note saying tests are deferred is never license to skip running the suite.
+
 **Check column format**: copy the exact text from the spec's *Validation Required* checklist entry into the Check cell. If the spec says `` `lint` (`npm run lint`) ``, the handoff row must say `` `lint` (`npm run lint`) `` — not just `` `npm run lint` ``. The orchestrator matches by the short name (first backtick token); any mismatch causes a false pre-flight failure.
 
 ## Handoff Template
