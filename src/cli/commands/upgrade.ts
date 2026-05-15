@@ -11,8 +11,11 @@ const CANON_START_RE = /<!-- canon:start[^>]* -->/;
 // Agent files: have canon:start/end delimiters — replace canon block, preserve project tail
 const DELIMITED = ['AGENTS.md', 'CLAUDE.md', 'CODEX.md'];
 
-// Canon-owned files: no delimiters, fully managed by canon — overwrite entirely
+// Canon-owned files: no delimiters, fully managed by canon — overwrite entirely.
+// .canon/templates/ are the canonical defaults; projects override per-file by
+// placing a copy in tasks/_templates/ (never touched by upgrade). See .canon/README.md.
 const CANON_OWNED = [
+    '.canon/README.md',
     '.claude/skills/canon-init/SKILL.md',
     '.claude/skills/spec/SKILL.md',
     '.claude/skills/pipeline/SKILL.md',

@@ -127,6 +127,25 @@ canon run my-first-feature
 
 Full `canon task` subcommand reference is in `docs/pipeline-orchestrator.md`.
 
+### Customizing task templates
+
+Task templates live in `.canon/templates/` and are managed by canon — `canon upgrade` overwrites them. To customize a template for your project, copy it to `tasks/_templates/`:
+
+```bash
+cp .canon/templates/spec.md tasks/_templates/spec.md
+# edit tasks/_templates/spec.md — add your validation commands, project-specific sections, etc.
+```
+
+`canon task new` checks `tasks/_templates/` first and falls back to `.canon/templates/`. Files in `tasks/_templates/` are never touched by `canon upgrade`.
+
+After upgrading, check whether structural changes landed in the canonical template that you should incorporate into your override:
+
+```bash
+diff .canon/templates/spec.md tasks/_templates/spec.md
+```
+
+See `.canon/README.md` for a quick reference.
+
 ## Architecture: two layers
 
 Canon is two products:

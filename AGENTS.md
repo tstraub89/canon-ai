@@ -78,7 +78,7 @@ tasks/
     status.json       # Updated by whichever agent acts
 ```
 
-Templates live in `.canon/templates/`. To start a task, use `./scripts/task.sh new <TASK-ID> <title>`.
+Templates live in `.canon/templates/` (managed by canon — do not edit directly). To start a task, use `./scripts/task.sh new <TASK-ID> <title>`. To override a template for this project, copy it to `tasks/_templates/` — `canon task new` checks there first. See `.canon/README.md` for details.
 
 **Task ID naming**: Use lowercase kebab-case (e.g., `add-login-modal`, `refactor-cache-layer`). The pipeline orchestrator validates that IDs contain only lowercase alphanumeric characters, hyphens, dots, and underscores.
 

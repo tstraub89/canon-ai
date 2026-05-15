@@ -210,9 +210,11 @@ cmd_new() {
 
   for tmpl in "$TEMPLATES_DIR"/*.md "$TEMPLATES_DIR"/*.json; do
     [ -f "$tmpl" ] || continue
-    local basename
+    local basename src
     basename=$(basename "$tmpl")
-    sed -e "s/\[TASK-ID\]/$escaped_id/g" -e "s/\[Title\]/$escaped_title/g" "$tmpl" > "$task_dir/$basename"
+    src="$TASKS_DIR/_templates/$basename"
+    [ -f "$src" ] || src="$tmpl"
+    sed -e "s/\[TASK-ID\]/$escaped_id/g" -e "s/\[Title\]/$escaped_title/g" "$src" > "$task_dir/$basename"
   done
 
   # Set dates, base branch, and metadata in status.json.
