@@ -168,8 +168,8 @@ void test('refreshCanonSnapshotAtPath stamps an older task before pipeline work 
 void test('task.sh new stamps canon provenance into the seeded status.json', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-snapshot-task-new-'));
     try {
-        fs.mkdirSync(path.join(root, 'tasks', '_templates'), { recursive: true });
-        fs.cpSync(path.join(REPO_ROOT, 'tasks', '_templates'), path.join(root, 'tasks', '_templates'), { recursive: true });
+        fs.mkdirSync(path.join(root, '.canon', 'templates'), { recursive: true });
+        fs.cpSync(path.join(REPO_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
 
         const taskId = 'canon-stamp-seed';
         runTaskSh(root, ['new', taskId, 'Canon stamp seed']);

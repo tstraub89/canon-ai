@@ -24,7 +24,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 **Why**: The alternative — in-memory state, faster transitions, no parsing — was attractive on speed but lost two critical properties. **(1) Resumability**: a process crash, a CLI timeout, or a deliberate `Ctrl+C` mid-run loses everything. With files, re-running `run-task.ts <id>` from a cold start picks up wherever the filesystem says the task is. **(2) Observability**: humans can read every artifact an agent wrote or saw. Memory leaks no signal across boundaries; files leave a trail. The cost (parsing markdown tables) is acceptable — `parseHandoffFiles()` is ~20 lines.
 
-**Rule**: When adding a new cross-phase contract, add a markdown file to `tasks/_templates/` with a documented schema. Don't pass data through stdout, env vars, or in-memory orchestrator state across a phase boundary.
+**Rule**: When adding a new cross-phase contract, add a markdown file to `.canon/templates/` with a documented schema. Don't pass data through stdout, env vars, or in-memory orchestrator state across a phase boundary.
 
 ---
 
@@ -50,7 +50,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ## Worktree isolation default-on (vs. opt-in)
 
-**Decision**: `tasks/_templates/status.json` defaults `worktree: true`. Tasks run in a separate git worktree on a separate branch by default; opt-out is a deliberate per-task flag.
+**Decision**: `.canon/templates/status.json` defaults `worktree: true`. Tasks run in a separate git worktree on a separate branch by default; opt-out is a deliberate per-task flag.
 
 **Why**: The alternative — opt-in worktrees, simpler default — produced a real footgun before this decision: two `run-task.ts` invocations on the same branch corrupted each other's git state. Worktree isolation makes that impossible by giving each task its own working tree. The cost of default-on is one extra directory per task; the cost of default-off is occasional unrecoverable git-state corruption. Asymmetric — default to safety.
 
@@ -109,7 +109,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 - **SemVer interpretation**:
   - **Patch**: bug fixes only, no behavior change beyond fixing the bug.
   - **Minor**: new features (new pipeline phase, new validation gate, new template section, new agent capability) without breaking existing usage.
-  - **Major**: breaking changes — anything that requires adopters to update their `tasks/_templates/`, their `status.json` schema, their workflow expectations, or any canon-supplied policy in a way that breaks existing tasks mid-flight.
+  - **Major**: breaking changes — anything that requires adopters to update their `.canon/templates/`, their `status.json` schema, their workflow expectations, or any canon-supplied policy in a way that breaks existing tasks mid-flight.
 
 - **Agent authorization**:
   - **Patch**: agents may bump the version and commit the changelog edit autonomously.

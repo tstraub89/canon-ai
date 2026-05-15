@@ -26,7 +26,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **Shell helpers**: bash + `jq` for status.json updates (`scripts/task.sh`)
 - **External CLIs the orchestrator drives**: `claude` (Anthropic CLI), `codex` (OpenAI Codex CLI), `git`, `gh`
 - **Persistence**: filesystem only — `status.json` files and markdown artifacts under `tasks/<id>/`
-- **State machine**: `status.json` per task, with phases as nodes (see `tasks/_templates/status.json`)
+- **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
 - **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push and PR to `main` and `dev`, runs on Node 24.x with `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, and `npm test`.
@@ -100,7 +100,7 @@ After every agent invocation, the orchestrator appends a row to `docs/pipeline-i
 
 ### `status.json` is the state machine contract
 
-Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json` is the only structured contract between phases. Schema lives in `tasks/_templates/status.json`:
+Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json` is the only structured contract between phases. Schema lives in `.canon/templates/status.json`:
 
 - Top-level `status` is **derived** — it points at the first non-`done` phase. Hand-editing it produces inconsistent state. Use `./scripts/task.sh phase` instead.
 - Each phase has at least `{ status, agent }`. Review phases also have `{ verdict, iterations }`.
@@ -108,7 +108,7 @@ Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json`
 
 ### File-based handoff (not in-memory)
 
-Agents do not pass data to each other through memory or stdout. Every handoff is a markdown file with a stable name (`spec.md`, `handoff.md`, `review.md`, etc.) and a documented schema (the `tasks/_templates/` versions). Codex parses `spec.md` headings; Claude parses `handoff.md`'s Changes table via regex (`parseHandoffFiles()` in `scripts/run-task/validation.ts`). The orchestrator parses verdict lines.
+Agents do not pass data to each other through memory or stdout. Every handoff is a markdown file with a stable name (`spec.md`, `handoff.md`, `review.md`, etc.) and a documented schema (the `.canon/templates/` versions). Codex parses `spec.md` headings; Claude parses `handoff.md`'s Changes table via regex (`parseHandoffFiles()` in `scripts/run-task/validation.ts`). The orchestrator parses verdict lines.
 
 This is deliberate. File-based handoff means:
 - Sessions can be resumed cold (re-running `run-task.ts` recovers full state).
@@ -138,7 +138,7 @@ When `worktree: true`, the orchestrator creates a git worktree for the task. The
 | Full build | N/A — `tsx` runs scripts directly. There is no compile/build step. |
 | End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `scripts/run-task/git.ts` and `scripts/run-task/validation.ts`. |
 | Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
-| Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `tasks/_templates/status.json`, update parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
+| Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `.canon/templates/status.json`, update parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
 | Cross-platform | Node 24.x is the supported version (declared in `package.json` `engines`). CI runs 24.x via `.github/workflows/ci.yml`. |
 
 **Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.

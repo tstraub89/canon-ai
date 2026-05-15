@@ -10,7 +10,7 @@
   - **Scope**: Generalize `code_review` from one omnibus reviewer into a *stage* that fans out to N specialist auditors, each scoped to a single concern. The current code-review prompt asks the reviewer to check a long list of things in one pass — spec compliance, validation gates, citation grounding, plan deviations, cross-cutting guards, and so on. Specialist agents with focused prompts and dedicated artifacts are easier to author, easier to evolve, harder to skip silently, and parallelizable. Step 1 is the framework + first audit (`guard_audit`); Step 2 (deferred until Step 1 has shipped through one delicate task on a real project) adds a second audit to prove the generalization.
   - **Framework shape**: A new pipeline stage `audits` sits between `code_review` and `qa`. It runs zero-or-more registered audits sequentially (parallelize later if wall time grows). Each audit is a small plugin: `{ name, when(status, files) → boolean, promptBuilder, artifact, collector?, config? }`. Registry lives in `scripts/pipeline-policy.ts`. Verdict aggregation: any audit FAIL → reroute to implement (audit artifacts join `review.md` as feedback); all PASS → advance to qa. Implement-revision prompt updated to read `tasks/<id>/audits/*.md` for FAILED audits alongside `review.md §Round N`.
   - **`status.json` shape**: `phases.audits` becomes a container with sub-items (`items.<name>.status`, `items.<name>.verdict`, `items.<name>.iterations`) mirroring the existing phase shape so the dispatcher reuses most routing logic. `task.sh` gains a helper to advance audit items.
-  - **Artifact layout**: `tasks/<id>/audits/<name>.md`, one per audit. Templates in `tasks/_templates/audits/<name>.md`. Each audit's artifact follows the same skeleton: per-item verification table, verdict checkbox, required actions if FAILED.
+  - **Artifact layout**: `tasks/<id>/audits/<name>.md`, one per audit. Templates in `.canon/templates/audits/<name>.md`. Each audit's artifact follows the same skeleton: per-item verification table, verdict checkbox, required actions if FAILED.
   - **First audit — `guard_audit`**: Triggered by `delicate: true`. Hybrid script + LLM. The collector (`scripts/guard-audit-collect.ts`) reads a project-defined registry at `.canon/guards.json` (a small list of guard helper names — auth helpers, feature-gating wrappers, mutation-chokepoint validators — registered per-project), greps the task baseline and HEAD for call sites of each guard, extracts the containing function for each call site, and emits structured JSON. The LLM step (focused Claude phase) reads the JSON + `spec.md` + diff and decides per call site: PRESERVED / RELOCATED (guard moved up the call stack to a wrapper that still gates every entry point) / DROPPED (operation still exists but guard is gone — automatic FAIL) / OBSOLETE (operation no longer requires the guard and `spec.md` authorizes removal — citation required). Writes verdict to `audits/guard.md`.
   - **Triggering failure pattern**: A delicate refactor that consolidates mutation entry points (e.g., moves several call sites into a single store action or shared helper) can silently drop the cross-cutting guards that wrapped the original sites. The general code-review prompt has too much else to check; a specific "for each pre-refactor guard call site, find the post-refactor equivalent and verify the guard survives" pass is what catches this reliably. The CLAUDE.md/AGENTS.md rule alone has historically not been enough — a memory rule that didn't stick becomes a deterministic check.
   - **What's built in Step 1**: `audits` field in `status.json` + `task.sh` helper; `Audit` type + registry in `pipeline-policy.ts`; `runAuditsPhase()` in `run-task.ts` (sequential dispatch loop); reroute-on-failure routing in `checkAndRoute`; the `guard_audit` collector + prompt + template; implement-revision prompt updated; `AGENTS.md` / `CLAUDE.md` docs on the new phase. Estimated 600–800 lines total.
@@ -67,7 +67,7 @@
     - `runArchitectReviewPhase()` in `run-task.ts` (single-shot dispatch, three-way verdict parsing).
     - Routing in `checkAndRoute`: `agree` / `concern_for_human_attention` → `qa`; `block_due_to_architecture_risk` → integrate with existing reroute mechanism.
     - Prompt template (canon-supplied default + project overlay hook).
-    - Artifact template `tasks/_templates/architect-review.md`.
+    - Artifact template `.canon/templates/architect-review.md`.
     - QA prompt update for *Architect concerns* surfacing.
     - `AGENTS.md` updates: documenting the new phase, the no-self-review principle's "different question, different context" framing, and the three-way verdict.
     - `CLAUDE.md` updates: pipeline-mode role lists architect review; explicit guidance on the persona, context isolation, and counterfactual.
@@ -121,7 +121,7 @@
     - `handoff.md` template gains a "Canon Governance" section that references the `status.json` `canon` values.
     - Missing CLI binaries (codex/claude not installed) record `"<unavailable>"` rather than failing.
   - **Why this matters**: turns future dogfood reports from archaeology into normal telemetry. The `canon dogfood-report` BACKLOG entry depends on this.
-  - **Affected files**: `scripts/task.sh`, `scripts/run-task/state.ts`, `scripts/run-task/types.ts`, `tasks/_templates/status.json`, `tasks/_templates/handoff.md`.
+  - **Affected files**: `scripts/task.sh`, `scripts/run-task/state.ts`, `scripts/run-task/types.ts`, `.canon/templates/status.json`, `.canon/templates/handoff.md`.
   - **Sequencing**: Independent of other Wave 3 entries. Reasonable first thing to land from this cluster.
   - **Effort**: `M`. Schema change + write logic + vendored-mode detection.
 
@@ -146,7 +146,7 @@
     - If phase has a verdict field: verdict must be non-empty AND parseable from artifact.
     - Reject with non-zero exit; orchestrator surfaces the rejection and resets phase to `pending`.
     - The Structured-table parser utility (separate BACKLOG entry, in Harness Bugs section) is the prerequisite for the verdict-extraction half — parse handoff/review tables reliably, then enforce.
-  - **Affected files**: `scripts/task.sh` (counter logic + invariant gate), `scripts/run-task/state.ts` + `types.ts` (schema), `scripts/run-task/validation.ts` (invariant-gate primitives), `tasks/_templates/status.json` (schema example), new test file or extension of existing tests (coverage).
+  - **Affected files**: `scripts/task.sh` (counter logic + invariant gate), `scripts/run-task/state.ts` + `types.ts` (schema), `scripts/run-task/validation.ts` (invariant-gate primitives), `.canon/templates/status.json` (schema example), new test file or extension of existing tests (coverage).
   - **Sequencing**: Depends on the structured-table parser utility for the verdict-extraction part of the invariant gate. The counter migration can land independently.
   - **Effort**: `M`. Heaviest schema work from #27. Multiple other Wave 3 entries (validation result states, QA telemetry) depend on the invariant-gate framework this entry establishes.
 
@@ -165,7 +165,7 @@
     - Handoff Validation Outcomes table parser recognizes all new states.
     - `human_review: done` requires zero `human_pending` rows in any task in the bundle, OR an explicit waiver from a human in done.md ("Acknowledged: <list of human_pending items> deferred to post-merge follow-up by [reason]").
     - QA prompt surfaces `human_pending` items in done.md under a "Human Verification Required" section so the human sees them before they think they're done.
-  - **Affected files**: `scripts/run-task/validation.ts`, `scripts/run-task/prompts/templates/qa-*.md`, `tasks/_templates/handoff.md` (Validation Outcomes legend), `AGENTS.md` (validation matrix docs), `tests/run-task-validation.test.ts`.
+  - **Affected files**: `scripts/run-task/validation.ts`, `scripts/run-task/prompts/templates/qa-*.md`, `.canon/templates/handoff.md` (Validation Outcomes legend), `AGENTS.md` (validation matrix docs), `tests/run-task-validation.test.ts`.
   - **Sequencing**: Depends on the counters+invariants entry for the invariant-gate primitives (`human_review: done` rejection logic). Otherwise independent.
   - **Effort**: `M`. Self-contained but touches multiple surfaces.
 
@@ -176,7 +176,7 @@
     - For each task: `done.md` has a "Lessons" section. Empty list is allowed but must be explicit: "Lessons: none — routine task."
     - `docs/pipeline-invocations.md` has a row matching the current invocation.
     - Reject with non-zero exit; rejection messages are actionable (name the file, name the missing row, link to the template).
-  - **Affected files**: `scripts/task.sh` (qa-done invariants), `scripts/run-task/validation.ts` (telemetry-presence helpers), `tasks/_templates/done.md` (explicit Lessons section heading), `tests/run-task-validation.test.ts`.
+  - **Affected files**: `scripts/task.sh` (qa-done invariants), `scripts/run-task/validation.ts` (telemetry-presence helpers), `.canon/templates/done.md` (explicit Lessons section heading), `tests/run-task-validation.test.ts`.
   - **Sequencing**: Depends on the counters+invariants entry for the centralized invariant-gate framework. Without that framework, this is a one-off check in `task.sh`.
   - **Effort**: `S` (once the invariant-gate framework exists).
 
@@ -234,7 +234,7 @@
       config.json      # central declarative config (contents below)
       _templates/      # task-shape templates (status, spec, spec-review, plan, handoff, review, done, notes)
     ```
-    `_templates/` is a forward-compatible move from today's `tasks/_templates/` — same files, new home. Separates "canon's machinery" (`.canon/`) from "canon's task production" (`tasks/`).
+    `_templates/` is a forward-compatible move from today's `.canon/templates/` — same files, new home. Separates "canon's machinery" (`.canon/`) from "canon's task production" (`tasks/`).
   - **`config.json` initial contents**:
     - `validation_bindings`: project's commands for each validation matrix category (lint, type-check, test, build, e2e). Replaces the prose validation matrix in `AGENTS.md` for the host repo.
     - `delicate_domains`: list of areas where `delicate: true` is mandatory (auth, payments, persistent storage, etc.). Today lives in `docs/product-context.md`.
@@ -256,7 +256,7 @@
   - **Risks to watch**:
     - **Drift with prose docs**: during the augment-then-deprecate window, prose matrix and `.canon/config.json` can disagree. Validation matrix lookups must check `.canon/config.json` first and warn (not error) if prose drift is detected.
     - **Discoverability**: putting config in a hidden directory hides it from casual reading. `README.md` and `AGENTS.md` must point to `.canon/config.json` as the source of truth so new contributors find it.
-    - **Migration timing**: moving `tasks/_templates/` → `.canon/_templates/` is a single-PR mechanical change for canon-ai itself, but it's a coordinated change for any downstream adopter (TokenAnxiety would need to pick up the move). Include in the canon-as-package `migrate` command.
+    - **Migration timing**: moving `.canon/templates/` → `.canon/_templates/` is a single-PR mechanical change for canon-ai itself, but it's a coordinated change for any downstream adopter (TokenAnxiety would need to pick up the move). Include in the canon-as-package `migrate` command.
   - **Sequencing**: Land the day-one shape (`.canon/config.json` + `.canon/_templates/` move) as its own M-tier task — independent of canon-as-package, useful immediately. Layer on `validation-bindings.json` and `audits/` as their respective features land. Layer on `overrides/` only when canon becomes a package. Bootstrap CLI's Installation phase writes into this shape.
   - **Effort**: `M` for the day-one shape (`config.json` schema + read paths + template move + AGENTS.md/docs updates pointing at it). `S` per later addition.
 
@@ -328,7 +328,7 @@
   - **Scope**: `canonicalizeValidationCheck` extracts the first backtick token from both the spec's Validation Required entry and the handoff's Validation Outcomes Check cell, then compares them. The spec format is `` `type-check` (`npm run type-check`) `` — first token is the short name. Codex consistently writes the handoff Check column as `` `npm run type-check` `` — first token is the full command. The two canonicalize differently (`type-check` ≠ `npm run type-check`), so the pre-flight reports all checks as missing even when they all passed. This has happened twice in two different tasks.
   - **Why it keeps happening**: the handoff template's Validation Outcomes table has no concrete example row, and neither the Codex implement prompt nor CODEX.md states the required format for the Check column. Codex fills in the command string because that's the most natural label; the spec's short-name form is only visible if Codex re-reads the spec carefully.
   - **Fix options** (pick one or combine):
-    1. **Template fix**: add a concrete example row to the Validation Outcomes table in `tasks/_templates/handoff.md` showing the required format: `` | `lint` (`npm run lint`) | Pass | ... | ``.
+    1. **Template fix**: add a concrete example row to the Validation Outcomes table in `.canon/templates/handoff.md` showing the required format: `` | `lint` (`npm run lint`) | Pass | ... | ``.
     2. **Prompt fix**: add one sentence to the implement prompt or CODEX.md: "In the Validation Outcomes table, the Check column must use the exact text from the spec's Validation Required checklist entry — e.g. `` `type-check` (`npm run type-check`) ``, not just `` `npm run type-check` ``."
     3. **Canonicalization fix**: make `canonicalizeValidationCheck` also try matching against the command substring — if the first token contains spaces (i.e., is a command like `npm run lint`), strip `npm run ` and retry. This makes the validator robust to both formats without requiring Codex to get the format exactly right.
   - **Recommended approach**: (1) + (2) together. (3) is a safety net worth adding but doesn't fix the root cause. All three are trivial and can be done inline without a pipeline task.

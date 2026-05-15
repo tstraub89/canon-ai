@@ -7,7 +7,7 @@
 set -euo pipefail
 
 TASKS_DIR="tasks"
-TEMPLATES_DIR="$TASKS_DIR/_templates"
+TEMPLATES_DIR=".canon/templates"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TSX_BIN="$REPO_ROOT_DIR/node_modules/.bin/tsx"
@@ -256,7 +256,7 @@ cmd_list() {
     dir=$(dirname "$status_file")
     id=$(basename "$dir")
 
-    if [ "$id" = "_templates" ]; then continue; fi
+    if [ "$id" = "_archive" ]; then continue; fi
 
     title=$(jq -r '.title // "(untitled)"' "$status_file")
     # Derive current phase the same way cmd_phase does: walk phases in

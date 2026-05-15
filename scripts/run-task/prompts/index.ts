@@ -45,7 +45,7 @@ export function promptSpec(state: PipelineState): string {
                 `**Task \`${t.taskId}\`**: Write tasks/${t.taskId}/spec.md using the template.` +
                 (combined ? ` Also write tasks/${t.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns.` : '')
             ).join('\n\n')
-            : `Write tasks/${task.taskId}/spec.md using the template in tasks/_templates/spec.md. Be concrete — Codex implements directly from this.` +
+            : `Write tasks/${task.taskId}/spec.md using the template in .canon/templates/spec.md. Be concrete — Codex implements directly from this.` +
               (combined ? `\n\nAlso write tasks/${task.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns to use.` : ''),
         bundleNote: isBundle ? '\nThese tasks are related — consider cross-task interactions while speccing.' : '',
         doneNote: combined

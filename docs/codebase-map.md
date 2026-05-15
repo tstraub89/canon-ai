@@ -22,7 +22,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Claude (architect/reviewer) guide | `CLAUDE.md` |
 | Codex (implementer) guide | `CODEX.md` |
 | Project pitch + adoption guide | `README.md` |
-| Per-task state machine | `tasks/_templates/status.json` |
+| Per-task state machine | `.canon/templates/status.json` |
 
 ## Pipeline Orchestration
 
@@ -47,18 +47,18 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 
 ## Task Lifecycle Artifacts
 
-Every task lives in `tasks/<TASK-ID>/`. Templates live in `tasks/_templates/`.
+Every task lives in `tasks/<TASK-ID>/`. Templates live in `.canon/templates/`.
 
 | What | Where | Author |
 |---|---|---|
-| Task state machine | `tasks/_templates/status.json` | Updated by whichever agent acts |
-| Spec template | `tasks/_templates/spec.md` | Claude writes; Codex reviews (full tier) |
-| Spec review template | `tasks/_templates/spec-review.md` | Codex |
-| Plan template | `tasks/_templates/plan.md` | Claude (after spec approval) |
-| Implementation handoff template | `tasks/_templates/handoff.md` | Codex |
-| Code review template (2-stage) | `tasks/_templates/review.md` | Claude |
-| QA / human-facing summary template | `tasks/_templates/done.md` | Claude |
-| Per-task scratchpad | `tasks/_templates/notes.md` | Any agent, any phase |
+| Task state machine | `.canon/templates/status.json` | Updated by whichever agent acts |
+| Spec template | `.canon/templates/spec.md` | Claude writes; Codex reviews (full tier) |
+| Spec review template | `.canon/templates/spec-review.md` | Codex |
+| Plan template | `.canon/templates/plan.md` | Claude (after spec approval) |
+| Implementation handoff template | `.canon/templates/handoff.md` | Codex |
+| Code review template (2-stage) | `.canon/templates/review.md` | Claude |
+| QA / human-facing summary template | `.canon/templates/done.md` | Claude |
+| Per-task scratchpad | `.canon/templates/notes.md` | Any agent, any phase |
 
 ## Protected Docs (Institutional Memory)
 
@@ -112,10 +112,10 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > Common changes that touch multiple files. Use as starting checklists, not exhaustive.
 
 **Add a new pipeline phase**:
-> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `scripts/task.sh` (`cmd_phase()` validation) → `tasks/_templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
+> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `scripts/task.sh` (`cmd_phase()` validation) → `.canon/templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
 
 **Add a new validation check (handoff or pre-flight gate)**:
-> `scripts/run-task/validation.ts` (or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `tasks/_templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)
+> `scripts/run-task/validation.ts` (or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `.canon/templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)
 
 **Change pipeline tier or sizing rules**:
 > `scripts/pipeline-policy.ts` (the matrix) → `tests/pipeline-policy.test.ts` → `AGENTS.md` (Pipeline Tiers section) → `docs/pipeline-orchestrator.md` (model/effort matrix)
@@ -124,7 +124,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `scripts/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
 
 **Add a new task-template field or section**:
-> `tasks/_templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` / `CODEX.md` (authorship rules)
+> `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` / `CODEX.md` (authorship rules)
 
 **Promote a lesson into canon**:
 > `tasks/<id>/notes.md` (raw) → `docs/lessons-learned.md` (distilled, during QA) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule
