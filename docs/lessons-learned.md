@@ -82,12 +82,6 @@ In a linked worktree, `git rev-parse --git-common-dir` resolves to the supervisi
 
 `git status --porcelain -uall` does not surface gitignored files by design. Tests that verify scoped delta cleanup by writing `*.tmp` files (or other extensions matching `.gitignore` patterns) will find an empty delta and pass vacuously — they never actually exercise the cleanup path. Write fixture files with names that are not gitignored (e.g., `fixture-output.txt`, `test-check-artifact.log`) so `git status` surfaces them in the delta and the cleanup assertion has something to verify.
 
-### "No new unit tests" does not mean skip the existing test suite
-
-*(2026-05-15, source: scope-review-diff)*
-
-When a spec's Validation Required section notes "no new unit tests required," that applies to authoring — not to running. Codex interpreted the deferred-unit-tests note as license to skip `npm test` entirely, so changes to prompt templates (which have golden-output regression coverage) reached CI with stale snapshots. The fix is in the spec: always include `npm test` as a checked validation item. Reserve the "no new tests required" note as a parenthetical explaining why the spec doesn't add cases — never as justification for skipping the run. Concrete check: if `tests/` exists and `npm test` is a valid command, it is always required regardless of whether new test files are being added.
-
 ### Shell scripts that lack a CANON_TASKS_DIR_OVERRIDE need a real tasks/ subtree in the test cwd
 
 *(2026-05-11, source: counter-schema-migration)*
