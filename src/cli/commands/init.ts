@@ -31,14 +31,13 @@ function walkDir(dir: string, base: string = dir): string[] {
 }
 
 
-export function initCmd(_args: string[]): void {
-    checkDeps();
-
-    const cwd = process.cwd();
-    const templateFiles = walkDir(templatesDir);
-
+export function scaffoldTemplates(
+    cwd: string,
+    srcTemplatesDir: string,
+): { scaffolded: string[]; skipped: string[] } {
+    const templateFiles = walkDir(srcTemplatesDir);
     const scaffolded: string[] = [];
-    const skipped: string[] = [];   // existing files — grill will merge
+    const skipped: string[] = [];
 
     for (const rel of templateFiles) {
         const dest = join(cwd, rel);
@@ -47,9 +46,18 @@ export function initCmd(_args: string[]): void {
             continue;
         }
         mkdirSync(dirname(dest), { recursive: true });
-        copyFileSync(join(templatesDir, rel), dest);
+        copyFileSync(join(srcTemplatesDir, rel), dest);
         scaffolded.push(rel);
     }
+
+    return { scaffolded, skipped };
+}
+
+export function initCmd(_args: string[]): void {
+    checkDeps();
+
+    const cwd = process.cwd();
+    const { scaffolded, skipped } = scaffoldTemplates(cwd, templatesDir);
 
     const pkgPath = join(cwd, 'package.json');
     const isJsProject = existsSync(pkgPath);

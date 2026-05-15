@@ -5,12 +5,13 @@ import { spawnSync } from 'child_process';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
-function detectInstallType(_cwd: string): 'local' | 'global' | 'npx' {
-    if (packageDir.includes('/_npx/') || packageDir.includes('\\_npx\\')) return 'npx';
-    // Check the package's own install path rather than cwd — handles subdirectory invocations
-    const nodeModulesIdx = packageDir.lastIndexOf('/node_modules/');
+export function detectInstallType(pkgDirOverride?: string): 'local' | 'global' | 'npx' {
+    const dir = pkgDirOverride ?? packageDir;
+    if (dir.includes('/_npx/') || dir.includes('\\_npx\\')) return 'npx';
+    // Check the package's own install path — handles subdirectory invocations correctly
+    const nodeModulesIdx = dir.lastIndexOf('/node_modules/');
     if (nodeModulesIdx !== -1) {
-        const projectRoot = packageDir.slice(0, nodeModulesIdx);
+        const projectRoot = dir.slice(0, nodeModulesIdx);
         if (existsSync(join(projectRoot, 'package.json'))) return 'local';
     }
     return 'global';
@@ -18,7 +19,7 @@ function detectInstallType(_cwd: string): 'local' | 'global' | 'npx' {
 
 export function updateCmd(_args: string[]): void {
     const cwd = process.cwd();
-    const installType = detectInstallType(cwd);
+    const installType = detectInstallType();
 
     if (installType === 'npx') {
         console.log('\nRunning via npx — no persistent install to update.');

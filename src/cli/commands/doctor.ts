@@ -18,7 +18,7 @@ const EXPECTED_TEMPLATES = [
 
 // --- individual checks ---
 
-function checkPlatform(): Check {
+export function checkPlatform(): Check {
     const isWindows = process.platform === 'win32';
     if (!isWindows) return { label: 'platform', status: 'pass' };
     const isWSL = existsSync('/proc/version') &&
@@ -31,7 +31,7 @@ function checkPlatform(): Check {
     };
 }
 
-function checkNodeVersion(): Check {
+export function checkNodeVersion(): Check {
     const match = process.version.match(/^v(\d+)/);
     const major = match ? parseInt(match[1], 10) : 0;
     if (major >= 24) return { label: `node ${process.version}`, status: 'pass' };
@@ -42,7 +42,7 @@ function checkNodeVersion(): Check {
     };
 }
 
-function checkBinary(cmd: string, required: boolean, hint: string): Check {
+export function checkBinary(cmd: string, required: boolean, hint: string): Check {
     if (isAvailable(cmd)) return { label: cmd, status: 'pass' };
     return {
         label: cmd,
@@ -51,7 +51,7 @@ function checkBinary(cmd: string, required: boolean, hint: string): Check {
     };
 }
 
-function checkAgentFile(cwd: string, filename: string): Check {
+export function checkAgentFile(cwd: string, filename: string): Check {
     const path = join(cwd, filename);
     if (!existsSync(path)) {
         return { label: filename, status: 'fail', detail: 'missing — run `canon init`' };
@@ -63,7 +63,7 @@ function checkAgentFile(cwd: string, filename: string): Check {
     return { label: filename, status: 'pass' };
 }
 
-function checkTemplates(cwd: string): Check {
+export function checkTemplates(cwd: string): Check {
     const dir = join(cwd, '.canon', 'templates');
     if (!existsSync(dir)) {
         return { label: '.canon/templates/', status: 'fail', detail: 'missing — run `canon init`' };
@@ -79,7 +79,7 @@ function checkTemplates(cwd: string): Check {
     return { label: '.canon/templates/', status: 'pass' };
 }
 
-function checkCanonVersion(cwd: string): Check {
+export function checkCanonVersion(cwd: string): Check {
     const versionPath = join(cwd, '.canon', 'version');
     const installedVersion = process.env['CANON_VERSION'] ?? 'dev';
 
@@ -97,7 +97,7 @@ function checkCanonVersion(cwd: string): Check {
     return { label: `.canon/version (${vendoredVersion})`, status: 'pass' };
 }
 
-function checkSkills(cwd: string): Check {
+export function checkSkills(cwd: string): Check {
     const initSkill = join(cwd, '.claude', 'skills', 'canon-init', 'SKILL.md');
     if (!existsSync(initSkill)) {
         return {
@@ -118,13 +118,13 @@ function checkSkills(cwd: string): Check {
     return { label: '.claude/skills/', status: 'pass' };
 }
 
-function checkCodexConfig(cwd: string): Check {
+export function checkCodexConfig(cwd: string): Check {
     const path = join(cwd, '.codex', 'config.toml');
     if (existsSync(path)) return { label: '.codex/config.toml', status: 'pass' };
     return { label: '.codex/config.toml', status: 'warn', detail: 'missing — Codex will use defaults' };
 }
 
-function checkLocalSettingsGitignored(cwd: string): Check {
+export function checkLocalSettingsGitignored(cwd: string): Check {
     const settingsPath = join(cwd, '.claude', 'settings.local.json');
     const gitignorePath = join(cwd, '.gitignore');
 

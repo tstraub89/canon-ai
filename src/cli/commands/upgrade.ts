@@ -20,7 +20,7 @@ const CANON_OWNED = [
     '.claude/skills/changelog/SKILL.md',
 ];
 
-function mergeDelimited(templateContent: string, projectContent: string): string | null {
+export function mergeDelimited(templateContent: string, projectContent: string): string | null {
     if (!CANON_START_RE.test(templateContent)) return null;
     if (!CANON_START_RE.test(projectContent)) return null;
 
@@ -35,9 +35,13 @@ function mergeDelimited(templateContent: string, projectContent: string): string
     );
 }
 
-export function upgradeCmd(_args: string[]): void {
-    const cwd = process.cwd();
+interface UpgradeResult {
+    upgraded: string[];
+    unchanged: string[];
+    skipped: string[];
+}
 
+export function runUpgrade(cwd: string, pkgDir: string): UpgradeResult {
     const upgraded: string[] = [];
     const unchanged: string[] = [];
     const skipped: string[] = [];
@@ -45,7 +49,7 @@ export function upgradeCmd(_args: string[]): void {
     // --- Delimited files (AGENTS.md, CLAUDE.md, CODEX.md) ---
     for (const rel of DELIMITED) {
         const projectPath = join(cwd, rel);
-        const templatePath = join(packageDir, 'templates', rel);
+        const templatePath = join(pkgDir, 'templates', rel);
 
         if (!existsSync(projectPath) || !existsSync(templatePath)) {
             skipped.push(rel);
@@ -57,7 +61,6 @@ export function upgradeCmd(_args: string[]): void {
         const merged = mergeDelimited(templateContent, projectContent);
 
         if (merged === null) {
-            // Missing delimiters — can't safely merge
             skipped.push(`${rel} (no canon delimiters — run \`canon init\` to add them)`);
             continue;
         }
@@ -71,10 +74,10 @@ export function upgradeCmd(_args: string[]): void {
         upgraded.push(rel);
     }
 
-    // --- Canon-owned files (grill SKILL.md) ---
+    // --- Canon-owned files (skills, etc.) ---
     for (const rel of CANON_OWNED) {
         const projectPath = join(cwd, rel);
-        const templatePath = join(packageDir, 'templates', rel);
+        const templatePath = join(pkgDir, 'templates', rel);
 
         if (!existsSync(templatePath)) {
             skipped.push(rel);
@@ -90,7 +93,6 @@ export function upgradeCmd(_args: string[]): void {
                 continue;
             }
         } else {
-            // Not installed yet — copy it in
             mkdirSync(dirname(projectPath), { recursive: true });
         }
 
@@ -108,9 +110,15 @@ export function upgradeCmd(_args: string[]): void {
         upgraded.push('.canon/version');
     }
 
+    return { upgraded, unchanged, skipped };
+}
+
+export function upgradeCmd(_args: string[]): void {
+    const { upgraded, unchanged, skipped } = runUpgrade(process.cwd(), packageDir);
+
     // Stage all changed files
     if (upgraded.length > 0) {
-        const r = spawnSync('git', ['add', ...upgraded], { cwd, stdio: 'inherit' });
+        const r = spawnSync('git', ['add', ...upgraded], { cwd: process.cwd(), stdio: 'inherit' });
         if (r.status !== 0) {
             console.error('\nwarning: failed to stage changes — run `git add` manually.');
         }
