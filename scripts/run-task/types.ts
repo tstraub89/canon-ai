@@ -75,6 +75,7 @@ export type StatusJson = {
         /** @deprecated use claude_spec or claude_review */
         claude?: string | null;
         codex?: string | null;
+        codex_spec_review?: string | null;
     };
 };
 
@@ -129,7 +130,7 @@ export type MetricEntry = {
 
 export type ImplementMode = 'fresh' | 'revision' | 'reroute' | 'resume';
 
-export type SessionSlot = 'claude_spec' | 'claude_review' | 'codex';
+export type SessionSlot = 'claude_spec' | 'claude_review' | 'codex' | 'codex_spec_review';
 
 export type ClaudeRunResult = {
     exitCode: number | null;

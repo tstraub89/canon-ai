@@ -1189,6 +1189,10 @@ function rerouteFromHumanReview(taskIds: string[]): void {
     }
     splitCli.info('Status reset. Pipeline will resume from implement phase with amended-spec context.');
     splitCli.info('Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.');
+    splitCli.info('');
+    splitCli.info('⚠  Before invoking the pipeline: ensure tasks/<id>/spec.md (in the MAIN repo, not the worktree) has an');
+    splitCli.info('   Amendment section with the new requirements. review.md alone is not sufficient — Codex reads spec.md');
+    splitCli.info('   as the contract. The main-repo spec is synced into the worktree at the start of implement.');
 }
 
 function routeBackTo(taskIds: string[], targetPhase: Phase): void {
@@ -1227,13 +1231,16 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     const specClaudeSession = splitState.getStoredSessionId(taskIds, 'claude_spec');
     // code_review cluster: round 1 is always fresh; round 2+ resumes (same worktree cwd)
     const reviewClaudeSession = splitState.getStoredSessionId(taskIds, 'claude_review');
+    // spec_review and implement use separate codex slots — they run in different cwds
+    // (REPO_ROOT vs worktree) and must not share session context.
+    const codexSpecReviewSession = splitState.getStoredSessionId(taskIds, 'codex_spec_review');
     const codexSession = splitState.getStoredSessionId(taskIds, 'codex');
 
     if ((phase as Phase) === 'spec') {
         return runSpecPhase(state, cliArgs.interactive, specClaudeSession);
     }
     if ((phase as Phase) === 'spec_review') {
-        return runSpecReviewPhase(state, cliArgs.interactive, codexSession);
+        return runSpecReviewPhase(state, cliArgs.interactive, codexSpecReviewSession);
     }
     if ((phase as Phase) === 'plan') {
         return runPlanPhase(state, cliArgs.interactive);
@@ -1392,10 +1399,10 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
     if (!agent || (agent !== 'codex' && agent !== 'claude')) return 'no_session';
     // Sessions live in per-phase slots, not a flat-by-agent slot. Map phase to
     // slot the same way the post-phase storage block does (spec → claude_spec,
-    // code_review → claude_review, codex → codex). plan and qa are one-offs
-    // and have no stored session, so retry returns 'no_session' for them.
+    // spec_review → codex_spec_review, code_review → claude_review, implement → codex).
+    // plan and qa are one-offs with no stored session; retry returns 'no_session'.
     const slot: SessionSlot | null = agent === 'codex'
-        ? 'codex'
+        ? (phase === 'spec_review' ? 'codex_spec_review' : 'codex')
         : phase === 'spec' ? 'claude_spec'
         : phase === 'code_review' ? 'claude_review'
         : null;
@@ -1712,9 +1719,11 @@ export async function main(): Promise<void> {
 
         // Store session IDs after each agent phase for resumption.
         // Sessions are stored per-cluster, not per-phase:
-        //   spec/spec_revision → claude_spec  (both run in REPO_ROOT, share continuity)
-        //   code_review        → claude_review (same worktree cwd across rounds)
-        //   plan, qa           → not stored    (one-offs, always fresh)
+        //   spec/spec_revision  → claude_spec        (both run in REPO_ROOT, share continuity)
+        //   code_review         → claude_review       (same worktree cwd across rounds)
+        //   spec_review (Codex) → codex_spec_review   (REPO_ROOT; separate from implement)
+        //   implement (Codex)   → codex               (worktree cwd)
+        //   plan, qa            → not stored          (one-offs, always fresh)
         if (currentPhase !== 'complete' && currentPhase !== 'human_review') {
             const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
             if (agentForPhase === 'claude') {
@@ -1727,8 +1736,9 @@ export async function main(): Promise<void> {
                     splitCli.info(`Claude session stored (${slot}): ${lastClaudeSessionId.slice(0, 8)}...`);
                 }
             } else if (agentForPhase === 'codex' && lastCodexSessionId) {
-                splitState.storeSessionId(taskIds, 'codex', lastCodexSessionId);
-                splitCli.info(`Codex session stored: ${lastCodexSessionId.slice(0, 8)}...`);
+                const codexSlot: SessionSlot = currentPhase === 'spec_review' ? 'codex_spec_review' : 'codex';
+                splitState.storeSessionId(taskIds, codexSlot, lastCodexSessionId);
+                splitCli.info(`Codex session stored (${codexSlot}): ${lastCodexSessionId.slice(0, 8)}...`);
             }
             await checkAndRoute(currentPhase, taskIds);
         }

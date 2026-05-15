@@ -354,7 +354,26 @@ void test('getActiveCwd fails closed when a worktree-backed bundle has no availa
     });
 });
 
-void test('REPO_ROOT stays anchored to the supervising checkout when imported from a linked worktree', () => {
+// Probe whether the .git directory is writable before attempting to create a
+// real worktree. Two environments legitimately block this:
+//   1. Codex's sandbox (blocks all .git/ writes by design)
+//   2. Running from inside a linked worktree (.git is a file, not a dir)
+// In both cases the underlying code is correct — skipping avoids a false
+// EPERM failure that has nothing to do with the behavior under test.
+const gitDirWritable = (() => {
+    const probe = path.join(REPO_ROOT, '.git', '.worktree-test-probe');
+    try {
+        fs.writeFileSync(probe, '');
+        fs.unlinkSync(probe);
+        return true;
+    } catch {
+        return false;
+    }
+})();
+
+void test('REPO_ROOT stays anchored to the supervising checkout when imported from a linked worktree', {
+    skip: gitDirWritable ? false : '.git/ writes are restricted in this environment (sandbox or linked worktree)',
+}, () => {
     withTempDir('run-task-root-regression-', dir => {
         const worktreeDir = path.join(dir, 'linked-worktree');
         const addResult = spawnSync('git', ['worktree', 'add', '--detach', worktreeDir, 'HEAD'], {
@@ -431,7 +450,7 @@ void test('buildHumanReviewStagePaths includes protected docs in the human_revie
     ]);
 });
 
-void test('syncWorktreeTelemetry skips shared-doc mirroring when repo checkout has diverged', () => {
+void test('syncWorktreeTelemetry skips a file when destination has file-specific commits source lacks', () => {
     withTempDir('run-task-sync-regression-', dir => {
         const repoDir = path.join(dir, 'repo');
         const worktreesRoot = path.join(dir, 'dev-worktrees');
@@ -453,15 +472,19 @@ void test('syncWorktreeTelemetry skips shared-doc mirroring when repo checkout h
         runGit(['config', 'user.name', 'Canon Bot']);
         fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
         fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'repo v1\n', 'utf8');
-        runGit(['add', 'docs/architecture.md']);
+        fs.writeFileSync(path.join(repoDir, 'docs', 'decisions.md'), 'decisions v1\n', 'utf8');
+        runGit(['add', 'docs/architecture.md', 'docs/decisions.md']);
         runGit(['commit', '-m', 'initial']);
 
         runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
+        // worktree updates both files
         fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'worktree v2\n', 'utf8');
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'decisions.md'), 'decisions v2\n', 'utf8');
 
+        // repo advances only architecture.md — decisions.md has no new commits
         fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'repo v2\n', 'utf8');
         runGit(['add', 'docs/architecture.md']);
-        runGit(['commit', '-m', 'repo diverges']);
+        runGit(['commit', '-m', 'repo diverges on architecture.md only']);
 
         try {
             const syncScript = [
@@ -475,9 +498,11 @@ void test('syncWorktreeTelemetry skips shared-doc mirroring when repo checkout h
             }, repoDir);
 
             assert.equal(result.status, 0, result.stderr);
-            assert.match(result.stderr, /Skipping shared-doc sync for task-a/);
+            // architecture.md skipped — destination has a commit source lacks
+            assert.match(result.stderr, /Skipping shared-doc sync for task-a \(docs\/architecture\.md\)/);
             assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'repo v2\n');
-            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'worktree v2\n');
+            // decisions.md synced — no file-specific divergence
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'decisions.md'), 'utf8'), 'decisions v2\n');
         } finally {
             spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
                 cwd: repoDir,

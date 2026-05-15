@@ -227,11 +227,16 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
     for (const taskId of taskIds) {
         const wt = worktreePath(taskId);
         if (!fs.existsSync(wt)) continue;
-        const mirrorResult = canMirrorSharedDocs(wt, REPO_ROOT);
-        if (!mirrorResult.ok) {
-            warn(`Skipping shared-doc sync for ${taskId}: ${mirrorResult.reason}`);
+
+        const sourceHead = gitSafeAtRaw(wt, 'rev-parse', 'HEAD');
+        const destHead = gitSafeAtRaw(REPO_ROOT, 'rev-parse', 'HEAD');
+        if (!sourceHead.ok || !destHead.ok) {
+            warn(`Skipping shared-doc sync for ${taskId}: could not resolve HEAD SHAs`);
             continue;
         }
+        const sourceSHA = sourceHead.stdout.trim();
+        const destSHA = destHead.stdout.trim();
+
         for (const relPath of PIPELINE_SHARED_DOCS) {
             if (relPath === 'docs/pipeline-invocations.md') continue;
             const src = path.join(wt, relPath);
@@ -239,6 +244,24 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
             if (!fs.existsSync(src)) continue;
             try {
                 if (fs.lstatSync(src).isSymbolicLink()) continue;
+
+                // Per-file dirty check: don't overwrite uncommitted destination changes.
+                const dirty = gitSafeAtRaw(REPO_ROOT, 'status', '--porcelain=v1', '-uall', '--', relPath);
+                if (dirty.ok && dirty.stdout.trim()) {
+                    warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has uncommitted changes`);
+                    continue;
+                }
+
+                // Per-file ancestry: skip only when destination has file-specific commits
+                // the worktree lacks. Unrelated divergence on other files does not block.
+                if (sourceSHA !== destSHA) {
+                    const destAhead = gitSafeAtRaw(wt, 'log', '--oneline', `${sourceSHA}..${destSHA}`, '--', relPath);
+                    if (destAhead.ok && destAhead.stdout.trim()) {
+                        warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has commits source lacks`);
+                        continue;
+                    }
+                }
+
                 let needsCopy = !fs.existsSync(dest);
                 if (!needsCopy) {
                     const sourceContent = fs.readFileSync(src, 'utf8');

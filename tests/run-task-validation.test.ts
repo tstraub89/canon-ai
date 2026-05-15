@@ -824,6 +824,7 @@ import {
     isDeferredBySpecResult,
     isNotConfiguredResult,
     isPendingResult,
+    isUnrelatedFailResult,
 } from '../scripts/run-task/validation.js';
 
 void test('result enum: state-detector helpers recognize each new value (case + delim variants)', () => {
@@ -838,8 +839,71 @@ void test('result enum: state-detector helpers recognize each new value (case + 
     assert.ok(isNotConfiguredResult('Not Configured'));
     assert.ok(isPendingResult(''));
     assert.ok(isPendingResult('Pass / Fail / N/A'));  // template-row state
+    assert.ok(isUnrelatedFailResult('Fail – unrelated'));
+    assert.ok(isUnrelatedFailResult('fail - unrelated'));
+    assert.ok(isUnrelatedFailResult('FAIL — UNRELATED'));
+    assert.equal(isUnrelatedFailResult('fail'), false);
+    assert.equal(isUnrelatedFailResult('pass'), false);
     assert.equal(isHumanPendingResult('pass'), false);
     assert.equal(isBlockedResult('human_pending'), false);
+});
+
+void test('validateHandoffAgainstSpec: Fail – unrelated with notes is accepted (reviewer assesses)', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | Fail – unrelated | tests/foo.test.ts:42 — pre-existing timing race unrelated to Affected Files |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, []);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: Fail – unrelated without notes is rejected', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | Fail – unrelated |  |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /Fail.*unrelated.*without a specific test\/file reference/);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: Fail – unrelated with vague notes (no file ref) is rejected', () => {
+    for (const vague of ['pre-existing flake', 'CI/network flake', 'unit/e2e failure', 'see logs']) {
+        withTempPair(
+            ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+            [
+                '## Validation Outcomes',
+                '',
+                '| Check | Result | Notes |',
+                '|---|---|---|',
+                `| \`npm run test\` | Fail – unrelated | ${vague} |`,
+                '',
+            ].join('\n'),
+            (specPath, handoffPath) => {
+                const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+                assert.equal(issues.length, 1, `expected rejection for notes: "${vague}"`);
+                assert.match(issues[0], /Fail.*unrelated.*without a specific test\/file reference/);
+            },
+        );
+    }
 });
 
 void test('validateHandoffAgainstSpec: human_pending on a required check is accepted (soft state)', () => {

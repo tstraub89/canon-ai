@@ -1,3 +1,4 @@
+<!-- canon:start -->
 # Agent Quality Rules (Source of Truth)
 
 > This is the canon. Agents read this file at session start and operate under its rules.
@@ -77,7 +78,7 @@ tasks/
     status.json       # Updated by whichever agent acts
 ```
 
-Templates live in `tasks/_templates/`. To start a task, use `./scripts/task.sh new <TASK-ID> <title>`.
+Templates live in `.canon/templates/` (managed by canon — do not edit directly). To start a task, use `./scripts/task.sh new <TASK-ID> <title>`. To override a template for this project, copy it to `tasks/_templates/` — `canon task new` checks there first. See `.canon/README.md` for details.
 
 **Task ID naming**: Use lowercase kebab-case (e.g., `add-login-modal`, `refactor-cache-layer`). The pipeline orchestrator validates that IDs contain only lowercase alphanumeric characters, hyphens, dots, and underscores.
 
@@ -93,6 +94,8 @@ Templates live in `tasks/_templates/`. To start a task, use `./scripts/task.sh n
 9. Human tests against `done.md` checklist, sets `human_review` → `done`
 
 **Validation authority boundary**: Codex authors `## Validation Outcomes` for checks it ran in its sandbox. The orchestrator authors `## Runtime Validation Outcomes` for registered runtime checks it ran outside Codex's sandbox. Neither actor edits the other's section.
+
+**`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a failure outside the task's Affected Files, Codex may record `Fail – unrelated` instead of a bare `Fail`. The Notes column must contain a specific file reference (path, extension, or `file:line`) — vague explanations are rejected by the orchestrator. Claude assesses credibility in Stage 1 code review; an implausible explanation is a Stage 1 fail.
 
 **Per-iteration artifact convention.** `handoff.md` and `review.md` are **cumulative across review rounds, not rewritten**. Round 1 fills the existing template structure. On every subsequent revision:
 
@@ -321,3 +324,6 @@ When a task cycle completes, the human sees `tasks/TASK-ID/done.md` containing:
 4. Test results table
 5. Decisions made during implementation
 6. Open questions needing human input
+<!-- canon:end -->
+
+<!-- Your project additions below — `canon upgrade` will not touch this section -->

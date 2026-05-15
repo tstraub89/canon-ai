@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { config } from '../env.js';
-import { getBaseBranch } from '../git.js';
+import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
 import { RUNTIME_CHECKS } from '../../pipeline-policy.js';
 import { computeLatestRuntimeResults } from '../validation.js';
@@ -45,7 +45,7 @@ export function promptSpec(state: PipelineState): string {
                 `**Task \`${t.taskId}\`**: Write tasks/${t.taskId}/spec.md using the template.` +
                 (combined ? ` Also write tasks/${t.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns.` : '')
             ).join('\n\n')
-            : `Write tasks/${task.taskId}/spec.md using the template in tasks/_templates/spec.md. Be concrete — Codex implements directly from this.` +
+            : `Write tasks/${task.taskId}/spec.md using the template in .canon/templates/spec.md. Be concrete — Codex implements directly from this.` +
               (combined ? `\n\nAlso write tasks/${task.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns to use.` : ''),
         bundleNote: isBundle ? '\nThese tasks are related — consider cross-task interactions while speccing.' : '',
         doneNote: combined
@@ -134,6 +134,20 @@ export function promptImplement(state: PipelineState, mode: 'fresh' | 'resume' =
         isBundle: tasks.length > 1,
         phaseCommands: phaseCommands(taskIds, 'implement', 'done'),
     });
+}
+
+export function promptImplementResume(state: PipelineState): string {
+    return [
+        'Your implementation session was interrupted before you could write handoffs.',
+        'The code changes are already complete in the working tree.',
+        '',
+        'Your only remaining tasks:',
+        '1. Run the project\'s validation commands (see AGENTS.md "Validation Matrix" and each spec\'s "Validation Required" section) and record results.',
+        '2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, validation outcomes).',
+        '3. Run task.sh to mark implement done for each task.',
+        '',
+        promptImplement(state, 'resume'),
+    ].join('\n');
 }
 
 export function promptImplementRevisions(state: PipelineState): string {
@@ -226,7 +240,7 @@ function buildRuntimeFailureEntries(tasks: readonly TaskContext[]): object[] {
     return entries;
 }
 
-export function promptImplementReroute(state: PipelineState): string {
+export function promptImplementReroute(state: PipelineState, isResumedSession = false): string {
     const { tasks } = state;
     const stateHeader = buildImplementStateHeader(state, 'reroute');
     const taskIds = tasks.map(t => t.taskId);
@@ -240,12 +254,22 @@ export function promptImplementReroute(state: PipelineState): string {
         `- \`${t.taskId}\`: "${t.title}" (reroute #${t.rerouteCount}) — the spec was amended after human review. Read tasks/${t.taskId}/spec.md carefully (look for "Amendment", "Round N", "Follow-up", "Revision Notes", or similar sections that were added since your last handoff). Your previous handoff is at tasks/${t.taskId}/handoff.md.`
     ).join('\n');
 
+    const preamble = isResumedSession
+        ? 'Your session is being continued with spec amendments. The spec has been updated since your last turn — new ACs, new sections, or revised requirements have been added. Your existing code and codebase context are still valid; only the spec has changed.'
+        : 'A human reviewed your previous implementation and sent it back with additional feedback. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is **not** a resume of an interrupted session: your previous work shipped, the human tried it, and now there\'s more to do.';
+    const startup = isResumedSession ? '' : CODEX_STARTUP;
+    const groundingRule = isResumedSession
+        ? 'Grounding rule: re-read the amended spec.md and your handoff.md before changing anything. Your codebase context is current, but the spec has new requirements — do not assume your prior memory of the spec is complete.'
+        : 'Grounding rule: re-open the amended spec and the current handoff before changing anything. Session memory is stale by design on reroute rounds.';
+
     return render('implement-reroute.md', {
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         stateHeader,
-        startup: CODEX_STARTUP,
+        startup,
         roundBanner,
+        preamble,
+        groundingRule,
         risksBlock: buildKnownRisks(taskIds),
         pitfallsBlock: buildKnownPitfalls(),
         contextBlock: buildContextBlock(taskIds),
@@ -254,14 +278,32 @@ export function promptImplementReroute(state: PipelineState): string {
     });
 }
 
-export function promptCodeReview(state: PipelineState): string {
+export function promptCodeReview(
+    state: PipelineState,
+    baseBranch?: string,
+    scopedDiff: ScopedDiff | null = null,
+): string {
     const { tasks } = state;
     const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
-    const baseBranch = getBaseBranch(tasks.map(t => t.taskId));
+    const resolvedBaseBranch = baseBranch ?? getBaseBranch(tasks.map(t => t.taskId));
+    const hasDiff = scopedDiff !== null;
 
     if (maxIter > 0) {
         const roundN = maxIter + 1;
         const priorIteration = maxIter;
+        const diffView = hasDiff
+            ? {
+                hasDiff,
+                baseBranch: resolvedBaseBranch,
+                diffContent: scopedDiff.diff,
+                diffTruncated: scopedDiff.truncated,
+            }
+            : {
+                hasDiff,
+                baseBranch: resolvedBaseBranch,
+                diffContent: '',
+                diffTruncated: false,
+            };
         const taskLines = tasks.map(t =>
             `- \`${t.taskId}\` → read the \`## Iteration ${priorIteration} — addressing review round ${maxIter}\` section of \`tasks/${t.taskId}/handoff.md\``
         ).join('\n');
@@ -275,7 +317,7 @@ export function promptCodeReview(state: PipelineState): string {
             maxIter,
             taskLines,
             tightenLine,
-            baseBranch,
+            ...diffView,
             phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
         });
     }
@@ -284,13 +326,27 @@ export function promptCodeReview(state: PipelineState): string {
         `- \`${t.taskId}\`: read tasks/${t.taskId}/handoff.md and cross-reference tasks/${t.taskId}/spec.md ACs`
     ).join('\n');
 
+    const diffView = hasDiff
+        ? {
+            hasDiff,
+            baseBranch: resolvedBaseBranch,
+            diffContent: scopedDiff.diff,
+            diffTruncated: scopedDiff.truncated,
+        }
+        : {
+            hasDiff,
+            baseBranch: resolvedBaseBranch,
+            diffContent: '',
+            diffTruncated: false,
+        };
+
     return render('code-review-round-1.md', {
         projectName: config.projectName,
         startup: CLAUDE_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         taskLines,
-        baseBranch,
         isBundle: tasks.length > 1,
+        ...diffView,
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
     });
 }

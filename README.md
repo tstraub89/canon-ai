@@ -52,7 +52,7 @@ A **human** is the product owner: approves specs, runs final behavioral tests, s
 The orchestrator under `scripts/run-task/` drives this. For each task:
 
 ```
-spec → spec_review → human gate → plan → implement → code_review → qa → human_review
+spec → spec_review → human gate → plan → implement → runtime_validation → code_review → qa → human_review
 ```
 
 …with automatic loops on `changes_requested` verdicts, model/effort scaling by task size, optional git-worktree isolation, session resumption across phases, and auto-block on runaway loops. See `docs/pipeline-orchestrator.md` for the full mechanics.
@@ -62,113 +62,141 @@ The pipeline supports two tiers:
 - **Fast tier** (small tasks): spec + plan in one Claude session, skip Codex spec review, human gate replaces it.
 - **Full tier** (medium / large / delicate tasks): every phase runs separately, Codex reviews specs before they reach the human.
 
-A single command runs a task end-to-end through the whole pipeline:
+A single command runs a task end-to-end:
 
 ```bash
-npx tsx scripts/run-task.ts <task-id>
+canon run <task-id>
 ```
 
-`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--ship` archives a finished task. Multiple task IDs in one invocation = bundle mode.
+`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` archives a finished task. Multiple task IDs in one invocation = bundle mode.
+
+## Getting started
+
+### Prerequisites
+
+- **Node 24+**
+- **git**
+- **jq** — `brew install jq`
+- **Claude Code** — `npm install -g @anthropic-ai/claude-code`
+- **Codex CLI** — `npm install -g @openai/codex`
+- **gh** (optional, for `--pr` / `--push`) — `brew install gh && gh auth login`
+
+### Install
+
+```bash
+npm install -g canon-ai
+# or use without installing:
+npx canon-ai@latest init
+```
+
+### Set up in a repo
+
+```bash
+cd your-project
+
+# Install canon into this repo
+canon init
+```
+
+`canon init` installs a Claude Code skill (`/canon-init`) in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the `docs/` knowledge corpus tailored to your project.
+
+After setup:
+
+```bash
+# Create your first task (Claude writes the spec conversationally)
+canon task new my-first-feature "Short description"
+
+# Run the pipeline
+canon run my-first-feature
+```
+
+### Key commands
+
+| Command | What it does |
+|---|---|
+| `canon init` | Install canon into the current repo |
+| `canon doctor` | Verify environment and canon setup |
+| `canon task new <id> "Title"` | Scaffold a new task from templates |
+| `canon task list` | Show all tasks and their pipeline phase |
+| `canon task phase <id> <phase> <status>` | Advance a task phase manually |
+| `canon run <id>` | Run the full pipeline for a task |
+| `canon run <id> --step` | Run one phase then stop |
+| `canon run <id> --pr` | Push branch and open a draft PR |
+| `canon upgrade` | Sync vendored files to match installed version |
+| `canon update` | Update the canon-ai package itself |
+
+Full `canon task` subcommand reference is in `docs/pipeline-orchestrator.md`.
+
+### Customizing task templates
+
+Task templates live in `.canon/templates/` and are managed by canon — `canon upgrade` overwrites them. To customize a template for your project, copy it to `tasks/_templates/`:
+
+```bash
+cp .canon/templates/spec.md tasks/_templates/spec.md
+# edit tasks/_templates/spec.md — add your validation commands, project-specific sections, etc.
+```
+
+`canon task new` checks `tasks/_templates/` first and falls back to `.canon/templates/`. Files in `tasks/_templates/` are never touched by `canon upgrade`.
+
+After upgrading, check whether structural changes landed in the canonical template that you should incorporate into your override:
+
+```bash
+diff .canon/templates/spec.md tasks/_templates/spec.md
+```
+
+See `.canon/README.md` for a quick reference.
 
 ## Architecture: two layers
 
-Canon is two products in one repo, in different states of completion:
+Canon is two products:
 
-### Layer 1: The Scaffold *(this is what's shipping today)*
+### Layer 1: The Scaffold
 
 The portable structure: orchestration scripts, task templates, agent rules (`AGENTS.md` / `CLAUDE.md` / `CODEX.md`), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs.
 
-**Drop this into any repo and, after filling in the project-specific scaffolding, you have:**
+Drop this into any repo and you have:
 
 - A working multi-agent pipeline that runs spec → review → implement → review → QA without intervention
 - Templates for every artifact the pipeline produces
 - The discipline (low-padding communication norms, two-stage code review, code-is-canonical, etc.) baked into the agent rules
 - A knowledge corpus structure (`docs/patterns.md`, `docs/decisions.md`, `docs/codebase-map.md`) you fill in as your project's conventions emerge
 
-The "after filling in the project-specific scaffolding" caveat matters: canon-ai ships `TODO[canon]:` markers across the docs and a few in the orchestrator. The pipeline runs without them, but agent prompts will be referencing empty validation matrices and missing patterns until you populate them.
+### Layer 2: The Bootstrap CLI
 
-**What you don't get from Layer 1:**
-
-- Pre-populated `docs/patterns.md` / `docs/decisions.md` / `docs/codebase-map.md` for *your* codebase. Those are the institutional-memory docs that make canon valuable, and they have to be project-specific. Layer 1 ships them as detailed templates with `TODO[canon]` markers.
-
-### Layer 2: The Bootstrap CLI *(future — not built yet)*
-
-A setup CLI that points at an existing repo and uses Claude to analyze it and *generate the initial knowledge corpus* — codebase map, settled decisions surfaced from git history and code, the obvious patterns that are already canonical.
-
-This is the product hypothesis worth validating: *can we collapse the 6-month "fill in your patterns.md as you go" cold start into a single bootstrap run?*
-
-Layer 1 is required for Layer 2 to work; Layer 2 is what makes Layer 1 actually useful on day one.
+`canon init` + `/canon-init` — installed as a Claude Code skill in your project. Grills Claude on your codebase and generates the initial knowledge corpus: codebase map, decisions surfaced from your existing conventions, patterns you're already using. The goal: collapse the "fill in your canon as you go" cold start into a single onboarding session.
 
 ## Current scope
 
-✅ **Built and working in canon-ai today:**
+✅ **Built and working:**
 
-- `scripts/run-task.ts` (entry) + `scripts/run-task/` modules — full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, --reroute, --ship
+- `canon` CLI — `init`, `doctor`, `run`, `task`, `update`, `upgrade`
+- `scripts/run-task.ts` + `scripts/run-task/` modules — full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`
 - `scripts/pipeline-policy.ts` — pure policy module (tier/sizing/model/effort matrix), table-tested
-- `scripts/task.sh` — task lifecycle helper (new / list / status / phase / reset-spec-review / post-merge-sync / release-init), genericized for non-Node projects
-- `tasks/_templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
+- `scripts/task.sh` — task lifecycle helper (new / list / status / phase / reset-spec-review / post-merge-sync / release-init)
+- `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
 - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — workflow rules and per-agent guidance
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.codex/config.toml` / `.claude/settings.json` — agent CLI configs
+- `/canon-init` skill — interactive grill that generates the full knowledge corpus for a new project
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**
 
 - Validation matrix in `AGENTS.md` (which checks apply to which change types)
 - Implementation Rules sections in `AGENTS.md` (state, styling, perf, testing, gating, assets, analytics — project-specific)
-- Codebase Navigation in `CLAUDE.md` and Validation Checklist in `CODEX.md`
-- All `docs/*.md` content (the templates teach you the format; the substance is yours)
-- Project name (defaults to your `package.json` "name" field, or set `CANON_PROJECT_NAME`)
+- All `docs/*.md` content (the templates teach you the format; the substance is yours — partially generated by `/canon-init`)
 
-❌ **Not in scope for MVP — phase 2:**
+❌ **Not in scope for MVP:**
 
-- The Layer 2 bootstrap CLI (codebase analyzer that auto-populates `docs/`)
-- Skills extraction (Claude Code-specific `/pipeline`, `/spec`, `/status` commands)
-- Adapters for other agentic CLIs (Gemini CLI, Aider, etc.) — assumed Claude Code + Codex CLI for now
-- Pre-built docs-check / external-API-citation tooling (project-specific in original)
+- Adapters for other agentic CLIs (Gemini CLI, Aider, etc.) — assumed Claude Code + Codex CLI
+- Pre-built docs-check / external-API-citation tooling (project-specific)
 - Per-language project bootstrappers (Python / Rust / Go variants)
 
 ## Supported platforms
 
-- **macOS** and **Linux** are the supported targets. Canon's helpers (`scripts/task.sh`, worktree setup, etc.) require bash plus standard Unix tools (`jq`, `awk`, `sed`, `grep`).
-- **Windows is not supported.** Worktree setup symlinks `node_modules` and `.env*` files, which commonly fails with `EPERM` on Windows without developer mode or admin shell. Use **WSL2** if you're on Windows; native Windows is untested.
-- **Node**: 24.x (declared in `package.json` engines; CI runs on 24.x only).
-
-## Getting started
-
-> ⚠️ **Pre-MVP**: Layer 1 works mechanically but the experience of using canon in a fresh project hasn't been validated. The first real test of the abstraction is its dogfooding adoption.
-
-```bash
-# 1. Clone canon-ai into your project (or copy the relevant files manually)
-git clone git@github.com:tstraub89/canon-ai.git
-cp -r canon-ai/{scripts,tasks,docs,AGENTS.md,CLAUDE.md,CODEX.md,.codex,.claude,.canon} your-project/
-cd your-project
-
-# 2. Install the orchestrator's deps (TypeScript + tsx + node:test + Mustache for prompt rendering)
-npm install --save-dev tsx typescript @types/node mustache @types/mustache
-
-# 3. Set the project name (or rely on your package.json "name" field)
-export CANON_PROJECT_NAME="your-project"
-
-# 4. Verify the pipeline scripts run
-npm test
-
-# 5. Fill in the knowledge corpus
-# Open each docs/*.md and replace TODO[canon] markers with project content.
-# At minimum: AGENTS.md "Validation Matrix" and "Implementation Rules" sections.
-
-# 6. Create your first task
-./scripts/task.sh new my-first-task "Description"
-
-# 7. Write a spec conversationally with Claude (in tasks/my-first-task/spec.md),
-# then invoke the pipeline:
-npx tsx scripts/run-task.ts my-first-task
-```
-
-Canon is tested with `CODEX_MODEL_MINI=gpt-5.4-mini` and `CODEX_MODEL_FULL=gpt-5.5`.
-If your local Codex CLI uses different model names, set those env vars explicitly.
-
-Expect a calibration period. The first several tasks will surface conventions worth writing into `docs/patterns.md` and `docs/decisions.md` — that's the point of those files. The rate of new pattern/decision entries should taper off as the canon accumulates. The exact number of tasks before things feel stable is project-specific; canon hasn't been validated across enough projects to give a confident range.
+- **macOS** and **Linux** are the supported targets. Canon's helpers (`scripts/task.sh`, worktree setup) require bash plus standard Unix tools (`jq`, `awk`, `sed`, `grep`).
+- **Windows is not supported.** Use WSL2.
+- **Node**: 24.x.
 
 ## The canon philosophy
 
@@ -176,21 +204,19 @@ The metaphor matters. A *canon* is a body of accumulated, authoritative work —
 
 That's exactly what `docs/patterns.md`, `docs/decisions.md`, and `AGENTS.md` are. They start small. They grow as the project ships features and absorbs lessons. They become more authoritative over time. And the more authoritative they are, the better the agents perform — because the agents stop having to guess.
 
-The implication for product strategy: **the value of canon compounds with use**. A 6-month-old canon repo on a real project is dramatically more useful than a fresh canon repo on a fresh project. That's where Layer 2's bootstrap CLI matters — it tries to short-circuit the cold start by generating an initial canon from existing code.
+The implication: **the value of canon compounds with use**. A 6-month-old canon repo on a real project is dramatically more useful than a fresh canon repo on a fresh project.
 
 ## Roadmap
 
-**Phase 1 (now)**: Layer 1 ships. Validate the abstraction by using canon-ai on at least one fresh project. Measure friction. Iterate the templates.
+**Phase 1 (now)**: Layer 1 + Layer 2 ship. npm package `canon-ai` with full CLI. `/canon-init` skill for interactive project bootstrap. Validate against real projects.
 
-**Phase 2 (next)**: The bootstrap CLI. `canon init` on an existing repo runs Claude over the codebase, generates initial `docs/codebase-map.md` (file inventory + feature wiring), surfaces obvious decisions from git history into `docs/decisions.md`, and identifies recurring patterns into `docs/patterns.md`. The hypothesis: this collapses the 6-month "fill in your canon as you go" cold start.
+**Phase 2 (next)**: Make the implementer slot pluggable — adapter interface for Codex CLI, Gemini CLI, Aider, others. Architect slot stays Claude Code (skills are load-bearing).
 
-**Phase 3 (research)**: Make the implementer slot pluggable — adapter interface for Codex CLI, Gemini CLI, Aider, others. Architect slot stays Claude Code (skills are load-bearing). Validate that the same task produces working code through any adapter.
-
-**Phase 4 (research)**: Productize. Hosted bootstrap service? Per-language scaffolds? Marketplace for `docs/patterns.md` starter packs (Next.js patterns, Rails patterns, etc.)? TBD based on Phase 2 validation.
+**Phase 3 (research)**: Productize. Hosted bootstrap service? Per-language scaffolds? Marketplace for `docs/patterns.md` starter packs (Next.js patterns, Rails patterns, etc.)? TBD based on Phase 1 validation.
 
 ## License
 
-Proprietary. See `LICENSE`. This may eventually open-source — that decision lives downstream of Phase 2 validation.
+Proprietary. See `LICENSE`. This may eventually open-source — that decision lives downstream of Phase 1 validation.
 
 ## Origin
 

@@ -1,3 +1,4 @@
+<!-- canon:start -->
 # CODEX.md
 
 ## Role
@@ -35,7 +36,7 @@ When Claude hands off a spec (`tasks/TASK-ID/spec.md`):
    - Are there edge cases the spec missed?
    - Are there type safety gaps or interface mismatches?
    - Does the proposed approach conflict with existing patterns?
-3. Write `tasks/TASK-ID/spec-review.md` with findings (use `tasks/_templates/spec-review.md`).
+3. Write `tasks/TASK-ID/spec-review.md` with findings (use `.canon/templates/spec-review.md`).
 4. Update `status.json`: set `spec_review.status` to `"done"` and `spec_review.verdict` to `"approved"`, `"approved_with_nits"` (no blockers, nits passed to plan — loop exits), or `"changes_requested"` (blocking finding, spec must be revised).
 
 ### Implementing
@@ -43,7 +44,7 @@ When Claude hands off a spec (`tasks/TASK-ID/spec.md`):
 When the orchestrator invokes you for implement, the prompt already carries the task-state header, AC summary, risks, pitfalls, and relevant file contents. The rules below are the non-negotiables — the prompt reminds you of them, but this is the reference.
 
 1. **Spec ACs are binding. Plan approach is guidance.** Every AC in `spec.md` MUST be met. If you find a better approach than the plan, use it and document the deviation in `handoff.md` under *Deviations*. You may NOT silently drop an AC, skip a validation check, or omit a spec requirement. If an AC is infeasible, document it under *Blockers*.
-2. Run every check listed in the spec's *Validation Required* section and every applicable check from the [Validation Checklist](#validation-checklist) below. No `Fail` in the Validation Outcomes table — fix failures before writing `handoff.md`.
+2. Run every check listed in the spec's *Validation Required* section and every applicable check from the [Validation Checklist](#validation-checklist) below. No bare `Fail` in the Validation Outcomes table — fix failures before writing `handoff.md`. Exception: a pre-existing flake or failure outside the task's Affected Files may be recorded as `Fail – unrelated`, but only when the Notes column contains a specific file reference (path, file extension, or `file:line`). Vague notes are rejected. Claude will assess credibility in code review — write a precise, honest explanation.
 3. Write `tasks/TASK-ID/handoff.md` using the template. Required fields: changed files, rationale, deviations, AC coverage table, edge cases, blockers, validation outcomes.
 4. Finish with `./scripts/task.sh phase <TASK-ID> implement done` (the orchestrator's prompt shows the exact command).
 5. If you surfaced a distinct insight the reviewer wouldn't naturally capture, append an entry to `docs/lessons-learned.md`. Claude owns lessons by default — Codex writes only when it has a unique perspective.
@@ -59,6 +60,9 @@ When Claude writes `tasks/TASK-ID/review.md` with changes requested, or when run
 3. For runtime failures, read `tasks/<id>/runtime-check-output/...` before proposing a fix; fix the product/code path, not the check, unless the spec authorizes a check change.
 4. `optional cleanup/nit` items: address if straightforward, skip if out of scope.
 5. Update `handoff.md` with what changed in this iteration.
+   - **Reverting a file — how to do it**: `git restore` is blocked in the sandbox (it requires `.git/index.lock`). For a byte-perfect revert to the task baseline, use `git show origin/<base-branch>:<path>` (read-only git, always allowed) and write the output to the file. This avoids residual diffs like trailing newlines.
+   - **Reverting a file — perfect revert** (file no longer appears in `git diff base...HEAD`): delete it from all prior iteration Changes tables and do not add it to the current one. The pre-flight check validates the aggregate against the final diff, so a net-zero file left in any Changes table is a false `handoff→diff` error.
+   - **Reverting a file — imperfect revert** (file still appears in the diff, e.g. a trailing newline remains): add it to the current iteration's Changes table with "Reverted to original (describe residual diff)". Leaving a changed file out of all Changes tables is a `diff→handoff` error.
 6. Rerun validation you can run locally; runtime checks rerun after implement closes.
 
 ## Implementation Conventions
@@ -79,11 +83,13 @@ Project-specific validation commands live in [`docs/architecture.md`](docs/archi
 
 Before writing `handoff.md`, run every check listed in the spec's *Validation Required* section AND every applicable check from `docs/architecture.md` based on the change type. Record each as Pass / Fail / N/A in the Validation Outcomes table. Required checks must be Pass or Fail — do not mark them N/A.
 
+**Unit tests specifically**: if a unit test suite exists (`npm test` or equivalent), run it — always, regardless of whether the spec adds new test cases. "No new unit tests required" means no new cases are being authored, not that the existing suite can be skipped. A spec note saying tests are deferred is never license to skip running the suite.
+
 **Check column format**: copy the exact text from the spec's *Validation Required* checklist entry into the Check cell. If the spec says `` `lint` (`npm run lint`) ``, the handoff row must say `` `lint` (`npm run lint`) `` — not just `` `npm run lint` ``. The orchestrator matches by the short name (first backtick token); any mismatch causes a false pre-flight failure.
 
 ## Handoff Template
 
-Use `tasks/_templates/handoff.md`. Required fields:
+Use `.canon/templates/handoff.md`. Required fields:
 
 1. Changed files with descriptions
 2. Intent and rationale
@@ -91,3 +97,6 @@ Use `tasks/_templates/handoff.md`. Required fields:
 4. Edge cases considered
 5. Blockers (or "none")
 6. Validation outcomes table
+<!-- canon:end -->
+
+<!-- Your project additions below — `canon upgrade` will not touch this section -->

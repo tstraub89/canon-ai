@@ -4,7 +4,7 @@ import path from 'node:path';
 import { info, warn } from '../cli.js';
 import { getCodexConfig } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
-import { promptImplement, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
+import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
 import { commitTaskArtifactsToBase, gitSafeAtRaw, parsePorcelain, ensureBranch } from '../git.js';
 import { runTaskShFor } from '../task-sh.js';
 import { getActiveCwd, isWorktreeEnabled, TASK_ARTIFACT_FILES } from '../worktree.js';
@@ -55,17 +55,22 @@ export async function runImplementPhase(
 
     const codexCfg = getCodexConfig('implement', tasks);
     const isResume = resumeId !== null && !isRevision && !isRerouted && wasImplementInProgress;
+    // Only pass a resumeId when we're deliberately continuing an implement session.
+    // A stored codex session from spec_review (full-tier tasks) must not bleed into
+    // implement: that session's project root is REPO_ROOT, not the worktree, so Codex
+    // file ops would land in the wrong tree.
+    const shouldResume = isRevision || isRerouted || isResume;
     const implementPrompt = isRevision
         ? promptImplementRevisions(state)
         : isRerouted
-            ? promptImplementReroute(state)
+            ? promptImplementReroute(state, resumeId !== null)
             : isResume
-                ? `Your implementation session was interrupted before you could write handoffs. The code changes are already complete in the working tree.\n\nYour only remaining tasks:\n1. Run the project's validation commands (see AGENTS.md "Validation Matrix" and each spec's "Validation Required" section) and record results.\n2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, validation outcomes).\n3. Run task.sh to mark implement done for each task.\n\n${promptImplement(state, 'resume')}`
+                ? promptImplementResume(state)
                 : promptImplement(state, 'fresh');
     const result = await runCodex(
         implementPrompt,
         interactive,
-        resumeId,
+        shouldResume ? resumeId : null,
         codexCfg.model,
         codexCfg.effort,
         {
@@ -74,6 +79,7 @@ export async function runImplementPhase(
             iteration: tasks[0].iterations_current_loop,
         },
         activeCwd,
+        /* wrapForResume */ !isRerouted,
     );
 
     if (isRevision) {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { info, warn } from '../cli.js';
-import { getBaseBranch, verifyBranch } from '../git.js';
+import { getBaseBranch, getScopedDiff, verifyBranch } from '../git.js';
 import { getClaudeConfig, getMaxReviewLoops } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
 import { runTaskShFor } from '../task-sh.js';
@@ -20,6 +20,8 @@ export async function runCodeReviewPhase(
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
     verifyBranch(taskIds);
+    const baseBranch = getBaseBranch(taskIds);
+    const activeCwd = getActiveCwd(taskIds);
     const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
     const codeReviewLoopCap = getMaxReviewLoops(tasks);
     if (maxIter >= codeReviewLoopCap) {
@@ -42,7 +44,7 @@ export async function runCodeReviewPhase(
         const issues = validateHandoff(t.taskId);
         if (issues.length > 0) preflightFailed.push({ taskId: t.taskId, issues });
     }
-    const bundleIssues = verifyHandoffAgainstDiff(taskIds, getBaseBranch(taskIds));
+    const bundleIssues = verifyHandoffAgainstDiff(taskIds, baseBranch);
     if (bundleIssues.length > 0) {
         for (const taskId of taskIds) {
             const existing = preflightFailed.find(entry => entry.taskId === taskId);
@@ -88,7 +90,6 @@ export async function runCodeReviewPhase(
     info(`Phase: code_review (Claude${state.isBundle ? ' bundle' : ''}, iteration ${maxIter + 1})`);
     for (const t of tasks) runTaskShFor(t.taskId, 'phase', t.taskId, 'code_review', 'in_progress');
     if (isWorktreeEnabled(taskIds)) {
-        const activeCwd = getActiveCwd(taskIds);
         const artifacts = ['spec.md', 'spec-review.md', 'plan.md', 'notes.md'];
         for (const taskId of taskIds) {
             const srcDir = taskDirFor(taskId);
@@ -107,11 +108,12 @@ export async function runCodeReviewPhase(
 
     const cfg = getClaudeConfig('code_review', tasks);
     const reviewResumeId = maxIter > 0 ? resumeId : null;
-    const result = await runClaude(promptCodeReview(state), interactive, reviewResumeId, cfg.model, cfg.effort, {
+    const scopedDiff = getScopedDiff(baseBranch, activeCwd);
+    const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,
-    }, getActiveCwd(taskIds));
+    }, activeCwd);
 
     for (const t of tasks) {
         // Read from the active cwd, not REPO_ROOT — Claude just wrote review.md

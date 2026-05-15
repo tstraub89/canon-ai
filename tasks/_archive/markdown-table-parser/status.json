@@ -1,0 +1,36 @@
+{
+  "id": "markdown-table-parser",
+  "title": "Structured-table parser utility",
+  "status": "complete",
+  "created": "2026-05-10",
+  "updated": "2026-05-11",
+  "branch": "task/markdown-table-parser (manually shipped to dev as commit 0b35348)",
+  "base_branch": "dev",
+  "task_size": "S",
+  "delicate": false,
+  "human_spec_gate": false,
+  "worktree": true,
+  "phases": {
+    "spec": { "status": "done", "agent": "claude" },
+    "spec_review": { "status": "done", "agent": "claude", "verdict": "approved", "iterations": 0 },
+    "plan": { "status": "done", "agent": "claude" },
+    "implement": { "status": "done", "agent": "codex" },
+    "code_review": { "status": "done", "agent": "human", "verdict": "approved", "iterations": 7, "manual_override_reason": "pipeline auto-blocked 3x due to canon's own cumulative-handoff bug (validator scans whole file for |Fail|; later iteration notes retained stale Fail text from corrected earlier rounds). Implementation correctness independently verified (75/75 tests pass on dev REPO_ROOT, lint + type-check clean). Codex review of gallery_wall canon port surfaced the underlying canon bugs — fixing them is the orchestrator-cumulative-reads follow-on task." },
+    "qa": { "status": "done", "agent": "human", "manual_override_reason": "Same as above. QA verified directly on dev after manual ship." },
+    "human_review": { "status": "done", "agent": "human" }
+  },
+  "escalations": [
+    { "date": "2026-05-11", "phase": "code_review", "iteration_count": 3, "reason": "Auto-blocked at iter 3 on cumulative-handoff validator bug. Reset and retried — same result. Then deleted unportable golden test, reset and retried — same result. Codex review of gallery_wall port (separate, same day) identified the canon-level bug. Decision: ship parser manually, fix canon in follow-on task." }
+  ],
+  "sessions": { "codex": "019e1515-1f70-74f2-8838-0c8c8991b431" },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked | complete",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_ship_record": {
+    "method": "manual",
+    "shipped_to": "dev",
+    "shipped_at": "2026-05-11",
+    "ship_commit": "0b35348",
+    "follow_on_task": "orchestrator-cumulative-reads",
+    "context": "Canon's validateHandoff, parseHandoffFiles, and review-verdict reader all assume single-section handoffs/reviews. Multi-iteration handoffs break them. Implementation correct; orchestrator broken."
+  }
+}

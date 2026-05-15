@@ -1,0 +1,67 @@
+# QA Summary: handoff-verifier — Verify handoff matches git diff
+
+> Written by: Claude | Date: 2026-05-08 (updated after Iteration 3 rename-pair fix)
+
+## What Changed
+
+A post-commit verification step was added to the code-review pre-flight. Previously the pipeline checked that the handoff Changes table matched the dirty working tree *before* the auto-commit, but had no guard at the code-review boundary to confirm the committed diff still matched the handoff. This task closes that gap.
+
+The new check runs once per pipeline invocation, after the existing per-task validation loop and before any rejection writes. It compares the union of all bundle members' handoff Changes tables against the actual committed diff in two directions: files the handoff claims that aren't in the diff, and files in the diff that no handoff mentions. Failures are written to every bundle member's review file under a clearly labelled bundle-level section and route the bundle back to implement via the existing changes-requested path.
+
+## Files Changed
+
+| File | What changed |
+|---|---|
+| `scripts/run-task.ts` | Added `HANDOFF_DIFF_EXEMPT_PATHS` constant, `verifyHandoffAgainstDiff()` (runtime), and `verifyHandoffAgainstDiffFromData()` (test seam). Extended code-review pre-flight to run the bundle-wide verifier once and merge its issues into each affected task's preflight entry. |
+| `tests/run-task-validation.test.ts` | Seven new test rows via the injected-data seam: positive match, handoff→diff negative, diff→handoff negative, bundle-union behavior, empty diff+handoff, rename preimage covered, and rename pair uncovered. |
+| `tasks/handoff-verifier/status.json` | Pipeline state advanced through implement. |
+
+## How to Test
+
+1. **Happy path**: run any task through the pipeline normally. Code review should proceed without a handoff-verification rejection. Check `tasks/<id>/review.md` — no bundle-level section should appear.
+2. **Handoff hallucination**: between implement and code_review, edit `tasks/<id>/handoff.md` to add a fake row claiming a file changed that didn't. Resume the pipeline. Expected: code_review rejects; `review.md` names the file as "in handoff but not in diff."
+3. **Silent edit**: between implement and code_review, manually edit a file not in the handoff and commit it. Resume the pipeline. Expected: code_review rejects; `review.md` names the file as "in diff but not in any bundle handoff."
+4. **Bundle**: run two tasks bundled. Confirm a file listed in one member's handoff is not flagged as missing from the bundle.
+5. After step 2 or 3: confirm the orchestrator routes back to implement, Codex corrects the handoff (or reverts the change), and code_review passes on the second try.
+
+## Test Results
+
+| Check | Result | Notes |
+|---|---|---|
+| Type-check | Pass | |
+| Unit tests | Pass | 65 tests, 7 new (including rename-pair rows added in Iteration 3) |
+| Lint | N/A | No linter configured for canon-ai |
+| Build | N/A | No build step; scripts run via `tsx` |
+
+Code review verdict: **Approved** (after 3 implementation iterations). Round 1 found two optional nits and a spec-accuracy gap (all folded inline or corrected). Round 3 caught a correctness bug: `--name-only -M` suppresses the rename pre-image path, causing false-positive `handoff→diff` failures when a handoff lists the old name of a renamed file. Fixed by switching to `--name-status -M` and expanding rename lines into both paths.
+
+## Decisions Made
+
+- **Test seam as a separate exported function** (`verifyHandoffAgainstDiffFromData`) rather than threading injectable parameters through the public `verifyHandoffAgainstDiff()` signature. Keeps the public API exact per spec while making synthetic-data tests practical.
+- **Exemption list is currently empty.** The orchestrator's auto-commit only stages files already listed in the handoff Changes table, so no orchestrator-managed paths land in the diff before code_review. The constant exists as a forward-compatibility seam and single source of truth.
+- **`--name-status` not `--name-only`** (Iteration 3 correctness fix). `--name-only` with `-M` suppresses the pre-image path for renames. A handoff that lists the old name of a renamed file — which `autoCommitCode()` accepts as valid — would produce a false-positive `handoff→diff` failure. Switching to `--name-status` and explicitly expanding rename lines to both paths resolves this symmetrically.
+
+## Open Questions
+
+(Both review nits were folded inline before shipping — see "Inline Nit Fixes" below.)
+
+## Inline Nit Fixes (post-review, pre-ship)
+
+Per human direction at the spec gate to fold review nits inline:
+
+1. **Duplicate "FAILED" log banner** — removed the bundle-specific banner in the code-review pre-flight (`scripts/run-task.ts`). The outer aggregation banner already logs each issue with a `[bundle:taskId]` prefix; the inner banner was double-emitting the same content. 2 lines deleted, no logic change. Tests still pass (63/63).
+2. **Spec wording inaccuracy** — corrected `tasks/handoff-verifier/spec.md` Known Risks bullet that claimed `parseHandoffFiles()` accepts an array of task IDs. Actual signature is single-ID (call once per task and union, per AC-2). 1-line wording fix; AC-2 itself was already accurate.
+
+## Environment Gap (separate follow-up)
+
+A real harness gap surfaced during this run, worth tracking as a separate canon task: the worktree was created without `node_modules`, and Codex hit `@esbuild/darwin-arm64` missing during validation. Codex worked through it via creative `tar`-from-cache restoration, but the proper fix is the orchestrator running `npm install` (or a project-agnostic equivalent that detects `package.json`, `requirements.txt`, etc.) on worktree creation. Symlinking project-specific resources (`.env`, `node_modules`, etc.) is one possible approach. Not in scope for this task.
+
+---
+
+## Proposed Changelog
+
+`CHANGELOG.md` already has a v0.1.0 entry that accurately covers this task:
+
+> **Added**: Post-commit handoff verification at code-review pre-flight: the pipeline now cross-checks the committed diff against every bundle member's handoff Changes table and rejects with a labelled bundle-level finding when they diverge — catching both hallucinated handoff entries and silent edits not mentioned in any handoff.
+
+**No additional changelog edit or version bump needed.** v0.1.0 was cut after code_review passed (before QA completed). The rename-pair fix (Iteration 3) is part of the same feature and does not change the user-visible description. The v0.1.0 entry is the canonical record.

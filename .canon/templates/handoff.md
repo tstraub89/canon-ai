@@ -92,6 +92,8 @@ On revision rounds, append below this line:
 |---|---|
 | `<path>` | ... |
 
+> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+
 ### Findings addressed
 
 - _correctness bug:_ "<one-line summary>" → fixed at file:line

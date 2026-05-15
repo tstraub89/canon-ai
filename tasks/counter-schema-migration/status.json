@@ -1,0 +1,61 @@
+{
+  "id": "counter-schema-migration",
+  "title": "Status counter schema migration (iterations_current_loop + iterations_total + 3 sibling fields)",
+  "status": "human_review",
+  "created": "2026-05-11",
+  "updated": "2026-05-11",
+  "branch": "task/counter-schema-migration",
+  "base_branch": "dev",
+  "task_size": "L",
+  "delicate": false,
+  "human_spec_gate": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "runtime_validation": {
+      "status": "done",
+      "agent": "orchestrator",
+      "verdict": "approved",
+      "iterations": 0
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex": "019e188a-95c2-7ed2-a155-4b4a780f441f",
+    "claude_spec": "bdef9e8c-9130-4d5d-8cfe-f351fcc9bfbe",
+    "claude_review": "4183cfbd-d2c9-49dc-a196-9eda50ab579c"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
+}
