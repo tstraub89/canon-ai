@@ -147,6 +147,7 @@ export function upgradeCmd(_args: string[]): void {
     if (upgraded.length === 0 && unchanged.length === 0) {
         console.log('No canon-managed files found. Run `canon init` to set up canon in this repo.\n');
     } else {
-        console.log('Orchestrator scripts update automatically — run `npm update canon-ai` to pull the latest.\n');
+        console.log('Orchestrator scripts update automatically — run `npm update canon-ai` to pull the latest.');
+        console.log('Note: task templates (.canon/templates/) are not synced — copy from node_modules/canon-ai/templates/.canon/templates/ if you need schema updates.\n');
     }
 }

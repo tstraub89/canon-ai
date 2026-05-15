@@ -52,7 +52,7 @@ A **human** is the product owner: approves specs, runs final behavioral tests, s
 The orchestrator under `scripts/run-task/` drives this. For each task:
 
 ```
-spec → spec_review → human gate → plan → implement → code_review → qa → human_review
+spec → spec_review → human gate → plan → implement → runtime_validation → code_review → qa → human_review
 ```
 
 …with automatic loops on `changes_requested` verdicts, model/effort scaling by task size, optional git-worktree isolation, session resumption across phases, and auto-block on runaway loops. See `docs/pipeline-orchestrator.md` for the full mechanics.

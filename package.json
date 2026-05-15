@@ -12,7 +12,8 @@
   "files": [
     "dist/",
     "templates/",
-    "scripts/"
+    "scripts/",
+    "public/"
   ],
   "scripts": {
     "build": "tsup",
