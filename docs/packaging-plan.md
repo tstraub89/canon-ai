@@ -24,20 +24,14 @@
 ### What lives in `node_modules` (canon-owned)
 - All orchestrator scripts (`scripts/run-task/`, etc.)
 - CLI binary (`canon`)
-- Grill prompt template
+- Grill skill template
 
 ### What gets vendored into the adopter's repo (project-owned)
-- `AGENTS.md`
-- `CLAUDE.md`
-- `CODEX.md`
-- `docs/product-context.md`
-- `docs/decisions.md`
-- `docs/codebase-map.md`
-- `docs/patterns.md`
-- `docs/architecture.md`
-- `docs/lessons-learned.md`
-- `docs/task-quality-log.md`
-- `tasks/_templates/spec.md`
+- `AGENTS.md`, `CLAUDE.md`, `CODEX.md` — wrapped in canon delimiters; project additions go below `<!-- canon:end -->`
+- `docs/product-context.md`, `docs/decisions.md`, `docs/codebase-map.md`, `docs/patterns.md`, `docs/architecture.md`, `docs/lessons-learned.md`, `docs/task-quality-log.md`
+- `.canon/templates/` — task scaffolding templates; adopters can customize these
+- `.canon/version` — written by `canon init` / `canon upgrade` with the installed package version
+- `.claude/skills/canon-init/SKILL.md` — the grill skill; updated by `canon upgrade`
 
 ---
 
@@ -100,11 +94,19 @@ Pull the stub (project-agnostic) versions of the agent-facing docs from `main` i
 ```
 src/
   cli/
-    init.ts        # canon init command
+    init.ts        # canon init — scaffold + write .canon/version
     run-task.ts    # thin wrapper → delegates to scripts/
-    upgrade.ts     # future: merge protocol for upgrades
+    update.ts      # canon update — npm update or npm install -g
+    upgrade.ts     # canon upgrade — sync canon blocks + .canon/version
   index.ts
 templates/         # vendored layer — copied into adopter's repo on init
+  .canon/
+    templates/     # task scaffolding templates (adopters can customize)
+  .claude/
+    skills/
+      canon-init/  # grill skill (canon-owned, upgraded by canon upgrade)
+  AGENTS.md / CLAUDE.md / CODEX.md  # with canon:start/end delimiters
+  docs/            # stub docs for the grill to fill
 scripts/           # orchestrator (stays in node_modules)
 ```
 
@@ -112,14 +114,35 @@ scripts/           # orchestrator (stays in node_modules)
 - Package name: `canon-ai` (or `@canon-ai/core` if monorepo scope ever needed)
 - Add convenience scripts to adopter's `package.json` on init: `"canon": "canon"`
 
+### Phase 2.5 — External Dependency Handling
+
+Canon requires several external CLI tools that are not npm packages. The package treats them as documented prerequisites with runtime detection — not peer deps.
+
+| Tool | When needed | Handling |
+|---|---|---|
+| `git` | always | hard requirement — `canon init` fails with setup instructions if missing |
+| `node` 24+ | always | hard requirement |
+| `jq` | `task.sh` helpers | hard requirement — `canon init` fails if missing |
+| `claude` | spec, plan, review, qa phases | hard requirement — `canon init` fails if missing |
+| `codex` | implement, spec_review phases | hard requirement — `canon init` fails if missing |
+| `gh` | `--pr`, `--push` only | soft — passes init, fails at use with: `"--pr requires the GitHub CLI: brew install gh && gh auth login"` |
+
+**`checkDeps()`** runs at the start of `canon init` — checks hard requirements, warns about soft ones.  
+**`checkDepForFlag(flag)`** runs at the start of specific commands — `gh` is checked when `--pr` or `--push` is passed.
+
+The canon snapshot in `status.json.canon` records `<unavailable>` for any binary that isn't found (existing behavior for `claude`/`codex` — extend to `gh`).
+
 ### Phase 3 — `canon init` Command
 
-When the adopter runs `npx canon-ai init`:
+**Installation**: JS projects add it as a devDependency (`npm install --save-dev canon-ai`). Non-JS projects install globally (`npm install -g canon-ai`) — same as any other CLI tool. `npx canon-ai init` works for one-shot use without installing.
 
-1. Detect existing CLAUDE.md / CODEX.md / AGENTS.md
-2. Scaffold: copy `templates/` contents into their repo
-3. Add `canon-ai` to their `devDependencies`
-4. Shell out to `claude` with the grill prompt as the starting instruction
+When the adopter runs `canon init`:
+
+1. Run `checkDeps()` — fail fast with setup instructions for any missing hard requirement
+2. Detect existing CLAUDE.md / CODEX.md / AGENTS.md
+3. Scaffold: copy `templates/` contents into their repo
+4. Add `canon-ai` to their `devDependencies`
+5. Shell out to `claude` with the grill prompt as the starting instruction
 
 ### Phase 4 — The Grill Prompt
 
@@ -149,13 +172,13 @@ This is the core IP of the init experience. Instructions for the Claude Code ses
 
 ### Phase 5 — CLI Wrapper for `run-task`
 
-`canon run-task <id>` delegates to scripts in `node_modules`. All existing flags pass through transparently:
+`canon run <id>` delegates to scripts in `node_modules`. All existing flags pass through transparently:
 
 ```
-canon run-task <id>
-canon run-task <id> --step --expect <phase>
-canon run-task <id> --pr
-canon run-task <id> --ship
+canon run <id>
+canon run <id> --step --expect <phase>
+canon run <id> --pr
+canon run <id> --ship
 ```
 
 Adopters never write `npx tsx node_modules/canon-ai/scripts/...`.
@@ -186,6 +209,9 @@ canon upgrade
 ## Open Questions (not yet decided)
 
 - Exact package name: `canon-ai` vs `@canon-ai/core`
-- Whether `canon init` requires `claude` to be installed, or gracefully degrades to stubs + a generated prompt file the human can paste manually
 - Whether the grill session commits the docs or just stages them
 - `canon upgrade` implementation timeline (Phase 5+ or post-MVP)
+
+## Resolved
+
+- **External dependency handling**: all external CLIs (`claude`, `codex`, `gh`, `jq`, `git`) are documented prerequisites with runtime detection, not npm peer deps. Hard requirements checked at `canon init`; `gh` is soft and checked at `--pr`/`--push` use. See Phase 2.5.

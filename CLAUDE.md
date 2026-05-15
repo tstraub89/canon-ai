@@ -1,3 +1,4 @@
+<!-- canon:start -->
 # CLAUDE.md
 
 ## Role
@@ -50,11 +51,13 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 **Orchestrator mechanics live in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md)** — `run-task.ts` flags, env vars, model/effort matrix, task sizing tables, bundle mode, review-loop caps, session resumption, reroute. Read on demand when invoking the pipeline; not every conversational session needs it loaded.
 
 **Quick refs you'll use most**:
-- `npx tsx scripts/run-task.ts <id> --step --expect <phase>` — run one phase with a phase-mismatch guard.
-- `MAX_REVIEW_LOOPS=5 npx tsx scripts/run-task.ts <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block.
+- `canon run <id> --step --expect <phase>` — run one phase with a phase-mismatch guard.
+- `MAX_REVIEW_LOOPS=5 canon run <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block.
+- **`canon run <id> --pr`** — when a task reaches `human_review`, always use `--pr` to push the branch and open the draft PR. Do not skip this. `--ship` is post-merge cleanup only — running it before the PR merges archives the task without the implementation landing.
 - Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — anything where a regression has unbounded blast radius. The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`). **Project-specific delicate-flag domain examples** (auth, payments, persistent storage, PHI handling, security-relevant cryptography, orchestrator routing logic, etc.) live in [`docs/product-context.md`](docs/product-context.md) — adopters list theirs there.
 - **One pipeline per worktree.** Multiple `run-task.ts` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
-- **Prefer `task.sh` helpers over hand-editing `status.json`.** `task.sh phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
+- **Prefer `canon task` helpers over hand-editing `status.json`.** `canon task phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
+- **`canon task` key ops**: `canon task new <id> "Title"` — scaffold a task; `canon task list` — show all tasks; `canon task phase <id> <phase> <status>` — advance a phase; `canon task post-merge-sync` — reconcile after squash-merge. Full subcommand list in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md#task-management-canon-task).
 
 ### Writing a Spec (conversational — all tiers)
 
@@ -65,7 +68,7 @@ All specs are written conversationally with the human before the pipeline runs.
    - **M, L, XL, and any delicate task**: Grill mode. Walk the decision tree one branch at a time, resolving dependencies between decisions before descending. Ask **one question at a time** — not a batch. For every question, state your **recommended answer** so the human can confirm, redirect, or override. If a question can be answered by exploring the codebase, explore instead of asking. Continue until the tree is resolved and the human signals shared understanding. Only then write the spec.
    - **Always take a position.** A question without a recommended answer is rarely worth asking — it offloads design work onto the human. If you genuinely have no position, say so explicitly and explain why.
 2. Explore the codebase to verify assumptions. Check for conflicts with existing patterns or duplicate functionality. Reference `docs/codebase-map.md` for file locations.
-3. Create `tasks/TASK-ID/` using `./scripts/task.sh new TASK-ID "Title"`. Set `task_size` (S/M/L/XL), `delicate`, and `human_spec_gate` in `status.json`.
+3. Create `tasks/TASK-ID/` using `canon task new TASK-ID "Title"`. Set `task_size` (S/M/L/XL), `delicate`, and `human_spec_gate` in `status.json`.
 4. Write `spec.md` with all required sections. Be concrete — Codex should be able to implement without architectural guesswork.
 5. Update `status.json`: set `spec.status` to `"done"`.
 6. **Wait for human approval before writing the plan or invoking the pipeline.**
@@ -82,8 +85,8 @@ For S tasks only. Wait for human approval before writing the plan.
    - `phases.plan.status`: `"done"`
    - `human_spec_gate`: `false` (gate has already been cleared by human approval)
 
-   Prefer `./scripts/task.sh phase TASK-ID <phase> done [verdict]` over hand-editing — it rederives the top-level `status` for you.
-4. Invoke the pipeline: `npx tsx scripts/run-task.ts TASK-ID`
+   Prefer `canon task phase TASK-ID <phase> done [verdict]` over hand-editing — it rederives the top-level `status` for you.
+4. Invoke the pipeline: `canon run TASK-ID`
 
 For full-tier tasks (M, L, XL, or any delicate task), plan writing is a pipeline phase. After the human approves the spec, invoke the pipeline directly — let the pipeline Claude session write the plan.
 
@@ -103,8 +106,8 @@ Reviews run in **two stages**. Stage 1 is a gate — if it fails, skip Stage 2 e
 
 **Stage 1 — Spec compliance (gate)**:
 1. Read `handoff.md` for changed files, rationale, and deviations.
-2. **Validation gate**: Verify the Codex-authored Validation Outcomes table has no `Fail` results and all applicable checks were run. Also read the orchestrator-authored Runtime Validation Outcomes section if present; failed runtime checks should have routed back before code review. Missing or failed = Stage 1 fail.
-3. Read the actual diff (`git diff main...HEAD` or individual files).
+2. **Validation gate**: Verify the Codex-authored Validation Outcomes table has no `Fail` results and all applicable checks were run. A `Fail – unrelated` entry is acceptable only when Notes contains a specific file reference (path, extension, or `file:line`) and the explanation is credible — assess it; don't rubber-stamp it. Also read the orchestrator-authored Runtime Validation Outcomes section if present; failed runtime checks should have routed back before code review. Missing or unexplained failure = Stage 1 fail.
+3. Read the injected diff in your prompt (the orchestrator pre-computes `git diff <baseBranch>...HEAD` and includes it). If the diff was truncated, read individual files from the handoff Changes table directly.
 4. **AC cross-reference**: Fill the Stage 1 AC table in `review.md` with **every** AC from `spec.md`. Missing an AC from the table is itself a Stage 1 fail — no skipping.
 5. **Dropped sections check**: Non-goals respected? Known Risks addressed or accepted? Human Test Plan satisfiable? Any dropped section = Stage 1 fail.
 6. If Stage 1 fails: fill the Stage 1 section, mark Stage 2 as "Not run — Stage 1 failed," set final verdict to `changes_requested`, and stop. Do not write Stage 2 findings.
@@ -134,7 +137,7 @@ After code review passes:
 Once the task reaches `human_review`, open the draft PR with:
 
 ```bash
-npx tsx scripts/run-task.ts <id> --pr
+canon run <id> --pr
 ```
 
 `--pr` pushes the task branch and creates a draft PR targeting `base_branch` (recorded in `status.json` at task creation — typically `dev`). Do not use `--ship` here; `--ship` is post-merge cleanup only, run after the PR merges.
@@ -211,3 +214,6 @@ Project commands (lint, type-check, test, build, dev server, etc.) live in [`doc
 ## CI
 
 Project CI configuration lives in [`docs/architecture.md`](docs/architecture.md) under the Tech Stack → CI subsection. Projects that don't have CI configured will have it marked there.
+<!-- canon:end -->
+
+<!-- Your project additions below — `canon upgrade` will not touch this section -->

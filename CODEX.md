@@ -1,3 +1,4 @@
+<!-- canon:start -->
 # CODEX.md
 
 ## Role
@@ -35,7 +36,7 @@ When Claude hands off a spec (`tasks/TASK-ID/spec.md`):
    - Are there edge cases the spec missed?
    - Are there type safety gaps or interface mismatches?
    - Does the proposed approach conflict with existing patterns?
-3. Write `tasks/TASK-ID/spec-review.md` with findings (use `tasks/_templates/spec-review.md`).
+3. Write `tasks/TASK-ID/spec-review.md` with findings (use `.canon/templates/spec-review.md`).
 4. Update `status.json`: set `spec_review.status` to `"done"` and `spec_review.verdict` to `"approved"`, `"approved_with_nits"` (no blockers, nits passed to plan — loop exits), or `"changes_requested"` (blocking finding, spec must be revised).
 
 ### Implementing
@@ -43,7 +44,7 @@ When Claude hands off a spec (`tasks/TASK-ID/spec.md`):
 When the orchestrator invokes you for implement, the prompt already carries the task-state header, AC summary, risks, pitfalls, and relevant file contents. The rules below are the non-negotiables — the prompt reminds you of them, but this is the reference.
 
 1. **Spec ACs are binding. Plan approach is guidance.** Every AC in `spec.md` MUST be met. If you find a better approach than the plan, use it and document the deviation in `handoff.md` under *Deviations*. You may NOT silently drop an AC, skip a validation check, or omit a spec requirement. If an AC is infeasible, document it under *Blockers*.
-2. Run every check listed in the spec's *Validation Required* section and every applicable check from the [Validation Checklist](#validation-checklist) below. No `Fail` in the Validation Outcomes table — fix failures before writing `handoff.md`.
+2. Run every check listed in the spec's *Validation Required* section and every applicable check from the [Validation Checklist](#validation-checklist) below. No bare `Fail` in the Validation Outcomes table — fix failures before writing `handoff.md`. Exception: a pre-existing flake or failure outside the task's Affected Files may be recorded as `Fail – unrelated`, but only when the Notes column contains a specific file reference (path, file extension, or `file:line`). Vague notes are rejected. Claude will assess credibility in code review — write a precise, honest explanation.
 3. Write `tasks/TASK-ID/handoff.md` using the template. Required fields: changed files, rationale, deviations, AC coverage table, edge cases, blockers, validation outcomes.
 4. Finish with `./scripts/task.sh phase <TASK-ID> implement done` (the orchestrator's prompt shows the exact command).
 5. If you surfaced a distinct insight the reviewer wouldn't naturally capture, append an entry to `docs/lessons-learned.md`. Claude owns lessons by default — Codex writes only when it has a unique perspective.
@@ -88,7 +89,7 @@ Before writing `handoff.md`, run every check listed in the spec's *Validation Re
 
 ## Handoff Template
 
-Use `tasks/_templates/handoff.md`. Required fields:
+Use `.canon/templates/handoff.md`. Required fields:
 
 1. Changed files with descriptions
 2. Intent and rationale
@@ -96,3 +97,6 @@ Use `tasks/_templates/handoff.md`. Required fields:
 4. Edge cases considered
 5. Blockers (or "none")
 6. Validation outcomes table
+<!-- canon:end -->
+
+<!-- Your project additions below — `canon upgrade` will not touch this section -->

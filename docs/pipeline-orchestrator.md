@@ -19,6 +19,8 @@ If you find yourself wanting Codex as operator, use Claude Code instead and lean
 ## Invocation surface
 
 ```bash
+canon run <task-id> [<task-id> ...]
+# or directly (dev / CI without package install):
 npx tsx scripts/run-task.ts <task-id> [<task-id> ...]
 ```
 
@@ -38,6 +40,52 @@ Multiple IDs = bundle mode (see below).
 | `--dry-run` | — | Print the planned phases, agents, model, and effort without spawning an LLM. |
 
 **Default is full auto** — without `--step`, the pipeline runs all phases to completion (or to the next human gate).
+
+## Task management (`canon task`)
+
+`canon task` wraps `scripts/task.sh` — the lightweight lifecycle CLI that manages task directories, `status.json`, and release branches. **No AI is spawned**; it is pure filesystem and git operations. Always prefer `canon task` helpers over hand-editing `status.json` directly — the helpers re-derive the top-level `status` pointer and keep state consistent.
+
+```bash
+canon task <subcommand> [args]
+# equivalent low-level form (dev / no package install):
+./scripts/task.sh <subcommand> [args]
+```
+
+### Subcommands
+
+| Subcommand | Args | What it does |
+|---|---|---|
+| `new` | `<id> "Title" [--base <branch>]` | Scaffold `tasks/<id>/` from `.canon/templates/`. Stamps provenance in `status.json`. Auto-detects `base_branch` from current git checkout; use `--base` to override. |
+| `list` | — | Print all tasks and their current pipeline phase. |
+| `status` | `<id>` | Print full `status.json` detail for a task. |
+| `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement runtime_validation code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
+| `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`. |
+| `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
+| `release-init` | `<version>` | Initialize a `release/v<MAJ.MIN>` branch off main with the version bumped and an empty CHANGELOG block. |
+
+### Common patterns
+
+```bash
+# Create a new task (auto-detects base branch)
+canon task new feat-search "Add search to sidebar"
+
+# Create a task targeting a release branch
+canon task new feat-x "X feature" --base release/v1.6
+
+# Check what's in flight
+canon task list
+
+# Advance a phase manually (after conversational spec approval)
+canon task phase feat-search spec done
+canon task phase feat-search spec_review done approved
+canon task phase feat-search plan done
+
+# After a squash-merge PR lands
+canon task post-merge-sync
+
+# Initialize a release branch
+canon task release-init 1.6.0
+```
 
 ## Pipeline Tiers
 
@@ -168,7 +216,7 @@ See `scripts/run-task/canon-snapshot.ts` for the capture logic and `scripts/run-
 
 **Auto-branch**: The orchestrator creates a `task/<TASK-ID>` branch before the implement phase and records it in `status.json`.
 
-**Auto-commit**: After implement passes validation, the orchestrator auto-commits source files listed in `handoff.md`'s Changes table. If any non-task source files remain dirty after staging, the commit is aborted and the pipeline stops for manual intervention. `handoff.md` must list every changed file including both sides of renames.
+**Auto-commit**: After implement passes validation, the orchestrator auto-commits source files listed in `handoff.md`'s Changes table — including `### Changes` tables in `## Iteration N` sections (files introduced in later review rounds are valid). If any non-task source files remain dirty after staging, the commit is aborted and the pipeline stops for manual intervention. `handoff.md` must list every changed file including both sides of renames. Specs with a missing or empty `## Validation Required` section are rejected at this gate — handoff validation cannot be bypassed by omitting the section.
 
 At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task artifacts, telemetry, and the managed docs listed in `PIPELINE_MANAGED_DOCS` before pushing. Changelog and version bump remain a manual human + Claude step.
 
@@ -204,15 +252,17 @@ Checks run sequentially per task. `cwd` defaults to the active task worktree; `r
 
 Runtime output streams live to the operator. Full `stdout.log` and `stderr.log` are preserved on Fail/Timeout under `tasks/<id>/runtime-check-output/<check>/iter-N/`; the handoff table keeps only a short stderr excerpt plus the artifact path. On Pass, check-induced dirty paths are cleaned and the scratch artifact directory is removed. Cleanup is scoped to paths that became dirty during the check and never uses blanket `git stash` or `git clean`, so pre-existing task artifacts are preserved.
 
+**`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a test outside the task's Affected Files, Codex may record `Fail – unrelated` in the Validation Outcomes table instead of blocking on a bare `Fail`. The orchestrator accepts this state only when the Notes column contains a specific file reference (a path, file extension, or `file:line`); vague notes are rejected. The code-review prompt instructs Claude to assess whether the explanation is credible and the failure is genuinely out of scope.
+
 If the human authorizes more iterations, override via env var rather than hand-editing `status.json`:
 
 ```bash
-MAX_REVIEW_LOOPS=5 npx tsx scripts/run-task.ts <id> --step
+MAX_REVIEW_LOOPS=5 canon run <id> --step
 ```
 
 ## Session Resumption
 
-The orchestrator resumes agent sessions across phases instead of spawning fresh ones. After each phase, the session ID is discovered and stored in `status.json` under `sessions.claude_spec`, `sessions.claude_review`, or `sessions.codex`. Subsequent phases for the same agent pass `--resume <id>` (Claude) or `codex exec resume <id>` (Codex), preserving conversation context and skipping doc re-reads.
+The orchestrator resumes agent sessions across phases instead of spawning fresh ones. After each phase, the session ID is discovered and stored in `status.json` under one of four slots: `sessions.claude_spec`, `sessions.claude_review`, `sessions.codex`, or `sessions.codex_spec_review` (Codex spec review uses its own slot so it never clobbers the implement session). Subsequent phases for the same agent pass `--resume <id>` (Claude) or `codex exec resume <id>` (Codex), preserving conversation context and skipping doc re-reads.
 
 **Stale Claude session auto-recovery**: A stored Claude session ID can go stale (long usage-limit gaps, workstation rotation, aggressive `~/.claude/projects/` pruning). When `claude --resume <id>` can't find the session, the orchestrator detects the pattern and retries once with a fresh session and the full original prompt.
 
@@ -225,12 +275,16 @@ Agent invocations stream NDJSON events live rather than blocking on `spawnSync` 
 **Configuration.** `PIPELINE_STALL_TIMEOUT_MS` env var (default 10 minutes — long enough for normal agent reasoning bursts, short enough that a wedged process doesn't sit forever). Override per invocation when running heavier tasks:
 
 ```bash
-PIPELINE_STALL_TIMEOUT_MS=1800000 npx tsx scripts/run-task.ts <id>
+PIPELINE_STALL_TIMEOUT_MS=1800000 canon run <id>
 ```
 
 **Implementation gotcha.** `child.killed` flips `true` the instant `kill('SIGTERM')` is called — it does not tell you whether the child actually exited. The SIGKILL escalation must check a locally-tracked `closed` flag set in the child's `'close'` handler, not `child.killed`. Otherwise the SIGKILL never fires for a truly unresponsive child and the promise hangs.
 
 **What's preserved.** Token counts (parsed from the stream's final `result` event for Claude, accumulated from `turn.completed` events for Codex), session IDs (from `result.session_id` / `thread.started`), and the assistant's final text (mirrored to stdout post-exit, so backgrounded runs and captured logs both surface what the agent said). The stale-resume detection still pattern-matches the captured stderr/stdout combined.
+
+## Code Review Diff Injection
+
+Both round-1 and round-N code review prompts include a scoped diff: `git diff <baseBranch>...HEAD` run in the active worktree (three-dot, so only commits on the task branch are included, not unrelated divergence on `baseBranch`). The diff is capped at 50,000 bytes; if truncated, the prompt notes it. This keeps the reviewer focused on the task delta and avoids attributing unrelated baseline work to the current task.
 
 ## Per-Iteration Prompt Slimming
 
@@ -280,7 +334,7 @@ Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the 
 
 **Normal sequence**: `--pr` (push + draft PR) → PR merges → `--ship` (archive + cleanup). `--ship` is post-merge only; running it before the PR merges archives the task without the implementation branch landing.
 
-`--ship` archives the task dir to `tasks/_archive/<id>/`, removes the worktree (if any), and marks the task complete.
+`--ship` archives the task dir to `tasks/_archive/<id>/`, removes the worktree (if any), and marks the task complete. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
 
 **Always rebase local main on `origin/main` before invoking `--ship`.** When a worktree-implemented PR squash-merges, `origin/main` picks up `tasks/<id>/` files from the squash commit. If `--ship` runs before local rebases, the task directory ends up in both `tasks/<id>/` and `tasks/_archive/<id>/` and needs manual reconciliation.
 
