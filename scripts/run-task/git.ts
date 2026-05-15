@@ -105,6 +105,39 @@ export function commitsAheadOfBase(branchName: string, baseBranch: string): numb
     return Number.isNaN(count) ? 0 : count;
 }
 
+export type ScopedDiff = {
+    diff: string;
+    truncated: boolean;
+};
+
+function truncateUtf8(input: string, capBytes: number): string {
+    const bytes = Buffer.from(input, 'utf8');
+    if (bytes.length <= capBytes) return input;
+
+    let end = capBytes;
+    while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+    return bytes.subarray(0, end).toString('utf8');
+}
+
+export function getScopedDiff(
+    baseBranch: string,
+    cwd: string,
+    capBytes = 50_000,
+): ScopedDiff | null {
+    const result = gitSafeAtRaw(cwd, 'diff', `${baseBranch}...HEAD`);
+    if (!result.ok) return null;
+
+    const raw = result.stdout;
+    if (Buffer.byteLength(raw, 'utf8') <= capBytes) {
+        return { diff: raw, truncated: false };
+    }
+
+    return {
+        diff: truncateUtf8(raw, capBytes),
+        truncated: true,
+    };
+}
+
 export function isCommandAvailable(command: string): boolean {
     const result = spawnSync('which', [command], { stdio: 'ignore' });
     return !result.error && result.status === 0;

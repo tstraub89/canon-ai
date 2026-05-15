@@ -3,6 +3,12 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [0.6.1] — 2026-05-15
+
+### Fixed
+
+- **Code review diff injection**: the orchestrator now pre-computes `git diff {baseBranch}...HEAD` and injects it directly into the code-review prompt, eliminating the failure mode where a noisy worktree (uncommitted unrelated files) caused the review agent to drift to the wrong fallback and stall without producing `review.md`. Diffs larger than 50 000 bytes are truncated with a note pointing the agent to the handoff Changes table. When git fails, the original command-instruction fallback is preserved. Applies to both round-1 and round-N review prompts. Closes [#46](https://github.com/tstraub89/canon-ai/issues/46).
+
 ## [0.6.0] — 2026-05-14
 
 ### Fixed

@@ -65,3 +65,6 @@
 | 2026-05-11T20:12:06.104Z | counter-schema-migration | implement | codex | gpt-5.4-mini | 1 | 439.9s | 17169664 | ok |
 | 2026-05-11T20:14:08.881Z | counter-schema-migration | code_review | claude | sonnet | 1 | 122.3s | 264926 | ok |
 | 2026-05-11T20:18:00.003Z | counter-schema-migration | qa | claude | sonnet | - | 231.1s | 1020591 | ok |
+| 2026-05-15T03:50:25.157Z | scope-review-diff | implement | codex | gpt-5.4-mini | 0 | 237.0s | 2597454 | ok |
+| 2026-05-15T03:53:49.243Z | scope-review-diff | code_review | claude | sonnet | 0 | 203.8s | 403175 | ok |
+| 2026-05-15T03:56:00.155Z | scope-review-diff | qa | claude | sonnet | 0 | 130.8s | 526336 | ok |

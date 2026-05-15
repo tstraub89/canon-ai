@@ -9,7 +9,20 @@ Grounding rule: inspect the current diff and changed files before you trust any 
 
 **Read in this order: spec.md → handoff.md → diff.** Do not read handoff.md first — Codex's explanation of what it did will anchor your review before you've formed an independent read of the requirements. Let the spec set the frame, then check whether the handoff and diff match it.
 
-Read the actual diff: `git diff {{{baseBranch}}}...HEAD` (or read the changed files directly).{{#isBundle}}
+{{#hasDiff}}
+**Task diff against {{{baseBranch}}}**
+
+```diff
+{{{diffContent}}}
+```
+{{#diffTruncated}}
+> Diff truncated at 50 000 bytes — read changed files listed in handoff.md Changes table directly for the remainder.
+{{/diffTruncated}}
+{{/hasDiff}}
+{{^hasDiff}}
+Read the actual diff: `git diff {{{baseBranch}}}...HEAD`.
+{{/hasDiff}}
+{{#isBundle}}
 Also check for cross-task interactions — unintended coupling or conflicts between tasks.{{/isBundle}}
 
 **Validation gate**: verify each handoff.md Validation Outcomes table has no Fail results and all applicable checks were run.

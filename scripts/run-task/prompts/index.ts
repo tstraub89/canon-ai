@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { config } from '../env.js';
-import { getBaseBranch } from '../git.js';
+import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
 import { RUNTIME_CHECKS } from '../../pipeline-policy.js';
 import { computeLatestRuntimeResults } from '../validation.js';
@@ -278,14 +278,32 @@ export function promptImplementReroute(state: PipelineState, isResumedSession = 
     });
 }
 
-export function promptCodeReview(state: PipelineState): string {
+export function promptCodeReview(
+    state: PipelineState,
+    baseBranch?: string,
+    scopedDiff: ScopedDiff | null = null,
+): string {
     const { tasks } = state;
     const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
-    const baseBranch = getBaseBranch(tasks.map(t => t.taskId));
+    const resolvedBaseBranch = baseBranch ?? getBaseBranch(tasks.map(t => t.taskId));
+    const hasDiff = scopedDiff !== null;
 
     if (maxIter > 0) {
         const roundN = maxIter + 1;
         const priorIteration = maxIter;
+        const diffView = hasDiff
+            ? {
+                hasDiff,
+                baseBranch: resolvedBaseBranch,
+                diffContent: scopedDiff.diff,
+                diffTruncated: scopedDiff.truncated,
+            }
+            : {
+                hasDiff,
+                baseBranch: resolvedBaseBranch,
+                diffContent: '',
+                diffTruncated: false,
+            };
         const taskLines = tasks.map(t =>
             `- \`${t.taskId}\` → read the \`## Iteration ${priorIteration} — addressing review round ${maxIter}\` section of \`tasks/${t.taskId}/handoff.md\``
         ).join('\n');
@@ -299,7 +317,7 @@ export function promptCodeReview(state: PipelineState): string {
             maxIter,
             taskLines,
             tightenLine,
-            baseBranch,
+            ...diffView,
             phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
         });
     }
@@ -308,13 +326,27 @@ export function promptCodeReview(state: PipelineState): string {
         `- \`${t.taskId}\`: read tasks/${t.taskId}/handoff.md and cross-reference tasks/${t.taskId}/spec.md ACs`
     ).join('\n');
 
+    const diffView = hasDiff
+        ? {
+            hasDiff,
+            baseBranch: resolvedBaseBranch,
+            diffContent: scopedDiff.diff,
+            diffTruncated: scopedDiff.truncated,
+        }
+        : {
+            hasDiff,
+            baseBranch: resolvedBaseBranch,
+            diffContent: '',
+            diffTruncated: false,
+        };
+
     return render('code-review-round-1.md', {
         projectName: config.projectName,
         startup: CLAUDE_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         taskLines,
-        baseBranch,
         isBundle: tasks.length > 1,
+        ...diffView,
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
     });
 }

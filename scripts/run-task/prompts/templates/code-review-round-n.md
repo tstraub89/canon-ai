@@ -5,9 +5,28 @@ Codex appended `## Iteration {{priorIteration}}` to `handoff.md` addressing your
 Tasks to re-review:
 {{{taskLines}}}
 {{{tightenLine}}}
+{{#hasDiff}}
+**Task diff against {{{baseBranch}}}**
+
+```diff
+{{{diffContent}}}
+```
+{{#diffTruncated}}
+> Diff truncated at 50 000 bytes — read changed files listed in handoff.md Changes table directly for the remainder.
+{{/diffTruncated}}
+{{/hasDiff}}
+{{^hasDiff}}
+Read the actual code diff since your prior review: `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>`.
+{{/hasDiff}}
+
 For each task:
 1. Read the `## Iteration {{priorIteration}}` section of `tasks/<id>/handoff.md` — that's the diff under review this round.
-2. Read the actual code diff since your prior review: `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>` (or read the changed files directly). Do not trust handoff claims that are not visible in the diff.
+{{#hasDiff}}
+2. Read the pre-computed code diff above. Do not trust handoff claims that are not visible in the diff.
+{{/hasDiff}}
+{{^hasDiff}}
+2. Read the actual code diff since your prior review using `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>` when the diff was not precomputed. Do not trust handoff claims that are not visible in the diff.
+{{/hasDiff}}
 3. For each finding in your prior `## Round {{maxIter}}` section of `review.md`, verify whether iteration {{priorIteration}} addressed it. **Do NOT redo the Stage 1 AC table** — that gate already passed in round 1.
 4. **APPEND** `## Round {{roundN}} — verifying iteration {{priorIteration}}'s response to round {{maxIter}}` to `review.md` (the template's "On re-review" comment shows the shape). Do not rewrite earlier rounds. Include only:
    - Per-finding verification (addressed / still open / no longer relevant)

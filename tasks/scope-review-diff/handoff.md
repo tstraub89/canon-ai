@@ -8,7 +8,12 @@
 
 | File | What Changed |
 |---|---|
-| `<path>` | ... |
+| `scripts/run-task/git.ts` | Added `getScopedDiff()` plus a UTF-8-safe byte truncation helper so the orchestrator can precompute `git diff {baseBranch}...HEAD` in the active worktree and return `null` on git failure. |
+| `scripts/run-task/phases/code-review.ts` | Resolved `baseBranch` and `activeCwd` once, computed the scoped diff before invoking Claude, passed both into the prompt builder, and reused the same active cwd for worktree sync and review invocation. |
+| `scripts/run-task/prompts/index.ts` | Updated `promptCodeReview()` to accept the resolved base branch and optional precomputed diff, while preserving a backward-compatible fallback for older one-argument call sites. |
+| `scripts/run-task/prompts/templates/code-review-round-1.md` | Replaced the live `git diff` instruction with a conditional inline diff block, including the exact 50 000-byte truncation note and the original command fallback when no diff is available. |
+| `scripts/run-task/prompts/templates/code-review-round-n.md` | Added the same conditional inline diff block for re-review rounds and removed the "or read the changed files directly" fallback text. |
+| `tasks/scope-review-diff/notes.md` | Appended a short implementation note about the temporary backward-compatibility fallback in `promptCodeReview()`. |
 
 ## Canon Governance
 
@@ -24,7 +29,9 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Precompute the review diff in the orchestrator so Claude receives the task delta as prompt data instead of being asked to reconstruct it from the current worktree. That removes the noisy-worktree failure mode from the review path while preserving the existing fallback when git itself fails.
+
+The implementation resolves the base branch once in `phases/code-review.ts`, uses `getActiveCwd(taskIds)` so worktree mode scopes the diff to the active task checkout, and renders the diff inline in both round-1 and round-N templates. When the diff is larger than 50 000 bytes, the prompt includes the truncated prefix plus the exact handoff-table remainder note from the spec.
 
 ## Deviations from Plan
 
@@ -32,7 +39,8 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Used `gitSafeAtRaw()` in `getScopedDiff()` instead of `gitSafeAt()` | The raw helper preserves the full untrimmed diff bytes so the 50 000-byte cap is measured against the actual command output rather than a trimmed string. | None |
+| Kept `promptCodeReview()` backward-compatible with an optional `baseBranch` fallback | Existing test call sites still invoke `promptCodeReview(state)` with the old arity; keeping the fallback avoided a test-only type-check break while the code-review phase still passes the resolved base branch explicitly. | None |
 
 ## AC Coverage
 
@@ -40,17 +48,24 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: When `git diff {baseBranch}...HEAD` succeeds and produces ≤ 50 000 bytes, the round-1 code review prompt contains the full diff inline, preceded by a "Task diff against {baseBranch}" header. The instruction to run `git diff` is removed from the round-1 template. | Met | `scripts/run-task/phases/code-review.ts` now precomputes the diff; `scripts/run-task/prompts/templates/code-review-round-1.md` renders the inline diff block and only falls back to the command instruction when no diff is available. |
+| AC-2: When the diff exceeds 50 000 bytes, the injected diff is truncated at the byte limit and followed by a note: "Diff truncated at 50 000 bytes — read changed files listed in handoff.md Changes table directly for the remainder." | Met | `scripts/run-task/git.ts` truncates the diff to the byte cap; both code-review templates emit the exact truncation note from the spec. |
+| AC-3: When `git diff` fails (non-zero exit, git unavailable, etc.), the prompt falls back to the original instruction telling the agent to run `git diff {baseBranch}...HEAD` itself. No pipeline error is raised. | Met | `getScopedDiff()` returns `null` on git failure and the templates render the original instruction path instead of throwing. |
+| AC-4: The round-N code review prompt also includes the pre-computed diff (same AC-1/AC-2/AC-3 behavior). The "or read the changed files directly" fallback text is removed from the round-N template. | Met | `scripts/run-task/prompts/templates/code-review-round-n.md` now uses the same conditional diff block and no longer mentions the changed-files-directly fallback. |
+| AC-5: The diff is computed using `getActiveCwd(taskIds)` so worktree-mode runs correctly scope to the task branch rather than the main checkout. | Met | `scripts/run-task/phases/code-review.ts` resolves `activeCwd` once via `getActiveCwd(taskIds)` and passes it to `getScopedDiff()`. |
+| AC-6: `npm run type-check` passes with no new errors. | Met | Passed after the backward-compatible `promptCodeReview()` fallback was added. |
+| AC-7: `npm run lint` passes with no new errors. | Met | Passed on the final code state. |
 
 ## Edge Cases Considered
 
-- ...
+- Git failure now produces `null` rather than a hard error, so the prompt still launches with the original instruction path.
+- Truncation is byte-based, not line-based, so the injected diff stays within the context cap even for large diffs.
+- The code-review phase uses the same resolved base branch for preflight bundle checks, prompt rendering, and diff computation so the task cannot drift between those steps.
+- Existing `promptCodeReview(state)` call sites still compile because the prompt builder keeps a compatibility fallback while the orchestrator path uses the explicit branch value.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -70,52 +85,24 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Ran against the final code state after the diff injection changes. |
+| `npm run type-check` | Pass | Passed after making `promptCodeReview()` backward-compatible for existing test call sites. |
+| `Unit tests` | deferred_by_spec | Spec explicitly says no new unit tests are required for this change. |
+| `Build` | deferred_by_spec | Spec marks build as not required because the project is `NoEmit` and type-check covers build correctness. |
+| `E2E` | not_configured | Spec marks E2E as not applicable. |
 
-## Ready for Review
+## Runtime Validation Outcomes
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-- [ ] Branch is current with `origin/<base>`
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-| File | What Changed |
-|---|---|
-| `<path>` | ... |
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
-
-The orchestrator may also append:
-
-### Re-run runtime validation
+> Authored by the orchestrator after Codex's implement phase. Codex did not run these checks.
 
 | Check | Result | Elapsed | Notes |
 |---|---|---|---|
-| `<runtime check>` | Pass / Fail / Timeout | 0.0s | |
--->
+| `orchestrator-phase-smoke` | Pass | 0.0s | exit code 0 |
+
+## Ready for Review
+
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
+- [ ] Branch is current with `origin/<base>`
+

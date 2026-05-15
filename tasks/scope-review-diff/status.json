@@ -1,15 +1,15 @@
 {
   "id": "scope-review-diff",
   "title": "Scope code-review diff to task delta in prompt",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-05-14",
   "updated": "2026-05-15",
-  "branch": "",
+  "branch": "task/scope-review-diff",
   "base_branch": "dev",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "be23ee17c8848830af8ffdbf6a1b56c4fbd74190",
-    "orchestrator_commit": "be23ee17c8848830af8ffdbf6a1b56c4fbd74190",
+    "upstream_commit": "a4d9f2dd7a6caa2cfe4d3aade7b9091627913782",
+    "orchestrator_commit": "a4d9f2dd7a6caa2cfe4d3aade7b9091627913782",
     "codex_cli": "codex-cli 0.130.0",
     "claude_code": "2.1.139 (Claude Code)"
   },
@@ -37,31 +37,31 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "runtime_validation": {
-      "status": "pending",
+      "status": "done",
       "agent": "orchestrator",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
       "auto_block_count": 0
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
       "auto_block_count": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -70,7 +70,10 @@
     }
   },
   "escalations": [],
-  "sessions": {},
+  "sessions": {
+    "codex": "019e29be-2a36-73e1-9ca3-96a092457350",
+    "claude_review": "2a335080-5053-4f5c-8948-27f97d4220bf"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
 }
