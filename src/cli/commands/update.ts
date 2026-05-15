@@ -5,11 +5,14 @@ import { spawnSync } from 'child_process';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
-function detectInstallType(cwd: string): 'local' | 'global' | 'npx' {
-    // npx: package lives in the npm cache (_npx directory)
+function detectInstallType(_cwd: string): 'local' | 'global' | 'npx' {
     if (packageDir.includes('/_npx/') || packageDir.includes('\\_npx\\')) return 'npx';
-    // Local devDep: canon-ai lives inside the project's own node_modules
-    if (existsSync(join(cwd, 'node_modules', 'canon-ai'))) return 'local';
+    // Check the package's own install path rather than cwd — handles subdirectory invocations
+    const nodeModulesIdx = packageDir.lastIndexOf('/node_modules/');
+    if (nodeModulesIdx !== -1) {
+        const projectRoot = packageDir.slice(0, nodeModulesIdx);
+        if (existsSync(join(projectRoot, 'package.json'))) return 'local';
+    }
     return 'global';
 }
 

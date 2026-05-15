@@ -17,5 +17,5 @@ export function taskCmd(args: string[]): void {
         cwd: process.cwd(),
     });
 
-    process.exit(result.status ?? (result.error ? 1 : 0));
+    process.exit(result.status ?? 1);
 }

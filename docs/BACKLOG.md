@@ -256,7 +256,7 @@
   - **Risks to watch**:
     - **Drift with prose docs**: during the augment-then-deprecate window, prose matrix and `.canon/config.json` can disagree. Validation matrix lookups must check `.canon/config.json` first and warn (not error) if prose drift is detected.
     - **Discoverability**: putting config in a hidden directory hides it from casual reading. `README.md` and `AGENTS.md` must point to `.canon/config.json` as the source of truth so new contributors find it.
-    - **Migration timing**: moving `.canon/templates/` → `.canon/_templates/` is a single-PR mechanical change for canon-ai itself, but it's a coordinated change for any downstream adopter (TokenAnxiety would need to pick up the move). Include in the canon-as-package `migrate` command.
+    - **Migration timing**: `tasks/_templates/` → `.canon/templates/` already landed. The next move (`.canon/templates/` → `.canon/_templates/`) is a single-PR mechanical change for canon-ai itself, but it's a coordinated change for any downstream adopter (TokenAnxiety would need to pick up the move). Include in the canon-as-package `migrate` command.
   - **Sequencing**: Land the day-one shape (`.canon/config.json` + `.canon/_templates/` move) as its own M-tier task — independent of canon-as-package, useful immediately. Layer on `validation-bindings.json` and `audits/` as their respective features land. Layer on `overrides/` only when canon becomes a package. Bootstrap CLI's Installation phase writes into this shape.
   - **Effort**: `M` for the day-one shape (`config.json` schema + read paths + template move + AGENTS.md/docs updates pointing at it). `S` per later addition.
 

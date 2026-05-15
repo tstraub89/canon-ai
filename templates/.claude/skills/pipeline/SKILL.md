@@ -84,8 +84,7 @@ After the PR squash-merges:
 
 ```bash
 canon task post-merge-sync              # reconcile local branch with origin
-canon run <task-id> --ship              # archive the task dir to tasks/_archive/
-git push origin <branch>                # push the archive commit
+canon run <task-id> --ship              # archive, delete task branch, push base branch
 ```
 
 If the task targeted a release branch (`base_branch` in `status.json`), `--ship` archives there — not main.

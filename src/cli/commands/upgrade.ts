@@ -110,7 +110,10 @@ export function upgradeCmd(_args: string[]): void {
 
     // Stage all changed files
     if (upgraded.length > 0) {
-        spawnSync('git', ['add', ...upgraded], { cwd, stdio: 'inherit' });
+        const r = spawnSync('git', ['add', ...upgraded], { cwd, stdio: 'inherit' });
+        if (r.status !== 0) {
+            console.error('\nwarning: failed to stage changes — run `git add` manually.');
+        }
     }
 
     // Summary

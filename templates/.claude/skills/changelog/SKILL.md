@@ -180,7 +180,7 @@ Wait for approval. The user may adjust wording or version. Incorporate edits, th
 ### ⛔ STOP — Phase 6 — Show diff before committing
 
 ```bash
-git diff CHANGELOG.md package.json
+git diff CHANGELOG.md package.json package-lock.json
 ```
 
 Show the complete diff. Say: "Here's what will be committed. Reply **commit** to confirm, or tell me what to change."
