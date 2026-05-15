@@ -3,6 +3,32 @@
 > Internal changelog for canon-ai's `dev` branch. Not present on `main` (which is the portable template).
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.0.0] — 2026-05-15
+
+First public release. Canon ships as the `canon-ai` npm package with a full CLI, Claude Code skills, and a unit-test suite.
+
+### Added
+
+- **`canon-ai` npm package** — publishable via npm; `canon` binary wired through `dist/cli/index.js`. Build via `tsup`; `templates/`, `scripts/`, and `public/` are included in the package files so adopters get the full scaffold on install.
+- **`canon` CLI** — six commands: `init` (installs the `/canon-init` skill into the project), `doctor` (verifies environment and canon setup), `upgrade` (syncs canon-owned files to match installed version), `update` (updates the canon-ai package itself), `run` (delegates to `scripts/run-task.ts`), `task` (delegates to `scripts/task.sh`).
+- **`/spec`, `/pipeline`, `/status`, `/changelog` Claude Code skills** — installed to `.claude/skills/` by `canon init` and synced by `canon upgrade`. All four are `CANON_OWNED`.
+- **Unit test suite** — 237 tests covering CLI commands (`upgrade`, `init`, `doctor`, `update`), orchestrator extractors, validation parsers, and phase-gate logic. Run via `npm test`. Pure/injectable entry points extracted from each CLI command so tests don't require subprocess spawning or `process.chdir`.
+- **Project template overrides** — `canon task new` checks `tasks/_templates/<file>` first and falls back to `.canon/templates/<file>`. Files in `tasks/_templates/` are never touched by `canon upgrade`, allowing per-project customization (validation commands, placeholder text, project-specific sections) to survive upgrades. See `.canon/README.md`.
+- **`.canon/README.md`** — "do not edit these files" notice seeded by `canon init` and kept current by `canon upgrade`, with the `cp` command and post-upgrade `diff` workflow for overrides.
+
+### Changed
+
+- **Task templates moved** from `tasks/_templates/` to `.canon/templates/` — now canon-owned and overwritten by `canon upgrade` alongside skills. The `tasks/_templates/` path is now the project-override location.
+- **`detectInstallType`** now inspects the package's own install path (`packageDir`) instead of `cwd/node_modules/canon-ai`. The old check failed silently when `canon` was invoked from a project subdirectory, always returning `local` regardless of actual install type.
+- **Signal exit propagation** in `run` and `task` subcommands: child process exit code is now `result.status ?? 1` (was `result.status ?? (result.error ? 1 : 0)`, which swallowed non-zero exits on some error paths).
+- **`CANON_VERSION`** injected at build time via `tsup` `define` so the compiled binary carries the package version without a `package.json` read at runtime.
+
+### Fixed
+
+- `scaffoldTemplates` (`init.ts`) extracted as a testable pure function; dead `resolveTsx` function body removed (was causing lint error `'resolveTsx' is defined but never used`).
+- `runUpgrade` (`upgrade.ts`) extracted as a testable pure function accepting `(cwd, pkgDir)` so upgrade logic can be exercised without invoking the CLI entry point.
+- `upgrade` output no longer stages files to paths that may not exist on disk when a CANON_OWNED template is missing from the package's `templates/` directory.
+
 ## [0.6.1] — 2026-05-15
 
 ### Fixed
