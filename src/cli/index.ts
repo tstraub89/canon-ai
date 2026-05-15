@@ -70,7 +70,7 @@ Global:
 
 function printVersion(): void {
     // Resolved at build time via tsup define
-    console.log(process.env['CANON_VERSION'] ?? 'dev');
+    console.log(process.env.CANON_VERSION ?? 'dev');
 }
 
 switch (command) {
