@@ -8,6 +8,7 @@
 ### Fixed
 
 - **Code review diff injection**: the orchestrator now pre-computes `git diff {baseBranch}...HEAD` and injects it directly into the code-review prompt, eliminating the failure mode where a noisy worktree (uncommitted unrelated files) caused the review agent to drift to the wrong fallback and stall without producing `review.md`. Diffs larger than 50 000 bytes are truncated with a note pointing the agent to the handoff Changes table. When git fails, the original command-instruction fallback is preserved. Applies to both round-1 and round-N review prompts. Closes [#46](https://github.com/tstraub89/canon-ai/issues/46).
+- **Shared-doc sync over-skipping**: `syncWorktreeTelemetry` was using a HEAD-level `merge-base --is-ancestor` check, so any unrelated commit on dev (a backlog doc update, a hotfix) would block the entire shared-doc sync for an in-flight task. Switched to a per-file `git log source..dest -- <path>` check: each file is now skipped only when the destination has file-specific commits the worktree lacks; unrelated divergence on other files does not block it.
 
 ## [0.6.0] — 2026-05-14
 
