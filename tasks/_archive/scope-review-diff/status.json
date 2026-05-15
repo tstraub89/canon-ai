@@ -1,7 +1,7 @@
 {
   "id": "scope-review-diff",
   "title": "Scope code-review diff to task delta in prompt",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-05-14",
   "updated": "2026-05-15",
   "branch": "task/scope-review-diff",
@@ -65,7 +65,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
