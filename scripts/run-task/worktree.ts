@@ -43,11 +43,11 @@ export function getActiveCwd(taskIds: string[]): string {
         if (branch) {
             const existing = findExistingWorktreeForBranch(branch);
             if (existing) return existing;
-            die(
-                `Worktree for task '${taskIds[0]}' is expected but missing.\n` +
-                `  Restore or recreate the worktree before continuing.`,
-            );
         }
+        die(
+            `Worktree for task '${taskIds[0]}' is expected but missing.\n` +
+            `  Restore or recreate the worktree before continuing.`,
+        );
     }
     return REPO_ROOT;
 }
