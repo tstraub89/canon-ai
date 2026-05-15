@@ -569,6 +569,55 @@ void test('runUpgrade: version already current → not in upgraded', () => {
     });
 });
 
+void test('runUpgrade: task template (.canon/templates/spec.md) fully overwritten', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = '.canon/templates/spec.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            fs.writeFileSync(tmplPath, '# new spec template');
+
+            const projPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projPath), { recursive: true });
+            fs.writeFileSync(projPath, '# old spec template');
+
+            const canonDir = path.join(projectDir, '.canon');
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const { upgraded } = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(upgraded.includes(rel));
+            assert.equal(fs.readFileSync(projPath, 'utf8'), '# new spec template');
+        });
+    });
+});
+
+void test('runUpgrade: task template unchanged → not in upgraded', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = '.canon/templates/spec.md';
+            const content = '# spec template';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            fs.writeFileSync(tmplPath, content);
+
+            const projPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projPath), { recursive: true });
+            fs.writeFileSync(projPath, content);
+
+            const canonDir = path.join(projectDir, '.canon');
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const { upgraded, unchanged } = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(!upgraded.includes(rel));
+            assert.ok(unchanged.includes(rel));
+        });
+    });
+});
+
 // ── runUpgrade against real templates ────────────────────────────────────────
 
 void test('runUpgrade: real templates dir produces valid merged CLAUDE.md', () => {

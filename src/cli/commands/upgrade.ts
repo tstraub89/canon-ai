@@ -18,6 +18,14 @@ const CANON_OWNED = [
     '.claude/skills/pipeline/SKILL.md',
     '.claude/skills/status/SKILL.md',
     '.claude/skills/changelog/SKILL.md',
+    '.canon/templates/status.json',
+    '.canon/templates/spec.md',
+    '.canon/templates/plan.md',
+    '.canon/templates/handoff.md',
+    '.canon/templates/spec-review.md',
+    '.canon/templates/review.md',
+    '.canon/templates/done.md',
+    '.canon/templates/notes.md',
 ];
 
 export function mergeDelimited(templateContent: string, projectContent: string): string | null {
@@ -147,7 +155,6 @@ export function upgradeCmd(_args: string[]): void {
     if (upgraded.length === 0 && unchanged.length === 0) {
         console.log('No canon-managed files found. Run `canon init` to set up canon in this repo.\n');
     } else {
-        console.log('Orchestrator scripts update automatically — run `npm update canon-ai` to pull the latest.');
-        console.log('Note: task templates (.canon/templates/) are not synced — copy from node_modules/canon-ai/templates/.canon/templates/ if you need schema updates.\n');
+        console.log('Orchestrator scripts update automatically — run `npm update canon-ai` to pull the latest.\n');
     }
 }
