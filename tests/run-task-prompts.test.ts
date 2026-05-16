@@ -122,9 +122,6 @@ function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
         iterations: 0,
         iterations_current_loop: 0,
         iterations_total: 0,
-        runtimeIterations: 0,
-        runtimeIterations_current_loop: 0,
-        runtimeIterations_total: 0,
         rerouteCount: 0,
         status: makeStatus(),
         ...overrides,
@@ -134,10 +131,6 @@ function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
         iterations: task.iterations ?? 0,
         iterations_current_loop: task.iterations_current_loop ?? task.iterations ?? 0,
         iterations_total: task.iterations_total ?? task.iterations_current_loop ?? task.iterations ?? 0,
-        runtimeIterations: task.runtimeIterations ?? 0,
-        runtimeIterations_current_loop: task.runtimeIterations_current_loop ?? task.runtimeIterations ?? 0,
-        runtimeIterations_total:
-            task.runtimeIterations_total ?? task.runtimeIterations_current_loop ?? task.runtimeIterations ?? 0,
     };
 }
 
@@ -220,17 +213,31 @@ void test('promptPlan', () => {
 });
 
 void test('promptImplement_fresh', () => {
-    const actual = normalize(promptImplement(baseState, 'fresh'));
+    const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));
     recordOrAssert('promptImplement_fresh', actual);
 });
 
+void test('promptImplement renders empty affected-files branch', () => {
+    const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));
+    assert.match(actual, /No prior commits on this task's branch yet/);
+    assert.match(actual, /every check runs unconditionally on this first implement pass/);
+});
+
+void test('promptImplement renders affected files when provided', () => {
+    const actual = normalize(promptImplement(baseState, 'fresh', ['src/a.ts', 'src/b.ts'], 'main'));
+    assert.match(actual, /## Affected files \(committed diff vs base branch\)/);
+    assert.match(actual, /- `src\/a\.ts`/);
+    assert.match(actual, /- `src\/b\.ts`/);
+    assert.match(actual, /vs `main`/);
+});
+
 void test('promptImplementRevisions', () => {
-    const actual = normalize(promptImplementRevisions(iterState));
+    const actual = normalize(promptImplementRevisions(iterState, [], 'main'));
     recordOrAssert('promptImplementRevisions', actual);
 });
 
 void test('promptImplementReroute', () => {
-    const actual = normalize(promptImplementReroute(rerouteState));
+    const actual = normalize(promptImplementReroute(rerouteState, false, [], 'main'));
     recordOrAssert('promptImplementReroute', actual);
 });
 

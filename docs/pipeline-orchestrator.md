@@ -58,7 +58,7 @@ canon task <subcommand> [args]
 | `new` | `<id> "Title" [--base <branch>]` | Scaffold `tasks/<id>/` from `.canon/templates/`. Stamps provenance in `status.json`. Auto-detects `base_branch` from current git checkout; use `--base` to override. |
 | `list` | — | Print all tasks and their current pipeline phase. |
 | `status` | `<id>` | Print full `status.json` detail for a task. |
-| `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement runtime_validation code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
+| `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
 | `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`. |
 | `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
 | `release-init` | `<version>` | Initialize a `release/v<MAJ.MIN>` branch off main with the version bumped and an empty CHANGELOG block. |
@@ -178,8 +178,7 @@ Codex model overrides:
 |---|---|---|
 | `CODEX_MODEL_MINI` | `gpt-5.4-mini` | Codex model for S/M/L non-delicate phases. |
 | `CODEX_MODEL_FULL` | `gpt-5.5` | Codex model for XL or delicate phases. |
-| `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review`, `runtime_validation`, and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
-| `ORCHESTRATOR_CHECK_TIMEOUT_MS` | `600000` | Global timeout for runtime validation checks. Per-check `timeoutMs` in `RUNTIME_CHECKS` wins. |
+| `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
 
 These Codex defaults are the repo-tested assumptions for canon-ai. If your local
 `codex` CLI exposes different model identifiers, set `CODEX_MODEL_MINI` and
@@ -193,7 +192,7 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 **Main repo stays on its base**: In worktree mode, the orchestrator creates the `task/<id>` branch directly in the worktree. The main repo never checks out the task branch.
 
-**Artifact sync**: After each agent phase, task artifact files (`spec.md`, `spec-review.md`, `plan.md`, `handoff.md`, `review.md`, `done.md`) are synced from the worktree back to the main repo's `tasks/<id>/` so the pipeline can read them. The sync is delete-aware. Runtime validation artifacts under `tasks/<id>/runtime-check-output/` stay in the active worktree for the next implement iteration and are intentionally gitignored.
+**Artifact sync**: After each agent phase, task artifact files (`spec.md`, `spec-review.md`, `plan.md`, `handoff.md`, `review.md`, `done.md`) are synced from the worktree back to the main repo's `tasks/<id>/` so the pipeline can read them. The sync is delete-aware.
 
 **Telemetry flush**: Telemetry files (`docs/pipeline-invocations.md`, `docs/task-quality-log.md`, `docs/lessons-learned.md`) accumulate via two paths in worktree mode and get flushed to main at `--push`, `--pr`, and `--ship`.
 
@@ -222,35 +221,9 @@ At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task ar
 
 ## Phase Routing + Auto-Block
 
-After `spec_review`, `runtime_validation`, or `code_review`, the orchestrator checks the verdict. If `changes_requested`, it loops back to the prior agent automatically (up to `MAX_REVIEW_LOOPS`).
+After `spec_review` or `code_review`, the orchestrator checks the verdict. If `changes_requested`, it loops back to the prior agent automatically (up to `MAX_REVIEW_LOOPS`).
 
-**Auto-block on runaway loops**: If spec review, runtime validation, or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased. Runtime validation and code review keep independent counters, so a task can spend iterations in each phase without a shared global budget.
-
-## Runtime Validation Phase
-
-`runtime_validation` runs after `implement` auto-commits the Codex-authored source changes and before `code_review`. It is orchestrator-owned: Codex writes `## Validation Outcomes` for checks it ran in its sandbox, while the orchestrator writes `## Runtime Validation Outcomes` for checks that need the orchestrator environment.
-
-Runtime checks are registered in `scripts/pipeline-policy.ts`:
-
-```ts
-export type RuntimeCheck = {
-    name: string;
-    command: string;
-    timeoutMs?: number;
-    cwd?: 'worktree' | 'repo_root';
-    when?: (status: PolicyInput, affectedFiles: readonly string[]) => boolean;
-    artifactPaths?: readonly string[];
-    artifactReadingHint?: string;
-};
-
-export const RUNTIME_CHECKS: RuntimeCheck[] = [
-    { name: 'orchestrator-phase-smoke', command: 'echo orchestrator-phase-smoke-ok' },
-];
-```
-
-Checks run sequentially per task. `cwd` defaults to the active task worktree; `repo_root` runs from the supervising checkout. `when` receives the task status plus the files parsed from the handoff Changes table. If the registry is empty, or every check filters out, the phase marks `runtime_validation` approved and writes no handoff section.
-
-Runtime output streams live to the operator. Full `stdout.log` and `stderr.log` are preserved on Fail/Timeout under `tasks/<id>/runtime-check-output/<check>/iter-N/`; the handoff table keeps only a short stderr excerpt plus the artifact path. On Pass, check-induced dirty paths are cleaned and the scratch artifact directory is removed. Cleanup is scoped to paths that became dirty during the check and never uses blanket `git stash` or `git clean`, so pre-existing task artifacts are preserved.
+**Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
 
 **`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a test outside the task's Affected Files, Codex may record `Fail – unrelated` in the Validation Outcomes table instead of blocking on a bare `Fail`. The orchestrator accepts this state only when the Notes column contains a specific file reference (a path, file extension, or `file:line`); vague notes are rejected. The code-review prompt instructs Claude to assess whether the explanation is credible and the failure is genuinely out of scope.
 
@@ -314,7 +287,7 @@ For each task:
 4. APPEND `## Round N` to review.md
 ```
 
-The Stage 1 AC table is **not** redone on round 2+ — that gate already passed in round 1. Implement-revision prompts are composable: code-review reroutes point at the new `## Round N-1` of `review.md`, runtime-validation reroutes include `## Runtime check failures to address`, and combined reroutes include both sections.
+The Stage 1 AC table is **not** redone on round 2+ — that gate already passed in round 1. Implement-revision prompts are composable: code-review reroutes point at the new `## Round N-1` of `review.md`.
 
 **Round-3+ tightening.** When the round number reaches 3, the prompt adds a discipline rule: findings must be `correctness bug` or `spec gap` only. No `optional cleanup/nit` and no wording-only changes. Encoded as: "we are tightening, not exploring." Without this, round-by-round wording-quibble creep eats the loop budget.
 

@@ -110,12 +110,4 @@ On revision rounds, append below this line:
 | Check | Result | Notes |
 |---|---|---|
 | `<lint>` | Pass | |
-
-The orchestrator may also append:
-
-### Re-run runtime validation
-
-| Check | Result | Elapsed | Notes |
-|---|---|---|---|
-| `<runtime check>` | Pass / Fail / Timeout | 0.0s | |
 -->

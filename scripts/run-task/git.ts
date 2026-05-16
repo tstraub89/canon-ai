@@ -275,3 +275,25 @@ export function parsePorcelainEntries(output: string): PorcelainEntry[] {
 export function parsePorcelain(output: string): Set<string> {
     return new Set(parsePorcelainEntries(output).flatMap(entry => entry.paths));
 }
+
+export function parseNameStatusOutput(raw: string): string[] {
+    const paths = new Set<string>();
+    for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        const parts = line.split('\t');
+        const status = parts[0] ?? '';
+        if ((status.startsWith('R') || status.startsWith('C')) && parts.length >= 3) {
+            paths.add(parts[1]);
+            paths.add(parts[2]);
+        } else if (parts.length >= 2) {
+            paths.add(parts[1]);
+        }
+    }
+    return [...paths].sort();
+}
+
+export function getAffectedFiles(baseRef: string, cwd: string): string[] {
+    const result = gitSafeAtRaw(cwd, 'diff', `${baseRef}...HEAD`, '--name-status', '-M');
+    if (!result.ok || !result.stdout.trim()) return [];
+    return parseNameStatusOutput(result.stdout);
+}

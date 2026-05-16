@@ -1,5 +1,7 @@
 # QA Summary: runtime-validation-phase
 
+> **Superseded** by docs/decisions.md "Validation runs inside agent phases (supersedes orchestrator-run runtime_validation)" — 2026-05-15. The phase shipped in this task is retired by task retire-runtime-validation.
+
 > Authored by: Claude | Phase: qa | Date: 2026-05-11
 
 ## What Changed

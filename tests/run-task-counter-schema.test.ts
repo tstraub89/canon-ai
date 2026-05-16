@@ -34,12 +34,6 @@ function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): Status
             },
             plan: { status: 'done', agent: 'claude' },
             implement: { status: 'done', agent: 'codex' },
-            runtime_validation: {
-                status: 'done',
-                agent: 'orchestrator',
-                verdict: 'approved',
-                iterations: 0,
-            },
             code_review: {
                 status: 'done',
                 agent: 'claude',

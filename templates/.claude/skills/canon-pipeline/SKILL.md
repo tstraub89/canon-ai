@@ -29,10 +29,8 @@ npx tsx scripts/run-task.ts <id> [flags]
 ## Pipeline phases (in order)
 
 ```
-spec → spec_review → plan → implement → runtime_validation → code_review → qa → human_review
+spec → spec_review → plan → implement → code_review → qa → human_review
 ```
-
-`runtime_validation` runs between implement and code_review — the orchestrator executes registered checks automatically (no agent session). If checks fail, the task reroutes to implement before Claude ever sees the diff.
 
 ## Do NOT use this skill for
 
@@ -68,7 +66,7 @@ canon run <task-id> --step --expect <phase>
 
 Use `--expect` whenever you have a specific next phase in mind — it fails fast on phase mismatch instead of silently running the wrong phase.
 
-Valid phases: `spec | spec_review | plan | implement | runtime_validation | code_review | qa | human_review`
+Valid phases: `spec | spec_review | plan | implement | code_review | qa | human_review`
 
 ### 3. Open a draft PR
 
@@ -207,21 +205,6 @@ Fix: re-auth (`claude login`), then re-invoke the same `canon run` command. The 
 canon task phase <task-id> <phase> pending
 canon run <task-id>
 ```
-
-### `runtime_validation` failed — task didn't reach code_review
-
-The orchestrator runs registered runtime checks automatically after implement. If they fail, the task reroutes to implement with the failure report in the prompt. This is intentional — Claude should not see a diff that failed validation.
-
-If you believe the failure is a flake or an unrelated pre-existing issue:
-1. Read `tasks/<id>/handoff.md` → Blockers — Codex should have noted the failure.
-2. If genuinely unrelated: manually advance runtime_validation past the failure:
-   ```bash
-   canon task phase <task-id> runtime_validation done approved
-   canon run <task-id> --step --expect code_review
-   ```
-   Document the bypass decision in `tasks/<id>/notes.md`.
-
----
 
 ## Pre-flight checklist before `--pr` or `--ship`
 

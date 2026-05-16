@@ -108,18 +108,6 @@ function validateStatus(taskId: string, parsed: StatusJson): void {
 export function readStatus(taskId: string): StatusJson {
     const parsed = JSON.parse(fs.readFileSync(statusFileFor(taskId), 'utf8')) as StatusJson;
     validateStatus(taskId, parsed);
-    if (!parsed.phases.runtime_validation) {
-        parsed.phases.runtime_validation = {
-            status: 'done',
-            agent: 'orchestrator',
-            verdict: 'approved',
-            iterations: 0,
-            iterations_current_loop: 0,
-            iterations_total: 0,
-            changes_requested_total: 0,
-            auto_block_count: 0,
-        };
-    }
     return parsed;
 }
 

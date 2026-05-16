@@ -71,7 +71,6 @@ void test('deriveTopLevelStatus returns the first phase that is not done', () =>
             spec_review: { status: 'done', agent: 'codex' },
             plan: { status: 'done', agent: 'claude' },
             implement: { status: 'done', agent: 'codex' },
-            runtime_validation: { status: 'done', agent: 'orchestrator', verdict: 'approved' },
             code_review: { status: 'done', agent: 'claude', verdict: 'approved' },
             qa: { status: 'done', agent: 'claude' },
             human_review: { status: 'done', agent: 'human' },
@@ -85,13 +84,6 @@ void test('deriveTopLevelStatus returns the first phase that is not done', () =>
             spec_review: { status: 'done', agent: 'codex' },
             plan: { status: 'pending', agent: 'claude' },
         }, 'plan'],
-        ['runtime_validation', {
-            spec: { status: 'done', agent: 'claude' },
-            spec_review: { status: 'done', agent: 'codex' },
-            plan: { status: 'done', agent: 'claude' },
-            implement: { status: 'done', agent: 'codex' },
-            runtime_validation: { status: 'pending', agent: 'orchestrator' },
-        }, 'runtime_validation'],
     ];
 
     for (const [label, phases, expected] of cases) {

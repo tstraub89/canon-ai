@@ -5,16 +5,16 @@ import { info, warn } from '../cli.js';
 import { getCodexConfig } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
 import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
-import { commitTaskArtifactsToBase, gitSafeAtRaw, parsePorcelain, ensureBranch } from '../git.js';
+import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, parsePorcelain, ensureBranch } from '../git.js';
 import { runTaskShFor } from '../task-sh.js';
 import { getActiveCwd, isWorktreeEnabled, TASK_ARTIFACT_FILES } from '../worktree.js';
 import { autoBlockPhase, readStatus, taskDirFor, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 
 export function shouldUseImplementRevision(
-    tasks: readonly Pick<TaskContext, 'iterations_current_loop' | 'runtimeIterations_current_loop'>[],
+    tasks: readonly Pick<TaskContext, 'iterations_current_loop'>[],
 ): boolean {
-    return tasks.some(t => t.iterations_current_loop > 0 || t.runtimeIterations_current_loop > 0);
+    return tasks.some(t => t.iterations_current_loop > 0);
 }
 
 export async function runImplementPhase(
@@ -46,6 +46,8 @@ export async function runImplementPhase(
     }
 
     const activeCwd = getActiveCwd(taskIds);
+    const baseBranch = getBaseBranch(taskIds);
+    const affectedFiles = getAffectedFiles(baseBranch, activeCwd);
     const isRevision = shouldUseImplementRevision(tasks);
     const isRerouted = tasks.some(t => t.status.phases.implement?.rerouted === true);
     const wasImplementInProgress = tasks.some(t => t.status.phases.implement?.status === 'in_progress');
@@ -61,12 +63,12 @@ export async function runImplementPhase(
     // file ops would land in the wrong tree.
     const shouldResume = isRevision || isRerouted || isResume;
     const implementPrompt = isRevision
-        ? promptImplementRevisions(state)
+        ? promptImplementRevisions(state, affectedFiles, baseBranch)
         : isRerouted
-            ? promptImplementReroute(state, resumeId !== null)
+            ? promptImplementReroute(state, resumeId !== null, affectedFiles, baseBranch)
             : isResume
                 ? promptImplementResume(state)
-                : promptImplement(state, 'fresh');
+                : promptImplement(state, 'fresh', affectedFiles, baseBranch);
     const result = await runCodex(
         implementPrompt,
         interactive,
