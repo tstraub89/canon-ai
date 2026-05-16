@@ -16,6 +16,32 @@ const EXPECTED_TEMPLATES = [
     'done.md', 'spec-review.md', 'notes.md', 'status.json',
 ];
 
+// Canon's recommended .claude/settings.json permissions.allow entries.
+// Kept in sync with README's "Skip the permission prompts" block.
+export const RECOMMENDED_ALLOW = [
+    'Bash(git *)',
+    'Bash(gh *)',
+    'Bash(jq *)',
+    'Bash(sed *)',
+    'Bash(awk *)',
+    'Bash(ls *)',
+    'Bash(find *)',
+    'Bash(npm run *)',
+    'Bash(npx canon *)',
+    'Bash(canon *)',
+    'Bash(npx tsx *)',
+    'Bash(codex *)',
+    'Skill(canon-init)',
+    'Skill(canon-spec)',
+    'Skill(canon-spec:*)',
+    'Skill(canon-pipeline)',
+    'Skill(canon-pipeline:*)',
+    'Skill(canon-status)',
+    'Skill(canon-status:*)',
+    'Skill(canon-changelog)',
+    'Skill(canon-changelog:*)',
+];
+
 // --- individual checks ---
 
 export function checkPlatform(): Check {
@@ -124,6 +150,44 @@ export function checkCodexConfig(cwd: string): Check {
     return { label: '.codex/config.toml', status: 'warn', detail: 'missing — Codex will use defaults' };
 }
 
+export function checkRecommendedPermissions(cwd: string): Check {
+    const settingsPath = join(cwd, '.claude', 'settings.json');
+    const label = '.claude/settings.json';
+    if (!existsSync(settingsPath)) {
+        return {
+            label,
+            status: 'warn',
+            detail: 'not present — see README "Skip the permission prompts" for the recommended allowlist, or rerun `/canon-init`',
+        };
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    } catch {
+        return { label, status: 'warn', detail: 'present but not valid JSON — review manually' };
+    }
+    const allowRaw = (parsed as { permissions?: { allow?: unknown } } | null)?.permissions?.allow;
+    const allow = new Set<string>(Array.isArray(allowRaw) ? allowRaw.filter((x): x is string => typeof x === 'string') : []);
+    const missing = RECOMMENDED_ALLOW.filter(p => !allow.has(p));
+    if (missing.length === 0) {
+        return { label, status: 'pass', detail: 'recommended canon perms present' };
+    }
+    if (missing.length === RECOMMENDED_ALLOW.length) {
+        return {
+            label,
+            status: 'warn',
+            detail: 'no recommended canon perms allowlisted — see README "Skip the permission prompts"',
+        };
+    }
+    const preview = missing.slice(0, 3).join(', ');
+    const more = missing.length > 3 ? ` (+${missing.length - 3} more)` : '';
+    return {
+        label,
+        status: 'warn',
+        detail: `missing ${missing.length} recommended perm(s): ${preview}${more} — see README`,
+    };
+}
+
 export function checkLocalSettingsGitignored(cwd: string): Check {
     const settingsPath = join(cwd, '.claude', 'settings.local.json');
     const gitignorePath = join(cwd, '.gitignore');
@@ -189,6 +253,7 @@ export function doctorCmd(_args: string[]): void {
 
     const configChecks: Check[] = [
         checkCodexConfig(cwd),
+        checkRecommendedPermissions(cwd),
         checkLocalSettingsGitignored(cwd),
     ];
 

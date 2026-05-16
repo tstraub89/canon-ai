@@ -14,6 +14,8 @@ import {
     checkSkills,
     checkCanonVersion,
     checkLocalSettingsGitignored,
+    checkRecommendedPermissions,
+    RECOMMENDED_ALLOW,
 } from '../src/cli/commands/doctor.js';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 
@@ -335,6 +337,63 @@ void test('checkLocalSettingsGitignored: present with no .gitignore at all → w
         const check = checkLocalSettingsGitignored(dir);
         assert.equal(check.status, 'warn');
         assert.match(check.detail ?? '', /no .gitignore/i);
+    });
+});
+
+// ── checkRecommendedPermissions ──────────────────────────────────────────────
+
+function writeSettings(dir: string, obj: unknown): void {
+    fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify(obj));
+}
+
+void test('checkRecommendedPermissions: settings.json absent → warn pointing to README', () => {
+    withTempDir(dir => {
+        const check = checkRecommendedPermissions(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /README/);
+    });
+});
+
+void test('checkRecommendedPermissions: present with all recommended perms → pass', () => {
+    withTempDir(dir => {
+        writeSettings(dir, { permissions: { allow: [...RECOMMENDED_ALLOW] } });
+        assert.equal(checkRecommendedPermissions(dir).status, 'pass');
+    });
+});
+
+void test('checkRecommendedPermissions: present with extras alongside all recommended → pass', () => {
+    withTempDir(dir => {
+        writeSettings(dir, { permissions: { allow: [...RECOMMENDED_ALLOW, 'Bash(my-custom *)'] } });
+        assert.equal(checkRecommendedPermissions(dir).status, 'pass');
+    });
+});
+
+void test('checkRecommendedPermissions: present but empty allow → warn "no recommended"', () => {
+    withTempDir(dir => {
+        writeSettings(dir, { permissions: { allow: [] } });
+        const check = checkRecommendedPermissions(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /no recommended canon perms/);
+    });
+});
+
+void test('checkRecommendedPermissions: present with partial perms → warn with count and preview', () => {
+    withTempDir(dir => {
+        writeSettings(dir, { permissions: { allow: ['Bash(git *)', 'Bash(gh *)', 'Skill(canon-init)'] } });
+        const check = checkRecommendedPermissions(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /missing \d+ recommended perm/);
+    });
+});
+
+void test('checkRecommendedPermissions: malformed JSON → warn gracefully', () => {
+    withTempDir(dir => {
+        fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{ not valid json');
+        const check = checkRecommendedPermissions(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /not valid JSON/i);
     });
 });
 
