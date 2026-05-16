@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.0.1] — 2026-05-16
+
+### Fixed
+
+- **Git-based installs now produce a working `canon` binary.** Added `"prepare": "tsup"` to `package.json` scripts so `npm install github:tstraub89/canon-ai` (and any git-URL install) builds `dist/` on the consumer side before install completes. Previously the tarball npm built from the cloned repo shipped without `dist/` because `dist/` is gitignored and there was no `prepack`/`prepare` hook — leaving `bin: "./dist/cli/index.js"` pointing at a non-existent file, so `node_modules/.bin/canon` ended up a broken symlink and `canon --version` / `canon doctor` / every other CLI command failed for adopters installing via git. CI now wipes `dist/` and runs `npm pack`, asserting `package/dist/cli/index.js` is in the tarball, so a regression of the `prepare` hook will fail CI before shipping. Reported by [James in discussion #56](https://github.com/tstraub89/canon-ai/discussions/56).
+
 ## [1.0.0] — 2026-05-16
 
 First major release. Canon ships as the `canon-ai` npm package with a full CLI, Claude Code skills, and a unit-test suite.

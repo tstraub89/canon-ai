@@ -57,3 +57,9 @@ jobs:
       - run: npm run type-check
       - run: npm test
       - run: npm run build
+      - name: Verify tarball ships dist/cli/index.js (git-install simulation)
+        run: |
+          rm -rf dist/
+          npm pack
+          tar -tzf canon-ai-*.tgz | grep -q '^package/dist/cli/index.js$' \
+            || { echo "::error::dist/cli/index.js missing from npm pack tarball — prepare hook likely missing or broken"; exit 1; }

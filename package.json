@@ -1,6 +1,6 @@
 {
   "name": "canon-ai",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "A spec-first, multi-agent coding pipeline you drop into any repo. The law your agents work under.",
   "engines": {
@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepare": "tsup",
     "test": "node --test --import tsx tests/*.test.ts",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "task": "./scripts/task.sh",
