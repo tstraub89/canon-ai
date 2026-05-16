@@ -176,3 +176,37 @@ Periodic application: when running an audit on canon (TokenAnxiety-style dogfood
 **Why**: BACKLOG's prose-and-cross-reference format is materially better than the issue-body format for the kind of work canon currently runs — design-stage entries with sequencing dependencies, replace-vs-augment tensions, future-additions tables, and links to other entries. Issues are good for linear lifecycles (open → fix → close); BACKLOG is good for living documents that evolve as related findings surface. At canon-ai's current scale (single developer + occasional external dogfooder, private repo, auto-close-on-merge doesn't fire for `dev`), GitHub's issue affordances (assignment, labels, project boards, search) are unused and add no value over a flat doc. The decision is reversible if canon goes OSS later and external bug filings overwhelm the BACKLOG-first flow — promote BACKLOG entries back into issues at that point.
 
 **Rule**: When framing a new piece of work — a design idea, a follow-up from a discussion, a refactor proposal — add an entry to `docs/BACKLOG.md` under the appropriate section. Only open a GH issue when one of the three reserved cases applies. Signal that an entry belongs in BACKLOG rather than as an issue: it has "depends on / blocks / interacts with" pointers to other entries, it has unresolved design tensions worth documenting, or it's prose-density work that the issue format actively compresses. External adopter filings stay as issues regardless — migrating them would feel dismissive of external-contributor signal.
+
+
+---
+
+## Validation runs inside agent phases (supersedes orchestrator-run `runtime_validation`)
+
+**Decision**: Validation execution lives inside agent phases — Codex runs project-specific checks during `implement`; Claude verifies in Stage 1 code review by reading the outcomes table critically and re-running selectively when anything looks off. The orchestrator does not run independent validation checks. The `runtime_validation` phase as currently shipped (orchestrator-run smoke + planned `.canon/phases.ts` extension point) is being retired as a consequence; that retirement work has its own task.
+
+**Why**: The earlier model treated the orchestrator as an independent witness against agents hallucinating Pass results. Two findings collapse that thesis:
+
+1. **Empirical**: agents don't fabricate test execution. The realistic failure modes are:
+   - Skipping a check entirely when the spec doesn't crisply require it.
+   - Interpreting a real failure as pre-existing/unrelated when it's actually consequential to the task.
+   - Summarizing "10 passed, 5 skipped" as "tests pass" without naming the skips.
+
+   All three are spec-clarity and interpretation failures, not execution failures — they don't change based on *who* ran the check. An orchestrator-run smoke still produces output that some agent has to summarize into the handoff outcomes table, and that's where the slip happens. The witness layer was never going to catch these; Stage 1 code review (Claude reading the outcomes table against the diff *and the spec*) is the only layer that does, and that layer is unaffected by the runner. The existing `Fail – unrelated` mechanism (Notes column must contain a specific file reference, assessed by Claude in Stage 1) is the right guardrail for failure-mode #2 and survives the supersession unchanged.
+
+2. **Architectural**: the witness boundary was theater. The conversational Claude session runs canon with broad operator permissions; the orchestrator is a Node.js script in that same shell. There is no security/trust asymmetry between "what the orchestrator runs" and "what Codex runs in its sandbox" — both execute in the operator's terminal. Codex's tighter default sandbox is OpenAI's shipping choice, configurable per phase via `.codex/config.toml`. The model relied on a trust gradient that doesn't exist.
+
+What the orchestrator does uniquely (and these stand): routes between phases and writes `status.json`; computes the diff for `affectedFiles`; spawns agent CLIs with the right session context; auto-commits per the handoff table. None of these require it to also run validation checks.
+
+**Rule**:
+
+1. **Validation execution stays in agent phases.** Codex runs project-specific checks (lint, type-check, unit tests, e2e, staging smoke, anything else) during `implement`. Claude verifies in Stage 1 code review by reading the `## Validation Outcomes` table — if any row looks ambiguous (vague Pass with skipped tests, missing test names, predicate-gated check unexpectedly skipped), Claude re-runs that check in its own session before approving.
+
+2. **Adopters extend validation via Codex's sandbox + project scripts, not via canon-side policy modules.** `.codex/config.toml` is project-owned (scaffolded by `canon init`, never touched by `canon upgrade`); adopters widen sandbox permissions per phase as their checks require. Real checks live in the project's `package.json` scripts or equivalent — canon does not host a project-policy module for runtime checks.
+
+3. **The orchestrator pre-computes `affectedFiles` and injects it into the implement prompt.** Predicate gating (e.g., "run e2e only if `src/` changed") moves into prompt-shaped logic inside Codex's implement session. The orchestrator already knows the committed-file set; injecting it once eliminates the need for project-side TS predicates to re-derive it.
+
+4. **`runtime_validation` is retired.** Drop it from `PHASE_ORDER`, the dispatch switches, `task.sh` validation, `status.json` schema, and the handoff template's Runtime Validation Outcomes section. The smoke echo in `RUNTIME_CHECKS` goes with it. This is a separate task; this entry authorizes the change.
+
+5. **The validation-authority boundary in `AGENTS.md` is removed by the retirement task.** Going forward there is one validation outcomes section, authored by Codex during implement. There is no separate orchestrator-authored counterpart.
+
+**Supersedes**: The validation-authority boundary previously documented in `AGENTS.md` (Codex authors `## Validation Outcomes`; orchestrator authors `## Runtime Validation Outcomes`). Also supersedes the unshipped design that would have added a `.canon/phases.ts` project-policy loader as an extension point for `runtime_validation` (`tasks/project-phases/` — deleted; design rationale in conversation history 2026-05-15).
