@@ -150,24 +150,44 @@ export function checkCodexConfig(cwd: string): Check {
     return { label: '.codex/config.toml', status: 'warn', detail: 'missing — Codex will use defaults' };
 }
 
+function readAllowFromSettings(path: string): { allow: Set<string>; status: 'ok' | 'missing' | 'invalid' } {
+    if (!existsSync(path)) return { allow: new Set(), status: 'missing' };
+    try {
+        const parsed = JSON.parse(readFileSync(path, 'utf8')) as { permissions?: { allow?: unknown } } | null;
+        const raw = parsed?.permissions?.allow;
+        const allow = new Set<string>(
+            Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [],
+        );
+        return { allow, status: 'ok' };
+    } catch {
+        return { allow: new Set(), status: 'invalid' };
+    }
+}
+
 export function checkRecommendedPermissions(cwd: string): Check {
-    const settingsPath = join(cwd, '.claude', 'settings.json');
     const label = '.claude/settings.json';
-    if (!existsSync(settingsPath)) {
+    const committed = readAllowFromSettings(join(cwd, '.claude', 'settings.json'));
+    const local = readAllowFromSettings(join(cwd, '.claude', 'settings.local.json'));
+
+    if (committed.status === 'invalid') {
+        return { label, status: 'warn', detail: 'present but not valid JSON — review manually' };
+    }
+    if (local.status === 'invalid') {
+        return {
+            label: '.claude/settings.local.json',
+            status: 'warn',
+            detail: 'present but not valid JSON — review manually',
+        };
+    }
+    if (committed.status === 'missing' && local.status === 'missing') {
         return {
             label,
             status: 'warn',
             detail: 'not present — see README "Skip the permission prompts" for the recommended allowlist, or rerun `/canon-init`',
         };
     }
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    } catch {
-        return { label, status: 'warn', detail: 'present but not valid JSON — review manually' };
-    }
-    const allowRaw = (parsed as { permissions?: { allow?: unknown } } | null)?.permissions?.allow;
-    const allow = new Set<string>(Array.isArray(allowRaw) ? allowRaw.filter((x): x is string => typeof x === 'string') : []);
+
+    const allow = new Set<string>([...committed.allow, ...local.allow]);
     const missing = RECOMMENDED_ALLOW.filter(p => !allow.has(p));
     if (missing.length === 0) {
         return { label, status: 'pass', detail: 'recommended canon perms present' };

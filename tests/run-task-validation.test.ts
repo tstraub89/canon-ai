@@ -46,19 +46,26 @@ void test('parseNameStatusOutput: empty diff returns no affected files', () => {
 });
 
 void test('parseNameStatusOutput: non-renamed change returns one path', () => {
-    assert.deepEqual(parseNameStatusOutput('M\tsrc/foo.ts'), ['src/foo.ts']);
+    assert.deepEqual(parseNameStatusOutput('M\0src/foo.ts\0'), ['src/foo.ts']);
 });
 
 void test('parseNameStatusOutput: rename returns pre-image and post-image paths sorted', () => {
-    assert.deepEqual(parseNameStatusOutput('R95\told.ts\tnew.ts'), ['new.ts', 'old.ts']);
+    assert.deepEqual(parseNameStatusOutput('R95\0old.ts\0new.ts\0'), ['new.ts', 'old.ts']);
 });
 
 void test('parseNameStatusOutput: deletion is included', () => {
-    assert.deepEqual(parseNameStatusOutput('D\tsrc/gone.ts'), ['src/gone.ts']);
+    assert.deepEqual(parseNameStatusOutput('D\0src/gone.ts\0'), ['src/gone.ts']);
 });
 
 void test('parseNameStatusOutput: binary-modified file is included', () => {
-    assert.deepEqual(parseNameStatusOutput('B\tbin/binary'), ['bin/binary']);
+    assert.deepEqual(parseNameStatusOutput('B\0bin/binary\0'), ['bin/binary']);
+});
+
+void test('parseNameStatusOutput: paths with spaces survive NUL decoding', () => {
+    assert.deepEqual(
+        parseNameStatusOutput('M\0src/has spaces.ts\0R100\0old name.ts\0new name.ts\0'),
+        ['new name.ts', 'old name.ts', 'src/has spaces.ts'],
+    );
 });
 
 void test('legacy status with retired phase block parses, routes implement to code_review, and roundtrips intact', () => {

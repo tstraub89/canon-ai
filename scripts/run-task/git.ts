@@ -276,24 +276,29 @@ export function parsePorcelain(output: string): Set<string> {
     return new Set(parsePorcelainEntries(output).flatMap(entry => entry.paths));
 }
 
+// Parses `git diff --name-status -z` output. With `-z`, each record is
+// NUL-delimited (no quoting/escaping of paths), so we can recover filenames
+// with spaces or special characters verbatim. Format per record:
+//   non-rename/copy: STATUS\0PATH\0
+//   rename/copy:     R100\0OLD\0NEW\0
 export function parseNameStatusOutput(raw: string): string[] {
     const paths = new Set<string>();
-    for (const line of raw.split('\n')) {
-        if (!line.trim()) continue;
-        const parts = line.split('\t');
-        const status = parts[0] ?? '';
-        if ((status.startsWith('R') || status.startsWith('C')) && parts.length >= 3) {
-            paths.add(parts[1]);
-            paths.add(parts[2]);
-        } else if (parts.length >= 2) {
-            paths.add(parts[1]);
+    const tokens = raw.split('\0').filter(t => t.length > 0);
+    let i = 0;
+    while (i < tokens.length) {
+        const status = tokens[i++];
+        if ((status.startsWith('R') || status.startsWith('C')) && i + 1 < tokens.length) {
+            paths.add(tokens[i++]);
+            paths.add(tokens[i++]);
+        } else if (i < tokens.length) {
+            paths.add(tokens[i++]);
         }
     }
     return [...paths].sort();
 }
 
 export function getAffectedFiles(baseRef: string, cwd: string): string[] {
-    const result = gitSafeAtRaw(cwd, 'diff', `${baseRef}...HEAD`, '--name-status', '-M');
-    if (!result.ok || !result.stdout.trim()) return [];
+    const result = gitSafeAtRaw(cwd, 'diff', `${baseRef}...HEAD`, '--name-status', '-M', '-z');
+    if (!result.ok || !result.stdout) return [];
     return parseNameStatusOutput(result.stdout);
 }

@@ -397,6 +397,40 @@ void test('checkRecommendedPermissions: malformed JSON → warn gracefully', () 
     });
 });
 
+void test('checkRecommendedPermissions: settings.local.json carries all perms, settings.json absent → pass', () => {
+    withTempDir(dir => {
+        fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+        fs.writeFileSync(
+            path.join(dir, '.claude', 'settings.local.json'),
+            JSON.stringify({ permissions: { allow: [...RECOMMENDED_ALLOW] } }),
+        );
+        assert.equal(checkRecommendedPermissions(dir).status, 'pass');
+    });
+});
+
+void test('checkRecommendedPermissions: union of committed + local covers recommended set → pass', () => {
+    withTempDir(dir => {
+        const half = Math.floor(RECOMMENDED_ALLOW.length / 2);
+        writeSettings(dir, { permissions: { allow: RECOMMENDED_ALLOW.slice(0, half) } });
+        fs.writeFileSync(
+            path.join(dir, '.claude', 'settings.local.json'),
+            JSON.stringify({ permissions: { allow: RECOMMENDED_ALLOW.slice(half) } }),
+        );
+        assert.equal(checkRecommendedPermissions(dir).status, 'pass');
+    });
+});
+
+void test('checkRecommendedPermissions: malformed settings.local.json → warn pointing at local file', () => {
+    withTempDir(dir => {
+        fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), '{ not valid json');
+        const check = checkRecommendedPermissions(dir);
+        assert.equal(check.status, 'warn');
+        assert.equal(check.label, '.claude/settings.local.json');
+        assert.match(check.detail ?? '', /not valid JSON/i);
+    });
+});
+
 // ── scaffoldTemplates ────────────────────────────────────────────────────────
 
 void test('scaffoldTemplates: fresh directory — all templates copied', () => {
