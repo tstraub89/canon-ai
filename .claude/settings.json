@@ -24,7 +24,9 @@
 
       "Bash(node scripts/*)",
       "Bash(bash scripts/*)",
-      "Bash(./scripts/task.sh *)",
+
+      "Bash(npx canon *)",
+
       "Bash(npx tsx *)",
 
       "Bash(codex *)"
