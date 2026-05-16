@@ -870,7 +870,7 @@ function findOpenPRNumber(branch: string): number | null {
 function mergeOpenPRsAndPull(taskIds: string[]): boolean {
     const baseBranch = splitGit.getBaseBranch(taskIds);
     // Deduplicate branch names (bundles share one branch)
-    const branches = [...new Set(taskIds.map(id => `task/${id}`))];
+    const branches = [...new Set(taskIds.map(id => resolveTaskBranchName(id)))];
     let anyMerged = false;
     for (const branch of branches) {
         const prNum = findOpenPRNumber(branch);

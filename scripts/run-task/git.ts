@@ -82,9 +82,6 @@ export function getBaseBranch(taskIds?: string[]): string {
         for (const id of taskIds) {
             const status = readStatus(id);
             const declared = (status.base_branch ?? '').trim();
-            if (declared.startsWith('-')) {
-                die(`Invalid base_branch in task '${id}': '${declared}' looks like a flag, not a branch name. Edit status.json.`);
-            }
             bases.add(declared || getDefaultBaseBranch());
         }
         if (bases.size > 1) {
