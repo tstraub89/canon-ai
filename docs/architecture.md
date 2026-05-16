@@ -156,6 +156,27 @@ CI is configured via `.github/workflows/ci.yml`.
 
 **To make CI a hard merge gate**: in GitHub → Settings → Branches, add a protection rule for `main` and `dev` with required status check `test (24.x)`. Until configured, CI is informational only.
 
+## Validation
+
+> **TODO[canon]: Bind the [AGENTS.md Validation Matrix](../AGENTS.md#validation-matrix) categories to your project's actual commands. One row per category; mark N/A with rationale where a category doesn't apply.**
+
+| Category (from AGENTS.md) | Project binding |
+|---|---|
+| Linting | `<command>` |
+| Type checking | `<command>` |
+| Unit tests | `<command>` |
+| Full build | `<command>` |
+| End-to-end tests | `<command>` |
+| Prerender / sitemap / feed | `<command>` |
+| Migration runner | `<command>` |
+| Cross-platform | `<note>` |
+
+**Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.
+
+## CI
+
+> **TODO[canon]: Document the project's CI pipeline structure — provider, workflow files in `.github/workflows/` (or equivalent), and which checks block merges. If no CI is configured, state that explicitly with a note about manual validation discipline.**
+
 ## Cross-Cutting Concerns
 
 ### Session resumption
