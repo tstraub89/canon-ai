@@ -2,7 +2,7 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
-### [1.0.0] — 2026-05-16
+## [1.0.0] — 2026-05-16
 
 First major release. Canon ships as the `canon-ai` npm package with a full CLI, Claude Code skills, and a unit-test suite.
 
