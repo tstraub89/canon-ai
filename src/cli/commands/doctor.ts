@@ -106,7 +106,7 @@ export function checkSkills(cwd: string): Check {
             detail: 'canon-init skill missing — run `canon init` or `canon upgrade`',
         };
     }
-    const skillNames = ['spec', 'pipeline', 'status', 'changelog'];
+    const skillNames = ['canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog'];
     const missing = skillNames.filter(s => !existsSync(join(cwd, '.claude', 'skills', s, 'SKILL.md')));
     if (missing.length > 0) {
         return {

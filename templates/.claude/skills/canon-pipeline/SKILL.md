@@ -1,5 +1,5 @@
 ---
-name: pipeline
+name: canon-pipeline
 description: Drive the canon task pipeline — kick off, advance phases, open PRs, ship, recover from auto-blocks, and reconcile branches after merges. Encodes operational patterns and snag-recovery flows; for orchestrator internals (model matrix, env vars, session-resume mechanics) see docs/pipeline-orchestrator.md.
 allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(./scripts/task.sh *) Bash(npx tsx scripts/run-task.ts *) Bash(git *) Bash(gh *)
 effort: medium
@@ -36,9 +36,9 @@ spec → spec_review → plan → implement → runtime_validation → code_revi
 
 ## Do NOT use this skill for
 
-- Authoring a spec (use `/spec`)
-- Reading task status (use `/status`)
-- Drafting changelog entries (use `/changelog`)
+- Authoring a spec (use `/canon-spec`)
+- Reading task status (use `/canon-status`)
+- Drafting changelog entries (use `/canon-changelog`)
 
 ---
 
@@ -241,6 +241,6 @@ If any are missing post-pipeline, manually advance or fix before `--pr` / `--shi
 - `AGENTS.md` — workflow rules, roles, escalation, validation matrix, git/release.
 - `CLAUDE.md` — Claude phase-specific guidance.
 - `CODEX.md` — Codex phase-specific guidance.
-- `/status` — read task state and get recommended next action.
-- `/spec` — author a new task spec.
-- `/changelog` — draft release notes from completed tasks.
+- `/canon-status` — read task state and get recommended next action.
+- `/canon-spec` — author a new task spec.
+- `/canon-changelog` — draft release notes from completed tasks.

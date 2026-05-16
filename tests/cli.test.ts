@@ -207,7 +207,7 @@ void test('checkTemplates: some templates missing → warn with file list', () =
 
 void test('checkSkills: all five skills present → pass', () => {
     withTempDir(dir => {
-        for (const skill of ['canon-init', 'spec', 'pipeline', 'status', 'changelog']) {
+        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog']) {
             const skillDir = path.join(dir, '.claude', 'skills', skill);
             fs.mkdirSync(skillDir, { recursive: true });
             fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '');
@@ -231,23 +231,23 @@ void test('checkSkills: canon-init present but all operational skills missing �
         fs.writeFileSync(path.join(initDir, 'SKILL.md'), '');
         const check = checkSkills(dir);
         assert.equal(check.status, 'warn');
-        assert.match(check.detail ?? '', /spec/);
-        assert.match(check.detail ?? '', /pipeline/);
-        assert.match(check.detail ?? '', /status/);
-        assert.match(check.detail ?? '', /changelog/);
+        assert.match(check.detail ?? '', /canon-spec/);
+        assert.match(check.detail ?? '', /canon-pipeline/);
+        assert.match(check.detail ?? '', /canon-status/);
+        assert.match(check.detail ?? '', /canon-changelog/);
     });
 });
 
-void test('checkSkills: changelog specifically checked — missing changelog warns even with others present', () => {
+void test('checkSkills: canon-changelog specifically checked — missing canon-changelog warns even with others present', () => {
     withTempDir(dir => {
-        for (const skill of ['canon-init', 'spec', 'pipeline', 'status']) {
+        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status']) {
             const skillDir = path.join(dir, '.claude', 'skills', skill);
             fs.mkdirSync(skillDir, { recursive: true });
             fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '');
         }
         const check = checkSkills(dir);
         assert.equal(check.status, 'warn');
-        assert.match(check.detail ?? '', /changelog/);
+        assert.match(check.detail ?? '', /canon-changelog/);
     });
 });
 
@@ -344,7 +344,7 @@ void test('scaffoldTemplates: fresh directory — all templates copied', () => {
     withTempDir(projectDir => {
         withTempDir(srcDir => {
             // Build a small fake templates tree
-            const files = ['AGENTS.md', '.canon/templates/spec.md', '.claude/skills/spec/SKILL.md'];
+            const files = ['AGENTS.md', '.canon/templates/spec.md', '.claude/skills/canon-spec/SKILL.md'];
             for (const f of files) {
                 const full = path.join(srcDir, f);
                 fs.mkdirSync(path.dirname(full), { recursive: true });
@@ -491,7 +491,7 @@ void test('runUpgrade: project file without delimiters → skipped with message'
 void test('runUpgrade: canon-owned skill file fully overwritten', () => {
     withTempDir(projectDir => {
         withTempDir(pkgDir => {
-            const skillRel = '.claude/skills/spec/SKILL.md';
+            const skillRel = '.claude/skills/canon-spec/SKILL.md';
             const tmplSkill = path.join(pkgDir, 'templates', skillRel);
             fs.mkdirSync(path.dirname(tmplSkill), { recursive: true });
             fs.writeFileSync(tmplSkill, 'new skill content');

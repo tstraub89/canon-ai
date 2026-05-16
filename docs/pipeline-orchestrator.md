@@ -2,7 +2,7 @@
 
 This doc is the source of truth for `scripts/run-task.ts` **internals**: pipeline tiers, model/effort selection, environment variables, worktree mechanics, auto-commit guardrails, session resumption, auto-block thresholds, and the post-merge reconciliation guardrail. Read on demand when you need to understand *why* the orchestrator behaves a certain way.
 
-For **operational** guidance — how to drive the pipeline, common command patterns, snag recovery — write a `/pipeline` skill in `.claude/skills/pipeline/SKILL.md` for your project.
+For **operational** guidance — how to drive the pipeline, common command patterns, snag recovery — see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`).
 
 `AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *orchestration internals*.
 

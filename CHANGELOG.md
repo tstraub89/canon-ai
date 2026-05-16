@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [Unreleased]
+
+### Changed
+
+- **Operational skills renamed to `canon-*` prefix.** `/spec`, `/pipeline`, `/status`, `/changelog` are now `/canon-spec`, `/canon-pipeline`, `/canon-status`, `/canon-changelog`. The generic names invited collision with project-owned skills and made `.claude/settings.json` allowlists look like canon was claiming a global namespace. `CANON_OWNED` paths in `upgrade.ts`, the `doctor` skill check, and all SKILL.md cross-references updated to match.
+
 ## [1.0.0] — 2026-05-15
 
 First major release. Canon ships as the `canon-ai` npm package with a full CLI, Claude Code skills, and a unit-test suite.
