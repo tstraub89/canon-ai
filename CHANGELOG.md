@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.0.2] — 2026-05-16
+
+### Fixed
+
+- **Git-based installs actually work now — commit `dist/` instead of building at install time.** v1.0.1's `prepare: "tsup"` hook fails in practice because npm 11's `pacote` git-source preparation does not reliably install devDependencies into its cache-clone before firing `prepare`. Verified locally: npm's debug log shows the nested install placing exactly one `placeDep ROOT canon-ai` and then running `prepare` against an empty `node_modules`, so tsup is never on disk and the build dies with `sh: tsup: command not found` (exit 127). This is [npm/cli#8440](https://github.com/npm/cli/issues/8440), open and unfixed across multiple npm versions. The industry-standard workaround for git-installable TypeScript CLIs is to commit the build artifact rather than rely on `prepare`. Canon now does that: `dist/` is removed from `.gitignore`, the `prepare` script is gone, and CI enforces freshness with `npm run build && git diff --exit-code -- dist/` so a stale `dist/` fails before merging. The CI assertion that *also* failed to catch this last time (`npm pack && grep dist/`) is replaced with a real `npm install -g "git+file://$GITHUB_WORKSPACE"` + `canon --version` in a clean tmpdir, exercising the actual adopter path end-to-end. Discovered while installing 1.0.1 fresh against the canon-ai private repo; same broken-binary symptom as [discussion #56](https://github.com/tstraub89/canon-ai/discussions/56), but the underlying cause is an npm bug, not a missing hook.
+
 ## [1.0.1] — 2026-05-16
 
 ### Fixed
