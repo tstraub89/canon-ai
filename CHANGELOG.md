@@ -2,13 +2,7 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
-## [Unreleased]
-
-### Changed
-
-- **Operational skills renamed to `canon-*` prefix.** `/spec`, `/pipeline`, `/status`, `/changelog` are now `/canon-spec`, `/canon-pipeline`, `/canon-status`, `/canon-changelog`. The generic names invited collision with project-owned skills and made `.claude/settings.json` allowlists look like canon was claiming a global namespace. `CANON_OWNED` paths in `upgrade.ts`, the `doctor` skill check, and all SKILL.md cross-references updated to match.
-
-## [1.0.0] — 2026-05-15
+### [1.0.0] — 2026-05-16
 
 First major release. Canon ships as the `canon-ai` npm package with a full CLI, Claude Code skills, and a unit-test suite.
 
@@ -16,7 +10,7 @@ First major release. Canon ships as the `canon-ai` npm package with a full CLI, 
 
 - **`canon-ai` npm package** — publishable via npm; `canon` binary wired through `dist/cli/index.js`. Build via `tsup`; `templates/`, `scripts/`, and `public/` are included in the package files so adopters get the full scaffold on install.
 - **`canon` CLI** — six commands: `init` (installs the `/canon-init` skill into the project), `doctor` (verifies environment and canon setup), `upgrade` (syncs canon-owned files to match installed version), `update` (updates the canon-ai package itself), `run` (delegates to `scripts/run-task.ts`), `task` (delegates to `scripts/task.sh`).
-- **`/spec`, `/pipeline`, `/status`, `/changelog` Claude Code skills** — installed to `.claude/skills/` by `canon init` and synced by `canon upgrade`. All four are `CANON_OWNED`.
+- **`/canon-spec`, `/canon-pipeline`, `/canon-status`, `/canon-changelog` Claude Code skills** — installed to `.claude/skills/` by `canon init` and synced by `canon upgrade`. All four are `CANON_OWNED`.
 - **Unit test suite** — 237 tests covering CLI commands (`upgrade`, `init`, `doctor`, `update`), orchestrator extractors, validation parsers, and phase-gate logic. Run via `npm test`. Pure/injectable entry points extracted from each CLI command so tests don't require subprocess spawning or `process.chdir`.
 - **Project template overrides** — `canon task new` checks `tasks/_templates/<file>` first and falls back to `.canon/templates/<file>`. Files in `tasks/_templates/` are never touched by `canon upgrade`, allowing per-project customization (validation commands, placeholder text, project-specific sections) to survive upgrades. See `.canon/README.md`.
 - **`.canon/README.md`** — "do not edit these files" notice seeded by `canon init` and kept current by `canon upgrade`, with the `cp` command and post-upgrade `diff` workflow for overrides.
