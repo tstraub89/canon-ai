@@ -1,5 +1,5 @@
 ---
-name: pipeline
+name: canon-pipeline
 description: Drive the canon task pipeline — kick off, advance phases, open PRs, ship, recover from auto-blocks, and reconcile branches after merges. Encodes operational patterns and snag-recovery flows; for orchestrator internals (model matrix, env vars, session-resume mechanics) see docs/pipeline-orchestrator.md.
 allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(./scripts/task.sh *) Bash(npx tsx scripts/run-task.ts *) Bash(git *) Bash(gh *)
 effort: medium
@@ -29,16 +29,14 @@ npx tsx scripts/run-task.ts <id> [flags]
 ## Pipeline phases (in order)
 
 ```
-spec → spec_review → plan → implement → runtime_validation → code_review → qa → human_review
+spec → spec_review → plan → implement → code_review → qa → human_review
 ```
-
-`runtime_validation` runs between implement and code_review — the orchestrator executes registered checks automatically (no agent session). If checks fail, the task reroutes to implement before Claude ever sees the diff.
 
 ## Do NOT use this skill for
 
-- Authoring a spec (use `/spec`)
-- Reading task status (use `/status`)
-- Drafting changelog entries (use `/changelog`)
+- Authoring a spec (use `/canon-spec`)
+- Reading task status (use `/canon-status`)
+- Drafting changelog entries (use `/canon-changelog`)
 
 ---
 
@@ -68,7 +66,7 @@ canon run <task-id> --step --expect <phase>
 
 Use `--expect` whenever you have a specific next phase in mind — it fails fast on phase mismatch instead of silently running the wrong phase.
 
-Valid phases: `spec | spec_review | plan | implement | runtime_validation | code_review | qa | human_review`
+Valid phases: `spec | spec_review | plan | implement | code_review | qa | human_review`
 
 ### 3. Open a draft PR
 
@@ -208,21 +206,6 @@ canon task phase <task-id> <phase> pending
 canon run <task-id>
 ```
 
-### `runtime_validation` failed — task didn't reach code_review
-
-The orchestrator runs registered runtime checks automatically after implement. If they fail, the task reroutes to implement with the failure report in the prompt. This is intentional — Claude should not see a diff that failed validation.
-
-If you believe the failure is a flake or an unrelated pre-existing issue:
-1. Read `tasks/<id>/handoff.md` → Blockers — Codex should have noted the failure.
-2. If genuinely unrelated: manually advance runtime_validation past the failure:
-   ```bash
-   canon task phase <task-id> runtime_validation done approved
-   canon run <task-id> --step --expect code_review
-   ```
-   Document the bypass decision in `tasks/<id>/notes.md`.
-
----
-
 ## Pre-flight checklist before `--pr` or `--ship`
 
 1. Working tree clean inside the worktree (no uncommitted source).
@@ -241,6 +224,6 @@ If any are missing post-pipeline, manually advance or fix before `--pr` / `--shi
 - `AGENTS.md` — workflow rules, roles, escalation, validation matrix, git/release.
 - `CLAUDE.md` — Claude phase-specific guidance.
 - `CODEX.md` — Codex phase-specific guidance.
-- `/status` — read task state and get recommended next action.
-- `/spec` — author a new task spec.
-- `/changelog` — draft release notes from completed tasks.
+- `/canon-status` — read task state and get recommended next action.
+- `/canon-spec` — author a new task spec.
+- `/canon-changelog` — draft release notes from completed tasks.

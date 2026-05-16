@@ -7,7 +7,6 @@ import {
     getNominalSize,
     getPipelinePolicy,
     isPlanCombined,
-    RUNTIME_CHECKS,
     type ClaudePhase,
     type CodexPhase,
     type PolicyConfig,
@@ -186,10 +185,4 @@ void test('policy: empty task list falls back to S/fast tier', () => {
     assert.equal(p.nominalSize, 'S');
     assert.equal(p.effectiveSize, 'S');
     assert.deepEqual(p.claude('spec'), { model: 'opus', effort: 'medium' });
-});
-
-void test('runtime checks: canon-ai ships the orchestrator smoke registration', () => {
-    assert.deepEqual(RUNTIME_CHECKS, [
-        { name: 'orchestrator-phase-smoke', command: 'echo orchestrator-phase-smoke-ok' },
-    ]);
 });

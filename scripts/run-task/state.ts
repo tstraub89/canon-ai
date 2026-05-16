@@ -70,20 +70,44 @@ export function statusFileFor(taskId: string): string {
     return path.join(resolveTaskCwd(taskId), 'tasks', taskId, 'status.json');
 }
 
+function validateBranchField(value: string | undefined, taskId: string, fieldName: string): void {
+    if (value === undefined) return;
+    if (typeof value !== 'string') {
+        die(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);
+    }
+    const trimmed = value.trim();
+    if (trimmed === '') return;
+    if (trimmed.startsWith('-')) {
+        die(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. Edit status.json.`);
+    }
+    if (/[\x00-\x1F\x7F\s:]/.test(trimmed)) {
+        die(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. Edit status.json.`);
+    }
+}
+
+function validateNonNegativeInt(value: unknown, taskId: string, fieldPath: string): void {
+    if (value === undefined) return;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+        die(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. Edit status.json.`);
+    }
+}
+
+function validateStatus(taskId: string, parsed: StatusJson): void {
+    validateBranchField(parsed.branch, taskId, 'branch');
+    validateBranchField(parsed.base_branch, taskId, 'base_branch');
+
+    const phases = parsed.phases ?? {};
+    for (const [phaseName, entry] of Object.entries(phases)) {
+        if (!entry) continue;
+        for (const field of ['iterations', 'iterations_current_loop', 'iterations_total', 'changes_requested_total', 'auto_block_count', 'reroute_count'] as const) {
+            validateNonNegativeInt(entry[field], taskId, `phases.${phaseName}.${field}`);
+        }
+    }
+}
+
 export function readStatus(taskId: string): StatusJson {
     const parsed = JSON.parse(fs.readFileSync(statusFileFor(taskId), 'utf8')) as StatusJson;
-    if (!parsed.phases.runtime_validation) {
-        parsed.phases.runtime_validation = {
-            status: 'done',
-            agent: 'orchestrator',
-            verdict: 'approved',
-            iterations: 0,
-            iterations_current_loop: 0,
-            iterations_total: 0,
-            changes_requested_total: 0,
-            auto_block_count: 0,
-        };
-    }
+    validateStatus(taskId, parsed);
     return parsed;
 }
 

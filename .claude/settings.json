@@ -20,14 +20,25 @@
 
       "Bash(ls *)",
       "Bash(find *)",
-      "Bash(wc *)",
 
-      "Bash(node scripts/*)",
-      "Bash(bash scripts/*)",
-      "Bash(./scripts/task.sh *)",
+      "Bash(npm run *)",
+
+      "Bash(npx canon *)",
+      "Bash(canon *)",
+
       "Bash(npx tsx *)",
 
-      "Bash(codex *)"
+      "Bash(codex *)",
+
+      "Skill(canon-init)",
+      "Skill(canon-changelog)",
+      "Skill(canon-changelog:*)",
+      "Skill(canon-status)",
+      "Skill(canon-status:*)",
+      "Skill(canon-spec)",
+      "Skill(canon-spec:*)",
+      "Skill(canon-pipeline)",
+      "Skill(canon-pipeline:*)"
     ],
     "additionalDirectories": [
       "../dev-worktrees"

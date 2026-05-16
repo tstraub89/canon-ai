@@ -23,3 +23,10 @@ canonical template that you should incorporate into your override:
 ```bash
 diff .canon/templates/spec.md tasks/_templates/spec.md
 ```
+
+## Project-specific validation checks during `implement`
+
+Configure Codex sandbox permissions in the project-owned `.codex/config.toml`
+when validation needs more access than the default implement sandbox provides.
+Real checks should live in project scripts such as `package.json` commands (or
+the local equivalent), not in canon-side policy modules.

@@ -26,7 +26,7 @@ Typical workflow:
   canon run <id> --pr           Open a draft PR when the task reaches human_review
 
 Pipeline phases (in order):
-  spec → spec_review → plan → implement → runtime_validation → code_review → qa → human_review
+  spec → spec_review → plan → implement → code_review → qa → human_review
 
 canon task subcommands:
   new <id> "Title" [--base <branch>]
@@ -37,7 +37,7 @@ canon task subcommands:
   phase <id> <phase> <status> [verdict]
                           Update a phase and re-derive the top-level status pointer.
                             phases:   spec | spec_review | plan | implement |
-                                      runtime_validation | code_review | qa | human_review
+                                      code_review | qa | human_review
                             status:   pending | in_progress | done | changes_requested | blocked
                             verdict:  approved | approved_with_nits | changes_requested | needs_re_review
                                       (verdict applies to spec_review and code_review only)
@@ -54,7 +54,7 @@ canon run options:
   --step, -1              Run one phase then stop
   --expect <phase>        Fail fast if current phase doesn't match
                             phases: spec | spec_review | plan | implement |
-                                    runtime_validation | code_review | qa | human_review
+                                    code_review | qa | human_review
   --interactive, -I       Open interactive agent sessions (default: non-interactive)
   --pr                    At human_review: push branch and open a draft PR (requires gh)
   --push                  At human_review: push branch only (requires gh)

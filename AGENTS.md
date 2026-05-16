@@ -40,8 +40,7 @@ The tier is determined by the largest task size in the run. Task size is set in 
 **Fast tier** (all tasks S, non-delicate):
 ```
 Claude writes spec+plan → [human spec gate] → Codex implements →
-Orchestrator runtime validation → Claude reviews code ↔ Codex iterates →
-Claude writes QA summary → Human tests
+Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human tests
 ```
 - Spec and plan are written in one Claude session.
 - Codex spec_review is skipped; the human spec gate replaces it.
@@ -50,8 +49,8 @@ Claude writes QA summary → Human tests
 **Full tier** (any task M, L, XL, or delicate):
 ```
 Claude writes spec → Codex reviews spec → [human spec gate] → Claude writes plan →
-Codex implements → Orchestrator runtime validation → Claude reviews code ↔
-Codex iterates → Claude writes QA summary → Human tests
+Codex implements → Claude reviews code ↔ Codex iterates →
+Claude writes QA summary → Human tests
 ```
 - Spec and plan are written in separate Claude sessions.
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe. Silence is the default — a real shape concern becomes the lead reason for `changes_requested`; no concern leaves the section empty and review proceeds.
@@ -87,13 +86,10 @@ Templates live in `.canon/templates/` (managed by canon — do not edit directly
 2. Codex reads spec, writes `tasks/TASK-ID/spec-review.md` with findings, sets `spec_review` → `done` (or `changes_requested`)
 3. Claude creates `tasks/TASK-ID/plan.md`, sets `plan` → `done`
 4. Codex implements, creates `tasks/TASK-ID/handoff.md`, sets `implement` → `done`
-5. Orchestrator runs registered runtime checks, writes `## Runtime Validation Outcomes` to `handoff.md` when checks run, and sets `runtime_validation` → `done`. On failure, it routes back to implement with the same loop-cap semantics as code review.
-6. Claude reads handoff + diff, creates `tasks/TASK-ID/review.md`, sets `code_review` → `done`
-7. If changes requested: Codex iterates, updates `handoff.md`, Claude re-reviews
-8. Claude creates `tasks/TASK-ID/done.md` for the human, sets `qa` → `done`
-9. Human tests against `done.md` checklist, sets `human_review` → `done`
-
-**Validation authority boundary**: Codex authors `## Validation Outcomes` for checks it ran in its sandbox. The orchestrator authors `## Runtime Validation Outcomes` for registered runtime checks it ran outside Codex's sandbox. Neither actor edits the other's section.
+5. Claude reads handoff + diff, creates `tasks/TASK-ID/review.md`, sets `code_review` → `done`
+6. If changes requested: Codex iterates, updates `handoff.md`, Claude re-reviews
+7. Claude creates `tasks/TASK-ID/done.md` for the human, sets `qa` → `done`
+8. Human tests against `done.md` checklist, sets `human_review` → `done`
 
 **`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a failure outside the task's Affected Files, Codex may record `Fail – unrelated` instead of a bare `Fail`. The Notes column must contain a specific file reference (path, extension, or `file:line`) — vague explanations are rejected by the orchestrator. Claude assesses credibility in Stage 1 code review; an implausible explanation is a Stage 1 fail.
 
@@ -124,7 +120,7 @@ Task management helper (requires `jq`) — used by both agents:
 
 The pipeline produces three categories of changes. Each has a clear owner:
 
-1. **Code changes**: Codex writes the files during implement. The orchestrator commits them after implement passes Codex-reported static validation and before runtime_validation/code_review. Commit message: `<task title> [<TASK-ID>]`.
+1. **Code changes**: Codex writes the files during implement. The orchestrator commits them after implement passes Codex-reported static validation and before code_review. Commit message: `<task title> [<TASK-ID>]`.
 
 2. **Task artifacts** (`tasks/TASK-ID/`): Committed once at the end, after human_review approves. A single commit bundles spec, plan, reviews, handoff, done, and notes. Commit message: `chore: add task artifacts for <TASK-ID>`.
 

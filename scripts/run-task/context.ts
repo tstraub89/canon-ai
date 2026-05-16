@@ -162,12 +162,7 @@ export function buildImplementStateHeader(state: PipelineState, mode: ImplementM
     const primary = tasks[0];
 
     const maxCodeReviewIter = tasks.reduce((max, task) => Math.max(max, task.iterations_current_loop), 0);
-    const maxRuntimeIter = tasks.reduce((max, task) => Math.max(max, task.runtimeIterations_current_loop), 0);
-    const revisionExplain = maxCodeReviewIter > 0 && maxRuntimeIter > 0
-        ? `addressing code-review feedback (iteration ${maxCodeReviewIter + 1}) and runtime validation failures — read tasks/<id>/review.md and the runtime failure section below`
-        : maxCodeReviewIter > 0
-            ? `addressing code-review feedback (iteration ${maxCodeReviewIter + 1}) — read tasks/<id>/review.md`
-            : `addressing runtime validation failures (iteration ${maxRuntimeIter + 1}) — read the runtime failure section below`;
+    const revisionExplain = `addressing code-review feedback (iteration ${maxCodeReviewIter + 1}) — read tasks/<id>/review.md`;
     const modeExplain: Record<ImplementMode, string> = {
         fresh: 'first implementation pass — no prior work on this phase',
         revision: revisionExplain,

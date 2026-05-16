@@ -4,6 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+    parseNameStatusOutput,
+} from '../scripts/run-task/git.js';
+import {
+    deriveTopLevelStatus,
+    readStatus,
+    writeStatusToFile,
+} from '../scripts/run-task/state.js';
+import type { StatusJson } from '../scripts/run-task/types.js';
+import {
     checkAcCoveragePlaceholders,
     computeLatestValidationResults,
     parseHandoffFiles,
@@ -31,6 +40,86 @@ function withTempPair(
 function makeHandoffMap(entries: Record<string, readonly string[]>): Map<string, readonly string[]> {
     return new Map(Object.entries(entries));
 }
+
+void test('parseNameStatusOutput: empty diff returns no affected files', () => {
+    assert.deepEqual(parseNameStatusOutput(''), []);
+});
+
+void test('parseNameStatusOutput: non-renamed change returns one path', () => {
+    assert.deepEqual(parseNameStatusOutput('M\0src/foo.ts\0'), ['src/foo.ts']);
+});
+
+void test('parseNameStatusOutput: rename returns pre-image and post-image paths sorted', () => {
+    assert.deepEqual(parseNameStatusOutput('R95\0old.ts\0new.ts\0'), ['new.ts', 'old.ts']);
+});
+
+void test('parseNameStatusOutput: deletion is included', () => {
+    assert.deepEqual(parseNameStatusOutput('D\0src/gone.ts\0'), ['src/gone.ts']);
+});
+
+void test('parseNameStatusOutput: binary-modified file is included', () => {
+    assert.deepEqual(parseNameStatusOutput('B\0bin/binary\0'), ['bin/binary']);
+});
+
+void test('parseNameStatusOutput: paths with spaces survive NUL decoding', () => {
+    assert.deepEqual(
+        parseNameStatusOutput('M\0src/has spaces.ts\0R100\0old name.ts\0new name.ts\0'),
+        ['new name.ts', 'old name.ts', 'src/has spaces.ts'],
+    );
+});
+
+void test('legacy status with retired phase block parses, routes implement to code_review, and roundtrips intact', () => {
+    const retiredPhase = `runtime${'_'}validation`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-retirement-status-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const taskId = 'legacy-status-task';
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    const statusPath = path.join(taskDir, 'status.json');
+    const legacyStatus = {
+        id: taskId,
+        status: 'implement',
+        phases: {
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'done', agent: 'codex' },
+            [retiredPhase]: {
+                status: 'pending',
+                agent: 'orchestrator',
+                verdict: '',
+                iterations: 0,
+                iterations_current_loop: 0,
+                iterations_total: 0,
+                changes_requested_total: 0,
+                auto_block_count: 0,
+            },
+            code_review: { status: 'pending', agent: 'claude', verdict: '', iterations: 0 },
+            qa: { status: 'pending', agent: 'claude' },
+            human_review: { status: 'pending', agent: 'human' },
+        },
+    } as unknown as StatusJson;
+    fs.writeFileSync(statusPath, `${JSON.stringify(legacyStatus, null, 2)}\n`, 'utf8');
+
+    const prevOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        const parsed = readStatus(taskId);
+        assert.equal(deriveTopLevelStatus(parsed), 'code_review');
+
+        writeStatusToFile(statusPath, parsed);
+        const roundtripped = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as {
+            status: string;
+            phases: Record<string, unknown>;
+        };
+        assert.equal(roundtripped.status, 'code_review');
+        assert.ok(roundtripped.phases[retiredPhase]);
+    } finally {
+        if (prevOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
 
 function withTempTaskHandoff(
     taskId: string,
@@ -776,18 +865,6 @@ void test('checkPhaseGate: code_review rejects when verdict is not provided', ()
         const result = checkPhaseGate(taskId, 'code_review', undefined);
         assert.equal(result.ok, false);
         if (!result.ok) assert.match(result.reason, /requires a verdict argument/);
-    });
-});
-
-void test('checkPhaseGate: runtime_validation has no gate (CLI contract: verdict optional, orchestrator writes always include one)', () => {
-    // The gate does not enforce a verdict on runtime_validation manual
-    // transitions — the orchestrator's setRuntimeValidationPhase() bypasses
-    // task.sh entirely and always provides a verdict via its direct write
-    // path. Manual `task.sh phase X runtime_validation done` without a
-    // verdict is treated as a deliberate repair action by the operator.
-    withTempTaskDir(taskId => {
-        assert.deepEqual(checkPhaseGate(taskId, 'runtime_validation', 'approved'), { ok: true });
-        assert.deepEqual(checkPhaseGate(taskId, 'runtime_validation', undefined), { ok: true });
     });
 });
 

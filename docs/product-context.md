@@ -53,18 +53,18 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 ### Flow 1: Adopt canon-ai in a new repo (downstream user)
 
-1. Drop the canon-ai repo contents into the target project (or clone canon-ai and point it at the project).
-2. Fill in the `TODO[canon]` markers in `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the docs in `docs/` with project-specific context.
-3. Verify `npm test` and `npm run type-check` pass on the project.
-4. Create the first task: `./scripts/task.sh new <id> <title>`. Write a spec by hand or with conversational Claude.
-5. Run the pipeline: `npx tsx scripts/run-task.ts <id>`.
+1. Install the package: `npm install -D canon-ai` (or global). This pulls in the `canon` CLI plus bundled templates, skills, and orchestrator scripts.
+2. Run `canon init` in the target repo. It scaffolds `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.canon/` (templates, README), and the `docs/` stubs with `TODO[canon]` markers, and installs the `/canon-init` Claude Code skill.
+3. From Claude Code, run `/canon-init`. The skill grills on project context (stack, domain, delicate surfaces, voice) and fills the scaffolded docs with project-specific content.
+4. Create the first task: `canon task new <id> <title>`. Write a spec conversationally with Claude (or invoke `/spec`).
+5. Run the pipeline: `canon run <id>`.
 
-> *Future*: a `canon init` script will automate the doc-fill step (Phase 2 of the roadmap).
+> Run `canon upgrade` periodically to sync canon-owned files (templates, skills, `.canon/README.md`) to the installed package version. Project-owned overrides in `tasks/_templates/` are preserved.
 
 ### Flow 2: Run a task (the standard pipeline lifecycle)
 
 1. **Human + conversational Claude** discuss the problem. Claude grills on shape and decomposition (full tier) or asks clarifying questions (fast tier), then writes `spec.md` in `tasks/<id>/`.
-2. **Human reads spec, approves at the spec gate.** Claude invokes `npx tsx scripts/run-task.ts <id>`.
+2. **Human reads spec, approves at the spec gate.** Claude invokes `canon run <id>`.
 3. **Pipeline runs**: spec_review (full tier) → plan → implement → code_review → qa, with auto-reroute on `changes_requested` and auto-block on loop-cap hits.
 4. **Human tests against `done.md`**, marks `phases.human_review.status = "done"`.
 5. Task artifacts get archived; lessons distilled into `lessons-learned.md`.
@@ -73,15 +73,15 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 1. Pipeline halts (auto-block, manual Ctrl+C, or unexpected error).
 2. Human inspects `tasks/<id>/status.json` and the latest artifact written.
-3. Resolve manually: reset the relevant phase via `./scripts/task.sh phase <id> <phase> pending`, or set `iterations_current_loop` back to 0 if a loop cap was hit (preserves `iterations_total` and `auto_block_count`), or escalate to a human reroute.
-4. Re-run `npx tsx scripts/run-task.ts <id>`. The orchestrator picks up from the new phase state.
+3. Resolve manually: reset the relevant phase via `canon task phase <id> <phase> pending`, or set `iterations_current_loop` back to 0 if a loop cap was hit (preserves `iterations_total` and `auto_block_count`), or escalate to a human reroute.
+4. Re-run `canon run <id>`. The orchestrator picks up from the new phase state.
 
 ### Flow 4: Self-improvement (canon-on-canon)
 
-1. canon-ai's own `dev` branch is where pipeline improvements happen.
-2. Tasks that modify the orchestrator (`scripts/run-task.ts`, `pipeline-policy.ts`, templates, AGENTS.md) run through canon-ai's own pipeline on `dev`.
-3. Trivial tweaks (≤ ~10 lines, no logic change) may still be inline; non-trivial changes go through the full pipeline with worktree isolation.
-4. `dev` never merges into `main`. `main` stays as the portable template.
+1. canon-ai's own `dev` branch is the staging/work-in-progress branch for pipeline improvements.
+2. Tasks that modify the orchestrator (`scripts/run-task/`, `pipeline-policy.ts`, templates, `AGENTS.md`) run through canon-ai's own pipeline on `dev`, with worktree isolation so the supervising orchestrator is shielded from edits to itself mid-run.
+3. Trivial tweaks (≤ ~10 lines, no logic change) may still be inline; non-trivial changes go through the full pipeline.
+4. Releases merge `dev` → `main` with a version bump and `CHANGELOG.md` entry. `main` is the published `canon-ai` npm package — what adopters get when they `npm install`.
 
 ## Tiers, Sizes, and Authorization
 
@@ -109,9 +109,9 @@ Adopters of canon-ai add their own project-specific delicate domains to this lis
 
 ## Business Rules
 
-- **Repo visibility**: canon-ai is a private GitHub repository. Not open-source, not publicly mirrored, not on a registry. Future open-source release would be a separate decision.
-- **Branch policy**: `main` is the portable template — generic, with `TODO[canon]` markers intact. `dev` is canon-ai's self-development branch — fully filled out, including `CHANGELOG.md`. `dev` never merges to `main`.
-- **Public changelog**: none. The internal `CHANGELOG.md` lives only on `dev`. A future product with a public surface would have its own landing-page repo for high-level public changelogs.
+- **Repo visibility**: canon-ai is a private GitHub repository. The `canon-ai` npm package ships from `main`. Future open-source release would be a separate decision.
+- **Branch policy**: `dev` is the work-in-progress branch where pipeline improvements land first; `main` is the release branch and the source of the published `canon-ai` npm package. Releases merge `dev` → `main` with a version bump and `CHANGELOG.md` entry. Cross-branch sync still uses cherry-pick for canon-supplied changes outside a release (see `docs/patterns.md`).
+- **Changelog**: `CHANGELOG.md` lives on both branches and ships with the package. Audience is canon-ai contributors and adopters who want to know what changed between versions. Format follows Keep a Changelog conventions.
 - **License**: Proprietary (`LICENSE` file at repo root). Reconsidered when/if a public release happens.
 
 ## Voice & Tone
@@ -124,9 +124,8 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 
 ## Roadmap (Brief)
 
-- **Current state**: Layer 1 mostly built and dogfooded internally — multiple canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). First external adopter (TokenAnxiety, via vendored submodule) is providing dogfood feedback that's driving the next hardening pass (see open Wave 3 issues).
-- **Near-term**: Address the Wave 3 issues from external dogfooding — canon-version stamping into artifacts, status-counter consistency, validation-result-state nuance, telemetry enforcement. Continue hardening before Phase 2 abstractions land.
-- **Phase 2**: `canon init` script (auto-populates `docs/` from a target repo's structure). Layer 2 of the product hypothesis. Also: canon-as-installable-package work (see `docs/BACKLOG.md`).
-- **Future**: Additional agent-CLI adapters (Gemini, Aider). Skill packaging for Claude Code. Public release decision.
+- **Current state**: v1.0.0 shipped (2026-05-15). canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task), bundled Claude Code skills (`/spec`, `/pipeline`, `/status`, `/changelog`, `/canon-init`), template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the next hardening pass.
+- **Near-term**: Adopters extend validation by configuring Codex sandbox permissions in project-owned `.codex/config.toml` and wiring real checks through project scripts such as `package.json`. Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon").
+- **Future**: Additional agent-CLI adapters (Gemini, Aider). Public release decision.
 
 (See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)

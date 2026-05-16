@@ -121,49 +121,6 @@ export type ValidationOutcomeRow = {
     notes: string;
 };
 
-export type RuntimeOutcomeRow = {
-    check: string;
-    result: string;
-    elapsed: string;
-    notes: string;
-};
-
-function cleanRuntimeCheckName(value: string): string {
-    return value.trim().replace(/^`|`$/g, '');
-}
-
-export function computeLatestRuntimeResults(handoffContent: string): Map<string, RuntimeOutcomeRow> {
-    const latest = new Map<string, RuntimeOutcomeRow>();
-    const baseline = parseTable(handoffContent, 'Runtime Validation Outcomes');
-    for (const row of baseline) {
-        const check = cleanRuntimeCheckName(row['Check'] ?? '');
-        if (!check) continue;
-        latest.set(check, {
-            check,
-            result: row['Result'] ?? '',
-            elapsed: row['Elapsed'] ?? '',
-            notes: row['Notes'] ?? '',
-        });
-    }
-
-    const iterationBodies = extractSectionBodies(handoffContent, /^## Iteration\b/);
-    for (const body of iterationBodies) {
-        const reruns = parseTableH3(body, 'Re-run runtime validation');
-        for (const row of reruns) {
-            const check = cleanRuntimeCheckName(row['Check'] ?? '');
-            if (!check) continue;
-            latest.set(check, {
-                check,
-                result: row['Result'] ?? '',
-                elapsed: row['Elapsed'] ?? '',
-                notes: row['Notes'] ?? '',
-            });
-        }
-    }
-
-    return latest;
-}
-
 export function parseValidationOutcomeRows(handoffPath: string): ValidationOutcomeRow[] {
     try {
         const content = fs.readFileSync(handoffPath, 'utf8');
@@ -496,16 +453,6 @@ const PHASE_GATE_CONFIG: Record<Phase, PhaseGateConfig> = {
     spec_review: { artifactName: 'spec-review.md', requiresVerdict: true, verdictMustMatchArtifact: true },
     plan: { artifactName: 'plan.md' },
     implement: { artifactName: 'handoff.md' },
-    // runtime_validation has no per-task artifact file — the phase's results
-    // live in a section appended to handoff.md by the orchestrator. The
-    // gate doesn't require a verdict here because (a) the orchestrator's
-    // direct setRuntimeValidationPhase() writes always include a verdict
-    // and bypass task.sh entirely, and (b) the existing task.sh CLI
-    // contract treats verdict as optional for runtime_validation (see
-    // the verdict-validation block earlier in cmd_phase). Tightening this
-    // would break documented manual-repair paths without adding real
-    // enforcement against the orchestrator's own writes.
-    runtime_validation: {},
     code_review: { artifactName: 'review.md', requiresVerdict: true, verdictMustMatchArtifact: true },
     qa: { artifactName: 'done.md', customTemplateCheck: isDoneMdTemplate },
     // human_review's gate logic lives in checkPhaseGate's switch below — it
@@ -559,7 +506,6 @@ export function checkPhaseGate(
     }
 
     if (config.requiresVerdict && !config.verdictMustMatchArtifact) {
-        // Verdict required but not parseable from an artifact (runtime_validation).
         if (!verdict) {
             return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
         }

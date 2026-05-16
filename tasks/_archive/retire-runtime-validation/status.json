@@ -1,0 +1,81 @@
+{
+  "id": "retire-runtime-validation",
+  "title": "Retire runtime_validation pipeline phase",
+  "status": "human_review",
+  "created": "2026-05-16",
+  "updated": "2026-05-16",
+  "branch": "task/retire-runtime-validation",
+  "base_branch": "dev",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "4f5bf343fbd9499a9dc62cbd4ef5670bce2f453e",
+    "orchestrator_commit": "4f5bf343fbd9499a9dc62cbd4ef5670bce2f453e",
+    "codex_cli": "codex-cli 0.130.0",
+    "claude_code": "2.1.143 (Claude Code)"
+  },
+  "task_size": "L",
+  "delicate": true,
+  "human_spec_gate": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 4,
+      "changes_requested_total": 3,
+      "auto_block_count": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "runtime_validation": {
+      "status": "done",
+      "agent": "orchestrator",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019e2f1e-5201-7330-8b7b-d9fd40508e0c",
+    "claude_spec": "e58d217c-8e47-4b66-bc25-6f5a66d86403",
+    "codex": "019e2f33-0f00-7223-8d17-25ce80da7884",
+    "claude_review": "b7f103a6-da58-4b3c-ad53-df4a3a4466e8"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"
+}

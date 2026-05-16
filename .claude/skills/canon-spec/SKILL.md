@@ -1,5 +1,5 @@
 ---
-name: spec
+name: canon-spec
 description: Write a scoped implementation spec for a new task. Explores the codebase, grills for M/L/XL tasks, proposes scope for approval, then creates the task directory and writes spec.md. For S tasks, also writes plan.md and kicks off the pipeline after approval.
 argument-hint: "[task description or title]"
 allowed-tools: Read Glob Grep Write Edit Agent Bash(canon task *) Bash(canon run *) Bash(./scripts/task.sh *) Bash(git branch *) Bash(git status *) Bash(git log *)

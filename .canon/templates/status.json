@@ -31,16 +31,6 @@
     },
     "plan": { "status": "pending", "agent": "claude" },
     "implement": { "status": "pending", "agent": "codex" },
-    "runtime_validation": {
-      "status": "pending",
-      "agent": "orchestrator",
-      "verdict": "",
-      "iterations": 0,
-      "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
-    },
     "code_review": {
       "status": "pending",
       "agent": "claude",

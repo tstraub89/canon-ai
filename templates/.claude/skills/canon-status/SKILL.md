@@ -1,5 +1,5 @@
 ---
-name: status
+name: canon-status
 description: Show where all in-progress tasks stand, flag what needs attention, and recommend the next concrete action. Read-only — no files modified.
 allowed-tools: Read Glob Grep Bash(canon task *) Bash(./scripts/task.sh *) Bash(git branch *) Bash(git log *) Bash(git status *)
 effort: low
@@ -61,8 +61,7 @@ Tasks where any phase has `status = "in_progress"` and no action is needed yet.
 - `code_review.iterations_current_loop ≥ 2`: "Review looping — N rounds this cycle. Default cap is 3 for S/M, 5 for L/XL."
 - `spec_review.iterations_current_loop ≥ 2`: "Spec review looping — worth watching."
 - `auto_block_count > 0`: "Previously auto-blocked [N] times — escalation history in tasks/<id>/status.json."
-- `runtime_validation.status = "changes_requested"`: "Runtime validation failed — rerouted to implement."
-- If a task has been `in_progress` for the same phase across multiple `/status` checks (infer from iteration counts and last-updated), note it: "Phase hasn't advanced — may be stalled."
+- If a task has been `in_progress` for the same phase across multiple `/canon-status` checks (infer from iteration counts and last-updated), note it: "Phase hasn't advanced — may be stalled."
 
 If `code_review.verdict = "changes_requested"` and `implement.status = "in_progress"`, note: "Codex iterating (round N)."
 

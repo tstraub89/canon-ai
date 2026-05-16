@@ -116,20 +116,16 @@ When working on canon-ai's harness, `delicate: true` should be set for any task 
 
 The architectural decision (see `docs/decisions.md` "File-based handoffs between phases") makes resumability and observability load-bearing. Adding in-memory state that bridges phase boundaries — even seemingly innocuous things like "remember the validation result so we don't recompute it" — breaks both. New cross-phase state goes in a file under `tasks/<id>/` with a documented schema in `.canon/templates/`.
 
-### Don't `git merge` between `dev` and `main` — cherry-pick canon-supplied commits instead.
+### Release-merge `dev` → `main` via PR; cherry-pick for out-of-band fixes.
 
-The three-layer architecture (harness + policy mirrored across branches; project context dev-only) means `dev` and `main` intentionally diverge on the descriptive docs (`docs/architecture.md`, `docs/decisions.md`, `docs/product-context.md` — main has TODO[canon] stubs for adopters; dev has canon-ai's filled content). **A whole-branch `git merge origin/main` (or vice versa) will always produce false-positive conflicts** on those files because both sides have legitimately added different content to the same structural locations. There is no clean automatic resolution — git can't tell that the divergence is *by design*.
+Since v1.0.0, `main` is the published `canon-ai` npm package and `dev` is the staging branch — both carry the same canon-ai content shape, so they no longer structurally diverge the way the pre-v1 template/dev split did. **Normal release flow**: open a PR from `dev` → `main` with the version bump and `CHANGELOG.md` entry; merge it. The release-merge is the supported path; raw `git merge dev` on `main` works too but a PR is preferred for review/CI hygiene.
 
-**The right cross-branch sync pattern**: cherry-pick specific canon-supplied commits — harness changes in `scripts/`, policy changes in `AGENTS.md` / `CLAUDE.md` / `CODEX.md`, canon-supplied additions to `pipeline-orchestrator.md`, `lessons-learned.md`, etc. — between branches one at a time. The cherry-pick scope matches the layering: only canon-supplied content crosses branches; project-specific content stays put.
+**Cherry-pick is still the right tool for out-of-band fixes** that need to land on one branch ahead of the next release-merge — e.g., a hotfix authored on `main` that should also be on `dev` so it doesn't regress on the next merge, or a fix authored on `dev` that needs to land on `main` for an urgent patch release without sweeping in unrelated in-flight work.
 
-When canon needs a change to land on both branches:
-1. Author it on whichever branch is convenient (typically dev for canon-ai self-development).
+When a single change needs both branches outside a release:
+1. Author on whichever branch is convenient.
 2. `git cherry-pick <SHA>` to the other branch.
 3. Push both.
-
-A future canon improvement could automate this with `.gitattributes merge=ours` on the descriptive docs (per branch) so accidental whole-branch merges no longer produce conflicts. Not in scope yet — capture this as a backlog item if it bites again.
-
-Failure mode if violated: a `git merge` produces conflicts on every descriptive doc, the human resolves them by picking one side (always wrong because *both* sides are correct for their respective branches), and the merged branch ends up with content that's incorrect for its layer (filled content lands on main, or stubs land on dev). Recovery requires reverting the merge.
 
 ### Use `--name-status`, not `--name-only`, when building path sets from `git diff`
 

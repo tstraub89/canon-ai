@@ -163,18 +163,36 @@ If any of `AGENTS.md`, `CLAUDE.md`, `CODEX.md` had project-specific content belo
 
 ---
 
-## Phase 5 — Stage and summarize
+## Phase 5 — Set up Claude permissions (optional)
 
-Stage all written docs:
+By default, Claude Code prompts on every `git`, `gh`, `codex`, and `canon` subprocess. Canon ships with a recommended allowlist that eliminates the prompts.
+
+1. Run `canon doctor` and read the `.claude/settings.json` line under "Config". The detail tells you whether the recommended canon perms are present, partially present, or absent.
+2. If anything's missing, ask the project owner: *"Want me to add canon's recommended permission allowlist to `.claude/settings.json`? I'll preserve your existing entries."*
+3. If yes:
+   - Read `.claude/settings.json` if it exists (or start from `{}`).
+   - Merge canon's recommended entries into `permissions.allow` — see the project README "Skip the permission prompts" section for the full block. Preserve all existing entries; only add what's missing.
+   - Write back with 2-space indentation.
+4. If no, skip — canon works without it; every `canon run` will just prompt per subprocess.
+
+This is purely ergonomics. The committed `.claude/settings.json` is project-level (shared with the team). Personal "full send" overrides belong in `.claude/settings.local.json` (gitignored).
+
+---
+
+## Phase 6 — Stage and summarize
+
+Stage all written docs (and `.claude/settings.json` if Phase 5 modified it):
 
 ```bash
 git add docs/ AGENTS.md CLAUDE.md CODEX.md 2>/dev/null
+[ -f .claude/settings.json ] && git add .claude/settings.json
 git status --short
 ```
 
 Then print a summary:
 
 - Which docs were filled (list them)
+- Whether the Claude permissions allowlist was updated
 - Any sections left intentionally thin, and why
 - Next step: `git diff --staged` to review, then commit when satisfied
 - How to run the pipeline once you have a task ready: `canon run <id>` (or `npx tsx scripts/run-task.ts <id>` without global install)

@@ -38,6 +38,7 @@ The QA phase appends a row at the end of every task. The product owner reviews t
 | 2026-05-11 | runtime-validation-phase | M delicate | approved_with_nits | 5 (auto-blocked at 3, reset+2 more) | 0 | 0 | 0 | No | Complex spec — AC-9b, AC-11 artifact preservation, AC-12b template composability all emerged iteratively through spec review; clean single-pass implementation once spec settled |
 | 2026-05-11 | counter-schema-migration | L | approved | 1 | 2 | 0 | 0 | No | Round 1 blocked by sandbox write-path failure in runtime-validation regression test; round 2 clean. Nit: `cwd: 'repo_root'` test case dropped for sandbox compat (coverage gap, non-blocking). Docs-impact items (pipeline-orchestrator.md, decisions.md) not in handoff — updated inline at QA. |
 | 2026-05-14 | scope-review-diff | S | approved (human fast-tier) | 1 | 1 | 0 | 0 | No | Clean single-pass; approved with nits — round-1 `baseBranch` vs `resolvedBaseBranch` inconsistency in `prompts/index.ts` non-blocking. Eliminates noisy-worktree review stall (issue #46). |
+| 2026-05-16 | retire-runtime-validation | L delicate | approved_with_nits | 4 (3 changes_requested) | 1 | 0 | 0 | No | 4 spec-review rounds to resolve allow-list scope (grep-discovered historical telemetry + archived tasks) and template-mirror details; clean single-pass implementation; delicate self-modification — pipeline retires itself via worktree isolation. |
 
 ---
 

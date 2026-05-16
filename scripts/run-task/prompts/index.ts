@@ -5,13 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../env.js';
 import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
-import { RUNTIME_CHECKS } from '../../pipeline-policy.js';
-import { computeLatestRuntimeResults } from '../validation.js';
-import { resolveTaskCwd } from '../state.js';
-import { sanitizeRuntimeCheckName } from '../phases/runtime-validation.js';
 import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
-import type { PipelineState, TaskContext } from '../types.js';
+import type { PipelineState } from '../types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +25,30 @@ function loadTemplate(name: string): string {
 
 function render(name: string, view: object): string {
     return renderTemplate(loadTemplate(name), view);
+}
+
+function buildAffectedFilesBlock(affectedFiles: readonly string[] | undefined, baseBranch: string | undefined): string {
+    if (!affectedFiles) return '';
+    if (affectedFiles.length === 0) {
+        return [
+            '## Affected files (committed diff vs base branch)',
+            '',
+            'No prior commits on this task\'s branch yet. Apply the full default check matrix from the spec\'s *Validation Required* section — every check runs unconditionally on this first implement pass. Predicate gating is meaningful only once the task branch has committed changes.',
+            '',
+        ].join('\n');
+    }
+
+    const branch = baseBranch ?? 'base branch';
+    return [
+        '## Affected files (committed diff vs base branch)',
+        '',
+        `The following files have committed changes on this task's branch vs \`${branch}\`:`,
+        '',
+        ...affectedFiles.map(file => `- \`${file}\``),
+        '',
+        'Use this set when applying predicate-gated checks from the spec\'s *Validation Required* section. If a check is gated (e.g., "run e2e only if `src/` changed"), evaluate the predicate against the affected-files set; when the predicate is false, skip the check and record the skip in the Validation Outcomes table with the predicate\'s verbatim condition in the Notes column. When no predicate gates a check in the spec, run the check unconditionally.',
+        '',
+    ].join('\n');
 }
 
 export function promptSpec(state: PipelineState): string {
@@ -115,7 +135,12 @@ export function promptPlan(state: PipelineState): string {
     });
 }
 
-export function promptImplement(state: PipelineState, mode: 'fresh' | 'resume' = 'fresh'): string {
+export function promptImplement(
+    state: PipelineState,
+    mode: 'fresh' | 'resume' = 'fresh',
+    affectedFiles?: readonly string[],
+    baseBranch?: string,
+): string {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
     const taskLines = tasks.map(t =>
@@ -130,6 +155,7 @@ export function promptImplement(state: PipelineState, mode: 'fresh' | 'resume' =
         risksBlock: buildKnownRisks(taskIds),
         pitfallsBlock: buildKnownPitfalls(),
         contextBlock: buildContextBlock(taskIds),
+        affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         taskLines,
         isBundle: tasks.length > 1,
         phaseCommands: phaseCommands(taskIds, 'implement', 'done'),
@@ -150,97 +176,48 @@ export function promptImplementResume(state: PipelineState): string {
     ].join('\n');
 }
 
-export function promptImplementRevisions(state: PipelineState): string {
+export function promptImplementRevisions(
+    state: PipelineState,
+    affectedFiles: readonly string[],
+    baseBranch: string,
+): string {
     const { tasks } = state;
     const stateHeader = buildImplementStateHeader(state, 'revision');
     const maxCodeReviewIter = tasks.reduce((m, t) => Math.max(m, t.iterations), 0);
-    const maxRuntimeIter = tasks.reduce((m, t) => Math.max(m, t.runtimeIterations), 0);
     const hasReviewFindings = maxCodeReviewIter > 0;
-    const hasRuntimeFailures = maxRuntimeIter > 0;
-    const iterationN = Math.max(maxCodeReviewIter, maxRuntimeIter) + 1;
+    const iterationN = maxCodeReviewIter + 1;
     const priorRound = maxCodeReviewIter;
-    const iterBanner = hasReviewFindings && hasRuntimeFailures
-        ? `[ITERATION ${iterationN} — addressing code review round ${priorRound} and runtime validation failures]`
-        : hasReviewFindings
-            ? `[ITERATION ${iterationN} — addressing code review round ${priorRound}]`
-            : `[ITERATION ${iterationN} — addressing runtime validation failures]`;
-    const handoffAppend = hasReviewFindings && hasRuntimeFailures
-        ? `## Iteration ${iterationN} — addressing review round ${priorRound} and runtime validation`
-        : hasReviewFindings
-            ? `## Iteration ${iterationN} — addressing review round ${priorRound}`
-            : `## Iteration ${iterationN} — addressing runtime validation`;
+    const iterBanner = `[ITERATION ${iterationN} — addressing code review round ${priorRound}]`;
+    const handoffAppend = `## Iteration ${iterationN} — addressing review round ${priorRound}`;
     const reviewLines = hasReviewFindings
         ? tasks.map(t =>
             `- \`${t.taskId}\` → read \`tasks/${t.taskId}/review.md\` (most recent \`## Round ${priorRound}\` section only — earlier rounds are already addressed)`
         ).join('\n')
         : '';
-    const runtimeFailureEntries = hasRuntimeFailures
-        ? buildRuntimeFailureEntries(tasks)
-        : [];
 
     return render('implement-revisions.md', {
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of related tasks' : `task "${tasks[0].taskId}"`,
         stateHeader,
         startup: CODEX_STARTUP,
+        affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         iterBanner,
         handoffAppend,
         hasReviewFindings,
-        hasRuntimeFailures,
         iterationN,
         priorRound,
         reviewLines,
-        runtimeFailureEntries,
         tightenLine: iterationN >= 3 ? ` (note: round ${iterationN} is tightening — prefer to defer nits).` : '',
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'implement', 'done'),
     });
 }
 
-function stderrExcerptFromNotes(notes: string): string {
-    const withoutArtifacts = notes.replace(/;\s*artifacts:.*$/s, '');
-    const firstSeparator = withoutArtifacts.indexOf(';');
-    if (firstSeparator === -1) return '';
-    return withoutArtifacts.slice(firstSeparator + 1).trim().replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
-}
-
-function buildRuntimeFailureEntries(tasks: readonly TaskContext[]): object[] {
-    const entries: object[] = [];
-    for (const task of tasks) {
-        if (task.runtimeIterations <= 0) continue;
-        const handoffPath = path.join(resolveTaskCwd(task.taskId), 'tasks', task.taskId, 'handoff.md');
-        let handoffContent = '';
-        try {
-            handoffContent = fs.readFileSync(handoffPath, 'utf8');
-        } catch {
-            // Missing handoff is handled downstream by the implementer as a blocker.
-        }
-        const latestRuntimeResults = computeLatestRuntimeResults(handoffContent);
-        for (const row of latestRuntimeResults.values()) {
-            if (row.result !== 'Fail' && row.result !== 'Timeout') continue;
-            const safeName = sanitizeRuntimeCheckName(row.check);
-            const artifactPath = `tasks/${task.taskId}/runtime-check-output/${safeName}/iter-${task.runtimeIterations_total}/`;
-            const stderrLogPath = path.join(resolveTaskCwd(task.taskId), artifactPath, 'stderr.log');
-            let stderrContent: string;
-            try {
-                stderrContent = fs.readFileSync(stderrLogPath).subarray(0, 2048).toString('utf8');
-            } catch {
-                stderrContent = `${stderrExcerptFromNotes(row.notes)}\n[stderr.log missing — using truncated handoff excerpt]`.trim();
-            }
-            const hint = RUNTIME_CHECKS.find(check => check.name === row.check)?.artifactReadingHint ?? '';
-            entries.push({
-                taskId: task.taskId,
-                checkName: row.check,
-                artifactPath,
-                stderrContent,
-                hasHint: hint.length > 0,
-                artifactReadingHint: hint,
-            });
-        }
-    }
-    return entries;
-}
-
-export function promptImplementReroute(state: PipelineState, isResumedSession = false): string {
+export function promptImplementReroute(
+    state: PipelineState,
+    isResumedSession = false,
+    affectedFiles?: readonly string[],
+    baseBranch?: string,
+): string {
     const { tasks } = state;
     const stateHeader = buildImplementStateHeader(state, 'reroute');
     const taskIds = tasks.map(t => t.taskId);
@@ -273,6 +250,7 @@ export function promptImplementReroute(state: PipelineState, isResumedSession = 
         risksBlock: buildKnownRisks(taskIds),
         pitfallsBlock: buildKnownPitfalls(),
         contextBlock: buildContextBlock(taskIds),
+        affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         taskLines,
         phaseCommands: phaseCommands(taskIds, 'implement', 'done'),
     });

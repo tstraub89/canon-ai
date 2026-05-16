@@ -52,7 +52,7 @@ A **human** is the product owner: approves specs, runs final behavioral tests, s
 The orchestrator under `scripts/run-task/` drives this. For each task:
 
 ```
-spec → spec_review → human gate → plan → implement → runtime_validation → code_review → qa → human_review
+spec → spec_review → human gate → plan → implement → code_review → qa → human_review
 ```
 
 …with automatic loops on `changes_requested` verdicts, model/effort scaling by task size, optional git-worktree isolation, session resumption across phases, and auto-block on runaway loops. See `docs/pipeline-orchestrator.md` for the full mechanics.
@@ -109,6 +109,42 @@ canon task new my-first-feature "Short description"
 # Run the pipeline
 canon run my-first-feature
 ```
+
+### Skip the permission prompts (optional)
+
+Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations. To avoid a Claude Code permission prompt on every step, drop these into `.claude/settings.json` under `permissions.allow`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(jq *)",
+      "Bash(sed *)",
+      "Bash(awk *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(npm run *)",
+      "Bash(npx canon *)",
+      "Bash(canon *)",
+      "Bash(npx tsx *)",
+      "Bash(codex *)",
+      "Skill(canon-init)",
+      "Skill(canon-spec)",
+      "Skill(canon-spec:*)",
+      "Skill(canon-pipeline)",
+      "Skill(canon-pipeline:*)",
+      "Skill(canon-status)",
+      "Skill(canon-status:*)",
+      "Skill(canon-changelog)",
+      "Skill(canon-changelog:*)"
+    ]
+  }
+}
+```
+
+Claude Code creates `settings.json` on first use — check what's already there before pasting. For a personal "full send" allowlist that doesn't get committed, use `.claude/settings.local.json` (and make sure it's gitignored — `canon doctor` will warn you if it isn't).
 
 ### Key commands
 

@@ -1,5 +1,5 @@
 ---
-name: changelog
+name: canon-changelog
 description: Draft or update CHANGELOG entries from completed tasks. Reads the "Proposed Changelog" sections that the QA pipeline writes into done.md, synthesizes them into a release entry, and commits after approval. Branch-aware — handles fresh entries on main, in-progress unreleased blocks on release branches, and finalization. Install only for projects that do versioned releases.
 argument-hint: "[optional: version override e.g. 1.5.0, or single task ID to add one bullet]"
 allowed-tools: Read Glob Grep Write Edit Bash(git log *) Bash(git diff *) Bash(git status *) Bash(git branch *) Bash(git rev-parse *) Bash(git add *) Bash(git commit *)

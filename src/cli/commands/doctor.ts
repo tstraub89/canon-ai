@@ -16,6 +16,32 @@ const EXPECTED_TEMPLATES = [
     'done.md', 'spec-review.md', 'notes.md', 'status.json',
 ];
 
+// Canon's recommended .claude/settings.json permissions.allow entries.
+// Kept in sync with README's "Skip the permission prompts" block.
+export const RECOMMENDED_ALLOW = [
+    'Bash(git *)',
+    'Bash(gh *)',
+    'Bash(jq *)',
+    'Bash(sed *)',
+    'Bash(awk *)',
+    'Bash(ls *)',
+    'Bash(find *)',
+    'Bash(npm run *)',
+    'Bash(npx canon *)',
+    'Bash(canon *)',
+    'Bash(npx tsx *)',
+    'Bash(codex *)',
+    'Skill(canon-init)',
+    'Skill(canon-spec)',
+    'Skill(canon-spec:*)',
+    'Skill(canon-pipeline)',
+    'Skill(canon-pipeline:*)',
+    'Skill(canon-status)',
+    'Skill(canon-status:*)',
+    'Skill(canon-changelog)',
+    'Skill(canon-changelog:*)',
+];
+
 // --- individual checks ---
 
 export function checkPlatform(): Check {
@@ -106,7 +132,7 @@ export function checkSkills(cwd: string): Check {
             detail: 'canon-init skill missing — run `canon init` or `canon upgrade`',
         };
     }
-    const skillNames = ['spec', 'pipeline', 'status', 'changelog'];
+    const skillNames = ['canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog'];
     const missing = skillNames.filter(s => !existsSync(join(cwd, '.claude', 'skills', s, 'SKILL.md')));
     if (missing.length > 0) {
         return {
@@ -122,6 +148,64 @@ export function checkCodexConfig(cwd: string): Check {
     const path = join(cwd, '.codex', 'config.toml');
     if (existsSync(path)) return { label: '.codex/config.toml', status: 'pass' };
     return { label: '.codex/config.toml', status: 'warn', detail: 'missing — Codex will use defaults' };
+}
+
+function readAllowFromSettings(path: string): { allow: Set<string>; status: 'ok' | 'missing' | 'invalid' } {
+    if (!existsSync(path)) return { allow: new Set(), status: 'missing' };
+    try {
+        const parsed = JSON.parse(readFileSync(path, 'utf8')) as { permissions?: { allow?: unknown } } | null;
+        const raw = parsed?.permissions?.allow;
+        const allow = new Set<string>(
+            Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [],
+        );
+        return { allow, status: 'ok' };
+    } catch {
+        return { allow: new Set(), status: 'invalid' };
+    }
+}
+
+export function checkRecommendedPermissions(cwd: string): Check {
+    const label = '.claude/settings.json';
+    const committed = readAllowFromSettings(join(cwd, '.claude', 'settings.json'));
+    const local = readAllowFromSettings(join(cwd, '.claude', 'settings.local.json'));
+
+    if (committed.status === 'invalid') {
+        return { label, status: 'warn', detail: 'present but not valid JSON — review manually' };
+    }
+    if (local.status === 'invalid') {
+        return {
+            label: '.claude/settings.local.json',
+            status: 'warn',
+            detail: 'present but not valid JSON — review manually',
+        };
+    }
+    if (committed.status === 'missing' && local.status === 'missing') {
+        return {
+            label,
+            status: 'warn',
+            detail: 'not present — see README "Skip the permission prompts" for the recommended allowlist, or rerun `/canon-init`',
+        };
+    }
+
+    const allow = new Set<string>([...committed.allow, ...local.allow]);
+    const missing = RECOMMENDED_ALLOW.filter(p => !allow.has(p));
+    if (missing.length === 0) {
+        return { label, status: 'pass', detail: 'recommended canon perms present' };
+    }
+    if (missing.length === RECOMMENDED_ALLOW.length) {
+        return {
+            label,
+            status: 'warn',
+            detail: 'no recommended canon perms allowlisted — see README "Skip the permission prompts"',
+        };
+    }
+    const preview = missing.slice(0, 3).join(', ');
+    const more = missing.length > 3 ? ` (+${missing.length - 3} more)` : '';
+    return {
+        label,
+        status: 'warn',
+        detail: `missing ${missing.length} recommended perm(s): ${preview}${more} — see README`,
+    };
 }
 
 export function checkLocalSettingsGitignored(cwd: string): Check {
@@ -189,6 +273,7 @@ export function doctorCmd(_args: string[]): void {
 
     const configChecks: Check[] = [
         checkCodexConfig(cwd),
+        checkRecommendedPermissions(cwd),
         checkLocalSettingsGitignored(cwd),
     ];
 

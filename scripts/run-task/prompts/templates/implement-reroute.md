@@ -5,6 +5,7 @@ You are addressing **human-review feedback** on {{taskScope}} for {{projectName}
 
 {{#startup}}{{{startup}}}
 {{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}
+{{{affectedFilesBlock}}}
 Tasks with amended specs:
 {{{taskLines}}}
 

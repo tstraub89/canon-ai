@@ -6,7 +6,6 @@ import { runCodeReviewPhase } from './phases/code-review.js';
 import { runImplementPhase } from './phases/implement.js';
 import { runPlanPhase } from './phases/plan.js';
 import { runQaPhase } from './phases/qa.js';
-import { runRuntimeValidationPhase } from './phases/runtime-validation.js';
 import { runSpecPhase } from './phases/spec.js';
 import { runSpecReviewPhase } from './phases/spec-review.js';
 import * as splitTypes from './types.js';
@@ -126,7 +125,7 @@ function getPhaseStatus(status: StatusJson, phase: Phase): PhaseStatus {
     return isPhaseStatus(value) ? value : 'pending';
 }
 
-function getVerdict(status: StatusJson, phase: 'spec_review' | 'runtime_validation' | 'code_review'): Verdict {
+function getVerdict(status: StatusJson, phase: 'spec_review' | 'code_review'): Verdict {
     const value = status.phases[phase]?.verdict;
     return isVerdict(value) ? value : '';
 }
@@ -148,11 +147,8 @@ export function buildPipelineState(taskIds: string[]): PipelineState {
     const tasks: TaskContext[] = taskIds.map((taskId, i) => {
         const status = statuses[i];
         const codeReview = status.phases.code_review;
-        const runtimeValidation = status.phases.runtime_validation;
         const codeReviewCurrentLoop = codeReview?.iterations_current_loop ?? codeReview?.iterations ?? 0;
         const codeReviewTotal = codeReview?.iterations_total ?? codeReview?.iterations ?? 0;
-        const runtimeCurrentLoop = runtimeValidation?.iterations_current_loop ?? runtimeValidation?.iterations ?? 0;
-        const runtimeTotal = runtimeValidation?.iterations_total ?? runtimeValidation?.iterations ?? 0;
         return {
             taskId,
             title: getTitle(status),
@@ -160,9 +156,6 @@ export function buildPipelineState(taskIds: string[]): PipelineState {
             iterations: codeReviewCurrentLoop,
             iterations_current_loop: codeReviewCurrentLoop,
             iterations_total: codeReviewTotal,
-            runtimeIterations: runtimeCurrentLoop,
-            runtimeIterations_current_loop: runtimeCurrentLoop,
-            runtimeIterations_total: runtimeTotal,
             rerouteCount: status.phases.implement?.reroute_count ?? 0,
             status,
         };
@@ -657,10 +650,6 @@ function printDryRunPlan(state: PipelineState): void {
     for (const phase of PHASE_ORDER.slice(currentIdx)) {
         if (phase === 'human_review') continue;
         if (phase === 'spec_review' && state.tier === 'fast') continue;
-        if (phase === 'runtime_validation') {
-            console.log(`  - ${phase}: orchestrator runtime checks`);
-            continue;
-        }
         if (phase === 'spec' || phase === 'plan' || phase === 'code_review' || phase === 'qa') {
             const cfg = splitPolicy.getClaudeConfig(phase, tasks);
             console.log(`  - ${phase}: Claude / ${cfg.model} / ${cfg.effort}`);
@@ -870,7 +859,7 @@ function findOpenPRNumber(branch: string): number | null {
 function mergeOpenPRsAndPull(taskIds: string[]): boolean {
     const baseBranch = splitGit.getBaseBranch(taskIds);
     // Deduplicate branch names (bundles share one branch)
-    const branches = [...new Set(taskIds.map(id => `task/${id}`))];
+    const branches = [...new Set(taskIds.map(id => resolveTaskBranchName(id)))];
     let anyMerged = false;
     for (const branch of branches) {
         const prNum = findOpenPRNumber(branch);
@@ -1248,9 +1237,6 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     if ((phase as Phase) === 'implement') {
         return runImplementPhase(state, cliArgs.interactive, codexSession);
     }
-    if ((phase as Phase) === 'runtime_validation') {
-        return runRuntimeValidationPhase(taskIds, state);
-    }
     if ((phase as Phase) === 'code_review') {
         return runCodeReviewPhase(state, cliArgs.interactive, reviewClaudeSession);
     }
@@ -1443,15 +1429,6 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
             iterations: 0,
             iterations_current_loop: 0,
             iterations_total: 0,
-            runtimeIterations: status.phases.runtime_validation?.iterations_current_loop
-                ?? status.phases.runtime_validation?.iterations
-                ?? 0,
-            runtimeIterations_current_loop: status.phases.runtime_validation?.iterations_current_loop
-                ?? status.phases.runtime_validation?.iterations
-                ?? 0,
-            runtimeIterations_total: status.phases.runtime_validation?.iterations_total
-                ?? status.phases.runtime_validation?.iterations
-                ?? 0,
             rerouteCount: 0,
             status,
         }];
@@ -1467,15 +1444,6 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
             iterations: 0,
             iterations_current_loop: 0,
             iterations_total: 0,
-            runtimeIterations: status.phases.runtime_validation?.iterations_current_loop
-                ?? status.phases.runtime_validation?.iterations
-                ?? 0,
-            runtimeIterations_current_loop: status.phases.runtime_validation?.iterations_current_loop
-                ?? status.phases.runtime_validation?.iterations
-                ?? 0,
-            runtimeIterations_total: status.phases.runtime_validation?.iterations_total
-                ?? status.phases.runtime_validation?.iterations
-                ?? 0,
             rerouteCount: 0,
             status,
         }];
@@ -1582,24 +1550,6 @@ async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
         case 'implement':
             autoCommitCode(taskIds, splitWorktree.getActiveCwd(taskIds));
             return;
-
-        case 'runtime_validation': {
-            const anyChangesRequested = statuses.some(s => getVerdict(s, 'runtime_validation') === 'changes_requested');
-            if (anyChangesRequested) {
-                const maxRuntimeIter = statuses.reduce(
-                    (max, s) => Math.max(
-                        max,
-                        s.phases.runtime_validation?.iterations_current_loop
-                            ?? s.phases.runtime_validation?.iterations
-                            ?? 0,
-                    ),
-                    0,
-                );
-                info(`Runtime validation requested changes (iteration ${maxRuntimeIter}) — routing back to implement`);
-                routeBackTo(taskIds, 'implement');
-            }
-            return;
-        }
 
         case 'code_review': {
             const anyChangesRequested = statuses.some(s =>

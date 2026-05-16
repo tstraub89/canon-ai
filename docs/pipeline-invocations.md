@@ -68,3 +68,14 @@
 | 2026-05-15T03:50:25.157Z | scope-review-diff | implement | codex | gpt-5.4-mini | 0 | 237.0s | 2597454 | ok |
 | 2026-05-15T03:53:49.243Z | scope-review-diff | code_review | claude | sonnet | 0 | 203.8s | 403175 | ok |
 | 2026-05-15T03:56:00.155Z | scope-review-diff | qa | claude | sonnet | 0 | 130.8s | 526336 | ok |
+| 2026-05-16T04:52:15.792Z | retire-runtime-validation | spec_review | codex | gpt-5.5 | 0 | 159.6s | 891618 | ok |
+| 2026-05-16T04:58:11.500Z | retire-runtime-validation | spec | claude | opus | 0 | 355.7s | 2675849 | ok |
+| 2026-05-16T05:00:47.817Z | retire-runtime-validation | spec_review | codex | gpt-5.5 | 1 | 156.3s | 2766312 | ok |
+| 2026-05-16T05:02:10.300Z | retire-runtime-validation | spec | claude | opus | 0 | 82.4s | 1412963 | ok |
+| 2026-05-16T05:04:00.733Z | retire-runtime-validation | spec_review | codex | gpt-5.5 | 2 | 110.4s | 5201922 | ok |
+| 2026-05-16T05:04:52.160Z | retire-runtime-validation | spec | claude | opus | 0 | 51.4s | 1060684 | ok |
+| 2026-05-16T05:05:45.148Z | retire-runtime-validation | spec_review | codex | gpt-5.5 | 3 | 52.9s | 6577007 | ok |
+| 2026-05-16T05:12:14.877Z | retire-runtime-validation | plan | claude | sonnet | 0 | 389.7s | 959399 | ok |
+| 2026-05-16T05:34:37.511Z | retire-runtime-validation | implement | codex | gpt-5.5 | 0 | 1342.4s | 19528263 | ok |
+| 2026-05-16T05:46:14.011Z | retire-runtime-validation | code_review | claude | sonnet | 0 | 349.3s | 2009567 | ok |
+| 2026-05-16T05:50:48.421Z | retire-runtime-validation | qa | claude | sonnet | 0 | 274.2s | 940399 | ok |

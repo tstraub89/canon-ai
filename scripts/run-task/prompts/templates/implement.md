@@ -3,6 +3,7 @@ You are implementing {{taskScope}} for {{projectName}}.
 {{{stateHeader}}}
 {{{startup}}}
 {{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}
+{{{affectedFilesBlock}}}
 Tasks to implement:
 {{{taskLines}}}{{#isBundle}}
 These tasks are related — implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}
