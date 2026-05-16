@@ -8,6 +8,7 @@ First major release. Canon ships as the `canon-ai` npm package with a full CLI, 
 
 ### Added
 
+- **Affected-files section in implement prompts** — `promptImplement`, `promptImplementRevisions`, and `promptImplementReroute` now receive the committed diff path set (`git diff <baseBranch>...HEAD --name-status -M`, expanded for renames) and render it into a `## Affected files (committed diff vs base branch)` section. Spec authors can write predicate-gated checks in the *Validation Required* section ("run e2e only if `src/` changed") and Codex evaluates the predicate against this set during `implement`. On the first implement pass (empty set), Codex applies the full default check matrix.
 - **`canon-ai` npm package** — publishable via npm; `canon` binary wired through `dist/cli/index.js`. Build via `tsup`; `templates/`, `scripts/`, and `public/` are included in the package files so adopters get the full scaffold on install.
 - **`canon` CLI** — six commands: `init` (installs the `/canon-init` skill into the project), `doctor` (verifies environment and canon setup), `upgrade` (syncs canon-owned files to match installed version), `update` (updates the canon-ai package itself), `run` (delegates to `scripts/run-task.ts`), `task` (delegates to `scripts/task.sh`).
 - **`/canon-spec`, `/canon-pipeline`, `/canon-status`, `/canon-changelog` Claude Code skills** — installed to `.claude/skills/` by `canon init` and synced by `canon upgrade`. All four are `CANON_OWNED`.
@@ -15,8 +16,13 @@ First major release. Canon ships as the `canon-ai` npm package with a full CLI, 
 - **Project template overrides** — `canon task new` checks `tasks/_templates/<file>` first and falls back to `.canon/templates/<file>`. Files in `tasks/_templates/` are never touched by `canon upgrade`, allowing per-project customization (validation commands, placeholder text, project-specific sections) to survive upgrades. See `.canon/README.md`.
 - **`.canon/README.md`** — "do not edit these files" notice seeded by `canon init` and kept current by `canon upgrade`, with the `cp` command and post-upgrade `diff` workflow for overrides.
 
+### Removed
+
+- **`runtime_validation` orchestrator phase** — implement now routes directly to `code_review`. The phase handler, `RUNTIME_CHECKS` registry, `RuntimeCheck` type, status.json block, handoff template section, AGENTS.md "Validation authority boundary" rule, and the dedicated test suite are all gone. Validation execution lives entirely inside agent phases now (Codex runs checks in `implement`; Claude verifies in Stage 1 code review). Legacy in-flight tasks with a `runtime_validation` block in `status.json` are tolerated — the parser ignores the block on read and preserves it on write. See `docs/decisions.md` "Validation runs inside agent phases" for the reframe rationale.
+
 ### Changed
 
+- **Codex CLI invocation no longer passes redundant sandbox flags.** `agents/codex.ts` previously hardcoded `--sandbox workspace-write -c sandbox_permissions=["disk-full-read-access"]` on every fresh invocation, which overrode any project-owned `.codex/config.toml`. Codex CLI's default sandbox already grants workspace-write + `/tmp` + `$TMPDIR` + `~/.codex/memories` writes and network access — equivalent to what canon was explicitly requesting. Dropping the flags makes `.codex/config.toml` the authoritative source for adopters who want to *tighten* (read-only mode for regulated data) or further widen (`danger-full-access` for off-workspace writes).
 - **Task templates moved** from `tasks/_templates/` to `.canon/templates/` — now canon-owned and overwritten by `canon upgrade` alongside skills. The `tasks/_templates/` path is now the project-override location.
 - **`detectInstallType`** now inspects the package's own install path (`packageDir`) instead of `cwd/node_modules/canon-ai`. The old check failed silently when `canon` was invoked from a project subdirectory, always returning `local` regardless of actual install type.
 - **Signal exit propagation** in `run` and `task` subcommands: child process exit code is now `result.status ?? 1` (was `result.status ?? (result.error ? 1 : 0)`, which swallowed non-zero exits on some error paths).

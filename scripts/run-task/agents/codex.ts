@@ -45,10 +45,9 @@ export async function runCodex(
         }
 
         const effortFlag = ['-c', `model_reasoning_effort=${effort}`];
-        const sandboxFlags = resumeId ? [] : ['--sandbox', 'workspace-write', '-c', 'sandbox_permissions=["disk-full-read-access"]'];
         const args = resumeId
             ? ['exec', 'resume', resumeId, '--json', ...effortFlag, effectivePrompt, '-m', model]
-            : ['exec', '--json', ...effortFlag, ...sandboxFlags, effectivePrompt, '-m', model, '-C', cwd];
+            : ['exec', '--json', ...effortFlag, effectivePrompt, '-m', model, '-C', cwd];
 
         const displayChunks: string[] = [];
         let tokenTotal = 0;
