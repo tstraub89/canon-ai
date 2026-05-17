@@ -49,7 +49,7 @@ Canon orchestrates two AI coding CLIs:
 
 A **human** is the product owner: approves specs, runs final behavioral tests, ships.
 
-The orchestrator under `scripts/run-task/` drives this. For each task:
+The orchestrator drives this. For each task:
 
 ```
 spec → spec_review → human gate → plan → implement → code_review → qa → human_review
@@ -76,7 +76,6 @@ canon run <task-id>
 
 - **Node 24+**
 - **git**
-- **jq** — `brew install jq`
 - **Claude Code** — `npm install -g @anthropic-ai/claude-code`
 - **Codex CLI** — `npm install -g @openai/codex`
 - **gh** (optional, for `--pr` / `--push`) — `brew install gh && gh auth login`
@@ -84,10 +83,10 @@ canon run <task-id>
 ### Install
 
 ```bash
-npm install -g canon-ai
-# or use without installing:
-npx canon-ai@latest init
+npm install -g --install-links github:tstraub89/canon-ai
 ```
+
+> `--install-links` is required because npm otherwise symlinks the global install to its git cache rather than copying the committed `dist/`, which leaves the `canon` bin pointing at a transient path and command-not-found after the install reports success. The flag packs+installs as a regular dependency, which is what you want for a stable global CLI.
 
 ### Set up in a repo
 
@@ -206,9 +205,9 @@ Drop this into any repo and you have:
 ✅ **Built and working:**
 
 - `canon` CLI — `init`, `doctor`, `run`, `task`, `update`, `upgrade`
-- `scripts/run-task.ts` + `scripts/run-task/` modules — full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`
-- `scripts/pipeline-policy.ts` — pure policy module (tier/sizing/model/effort matrix), table-tested
-- `scripts/task.sh` — task lifecycle helper (new / list / status / phase / reset-spec-review / post-merge-sync / release-init)
+- Full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`. Bundled into `dist/scripts/run-task.js` and invoked via `canon run`.
+- Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
+- `canon task` lifecycle CLI (new / list / status / phase / reset-spec-review / post-merge-sync / release-init), in-process TS.
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
 - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — workflow rules and per-agent guidance
 - `docs/` — knowledge corpus templates with detailed scaffolding
@@ -230,7 +229,7 @@ Drop this into any repo and you have:
 
 ## Supported platforms
 
-- **macOS** and **Linux** are the supported targets. Canon's helpers (`scripts/task.sh`, worktree setup) require bash plus standard Unix tools (`jq`, `awk`, `sed`, `grep`).
+- **macOS** and **Linux** are the supported targets. Canon's worktree helpers shell out to `git` for `worktree add`/`remove` and `worktree list --porcelain` parsing.
 - **Windows is not supported.** Use WSL2.
 - **Node**: 24.x.
 

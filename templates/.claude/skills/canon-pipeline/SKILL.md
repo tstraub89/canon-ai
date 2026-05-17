@@ -1,13 +1,13 @@
 ---
 name: canon-pipeline
 description: Drive the canon task pipeline — kick off, advance phases, open PRs, ship, recover from auto-blocks, and reconcile branches after merges. Encodes operational patterns and snag-recovery flows; for orchestrator internals (model matrix, env vars, session-resume mechanics) see docs/pipeline-orchestrator.md.
-allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(./scripts/task.sh *) Bash(npx tsx scripts/run-task.ts *) Bash(git *) Bash(gh *)
+allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(git *) Bash(gh *)
 effort: medium
 ---
 
 # Pipeline Operations
 
-This skill drives `canon run` (`scripts/run-task.ts`). It encodes:
+This skill drives `canon run`. It encodes:
 - common command patterns (start, advance, ship, open PRs)
 - pre-flight checks before invoking the pipeline
 - snag-recovery flows (auto-block reset, phase mismatch, post-merge sync)
@@ -17,13 +17,8 @@ For orchestrator internals — pipeline tiers, the Codex model/effort matrix, en
 ## Command reference
 
 ```bash
-# Primary CLI
 canon run <id> [flags]
 canon task <subcommand> [args]
-
-# Fallback (dev / no package install)
-npx tsx scripts/run-task.ts <id> [flags]
-./scripts/task.sh <subcommand> [args]
 ```
 
 ## Pipeline phases (in order)

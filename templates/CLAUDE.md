@@ -14,11 +14,11 @@ Claude operates in two distinct modes:
 **Pipeline mode** (invoked by the orchestrator as a separate agent session):
 - Plan writing (full tier, after Codex spec review), code review, QA summary.
 
-**Spec gate**: The human always reviews the spec before the pipeline advances — invoke `run-task.ts` only after they approve.
+**Spec gate**: The human always reviews the spec before the pipeline advances — invoke `canon run <id>` only after they approve.
 
-**Pipeline rule**: Claude Code (the operator session — the one the human talks to directly) invokes `scripts/run-task.ts` to drive pipeline phases and monitors progress. Pipeline-spawned Claude sessions write `review.md` and `done.md` (and, for full-tier tasks, `plan.md`) — that keeps orchestrator guardrails intact, session resumption working, and the operator session's context clean. If you catch yourself reading the diff to assess spec compliance in the operator session, stop and kick the phase to the pipeline instead.
+**Pipeline rule**: Claude Code (the operator session — the one the human talks to directly) invokes `canon run <id>` to drive pipeline phases and monitors progress. Pipeline-spawned Claude sessions write `review.md` and `done.md` (and, for full-tier tasks, `plan.md`) — that keeps orchestrator guardrails intact, session resumption working, and the operator session's context clean. If you catch yourself reading the diff to assess spec compliance in the operator session, stop and kick the phase to the pipeline instead.
 
-A human shell can also operate canon directly (`npx tsx scripts/run-task.ts <id>` in a terminal), useful for headless / scripted use. Codex can technically operate but canon was not designed for it — see [`docs/pipeline-orchestrator.md` §Operator](docs/pipeline-orchestrator.md) for why.
+A human shell can also operate canon directly (`canon run <id>` in a terminal), useful for headless / scripted use. Codex can technically operate but canon was not designed for it — see [`docs/pipeline-orchestrator.md` §Operator](docs/pipeline-orchestrator.md) for why.
 
 **Modifying canon's own harness or policy** (the orchestrator scripts, task templates, agent configs, or AGENTS.md / CLAUDE.md / CODEX.md themselves) is allowed both inline and through the pipeline. The split:
 

@@ -22,7 +22,7 @@ Codex is the **implementer and spec reviewer** in the canon-ai pipeline. See `AG
 - `docs/product-context.md` — when the task touches user-visible behavior or product terminology
 - `docs/decisions.md` — when the task proposes something that might revisit a settled decision
 
-**Task-specific context**: The orchestrator (`scripts/run-task.ts`) injects the most valuable task context directly into your prompt: task-state header (phase, mode, task size, validation checks), AC summary, `Known Risks` from the spec, `Known Pitfalls` from `docs/patterns.md`, and pre-loaded contents of files in the spec's Affected Files table when small enough. Read those injections before scanning the full spec — they're already filtered for you.
+**Task-specific context**: Canon's orchestrator injects the most valuable task context directly into your prompt: task-state header (phase, mode, task size, validation checks), AC summary, `Known Risks` from the spec, `Known Pitfalls` from `docs/patterns.md`, and pre-loaded contents of files in the spec's Affected Files table when small enough. Read those injections before scanning the full spec — they're already filtered for you.
 
 ## Task Workflow
 
@@ -46,7 +46,7 @@ When the orchestrator invokes you for implement, the prompt already carries the 
 1. **Spec ACs are binding. Plan approach is guidance.** Every AC in `spec.md` MUST be met. If you find a better approach than the plan, use it and document the deviation in `handoff.md` under *Deviations*. You may NOT silently drop an AC, skip a validation check, or omit a spec requirement. If an AC is infeasible, document it under *Blockers*.
 2. Run every check listed in the spec's *Validation Required* section and every applicable check from the [Validation Checklist](#validation-checklist) below. No bare `Fail` in the Validation Outcomes table — fix failures before writing `handoff.md`. Exception: a pre-existing flake or failure outside the task's Affected Files may be recorded as `Fail – unrelated`, but only when the Notes column contains a specific file reference (path, file extension, or `file:line`). Vague notes are rejected. Claude will assess credibility in code review — write a precise, honest explanation.
 3. Write `tasks/TASK-ID/handoff.md` using the template. Required fields: changed files, rationale, deviations, AC coverage table, edge cases, blockers, validation outcomes.
-4. Finish with `./scripts/task.sh phase <TASK-ID> implement done` (the orchestrator's prompt shows the exact command).
+4. Finish with `canon task phase <TASK-ID> implement done` (the orchestrator's prompt shows the exact command).
 5. If you surfaced a distinct insight the reviewer wouldn't naturally capture, append an entry to `docs/lessons-learned.md`. Claude owns lessons by default — Codex writes only when it has a unique perspective.
 
 ### Iterating After Review

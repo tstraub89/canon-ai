@@ -1,10 +1,10 @@
-# Pipeline Orchestrator — Internals Reference
+# Pipeline Orchestrator — Reference
 
-This doc is the source of truth for `scripts/run-task.ts` **internals**: pipeline tiers, model/effort selection, environment variables, worktree mechanics, auto-commit guardrails, session resumption, auto-block thresholds, and the post-merge reconciliation guardrail. Read on demand when you need to understand *why* the orchestrator behaves a certain way.
+Reference for driving canon's pipeline: CLI surface, flags, task-management subcommands, pipeline tiers, the model/effort matrix, environment variables, worktree mechanics, session resumption, auto-block thresholds, and recovery patterns. Read on demand when you need to know which flag to use, why canon picked a particular model, or how to recover from a stuck phase.
 
-For **operational** guidance — how to drive the pipeline, common command patterns, snag recovery — see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`).
+For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`).
 
-`AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *orchestration internals*.
+`AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *how to operate the pipeline*.
 
 ## Operator
 
@@ -20,8 +20,6 @@ If you find yourself wanting Codex as operator, use Claude Code instead and lean
 
 ```bash
 canon run <task-id> [<task-id> ...]
-# or directly (dev / CI without package install):
-npx tsx scripts/run-task.ts <task-id> [<task-id> ...]
 ```
 
 Multiple IDs = bundle mode (see below).
@@ -43,12 +41,10 @@ Multiple IDs = bundle mode (see below).
 
 ## Task management (`canon task`)
 
-`canon task` wraps `scripts/task.sh` — the lightweight lifecycle CLI that manages task directories, `status.json`, and release branches. **No AI is spawned**; it is pure filesystem and git operations. Always prefer `canon task` helpers over hand-editing `status.json` directly — the helpers re-derive the top-level `status` pointer and keep state consistent.
+`canon task` is the lightweight lifecycle CLI that manages task directories, `status.json`, and release branches. **No AI is spawned**; it is pure filesystem and git operations. Always prefer `canon task` helpers over hand-editing `status.json` directly — the helpers re-derive the top-level `status` pointer and keep state consistent.
 
 ```bash
 canon task <subcommand> [args]
-# equivalent low-level form (dev / no package install):
-./scripts/task.sh <subcommand> [args]
 ```
 
 ### Subcommands
@@ -150,7 +146,7 @@ This is a default — your project can adopt a stricter or looser bar in `docs/d
 
 ## Codex Model/Effort Matrix
 
-Applied by `getCodexConfig` in `scripts/run-task/policy.ts`:
+Codex model and effort scale with task size:
 
 | Phase | S | M | L | XL / delicate |
 |---|---|---|---|---|
@@ -202,14 +198,12 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 ## Canon Snapshot Stamping
 
-Every task carries a provenance snapshot in `status.json.canon`. `task.sh new` stamps it when the task is created, and the orchestrator refreshes it again before any real phase work begins so older tasks pick up the current canon checkout and CLI versions on the next pipeline run.
+Every task carries a provenance snapshot in `status.json.canon`. `canon task new` stamps it when the task is created, and the orchestrator refreshes it again before any real phase work begins so older tasks pick up the current canon checkout and CLI versions on the next pipeline run.
 
 - Native checkouts record the canon checkout SHA in both `upstream_commit` and `orchestrator_commit`.
 - Vendored checkouts record the submodule SHA in `upstream_commit` and the host repo SHA in `orchestrator_commit`.
 - Missing `codex` or `claude` binaries record `<unavailable>` instead of failing the run.
 - `--dry-run` is read-only and does not refresh the snapshot.
-
-See `scripts/run-task/canon-snapshot.ts` for the capture logic and `scripts/run-task/types.ts` for the `canon` shape.
 
 ## Auto-Branch + Auto-Commit
 
@@ -241,7 +235,7 @@ The orchestrator resumes agent sessions across phases instead of spawning fresh 
 
 ## Streaming + Stall Detection
 
-Agent invocations stream NDJSON events live rather than blocking on `spawnSync` and parsing post-exit. The `streamProcess` helper in `scripts/run-task/agents/stream.ts` spawns Claude (`--output-format stream-json --verbose`) or Codex (`--json`) with `spawn`, attaches a `readline` reader to stdout, parses each event as it arrives, and renders a one-line tick (`→ Read tasks/X/spec.md`, `← turn completed`) for live progress visibility.
+Agent invocations stream NDJSON events live rather than blocking on subprocess completion. The orchestrator spawns Claude (`--output-format stream-json --verbose`) or Codex (`--json`), parses each event as it arrives, and renders a one-line tick (`→ Read tasks/X/spec.md`, `← turn completed`) for live progress visibility.
 
 **Stall detection.** Every parsed event resets an idle timer. If the timer fires (no stdout/stderr data for the configured window), the orchestrator escalates: SIGTERM the child, then SIGKILL after a short grace if it doesn't exit. The child is treated as failed regardless of exit code when the watchdog fires.
 
@@ -313,16 +307,16 @@ Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the 
 
 **Guardrail in code**: `--ship` runs `assertLocalBaseInSyncWithOrigin()` first. It fetches `origin/<baseBranch>`, counts commits behind, and dies with a "rebase first" message if local is behind.
 
-## Pipeline-Infra Changes Are Inline
+## Customizing Canon for Your Project
 
-Changes to `scripts/run-task.ts`, `scripts/task.sh`, task templates, `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, this file, or any other orchestration surface are made inline by conversational Claude — one session, one commit, no `tasks/<id>/` directory, no Codex routing.
+Project-level customization happens at the files canon scaffolded into your repo: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads them on every session start.
+
+Task templates are managed by canon — `canon upgrade` overwrites `.canon/templates/*`. To customize a template for your project without losing your changes on upgrade, copy it to `tasks/_templates/<file>` — `canon task new` checks there first and falls back to `.canon/templates/`.
 
 ## Related References
 
 - `AGENTS.md` — workflow rules, roles, escalation, validation, git/release.
 - `CLAUDE.md` — Claude phase-specific guidance (spec authorship, code review, QA).
 - `CODEX.md` — Codex phase-specific guidance (implementation, handoff, spec review).
-- `scripts/run-task.ts` — orchestrator entry stub.
-- `scripts/run-task/` — orchestrator implementation (main, dispatchers, phase handlers, agents, policy, state, worktree, validation, prompts).
-- `scripts/task.sh` — task management helper (requires `jq`).
-- `scripts/pipeline-policy.ts` — pure routing policy (tier, model/effort, loop caps).
+- `docs/patterns.md` — implementation patterns and Known Pitfalls.
+- `docs/decisions.md` — settled architectural decisions.
