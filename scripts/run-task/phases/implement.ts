@@ -6,10 +6,10 @@ import { getCodexConfig } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
 import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
 import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, parsePorcelain, ensureBranch } from '../git.js';
-import { runTaskShFor } from '../task-sh.js';
 import { getActiveCwd, isWorktreeEnabled, TASK_ARTIFACT_FILES } from '../worktree.js';
 import { autoBlockPhase, readStatus, taskDirFor, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
+import { taskPhase } from '../../../src/task/index.js';
 
 export function shouldUseImplementRevision(
     tasks: readonly Pick<TaskContext, 'iterations_current_loop'>[],
@@ -53,7 +53,7 @@ export async function runImplementPhase(
     const wasImplementInProgress = tasks.some(t => t.status.phases.implement?.status === 'in_progress');
     const phaseLabel = isRevision ? ', revision' : isRerouted ? ', reroute (spec amended)' : '';
     info(`Phase: implement (Codex${state.isBundle ? ' bundle' : ''}${phaseLabel})`);
-    for (const t of tasks) runTaskShFor(t.taskId, 'phase', t.taskId, 'implement', 'in_progress');
+    for (const t of tasks) taskPhase(t.taskId, 'implement', 'in_progress');
 
     const codexCfg = getCodexConfig('implement', tasks);
     const isResume = resumeId !== null && !isRevision && !isRerouted && wasImplementInProgress;

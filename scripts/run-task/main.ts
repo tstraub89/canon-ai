@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { runCodeReviewPhase } from './phases/code-review.js';
 import { runImplementPhase } from './phases/implement.js';
 import { runPlanPhase } from './phases/plan.js';
@@ -17,12 +16,11 @@ import * as splitGit from './git.js';
 import * as splitWorktree from './worktree.js';
 import * as splitPolicy from './policy.js';
 import * as splitValidation from './validation.js';
-import * as splitTaskSh from './task-sh.js';
 import * as splitClaude from './agents/claude.js';
 import * as splitCodex from './agents/codex.js';
 import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
+import { taskPhase } from '../../src/task/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = splitEnv.REPO_ROOT;
 const TASKS_DIR = splitEnv.TASKS_DIR;
 
@@ -116,7 +114,7 @@ type SessionSlot = splitTypes.SessionSlot;
 function getCurrentPhase(status: StatusJson): CurrentPhase {
     // Always derive from phases — never trust the top-level pointer on its own.
     // A stale top-level value (e.g. from a hand-edited status.json or an older
-    // task.sh run) would otherwise silently route to the wrong phase.
+    // manual phase-helper run) would otherwise silently route to the wrong phase.
     return deriveTopLevelStatus(status);
 }
 
@@ -692,7 +690,7 @@ function assertLocalBaseInSyncWithOrigin(taskIds: string[]): void {
 
     die(
         `Local ${baseBranch} is ${behind} commit${behind === 1 ? '' : 's'} behind origin/${baseBranch}. ` +
-        `Rebase before --ship: \`git pull --rebase origin ${baseBranch}\` (or \`./scripts/task.sh post-merge-sync ${baseBranch}\`). ` +
+        `Rebase before --ship: \`git pull --rebase origin ${baseBranch}\` (or \`canon task post-merge-sync ${baseBranch}\`). ` +
         `The squash merge of the implement-phase PR re-introduces tasks/<id>/ on origin/${baseBranch}; ` +
         `rebasing first ensures --ship consumes the post-merge files instead of leaving a duplicate. ` +
         `See docs/pipeline-orchestrator.md §Shipping & Post-Merge Reconciliation.`,
@@ -1007,8 +1005,8 @@ function shipTasks(taskIds: string[]): void {
     }
 
     // 1b human_review invariant: --ship advances human_review.status directly
-    // (line ~1057) and bypasses task.sh, so the checkPhaseGate enforcement on
-    // task.sh wouldn't catch unresolved human_pending checks. Run the gate
+    // (line ~1057) and bypasses the task CLI, so the checkPhaseGate enforcement
+    // on `canon task` wouldn't catch unresolved human_pending checks. Run the gate
     // here explicitly. Only fires for tasks still at human_review (not those
     // already at `complete` — those have already passed the gate). Caught
     // via Codex review on the 1b inline change.
@@ -1270,7 +1268,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
 }
 
 // ── Evidence-based phase advance + one-shot retry ─────────────────────────
-// Background (2026-04-19): Codex "ran" scripts/task.sh phase <task-id>
+// Background (2026-04-19): Codex "ran" the phase-advance helper for <task-id>
 // implement done in its final summary — but never actually invoked the tool
 // call. Every other action (code edits, validation) was real; only the
 // silent-side-effect bookkeeping command was hallucinated. Pipeline bailed
@@ -1332,7 +1330,7 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
             if (existingFiles.length === 0) {
                 return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk` };
             }
-            splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'implement', 'done');
+            taskPhase(taskId, 'implement', 'done');
             return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk), validation clean` };
         }
         case 'code_review': {
@@ -1340,7 +1338,7 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
             if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'review.md is missing or still the template' };
             const verdict = extractCheckedVerdict(content!);
             if (!verdict) return { advanced: false, note: 'no verdict box checked in review.md' };
-            splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'code_review', 'done', verdict);
+            taskPhase(taskId, 'code_review', 'done', verdict);
             return { advanced: true, verdict, note: `verdict=${verdict}` };
         }
         case 'spec_review': {
@@ -1348,19 +1346,19 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
             if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'spec-review.md is missing or still the template' };
             const verdict = extractCheckedVerdict(content!);
             if (!verdict) return { advanced: false, note: 'no verdict box checked in spec-review.md' };
-            splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'spec_review', 'done', verdict);
+            taskPhase(taskId, 'spec_review', 'done', verdict);
             return { advanced: true, verdict, note: `verdict=${verdict}` };
         }
         case 'plan': {
             const content = readArtifact(taskId, 'plan.md');
             if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'plan.md is missing or still the template' };
-            splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'plan', 'done');
+            taskPhase(taskId, 'plan', 'done');
             return { advanced: true, note: 'plan.md is populated' };
         }
         case 'spec': {
             const content = readArtifact(taskId, 'spec.md');
             if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'spec.md is missing or still the template' };
-            splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'spec', 'done');
+            taskPhase(taskId, 'spec', 'done');
             return { advanced: true, note: 'spec.md is populated' };
         }
         case 'qa': {
@@ -1369,7 +1367,7 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
             // done.md on disk is what we have to work with.
             const donePath = path.join(splitState.taskDirFor(taskId), 'done.md');
             if (splitValidation.isDoneMdTemplate(donePath)) return { advanced: false, note: 'done.md is still the template' };
-            splitTaskSh.runTaskShFor(taskId, 'phase', taskId, 'qa', 'done');
+            taskPhase(taskId, 'qa', 'done');
             return { advanced: true, note: 'done.md is populated' };
         }
         default:
@@ -1404,7 +1402,7 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
         `Evidence check: ${evidenceNote}.`,
         '',
         'Your previous turn ended without completing the phase. Finish the work now (write the artifact if missing, commit if needed), then run:',
-        `  scripts/task.sh phase ${taskId} ${phase} done${verdictHint}`,
+        `  canon task phase ${taskId} ${phase} done${verdictHint}`,
         '',
         'Reply with tool calls only. No summary, no explanation.',
     ].join('\n');
@@ -1459,7 +1457,7 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
 async function recoverPhaseForTask(taskId: string, phase: Phase, initialStatus: PhaseStatus): Promise<boolean> {
     const evidence = tryEvidenceAdvance(taskId, phase);
     if (evidence.advanced) {
-        warn(`Auto-advanced '${phase}' for '${taskId}' (was ${initialStatus}; ${evidence.note}). Agent skipped task.sh bookkeeping.`);
+        warn(`Auto-advanced '${phase}' for '${taskId}' (was ${initialStatus}; ${evidence.note}). Agent skipped canon task bookkeeping.`);
         return true;
     }
 
@@ -1472,7 +1470,7 @@ async function recoverPhaseForTask(taskId: string, phase: Phase, initialStatus: 
     }
 
     // Retry ran but status still isn't done. Check evidence once more — maybe
-    // the agent produced the artifact on retry but skipped task.sh again.
+    // the agent produced the artifact on retry but skipped canon task again.
     const postEvidence = tryEvidenceAdvance(taskId, phase);
     if (postEvidence.advanced) {
         warn(`Retry produced artifact — auto-advanced (${postEvidence.note}).`);
@@ -1539,7 +1537,7 @@ async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
                 console.log('  Codex reviews:');
                 console.log(reviewList);
                 console.log('');
-                console.log(`  When ready: npx tsx scripts/run-task.ts ${taskIds.join(' ')}`);
+                console.log(`  When ready: canon run ${taskIds.join(' ')}`);
                 console.log('════════════════════════════════════════════════════════');
                 console.log('');
                 process.exit(0);
@@ -1573,7 +1571,7 @@ async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
 
 function checkDeps(taskIds: string[], skipAgentDeps = false): void {
     if (!skipAgentDeps) {
-        for (const dep of ['jq', 'claude', 'codex']) {
+        for (const dep of ['claude', 'codex']) {
             const result = spawnSync('which', [dep], { stdio: 'ignore' });
             if (result.error || result.status !== 0) {
                 const label = dep === 'claude' ? 'Claude Code CLI' : dep === 'codex' ? 'Codex CLI' : dep;
@@ -1589,7 +1587,7 @@ function checkDeps(taskIds: string[], skipAgentDeps = false): void {
     for (const taskId of taskIds) {
         splitCli.validateTaskId(taskId);
         if (!fs.existsSync(splitState.statusFileFor(taskId))) {
-            splitCli.die(`No status.json at tasks/${taskId}/status.json — run ./scripts/task.sh new ${taskId} first`);
+            splitCli.die(`No status.json at tasks/${taskId}/status.json — run canon task new ${taskId} first`);
         }
     }
 }
@@ -1698,7 +1696,7 @@ export async function main(): Promise<void> {
             splitCli.info('Step mode: stopping after one phase.');
             splitCli.info(`Next phase: ${nextPhase}`);
             // Exit non-zero if the phase didn't advance (artifact check reset it to pending,
-            // or the sub-agent failed without calling task.sh). This makes failures visible
+            // or the sub-agent failed without calling canon task). This makes failures visible
             // to callers checking $? instead of silently exiting 0.
             if (nextPhase === currentPhase) {
                 warn(`Phase ${currentPhase} did not advance after running — sub-agent likely failed. Check the artifact and logs.`);
@@ -1709,12 +1707,4 @@ export async function main(): Promise<void> {
 
         console.log('');
     }
-}
-
-// Only run the CLI when invoked directly (not when imported by tests).
-if (process.argv[1] === __filename) {
-    main().catch((err) => {
-        console.error(err instanceof Error ? err.stack ?? err.message : err);
-        process.exit(1);
-    });
 }

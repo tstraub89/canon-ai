@@ -1,26 +1,37 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { config } from '../env.js';
 import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
 import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
 import type { PipelineState } from '../types.js';
+import codeReviewRound1Template from './templates/code-review-round-1.md';
+import codeReviewRoundNTemplate from './templates/code-review-round-n.md';
+import implementTemplate from './templates/implement.md';
+import implementRerouteTemplate from './templates/implement-reroute.md';
+import implementRevisionsTemplate from './templates/implement-revisions.md';
+import planTemplate from './templates/plan.md';
+import qaTemplate from './templates/qa.md';
+import specTemplate from './templates/spec.md';
+import specRevisionTemplate from './templates/spec-revision.md';
+import specReviewTemplate from './templates/spec-review.md';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const TEMPLATE_DIR = path.join(__dirname, 'templates');
-const TEMPLATE_CACHE = new Map<string, string>();
+const TEMPLATES: Record<string, string> = {
+    'code-review-round-1.md': codeReviewRound1Template,
+    'code-review-round-n.md': codeReviewRoundNTemplate,
+    'implement.md': implementTemplate,
+    'implement-reroute.md': implementRerouteTemplate,
+    'implement-revisions.md': implementRevisionsTemplate,
+    'plan.md': planTemplate,
+    'qa.md': qaTemplate,
+    'spec.md': specTemplate,
+    'spec-revision.md': specRevisionTemplate,
+    'spec-review.md': specReviewTemplate,
+};
 
 function loadTemplate(name: string): string {
-    const cached = TEMPLATE_CACHE.get(name);
-    if (cached) return cached;
-    const content = fs.readFileSync(path.join(TEMPLATE_DIR, name), 'utf8');
-    TEMPLATE_CACHE.set(name, content);
-    return content;
+    const template = TEMPLATES[name];
+    if (!template) throw new Error(`Unknown template: ${name}`);
+    return template;
 }
 
 function render(name: string, view: object): string {
@@ -72,7 +83,7 @@ export function promptSpec(state: PipelineState): string {
             ? 'The orchestrator will handle spec_review and plan-phase advancement automatically for fast-tier tasks.'
             : '',
         selfCheck: [
-            'Before running the task.sh command, self-check each spec against this list. Fix anything that fails:',
+            'Before running the canon task command, self-check each spec against this list. Fix anything that fails:',
             '- Every AC is verifiable with a specific test (not just "it works" — state exactly how to verify)',
             '- Affected Files lists specific files (not directories) with specific, actionable change descriptions',
             combined ? '- Plan steps reference actual function/file names from the codebase (not just concepts)' : null,
@@ -170,7 +181,7 @@ export function promptImplementResume(state: PipelineState): string {
         'Your only remaining tasks:',
         '1. Run the project\'s validation commands (see AGENTS.md "Validation Matrix" and each spec\'s "Validation Required" section) and record results.',
         '2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, validation outcomes).',
-        '3. Run task.sh to mark implement done for each task.',
+        '3. Run canon task to mark implement done for each task.',
         '',
         promptImplement(state, 'resume'),
     ].join('\n');
