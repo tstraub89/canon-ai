@@ -22,6 +22,7 @@
 - **`jq` hard dependency** — `canon init` and `canon doctor` no longer require it.
 - **`scripts/` and `public/` from `package.json` `files`** — not installed by adopters anymore.
 - **`tsx` from `dependencies`** — moved to `devDependencies`. Not in adopters' runtime install graph.
+- **`mustache` from `dependencies`** — moved to `devDependencies`. tsup bundles it into `dist/` via `noExternal: ['mustache']`, so the bundled CLI has no runtime import from `node_modules` and there's no need to ship mustache as an adopter dep. Adopter install graph is now just `canon-ai` itself — one package, zero transitive runtime deps. Caught by Codex on the release PR.
 - **`npm run-task` dev shortcut** — removed. Use `npm run build && canon run <id>`.
 
 ## [1.0.2] — 2026-05-16
