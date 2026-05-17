@@ -2,14 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 import { autoBlockPhase, readStatus } from '../scripts/run-task/state.js';
 import { autoBlockSpecReview } from '../scripts/run-task/phases/spec-review.js';
+import { taskPhase, taskResetSpecReview } from '../src/task/index.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
-
-const TASK_SH = path.resolve('scripts/task.sh');
 
 function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): StatusJson {
     return {
@@ -52,7 +50,7 @@ function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): Status
 function withTempTasks<T>(fn: (root: string) => T): T {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'counter-schema-'));
     const previousOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
-    process.env.CANON_TASKS_DIR_OVERRIDE = root;
+    process.env.CANON_TASKS_DIR_OVERRIDE = path.join(root, 'tasks');
     try {
         fs.mkdirSync(path.join(root, 'tasks'), { recursive: true });
         return fn(root);
@@ -71,36 +69,24 @@ function writeTask(root: string, taskId: string, status: StatusJson, specReviewC
     fs.mkdirSync(taskDir, { recursive: true });
     fs.writeFileSync(path.join(taskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
     fs.writeFileSync(path.join(taskDir, 'spec-review.md'), specReviewContent, 'utf8');
-    const overrideTaskDir = path.join(root, taskId);
-    try {
-        fs.symlinkSync(path.join('tasks', taskId), overrideTaskDir, 'dir');
-    } catch {
-        // Some environments block symlink creation. The shell-path tests still
-        // cover the jq behavior; only the CANON_TASKS_DIR_OVERRIDE reads lose
-        // the mirror path in that case.
-    }
 }
 
 function readTaskStatus(root: string, taskId: string): StatusJson {
     return JSON.parse(fs.readFileSync(path.join(root, 'tasks', taskId, 'status.json'), 'utf8')) as StatusJson;
 }
 
-function runTaskSh(root: string, args: string[]): string {
-    return execFileSync('bash', [TASK_SH, ...args], {
-        cwd: root,
-        env: {
-            PATH: process.env.PATH ?? '',
-            HOME: process.env.HOME ?? '',
-            // Counter-schema tests don't materialize phase artifacts; bypass the
-            // gate so we can exercise the jq counter math directly. The gate's
-            // own tests (run-task-validation.test.ts) cover its enforcement.
-            CANON_SKIP_PHASE_GATE: '1',
-        },
-        encoding: 'utf8',
-    });
+function withSkippedPhaseGate<T>(fn: () => T): T {
+    const previous = process.env.CANON_SKIP_PHASE_GATE;
+    process.env.CANON_SKIP_PHASE_GATE = '1';
+    try {
+        return fn();
+    } finally {
+        if (previous === undefined) delete process.env.CANON_SKIP_PHASE_GATE;
+        else process.env.CANON_SKIP_PHASE_GATE = previous;
+    }
 }
 
-void test('task.sh phase seeds cumulative counters from legacy iterations without a verdict', () => {
+void test('taskPhase seeds cumulative counters from legacy iterations without a verdict', () => {
     withTempTasks(root => {
         const taskId = 'legacy-seed';
         const status = makeStatus(taskId, {
@@ -116,7 +102,7 @@ void test('task.sh phase seeds cumulative counters from legacy iterations withou
         });
         writeTask(root, taskId, status);
 
-        runTaskSh(root, ['phase', taskId, 'spec_review', 'in_progress']);
+        withSkippedPhaseGate(() => taskPhase(taskId, 'spec_review', 'in_progress'));
 
         const updated = readTaskStatus(root, taskId);
         assert.equal(updated.phases.spec_review?.iterations_current_loop, 3);
@@ -127,12 +113,12 @@ void test('task.sh phase seeds cumulative counters from legacy iterations withou
     });
 });
 
-void test('task.sh phase increments all counters on changes_requested and keeps the alias in sync', () => {
+void test('taskPhase increments all counters on changes_requested and keeps the alias in sync', () => {
     withTempTasks(root => {
         const taskId = 'changes-requested';
         writeTask(root, taskId, makeStatus(taskId));
 
-        runTaskSh(root, ['phase', taskId, 'spec_review', 'done', 'changes_requested']);
+        withSkippedPhaseGate(() => taskPhase(taskId, 'spec_review', 'done', 'changes_requested'));
 
         const updated = readTaskStatus(root, taskId);
         assert.equal(updated.phases.spec_review?.iterations_current_loop, 1);
@@ -143,12 +129,12 @@ void test('task.sh phase increments all counters on changes_requested and keeps 
     });
 });
 
-void test('task.sh phase increments total and resets the loop on approved', () => {
+void test('taskPhase increments total and resets the loop on approved', () => {
     withTempTasks(root => {
         const taskId = 'approved-once';
         writeTask(root, taskId, makeStatus(taskId));
 
-        runTaskSh(root, ['phase', taskId, 'spec_review', 'done', 'approved']);
+        withSkippedPhaseGate(() => taskPhase(taskId, 'spec_review', 'done', 'approved'));
 
         const updated = readTaskStatus(root, taskId);
         assert.equal(updated.phases.spec_review?.iterations_current_loop, 0);
@@ -159,13 +145,15 @@ void test('task.sh phase increments total and resets the loop on approved', () =
     });
 });
 
-void test('task.sh phase accumulates current-loop and total counts across a changes_requested -> approved sequence', () => {
+void test('taskPhase accumulates current-loop and total counts across a changes_requested -> approved sequence', () => {
     withTempTasks(root => {
         const taskId = 'round-sequence';
         writeTask(root, taskId, makeStatus(taskId));
 
-        runTaskSh(root, ['phase', taskId, 'spec_review', 'done', 'changes_requested']);
-        runTaskSh(root, ['phase', taskId, 'spec_review', 'done', 'approved']);
+        withSkippedPhaseGate(() => {
+            taskPhase(taskId, 'spec_review', 'done', 'changes_requested');
+            taskPhase(taskId, 'spec_review', 'done', 'approved');
+        });
 
         const updated = readTaskStatus(root, taskId);
         assert.equal(updated.phases.spec_review?.iterations_current_loop, 0);
@@ -247,7 +235,7 @@ void test('cmd_reset_spec_review resets only the current loop and alias counters
             },
         }));
 
-        runTaskSh(root, ['reset-spec-review', taskId]);
+        taskResetSpecReview(taskId);
 
         const updated = readTaskStatus(root, taskId);
         assert.equal(updated.phases.spec_review?.status, 'pending');

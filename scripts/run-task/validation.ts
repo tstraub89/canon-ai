@@ -423,7 +423,7 @@ export function extractCheckedVerdict(content: string): Verdict | null {
 
 // 1a-2 phase gate.
 //
-// Centralized invariant check called before `task.sh phase <id> <phase> done`
+// Centralized invariant check called before `canon task phase <id> <phase> done`
 // accepts the transition. Per BACKLOG §"Status counter consistency + artifact-
 // invariant gate before phase advancement": each phase that produces an
 // artifact requires that artifact to exist and be substantively filled
@@ -434,7 +434,7 @@ export function extractCheckedVerdict(content: string): Verdict | null {
 //
 // Replaces the scattered post-Codex template checks in phases/spec-review.ts,
 // phases/code-review.ts, phases/plan.ts — those still fire today but the
-// gate now also covers the manual `task.sh phase` path so operators can't
+// gate now also covers the manual `canon task phase` path so operators can't
 // silently advance a phase whose artifact is template-only.
 
 export type PhaseGateResult = { ok: true } | { ok: false; reason: string };

@@ -14,10 +14,10 @@ export function warn(message: string): void {
 }
 
 export function printUsage(): void {
-    console.log('Usage: npx tsx scripts/run-task.ts <TASK-ID...> [options]');
+    console.log('Usage: canon run <TASK-ID...> [options]');
     console.log('');
-    console.log('  Single task:  npx tsx scripts/run-task.ts fix-hover-state');
-    console.log('  Bundle:       npx tsx scripts/run-task.ts fix-hover-state dark-tokens empty-cta');
+    console.log('  Single task:  canon run fix-hover-state');
+    console.log('  Bundle:       canon run fix-hover-state dark-tokens empty-cta');
     console.log('');
     console.log('  Bundle mode runs all tasks together per phase (one agent session each).');
     console.log('  Fast tier (S, non-delicate only) skips Codex spec review. Full tier (any M/L/XL');

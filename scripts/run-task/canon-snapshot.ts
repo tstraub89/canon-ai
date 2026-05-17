@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { REPO_ROOT } from './env.js';
 import { gitSafeAt } from './git.js';
@@ -89,21 +88,4 @@ export function refreshCanonSnapshotAtPath(statusFilePath: string, options: Cano
 
 export function refreshCanonSnapshotsAtPaths(statusFilePaths: readonly string[], options: CanonSnapshotOptions = {}): CanonStamp[] {
     return statusFilePaths.map(statusFilePath => refreshCanonSnapshotAtPath(statusFilePath, options));
-}
-
-const isMain = process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
-
-if (isMain) {
-    const [, , statusFilePath] = process.argv;
-    if (!statusFilePath) {
-        console.error('Usage: canon-snapshot.ts <status.json path>');
-        process.exit(2);
-    }
-    try {
-        refreshCanonSnapshotAtPath(statusFilePath);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`canon-snapshot: ${message}`);
-        process.exit(1);
-    }
 }

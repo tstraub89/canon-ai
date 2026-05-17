@@ -82,17 +82,25 @@ In a linked worktree, `git rev-parse --git-common-dir` resolves to the supervisi
 
 `git status --porcelain -uall` does not surface gitignored files by design. Tests that verify scoped delta cleanup by writing `*.tmp` files (or other extensions matching `.gitignore` patterns) will find an empty delta and pass vacuously — they never actually exercise the cleanup path. Write fixture files with names that are not gitignored (e.g., `fixture-output.txt`, `test-check-artifact.log`) so `git status` surfaces them in the delta and the cleanup assertion has something to verify.
 
-### Shell scripts that lack a CANON_TASKS_DIR_OVERRIDE need a real tasks/ subtree in the test cwd
-
-*(2026-05-11, source: counter-schema-migration)*
-
-`scripts/task.sh` reads paths relative to the cwd and does not honor `CANON_TASKS_DIR_OVERRIDE`. Tests that exercise its jq logic (e.g., counter verdict transitions, reset helpers) must therefore run from a temp cwd that contains a `tasks/` subtree — typically a minimal mirror of the worktree's own `tasks/` directory created with `mkdtempSync`. Creating the temp root inside `process.cwd()` (the current worktree) keeps it writable in sandbox environments. The test fixture should symlink `worktreesRoot/<taskId> → process.cwd()` so any path that resolves through the worktrees root also lands in the writable sandbox. Without this setup, the shell path exercises file-not-found failures instead of the intended counter logic.
+*(2026-05-16 — pruned: bash-specific; `scripts/task.sh` deleted in canon-self-contained. Detail in `tasks/counter-schema-migration/notes.md`.)*
 
 ### For large-removal tasks with structural grep ACs, generate the allow-list from `git grep`, not from the Affected Files table
 
 *(2026-05-16, source: retire-runtime-validation)*
 
 When a spec includes an AC-39-style structural grep (e.g., "this string must not appear outside these paths"), the allow-list in the spec is written by the spec author before the task runs. The Affected Files table only lists files the author expects to touch; it misses historical telemetry docs, archived status.json snapshots, and template mirrors that legitimately contain the retiring symbol but weren't in the spec author's mental model. During spec review, the Codex reviewer should run the grep against the *current* tree to discover the full allow-list — including `docs/pipeline-invocations.md`, archived task dirs, and any files not in the Affected Files table — then flag additions to the spec before implementation begins. A missed allow-list entry forces a spec revision mid-review. Canonical example: `tasks/retire-runtime-validation/notes.md` [spec_review] entries — the grep surfaced `CLAUDE.md`, `CODEX.md`, and historical telemetry docs that weren't in the original allow-list.
+
+### tsup `.md` text-loader imports need a test-only loader for source tests
+
+*(2026-05-16, source: canon-self-contained)*
+
+tsup's `loader: { '.md': 'text' }` config makes `import content from './foo.md'` work at build time, but `npm test` (Node + tsx running source directly) cannot load `.md` modules without a custom loader. The test run fails with `ERR_UNKNOWN_FILE_EXTENSION`. Fix: add a test-only ESM loader (`tests/md-loader-hooks.mjs`) registered via `--import tests/md-loader-register.mjs` in the `package.json` test script. This is test infrastructure only — the production bundle is unaffected. Pattern: whenever a tsup config adds a non-JS asset loader, add the corresponding test-side loader at the same time. Canonical example: `tests/md-loader-hooks.mjs` + `tests/md-loader-register.mjs` in canon-ai.
+
+### `syncWorktreeArtifacts` can silently drop doc edits from the implementation commit
+
+*(2026-05-16, source: canon-self-contained)*
+
+The orchestrator's auto-commit step after `implement` stages only files that appear as dirty in the worktree at commit time. If `syncWorktreeArtifacts` moves worktree edits to the supervising checkout (resetting the worktree copy to HEAD) before auto-commit runs, those files show as clean in the worktree and are silently omitted from the commit — even if they are listed in the handoff Changes table. The post-commit coverage check correctly flags the mismatch ("no commit touches this path in dev..HEAD"), but the recovery requires a manual follow-up commit. When editing docs inside a worktree-isolated task, verify they are still dirty in the worktree before auto-commit fires; if in doubt, commit them explicitly before the phase closes.
 
 ### Migration-tolerance test fixtures for retiring schema keys must build the key dynamically
 

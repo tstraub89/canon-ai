@@ -55,6 +55,7 @@ jobs:
       - run: npm audit --omit=dev
       - run: npm run lint
       - run: npm run type-check
+      - run: npm run build
       - run: npm test
       - name: Verify committed dist/ matches a fresh build
         # We commit dist/ because `npm install -g <git-url>` cannot reliably
@@ -72,5 +73,38 @@ jobs:
         # is broken (e.g., dist/ missing from the tarball, bin path wrong).
         run: |
           cd "$(mktemp -d)"
-          npm install -g "git+file://$GITHUB_WORKSPACE"
+          git init
+          git config user.email "ci@example.com"
+          git config user.name "CI"
+          git commit --allow-empty -m init
+          # `--install-links` packs+installs instead of symlinking the global
+          # install to the git cache. Without it, the `canon` bin symlink ends
+          # up pointing at a transient cache dir and command-not-found's even
+          # though `npm install -g` reports success. (Codex noted this during
+          # the implement-phase smoke runs.)
+          npm install -g --install-links "git+file://$GITHUB_WORKSPACE"
           canon --version
+          node "$(npm root -g)/canon-ai/dist/scripts/run-task.js" --help
+          SHIM_DIR="$(mktemp -d)"
+          ln -s "$(command -v node)" "$SHIM_DIR/node"
+          ln -s "$(command -v npm)" "$SHIM_DIR/npm"
+          ln -s "$(command -v git)" "$SHIM_DIR/git"
+          ln -s "$(command -v canon)" "$SHIM_DIR/canon"
+          ln -s "$(command -v which)" "$SHIM_DIR/which"
+          printf '#!/bin/sh\necho claude-shim\n' > "$SHIM_DIR/claude"
+          printf '#!/bin/sh\necho codex-shim\n' > "$SHIM_DIR/codex"
+          chmod +x "$SHIM_DIR/claude" "$SHIM_DIR/codex"
+          if PATH="$SHIM_DIR" command -v jq; then
+            echo "::error::jq unexpectedly present in jq-less smoke PATH"
+            exit 1
+          fi
+          PATH="$SHIM_DIR" canon init
+          test -f AGENTS.md
+          test -f CLAUDE.md
+          test -f CODEX.md
+          test -d .canon/templates
+          test -d .claude/skills
+          PATH="$SHIM_DIR" canon doctor
+          PATH="$SHIM_DIR" canon task new test-task "Test"
+          test -f tasks/test-task/status.json
+          node -e "JSON.parse(require('fs').readFileSync('tasks/test-task/status.json','utf8'))"

@@ -42,7 +42,6 @@ function resolveRepoRoot(): string {
 
 export const REPO_ROOT = resolveRepoRoot();
 export const TASKS_DIR = path.join(REPO_ROOT, 'tasks');
-export const TASK_SH = path.join(REPO_ROOT, 'scripts/task.sh');
 
 export const WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT
     ? path.resolve(process.env.CANON_WORKTREES_ROOT)

@@ -1,15 +1,15 @@
 {
   "id": "canon-self-contained",
   "title": "Bundle orchestrator + task CLI into dist/, drop bash/jq/tsx from runtime requirements",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-05-16",
-  "updated": "2026-05-16",
-  "branch": "",
+  "updated": "2026-05-17",
+  "branch": "task/canon-self-contained",
   "base_branch": "dev",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "1dbd2d4597f3704cdd2f682ff2196e0cb9f25a19",
-    "orchestrator_commit": "1dbd2d4597f3704cdd2f682ff2196e0cb9f25a19",
+    "upstream_commit": "bc4853ab650e54e096ea08f6c84111aa0ae69d6e",
+    "orchestrator_commit": "bc4853ab650e54e096ea08f6c84111aa0ae69d6e",
     "codex_cli": "codex-cli 0.130.0",
     "claude_code": "2.1.143 (Claude Code)"
   },
@@ -37,21 +37,21 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
       "auto_block_count": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -62,7 +62,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "019e33aa-5e23-7341-950b-d47537fb56df",
-    "claude_spec": "56db56dd-3e41-42c2-af95-0664c5caa6df"
+    "claude_spec": "56db56dd-3e41-42c2-af95-0664c5caa6df",
+    "codex": "019e33c6-1a05-7f60-990c-7cb47d80f248",
+    "claude_review": "a3d86608-7355-4153-8d14-085354d08863"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review"

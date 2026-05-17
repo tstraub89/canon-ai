@@ -8,7 +8,6 @@ import { join } from "path";
 import { execSync } from "child_process";
 var HARD_DEPS = [
   { cmd: "git", installHint: "https://git-scm.com/downloads" },
-  { cmd: "jq", installHint: "brew install jq  (or https://jqlang.github.io/jq/)" },
   { cmd: "claude", installHint: "npm install -g @anthropic-ai/claude-code" },
   { cmd: "codex", installHint: "npm install -g @openai/codex" }
 ];
@@ -68,7 +67,6 @@ var EXPECTED_TEMPLATES = [
 var RECOMMENDED_ALLOW = [
   "Bash(git *)",
   "Bash(gh *)",
-  "Bash(jq *)",
   "Bash(sed *)",
   "Bash(awk *)",
   "Bash(ls *)",
@@ -76,7 +74,6 @@ var RECOMMENDED_ALLOW = [
   "Bash(npm run *)",
   "Bash(npx canon *)",
   "Bash(canon *)",
-  "Bash(npx tsx *)",
   "Bash(codex *)",
   "Skill(canon-init)",
   "Skill(canon-spec)",
@@ -118,11 +115,11 @@ function checkBinary(cmd, required, hint) {
   };
 }
 function checkAgentFile(cwd, filename) {
-  const path = join(cwd, filename);
-  if (!existsSync(path)) {
+  const path8 = join(cwd, filename);
+  if (!existsSync(path8)) {
     return { label: filename, status: "fail", detail: "missing \u2014 run `canon init`" };
   }
-  const content = readFileSync(path, "utf8");
+  const content = readFileSync(path8, "utf8");
   if (!CANON_START_RE.test(content) || !content.includes(CANON_END)) {
     return { label: filename, status: "warn", detail: "no canon delimiters \u2014 run `canon init` to add them" };
   }
@@ -180,14 +177,14 @@ function checkSkills(cwd) {
   return { label: ".claude/skills/", status: "pass" };
 }
 function checkCodexConfig(cwd) {
-  const path = join(cwd, ".codex", "config.toml");
-  if (existsSync(path)) return { label: ".codex/config.toml", status: "pass" };
+  const path8 = join(cwd, ".codex", "config.toml");
+  if (existsSync(path8)) return { label: ".codex/config.toml", status: "pass" };
   return { label: ".codex/config.toml", status: "warn", detail: "missing \u2014 Codex will use defaults" };
 }
-function readAllowFromSettings(path) {
-  if (!existsSync(path)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
+function readAllowFromSettings(path8) {
+  if (!existsSync(path8)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    const parsed = JSON.parse(readFileSync(path8, "utf8"));
     const raw = parsed?.permissions?.allow;
     const allow = new Set(
       Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : []
@@ -277,7 +274,6 @@ function doctorCmd(_args) {
     checkPlatform(),
     checkNodeVersion(),
     checkBinary("git", true, "https://git-scm.com/downloads"),
-    checkBinary("jq", true, "brew install jq  (or https://jqlang.github.io/jq/)"),
     checkBinary("claude", true, "npm install -g @anthropic-ai/claude-code"),
     checkBinary("codex", true, "npm install -g @openai/codex"),
     checkBinary("gh", false, "brew install gh && gh auth login  (required for --pr / --push)")
@@ -429,66 +425,1125 @@ function launchGrill(cwd, hasExistingAgentFiles) {
 
 // src/cli/commands/run-task.ts
 import { spawnSync } from "child_process";
-import { existsSync as existsSync3 } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { dirname as dirname2, join as join3 } from "path";
 var packageDir2 = join3(dirname2(fileURLToPath2(import.meta.url)), "../..");
-var runTaskScript = join3(packageDir2, "scripts/run-task.ts");
-function resolveTsx() {
-  const candidates = [
-    join3(packageDir2, "node_modules/.bin/tsx"),
-    // canon-ai's own (most reliable)
-    join3(packageDir2, "../.bin/tsx")
-    // adopter's node_modules/.bin
-  ];
-  for (const c of candidates) {
-    if (existsSync3(c)) return c;
-  }
-  return "tsx";
-}
+var runTaskScript = join3(packageDir2, "dist/scripts/run-task.js");
 function runCmd(args2) {
   for (const arg of args2) {
     checkDepForFlag(arg);
   }
-  const result = spawnSync(resolveTsx(), [runTaskScript, ...args2], {
+  const result = spawnSync(process.execPath, [runTaskScript, ...args2], {
     stdio: "inherit",
     cwd: process.cwd()
   });
   process.exit(result.status ?? 1);
+}
+
+// src/task/index.ts
+import { spawnSync as spawnSync6 } from "child_process";
+import fs6 from "fs";
+import path7 from "path";
+
+// scripts/run-task/canon-snapshot.ts
+import { spawnSync as spawnSync5 } from "child_process";
+import fs4 from "fs";
+import path5 from "path";
+
+// scripts/run-task/env.ts
+import { spawnSync as spawnSync2 } from "child_process";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
+var __filename = fileURLToPath3(import.meta.url);
+var __dirname = path.dirname(__filename);
+function resolveRepoRoot() {
+  try {
+    const result = spawnSync2("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    if (result.error || result.status !== 0) {
+      throw result.error ?? new Error(result.stderr || "git rev-parse --git-common-dir failed");
+    }
+    const gitCommonDir = result.stdout.trim();
+    if (!gitCommonDir) throw new Error("git rev-parse --git-common-dir returned no path");
+    const resolvedGitCommonDir = path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(process.cwd(), gitCommonDir);
+    return path.dirname(resolvedGitCommonDir);
+  } catch {
+    return path.resolve(__dirname, "../..");
+  }
+}
+var REPO_ROOT = resolveRepoRoot();
+var TASKS_DIR = path.join(REPO_ROOT, "tasks");
+var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path.resolve(process.env.CANON_WORKTREES_ROOT) : path.resolve(REPO_ROOT, "../dev-worktrees");
+var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
+function resolveProjectName() {
+  if (process.env.CANON_PROJECT_NAME) return process.env.CANON_PROJECT_NAME;
+  try {
+    const pkgPath = path.join(REPO_ROOT, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      if (pkg.name) return pkg.name;
+    }
+  } catch {
+  }
+  return "your project";
+}
+var config = {
+  projectName: resolveProjectName(),
+  claudeBudget: process.env.CLAUDE_BUDGET ?? "5.00",
+  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
+  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.4-mini",
+  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.5",
+  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+  maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
+};
+
+// scripts/run-task/git.ts
+import { spawnSync as spawnSync4 } from "child_process";
+import path4 from "path";
+
+// scripts/run-task/cli.ts
+function die(message) {
+  console.error(`\u274C ${message}`);
+  process.exit(1);
+}
+
+// scripts/run-task/state.ts
+import fs2 from "fs";
+import { spawnSync as spawnSync3 } from "child_process";
+import path2 from "path";
+
+// scripts/run-task/types.ts
+var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
+
+// scripts/run-task/state.ts
+function effectiveWorktreesRoot() {
+  return process.env.CANON_WORKTREES_ROOT ? path2.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+}
+function findExistingWorktreeForBranch(branch) {
+  const result = spawnSync3("git", ["worktree", "list", "--porcelain"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0) return null;
+  const lines = (result.stdout ?? "").split("\n");
+  let currentPath = null;
+  for (const line of lines) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length).trim();
+    } else if (line.startsWith("branch refs/heads/") && currentPath && currentPath !== REPO_ROOT) {
+      const lineBranch = line.slice("branch refs/heads/".length).trim();
+      if (lineBranch === branch) return currentPath;
+    }
+  }
+  return null;
+}
+function taskDirFor(taskId) {
+  const tasksDir = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR;
+  return path2.join(tasksDir, taskId);
+}
+function resolveTaskCwd(taskId) {
+  const worktreesRoot = effectiveWorktreesRoot();
+  const directWorktree = path2.join(worktreesRoot, taskId);
+  const directStatus = path2.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs2.existsSync(directStatus)) return directWorktree;
+  const statusPath = path2.join(taskDirFor(taskId), "status.json");
+  try {
+    const parsed = JSON.parse(fs2.readFileSync(statusPath, "utf8"));
+    if (parsed.worktree === true) {
+      const branch = parsed.branch?.trim() ?? "";
+      if (branch) {
+        const existing = findExistingWorktreeForBranch(branch);
+        if (existing) return existing;
+        die(
+          `Worktree for task '${taskId}' is expected but missing.
+  Looked for ${directWorktree} and a worktree for branch '${branch}'.
+  Restore or recreate the worktree before continuing.`
+        );
+      }
+    }
+  } catch {
+  }
+  return REPO_ROOT;
+}
+function deriveTopLevelStatus(status) {
+  for (const phase of PHASE_ORDER) {
+    const phaseStatus = status.phases[phase]?.status ?? "pending";
+    if (phaseStatus !== "done") return phase;
+  }
+  return "complete";
+}
+
+// scripts/run-task/worktree.ts
+import fs3 from "fs";
+import path3 from "path";
+var PIPELINE_TELEMETRY_FILES = [
+  "docs/pipeline-invocations.md",
+  "docs/task-quality-log.md",
+  "docs/lessons-learned.md"
+];
+var PIPELINE_MANAGED_DOCS = [
+  "docs/architecture.md",
+  "docs/codebase-map.md",
+  "docs/decisions.md",
+  "docs/patterns.md",
+  "docs/pipeline-orchestrator.md",
+  "docs/product-context.md"
+];
+var PIPELINE_SHARED_DOCS = [...PIPELINE_TELEMETRY_FILES, ...PIPELINE_MANAGED_DOCS];
+
+// scripts/run-task/git.ts
+function gitSafeAt(cwd, ...args2) {
+  const result = spawnSync4("git", args2, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
+  return { ok: result.status === 0, stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim() };
+}
+
+// scripts/run-task/canon-snapshot.ts
+var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
+function defaultRunCommand(command2, args2) {
+  const result = spawnSync5(command2, args2, {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error) {
+    return { ok: false, stdout: "", stderr: result.error.message };
+  }
+  return {
+    ok: result.status === 0,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim()
+  };
+}
+function captureGitOutput(cwd, args2, runGitAt) {
+  const result = runGitAt(cwd, ...args2);
+  return result.ok ? result.stdout.trim() : "";
+}
+function captureVersion(command2, runCommand) {
+  const result = runCommand(command2, ["--version"]);
+  if (!result.ok) return "<unavailable>";
+  const version = result.stdout.trim();
+  return version.length > 0 ? version : "<unavailable>";
+}
+function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
+  const runGitAt = options.runGitAt ?? gitSafeAt;
+  const runCommand = options.runCommand ?? defaultRunCommand;
+  const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
+  const upstreamCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
+  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path5.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : upstreamCommit;
+  return {
+    upstream_repo: CANON_UPSTREAM_REPO,
+    upstream_commit: upstreamCommit,
+    orchestrator_commit: orchestratorCommit,
+    codex_cli: captureVersion("codex", runCommand),
+    claude_code: captureVersion("claude", runCommand)
+  };
+}
+function applyCanonSnapshot(status, canon) {
+  const next = {
+    ...status,
+    canon,
+    updated: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)
+  };
+  next.status = deriveTopLevelStatus(next);
+  return next;
+}
+function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
+  const status = JSON.parse(fs4.readFileSync(statusFilePath, "utf8"));
+  const canon = captureCanonSnapshot(REPO_ROOT, options);
+  const next = applyCanonSnapshot(status, canon);
+  const serialized = `${JSON.stringify(next, null, 2)}
+`;
+  const current = fs4.readFileSync(statusFilePath, "utf8");
+  if (current !== serialized) {
+    fs4.writeFileSync(statusFilePath, serialized, "utf8");
+  }
+  return canon;
+}
+
+// scripts/run-task/validation.ts
+import fs5 from "fs";
+import path6 from "path";
+
+// scripts/run-task/markdown-table.ts
+function splitTableLine(line) {
+  const cells = [];
+  let cell = "";
+  let backslashes = 0;
+  for (const char of line) {
+    if (char === "\\") {
+      backslashes += 1;
+      continue;
+    }
+    if (char === "|") {
+      if (backslashes % 2 === 1) {
+        cell += "\\".repeat((backslashes - 1) / 2) + "|";
+      } else {
+        cell += "\\".repeat(backslashes / 2);
+        cells.push(cell);
+        cell = "";
+      }
+      backslashes = 0;
+      continue;
+    }
+    if (backslashes > 0) {
+      cell += "\\".repeat(backslashes);
+      backslashes = 0;
+    }
+    cell += char;
+  }
+  if (backslashes > 0) cell += "\\".repeat(backslashes);
+  cells.push(cell);
+  return cells;
+}
+function normalizeCells(line) {
+  const cells = splitTableLine(line.trim());
+  const innerCells = cells.slice(
+    (cells[0] ?? "").trim() === "" ? 1 : 0,
+    (cells[cells.length - 1] ?? "").trim() === "" ? -1 : void 0
+  );
+  return innerCells.map((cell) => cell.trim());
+}
+function isSeparatorRow(cells) {
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()));
+}
+function isSectionHeading(line, sectionHeading) {
+  return line.trimEnd() === `## ${sectionHeading}`;
+}
+function isHeadingBoundary(line) {
+  return /^#{1,2}\s/.test(line);
+}
+function extractSectionBodies(markdown, pattern) {
+  const lines = markdown.split("\n");
+  const bodies = [];
+  let activeStart = -1;
+  let inHtmlComment = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const opensComment = /<!--/.test(line);
+    const closesComment = /-->/.test(line);
+    const startsInComment = inHtmlComment;
+    if (opensComment && !closesComment) inHtmlComment = true;
+    else if (closesComment && !opensComment) inHtmlComment = false;
+    else if (opensComment && closesComment) {
+      inHtmlComment = false;
+    }
+    if (startsInComment) continue;
+    if (opensComment && !closesComment) continue;
+    const isH2 = /^## /.test(line);
+    const isH1 = /^# /.test(line);
+    if (isH2 || isH1) {
+      if (activeStart !== -1) {
+        bodies.push(lines.slice(activeStart, i).join("\n"));
+        activeStart = -1;
+      }
+      if (isH2 && pattern.test(line)) {
+        activeStart = i + 1;
+      }
+    }
+  }
+  if (activeStart !== -1) bodies.push(lines.slice(activeStart).join("\n"));
+  return bodies;
+}
+function parseTableH3(markdown, sectionHeading) {
+  const lines = markdown.split("\n");
+  const headingIndex = lines.findIndex((line) => line.trimEnd() === `### ${sectionHeading}`);
+  if (headingIndex === -1) return [];
+  let tableStart = -1;
+  let sectionEnd = lines.length;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (/^#{1,3}\s/.test(lines[index])) {
+      sectionEnd = index;
+      break;
+    }
+    if (tableStart === -1 && lines[index].trimStart().startsWith("|")) {
+      tableStart = index;
+    }
+  }
+  if (tableStart === -1 || tableStart >= sectionEnd) return [];
+  const headerCells = normalizeCells(lines[tableStart]);
+  if (headerCells.length === 0) return [];
+  let rowStart = tableStart + 1;
+  if (rowStart < sectionEnd) {
+    const separatorCells = normalizeCells(lines[rowStart]);
+    if (isSeparatorRow(separatorCells)) rowStart += 1;
+  }
+  const rows = [];
+  for (let index = rowStart; index < sectionEnd; index += 1) {
+    const line = lines[index];
+    if (!line.trimStart().startsWith("|")) break;
+    const cells = normalizeCells(line);
+    if (isSeparatorRow(cells)) continue;
+    const row = {};
+    for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+      row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+function parseTable(markdown, sectionHeading) {
+  const lines = markdown.split("\n");
+  const headingIndex = lines.findIndex((line) => isSectionHeading(line, sectionHeading));
+  if (headingIndex === -1) return [];
+  let tableStart = -1;
+  let sectionEnd = lines.length;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (isHeadingBoundary(lines[index])) {
+      sectionEnd = index;
+      break;
+    }
+    if (tableStart === -1 && lines[index].trimStart().startsWith("|")) {
+      tableStart = index;
+    }
+  }
+  if (tableStart === -1 || tableStart >= sectionEnd) return [];
+  const headerCells = normalizeCells(lines[tableStart]);
+  if (headerCells.length === 0) return [];
+  let rowStart = tableStart + 1;
+  if (rowStart < sectionEnd) {
+    const separatorCells = normalizeCells(lines[rowStart]);
+    if (isSeparatorRow(separatorCells)) rowStart += 1;
+  }
+  const rows = [];
+  for (let index = rowStart; index < sectionEnd; index += 1) {
+    const line = lines[index];
+    if (!line.trimStart().startsWith("|")) break;
+    const cells = normalizeCells(line);
+    if (isSeparatorRow(cells)) continue;
+    const row = {};
+    for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+      row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+// scripts/run-task/validation.ts
+function computeLatestValidationResults(handoffContent) {
+  const latest = /* @__PURE__ */ new Map();
+  const baseline = parseTable(handoffContent, "Validation Outcomes");
+  for (const row of baseline) {
+    const check = (row["Check"] ?? "").trim();
+    if (!check) continue;
+    latest.set(canonicalizeValidationCheck(check), {
+      check,
+      result: row["Result"] ?? "",
+      notes: row["Notes"] ?? ""
+    });
+  }
+  const iterationBodies = extractSectionBodies(handoffContent, /^## Iteration\b/);
+  for (const body of iterationBodies) {
+    const reruns = parseTableH3(body, "Re-run validation (only checks that re-ran)").concat(parseTableH3(body, "Re-run validation"));
+    for (const row of reruns) {
+      const check = (row["Check"] ?? "").trim();
+      if (!check) continue;
+      latest.set(canonicalizeValidationCheck(check), {
+        check,
+        result: row["Result"] ?? "",
+        notes: row["Notes"] ?? ""
+      });
+    }
+  }
+  return latest;
+}
+function canonicalizeValidationCheck(value) {
+  const backtickMatch = value.match(/`([^`]+)`/);
+  const base = backtickMatch ? backtickMatch[1] : value.split(/\s+[—–-]\s+/)[0];
+  const normalized = base.replace(/`/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (normalized.includes(" ")) {
+    return normalized.split(" ").at(-1) ?? normalized;
+  }
+  return normalized;
+}
+function isHumanPendingResult(result) {
+  return /^human[_ -]?pending\b/i.test(result.trim());
+}
+function countHumanPendingChecks(handoffContent) {
+  const latest = computeLatestValidationResults(handoffContent);
+  const pending = [];
+  for (const row of latest.values()) {
+    if (isHumanPendingResult(row.result)) pending.push({ check: row.check, notes: row.notes });
+  }
+  return pending;
+}
+function hasHumanPendingWaiver(doneContent) {
+  return /^\s*acknowledged\s*:/im.test(doneContent);
+}
+var DONE_MD_TEMPLATE_SENTINELS = [
+  "[TASK-ID]",
+  "One paragraph, plain English. No code jargon.",
+  "`src/...` \u2014 brief note"
+];
+function isTemplateUnfilled(content) {
+  if (content === null) return true;
+  return content.includes("[TASK-ID]");
+}
+function isDoneMdTemplate(donePath) {
+  let content;
+  try {
+    content = fs5.readFileSync(donePath, "utf8");
+  } catch {
+    return true;
+  }
+  return DONE_MD_TEMPLATE_SENTINELS.some((s) => content.includes(s));
+}
+function extractCheckedVerdict(content) {
+  const roundBodies = extractSectionBodies(content, /^## Round\b/);
+  const scope = roundBodies.length > 0 ? roundBodies[roundBodies.length - 1] : content;
+  if (/^- \[x\] (?:\*\*)?Approved with nits(?:\*\*)?(?:\s|$)/mi.test(scope)) return "approved_with_nits";
+  if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return "approved";
+  if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return "changes_requested";
+  if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return "needs_re_review";
+  return null;
+}
+var PHASE_GATE_CONFIG = {
+  spec: { artifactName: "spec.md" },
+  spec_review: { artifactName: "spec-review.md", requiresVerdict: true, verdictMustMatchArtifact: true },
+  plan: { artifactName: "plan.md" },
+  implement: { artifactName: "handoff.md" },
+  code_review: { artifactName: "review.md", requiresVerdict: true, verdictMustMatchArtifact: true },
+  qa: { artifactName: "done.md", customTemplateCheck: isDoneMdTemplate },
+  // human_review's gate logic lives in checkPhaseGate's switch below — it
+  // can't be expressed by the standard artifact/verdict config because the
+  // rule cross-references handoff.md (validation outcomes) + done.md
+  // (waiver text).
+  human_review: {}
+};
+function resolveTaskDirForValidation(taskId, taskDirOverride) {
+  return taskDirOverride ? path6.join(taskDirOverride, taskId) : taskDirFor(taskId);
+}
+function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
+  const config2 = PHASE_GATE_CONFIG[phase];
+  const taskDir = resolveTaskDirForValidation(taskId, taskDirOverride);
+  if (config2.artifactName) {
+    const artifactPath = path6.join(taskDir, config2.artifactName);
+    let content;
+    try {
+      content = fs5.readFileSync(artifactPath, "utf8");
+    } catch {
+      return { ok: false, reason: `${config2.artifactName} is missing for phase '${phase}'` };
+    }
+    const isTemplate = config2.customTemplateCheck ? config2.customTemplateCheck(artifactPath) : isTemplateUnfilled(content);
+    if (isTemplate) {
+      return { ok: false, reason: `${config2.artifactName} is still the unfilled template for phase '${phase}'` };
+    }
+    if (config2.verdictMustMatchArtifact) {
+      if (!verdict) {
+        return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
+      }
+      const extracted = extractCheckedVerdict(content);
+      if (!extracted) {
+        return { ok: false, reason: `${config2.artifactName} has no checked verdict checkbox` };
+      }
+      if (extracted !== verdict) {
+        return { ok: false, reason: `verdict mismatch: status.json wants '${verdict}', ${config2.artifactName} has '${extracted}'` };
+      }
+    }
+  }
+  if (config2.requiresVerdict && !config2.verdictMustMatchArtifact) {
+    if (!verdict) {
+      return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
+    }
+  }
+  if (phase === "human_review") {
+    const handoffPath = path6.join(taskDir, "handoff.md");
+    let handoffContent;
+    try {
+      handoffContent = fs5.readFileSync(handoffPath, "utf8");
+    } catch {
+      return { ok: false, reason: `closing human_review requires a handoff.md \u2014 none found in ${taskDir}` };
+    }
+    const pending = countHumanPendingChecks(handoffContent);
+    if (pending.length === 0) return { ok: true };
+    const donePath = path6.join(taskDir, "done.md");
+    let doneContent = "";
+    try {
+      doneContent = fs5.readFileSync(donePath, "utf8");
+    } catch {
+    }
+    if (hasHumanPendingWaiver(doneContent)) return { ok: true };
+    const list = pending.map((p) => `    - ${p.check}${p.notes ? ` (${p.notes})` : ""}`).join("\n");
+    return {
+      ok: false,
+      reason: `human_review cannot close with ${pending.length} unresolved human_pending check${pending.length === 1 ? "" : "s"}:
+${list}
+  Resolve: either run the check and update its row in handoff.md to Pass/Fail, or add an explicit waiver to done.md (a line beginning with "Acknowledged: ...") documenting the deferral and rationale.`
+    };
+  }
+  return { ok: true };
+}
+
+// src/task/index.ts
+var VALID_PHASES = new Set(PHASE_ORDER);
+var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
+var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review"]);
+var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
+function today() {
+  return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+}
+function usage() {
+  return [
+    "Usage: canon task <command> [args]",
+    "",
+    "Commands:",
+    "  new <TASK-ID> <title> [--base <branch>]",
+    "  list",
+    "  status <TASK-ID>",
+    "  phase <TASK-ID> <phase> <status> [verdict]",
+    "  reset-spec-review <TASK-ID>",
+    "  post-merge-sync [<branch>]",
+    "  release-init <version>"
+  ].join("\n");
+}
+function validateTaskId(id) {
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
+    throw new Error(`Error: invalid task ID '${id}'. Must be lowercase alphanumeric, hyphens, dots, or underscores. No slashes, spaces, or leading special characters.`);
+  }
+  if (id.includes("..")) {
+    throw new Error(`Error: invalid task ID '${id}'. Must not contain '..'.`);
+  }
+}
+function tasksRoot() {
+  return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
+}
+function taskDirFromRoot(taskId) {
+  return path7.join(tasksRoot(), taskId);
+}
+function taskDirForCwd(cwd, taskId) {
+  const root = tasksRoot();
+  return path7.isAbsolute(root) ? path7.join(root, taskId) : path7.join(cwd, root, taskId);
+}
+function taskStatusFileForCwd(cwd, taskId) {
+  return path7.join(taskDirForCwd(cwd, taskId), "status.json");
+}
+function taskRootForGate(cwd) {
+  const root = tasksRoot();
+  return path7.isAbsolute(root) ? root : path7.join(cwd, root);
+}
+function templatesRoot() {
+  return path7.join(process.cwd(), ".canon", "templates");
+}
+function taskTemplateOverrideRoot() {
+  return path7.join(tasksRoot(), "_templates");
+}
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs6.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Error: failed to read ${filePath}: ${message}`);
+  }
+}
+function writeJsonAtomic(filePath, data) {
+  const tmpFile = `${filePath}.tmp`;
+  fs6.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
+`, "utf8");
+  fs6.renameSync(tmpFile, filePath);
+}
+function writeStatusAtomic(filePath, status) {
+  status.status = deriveTopLevelStatus(status);
+  writeJsonAtomic(filePath, status);
+}
+function runGit(args2, options = {}) {
+  if (options.stdio === "inherit") {
+    return spawnSync6("git", args2, {
+      cwd: options.cwd ?? process.cwd(),
+      encoding: "utf8",
+      stdio: "inherit"
+    });
+  }
+  return spawnSync6("git", args2, {
+    cwd: options.cwd ?? process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+}
+function git2(args2, options = {}) {
+  const result = runGit(args2, options);
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+  if (result.status !== 0) {
+    throw new Error((result.stderr ?? "").trim() || `git ${args2.join(" ")} failed`);
+  }
+  return (result.stdout ?? "").trim();
+}
+function gitOk(args2, options = {}) {
+  const result = runGit(args2, options);
+  return !result.error && result.status === 0;
+}
+function currentBranchOrEmpty() {
+  const result = runGit(["branch", "--show-current"]);
+  if (result.error || result.status !== 0) return "";
+  return (result.stdout ?? "").trim();
+}
+function copyTemplateFile(source, destination, taskId, title) {
+  const content = fs6.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
+  fs6.writeFileSync(destination, content, "utf8");
+}
+function listTemplateFiles() {
+  const root = templatesRoot();
+  if (!fs6.existsSync(root)) {
+    throw new Error(`Error: templates directory not found at ${root}`);
+  }
+  return fs6.readdirSync(root).filter((name) => name.endsWith(".md") || name.endsWith(".json")).sort();
+}
+function printCreatedTask(taskDir, baseBranch) {
+  console.log(`Created task: ${taskDir}`);
+  console.log("Files:");
+  for (const file of fs6.readdirSync(taskDir).sort()) {
+    console.log(file);
+  }
+  console.log("");
+  console.log(`Next: Write the spec in ${taskDir}/spec.md`);
+  console.log("");
+  console.log(`  Defaults: task_size=M, delicate=false, human_spec_gate=true, base_branch=${baseBranch}`);
+  console.log(`  Edit ${taskDir}/status.json to adjust before running the pipeline.`);
+}
+function taskNew(args2) {
+  let id = "";
+  let title = "";
+  let baseBranch = "";
+  for (let i = 0; i < args2.length; i += 1) {
+    const arg = args2[i] ?? "";
+    if (arg === "--base") {
+      const next = args2[i + 1];
+      if (!next) throw new Error("--base requires a branch name");
+      baseBranch = next;
+      i += 1;
+    } else if (arg.startsWith("--base=")) {
+      baseBranch = arg.slice("--base=".length);
+    } else if (!id) {
+      id = arg;
+    } else if (!title) {
+      title = arg;
+    } else {
+      throw new Error(`Error: unexpected argument '${arg}'.`);
+    }
+  }
+  if (!id || !title) {
+    throw new Error("Error: usage: canon task new <TASK-ID> <title> [--base <branch>]");
+  }
+  validateTaskId(id);
+  if (title.includes("\n")) {
+    throw new Error("Error: title must be single-line (no embedded newlines).");
+  }
+  const taskDir = taskDirFromRoot(id);
+  if (fs6.existsSync(taskDir)) {
+    throw new Error(`Error: Task directory ${taskDir} already exists.`);
+  }
+  if (!baseBranch) {
+    baseBranch = currentBranchOrEmpty() || "main";
+  }
+  fs6.mkdirSync(taskDir, { recursive: true });
+  const overrideRoot = taskTemplateOverrideRoot();
+  for (const basename of listTemplateFiles()) {
+    const override = path7.join(overrideRoot, basename);
+    const source = fs6.existsSync(override) ? override : path7.join(templatesRoot(), basename);
+    copyTemplateFile(source, path7.join(taskDir, basename), id, title);
+  }
+  const statusPath = path7.join(taskDir, "status.json");
+  const status = readJsonFile(statusPath);
+  status.id = id;
+  status.title = title;
+  status.created = today();
+  status.updated = today();
+  status.base_branch = baseBranch;
+  writeStatusAtomic(statusPath, status);
+  try {
+    refreshCanonSnapshotAtPath(statusPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Warning: created task without canon snapshot refresh: ${message}`);
+  }
+  printCreatedTask(taskDir, baseBranch);
+}
+function derivePhase(status) {
+  return deriveTopLevelStatus(status);
+}
+function taskList() {
+  const root = tasksRoot();
+  if (!fs6.existsSync(root)) {
+    console.log("No tasks found.");
+    return;
+  }
+  const rows = [];
+  for (const entry of fs6.readdirSync(root).sort()) {
+    if (entry === "_archive") continue;
+    const statusPath = path7.join(root, entry, "status.json");
+    if (!fs6.existsSync(statusPath)) continue;
+    const status = readJsonFile(statusPath);
+    rows.push({
+      id: entry,
+      title: status.title ?? "(untitled)",
+      phase: derivePhase(status)
+    });
+  }
+  if (rows.length === 0) {
+    console.log("No tasks found.");
+    return;
+  }
+  console.log(`${"TASK".padEnd(25)} ${"TITLE".padEnd(40)} CURRENT PHASE`);
+  console.log(`${"----".padEnd(25)} ${"-----".padEnd(40)} -------------`);
+  for (const row of rows) {
+    console.log(`${row.id.padEnd(25)} ${row.title.padEnd(40)} ${row.phase}`);
+  }
+}
+function taskStatus(id) {
+  if (!id) throw new Error("Task ID required");
+  validateTaskId(id);
+  const cwd = resolveTaskCwd(id);
+  const statusPath = taskStatusFileForCwd(cwd, id);
+  if (!fs6.existsSync(statusPath)) {
+    throw new Error(`Error: No status.json found for task ${id}`);
+  }
+  const status = readJsonFile(statusPath);
+  console.log(JSON.stringify(status, null, 2));
+}
+function assertValidPhase(phase) {
+  if (!VALID_PHASES.has(phase)) {
+    throw new Error(`Error: invalid phase '${phase}'. Must be one of: ${PHASE_ORDER.join(", ")}`);
+  }
+}
+function assertValidStatus(status) {
+  if (!VALID_STATUSES.has(status)) {
+    throw new Error(`Error: invalid status '${status}'. Must be one of: pending, in_progress, done, changes_requested, blocked`);
+  }
+}
+function assertValidVerdict(phase, verdict) {
+  if (!verdict) return;
+  if (!REVIEW_PHASES.has(phase)) {
+    throw new Error("Error: verdict is only valid for spec_review and code_review phases");
+  }
+  if (!VALID_VERDICTS.has(verdict)) {
+    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review`);
+  }
+}
+function priorIncompletePhases(status, phase) {
+  const index = PHASE_ORDER.indexOf(phase);
+  if (index <= 0) return [];
+  return PHASE_ORDER.slice(0, index).filter((prior) => (status.phases[prior]?.status ?? "pending") !== "done");
+}
+function ensurePhaseEntry(status, phase) {
+  const existing = status.phases[phase];
+  if (existing) return existing;
+  const next = { status: "pending", agent: "" };
+  status.phases[phase] = next;
+  return next;
+}
+function updateReviewCounters(entry, verdict) {
+  entry.iterations_current_loop ??= entry.iterations ?? 0;
+  entry.iterations_total ??= entry.iterations ?? 0;
+  entry.changes_requested_total ??= 0;
+  entry.auto_block_count ??= 0;
+  if (verdict === "changes_requested" || verdict === "needs_re_review") {
+    entry.iterations_current_loop += 1;
+    entry.iterations_total += 1;
+    entry.changes_requested_total += 1;
+    entry.iterations = entry.iterations_current_loop;
+  } else if (verdict === "approved" || verdict === "approved_with_nits") {
+    entry.iterations_total += 1;
+    entry.iterations_current_loop = 0;
+    entry.iterations = 0;
+  }
+}
+function taskPhase(id, phaseArg, statusArg, verdictArg) {
+  if (!id) throw new Error("Task ID required");
+  if (!phaseArg) throw new Error("Phase required (spec, spec_review, plan, implement, code_review, qa, human_review)");
+  if (!statusArg) throw new Error("Status required (pending, in_progress, done, changes_requested, blocked)");
+  validateTaskId(id);
+  assertValidPhase(phaseArg);
+  assertValidStatus(statusArg);
+  assertValidVerdict(phaseArg, verdictArg);
+  const taskCwd = resolveTaskCwd(id);
+  const statusPath = taskStatusFileForCwd(taskCwd, id);
+  if (!fs6.existsSync(statusPath)) {
+    throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
+  }
+  const status = readJsonFile(statusPath);
+  if (statusArg !== "pending") {
+    const blocked = priorIncompletePhases(status, phaseArg);
+    if (blocked.length > 0) {
+      throw new Error(`Error: cannot mark ${phaseArg} as ${statusArg} \u2014 prior phases not done: ${blocked.join(",")}`);
+    }
+  }
+  if (statusArg === "done" && !process.env.CANON_SKIP_PHASE_GATE) {
+    const result = checkPhaseGate(id, phaseArg, verdictArg, taskRootForGate(taskCwd));
+    if (!result.ok) {
+      throw new Error(
+        `check-phase-gate: ${result.reason}
+  Resolution: either fix the artifact (most common) or, for a known-template case, do not advance the phase to 'done'.`
+      );
+    }
+  }
+  const entry = ensurePhaseEntry(status, phaseArg);
+  entry.status = statusArg;
+  status.updated = today();
+  if (verdictArg && Object.hasOwn(entry, "verdict")) {
+    entry.verdict = verdictArg;
+  }
+  if (REVIEW_PHASES.has(phaseArg)) {
+    updateReviewCounters(entry, verdictArg);
+  }
+  writeStatusAtomic(statusPath, status);
+  if (verdictArg) {
+    console.log(`Updated ${id}: ${phaseArg} \u2192 ${statusArg} (verdict: ${verdictArg})`);
+  } else {
+    console.log(`Updated ${id}: ${phaseArg} \u2192 ${statusArg}`);
+  }
+}
+function taskResetSpecReview(id) {
+  if (!id) throw new Error("Error: usage: canon task reset-spec-review <TASK-ID>");
+  validateTaskId(id);
+  const taskCwd = resolveTaskCwd(id);
+  const taskDir = taskDirForCwd(taskCwd, id);
+  const statusPath = path7.join(taskDir, "status.json");
+  if (!fs6.existsSync(statusPath)) {
+    throw new Error(`Error: no status.json at ${statusPath}`);
+  }
+  const reviewPath = path7.join(taskDir, "spec-review.md");
+  if (fs6.existsSync(reviewPath)) {
+    let n = 1;
+    while (fs6.existsSync(path7.join(taskDir, `spec-review-prior-${n}.md`))) n += 1;
+    fs6.renameSync(reviewPath, path7.join(taskDir, `spec-review-prior-${n}.md`));
+    console.log(`Archived prior spec-review.md \u2192 spec-review-prior-${n}.md`);
+  }
+  const status = readJsonFile(statusPath);
+  const spec = ensurePhaseEntry(status, "spec");
+  const specReview = ensurePhaseEntry(status, "spec_review");
+  spec.status = "done";
+  specReview.status = "pending";
+  specReview.iterations = 0;
+  specReview.iterations_current_loop = 0;
+  specReview.verdict = "";
+  if (status.sessions && Object.hasOwn(status.sessions, "claude_spec")) {
+    delete status.sessions.claude_spec;
+  }
+  status.updated = today();
+  writeStatusAtomic(statusPath, status);
+  console.log(`Reset ${id}: spec \u2192 done, spec_review \u2192 pending (iter=0, verdict cleared, claude_spec session dropped)`);
+}
+function ensureGitAvailable() {
+  const result = spawnSync6("git", ["--version"], { stdio: "ignore" });
+  if (result.error || result.status !== 0) {
+    throw new Error("Error: git is required.");
+  }
+}
+function taskPostMergeSync(branchArg) {
+  ensureGitAvailable();
+  let targetBranch = branchArg ?? "";
+  if (!targetBranch) targetBranch = currentBranchOrEmpty();
+  if (!targetBranch) {
+    throw new Error("Error: could not determine current branch (detached HEAD?). Pass branch as arg.");
+  }
+  const current = currentBranchOrEmpty();
+  if (current !== targetBranch) {
+    throw new Error(`Error: post-merge-sync expects you to be on '${targetBranch}' (you are on '${current}').`);
+  }
+  if (git2(["status", "--porcelain"])) {
+    throw new Error("Error: working tree is dirty. Commit or stash local changes before running post-merge-sync.");
+  }
+  console.log(`\u2192 Fetching origin/${targetBranch}...`);
+  const fetch = runGit(["fetch", "origin", targetBranch]);
+  if (fetch.error || fetch.status !== 0) {
+    throw new Error("Error: git fetch failed.");
+  }
+  const ahead = Number.parseInt(git2(["rev-list", "--count", `origin/${targetBranch}..${targetBranch}`]) || "0", 10);
+  const behind = Number.parseInt(git2(["rev-list", "--count", `${targetBranch}..origin/${targetBranch}`]) || "0", 10);
+  if (ahead === 0 && behind === 0) {
+    console.log(`\u2713 ${targetBranch} is in sync with origin/${targetBranch}.`);
+    return;
+  }
+  if (ahead === 0 && behind > 0) {
+    console.log(`\u2192 ${targetBranch} is ${behind} commit(s) behind origin/${targetBranch}, fast-forwarding...`);
+    const pull = runGit(["pull", "--ff-only", "origin", targetBranch], { stdio: "inherit" });
+    if (pull.error || pull.status !== 0) throw new Error(pull.error?.message ?? "git pull failed");
+    return;
+  }
+  const diff = git2(["diff", "--name-only", `origin/${targetBranch}..${targetBranch}`]);
+  const sourcePaths = diff.split("\n").filter(Boolean).filter(
+    (file) => !/^(docs\/pipeline-invocations\.md|docs\/task-quality-log\.md|docs\/lessons-learned\.md|tasks\/)/.test(file)
+  );
+  if (sourcePaths.length === 0) {
+    console.log(`\u2192 ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch}, but only via`);
+    console.log("  pipeline telemetry / task-state edits that have been absorbed by squash merges.");
+    console.log(`  Hard-resetting to origin/${targetBranch}...`);
+    const reset = runGit(["reset", "--hard", `origin/${targetBranch}`], { stdio: "inherit" });
+    if (reset.error || reset.status !== 0) throw new Error(reset.error?.message ?? "git reset failed");
+    console.log(`\u2713 ${targetBranch} reset to origin/${targetBranch} (${git2(["log", "-1", "--format=%h"])}).`);
+    return;
+  }
+  console.log(`\u26A0\uFE0F  ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch} with non-telemetry changes:`);
+  console.log("");
+  for (const file of sourcePaths) console.log(`    ${file}`);
+  console.log("");
+  console.log("Refusing to hard-reset. Either push these commits to origin");
+  console.log(`(\`git push origin ${targetBranch}\`) if they're real work, or rebase manually`);
+  console.log("if they conflict with the squash merge.");
+  throw new Error("");
+}
+function updatePackageVersion(filePath, version, updateLockRoot = false) {
+  const parsed = readJsonFile(filePath);
+  parsed.version = version;
+  if (updateLockRoot) {
+    const packages = parsed.packages;
+    if (packages && typeof packages === "object") {
+      const rootPackage = packages[""];
+      if (rootPackage && typeof rootPackage === "object") {
+        rootPackage.version = version;
+      }
+    }
+  }
+  writeJsonAtomic(filePath, parsed);
+}
+function insertChangelogBlock(filePath, short) {
+  const content = fs6.readFileSync(filePath, "utf8");
+  const lines = content.split("\n");
+  const first = lines.shift() ?? "";
+  const block = [
+    first,
+    "",
+    `## ${short} - unreleased`,
+    "",
+    `<!-- Bullets land here as tasks for ${short} ship. The single squash-merge of release/${short} \u2192 main carries this entry to production. -->`,
+    ...lines
+  ];
+  fs6.writeFileSync(filePath, block.join("\n"), "utf8");
+}
+function defaultPush(branch) {
+  const result = runGit(["push", "-u", "origin", branch], { stdio: "inherit" });
+  if (result.error) throw new Error(result.error.message);
+  if (result.status !== 0) throw new Error(`git push -u origin ${branch} failed`);
+}
+function taskReleaseInit(version, options = {}) {
+  if (!version) {
+    throw new Error("Error: usage: canon task release-init <version>\n       e.g.: canon task release-init 1.6.0");
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`Error: version must be semver (e.g. 1.6.0). Got: ${version}`);
+  }
+  ensureGitAvailable();
+  const short = `v${version.replace(/\.0$/, "")}`;
+  const branch = `release/${short}`;
+  const current = currentBranchOrEmpty();
+  if (current !== "main") {
+    throw new Error(`Error: release-init expects you to start on 'main' (you are on '${current}').`);
+  }
+  if (git2(["status", "--porcelain"])) {
+    throw new Error("Error: working tree is dirty. Commit or stash first.");
+  }
+  console.log("\u2192 Fetching origin/main...");
+  const fetch = runGit(["fetch", "origin", "main"]);
+  if (fetch.error || fetch.status !== 0) {
+    throw new Error("Error: git fetch failed.");
+  }
+  const behind = Number.parseInt(git2(["rev-list", "--count", "main..origin/main"]) || "0", 10);
+  if (behind > 0) {
+    throw new Error(`Error: local main is ${behind} commit(s) behind origin/main. Pull first.`);
+  }
+  if (gitOk(["rev-parse", "--verify", branch])) {
+    throw new Error(`Error: branch '${branch}' already exists locally.`);
+  }
+  if (gitOk(["rev-parse", "--verify", `origin/${branch}`])) {
+    throw new Error(`Error: branch '${branch}' already exists on origin.`);
+  }
+  console.log(`\u2192 Creating ${branch} off main...`);
+  git2(["checkout", "-b", branch, "main"]);
+  const filesToAdd = [];
+  if (fs6.existsSync("package.json")) {
+    console.log(`\u2192 Bumping package.json version to ${version}...`);
+    updatePackageVersion("package.json", version);
+    filesToAdd.push("package.json");
+    if (fs6.existsSync("package-lock.json")) {
+      console.log("\u2192 Bumping package-lock.json...");
+      updatePackageVersion("package-lock.json", version, true);
+      filesToAdd.push("package-lock.json");
+    }
+  }
+  if (fs6.existsSync("CHANGELOG.md")) {
+    console.log(`\u2192 Inserting empty changelog block for ${short}...`);
+    insertChangelogBlock("CHANGELOG.md", short);
+    filesToAdd.push("CHANGELOG.md");
+  }
+  if (filesToAdd.length > 0) {
+    git2(["add", ...filesToAdd]);
+    git2(["commit", "-m", `chore: initialize ${branch} (version ${version})`]);
+  } else {
+    git2(["commit", "--allow-empty", "-m", `chore: initialize ${branch} (version ${version}, no version files to bump)`]);
+  }
+  if (options.pushFn) options.pushFn(branch);
+  else defaultPush(branch);
+  console.log("");
+  console.log(`\u2713 Release branch ${branch} initialized and pushed.`);
+  console.log("");
+  console.log("Next steps:");
+  console.log("  1. Create tasks on this branch: canon task new <id> <title>");
+  console.log(`     (auto-detects base_branch=${branch} from your current checkout)`);
+  console.log(`  2. Each task PR targets ${branch} (not main).`);
+  console.log(`  3. As tasks ship, append bullets to the ${short} block in CHANGELOG.md.`);
+  console.log(`  4. When ready: open PR ${branch} \u2192 main, squash-merge for the release.`);
+}
+function taskCmd(args2) {
+  const [subcommand, ...rest] = args2;
+  try {
+    switch (subcommand) {
+      case "new":
+        taskNew(rest);
+        break;
+      case "list":
+        taskList();
+        break;
+      case "status":
+        taskStatus(rest[0] ?? "");
+        break;
+      case "phase":
+        taskPhase(rest[0] ?? "", rest[1] ?? "", rest[2] ?? "", rest[3]);
+        break;
+      case "reset-spec-review":
+        taskResetSpecReview(rest[0] ?? "");
+        break;
+      case "post-merge-sync":
+        taskPostMergeSync(rest[0]);
+        break;
+      case "release-init":
+        taskReleaseInit(rest[0] ?? "");
+        break;
+      default:
+        console.error(`Unknown subcommand: ${subcommand ?? "(none)"}
+${usage()}`);
+        process.exit(1);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message) console.error(message);
+    process.exit(1);
+  }
 }
 
 // src/cli/commands/task.ts
-import { spawnSync as spawnSync2 } from "child_process";
-import { existsSync as existsSync4 } from "fs";
-import { fileURLToPath as fileURLToPath3 } from "url";
-import { dirname as dirname3, join as join4 } from "path";
-var packageDir3 = join4(dirname3(fileURLToPath3(import.meta.url)), "../..");
-var taskScript = join4(packageDir3, "scripts/task.sh");
-function taskCmd(args2) {
-  if (!existsSync4(taskScript)) {
-    console.error(`task.sh not found at ${taskScript}`);
-    process.exit(1);
-  }
-  const result = spawnSync2("bash", [taskScript, ...args2], {
-    stdio: "inherit",
-    cwd: process.cwd()
-  });
-  process.exit(result.status ?? 1);
+function taskCmd2(args2) {
+  taskCmd(args2);
 }
 
 // src/cli/commands/update.ts
-import { existsSync as existsSync5 } from "fs";
+import { existsSync as existsSync3 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
-import { dirname as dirname4, join as join5 } from "path";
-import { spawnSync as spawnSync3 } from "child_process";
-var packageDir4 = join5(dirname4(fileURLToPath4(import.meta.url)), "../..");
+import { dirname as dirname3, join as join4 } from "path";
+import { spawnSync as spawnSync7 } from "child_process";
+var packageDir3 = join4(dirname3(fileURLToPath4(import.meta.url)), "../..");
 function detectInstallType(pkgDirOverride) {
-  const dir = pkgDirOverride ?? packageDir4;
+  const dir = pkgDirOverride ?? packageDir3;
   if (dir.includes("/_npx/") || dir.includes("\\_npx\\")) return "npx";
   const nodeModulesIdx = dir.lastIndexOf("/node_modules/");
   if (nodeModulesIdx !== -1) {
     const projectRoot = dir.slice(0, nodeModulesIdx);
-    if (existsSync5(join5(projectRoot, "package.json"))) return "local";
+    if (existsSync3(join4(projectRoot, "package.json"))) return "local";
   }
   return "global";
 }
@@ -509,7 +1564,7 @@ function updateCmd(_args) {
     cmdArgs = ["install", "-g", "canon-ai@latest"];
     console.log("\nUpdating canon-ai (global install)...\n");
   }
-  const result = spawnSync3("npm", cmdArgs, { stdio: "inherit", cwd });
+  const result = spawnSync7("npm", cmdArgs, { stdio: "inherit", cwd });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
@@ -517,11 +1572,11 @@ function updateCmd(_args) {
 }
 
 // src/cli/commands/upgrade.ts
-import { existsSync as existsSync6, readFileSync as readFileSync3, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
+import { existsSync as existsSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
 import { fileURLToPath as fileURLToPath5 } from "url";
-import { dirname as dirname5, join as join6 } from "path";
-import { spawnSync as spawnSync4 } from "child_process";
-var packageDir5 = join6(dirname5(fileURLToPath5(import.meta.url)), "../..");
+import { dirname as dirname4, join as join5 } from "path";
+import { spawnSync as spawnSync8 } from "child_process";
+var packageDir4 = join5(dirname4(fileURLToPath5(import.meta.url)), "../..");
 var CANON_END2 = "<!-- canon:end -->";
 var CANON_START_RE2 = /<!-- canon:start[^>]* -->/;
 var DELIMITED = ["AGENTS.md", "CLAUDE.md", "CODEX.md"];
@@ -554,9 +1609,9 @@ function runUpgrade(cwd, pkgDir) {
   const unchanged = [];
   const skipped = [];
   for (const rel of DELIMITED) {
-    const projectPath = join6(cwd, rel);
-    const templatePath = join6(pkgDir, "templates", rel);
-    if (!existsSync6(projectPath) || !existsSync6(templatePath)) {
+    const projectPath = join5(cwd, rel);
+    const templatePath = join5(pkgDir, "templates", rel);
+    if (!existsSync4(projectPath) || !existsSync4(templatePath)) {
       skipped.push(rel);
       continue;
     }
@@ -575,39 +1630,39 @@ function runUpgrade(cwd, pkgDir) {
     upgraded.push(rel);
   }
   for (const rel of CANON_OWNED) {
-    const projectPath = join6(cwd, rel);
-    const templatePath = join6(pkgDir, "templates", rel);
-    if (!existsSync6(templatePath)) {
+    const projectPath = join5(cwd, rel);
+    const templatePath = join5(pkgDir, "templates", rel);
+    if (!existsSync4(templatePath)) {
       skipped.push(rel);
       continue;
     }
     const templateContent = readFileSync3(templatePath, "utf8");
-    if (existsSync6(projectPath)) {
+    if (existsSync4(projectPath)) {
       const projectContent = readFileSync3(projectPath, "utf8");
       if (projectContent === templateContent) {
         unchanged.push(rel);
         continue;
       }
     } else {
-      mkdirSync2(dirname5(projectPath), { recursive: true });
+      mkdirSync2(dirname4(projectPath), { recursive: true });
     }
     writeFileSync2(projectPath, templateContent);
     upgraded.push(rel);
   }
-  const versionPath = join6(cwd, ".canon", "version");
+  const versionPath = join5(cwd, ".canon", "version");
   const newVersion = "1.0.2";
-  const currentVersion = existsSync6(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
+  const currentVersion = existsSync4(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
-    mkdirSync2(dirname5(versionPath), { recursive: true });
+    mkdirSync2(dirname4(versionPath), { recursive: true });
     writeFileSync2(versionPath, newVersion + "\n");
     upgraded.push(".canon/version");
   }
   return { upgraded, unchanged, skipped };
 }
 function upgradeCmd(_args) {
-  const { upgraded, unchanged, skipped } = runUpgrade(process.cwd(), packageDir5);
+  const { upgraded, unchanged, skipped } = runUpgrade(process.cwd(), packageDir4);
   if (upgraded.length > 0) {
-    const r = spawnSync4("git", ["add", ...upgraded], { cwd: process.cwd(), stdio: "inherit" });
+    const r = spawnSync8("git", ["add", ...upgraded], { cwd: process.cwd(), stdio: "inherit" });
     if (r.status !== 0) {
       console.error("\nwarning: failed to stage changes \u2014 run `git add` manually.");
     }
@@ -712,7 +1767,7 @@ switch (command) {
     runCmd(args);
     break;
   case "task":
-    taskCmd(args);
+    taskCmd2(args);
     break;
   case "update":
     updateCmd(args);
