@@ -142,7 +142,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.1.2";
+  const installedVersion = "1.1.3";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -384,7 +384,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.1.2";
+  const version = "1.1.3";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -1639,7 +1639,7 @@ function runUpgrade(cwd, pkgDir) {
     upgraded.push(rel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.1.2";
+  const newVersion = "1.1.3";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     mkdirSync2(dirname4(versionPath), { recursive: true });
@@ -1743,7 +1743,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.1.2");
+  console.log("1.1.3");
 }
 switch (command) {
   case "doctor":

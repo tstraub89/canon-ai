@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.1.3] — 2026-05-17
+
+### Fixed
+
+- **Restored `picocolors` entry in `package-lock.json` to its real version.** A too-broad `sed` substitution during the 1.1.2 release (`sed 's/"version": "1.1.1"/"version": "1.1.2"/g'`) bumped not just the canon-ai root version entries but also the picocolors lockfile entry, which happened to be at 1.1.1. The resolved URL and integrity hash still pointed at the actual picocolors-1.1.1 tarball, so `npm ci` worked (matched hash → install succeeded), but the version-vs-URL mismatch is the kind of dirty lockfile state that npm audit and lockfile-linter tools flag. No adopter impact (the lockfile doesn't ship — `files` excludes it), but caught by Codex on PR #61 review post-merge. Lesson: when bumping the project version in `package-lock.json`, edit lines 3 and 9 specifically, not via a global `sed` — other transitive deps may share the version string.
+
 ## [1.1.2] — 2026-05-17
 
 ### Fixed
