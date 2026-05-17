@@ -2,6 +2,16 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.1.2] — 2026-05-17
+
+### Fixed
+
+- **`canon upgrade` now syncs `docs/pipeline-orchestrator.md` to existing adopters.** The 1.1.1 reframe of that file (from "canon-ai internals reference" to "adopter-facing pipeline reference") only helped fresh `canon init` runs — `docs/pipeline-orchestrator.md` wasn't in `CANON_OWNED`, so existing adopters' copies were stuck on the 1.1.0 source-path-laden version with no path to update short of re-init or manual copy. Added to `CANON_OWNED` in [src/cli/commands/upgrade.ts](src/cli/commands/upgrade.ts). Adopters who run `canon upgrade` after picking up 1.1.2 will get the cleaned reference. Pure canon documentation — adopters never customize it — so overwriting is safe. Caught by GP after rolling 1.1.1 forward and noticing their docs were unchanged.
+
+### Known limitation
+
+- `docs/pipeline-invocations.md` has the same staleness pattern (its template header gets canon updates; adopters' copies don't) but is NOT in `CANON_OWNED` because it accumulates auto-appended telemetry rows below the header — overwriting would wipe history. A future release will add header-only sync (or migrate the file's adopter-mutable rows to a separate location) so canon updates can flow without data loss. Other `docs/*` files (`architecture.md`, `decisions.md`, `patterns.md`, `lessons-learned.md`, `codebase-map.md`, `product-context.md`, `task-quality-log.md`) are adopter-content-owned by design and don't have this pattern.
+
 ## [1.1.1] — 2026-05-17
 
 Adopter-feedback cleanup from a fresh GP install of 1.1.0. No runtime behavior change; doc + scaffold fixes only.
