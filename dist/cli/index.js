@@ -142,7 +142,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.1.0";
+  const installedVersion = "1.1.1";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -321,7 +321,6 @@ import {
   existsSync as existsSync2,
   mkdirSync,
   readdirSync,
-  readFileSync as readFileSync2,
   statSync,
   writeFileSync
 } from "fs";
@@ -364,9 +363,6 @@ function initCmd(_args) {
   const { scaffolded, skipped } = scaffoldTemplates(cwd, templatesDir);
   const pkgPath = join2(cwd, "package.json");
   const isJsProject = existsSync2(pkgPath);
-  if (isJsProject) {
-    updatePackageJson(pkgPath);
-  }
   console.log("\ncanon init\n");
   if (scaffolded.length > 0) {
     console.log("Scaffolded:");
@@ -388,22 +384,9 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.1.0";
+  const version = "1.1.1";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
-}
-function updatePackageJson(pkgPath) {
-  const raw = readFileSync2(pkgPath, "utf8");
-  const pkg = JSON.parse(raw);
-  const canonVersion = "1.1.0";
-  const devDeps = pkg["devDependencies"] ?? {};
-  devDeps["canon-ai"] = `^${canonVersion}`;
-  pkg["devDependencies"] = devDeps;
-  const scripts = pkg["scripts"] ?? {};
-  if (!scripts["canon"]) scripts["canon"] = "canon";
-  pkg["scripts"] = scripts;
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-  console.log("\nUpdated package.json (devDependencies + scripts.canon)");
 }
 function launchGrill(cwd, hasExistingAgentFiles) {
   const skillPath = join2(cwd, ".claude", "skills", "canon-init", "SKILL.md");
@@ -1547,22 +1530,24 @@ function detectInstallType(pkgDirOverride) {
   }
   return "global";
 }
+var CANON_GITHUB_SOURCE = "github:tstraub89/canon-ai";
 function updateCmd(_args) {
   const cwd = process.cwd();
   const installType = detectInstallType();
   if (installType === "npx") {
     console.log("\nRunning via npx \u2014 no persistent install to update.");
-    console.log("To apply the latest templates, run:\n");
-    console.log("  npx canon-ai@latest upgrade\n");
+    console.log("To apply the latest templates, re-run from the latest source:\n");
+    console.log(`  npx --install-links ${CANON_GITHUB_SOURCE} upgrade
+`);
     return;
   }
   let cmdArgs;
   if (installType === "local") {
-    cmdArgs = ["update", "canon-ai"];
-    console.log("\nUpdating canon-ai (local devDependency)...\n");
+    cmdArgs = ["install", "--save-dev", "--install-links", CANON_GITHUB_SOURCE];
+    console.log("\nUpdating canon-ai (local devDependency, from GitHub)...\n");
   } else {
-    cmdArgs = ["install", "-g", "canon-ai@latest"];
-    console.log("\nUpdating canon-ai (global install)...\n");
+    cmdArgs = ["install", "-g", "--install-links", CANON_GITHUB_SOURCE];
+    console.log("\nUpdating canon-ai (global install, from GitHub)...\n");
   }
   const result = spawnSync7("npm", cmdArgs, { stdio: "inherit", cwd });
   if (result.status !== 0) {
@@ -1572,7 +1557,7 @@ function updateCmd(_args) {
 }
 
 // src/cli/commands/upgrade.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
+import { existsSync as existsSync4, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
 import { fileURLToPath as fileURLToPath5 } from "url";
 import { dirname as dirname4, join as join5 } from "path";
 import { spawnSync as spawnSync8 } from "child_process";
@@ -1615,8 +1600,8 @@ function runUpgrade(cwd, pkgDir) {
       skipped.push(rel);
       continue;
     }
-    const projectContent = readFileSync3(projectPath, "utf8");
-    const templateContent = readFileSync3(templatePath, "utf8");
+    const projectContent = readFileSync2(projectPath, "utf8");
+    const templateContent = readFileSync2(templatePath, "utf8");
     const merged = mergeDelimited(templateContent, projectContent);
     if (merged === null) {
       skipped.push(`${rel} (no canon delimiters \u2014 run \`canon init\` to add them)`);
@@ -1636,9 +1621,9 @@ function runUpgrade(cwd, pkgDir) {
       skipped.push(rel);
       continue;
     }
-    const templateContent = readFileSync3(templatePath, "utf8");
+    const templateContent = readFileSync2(templatePath, "utf8");
     if (existsSync4(projectPath)) {
-      const projectContent = readFileSync3(projectPath, "utf8");
+      const projectContent = readFileSync2(projectPath, "utf8");
       if (projectContent === templateContent) {
         unchanged.push(rel);
         continue;
@@ -1650,8 +1635,8 @@ function runUpgrade(cwd, pkgDir) {
     upgraded.push(rel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.1.0";
-  const currentVersion = existsSync4(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
+  const newVersion = "1.1.1";
+  const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     mkdirSync2(dirname4(versionPath), { recursive: true });
     writeFileSync2(versionPath, newVersion + "\n");
@@ -1754,7 +1739,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.1.0");
+  console.log("1.1.1");
 }
 switch (command) {
   case "doctor":

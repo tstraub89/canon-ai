@@ -2,7 +2,7 @@
 name: canon-spec
 description: Write a scoped implementation spec for a new task. Explores the codebase, grills for M/L/XL tasks, proposes scope for approval, then creates the task directory and writes spec.md. For S tasks, also writes plan.md and kicks off the pipeline after approval.
 argument-hint: "[task description or title]"
-allowed-tools: Read Glob Grep Write Edit Agent Bash(canon task *) Bash(canon run *) Bash(./scripts/task.sh *) Bash(git branch *) Bash(git status *) Bash(git log *)
+allowed-tools: Read Glob Grep Write Edit Agent Bash(canon task *) Bash(canon run *) Bash(git branch *) Bash(git status *) Bash(git log *)
 effort: high
 ---
 
@@ -14,7 +14,7 @@ Task: **$ARGUMENTS**
 
 In-progress tasks:
 ```!
-canon task list 2>/dev/null || ./scripts/task.sh list 2>/dev/null || echo "(none)"
+canon task list 2>/dev/null || echo "(none)"
 ```
 
 Current branch: `!git branch --show-current 2>/dev/null`
@@ -119,7 +119,6 @@ After scope is approved:
 1. Create the task directory:
    ```bash
    canon task new TASK-ID "Title"
-   # falls back to: ./scripts/task.sh new TASK-ID "Title"
    ```
 
 2. Edit `tasks/TASK-ID/status.json`: set `task_size`, `delicate`, and `human_spec_gate: true`.

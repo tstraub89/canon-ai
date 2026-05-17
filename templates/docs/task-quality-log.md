@@ -36,4 +36,4 @@ The QA phase appends a row at the end of every task. The product owner reviews t
 
 ## Periodic Reviews
 
-> **TODO[canon]: Append a "Review: YYYY-MM-DD" subsection here at the end of each release milestone summarizing trends and the actions taken (rule updates in AGENTS.md, prompt tweaks in run-task.ts, etc.). The point of the log is to feed these reviews; without periodic scans the log is just cold data.**
+> **TODO[canon]: Append a "Review: YYYY-MM-DD" subsection here at the end of each release milestone summarizing trends and the actions taken (rule updates in AGENTS.md, new pattern entries in docs/patterns.md, validation tweaks, etc.). The point of the log is to feed these reviews; without periodic scans the log is just cold data.**

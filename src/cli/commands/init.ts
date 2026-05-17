@@ -3,7 +3,6 @@ import {
     existsSync,
     mkdirSync,
     readdirSync,
-    readFileSync,
     statSync,
     writeFileSync,
 } from 'fs';
@@ -61,9 +60,17 @@ export function initCmd(_args: string[]): void {
 
     const pkgPath = join(cwd, 'package.json');
     const isJsProject = existsSync(pkgPath);
-    if (isJsProject) {
-        updatePackageJson(pkgPath);
-    }
+    // Package.json mutation disabled — canon-ai isn't on the npm registry, so
+    // writing `"canon-ai": "^<ver>"` to the adopter's devDependencies broke
+    // their `npm install` / CI (resolves to a non-existent registry package).
+    // Adopters install canon globally via `npm install -g --install-links
+    // github:tstraub89/canon-ai`; no per-project devDep needed. The `"canon":
+    // "canon"` script alias was also a no-op once canon is on PATH. Re-enable
+    // (and revisit the URL/auth story) if canon ever ships to npm proper.
+    // See `updatePackageJson()` below — body preserved for that future revival.
+    // if (isJsProject) {
+    //     updatePackageJson(pkgPath);
+    // }
 
     console.log('\ncanon init\n');
     if (scaffolded.length > 0) {
@@ -95,22 +102,27 @@ function writeCanonVersion(cwd: string): void {
     writeFileSync(versionPath, version + '\n');
 }
 
-function updatePackageJson(pkgPath: string): void {
-    const raw = readFileSync(pkgPath, 'utf8');
-    const pkg = JSON.parse(raw) as Record<string, unknown>;
-    const canonVersion = process.env['CANON_VERSION'] ?? 'latest';
-
-    const devDeps = (pkg['devDependencies'] ?? {}) as Record<string, string>;
-    devDeps['canon-ai'] = `^${canonVersion}`;
-    pkg['devDependencies'] = devDeps;
-
-    const scripts = (pkg['scripts'] ?? {}) as Record<string, string>;
-    if (!scripts['canon']) scripts['canon'] = 'canon';
-    pkg['scripts'] = scripts;
-
-    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-    console.log('\nUpdated package.json (devDependencies + scripts.canon)');
-}
+// Disabled in 1.1.1 — see comment at the call site in `initCmd()`. Body preserved
+// so the function is one uncomment away from working once canon-ai ships to npm
+// (or once we settle on a private-registry / git-URL story that won't break
+// adopter CI).
+//
+// function updatePackageJson(pkgPath: string): void {
+//     const raw = readFileSync(pkgPath, 'utf8');
+//     const pkg = JSON.parse(raw) as Record<string, unknown>;
+//     const canonVersion = process.env['CANON_VERSION'] ?? 'latest';
+//
+//     const devDeps = (pkg['devDependencies'] ?? {}) as Record<string, string>;
+//     devDeps['canon-ai'] = `^${canonVersion}`;
+//     pkg['devDependencies'] = devDeps;
+//
+//     const scripts = (pkg['scripts'] ?? {}) as Record<string, string>;
+//     if (!scripts['canon']) scripts['canon'] = 'canon';
+//     pkg['scripts'] = scripts;
+//
+//     writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+//     console.log('\nUpdated package.json (devDependencies + scripts.canon)');
+// }
 
 function launchGrill(cwd: string, hasExistingAgentFiles: boolean): void {
     const skillPath = join(cwd, '.claude', 'skills', 'canon-init', 'SKILL.md');

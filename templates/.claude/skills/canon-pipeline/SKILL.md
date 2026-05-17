@@ -1,13 +1,13 @@
 ---
 name: canon-pipeline
 description: Drive the canon task pipeline — kick off, advance phases, open PRs, ship, recover from auto-blocks, and reconcile branches after merges. Encodes operational patterns and snag-recovery flows; for orchestrator internals (model matrix, env vars, session-resume mechanics) see docs/pipeline-orchestrator.md.
-allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(./scripts/task.sh *) Bash(npx tsx scripts/run-task.ts *) Bash(git *) Bash(gh *)
+allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(git *) Bash(gh *)
 effort: medium
 ---
 
 # Pipeline Operations
 
-This skill drives `canon run` (`scripts/run-task.ts`). It encodes:
+This skill drives `canon run`. It encodes:
 - common command patterns (start, advance, ship, open PRs)
 - pre-flight checks before invoking the pipeline
 - snag-recovery flows (auto-block reset, phase mismatch, post-merge sync)
@@ -17,13 +17,8 @@ For orchestrator internals — pipeline tiers, the Codex model/effort matrix, en
 ## Command reference
 
 ```bash
-# Primary CLI
 canon run <id> [flags]
 canon task <subcommand> [args]
-
-# Fallback (dev / no package install)
-npx tsx scripts/run-task.ts <id> [flags]
-./scripts/task.sh <subcommand> [args]
 ```
 
 ## Pipeline phases (in order)
@@ -53,7 +48,7 @@ canon run <task-id>
 Add `--step --expect <phase>` if you want one phase at a time with a guard. Add `MAX_REVIEW_LOOPS=N` when the default loop cap is too low for a complex spec.
 
 **Pre-flight before kicking off:**
-- Working tree is clean — commit or stash any pending edits. `run-task.ts` auto-commits task artifacts but will not touch source files outside `handoff.md`'s Changes table.
+- Working tree is clean — commit or stash any pending edits. The orchestrator auto-commits task artifacts but will not touch source files outside `handoff.md`'s Changes table.
 - `tasks/<id>/status.json`: `task_size`, `delicate`, `human_spec_gate`, `worktree` set correctly.
 - **Fast-tier (S, non-delicate)**: spec + plan written, `phases.spec_review = { "status": "done", "verdict": "approved" }`, `phases.plan.status = "done"`, `human_spec_gate = false`.
 - **Full-tier (M/L/XL/delicate)**: spec written, `phases.spec.status = "done"`, `phases.spec_review.status = "pending"`.

@@ -2,6 +2,20 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.1.1] — 2026-05-17
+
+Adopter-feedback cleanup from a fresh GP install of 1.1.0. No runtime behavior change; doc + scaffold fixes only.
+
+### Fixed
+
+- **README install command** — now reads `npm install -g --install-links github:tstraub89/canon-ai`. Without `--install-links`, npm symlinks the global install to its git cache rather than copying the committed `dist/`, which leaves the `canon` bin pointing at a transient path and command-not-found after install reports success. The `--install-links` flag packs+installs as a regular dependency, which is what a stable global CLI needs. The 1.1.0 README still recommended `npm install -g canon-ai` (which assumes a public npm registry publish that doesn't exist) — corrected to the github-URL form. Also drops `jq` from the Prerequisites list (no longer required since 1.1.0).
+- **Stale canon-internal source-path references in adopter-facing shipping content.** Post-1.1.0, canon's adopter install has no `scripts/` directory — everything is bundled into `dist/scripts/run-task.js`. But shipping files still referenced source paths from canon-ai's dev repo (`scripts/run-task.ts`, `scripts/task.sh`, `scripts/run-task/policy.ts`, `scripts/run-task/canon-snapshot.ts`, etc.) that don't exist in any adopter install. The 1.1.0 self-contained refactor updated the CLI surface (`canon run`, `canon task`) but missed sweeping the docs/scaffold templates that describe canon's mechanics. Adopter-facing files cleaned up in this release: `templates/AGENTS.md`, `templates/CLAUDE.md`, `templates/CODEX.md`, `templates/docs/pipeline-orchestrator.md`, `templates/docs/pipeline-invocations.md`, and the canon-owned skills (`canon-status`, `canon-spec`, `canon-pipeline`, `canon-init`). The biggest reframe: `templates/docs/pipeline-orchestrator.md` was an "internals reference" written for canon-ai contributors — now positioned as a reference for *using* canon's pipeline (flags, model matrix, env vars, recovery patterns). Source-path references and the "canon's own self-modification rules" section are removed; adopters who want to inspect canon-ai's internals can browse [the canon-ai repo](https://github.com/tstraub89/canon-ai) directly.
+
+### Changed
+
+- **`canon init` no longer mutates the adopter's `package.json`.** `updatePackageJson()` in [src/cli/commands/init.ts](src/cli/commands/init.ts) used to write `"canon-ai": "^<version>"` to `devDependencies` and add a `"canon": "canon"` script alias. Since canon-ai isn't published to the npm registry, the devDep entry broke adopters' `npm install` and CI (resolves to a non-existent registry package). The script alias was a functional no-op once `canon` is on PATH globally. Function body is preserved (commented out, ready to revive) for when canon ships to npm proper.
+- **`canon update` now targets the GitHub source.** Previously hardcoded `npm install -g canon-ai@latest` (registry-only), which broke for everyone who installed canon-ai via the documented github URL flow. Now uses `npm install -g --install-links github:tstraub89/canon-ai` (and the local-devDep variant). The constant `CANON_GITHUB_SOURCE` in [src/cli/commands/update.ts](src/cli/commands/update.ts) is the single switch point — flip it (and drop `--install-links`) when canon ships to npm. Caught by Codex on the release review.
+
 ## [1.1.0] — 2026-05-17
 
 ### Fixed

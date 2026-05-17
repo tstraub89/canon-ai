@@ -17,25 +17,31 @@ export function detectInstallType(pkgDirOverride?: string): 'local' | 'global' |
     return 'global';
 }
 
+// canon-ai is distributed via a private GitHub repo (not the npm registry yet),
+// so update commands target the github URL with --install-links. See README §Install
+// for the install command. Switch back to `canon-ai@latest` (and drop --install-links)
+// if/when canon ships to npm proper.
+const CANON_GITHUB_SOURCE = 'github:tstraub89/canon-ai';
+
 export function updateCmd(_args: string[]): void {
     const cwd = process.cwd();
     const installType = detectInstallType();
 
     if (installType === 'npx') {
         console.log('\nRunning via npx — no persistent install to update.');
-        console.log('To apply the latest templates, run:\n');
-        console.log('  npx canon-ai@latest upgrade\n');
+        console.log('To apply the latest templates, re-run from the latest source:\n');
+        console.log(`  npx --install-links ${CANON_GITHUB_SOURCE} upgrade\n`);
         return;
     }
 
     let cmdArgs: string[];
 
     if (installType === 'local') {
-        cmdArgs = ['update', 'canon-ai'];
-        console.log('\nUpdating canon-ai (local devDependency)...\n');
+        cmdArgs = ['install', '--save-dev', '--install-links', CANON_GITHUB_SOURCE];
+        console.log('\nUpdating canon-ai (local devDependency, from GitHub)...\n');
     } else {
-        cmdArgs = ['install', '-g', 'canon-ai@latest'];
-        console.log('\nUpdating canon-ai (global install)...\n');
+        cmdArgs = ['install', '-g', '--install-links', CANON_GITHUB_SOURCE];
+        console.log('\nUpdating canon-ai (global install, from GitHub)...\n');
     }
 
     const result = spawnSync('npm', cmdArgs, { stdio: 'inherit', cwd });
