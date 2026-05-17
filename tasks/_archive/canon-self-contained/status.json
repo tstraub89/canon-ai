@@ -1,7 +1,7 @@
 {
   "id": "canon-self-contained",
   "title": "Bundle orchestrator + task CLI into dist/, drop bash/jq/tsx from runtime requirements",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-05-16",
   "updated": "2026-05-17",
   "branch": "task/canon-self-contained",
@@ -55,7 +55,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
