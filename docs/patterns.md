@@ -17,9 +17,9 @@ This is the project's hard-won implementation knowledge. It has two main section
 
 | Area touched | Section in this file | Key files |
 |---|---|---|
-| Adding/changing a pipeline phase | Phase Addition Discipline | `scripts/run-task/main.ts`, `scripts/pipeline-policy.ts`, `src/task/index.ts`, `.canon/templates/status.json` |
+| Adding/changing a pipeline phase | Phase Addition Discipline | `scripts/run-task/main.ts`, `scripts/pipeline-policy.ts`, `scripts/task.sh`, `.canon/templates/status.json` |
 | Modifying `pipeline-policy.ts` | Pure Policy + Test Discipline | `scripts/pipeline-policy.ts`, `tests/pipeline-policy.test.ts` |
-| Modifying `status.json` shape | State Schema Discipline | `.canon/templates/status.json`, parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts`, `src/task/index.ts` `taskPhase()` |
+| Modifying `status.json` shape | State Schema Discipline | `.canon/templates/status.json`, parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts`, `scripts/task.sh` `cmd_phase()` |
 | Adding/modifying a validation gate | Validation Gate Discipline | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts`, `scripts/run-task/main.ts`, `tests/run-task-validation.test.ts` |
 | Lint / TS suppression / `any` | Lint & Type Safety Policy | (rule, no canonical file) |
 
@@ -40,7 +40,7 @@ This is the project's hard-won implementation knowledge. It has two main section
 
 ### Phase Addition Discipline
 
-**Files**: `scripts/run-task/main.ts`, `scripts/run-task/phases/*.ts`, `scripts/pipeline-policy.ts`, `src/task/index.ts`, `.canon/templates/status.json`
+**Files**: `scripts/run-task/main.ts`, `scripts/run-task/phases/*.ts`, `scripts/pipeline-policy.ts`, `scripts/task.sh`, `.canon/templates/status.json`
 
 **When to apply**: Anytime a new phase is added to the pipeline (e.g., a new validation gate that warrants its own phase rather than being a sub-step within an existing one).
 
@@ -50,7 +50,7 @@ This is the project's hard-won implementation knowledge. It has two main section
 3. `checkAndRoute()` switch (decides what happens after the phase completes)
 
 Plus:
-5. `src/task/index.ts` `taskPhase()` validation list (so the helper accepts the new phase name)
+5. `scripts/task.sh` `cmd_phase()` validation list (so the helper accepts the new phase name)
 6. `.canon/templates/status.json` (add the new phase entry with a default `status` and `agent`)
 7. If the phase has model/effort needs distinct from existing phases: add it to the matrices in `pipeline-policy.ts` and `tests/pipeline-policy.test.ts`
 8. Document in `AGENTS.md` (handoff sequence + workflow diagram) and any agent-specific implications in `CLAUDE.md` / `CODEX.md`
@@ -59,14 +59,14 @@ Plus:
 
 ### State Schema Discipline
 
-**Files**: `.canon/templates/status.json`, parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts`, `src/task/index.ts` `taskPhase()`
+**Files**: `.canon/templates/status.json`, parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts`, `scripts/task.sh` `cmd_phase()`
 
 **When to apply**: Adding a new field to `status.json`, renaming an existing field, or changing the type/shape of a field.
 
 **The pattern**: A status.json change must update three locations atomically:
 1. `.canon/templates/status.json` — the schema source of truth (and what new tasks are scaffolded from)
 2. Parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts` — anything that reads or writes the field. The orchestrator and `parseStatus()`-style helpers both need updates.
-3. `src/task/index.ts` `taskPhase()` — if the field affects phase transitions, the helper needs to know about it.
+3. `scripts/task.sh` `cmd_phase()` — if the field affects phase transitions, the helper needs to know about it.
 
 For breaking changes (renames, type changes), also: add a migration shim that detects the old shape and either fails loudly or transforms it. Tasks may be in flight when the change lands.
 
@@ -140,5 +140,5 @@ When parsing `git diff -M` output to build a set of changed paths, use `--name-s
 | Add a new per-task validation check at code_review entry | Validation Gate Discipline | `scripts/run-task/validation.ts` `validateHandoff()` |
 | Add a new bundle-wide validation check at code_review entry | Validation Gate Discipline | `scripts/run-task/validation.ts` `verifyHandoffAgainstDiff()` (canonical sibling example) |
 | Add a new field to status.json | State Schema Discipline | `.canon/templates/status.json` |
-| Update phase status from a script | (see CLAUDE.md Quick Refs) | `canon task phase` |
-| Run multiple related tasks together | (see CLAUDE.md Quick Refs — bundle mode) | `canon run a b c` |
+| Update phase status from a script | (see CLAUDE.md Quick Refs) | `./scripts/task.sh phase` |
+| Run multiple related tasks together | (see CLAUDE.md Quick Refs — bundle mode) | `npx tsx scripts/run-task.ts a b c` |

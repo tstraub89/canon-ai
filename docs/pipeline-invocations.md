@@ -79,3 +79,14 @@
 | 2026-05-16T05:34:37.511Z | retire-runtime-validation | implement | codex | gpt-5.5 | 0 | 1342.4s | 19528263 | ok |
 | 2026-05-16T05:46:14.011Z | retire-runtime-validation | code_review | claude | sonnet | 0 | 349.3s | 2009567 | ok |
 | 2026-05-16T05:50:48.421Z | retire-runtime-validation | qa | claude | sonnet | 0 | 274.2s | 940399 | ok |
+| 2026-05-17T02:03:41.192Z | canon-self-contained | spec_review | codex | gpt-5.5 | 0 | 158.5s | 1317208 | ok |
+| 2026-05-17T02:06:00.158Z | canon-self-contained | spec | claude | opus | 0 | 138.9s | 993142 | ok |
+| 2026-05-17T02:08:37.524Z | canon-self-contained | spec_review | codex | gpt-5.5 | 1 | 157.3s | 3284368 | ok |
+| 2026-05-17T02:11:20.863Z | canon-self-contained | spec | claude | opus | 0 | 163.3s | 1034499 | ok |
+| 2026-05-17T02:12:29.464Z | canon-self-contained | spec_review | codex | gpt-5.5 | 2 | 68.6s | 4601784 | ok |
+| 2026-05-17T02:13:05.009Z | canon-self-contained | spec | claude | opus | 0 | 35.5s | 620318 | ok |
+| 2026-05-17T02:14:07.094Z | canon-self-contained | spec_review | codex | gpt-5.5 | 3 | 62.0s | 6047581 | ok |
+| 2026-05-17T02:31:20.462Z | canon-self-contained | plan | claude | sonnet | 0 | 579.6s | 1810620 | ok |
+| 2026-05-17T03:05:53.401Z | canon-self-contained | implement | codex | gpt-5.5 | 0 | 2072.7s | 23734382 | ok |
+| 2026-05-17T03:28:47.105Z | canon-self-contained | code_review | claude | sonnet | 0 | 267.1s | 1333235 | ok |
+| 2026-05-17T03:34:48.017Z | canon-self-contained | qa | claude | sonnet | 0 | 360.5s | 1676684 | ok |
