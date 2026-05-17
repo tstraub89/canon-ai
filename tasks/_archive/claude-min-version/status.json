@@ -1,7 +1,7 @@
 {
   "id": "claude-min-version",
   "title": "Require Claude Code ≥ 2.1.72 in doctor (fixes --effort spawn crash)",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-05-17",
   "updated": "2026-05-17",
   "branch": "task/claude-min-version",
@@ -55,7 +55,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
