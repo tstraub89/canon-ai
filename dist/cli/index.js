@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli/commands/doctor.ts
+import { execSync as execSync2 } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
@@ -107,6 +108,16 @@ var RECOMMENDED_ALLOW = [
   "Skill(canon-changelog)",
   "Skill(canon-changelog:*)"
 ];
+var MIN_CLAUDE_VERSION = { major: 2, minor: 1, patch: 72 };
+function parseClaudeVersion(raw) {
+  const match = raw.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return {
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10)
+  };
+}
 function checkPlatform() {
   const isWindows = process.platform === "win32";
   if (!isWindows) return { label: "platform", status: "pass" };
@@ -135,6 +146,38 @@ function checkBinary(cmd, required, hint) {
     status: required ? "fail" : "warn",
     detail: hint
   };
+}
+var defaultClaudeVersionRunner = () => execSync2("claude --version", { encoding: "utf8" });
+function checkClaudeVersion(runner = defaultClaudeVersionRunner) {
+  let raw;
+  try {
+    raw = runner();
+  } catch {
+    return {
+      label: "claude (version unreadable)",
+      status: "warn",
+      detail: "Could not read `claude --version` output \u2014 verify your Claude Code install"
+    };
+  }
+  const parsed = parseClaudeVersion(raw);
+  if (!parsed) {
+    const preview = raw.trim() || "<empty>";
+    return {
+      label: `claude (unparseable: ${preview.slice(0, 32)})`,
+      status: "warn",
+      detail: "Could not parse `claude --version` output \u2014 verify your Claude Code install"
+    };
+  }
+  const label = `claude ${parsed.major}.${parsed.minor}.${parsed.patch}`;
+  const tooOld = parsed.major < MIN_CLAUDE_VERSION.major || parsed.major === MIN_CLAUDE_VERSION.major && parsed.minor < MIN_CLAUDE_VERSION.minor || parsed.major === MIN_CLAUDE_VERSION.major && parsed.minor === MIN_CLAUDE_VERSION.minor && parsed.patch < MIN_CLAUDE_VERSION.patch;
+  if (tooOld) {
+    return {
+      label,
+      status: "fail",
+      detail: "Claude Code 2.1.72+ required \u2014 npm install -g @anthropic-ai/claude-code"
+    };
+  }
+  return { label, status: "pass" };
 }
 function checkAgentFile(cwd, filename) {
   const path8 = join(cwd, filename);
@@ -297,6 +340,7 @@ function doctorCmd(_args) {
     checkNodeVersion(),
     checkBinary("git", true, "https://git-scm.com/downloads"),
     checkBinary("claude", true, "npm install -g @anthropic-ai/claude-code"),
+    ...isAvailable("claude") ? [checkClaudeVersion()] : [],
     checkBinary("codex", true, "npm install -g @openai/codex"),
     checkBinary("gh", false, "brew install gh && gh auth login  (required for --pr / --push)")
   ];

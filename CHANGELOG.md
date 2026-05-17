@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.1.4] — unreleased
+
+### Fixed
+
+- **Claude Code installs older than 2.1.72 no longer crash canon's `--effort` spawns.** `canon doctor` now checks the installed Claude Code version and fails fast below the verified-safe floor, which blocks the orchestrator from handing an unsupported CLI the `--effort` flag that it does not understand. As a fallback for users who skip `canon doctor`, Claude spawn failures that mention the unknown `--effort` option now print a one-line hint directing them back to `canon doctor` and the upgrade command. Closes [#70](https://github.com/tstraub89/canon-ai/issues/70).
+
 ## [1.1.3] — 2026-05-17
 
 ### Fixed

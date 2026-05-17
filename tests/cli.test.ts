@@ -15,6 +15,9 @@ import {
     checkCanonVersion,
     checkLocalSettingsGitignored,
     checkRecommendedPermissions,
+    checkClaudeVersion,
+    parseClaudeVersion,
+    MIN_CLAUDE_VERSION,
     RECOMMENDED_ALLOW,
 } from '../src/cli/commands/doctor.js';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
@@ -134,6 +137,66 @@ void test('checkNodeVersion: current process is ≥24 → pass', () => {
     const check = checkNodeVersion();
     assert.equal(check.status, 'pass');
     assert.match(check.label, /^node v\d+/);
+});
+
+// ── parseClaudeVersion ─────────────────────────────────────────────────────
+
+void test('parseClaudeVersion: parses "2.1.143 (Claude Code)" → { 2, 1, 143 }', () => {
+    assert.deepEqual(parseClaudeVersion('2.1.143 (Claude Code)'), { major: 2, minor: 1, patch: 143 });
+});
+
+void test('parseClaudeVersion: parses "2.1.72" (no suffix) → { 2, 1, 72 }', () => {
+    assert.deepEqual(parseClaudeVersion('2.1.72'), { major: 2, minor: 1, patch: 72 });
+});
+
+void test('parseClaudeVersion: returns null for "" (empty)', () => {
+    assert.equal(parseClaudeVersion(''), null);
+});
+
+void test('parseClaudeVersion: returns null for "Claude Code v??" (non-semver)', () => {
+    assert.equal(parseClaudeVersion('Claude Code v??'), null);
+});
+
+// ── checkClaudeVersion ──────────────────────────────────────────────────────
+
+void test('checkClaudeVersion: pass for 2.1.143', () => {
+    const check = checkClaudeVersion(() => '2.1.143 (Claude Code)');
+    assert.equal(check.status, 'pass');
+    assert.equal(check.label, 'claude 2.1.143');
+});
+
+void test('checkClaudeVersion: pass for 2.1.72 (exact minimum)', () => {
+    const check = checkClaudeVersion(() => '2.1.72 (Claude Code)');
+    assert.equal(check.status, 'pass');
+    assert.equal(check.label, 'claude 2.1.72');
+});
+
+void test('checkClaudeVersion: fail for 2.1.71 (one below)', () => {
+    const check = checkClaudeVersion(() => '2.1.71 (Claude Code)');
+    assert.equal(check.status, 'fail');
+    assert.match(check.detail ?? '', /2\.1\.72\+ required/);
+});
+
+void test('checkClaudeVersion: fail for 2.1.34 (James\'s reported version)', () => {
+    const check = checkClaudeVersion(() => '2.1.34 (Claude Code)');
+    assert.equal(check.status, 'fail');
+    assert.match(check.label, /^claude 2\.1\.34$/);
+});
+
+void test('checkClaudeVersion: pass for 3.0.0 (future major)', () => {
+    const check = checkClaudeVersion(() => '3.0.0 (Claude Code)');
+    assert.equal(check.status, 'pass');
+    assert.equal(check.label, 'claude 3.0.0');
+});
+
+void test('checkClaudeVersion: warn for unparseable output', () => {
+    const check = checkClaudeVersion(() => 'Claude Code v??');
+    assert.equal(check.status, 'warn');
+    assert.match(check.detail ?? '', /verify your Claude Code install/);
+});
+
+void test('checkClaudeVersion: exports the fixed minimum version', () => {
+    assert.deepEqual(MIN_CLAUDE_VERSION, { major: 2, minor: 1, patch: 72 });
 });
 
 // ── checkAgentFile ───────────────────────────────────────────────────────────

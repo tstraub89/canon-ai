@@ -76,7 +76,7 @@ canon run <task-id>
 
 - **Node 24+**
 - **git**
-- **Claude Code** — `npm install -g @anthropic-ai/claude-code`
+- **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
 - **Codex CLI** — `npm install -g @openai/codex`
 - **gh** (optional, for `--pr` / `--push`) — `brew install gh && gh auth login`
 
