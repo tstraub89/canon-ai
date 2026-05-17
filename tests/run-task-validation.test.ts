@@ -757,10 +757,10 @@ void test('verifyHandoffAgainstDiffFromData: rename whose either side is a pipel
 // existing task in the repo whose status.branch is absent.)
 
 // ─── 1a-2 phase gate ───
-// checkPhaseGate fires before task.sh advances a phase to `done`. Each
+// checkPhaseGate fires before canon task advances a phase to `done`. Each
 // case below tests one accept/reject branch of the gate. The CLI wrapper
 // (check-phase-gate.ts) is just argv parsing + exit-code mapping around
-// this function; integration test via task.sh would duplicate the unit
+// this function; integration test via canon task would duplicate the unit
 // coverage.
 
 import { checkPhaseGate } from '../scripts/run-task/validation.js';

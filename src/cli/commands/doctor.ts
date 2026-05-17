@@ -21,7 +21,6 @@ const EXPECTED_TEMPLATES = [
 export const RECOMMENDED_ALLOW = [
     'Bash(git *)',
     'Bash(gh *)',
-    'Bash(jq *)',
     'Bash(sed *)',
     'Bash(awk *)',
     'Bash(ls *)',
@@ -29,7 +28,6 @@ export const RECOMMENDED_ALLOW = [
     'Bash(npm run *)',
     'Bash(npx canon *)',
     'Bash(canon *)',
-    'Bash(npx tsx *)',
     'Bash(codex *)',
     'Skill(canon-init)',
     'Skill(canon-spec)',
@@ -256,7 +254,6 @@ export function doctorCmd(_args: string[]): void {
         checkPlatform(),
         checkNodeVersion(),
         checkBinary('git', true, 'https://git-scm.com/downloads'),
-        checkBinary('jq', true, 'brew install jq  (or https://jqlang.github.io/jq/)'),
         checkBinary('claude', true, 'npm install -g @anthropic-ai/claude-code'),
         checkBinary('codex', true, 'npm install -g @openai/codex'),
         checkBinary('gh', false, 'brew install gh && gh auth login  (required for --pr / --push)'),

@@ -11,27 +11,23 @@
   },
   "files": [
     "dist/",
-    "templates/",
-    "scripts/",
-    "public/"
+    "templates/"
   ],
   "scripts": {
     "build": "tsup",
-    "test": "node --test --import tsx tests/*.test.ts",
+    "test": "node --test --import ./tests/md-loader-register.mjs --import tsx tests/*.test.ts",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "task": "./scripts/task.sh",
-    "run-task": "tsx scripts/run-task.ts",
     "lint": "eslint scripts/ tests/ src/"
   },
   "dependencies": {
-    "mustache": "^4.2.0",
-    "tsx": "^4.21.0"
+    "mustache": "^4.2.0"
   },
   "devDependencies": {
     "@types/mustache": "^4.2.6",
     "@types/node": "^22.0.0",
     "eslint": "^10.3.0",
     "tsup": "^8.5.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.2"
   }

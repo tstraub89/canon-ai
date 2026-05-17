@@ -5,12 +5,12 @@ import { info, warn } from '../cli.js';
 import { getBaseBranch, getScopedDiff, verifyBranch } from '../git.js';
 import { getClaudeConfig, getMaxReviewLoops } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
-import { runTaskShFor } from '../task-sh.js';
 import { getActiveCwd, isWorktreeEnabled } from '../worktree.js';
 import { autoBlockPhase, resolveTaskCwd, taskDirFor } from '../state.js';
 import { isTemplateUnfilled, validateHandoff, verifyHandoffAgainstDiff } from '../validation.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptCodeReview } from '../prompts/index.js';
+import { taskPhase } from '../../../src/task/index.js';
 
 export async function runCodeReviewPhase(
     state: PipelineState,
@@ -82,13 +82,13 @@ export async function runCodeReviewPhase(
             // worktree sync would clobber the BLOCKED reason. resolveTaskCwd routes
             // to the worktree when one is active.
             fs.writeFileSync(path.join(resolveTaskCwd(taskId), 'tasks', taskId, 'review.md'), reviewContent);
-            runTaskShFor(taskId, 'phase', taskId, 'code_review', 'done', 'changes_requested');
+            taskPhase(taskId, 'code_review', 'done', 'changes_requested');
         }
         return { agent: 'claude', sessionId: null, exitCode: 0 };
     }
 
     info(`Phase: code_review (Claude${state.isBundle ? ' bundle' : ''}, iteration ${maxIter + 1})`);
-    for (const t of tasks) runTaskShFor(t.taskId, 'phase', t.taskId, 'code_review', 'in_progress');
+    for (const t of tasks) taskPhase(t.taskId, 'code_review', 'in_progress');
     if (isWorktreeEnabled(taskIds)) {
         const artifacts = ['spec.md', 'spec-review.md', 'plan.md', 'notes.md'];
         for (const taskId of taskIds) {
@@ -126,7 +126,7 @@ export async function runCodeReviewPhase(
         try { reviewContent = fs.readFileSync(reviewPath, 'utf8'); } catch { /* missing */ }
         if (isTemplateUnfilled(reviewContent)) {
             warn(`[${t.taskId}] review.md is still the template after code_review run — sub-agent did not write it. Resetting to pending for retry.`);
-            runTaskShFor(t.taskId, 'phase', t.taskId, 'code_review', 'pending');
+            taskPhase(t.taskId, 'code_review', 'pending');
         }
     }
 

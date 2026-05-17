@@ -77,7 +77,7 @@ tasks/
     status.json       # Updated by whichever agent acts
 ```
 
-Templates live in `.canon/templates/` (managed by canon — do not edit directly). To start a task, use `./scripts/task.sh new <TASK-ID> <title>`. To override a template for this project, copy it to `tasks/_templates/` — `canon task new` checks there first. See `.canon/README.md` for details.
+Templates live in `.canon/templates/` (managed by canon — do not edit directly). To start a task, use `canon task new <TASK-ID> <title>`. To override a template for this project, copy it to `tasks/_templates/` — `canon task new` checks there first. See `.canon/README.md` for details.
 
 **Task ID naming**: Use lowercase kebab-case (e.g., `add-login-modal`, `refactor-cache-layer`). The pipeline orchestrator validates that IDs contain only lowercase alphanumeric characters, hyphens, dots, and underscores.
 
@@ -108,12 +108,12 @@ The artifact templates carry a comment block at the bottom showing the expected 
 
 **Mechanics live in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md)** — flags, env vars, model/effort matrix, task sizing, auto-branch/commit, phase routing, auto-block, session resumption, human reroute. That doc is on-demand reading; no agent needs it loaded by default.
 
-Task management helper (requires `jq`) — used by both agents:
+Task management helper — used by both agents:
 ```bash
-./scripts/task.sh new <TASK-ID> <title>               # Create task from templates
-./scripts/task.sh list                                 # List all tasks with current phase
-./scripts/task.sh status <TASK-ID>                     # Show full task status
-./scripts/task.sh phase <TASK-ID> <phase> <status>     # Update phase status
+canon task new <TASK-ID> <title> [--base <branch>]    # Create task from templates
+canon task list                                        # List all tasks with current phase
+canon task status <TASK-ID>                            # Show full task status
+canon task phase <TASK-ID> <phase> <status> [verdict] # Update phase status
 ```
 
 ### Commit Ownership

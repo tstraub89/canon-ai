@@ -7,7 +7,6 @@ interface Dep {
 
 const HARD_DEPS: Dep[] = [
     { cmd: 'git', installHint: 'https://git-scm.com/downloads' },
-    { cmd: 'jq', installHint: 'brew install jq  (or https://jqlang.github.io/jq/)' },
     { cmd: 'claude', installHint: 'npm install -g @anthropic-ai/claude-code' },
     { cmd: 'codex', installHint: 'npm install -g @openai/codex' },
 ];

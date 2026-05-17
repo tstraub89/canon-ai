@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 import { REPO_ROOT } from '../scripts/run-task/env.js';
@@ -11,10 +10,9 @@ import {
     captureCanonSnapshot,
     refreshCanonSnapshotAtPath,
 } from '../scripts/run-task/canon-snapshot.js';
+import { taskNew } from '../src/task/index.js';
 import type { CanonSnapshotOptions } from '../scripts/run-task/canon-snapshot.js';
 import type { CommandResult, StatusJson } from '../scripts/run-task/types.js';
-
-const TASK_SH = path.resolve('scripts/task.sh');
 
 function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): StatusJson {
     return {
@@ -64,18 +62,6 @@ function fakeCommandRunner(responses: Record<string, CommandResult>): NonNullabl
         }
         return response;
     };
-}
-
-function runTaskSh(root: string, args: string[]): string {
-    return execFileSync('bash', [TASK_SH, ...args], {
-        cwd: root,
-        env: {
-            PATH: process.env.PATH ?? '',
-            HOME: process.env.HOME ?? '',
-            CANON_SKIP_PHASE_GATE: '1',
-        },
-        encoding: 'utf8',
-    });
 }
 
 void test('captureCanonSnapshot uses the current checkout SHA for native canon', () => {
@@ -155,14 +141,24 @@ void test('refreshCanonSnapshotAtPath stamps an older task before pipeline work 
     }
 });
 
-void test('task.sh new stamps canon provenance into the seeded status.json', () => {
+function withCwd<T>(cwd: string, fn: () => T): T {
+    const previous = process.cwd();
+    process.chdir(cwd);
+    try {
+        return fn();
+    } finally {
+        process.chdir(previous);
+    }
+}
+
+void test('taskNew stamps canon provenance into the seeded status.json', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-snapshot-task-new-'));
     try {
         fs.mkdirSync(path.join(root, '.canon', 'templates'), { recursive: true });
         fs.cpSync(path.join(REPO_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
 
         const taskId = 'canon-stamp-seed';
-        runTaskSh(root, ['new', taskId, 'Canon stamp seed']);
+        withCwd(root, () => taskNew([taskId, 'Canon stamp seed']));
 
         const status = JSON.parse(fs.readFileSync(path.join(root, 'tasks', taskId, 'status.json'), 'utf8')) as StatusJson;
         assert.equal(status.canon?.upstream_repo, CANON_UPSTREAM_REPO);

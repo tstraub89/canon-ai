@@ -4,11 +4,11 @@ import path from 'node:path';
 import { info, warn } from '../cli.js';
 import { getCodexConfig, getMaxReviewLoops, isPlanCombined } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
-import { runTaskShFor } from '../task-sh.js';
 import { autoBlockPhase, resolveTaskCwd, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
 import { isTemplateUnfilled } from '../validation.js';
+import { taskPhase } from '../../../src/task/index.js';
 
 export function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
     autoBlockPhase(taskIds, 'spec_review', iterationCount, reason);
@@ -42,16 +42,16 @@ export async function runSpecReviewPhase(
             console.log('  Plans:');
             console.log(planList);
             console.log('');
-            console.log(`  When ready: npx tsx scripts/run-task.ts ${taskIds.join(' ')}`);
+            console.log(`  When ready: canon run ${taskIds.join(' ')}`);
             console.log('════════════════════════════════════════════════════════');
             console.log('');
             process.exit(0);
         }
         info('Fast tier: auto-advancing spec_review and plan (written during spec phase).');
         for (const t of tasks) {
-            runTaskShFor(t.taskId, 'phase', t.taskId, 'spec_review', 'done', 'approved');
+            taskPhase(t.taskId, 'spec_review', 'done', 'approved');
             if (isPlanCombined(t.status)) {
-                runTaskShFor(t.taskId, 'phase', t.taskId, 'plan', 'done');
+                taskPhase(t.taskId, 'plan', 'done');
             }
         }
         return null;
@@ -82,7 +82,7 @@ export async function runSpecReviewPhase(
     }
 
     info(`Phase: spec_review (Codex reviews spec${state.isBundle ? 's' : ''})`);
-    for (const t of tasks) runTaskShFor(t.taskId, 'phase', t.taskId, 'spec_review', 'in_progress');
+    for (const t of tasks) taskPhase(t.taskId, 'spec_review', 'in_progress');
     const isReReview = resumeId !== null;
     const specReviewPrompt = isReReview
         ? `The spec${state.isBundle ? 's have' : ' has'} been revised since your last review. Re-read the current spec.md ${state.isBundle ? 'files' : 'file'} from disk and produce a completely fresh review — do not replay or summarise your previous output.\n\n${promptSpecReview(state)}`
@@ -106,7 +106,7 @@ export async function runSpecReviewPhase(
         try { reviewContent = fs.readFileSync(reviewPath, 'utf8'); } catch { /* missing */ }
         if (isTemplateUnfilled(reviewContent)) {
             warn(`[${t.taskId}] spec-review.md is still the template after spec_review run — sub-agent did not write it. Resetting to pending for retry.`);
-            runTaskShFor(t.taskId, 'phase', t.taskId, 'spec_review', 'pending');
+            taskPhase(t.taskId, 'spec_review', 'pending');
         }
     }
 
