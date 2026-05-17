@@ -4,45 +4,30 @@
 
 ## Shape Check
 
-> Strategic read of the spec itself — does it solve the right problem in the right shape? **Silence is the default**; only write here if something is actually off. A concern here is the lead reason for a `changes_requested` verdict.
-
-- Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)
-- Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)
-- Is there a materially simpler solution that changes the shape of the work?
-- Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)
-
-(no concerns / list items)
+(no concerns)
 
 ## Feasibility Check
 
-Does the spec's approach work against the actual codebase?
-
-- [ ] Affected files exist and contain what the spec assumes
-- [ ] Proposed patterns are consistent with existing conventions
-- [ ] No conflicts with existing functionality
+- [x] Affected files exist and contain what the spec assumes
+- [x] Proposed patterns are consistent with existing conventions
+- [x] No conflicts with existing functionality
 
 ## Issues Found
 
 ### Correctness Issues
 
-> Things the spec gets wrong about the current codebase.
-
-(none / list items)
+(none)
 
 ### Missing Edge Cases
 
-> Scenarios the spec doesn't account for.
-
-(none / list items)
+- **Non-blocking nit**: Human Test Plan step 2 still says to run `canon doctor` "in a directory with `git` available but without `jq` installed" (`tasks/canon-self-contained/spec.md:195-197`) without saying that directory must already be canon-initialized. `doctorCmd()` still fails when `AGENTS.md`/`CLAUDE.md`/`CODEX.md` or `.canon/templates/` are missing (`src/cli/commands/doctor.ts:80-106`, `src/cli/commands/doctor.ts:265-270`), and the revised AC-25/local smoke correctly run `canon init` before `doctor`. Plan should carry that clarification into `done.md`/human testing so the human does not try `doctor` in a bare tempdir.
 
 ### Type Safety / Interface Gaps
 
-> Type mismatches, missing interfaces, or signature errors.
-
-(none / list items)
+(none)
 
 ## Verdict
 
 - [ ] **Approved** — spec is implementable as written
-- [ ] **Approved with nits** — implementable, but noting observations for plan phase
+- [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
