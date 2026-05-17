@@ -77,7 +77,12 @@ jobs:
           git config user.email "ci@example.com"
           git config user.name "CI"
           git commit --allow-empty -m init
-          npm install -g "git+file://$GITHUB_WORKSPACE"
+          # `--install-links` packs+installs instead of symlinking the global
+          # install to the git cache. Without it, the `canon` bin symlink ends
+          # up pointing at a transient cache dir and command-not-found's even
+          # though `npm install -g` reports success. (Codex noted this during
+          # the implement-phase smoke runs.)
+          npm install -g --install-links "git+file://$GITHUB_WORKSPACE"
           canon --version
           node "$(npm root -g)/canon-ai/dist/scripts/run-task.js" --help
           SHIM_DIR="$(mktemp -d)"
