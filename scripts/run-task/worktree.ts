@@ -237,23 +237,72 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
         const sourceSHA = sourceHead.stdout.trim();
         const destSHA = destHead.stdout.trim();
 
+        // Two shared-doc shapes flow through this loop:
+        //
+        //   - **Telemetry files** (`PIPELINE_TELEMETRY_FILES`): per-run appends
+        //     whose canonical landing is supervising's branch via
+        //     flushWorktreeTelemetry. We copy worktree → supervising and then
+        //     `git checkout HEAD --` the worktree path: those edits should NOT
+        //     reach the task branch.
+        //
+        //   - **Managed docs** (`PIPELINE_MANAGED_DOCS`): edited by the task as
+        //     part of its work. We copy worktree → supervising so
+        //     `context.ts` `buildKnownPitfalls()` (which reads from REPO_ROOT)
+        //     sees fresh content on subsequent implement/reroute rounds. We do
+        //     NOT reset the worktree — the worktree's dirty state is what
+        //     autoCommit absorbs into the task branch's implement commit,
+        //     atomically with the rest of the round's code changes. The prior
+        //     implementation reset the worktree, stranding the edits in
+        //     supervising's dirty state and skipping autoCommit (the
+        //     worktree-sync regression that surfaced on canon-self-contained).
+        //     We intentionally avoid committing managed docs from inside this
+        //     sync function: a separate sync-time commit would land on the
+        //     task branch even if autoCommit later aborts on a coverage check,
+        //     breaking phase-rerun atomicity (codex P1 catch on the prior
+        //     iteration of this fix).
+        //
+        //     For managed docs we also bypass the destination-dirty check —
+        //     supervising's dirty state on those paths is our own mirror from
+        //     a prior sync round, not an external manual edit, so the
+        //     worktree's latest content is the right authority.
         for (const relPath of PIPELINE_SHARED_DOCS) {
             if (relPath === 'docs/pipeline-invocations.md') continue;
+            const isManagedDoc = (PIPELINE_MANAGED_DOCS as readonly string[]).includes(relPath);
             const src = path.join(wt, relPath);
             const dest = path.join(REPO_ROOT, relPath);
             if (!fs.existsSync(src)) continue;
             try {
                 if (fs.lstatSync(src).isSymbolicLink()) continue;
 
-                // Per-file dirty check: don't overwrite uncommitted destination changes.
+                // Dirty check.
+                //   Telemetry: skip if dest is dirty — those are independent
+                //     edits we should never overwrite.
+                //   Managed docs: skip only if dest is dirty AND its content
+                //     diverges from the worktree. Matching dirty content is
+                //     our own mirror from a prior sync round (safe to refresh);
+                //     diverging dirty content is an external edit (likely a
+                //     human's manual change in supervising) and must be
+                //     preserved.
                 const dirty = gitSafeAtRaw(REPO_ROOT, 'status', '--porcelain=v1', '-uall', '--', relPath);
                 if (dirty.ok && dirty.stdout.trim()) {
-                    warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has uncommitted changes`);
-                    continue;
+                    if (!isManagedDoc) {
+                        warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has uncommitted changes`);
+                        continue;
+                    }
+                    try {
+                        const sourceContent = fs.readFileSync(src, 'utf8');
+                        const destContent = fs.readFileSync(dest, 'utf8');
+                        if (sourceContent !== destContent) {
+                            warn(`Skipping managed-doc sync for ${taskId} (${relPath}): destination has uncommitted changes that diverge from the worktree (preserving external edits)`);
+                            continue;
+                        }
+                        // Content matches — it's our mirror from a prior round. Fall through to the (now no-op) copy.
+                    } catch {
+                        warn(`Skipping managed-doc sync for ${taskId} (${relPath}): could not compare destination to worktree`);
+                        continue;
+                    }
                 }
 
-                // Per-file ancestry: skip only when destination has file-specific commits
-                // the worktree lacks. Unrelated divergence on other files does not block.
                 if (sourceSHA !== destSHA) {
                     const destAhead = gitSafeAtRaw(wt, 'log', '--oneline', `${sourceSHA}..${destSHA}`, '--', relPath);
                     if (destAhead.ok && destAhead.stdout.trim()) {
@@ -271,7 +320,11 @@ export function syncWorktreeTelemetry(taskIds: string[]): void {
                 if (needsCopy) {
                     fs.copyFileSync(src, dest);
                 }
-                gitSafeAt(wt, 'checkout', 'HEAD', '--', relPath);
+                // Reset only telemetry. Managed docs stay dirty in the worktree
+                // for autoCommit to absorb atomically with the rest of the round.
+                if (!isManagedDoc) {
+                    gitSafeAt(wt, 'checkout', 'HEAD', '--', relPath);
+                }
             } catch {
                 // Non-fatal — flushWorktreeTelemetry runs at --push/--pr/--ship
             }

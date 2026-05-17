@@ -450,7 +450,7 @@ void test('buildHumanReviewStagePaths includes protected docs in the human_revie
     ]);
 });
 
-void test('syncWorktreeTelemetry skips a file when destination has file-specific commits source lacks', () => {
+void test('syncWorktreeTelemetry skips a telemetry file when destination has file-specific commits source lacks', () => {
     withTempDir('run-task-sync-regression-', dir => {
         const repoDir = path.join(dir, 'repo');
         const worktreesRoot = path.join(dir, 'dev-worktrees');
@@ -471,20 +471,20 @@ void test('syncWorktreeTelemetry skips a file when destination has file-specific
         runGit(['config', 'user.email', 'canon@example.com']);
         runGit(['config', 'user.name', 'Canon Bot']);
         fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
-        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'repo v1\n', 'utf8');
-        fs.writeFileSync(path.join(repoDir, 'docs', 'decisions.md'), 'decisions v1\n', 'utf8');
-        runGit(['add', 'docs/architecture.md', 'docs/decisions.md']);
+        fs.writeFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'repo v1\n', 'utf8');
+        fs.writeFileSync(path.join(repoDir, 'docs', 'lessons-learned.md'), 'lessons v1\n', 'utf8');
+        runGit(['add', 'docs/task-quality-log.md', 'docs/lessons-learned.md']);
         runGit(['commit', '-m', 'initial']);
 
         runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
         // worktree updates both files
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'worktree v2\n', 'utf8');
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'decisions.md'), 'decisions v2\n', 'utf8');
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'task-quality-log.md'), 'worktree v2\n', 'utf8');
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'lessons-learned.md'), 'lessons v2\n', 'utf8');
 
-        // repo advances only architecture.md — decisions.md has no new commits
-        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'repo v2\n', 'utf8');
-        runGit(['add', 'docs/architecture.md']);
-        runGit(['commit', '-m', 'repo diverges on architecture.md only']);
+        // repo advances only task-quality-log.md — lessons-learned.md has no new commits
+        fs.writeFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'repo v2\n', 'utf8');
+        runGit(['add', 'docs/task-quality-log.md']);
+        runGit(['commit', '-m', 'repo diverges on task-quality-log.md only']);
 
         try {
             const syncScript = [
@@ -498,11 +498,11 @@ void test('syncWorktreeTelemetry skips a file when destination has file-specific
             }, repoDir);
 
             assert.equal(result.status, 0, result.stderr);
-            // architecture.md skipped — destination has a commit source lacks
-            assert.match(result.stderr, /Skipping shared-doc sync for task-a \(docs\/architecture\.md\)/);
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'repo v2\n');
-            // decisions.md synced — no file-specific divergence
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'decisions.md'), 'utf8'), 'decisions v2\n');
+            // task-quality-log.md skipped — destination has a commit source lacks
+            assert.match(result.stderr, /Skipping shared-doc sync for task-a \(docs\/task-quality-log\.md\)/);
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'utf8'), 'repo v2\n');
+            // lessons-learned.md synced — no file-specific divergence
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'lessons-learned.md'), 'utf8'), 'lessons v2\n');
         } finally {
             spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
                 cwd: repoDir,
@@ -512,7 +512,7 @@ void test('syncWorktreeTelemetry skips a file when destination has file-specific
     });
 });
 
-void test('syncWorktreeTelemetry copies shared docs even when the new content is the same length', () => {
+void test('syncWorktreeTelemetry copies telemetry docs even when the new content is the same length', () => {
     withTempDir('run-task-sync-same-length-', dir => {
         const repoDir = path.join(dir, 'repo');
         const worktreesRoot = path.join(dir, 'dev-worktrees');
@@ -533,12 +533,12 @@ void test('syncWorktreeTelemetry copies shared docs even when the new content is
         runGit(['config', 'user.email', 'canon@example.com']);
         runGit(['config', 'user.name', 'Canon Bot']);
         fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
-        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'alpha beta\n', 'utf8');
-        runGit(['add', 'docs/architecture.md']);
+        fs.writeFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'alpha beta\n', 'utf8');
+        runGit(['add', 'docs/task-quality-log.md']);
         runGit(['commit', '-m', 'initial']);
 
         runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'omega zeta\n', 'utf8');
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'task-quality-log.md'), 'omega zeta\n', 'utf8');
 
         try {
             const syncScript = [
@@ -552,8 +552,157 @@ void test('syncWorktreeTelemetry copies shared docs even when the new content is
             }, repoDir);
 
             assert.equal(result.status, 0, result.stderr);
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'omega zeta\n');
-            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'alpha beta\n');
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'utf8'), 'omega zeta\n');
+            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'task-quality-log.md'), 'utf8'), 'alpha beta\n');
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+                cwd: repoDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('syncWorktreeTelemetry preserves external dirty edits to managed docs in supervising', () => {
+    // P2 guard: when supervising's managed-doc copy is dirty AND the content
+    // diverges from the worktree, that dirty state is NOT our mirror — it's
+    // someone else's edit (human manual change, another tool, etc.). Skip
+    // the sync for that file so we don't silently overwrite external work.
+    // Matching dirty content (our own mirror from prior rounds) still flows
+    // through and gets refreshed; only diverging content is preserved.
+    withTempDir('run-task-sync-managed-divergent-', dir => {
+        const repoDir = path.join(dir, 'repo');
+        const worktreesRoot = path.join(dir, 'dev-worktrees');
+        const worktreeDir = path.join(worktreesRoot, 'task-a');
+        fs.mkdirSync(repoDir, { recursive: true });
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+
+        const runGit = (args: string[], cwd = repoDir): string => {
+            const result = spawnSync('git', args, {
+                cwd,
+                encoding: 'utf8',
+            });
+            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
+            return result.stdout.trim();
+        };
+
+        runGit(['init', '-b', 'main']);
+        runGit(['config', 'user.email', 'canon@example.com']);
+        runGit(['config', 'user.name', 'Canon Bot']);
+        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'arch baseline\n', 'utf8');
+        runGit(['add', 'docs/architecture.md']);
+        runGit(['commit', '-m', 'initial']);
+
+        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
+        // Worktree (task) edits the managed doc one way.
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'arch edited by task\n', 'utf8');
+        // Supervising checkout simulates an EXTERNAL manual edit on the same path
+        // (different content from the worktree's edit).
+        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'arch edited externally by human\n', 'utf8');
+
+        try {
+            const syncScript = [
+                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('');
+            const result = runNodeInline(syncScript, {
+                ...process.env,
+                CANON_WORKTREES_ROOT: worktreesRoot,
+            }, repoDir);
+
+            assert.equal(result.status, 0, result.stderr);
+            // Sync warned about the divergent dirty state.
+            assert.match(result.stderr, /Skipping managed-doc sync for task-a \(docs\/architecture\.md\): destination has uncommitted changes that diverge/);
+            // Supervising's external edit is PRESERVED — we didn't clobber it.
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited externally by human\n');
+            // Worktree's edit also survives — autoCommit will absorb it.
+            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited by task\n');
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+                cwd: repoDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('syncWorktreeTelemetry mirrors managed docs to supervising and keeps worktree edits for autoCommit (no sync-time commit)', () => {
+    // Regression test for the worktree-sync bug hit during the
+    // canon-self-contained task. The prior sync+reset stranded managed-doc
+    // edits in supervising's dirty state and skipped autoCommit. The fix:
+    // copy worktree → supervising (so buildKnownPitfalls() in context.ts
+    // reads fresh content on subsequent rounds) but DO NOT reset the
+    // worktree — autoCommit on the implement phase absorbs those dirty edits
+    // into the task branch's commit atomically with the rest of the round's
+    // changes. We deliberately do NOT commit from inside sync: a sync-time
+    // commit would survive an autoCommit abort and corrupt rerun semantics.
+    withTempDir('run-task-sync-managed-docs-', dir => {
+        const repoDir = path.join(dir, 'repo');
+        const worktreesRoot = path.join(dir, 'dev-worktrees');
+        const worktreeDir = path.join(worktreesRoot, 'task-a');
+        fs.mkdirSync(repoDir, { recursive: true });
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+
+        const runGit = (args: string[], cwd = repoDir): string => {
+            const result = spawnSync('git', args, {
+                cwd,
+                encoding: 'utf8',
+            });
+            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
+            return result.stdout.trim();
+        };
+
+        runGit(['init', '-b', 'main']);
+        runGit(['config', 'user.email', 'canon@example.com']);
+        runGit(['config', 'user.name', 'Canon Bot']);
+        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'arch baseline\n', 'utf8');
+        fs.writeFileSync(path.join(repoDir, 'docs', 'codebase-map.md'), 'map baseline\n', 'utf8');
+        fs.writeFileSync(path.join(repoDir, 'docs', 'patterns.md'), 'patterns baseline\n', 'utf8');
+        runGit(['add', 'docs/architecture.md', 'docs/codebase-map.md', 'docs/patterns.md']);
+        runGit(['commit', '-m', 'initial']);
+        const baselineHead = runGit(['rev-parse', 'HEAD']);
+
+        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
+        // Codex-style edits to managed docs in the worktree
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'arch edited by task\n', 'utf8');
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'codebase-map.md'), 'map edited by task\n', 'utf8');
+        fs.writeFileSync(path.join(worktreeDir, 'docs', 'patterns.md'), 'patterns edited by task\n', 'utf8');
+
+        try {
+            const syncScript = [
+                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('');
+            const result = runNodeInline(syncScript, {
+                ...process.env,
+                CANON_WORKTREES_ROOT: worktreesRoot,
+            }, repoDir);
+
+            assert.equal(result.status, 0, result.stderr);
+            // Worktree's files retain the edits.
+            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited by task\n');
+            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'codebase-map.md'), 'utf8'), 'map edited by task\n');
+            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'patterns.md'), 'utf8'), 'patterns edited by task\n');
+            // Worktree stays DIRTY for autoCommit to absorb.
+            const wtStatus = spawnSync('git', ['status', '--porcelain=v1', '--', 'docs/'], {
+                cwd: worktreeDir, encoding: 'utf8',
+            });
+            const dirtyDocs = wtStatus.stdout
+                .split('\n')
+                .map(l => l.slice(3).trim())
+                .filter(p => p === 'docs/architecture.md' || p === 'docs/codebase-map.md' || p === 'docs/patterns.md');
+            assert.equal(dirtyDocs.length, 3, `worktree should be dirty on all 3 managed docs, got: ${wtStatus.stdout}`);
+            // No sync-time commit landed on the task branch (atomicity guarantee).
+            const wtHead = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: worktreeDir, encoding: 'utf8' });
+            assert.equal(wtHead.stdout.trim(), baselineHead, 'sync must not commit on the task branch — autoCommit handles that');
+            // Supervising checkout's working tree mirrors the worktree — keeps buildKnownPitfalls fresh.
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited by task\n');
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'codebase-map.md'), 'utf8'), 'map edited by task\n');
+            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'patterns.md'), 'utf8'), 'patterns edited by task\n');
         } finally {
             spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
                 cwd: repoDir,
