@@ -17,7 +17,14 @@ const EXPECTED_TEMPLATES = [
 ];
 
 // Canon's recommended .claude/settings.json permissions.allow entries.
-// Kept in sync with README's "Skip the permission prompts" block.
+// Kept in sync with README's "Skip the permission prompts" block — the
+// `README "Skip the permission prompts" allowlist matches RECOMMENDED_ALLOW`
+// test in tests/cli.test.ts will fail CI if these drift apart.
+//
+// Most entries are for *pipeline composition* — Claude prefers its built-in
+// Read / Glob / Grep tools for raw file reads and codebase search; bash
+// equivalents (`cat`, `head`, `grep`, etc.) are only reached for when
+// commands need to be chained (e.g., `cat foo.json | jq '.bar'`).
 export const RECOMMENDED_ALLOW = [
     'Bash(git *)',
     'Bash(gh *)',
@@ -25,8 +32,30 @@ export const RECOMMENDED_ALLOW = [
     'Bash(awk *)',
     'Bash(ls *)',
     'Bash(find *)',
+    'Bash(cat *)',
+    'Bash(head *)',
+    'Bash(tail *)',
+    'Bash(grep *)',
+    'Bash(wc *)',
+    'Bash(echo *)',
+    'Bash(tr *)',
+    'Bash(xargs *)',
+    'Bash(tee *)',
+    'Bash(jq *)',
     'Bash(npm run *)',
+    // Both bare and `*`-suffixed forms are required: Claude Code's `Bash(npm
+    // test *)` pattern matches `npm test --watch` etc. but does not match
+    // bare `npm test` (no trailing space for the glob to consume). Bare and
+    // flagged forms are both common — CI runs `npm test` bare and
+    // `npm audit --omit=dev` flagged.
+    'Bash(npm test)',
+    'Bash(npm test *)',
+    'Bash(npm audit)',
+    'Bash(npm audit *)',
+    'Bash(npm ci)',
+    'Bash(npm ci *)',
     'Bash(npx canon *)',
+    'Bash(npx tsc *)',
     'Bash(canon *)',
     'Bash(codex *)',
     'Skill(canon-init)',

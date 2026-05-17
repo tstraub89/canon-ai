@@ -90,8 +90,7 @@ The tier is set by the largest task in the run. Task size is set in `status.json
 **Fast tier** (all tasks S, non-delicate):
 ```
 Claude writes spec+plan → [human spec gate] → Codex implements →
-Orchestrator runtime validation → Claude reviews code ↔ Codex iterates →
-Claude writes QA summary → Human tests
+Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human tests
 ```
 
 - Spec and plan are written in one Claude session.
@@ -101,13 +100,15 @@ Claude writes QA summary → Human tests
 **Full tier** (any task M, L, XL, or `delicate`):
 ```
 Claude writes spec → Codex reviews spec → [human spec gate] → Claude writes plan →
-Codex implements → Orchestrator runtime validation → Claude reviews code ↔
-Codex iterates → Claude writes QA summary → Human tests
+Codex implements → Claude reviews code ↔ Codex iterates →
+Claude writes QA summary → Human tests
 ```
 
 - Spec and plan are written in separate Claude sessions.
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe.
 - Codex model/effort scales with effective size (matrix below).
+
+**Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
 **Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement.
 

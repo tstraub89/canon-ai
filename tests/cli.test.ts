@@ -735,3 +735,72 @@ void test('runUpgrade: real templates dir produces valid merged CLAUDE.md', () =
         assert.ok(result.includes('## Adopter Section'), 'project tail preserved');
     });
 });
+
+// ── README / doctor allowlist drift ──────────────────────────────────────────
+
+void test('README "Skip the permission prompts" allowlist matches RECOMMENDED_ALLOW', () => {
+    const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const blockMatch = readme.match(
+        /### Skip the permission prompts[\s\S]*?```json\n([\s\S]*?)\n```/,
+    );
+    assert.ok(blockMatch, 'README "Skip the permission prompts" json block not found');
+    const parsed: unknown = JSON.parse(blockMatch[1]);
+    if (
+        typeof parsed !== 'object' || parsed === null ||
+        typeof (parsed as { permissions?: unknown }).permissions !== 'object'
+    ) {
+        throw new Error('README json block missing permissions object');
+    }
+    const allow = (parsed as { permissions: { allow?: unknown } }).permissions.allow;
+    assert.ok(Array.isArray(allow), 'README permissions.allow must be an array');
+    const allowStrings = allow.map(entry => {
+        if (typeof entry !== 'string') {
+            throw new Error('README permissions.allow contained a non-string entry');
+        }
+        return entry;
+    });
+    assert.deepEqual(
+        [...allowStrings].sort(),
+        [...RECOMMENDED_ALLOW].sort(),
+        'README allowlist drifted from RECOMMENDED_ALLOW (src/cli/commands/doctor.ts)',
+    );
+});
+
+// ── Retired-phase drift in shipped docs ──────────────────────────────────────
+
+// Add to this list whenever an orchestrator phase is retired. The test below
+// guards against retired phase names slipping back into operational docs.
+// Phrasings we don't want anywhere — both the snake_case key and the
+// human-prose form that appeared in the old tier diagrams.
+const RETIRED_PHASE_TOKENS = ['runtime_validation', 'Orchestrator runtime validation'];
+
+// Operational docs the test scans. These describe how the pipeline operates
+// today; retired phase names must not appear here. Historical / supersession
+// records (`decisions.md`, `lessons-learned.md`, `BACKLOG.md`, `CHANGELOG.md`)
+// are intentionally excluded — they describe *why* the phase was retired and
+// must reference it by name.
+const OPERATIONAL_DOCS = [
+    'AGENTS.md',
+    'CLAUDE.md',
+    'CODEX.md',
+    'docs/pipeline-orchestrator.md',
+    'templates/AGENTS.md',
+    'templates/CLAUDE.md',
+    'templates/CODEX.md',
+    'templates/docs/pipeline-orchestrator.md',
+];
+
+void test('operational docs do not mention retired phase names', () => {
+    for (const rel of OPERATIONAL_DOCS) {
+        // Case-insensitive comparison catches capitalization variants like
+        // "orchestrator runtime validation" or "Orchestrator Runtime Validation"
+        // that would slip past a literal substring check.
+        const content = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8').toLowerCase();
+        for (const token of RETIRED_PHASE_TOKENS) {
+            assert.ok(
+                !content.includes(token.toLowerCase()),
+                `${rel} mentions retired phase token "${token}" — remove or update the diagram/reference`,
+            );
+        }
+    }
+});

@@ -71,8 +71,30 @@ var RECOMMENDED_ALLOW = [
   "Bash(awk *)",
   "Bash(ls *)",
   "Bash(find *)",
+  "Bash(cat *)",
+  "Bash(head *)",
+  "Bash(tail *)",
+  "Bash(grep *)",
+  "Bash(wc *)",
+  "Bash(echo *)",
+  "Bash(tr *)",
+  "Bash(xargs *)",
+  "Bash(tee *)",
+  "Bash(jq *)",
   "Bash(npm run *)",
+  // Both bare and `*`-suffixed forms are required: Claude Code's `Bash(npm
+  // test *)` pattern matches `npm test --watch` etc. but does not match
+  // bare `npm test` (no trailing space for the glob to consume). Bare and
+  // flagged forms are both common — CI runs `npm test` bare and
+  // `npm audit --omit=dev` flagged.
+  "Bash(npm test)",
+  "Bash(npm test *)",
+  "Bash(npm audit)",
+  "Bash(npm audit *)",
+  "Bash(npm ci)",
+  "Bash(npm ci *)",
   "Bash(npx canon *)",
+  "Bash(npx tsc *)",
   "Bash(canon *)",
   "Bash(codex *)",
   "Skill(canon-init)",
