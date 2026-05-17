@@ -543,6 +543,7 @@ function syncWorktreeTelemetry(taskIds) {
     const destSHA = destHead.stdout.trim();
     for (const relPath of PIPELINE_SHARED_DOCS) {
       if (relPath === "docs/pipeline-invocations.md") continue;
+      const isManagedDoc = PIPELINE_MANAGED_DOCS.includes(relPath);
       const src = path3.join(wt, relPath);
       const dest = path3.join(REPO_ROOT, relPath);
       if (!fs3.existsSync(src)) continue;
@@ -550,8 +551,21 @@ function syncWorktreeTelemetry(taskIds) {
         if (fs3.lstatSync(src).isSymbolicLink()) continue;
         const dirty = gitSafeAtRaw(REPO_ROOT, "status", "--porcelain=v1", "-uall", "--", relPath);
         if (dirty.ok && dirty.stdout.trim()) {
-          warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has uncommitted changes`);
-          continue;
+          if (!isManagedDoc) {
+            warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has uncommitted changes`);
+            continue;
+          }
+          try {
+            const sourceContent = fs3.readFileSync(src, "utf8");
+            const destContent = fs3.readFileSync(dest, "utf8");
+            if (sourceContent !== destContent) {
+              warn(`Skipping managed-doc sync for ${taskId} (${relPath}): destination has uncommitted changes that diverge from the worktree (preserving external edits)`);
+              continue;
+            }
+          } catch {
+            warn(`Skipping managed-doc sync for ${taskId} (${relPath}): could not compare destination to worktree`);
+            continue;
+          }
         }
         if (sourceSHA !== destSHA) {
           const destAhead = gitSafeAtRaw(wt, "log", "--oneline", `${sourceSHA}..${destSHA}`, "--", relPath);
@@ -569,7 +583,9 @@ function syncWorktreeTelemetry(taskIds) {
         if (needsCopy) {
           fs3.copyFileSync(src, dest);
         }
-        gitSafeAt(wt, "checkout", "HEAD", "--", relPath);
+        if (!isManagedDoc) {
+          gitSafeAt(wt, "checkout", "HEAD", "--", relPath);
+        }
       } catch {
       }
     }
