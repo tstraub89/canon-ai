@@ -8,11 +8,11 @@ For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skil
 
 ## Operator
 
-The operator is the session a human drives canon from — writes specs conversationally for fast-tier tasks, invokes `run-task.ts`, monitors pipeline progress, decides next moves.
+The operator is the session a human drives canon from — writes specs conversationally for fast-tier tasks, invokes `canon run`, monitors pipeline progress, decides next moves.
 
-Canon is designed for **Claude Code (or a human shell) as operator**. Pipeline-phase agents (Claude and Codex sessions spawned by `run-task.ts` for `spec_review` / `plan` / `implement` / `code_review` / `qa`) are independent sessions and never invoke the orchestrator themselves.
+Canon is designed for **Claude Code (or a human shell) as operator**. Pipeline-phase agents (Claude and Codex sessions spawned by the orchestrator for `spec_review` / `plan` / `implement` / `code_review` / `qa`) are independent sessions and never invoke the pipeline themselves.
 
-Codex can technically operate canon — it has shell access to run `run-task.ts` — but canon was not designed for this. Codex CLI's session model is optimized for execution tasks, not the extended coordination across phases that operating canon requires. Using Codex as operator also pushes Codex toward conversational tasks (spec drafting, multi-turn discussion with the human) that canon assigns to Claude; once that line blurs, cross-model independence erodes operationally even if it survives technically. The likely outcome is worse, not better, output.
+Codex can technically operate canon — it has shell access to run `canon run` — but canon was not designed for this. Codex CLI's session model is optimized for execution tasks, not the extended coordination across phases that operating canon requires. Using Codex as operator also pushes Codex toward conversational tasks (spec drafting, multi-turn discussion with the human) that canon assigns to Claude; once that line blurs, cross-model independence erodes operationally even if it survives technically. The likely outcome is worse, not better, output.
 
 If you find yourself wanting Codex as operator, use Claude Code instead and lean on Codex for the phases canon assigns to it (spec review, implementation, code review). That's canon's intended division of labor.
 
@@ -109,9 +109,9 @@ Codex iterates → Claude writes QA summary → Human tests
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe.
 - Codex model/effort scales with effective size (matrix below).
 
-**Bundle mode**: Pass multiple task IDs to `run-task.ts`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement.
 
-**One pipeline at a time**: Run only one task or bundle through `run-task.ts` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
+**One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
 
 ## Task Sizing Fields
 
@@ -123,7 +123,7 @@ Set in `status.json` at task creation:
 | `delicate` | `true \| false` | Forces the XL bucket (full Codex model, xhigh implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | Pauses the pipeline after `spec_review` for human review before planning (default: `true`). |
 | `worktree` | `true \| false` | Opt-in worktree isolation (default: absent/false). See Worktree Isolation below. |
-| `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `task.sh new` from the current git checkout at task creation. |
+| `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `canon task new` from the current git checkout at task creation. |
 
 ### Task sizing guide
 

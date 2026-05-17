@@ -48,7 +48,7 @@ canon run <task-id>
 Add `--step --expect <phase>` if you want one phase at a time with a guard. Add `MAX_REVIEW_LOOPS=N` when the default loop cap is too low for a complex spec.
 
 **Pre-flight before kicking off:**
-- Working tree is clean — commit or stash any pending edits. `run-task.ts` auto-commits task artifacts but will not touch source files outside `handoff.md`'s Changes table.
+- Working tree is clean — commit or stash any pending edits. The orchestrator auto-commits task artifacts but will not touch source files outside `handoff.md`'s Changes table.
 - `tasks/<id>/status.json`: `task_size`, `delicate`, `human_spec_gate`, `worktree` set correctly.
 - **Fast-tier (S, non-delicate)**: spec + plan written, `phases.spec_review = { "status": "done", "verdict": "approved" }`, `phases.plan.status = "done"`, `human_spec_gate = false`.
 - **Full-tier (M/L/XL/delicate)**: spec written, `phases.spec.status = "done"`, `phases.spec_review.status = "pending"`.

@@ -56,7 +56,7 @@ Claude writes QA summary → Human tests
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe. Silence is the default — a real shape concern becomes the lead reason for `changes_requested`; no concern leaves the section empty and review proceeds.
 - Codex model/effort scales with effective size: M gets mini at medium effort (low-cost sanity check), L gets mini at high, XL/delicate gets the full model at high (spec review) or xhigh (implement).
 
-**Bundle mode**: Pass multiple task IDs to `run-task.ts`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review changes_requested, the whole bundle reroutes to implement.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review changes_requested, the whole bundle reroutes to implement.
 
 **Conversational spec authorship**: Specs for emergent tasks are often written conversationally with Claude rather than through the pipeline's spec phase. Manually mark spec (and plan if written together) as done in `status.json`, then run the pipeline — it picks up from the current phase.
 
