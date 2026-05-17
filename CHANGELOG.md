@@ -2,6 +2,28 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.1.0] — 2026-05-17
+
+### Fixed
+
+- **`npm install -g github:tstraub89/canon-ai` now works reliably — the definitive fix.** 1.0.1's `prepare: "tsup"` failed because npm 11's `pacote` git-source prep doesn't reliably install devDeps before firing the prepare hook ([npm/cli#8440](https://github.com/npm/cli/issues/8440)). 1.0.2 committed `dist/` so the prepare hook wasn't needed, but exposed a *second* failure mode: `esbuild`'s native postinstall — a transitive dep via canon's runtime `tsx` dependency — hit `spawn sh ENOENT` during `npm install -g`. 1.1.0 fixes it at the root: the entire `tsx → esbuild → native-postinstall` chain is removed from the adopter's runtime dep graph. No native postinstalls in the install graph = no postinstall-script bugs from npm. The canon-self-contained refactor below describes how. See [PR #58](https://github.com/tstraub89/canon-ai/pull/58).
+- **`syncWorktreeTelemetry` no longer strands managed-doc edits on the task author.** The function was copying AND resetting the worktree path for every file in `PIPELINE_SHARED_DOCS` — correct for auto-appended telemetry, wrong for managed docs (`docs/architecture.md`, `docs/codebase-map.md`, `docs/patterns.md`, etc.) that a task INTENDS to edit on its own branch. Those edits were mirrored into supervising's dirty state and skipped from autoCommit, surfacing as auto-commit coverage failures. Fixed: only telemetry resets; managed docs stay dirty in the worktree for autoCommit to absorb atomically. A divergence guard preserves external manual edits in supervising. Surfaced and fixed during the canon-self-contained pipeline run.
+- **CI's `npm install -g` verify step now uses `--install-links`.** Without it, npm symlinks the global install to the git cache and the `canon` bin symlink ends up command-not-found despite the install reporting success.
+
+### Changed
+
+- **canon is self-contained at runtime.** Adopters' runtime requirements drop from `{node, git, bash, jq}` (plus the `tsx → esbuild` chain) to just `{node, git}`. The 693-line `scripts/task.sh` bash+jq helper becomes `src/task/index.ts` (in-process TS, same `canon task` subcommands and semantics). The orchestrator compiles to `dist/scripts/run-task.js` via tsup; prompt templates inline as static build-time imports. The shipped install surface is `dist/` + `templates/` + `CHANGELOG.md` (no `.ts` source, no shell scripts, no README image assets).
+- **`canon run <id>` spawns `node dist/scripts/run-task.js`** instead of `tsx scripts/run-task.ts`. The dogfood path for canon-ai contributors is `npm run build && canon run <id>`.
+
+### Removed
+
+- **`scripts/task.sh`** (693 lines of bash+jq) — replaced by `src/task/index.ts`. Same `canon task` API.
+- **`scripts/run-task/task-sh.ts`** — orchestrator phase handlers call the new TS task module directly.
+- **`jq` hard dependency** — `canon init` and `canon doctor` no longer require it.
+- **`scripts/` and `public/` from `package.json` `files`** — not installed by adopters anymore.
+- **`tsx` from `dependencies`** — moved to `devDependencies`. Not in adopters' runtime install graph.
+- **`npm run-task` dev shortcut** — removed. Use `npm run build && canon run <id>`.
+
 ## [1.0.2] — 2026-05-16
 
 ### Fixed
