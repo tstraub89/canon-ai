@@ -29,6 +29,10 @@ const CANON_OWNED = [
     '.canon/templates/review.md',
     '.canon/templates/done.md',
     '.canon/templates/notes.md',
+    // Pure canon documentation — adopters don't customize. Listed here so future
+    // canon releases (post-1.1.x reframes etc.) flow through `canon upgrade`
+    // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
+    'docs/pipeline-orchestrator.md',
 ];
 
 export function mergeDelimited(templateContent: string, projectContent: string): string | null {

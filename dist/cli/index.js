@@ -142,7 +142,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.1.1";
+  const installedVersion = "1.1.2";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -384,7 +384,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.1.1";
+  const version = "1.1.2";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -1579,7 +1579,11 @@ var CANON_OWNED = [
   ".canon/templates/spec-review.md",
   ".canon/templates/review.md",
   ".canon/templates/done.md",
-  ".canon/templates/notes.md"
+  ".canon/templates/notes.md",
+  // Pure canon documentation — adopters don't customize. Listed here so future
+  // canon releases (post-1.1.x reframes etc.) flow through `canon upgrade`
+  // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
+  "docs/pipeline-orchestrator.md"
 ];
 function mergeDelimited(templateContent, projectContent) {
   if (!CANON_START_RE2.test(templateContent)) return null;
@@ -1635,7 +1639,7 @@ function runUpgrade(cwd, pkgDir) {
     upgraded.push(rel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.1.1";
+  const newVersion = "1.1.2";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     mkdirSync2(dirname4(versionPath), { recursive: true });
@@ -1739,7 +1743,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.1.1");
+  console.log("1.1.2");
 }
 switch (command) {
   case "doctor":
