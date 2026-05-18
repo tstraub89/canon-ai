@@ -41,6 +41,7 @@ The QA phase appends a row at the end of every task. The product owner reviews t
 | 2026-05-16 | retire-runtime-validation | L delicate | approved_with_nits | 4 (3 changes_requested) | 1 | 0 | 0 | No | 4 spec-review rounds to resolve allow-list scope (grep-discovered historical telemetry + archived tasks) and template-mirror details; clean single-pass implementation; delicate self-modification — pipeline retires itself via worktree isolation. |
 | 2026-05-16 | canon-self-contained | L delicate | approved | 1 | 1 | 0 | 0 | No | Clean single-pass; 27 ACs, 42 files changed, 693-line bash port. Worktree-sync bug silently dropped 3 doc files from main commit — recovered in follow-up commit; post-commit coverage check correctly flagged the miss. |
 | 2026-05-17 | claude-min-version | S | approved (human fast-tier) | 1 | 1 | 0 | 0 | No | Clean first pass; bespoke spawn wrapper deviation documented in handoff (needed for stderr capture on interactive path). Single cosmetic nit in dist artifact path comment — not blocking. |
+| 2026-05-18 | pr-at-complete | S | approved | 1 | 1 | 0 | 0 | No | Clean single-pass; code review approved_with_nits (no iteration); Codex used subprocess-level tests instead of unit-testing runPhase() — valid implementer's call documented in handoff. |
 
 ---
 

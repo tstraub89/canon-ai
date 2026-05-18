@@ -4002,6 +4002,72 @@ function createDraftPRForTask(taskIds, branchName) {
   }
   info2(`Draft PR created: ${prResult.stdout || branchName}`);
 }
+function formatExistingPRMessage(prNum, prUrl) {
+  return `Existing draft PR: #${prNum} (${prUrl})`;
+}
+function parseOriginRepoSlug(remoteUrl) {
+  const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
+  return match?.[1] ?? null;
+}
+function lookupPRUrl(prNum) {
+  if (ghAvailable) {
+    const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "url", "--jq", ".url"]);
+    if (result.ok && result.stdout.trim()) return result.stdout.trim();
+  }
+  const remoteResult = runCommand("git", ["remote", "get-url", "origin"]);
+  if (remoteResult.ok) {
+    const repoSlug = parseOriginRepoSlug(remoteResult.stdout);
+    if (repoSlug) return `https://github.com/${repoSlug}/pull/${prNum}`;
+  }
+  return `(PR #${prNum})`;
+}
+function formatCompleteStateBanner(taskIds, state) {
+  const body = (() => {
+    switch (state.kind) {
+      case "open_pr":
+        return `  Open PR: #${state.prNum} (${state.prUrl})
+  Next:    \`canon run ${taskIds.join(" ")} --ship\` to merge + archive.`;
+      case "pushed_no_pr":
+        return `  Branch ${state.branch} is on origin but no open PR.
+  Next:    \`canon run ${taskIds.join(" ")} --pr\` to (re)open the draft PR, or
+           \`canon run ${taskIds.join(" ")} --ship\` if the work is already merged to ${state.baseBranch}.`;
+      case "unpushed":
+        return `  Local branch ${state.branch} is not on origin.
+  Next:    \`canon run ${taskIds.join(" ")} --pr\` to push and open a draft PR.
+           (For a no-PR flow: merge to ${state.baseBranch} manually, push, then run --ship.)`;
+    }
+  })();
+  return [
+    "",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  TASK COMPLETE \u2014 already past human_review.",
+    "",
+    body,
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    ""
+  ].join("\n");
+}
+function inspectCompleteState(branch, taskIds) {
+  const baseBranch = getBaseBranch(taskIds);
+  const remoteExists = gitSafeAt2(REPO_ROOT2, "rev-parse", "--verify", `origin/${branch}`).ok;
+  if (!remoteExists) {
+    return { kind: "unpushed", branch, baseBranch };
+  }
+  const prNum = ghAvailable ? findOpenPRNumber(branch) : null;
+  if (prNum === null) {
+    return { kind: "pushed_no_pr", branch, baseBranch };
+  }
+  const prUrl = lookupPRUrl(prNum);
+  return { kind: "open_pr", branch, prNum, prUrl };
+}
+function printCompleteStateBanner(taskIds) {
+  const branches = [...new Set(taskIds.map((id) => resolveTaskBranchName(id)))];
+  for (const branch of branches) {
+    const tasksOnBranch = taskIds.filter((id) => resolveTaskBranchName(id) === branch);
+    const state = inspectCompleteState(branch, tasksOnBranch);
+    console.log(formatCompleteStateBanner(tasksOnBranch, state));
+  }
+}
 function commitHumanReviewFiles(taskIds, cwd) {
   mirrorHumanReviewDocsToCwd(cwd);
   const dirtyResult = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall");
@@ -4009,17 +4075,25 @@ function commitHumanReviewFiles(taskIds, cwd) {
     die2(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || "unknown error"}`);
   }
   const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
-  if (dirtyEntries.length === 0 && cliArgs.pr) {
+  if (dirtyEntries.length === 0 && (cliArgs.pr || cliArgs.push)) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
-      const remoteRef = gitSafeAt2(cwd, "rev-parse", "--verify", `origin/${branchName2}`);
-      const openPR = ghAvailable ? findOpenPRNumber(branchName2) : null;
-      if (remoteRef.ok && openPR === null) {
-        info2(`--pr retry detected: tree clean, branch ${branchName2} on origin, no open PR. Creating PR only.`);
-        createDraftPRForTask(taskIds, branchName2);
+      const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName2) : null;
+      if (cliArgs.pr && openPR !== null) {
+        const prUrl = lookupPRUrl(openPR);
+        info2(formatExistingPRMessage(openPR, prUrl));
         return;
       }
+      info2(`Clean tree. Pushing ${branchName2}...`);
+      const pushResult2 = gitSafeAt2(cwd, "push", "origin", branchName2);
+      if (!pushResult2.ok) {
+        die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
+      }
+      if (cliArgs.pr) {
+        createDraftPRForTask(taskIds, branchName2);
+      }
+      return;
     }
   }
   if (dirtyEntries.length === 0) {
@@ -4485,6 +4559,16 @@ async function runPhase(phase, state) {
     console.log("  Re-run with --push to commit task artifacts and push, or --pr to also create a draft PR.");
     console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
     console.log("");
+    process.exit(0);
+  }
+  if (phase === "complete") {
+    const taskIds2 = tasks.map((t) => t.taskId);
+    if (cliArgs.push || cliArgs.pr) {
+      const cwd = getActiveCwd(taskIds2);
+      commitHumanReviewFiles(taskIds2, cwd);
+      process.exit(0);
+    }
+    printCompleteStateBanner(taskIds2);
     process.exit(0);
   }
   die2(`Unknown phase: ${String(phase)}`);

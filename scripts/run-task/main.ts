@@ -519,6 +519,80 @@ function createDraftPRForTask(taskIds: string[], branchName: string): void {
     info(`Draft PR created: ${prResult.stdout || branchName}`);
 }
 
+export function formatExistingPRMessage(prNum: number, prUrl: string): string {
+    return `Existing draft PR: #${prNum} (${prUrl})`;
+}
+
+function parseOriginRepoSlug(remoteUrl: string): string | null {
+    const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
+    return match?.[1] ?? null;
+}
+
+function lookupPRUrl(prNum: number): string {
+    if (ghAvailable) {
+        const result = splitGit.runCommand('gh', ['pr', 'view', String(prNum), '--json', 'url', '--jq', '.url']);
+        if (result.ok && result.stdout.trim()) return result.stdout.trim();
+    }
+
+    const remoteResult = splitGit.runCommand('git', ['remote', 'get-url', 'origin']);
+    if (remoteResult.ok) {
+        const repoSlug = parseOriginRepoSlug(remoteResult.stdout);
+        if (repoSlug) return `https://github.com/${repoSlug}/pull/${prNum}`;
+    }
+
+    return `(PR #${prNum})`;
+}
+
+export type CompleteState =
+    | { kind: 'open_pr'; branch: string; prNum: number; prUrl: string }
+    | { kind: 'pushed_no_pr'; branch: string; baseBranch: string }
+    | { kind: 'unpushed'; branch: string; baseBranch: string };
+
+export function formatCompleteStateBanner(taskIds: string[], state: CompleteState): string {
+    const body = (() => {
+        switch (state.kind) {
+            case 'open_pr':
+                return `  Open PR: #${state.prNum} (${state.prUrl})\n  Next:    \`canon run ${taskIds.join(' ')} --ship\` to merge + archive.`;
+            case 'pushed_no_pr':
+                return `  Branch ${state.branch} is on origin but no open PR.\n  Next:    \`canon run ${taskIds.join(' ')} --pr\` to (re)open the draft PR, or\n           \`canon run ${taskIds.join(' ')} --ship\` if the work is already merged to ${state.baseBranch}.`;
+            case 'unpushed':
+                return `  Local branch ${state.branch} is not on origin.\n  Next:    \`canon run ${taskIds.join(' ')} --pr\` to push and open a draft PR.\n           (For a no-PR flow: merge to ${state.baseBranch} manually, push, then run --ship.)`;
+        }
+    })();
+    return [
+        '',
+        '════════════════════════════════════════════════════════',
+        '  TASK COMPLETE — already past human_review.',
+        '',
+        body,
+        '════════════════════════════════════════════════════════',
+        '',
+    ].join('\n');
+}
+
+function inspectCompleteState(branch: string, taskIds: string[]): CompleteState {
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const remoteExists = gitSafeAt(REPO_ROOT, 'rev-parse', '--verify', `origin/${branch}`).ok;
+    if (!remoteExists) {
+        return { kind: 'unpushed', branch, baseBranch };
+    }
+    const prNum = ghAvailable ? findOpenPRNumber(branch) : null;
+    if (prNum === null) {
+        return { kind: 'pushed_no_pr', branch, baseBranch };
+    }
+    const prUrl = lookupPRUrl(prNum);
+    return { kind: 'open_pr', branch, prNum, prUrl };
+}
+
+function printCompleteStateBanner(taskIds: string[]): void {
+    const branches = [...new Set(taskIds.map(id => resolveTaskBranchName(id)))];
+    for (const branch of branches) {
+        const tasksOnBranch = taskIds.filter(id => resolveTaskBranchName(id) === branch);
+        const state = inspectCompleteState(branch, tasksOnBranch);
+        console.log(formatCompleteStateBanner(tasksOnBranch, state));
+    }
+}
+
 function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
     mirrorHumanReviewDocsToCwd(cwd);
 
@@ -534,17 +608,39 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
     // --pr run where commit+push succeeded but `gh pr create` failed
     // transiently (network, rate limit). Skip the commit step and re-attempt
     // PR creation only. Caught via canon-ai PR #39 CodeRabbit finding #1.
-    if (dirtyEntries.length === 0 && cliArgs.pr) {
+    if (dirtyEntries.length === 0 && (cliArgs.pr || cliArgs.push)) {
         const branchResult = gitSafeAt(cwd, 'rev-parse', '--abbrev-ref', 'HEAD');
         const branchName = branchResult.ok ? branchResult.stdout.trim() : '';
         if (branchName) {
-            const remoteRef = gitSafeAt(cwd, 'rev-parse', '--verify', `origin/${branchName}`);
-            const openPR = ghAvailable ? findOpenPRNumber(branchName) : null;
-            if (remoteRef.ok && openPR === null) {
-                info(`--pr retry detected: tree clean, branch ${branchName} on origin, no open PR. Creating PR only.`);
-                createDraftPRForTask(taskIds, branchName);
+            // For --pr: gh-authoritative PR check first. gh sees the
+            // origin-side state directly and is robust to stale local
+            // remote-tracking refs. An existing open PR wins regardless of
+            // whether `origin/<branch>` looks fresh locally.
+            // (Prevents the duplicate-PR-create regression; PR #75 iter 1.)
+            const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName) : null;
+            if (cliArgs.pr && openPR !== null) {
+                const prUrl = lookupPRUrl(openPR);
+                info(formatExistingPRMessage(openPR, prUrl));
                 return;
             }
+
+            // Otherwise (no existing PR for --pr, or --push at all): always
+            // push. `git push` is idempotent — no-op when origin already
+            // has the local tip, pushes the difference otherwise. We do
+            // NOT short-circuit on `git rev-parse origin/<branch>` because
+            // the local remote-tracking ref can be stale (a prior push
+            // failed mid-flight, or refs were never fetched). Letting
+            // git push run is the safe default.
+            // (Spec ACs 1+3, complete-state banner contract; PR #75 iter 2.)
+            info(`Clean tree. Pushing ${branchName}...`);
+            const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
+            if (!pushResult.ok) {
+                die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
+            }
+            if (cliArgs.pr) {
+                createDraftPRForTask(taskIds, branchName);
+            }
+            return;
         }
     }
 
@@ -1241,7 +1337,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     if ((phase as Phase) === 'qa') {
         return runQaPhase(state, cliArgs.interactive);
     }
-    if ((phase as Phase) === 'human_review') {
+    if (phase === 'human_review') {
         const taskIds = tasks.map(t => t.taskId);
         if (cliArgs.push || cliArgs.pr) {
             const cwd = splitWorktree.getActiveCwd(taskIds);
@@ -1261,6 +1357,17 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
         console.log('  Re-run with --push to commit task artifacts and push, or --pr to also create a draft PR.');
         console.log('════════════════════════════════════════════════════════');
         console.log('');
+        process.exit(0);
+    }
+    if (phase === 'complete') {
+        const taskIds = tasks.map(t => t.taskId);
+        if (cliArgs.push || cliArgs.pr) {
+            const cwd = splitWorktree.getActiveCwd(taskIds);
+            commitHumanReviewFiles(taskIds, cwd);
+            process.exit(0);
+        }
+
+        printCompleteStateBanner(taskIds);
         process.exit(0);
     }
 

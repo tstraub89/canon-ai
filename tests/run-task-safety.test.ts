@@ -7,7 +7,11 @@ import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 import { REPO_ROOT } from '../scripts/run-task/env.js';
-import { buildHumanReviewStagePaths } from '../scripts/run-task/main.js';
+import {
+    buildHumanReviewStagePaths,
+    formatCompleteStateBanner,
+    formatExistingPRMessage,
+} from '../scripts/run-task/main.js';
 import { ensureBranch, ensureCheckedOutBaseBranch } from '../scripts/run-task/git.js';
 import { commitArchiveChanges } from '../scripts/run-task/main.js';
 import { resolveTaskCwd } from '../scripts/run-task/state.js';
@@ -29,6 +33,10 @@ function writeTaskStatus(tasksRoot: string, taskId: string, status: Record<strin
     fs.writeFileSync(path.join(taskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
 }
 
+function writeExecutable(scriptDir: string, name: string, body: string[]): void {
+    fs.writeFileSync(path.join(scriptDir, name), ['#!/bin/sh', 'set -eu', ...body, ''].join('\n'), { mode: 0o755 });
+}
+
 function setupFakeGit(scriptDir: string): void {
     const gitPath = path.join(scriptDir, 'git');
     fs.writeFileSync(gitPath, [
@@ -37,6 +45,14 @@ function setupFakeGit(scriptDir: string): void {
         'printf "%s\\n" "$*" >> "$FAKE_GIT_LOG"',
         'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--abbrev-ref" ] && [ "${3:-}" = "HEAD" ]; then',
         '  cat "$FAKE_GIT_CURRENT_BRANCH"',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--verify" ] && [ "${3:-}" = "origin/$FAKE_GIT_REMOTE_BRANCH" ]; then',
+        '  if [ "${FAKE_GIT_REMOTE_EXISTS:-1}" = "1" ]; then exit 0; fi',
+        '  exit 1',
+        'fi',
+        'if [ "${1:-}" = "remote" ] && [ "${2:-}" = "get-url" ] && [ "${3:-}" = "origin" ]; then',
+        '  if [ -n "${FAKE_GIT_REMOTE_URL:-}" ]; then printf "%s\\n" "$FAKE_GIT_REMOTE_URL"; fi',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "show-ref" ] && [ "${2:-}" = "--verify" ] && [ "${3:-}" = "--quiet" ]; then',
@@ -59,6 +75,10 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "add" ]; then',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "status" ] && [ "${2:-}" = "--porcelain=v1" ]; then',
+        '  if [ -n "${FAKE_GIT_STATUS_OUTPUT:-}" ]; then printf "%s\\n" "$FAKE_GIT_STATUS_OUTPUT"; fi',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "diff" ] && [ "${2:-}" = "--cached" ] && [ "${3:-}" = "--name-only" ]; then',
         '  if [ -n "${FAKE_GIT_DIFF_OUTPUT:-}" ]; then printf "%s\\n" "$FAKE_GIT_DIFF_OUTPUT"; fi',
         '  exit 0',
@@ -73,6 +93,20 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "$FAKE_GIT_BASE_BRANCH" ]; then',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "$FAKE_GIT_BASE_BRANCH" ]; then',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "rev-list" ] && [ "${2:-}" = "--count" ] && [ "${3:-}" = "HEAD..origin/$FAKE_GIT_BASE_BRANCH" ]; then',
+        '  printf "%s\\n" "${FAKE_GIT_REVLIST_COUNT:-0}"',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "ls-remote" ] && [ "${2:-}" = "--heads" ] && [ "${3:-}" = "origin" ] && [ "${4:-}" = "refs/heads/$FAKE_GIT_TASK_BRANCH" ]; then',
+        '  if [ -n "${FAKE_GIT_LS_REMOTE_OUTPUT:-}" ]; then printf "%s\\n" "$FAKE_GIT_LS_REMOTE_OUTPUT"; fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "branch" ] && [ "${2:-}" = "-D" ] && [ "${3:-}" = "$FAKE_GIT_TASK_BRANCH" ]; then',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--porcelain" ]; then',
         '  if [ -n "${FAKE_GIT_WORKTREE_LIST_FILE:-}" ] && [ -f "$FAKE_GIT_WORKTREE_LIST_FILE" ]; then',
         '    cat "$FAKE_GIT_WORKTREE_LIST_FILE"',
@@ -83,6 +117,23 @@ function setupFakeGit(scriptDir: string): void {
         'exit 1',
         '',
     ].join('\n'), { mode: 0o755 });
+}
+
+function setupFakeCliTools(scriptDir: string): void {
+    writeExecutable(scriptDir, 'claude', ['exit 0']);
+    writeExecutable(scriptDir, 'codex', ['exit 0']);
+    writeExecutable(scriptDir, 'gh', [
+        'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then',
+        '  if [ -n "${FAKE_GH_PR_NUMBER:-}" ]; then printf "%s\\n" "$FAKE_GH_PR_NUMBER"; fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then',
+        '  if [ -n "${FAKE_GH_PR_URL:-}" ]; then printf "%s\\n" "$FAKE_GH_PR_URL"; exit 0; fi',
+        '  exit 1',
+        'fi',
+        'printf "%s\\n" "unexpected gh args: $*" >&2',
+        'exit 1',
+    ]);
 }
 
 function withFakeGitEnv<T>(
@@ -112,7 +163,14 @@ function runNodeInline(
     env: NodeJS.ProcessEnv,
     cwd = process.cwd(),
 ): { status: number | null; stderr: string; stdout: string } {
-    const result = spawnSync(process.execPath, ['--import', TSX_LOADER, '-e', script], {
+    const result = spawnSync(process.execPath, [
+        '--import',
+        path.join(REPO_ROOT, 'tests', 'md-loader-register.mjs'),
+        '--import',
+        TSX_LOADER,
+        '-e',
+        script,
+    ], {
         cwd,
         env,
         encoding: 'utf8',
@@ -121,6 +179,25 @@ function runNodeInline(
         status: result.status,
         stderr: result.stderr ?? '',
         stdout: result.stdout ?? '',
+    };
+}
+
+function makeCompleteStatus(taskId: string, branch: string): Record<string, unknown> {
+    return {
+        id: taskId,
+        title: taskId,
+        branch,
+        base_branch: 'main',
+        worktree: false,
+        phases: {
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'done', agent: 'claude', verdict: 'approved' },
+            qa: { status: 'done', agent: 'claude' },
+            human_review: { status: 'done', agent: 'human' },
+        },
     };
 }
 
@@ -624,6 +701,313 @@ void test('syncWorktreeTelemetry preserves external dirty edits to managed docs 
                 cwd: repoDir,
                 encoding: 'utf8',
             });
+        }
+    });
+});
+
+void test('formatCompleteStateBanner renders the open_pr state with the merge-next command', () => {
+    const banner = formatCompleteStateBanner(['task-a'], {
+        kind: 'open_pr',
+        branch: 'task/task-a',
+        prNum: 42,
+        prUrl: 'https://github.com/x/y/pull/42',
+    });
+
+    assert.match(banner, /TASK COMPLETE — already past human_review/);
+    assert.match(banner, /Open PR: #42/);
+    assert.match(banner, /canon run task-a --ship/);
+});
+
+void test('formatCompleteStateBanner renders the pushed_no_pr state with the retry command', () => {
+    const banner = formatCompleteStateBanner(['task-a'], {
+        kind: 'pushed_no_pr',
+        branch: 'task/task-a',
+        baseBranch: 'dev',
+    });
+
+    assert.match(banner, /Branch task\/task-a is on origin but no open PR/);
+    assert.match(banner, /canon run task-a --pr/);
+    assert.match(banner, /canon run task-a --ship/);
+});
+
+void test('formatCompleteStateBanner renders the unpushed state with the manual-merge fallback', () => {
+    const banner = formatCompleteStateBanner(['task-a'], {
+        kind: 'unpushed',
+        branch: 'task/task-a',
+        baseBranch: 'dev',
+    });
+
+    assert.match(banner, /Local branch task\/task-a is not on origin/);
+    assert.match(banner, /merge to dev manually/);
+});
+
+void test('formatExistingPRMessage returns the idempotent existing-PR message', () => {
+    assert.equal(
+        formatExistingPRMessage(17, 'https://github.com/x/y/pull/17'),
+        'Existing draft PR: #17 (https://github.com/x/y/pull/17)',
+    );
+});
+
+void test('main prints the complete-phase banner when the task is already complete', () => {
+    withTempDir('run-task-complete-banner-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        writeTaskStatus(tasksRoot, 'task-b', makeCompleteStatus('task-b', 'task/task-a'));
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', 'task-b'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GH_PR_NUMBER: '88',
+            FAKE_GH_PR_URL: 'https://github.com/x/y/pull/88',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /TASK COMPLETE — already past human_review/);
+        assert.equal((result.stdout.match(/TASK COMPLETE — already past human_review/g) ?? []).length, 1);
+        assert.match(result.stdout, /canon run task-a task-b --ship/);
+    });
+});
+
+void test('main prints the state-aware pushed_no_pr banner when the task is complete', () => {
+    withTempDir('run-task-complete-pushed-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /TASK COMPLETE — already past human_review/);
+        assert.match(result.stdout, /no open PR/);
+        assert.match(result.stdout, /canon run task-a --pr/);
+    });
+});
+
+void test('main prints the state-aware unpushed banner when the task is complete', () => {
+    withTempDir('run-task-complete-unpushed-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '0',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /TASK COMPLETE — already past human_review/);
+        assert.match(result.stdout, /not on origin/);
+        assert.match(result.stdout, /canon run task-a --pr/);
+    });
+});
+
+void test('main --pr on complete is idempotent when an open PR already exists', () => {
+    withTempDir('run-task-complete-pr-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GH_PR_NUMBER: '88',
+            FAKE_GH_PR_URL: 'https://github.com/x/y/pull/88',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Existing draft PR: #88 \(https:\/\/github\.com\/x\/y\/pull\/88\)/);
+        assert.doesNotMatch(result.stdout, /TASK COMPLETE — already past human_review/);
+    });
+});
+
+void test('main --pr at human_review is idempotent when an open PR already exists', () => {
+    withTempDir('run-task-human-review-pr-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.human_review = { status: 'pending', agent: 'human' };
+        writeTaskStatus(tasksRoot, 'task-a', status);
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GH_PR_NUMBER: '88',
+            FAKE_GH_PR_URL: 'https://github.com/x/y/pull/88',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Existing draft PR: #88 \(https:\/\/github\.com\/x\/y\/pull\/88\)/);
+        assert.doesNotMatch(result.stdout, /TASK COMPLETE — already past human_review/);
+    });
+});
+
+void test('main --pr on complete still rejects dirty files outside the human_review allowlist', () => {
+    withTempDir('run-task-complete-pr-dirty-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_STATUS_OUTPUT: '?? src/rogue.ts',
+            FAKE_GH_PR_NUMBER: '88',
+            FAKE_GH_PR_URL: 'https://github.com/x/y/pull/88',
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /working tree has dirty files outside the human_review allowlist/);
+    });
+});
+
+void test('main --ship still works when the task is already complete', () => {
+    withTempDir('run-task-complete-ship-', dir => {
+        const taskId = 'ship-smoke';
+        const repoRoot = process.cwd();
+        const taskDir = path.join(repoRoot, 'tasks', taskId);
+        const archiveDir = path.join(repoRoot, 'tasks', '_archive', taskId);
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        fs.mkdirSync(taskDir, { recursive: true });
+        writeTaskStatus(path.join(repoRoot, 'tasks'), taskId, makeCompleteStatus(taskId, `task/${taskId}`));
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, `task/${taskId}\n`);
+
+        try {
+            const result = runNodeInline([
+                "import { main } from './scripts/run-task/main.ts';",
+                `process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--ship'];`,
+                "main().catch(err => { console.error(err); process.exit(1); });",
+            ].join('\n'), {
+                ...process.env,
+                PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+                FAKE_GIT_LOG: path.join(dir, 'git.log'),
+                FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+                FAKE_GIT_BASE_BRANCH: 'main',
+                FAKE_GIT_TASK_BRANCH: `task/${taskId}`,
+                FAKE_GIT_REMOTE_BRANCH: `task/${taskId}`,
+                FAKE_GIT_REMOTE_EXISTS: '0',
+                FAKE_GIT_REVLIST_COUNT: '0',
+                FAKE_GIT_STATUS_OUTPUT: '',
+            });
+
+            assert.equal(result.status, 0, result.stderr);
+            assert.match(result.stdout, /Shipped 1 task to _archive\/\./);
+        } finally {
+            fs.rmSync(taskDir, { recursive: true, force: true });
+            fs.rmSync(archiveDir, { recursive: true, force: true });
         }
     });
 });
