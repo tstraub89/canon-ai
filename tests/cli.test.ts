@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { mergeDelimited, runUpgrade } from '../src/cli/commands/upgrade.js';
+import { mergeDelimited, parseUpgradeArgs, runUpgrade } from '../src/cli/commands/upgrade.js';
 import { detectInstallType } from '../src/cli/commands/update.js';
 import { scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
@@ -770,6 +771,177 @@ void test('runUpgrade: task template unchanged → not in upgraded', () => {
 
             assert.ok(!upgraded.includes(rel));
             assert.ok(unchanged.includes(rel));
+        });
+    });
+});
+
+// ── runUpgrade safety flags (--check, --force, dirty refusal) ────────────────
+
+function gitInit(dir: string): void {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: dir });
+}
+
+function gitAddCommit(dir: string, message: string): void {
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', message], { cwd: dir });
+}
+
+function setupSkillTemplate(pkgDir: string, content: string): string {
+    const rel = '.claude/skills/canon-spec/SKILL.md';
+    const tmplSkill = path.join(pkgDir, 'templates', rel);
+    fs.mkdirSync(path.dirname(tmplSkill), { recursive: true });
+    fs.writeFileSync(tmplSkill, content);
+    return rel;
+}
+
+void test('parseUpgradeArgs: accepts --check, --dry-run, --force, --no-stage', () => {
+    assert.deepEqual(parseUpgradeArgs([]), {});
+    assert.deepEqual(parseUpgradeArgs(['--check']), { check: true });
+    assert.deepEqual(parseUpgradeArgs(['--dry-run']), { check: true });
+    assert.deepEqual(parseUpgradeArgs(['--force']), { force: true });
+    assert.deepEqual(parseUpgradeArgs(['--no-stage']), { noStage: true });
+    assert.deepEqual(parseUpgradeArgs(['--check', '--force']), { check: true, force: true });
+});
+
+void test('parseUpgradeArgs: rejects unknown flag', () => {
+    assert.throws(() => parseUpgradeArgs(['--what']), /unknown flag '--what'/);
+});
+
+void test('runUpgrade --check: reports wouldUpgrade without writing', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'OLD skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const result = runUpgrade(projectDir, pkgDir, { check: true });
+
+            assert.ok(result.wouldUpgrade.includes(rel), 'would upgrade the skill');
+            assert.deepEqual(result.upgraded, [], '--check writes nothing');
+            assert.equal(
+                fs.readFileSync(projectSkillPath, 'utf8'),
+                'OLD skill content',
+                'file on disk untouched',
+            );
+        });
+    });
+});
+
+void test('runUpgrade: dirty managed target refused without --force', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'COMMITTED skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            gitAddCommit(projectDir, 'initial commit');
+            // Make the managed file dirty (modified tracked).
+            fs.writeFileSync(projectSkillPath, 'LOCAL EDITS in progress');
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes(rel), 'dirty target reported');
+            assert.deepEqual(result.upgraded, [], 'nothing written when dirty refusal fires');
+            assert.equal(
+                fs.readFileSync(projectSkillPath, 'utf8'),
+                'LOCAL EDITS in progress',
+                'dirty file preserved on disk',
+            );
+        });
+    });
+});
+
+void test('runUpgrade --force: dirty managed target is overwritten', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'COMMITTED skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            gitAddCommit(projectDir, 'initial commit');
+            fs.writeFileSync(projectSkillPath, 'LOCAL EDITS to discard');
+
+            const result = runUpgrade(projectDir, pkgDir, { force: true });
+
+            assert.ok(result.upgraded.includes(rel), 'dirty target upgraded under --force');
+            assert.deepEqual(result.dirtyRefused, [], 'no refusals under --force');
+            assert.equal(
+                fs.readFileSync(projectSkillPath, 'utf8'),
+                'NEW skill content',
+                'file overwritten with template',
+            );
+        });
+    });
+});
+
+void test('runUpgrade: locally-deleted tracked managed file is refused without --force', () => {
+    // Codex P1 on PR 4 iter 1: previous gate skipped the dirty check for
+    // paths that didn't exist on disk, letting `canon upgrade` silently
+    // re-create files the user had intentionally deleted. The check now
+    // asks git regardless of `existsSync()`, so a tracked deletion still
+    // refuses.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'COMMITTED skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            gitAddCommit(projectDir, 'initial commit');
+            // Operator intentionally deleted the managed file locally.
+            fs.unlinkSync(projectSkillPath);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes(rel), 'deletion is a dirty state — refused');
+            assert.deepEqual(result.upgraded, []);
+            assert.ok(!fs.existsSync(projectSkillPath), 'file not recreated on refusal');
+        });
+    });
+});
+
+void test('runUpgrade: untracked dirty status does NOT trigger refusal', () => {
+    // First-install scenario: the managed path exists locally but isn't yet
+    // tracked in git. `git status` shows it as `??` (untracked); we treat
+    // untracked as clean since there's no committed history to lose.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'untracked skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            // Note: no `git add` — file is untracked.
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.upgraded.includes(rel), 'untracked file upgraded without refusal');
+            assert.deepEqual(result.dirtyRefused, []);
         });
     });
 });

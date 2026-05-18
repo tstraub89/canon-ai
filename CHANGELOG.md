@@ -9,6 +9,10 @@
 - **Claude Code installs older than 2.1.72 no longer crash canon's `--effort` spawns.** `canon doctor` now checks the installed Claude Code version and fails fast below the verified-safe floor, which blocks the orchestrator from handing an unsupported CLI the `--effort` flag that it does not understand. As a fallback for users who skip `canon doctor`, Claude spawn failures that mention the unknown `--effort` option now print a one-line hint directing them back to `canon doctor` and the upgrade command. Closes [#70](https://github.com/tstraub89/canon-ai/issues/70).
 - **`canon run <id> --pr` now handles `complete` and stays idempotent when a PR already exists.** The terminal dispatch now treats `complete` the same as `human_review` for `--push` / `--pr`, so a task that has already reached `complete` no longer dies with `Unknown phase: complete`. On a rerun, the idempotent `--pr` path detects an already-open draft PR and prints its URL instead of trying to recreate it. `canon run <id>` with no flags at `complete` now prints a state-aware banner for the three exit states: open PR, pushed with no PR, or not pushed yet. Closes [#72](https://github.com/tstraub89/canon-ai/issues/72).
 
+### Added
+
+- **`canon upgrade --check`, `--force`, `--no-stage`.** `canon upgrade` no longer silently overwrites dirty managed files. By default it now detects modified/staged managed targets via `git status --porcelain` and refuses with an enumerated list of dirty paths (exit code 2). Pass `--force` to overwrite anyway, `--check` (or `--dry-run`) to preview without writing, or `--no-stage` to skip the post-write `git add`. Untracked managed paths (first-install scenario) are treated as clean — no committed history to lose. Closes [#63](https://github.com/tstraub89/canon-ai/issues/63).
+
 ## [1.1.3] — 2026-05-17
 
 ### Fixed

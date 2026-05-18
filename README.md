@@ -176,7 +176,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 | `canon run <id>` | Run the full pipeline for a task |
 | `canon run <id> --step` | Run one phase then stop |
 | `canon run <id> --pr` | Push branch and open a draft PR |
-| `canon upgrade` | Sync vendored files to match installed version |
+| `canon upgrade` | Sync vendored files to match installed version. Refuses to overwrite locally-modified managed files unless `--force` is set. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
 | `canon update` | Update the canon-ai package itself |
 
 Full `canon task` subcommand reference is in `docs/pipeline-orchestrator.md`.

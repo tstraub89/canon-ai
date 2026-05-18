@@ -1659,10 +1659,28 @@ function mergeDelimited(templateContent, projectContent) {
   if (templateEnd === -1 || projectEnd === -1) return null;
   return templateContent.slice(0, templateEnd + CANON_END2.length) + projectContent.slice(projectEnd + CANON_END2.length);
 }
-function runUpgrade(cwd, pkgDir) {
+function isPathDirty(cwd, relPath) {
+  const result = spawnSync8("git", ["status", "--porcelain", "--", relPath], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  if (result.status !== 0 || result.error) return false;
+  for (const line of (result.stdout ?? "").split("\n")) {
+    if (!line.trim()) continue;
+    const xy = line.slice(0, 2);
+    if (xy === "??") continue;
+    return true;
+  }
+  return false;
+}
+function runUpgrade(cwd, pkgDir, options = {}) {
   const upgraded = [];
   const unchanged = [];
   const skipped = [];
+  const wouldUpgrade = [];
+  const dirtyRefused = [];
+  const pending = [];
   for (const rel of DELIMITED) {
     const projectPath = join5(cwd, rel);
     const templatePath = join5(pkgDir, "templates", rel);
@@ -1681,8 +1699,7 @@ function runUpgrade(cwd, pkgDir) {
       unchanged.push(rel);
       continue;
     }
-    writeFileSync2(projectPath, merged);
-    upgraded.push(rel);
+    pending.push({ rel, projectPath, content: merged });
   }
   for (const rel of CANON_OWNED) {
     const projectPath = join5(cwd, rel);
@@ -1698,36 +1715,106 @@ function runUpgrade(cwd, pkgDir) {
         unchanged.push(rel);
         continue;
       }
-    } else {
-      mkdirSync2(dirname4(projectPath), { recursive: true });
     }
-    writeFileSync2(projectPath, templateContent);
-    upgraded.push(rel);
+    pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
   const newVersion = "1.1.3";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
-    mkdirSync2(dirname4(versionPath), { recursive: true });
-    writeFileSync2(versionPath, newVersion + "\n");
-    upgraded.push(".canon/version");
+    pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
   }
-  return { upgraded, unchanged, skipped };
+  const dirty = [];
+  const clean = [];
+  for (const op of pending) {
+    if (isPathDirty(cwd, op.rel)) dirty.push(op);
+    else clean.push(op);
+  }
+  if (options.check) {
+    for (const op of clean) wouldUpgrade.push(op.rel);
+    for (const op of dirty) dirtyRefused.push(op.rel);
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
+  }
+  if (dirty.length > 0 && !options.force) {
+    for (const op of dirty) dirtyRefused.push(op.rel);
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
+  }
+  const toWrite = options.force ? pending : clean;
+  for (const op of toWrite) {
+    mkdirSync2(dirname4(op.projectPath), { recursive: true });
+    writeFileSync2(op.projectPath, op.content);
+    upgraded.push(op.rel);
+  }
+  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
 }
-function upgradeCmd(_args) {
-  const { upgraded, unchanged, skipped } = runUpgrade(process.cwd(), packageDir4);
-  if (upgraded.length > 0) {
+function parseUpgradeArgs(args2) {
+  const options = {};
+  for (const arg of args2) {
+    if (arg === "--check" || arg === "--dry-run") options.check = true;
+    else if (arg === "--force") options.force = true;
+    else if (arg === "--no-stage") options.noStage = true;
+    else {
+      throw new Error(`canon upgrade: unknown flag '${arg}'. Supported: --check (--dry-run), --force, --no-stage.`);
+    }
+  }
+  return options;
+}
+function upgradeCmd(args2) {
+  const options = parseUpgradeArgs(args2);
+  const result = runUpgrade(process.cwd(), packageDir4, options);
+  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused } = result;
+  console.log("\ncanon upgrade" + (options.check ? " --check" : "") + "\n");
+  if (options.check) {
+    if (wouldUpgrade.length > 0) {
+      console.log("Would update:");
+      for (const f of wouldUpgrade) console.log(`  \u2191 ${f}`);
+      console.log("");
+    }
+    if (dirtyRefused.length > 0) {
+      console.log("Would refuse (dirty in git \u2014 pass --force to overwrite):");
+      for (const f of dirtyRefused) console.log(`  \u26A0 ${f}`);
+      console.log("");
+    }
+    if (unchanged.length > 0) {
+      console.log("Already up to date:");
+      for (const f of unchanged) console.log(`  = ${f}`);
+      console.log("");
+    }
+    if (skipped.length > 0) {
+      console.log("Skipped:");
+      for (const f of skipped) console.log(`  ? ${f}`);
+      console.log("");
+    }
+    if (wouldUpgrade.length === 0 && dirtyRefused.length === 0 && unchanged.length === 0 && skipped.length === 0) {
+      console.log("No canon-managed files found. Run `canon init` to set up canon in this repo.\n");
+    } else {
+      console.log("(dry run \u2014 no files written.) Re-run without --check to apply.\n");
+    }
+    return;
+  }
+  if (dirtyRefused.length > 0) {
+    console.log("Refused (dirty in git \u2014 pass --force to overwrite, or commit/stash these paths first):");
+    for (const f of dirtyRefused) console.log(`  \u26A0 ${f}`);
+    console.log("");
+    console.log("No files were upgraded. Resolve the dirty paths and re-run, or pass `--force`.");
+    process.exit(2);
+  }
+  if (upgraded.length > 0 && !options.noStage) {
     const r = spawnSync8("git", ["add", ...upgraded], { cwd: process.cwd(), stdio: "inherit" });
     if (r.status !== 0) {
       console.error("\nwarning: failed to stage changes \u2014 run `git add` manually.");
     }
   }
-  console.log("\ncanon upgrade\n");
   if (upgraded.length > 0) {
     console.log("Updated:");
     for (const f of upgraded) console.log(`  \u2191 ${f}`);
-    console.log("\nReview:  git diff --staged");
-    console.log("Revert:  git checkout -- <file>\n");
+    if (!options.noStage) {
+      console.log("\nReview:  git diff --staged");
+      console.log("Revert:  git checkout -- <file>\n");
+    } else {
+      console.log("\n(--no-stage: files written but not staged. Review:  git diff)");
+      console.log("Stage:   git add <file>\n");
+    }
   }
   if (unchanged.length > 0) {
     console.log("Already up to date:");
