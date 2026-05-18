@@ -903,8 +903,14 @@ function computeLatestValidationResults(handoffContent) {
 }
 function canonicalizeValidationCheck(value) {
   const backtickMatch = value.match(/`([^`]+)`/);
-  const base = backtickMatch ? backtickMatch[1] : value.split(/\s+[—–-]\s+/)[0];
-  const normalized = base.replace(/`/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  let base;
+  if (backtickMatch && !backtickMatch[1].endsWith("\\")) {
+    base = backtickMatch[1];
+  } else {
+    const stripped = value.replace(/\\`/g, "").replace(/`/g, "");
+    base = stripped.split(/\s+[—–-]\s+/)[0];
+  }
+  const normalized = base.replace(/\s+/g, " ").trim().toLowerCase();
   if (normalized.includes(" ")) {
     return normalized.split(" ").at(-1) ?? normalized;
   }

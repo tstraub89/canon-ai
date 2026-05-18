@@ -1578,8 +1578,14 @@ function validateHandoff(taskId) {
 }
 function canonicalizeValidationCheck(value) {
   const backtickMatch = value.match(/`([^`]+)`/);
-  const base = backtickMatch ? backtickMatch[1] : value.split(/\s+[—–-]\s+/)[0];
-  const normalized = base.replace(/`/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  let base;
+  if (backtickMatch && !backtickMatch[1].endsWith("\\")) {
+    base = backtickMatch[1];
+  } else {
+    const stripped = value.replace(/\\`/g, "").replace(/`/g, "");
+    base = stripped.split(/\s+[—–-]\s+/)[0];
+  }
+  const normalized = base.replace(/\s+/g, " ").trim().toLowerCase();
   if (normalized.includes(" ")) {
     return normalized.split(" ").at(-1) ?? normalized;
   }
@@ -1649,12 +1655,14 @@ function validateHandoffAgainstSpec(specPath, handoffPath, latestResults) {
     const canonical = canonicalizeValidationCheck(required);
     const row = rowMap.get(canonical);
     if (!row) {
-      issues.push(`Validation Required item missing from handoff.md: ${required}`);
+      const present = [...rowMap.keys()];
+      const hint = present.length > 0 ? ` Handoff has rows for: ${present.join(", ")}. (Required canonicalized to: '${canonical}'.)` : " Handoff has no Validation Outcomes rows.";
+      issues.push(`Validation Required item missing from handoff.md: ${required}.${hint}`);
       continue;
     }
     const note = row.notes ? ` (${row.notes})` : "";
     if (isPendingResult(row.result)) {
-      issues.push(`Validation Required item missing from handoff.md: ${required}`);
+      issues.push(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`);
       continue;
     }
     if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
@@ -1677,7 +1685,7 @@ function validateHandoffAgainstSpec(specPath, handoffPath, latestResults) {
     if (isUnrelatedFailResult(row.result)) {
       const hasFileRef = /\w+\.\w+|:\d+/.test(row.notes ?? "");
       if (!hasFileRef) {
-        issues.push(`Validation Required item marked Fail \u2013 unrelated without a specific test/file reference in Notes (must name the failing test file or path): ${required}`);
+        issues.push(`Validation Required item marked Fail \u2013 unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`);
       }
       continue;
     }
