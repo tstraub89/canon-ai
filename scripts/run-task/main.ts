@@ -267,6 +267,18 @@ function verifyHandoffFilesCommitted(
     }
 }
 
+/**
+ * True for paths the pipeline writes itself and that the agent need not list
+ * in the handoff Changes table: task artifacts under `tasks/<id>/` and
+ * append-only telemetry files. Managed docs (architecture.md, decisions.md,
+ * etc.) are deliberately NOT in this set — those are user content; if they're
+ * dirty after implement, the agent should list them in Changes.
+ */
+function isPipelineOwnedPath(filePath: string, taskIds: readonly string[]): boolean {
+    if (taskIds.some(id => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`))) return true;
+    return (splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath);
+}
+
 function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const primaryStatus = splitState.readStatus(taskIds[0]);
     const title = getTitle(primaryStatus);
@@ -279,8 +291,49 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     }
 
     if (allHandoffFiles.size === 0) {
-        warn('No files found in handoff.md Changes tables — skipping auto-commit.');
-        warn('Stage and commit manually, or ensure all handoff.md files have a Changes table.');
+        // Empty handoff Changes table is hostile when the working tree has
+        // *source-file* changes: it means the agent made changes but didn't
+        // (or couldn't) populate the table, so auto-commit can't proceed AND
+        // the downstream code-review step will read working-tree diff instead
+        // of a real commit — a silent-false-success class. Distinguish:
+        //   - Clean tree (or only pipeline-owned dirty paths) → genuinely no
+        //     source changes. Silent return — preserves the legitimate "implement
+        //     decided no source change was needed" path.
+        //   - Source-file dirty paths present → bug. Hard fail so the operator
+        //     sees it.
+        //
+        // (Pre-2026-05-18 this branch unconditionally warned and returned. The
+        // source-dirty class slipped through silently; surfaced via the
+        // pr-at-complete pipeline run where Codex's handoff used markdown-link
+        // path syntax that the parser missed.)
+        const emptyDebug: Record<string, unknown> = { cwd, handoffFiles: [] };
+        const dirtyCheck = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+        Object.assign(emptyDebug, {
+            dirtyStatusOk: dirtyCheck.ok,
+            dirtyStatusRaw: dirtyCheck.stdout,
+            dirtyStatusError: dirtyCheck.stderr,
+        });
+        if (!dirtyCheck.ok) {
+            appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-dirty-check-failed' });
+            splitCli.die(`Auto-commit aborted: handoff.md Changes table empty AND failed to inspect dirty files: ${dirtyCheck.stderr || 'unknown error'}`);
+        }
+        const allDirty = [...splitGit.parsePorcelain(dirtyCheck.stdout)];
+        const sourceDirty = allDirty.filter(f => !isPipelineOwnedPath(f, taskIds));
+        Object.assign(emptyDebug, { allDirty, sourceDirty });
+        if (sourceDirty.length > 0) {
+            appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-but-source-dirty' });
+            splitCli.die(
+                `Auto-commit aborted: handoff.md Changes table is empty but the working tree has\n` +
+                `  source-file changes outside the pipeline-owned paths.\n` +
+                `  This usually means the agent made changes but did not populate the Changes table\n` +
+                `  in handoff.md — or the table format was not recognized by the parser (backtick\n` +
+                `  paths and markdown links are both supported as of 2026-05-18).\n` +
+                `  Dirty source files (truncated to first 20):\n` +
+                sourceDirty.slice(0, 20).map(f => `    ${f}`).join('\n') +
+                `\n  Resolve manually: fix handoff.md or commit/discard the dirty files.`,
+            );
+        }
+        appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-clean-or-pipeline-only' });
         return;
     }
 

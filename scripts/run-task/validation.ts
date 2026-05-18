@@ -561,11 +561,33 @@ export function parseHandoffFiles(taskId: string): string[] {
     for (const rows of tables) {
         for (const row of rows) {
             const firstColumn = Object.values(row)[0] ?? '';
-            const match = firstColumn.match(/`([^`]+)`/);
-            if (match?.[1]) files.add(match[1]);
+            const extracted = extractHandoffPath(firstColumn);
+            if (extracted) files.add(extracted);
         }
     }
     return [...files];
+}
+
+/**
+ * Extracts the file path from the first-column cell of a handoff Changes
+ * table row. Two recognized formats:
+ *
+ *   - Backticked: `` `path/to/file.ts` ``
+ *   - Markdown link: `[path/to/file.ts](https://...)` or `[path/to/file.ts](some/local/link)`
+ *
+ * Codex's handoffs alternate between these forms across runs; pre-2026-05-18
+ * only the backtick form was supported, causing `autoCommitCode` to silently
+ * no-op on markdown-link handoffs (the empty-handoff branch returned without
+ * committing). Exported for unit testing.
+ */
+export function extractHandoffPath(cell: string): string | null {
+    // Backtick form first (more specific): `path`.
+    const backtick = cell.match(/`([^`]+)`/);
+    if (backtick?.[1]) return backtick[1].trim();
+    // Markdown link form: [path](anything). Path is everything inside [].
+    const mdLink = cell.match(/\[([^\]]+)\]\([^)]*\)/);
+    if (mdLink?.[1]) return mdLink[1].trim();
+    return null;
 }
 
 const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);

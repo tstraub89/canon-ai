@@ -15,6 +15,7 @@ import type { StatusJson } from '../scripts/run-task/types.js';
 import {
     checkAcCoveragePlaceholders,
     computeLatestValidationResults,
+    extractHandoffPath,
     parseHandoffFiles,
     validateHandoffAgainstSpec,
     verifyHandoffAgainstDiffFromData,
@@ -357,6 +358,56 @@ void test('parseHandoffFiles unions baseline Changes and iteration Changes table
         '',
     ].join('\n'), () => {
         assert.deepEqual(parseHandoffFiles('union-task'), ['src/base.ts', 'src/iter.ts']);
+    });
+});
+
+void test('extractHandoffPath: backtick-quoted path', () => {
+    assert.equal(extractHandoffPath('`src/foo.ts`'), 'src/foo.ts');
+    assert.equal(extractHandoffPath('`src/foo.ts` some annotation'), 'src/foo.ts');
+});
+
+void test('extractHandoffPath: markdown-link path', () => {
+    assert.equal(extractHandoffPath('[src/foo.ts](https://github.com/x/y/blob/main/src/foo.ts)'), 'src/foo.ts');
+    assert.equal(extractHandoffPath('[src/foo.ts](/Users/local/path/src/foo.ts)'), 'src/foo.ts');
+});
+
+void test('extractHandoffPath: backtick wins over markdown link if both present', () => {
+    // First column might mix forms (e.g., legacy edits + markdown). Prefer backtick.
+    assert.equal(extractHandoffPath('`src/a.ts` and [src/b.ts](url)'), 'src/a.ts');
+});
+
+void test('extractHandoffPath: markdown-link URL with parens still captures the path', () => {
+    // The captured group is everything inside `[...]`. The URL part `(...)`
+    // closing on the first `)` is fine for our purposes — we never read the
+    // destination, only the path.
+    assert.equal(
+        extractHandoffPath('[src/foo.ts](/tmp/build(foo)/src/foo.ts)'),
+        'src/foo.ts',
+    );
+    assert.equal(
+        extractHandoffPath('[src/foo.ts](https://github.com/x/y/pull/123)'),
+        'src/foo.ts',
+    );
+});
+
+void test('extractHandoffPath: returns null for no recognized format', () => {
+    assert.equal(extractHandoffPath('plain text src/foo.ts'), null);
+    assert.equal(extractHandoffPath(''), null);
+});
+
+void test('parseHandoffFiles: accepts markdown-link format in Changes table', () => {
+    withTempTaskHandoff('mdlink-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| [src/main.ts](/abs/path/src/main.ts) | refactor |',
+        '| [tests/main.test.ts](https://github.com/x/y/blob/main/tests/main.test.ts) | new tests |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseHandoffFiles('mdlink-task').sort(), ['src/main.ts', 'tests/main.test.ts']);
     });
 });
 

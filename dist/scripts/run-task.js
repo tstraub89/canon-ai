@@ -1842,11 +1842,18 @@ function parseHandoffFiles(taskId) {
   for (const rows of tables) {
     for (const row of rows) {
       const firstColumn = Object.values(row)[0] ?? "";
-      const match = firstColumn.match(/`([^`]+)`/);
-      if (match?.[1]) files.add(match[1]);
+      const extracted = extractHandoffPath(firstColumn);
+      if (extracted) files.add(extracted);
     }
   }
   return [...files];
+}
+function extractHandoffPath(cell) {
+  const backtick = cell.match(/`([^`]+)`/);
+  if (backtick?.[1]) return backtick[1].trim();
+  const mdLink = cell.match(/\[([^\]]+)\]\([^)]*\)/);
+  if (mdLink?.[1]) return mdLink[1].trim();
+  return null;
 }
 var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
 function isPipelineOwnedTaskArtifact(filePath, taskIds) {
@@ -3784,6 +3791,10 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
     );
   }
 }
+function isPipelineOwnedPath(filePath, taskIds) {
+  if (taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`))) return true;
+  return PIPELINE_TELEMETRY_FILES.includes(filePath);
+}
 function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   const primaryStatus = readStatus(taskIds[0]);
   const title = getTitle(primaryStatus);
@@ -3794,8 +3805,34 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     }
   }
   if (allHandoffFiles.size === 0) {
-    warn2("No files found in handoff.md Changes tables \u2014 skipping auto-commit.");
-    warn2("Stage and commit manually, or ensure all handoff.md files have a Changes table.");
+    const emptyDebug = { cwd, handoffFiles: [] };
+    const dirtyCheck = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
+    Object.assign(emptyDebug, {
+      dirtyStatusOk: dirtyCheck.ok,
+      dirtyStatusRaw: dirtyCheck.stdout,
+      dirtyStatusError: dirtyCheck.stderr
+    });
+    if (!dirtyCheck.ok) {
+      appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-dirty-check-failed" });
+      die(`Auto-commit aborted: handoff.md Changes table empty AND failed to inspect dirty files: ${dirtyCheck.stderr || "unknown error"}`);
+    }
+    const allDirty = [...parsePorcelain(dirtyCheck.stdout)];
+    const sourceDirty = allDirty.filter((f) => !isPipelineOwnedPath(f, taskIds));
+    Object.assign(emptyDebug, { allDirty, sourceDirty });
+    if (sourceDirty.length > 0) {
+      appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-but-source-dirty" });
+      die(
+        `Auto-commit aborted: handoff.md Changes table is empty but the working tree has
+  source-file changes outside the pipeline-owned paths.
+  This usually means the agent made changes but did not populate the Changes table
+  in handoff.md \u2014 or the table format was not recognized by the parser (backtick
+  paths and markdown links are both supported as of 2026-05-18).
+  Dirty source files (truncated to first 20):
+` + sourceDirty.slice(0, 20).map((f) => `    ${f}`).join("\n") + `
+  Resolve manually: fix handoff.md or commit/discard the dirty files.`
+      );
+    }
+    appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-clean-or-pipeline-only" });
     return;
   }
   const handoffFiles = [...allHandoffFiles];
