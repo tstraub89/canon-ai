@@ -1,7 +1,7 @@
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['node_modules/', 'dist/', 'tests/*.mjs'] },
+  { ignores: ['node_modules/', 'dist/', 'tests/*.mjs', 'scripts/*.mjs'] },
   ...tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: {

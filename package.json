@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "postbuild": "node scripts/normalize-dist-paths.mjs",
     "test": "node --test --import ./tests/md-loader-register.mjs --import tsx tests/*.test.ts",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint scripts/ tests/ src/"
