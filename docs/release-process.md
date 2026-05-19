@@ -52,7 +52,7 @@ Verify before opening the release PR: `git diff main..dev -- package-lock.json |
    gh pr create --base main --head dev --title "Release v<new-version>: <short theme>"
    ```
 2. Wait for both: (a) CI green on the PR, and (b) Codex's post-PR review (see [`docs/lessons-learned.md`](lessons-learned.md) — CI green alone is not sufficient; the 1.1.3 picocolors bug was caught by Codex's PR review, not CI).
-3. Product owner merges the PR (squash or merge commit per the PR's settings).
+3. Product owner squash-merges the PR. The repo's PR settings enforce squash-only with the PR title becoming the squash commit's subject and the PR body becoming its message — so the multi-commit dev history collapses to one clean release commit on `main`, and `git blame package.json` on the next workflow run finds a single SHA whose tree contains the final CHANGELOG. (Pre-1.3.1 the repo allowed all three merge styles; the v1.3.0 release shipped notes that disagreed with the tagged code because the merge-commit flow let scope land after the version-bump commit. See [`docs/lessons-learned.md`](lessons-learned.md).)
 4. **Auto-release fires.** A GitHub Action on push-to-`main` (`.github/workflows/auto-release.yml`) detects the version change in `package.json`, creates the `v<X.Y.Z>` tag, and publishes a GitHub release with the matching CHANGELOG block. Tagging is idempotent — re-runs on the same version exit silently.
 
 If the auto-release workflow fails (workflow disabled, missing CHANGELOG block, etc.), fall back to manual. **Always tag the version-bump commit explicitly** — `main` may have advanced past the release commit by the time you're running the fallback, and `git tag <name>` with no explicit SHA tags whatever `HEAD` points at:

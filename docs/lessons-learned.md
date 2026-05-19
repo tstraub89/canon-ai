@@ -42,6 +42,17 @@ When a record references another by ID, computed fields (caches, transforms, eph
 
 ---
 
+### Release-engineering workflows that blame for a SHA must read every artifact from that same SHA's tree
+
+*(2026-05-19, source: v1.3.0 release post-mortem — issues #87/#88/#92)*
+
+`auto-release.yml` used `git blame -- package.json` to find the version-bump commit and tagged that SHA, then read `CHANGELOG.md` from the workflow's working tree (HEAD) to build the release notes. When scope was added under the same version after the bump commit (six additional fixes accumulated on `dev` under "1.3.0" before the dev→main merge), the tag pointed at the early state while the notes described the final state. Result: GitHub Release advertised six features that weren't in the tagged code. Adopters following the release page would have gotten partial software.
+
+Two prevention rules:
+
+1. **Read every release artifact from the same SHA you're tagging.** In the workflow, `git show "${BUMP_SHA}":CHANGELOG.md` not `cat CHANGELOG.md`. Add a post-publish byte-diff verification step that re-extracts the block from the tag and compares it to the uploaded release notes.
+2. **Squash-only PRs to `main`** (enforced via the repo's PR settings since 1.3.1). The dev branch's multi-commit history collapses to one commit on main whose tree contains the final state of every release-relevant file. Blame on `package.json` then finds a single deterministic SHA whose tree matches the notes by construction. The blame-based determinism still matters for self-heal retry semantics — it's just no longer load-bearing for tree/notes consistency.
+
 ### Refactor specs need numerical structural caps, not just behavioral goals
 
 *(2026-05-09, source: split-run-task, in-flight observation)*
