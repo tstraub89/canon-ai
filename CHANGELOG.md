@@ -14,6 +14,10 @@
 
 - **`canon upgrade --check`, `--force`, `--no-stage`.** `canon upgrade` no longer silently overwrites dirty managed files. By default it now detects modified/staged managed targets via `git status --porcelain` and refuses with an enumerated list of dirty paths (exit code 2). Pass `--force` to overwrite anyway, `--check` (or `--dry-run`) to preview without writing, or `--no-stage` to skip the post-write `git add`. Untracked managed paths (first-install scenario) are treated as clean — no committed history to lose. Closes [#63](https://github.com/tstraub89/canon-ai/issues/63).
 
+### Added
+
+- **`canon upgrade` now header-only-syncs `docs/pipeline-invocations.md`.** Resolves the [1.1.2] "Known limitation" by refreshing the canon-owned header (intro + table column definitions) above the markdown table separator while preserving every appended telemetry row below the separator byte-for-byte. Adopters whose `pipeline-invocations.md` is missing the table separator get a clear skip message instead of silent data loss. Closes [#67](https://github.com/tstraub89/canon-ai/issues/67).
+
 ## [1.1.3] — 2026-05-17
 
 ### Fixed

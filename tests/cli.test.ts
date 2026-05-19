@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { mergeDelimited, parseUpgradeArgs, runUpgrade } from '../src/cli/commands/upgrade.js';
+import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, runUpgrade } from '../src/cli/commands/upgrade.js';
 import { detectInstallType } from '../src/cli/commands/update.js';
 import { scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
@@ -771,6 +771,173 @@ void test('runUpgrade: task template unchanged → not in upgraded', () => {
 
             assert.ok(!upgraded.includes(rel));
             assert.ok(unchanged.includes(rel));
+        });
+    });
+});
+
+// ── mergeHeaderOnly (telemetry header sync) ──────────────────────────────────
+
+void test('mergeHeaderOnly: refreshes canon header, preserves project rows byte-for-byte', () => {
+    const template = [
+        '# Workflow Metrics',
+        '',
+        '> NEW intro from updated canon template.',
+        '> Tokens reframed for the next version.',
+        '',
+        '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+        '|---|---|---|---|---|---|---|---|---|',
+    ].join('\n');
+
+    const projectRowsTail = '\n| 2026-05-01T10:00:00Z | foo | implement | codex | gpt-5.4-mini | 1 | 22s | 5234 | ok |\n| 2026-05-01T10:01:00Z | foo | code_review | claude | sonnet | 1 | 18s | 4112 | ok |\n';
+    const project = [
+        '# Workflow Metrics',
+        '',
+        '> OLD intro before the refresh.',
+        '',
+        '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+        '|---|---|---|---|---|---|---|---|---|',
+    ].join('\n') + projectRowsTail;
+
+    const merged = mergeHeaderOnly(template, project);
+    assert.ok(merged);
+    assert.ok(merged.includes('NEW intro from updated canon template.'), 'new header content present');
+    assert.ok(!merged.includes('OLD intro before the refresh.'), 'old header content removed');
+    assert.ok(merged.endsWith(projectRowsTail), 'project rows preserved byte-for-byte (tail unchanged)');
+});
+
+void test('mergeHeaderOnly: CRLF line endings preserved byte-for-byte (Codex P2 on PR #80)', () => {
+    // The separator regex must not consume `\r` from a CRLF file, or the
+    // header slice would end with `\r` and the project tail would start at
+    // `\n` — breaking the byte-for-byte guarantee for telemetry rows.
+    const eol = '\r\n';
+    const tplCrlf = [
+        '# Workflow Metrics',
+        '',
+        '> NEW intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join(eol);
+    const projectRowsTailCrlf = `${eol}| 2026-05-01T10:00:00Z | row1 |${eol}| 2026-05-01T10:01:00Z | row2 |${eol}`;
+    const prjCrlf = [
+        '# Workflow Metrics',
+        '',
+        '> OLD intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join(eol) + projectRowsTailCrlf;
+
+    const mergedCrlf = mergeHeaderOnly(tplCrlf, prjCrlf);
+    assert.ok(mergedCrlf);
+    assert.ok(mergedCrlf.endsWith(projectRowsTailCrlf), 'CRLF project rows tail preserved verbatim');
+    // No bare LF in the tail (would indicate spliced line endings).
+    assert.ok(!/[^\r]\n/.test(mergedCrlf.slice(-100)), 'no bare LF spliced into CRLF content');
+});
+
+void test('mergeHeaderOnly: project file with no rows yet — just refreshes header', () => {
+    const template = [
+        '# Workflow Metrics',
+        '',
+        '> NEW intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join('\n');
+    const project = [
+        '# Workflow Metrics',
+        '',
+        '> OLD intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join('\n');
+
+    const merged = mergeHeaderOnly(template, project);
+    assert.ok(merged);
+    assert.equal(merged, template, 'no rows on project side → result equals template');
+});
+
+void test('mergeHeaderOnly: project missing table separator → null', () => {
+    const template = '# Header\n| A |\n|---|\n';
+    const project = '# Header\n\n(no table at all)\n';
+    assert.equal(mergeHeaderOnly(template, project), null);
+});
+
+void test('mergeHeaderOnly: template missing table separator → null', () => {
+    const template = '# Header\n\nNo table here.\n';
+    const project = '# Header\n| A |\n|---|\n| 1 |\n';
+    assert.equal(mergeHeaderOnly(template, project), null);
+});
+
+void test('mergeHeaderOnly: identical content → result equals input (upgrade reports as unchanged)', () => {
+    const content = '# Workflow Metrics\n\n> intro.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+    assert.equal(mergeHeaderOnly(content, content), content);
+});
+
+void test('runUpgrade: header-only sync refreshes telemetry header + preserves rows', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            const newHeader = [
+                '# Workflow Metrics',
+                '',
+                '> NEW header from this canon release.',
+                '',
+                '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+                '|---|---|---|---|---|---|---|---|---|',
+            ].join('\n');
+            fs.writeFileSync(tmplPath, newHeader);
+
+            const projectPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+            const oldHeader = [
+                '# Workflow Metrics',
+                '',
+                '> OLD header.',
+                '',
+                '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+                '|---|---|---|---|---|---|---|---|---|',
+            ].join('\n');
+            const adopterRows = '\n| 2026-04-30T09:00:00Z | task-a | implement | codex | x | 1 | 12s | 9000 | ok |\n| 2026-04-30T09:01:00Z | task-a | code_review | claude | y | 1 | 8s | 5100 | ok |\n';
+            fs.writeFileSync(projectPath, oldHeader + adopterRows);
+
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const { upgraded } = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(upgraded.includes(rel), 'telemetry file should be upgraded');
+            const written = fs.readFileSync(projectPath, 'utf8');
+            assert.ok(written.includes('NEW header from this canon release.'), 'new header landed');
+            assert.ok(!written.includes('OLD header.'), 'old header replaced');
+            assert.ok(written.endsWith(adopterRows), 'adopter rows preserved verbatim');
+        });
+    });
+});
+
+void test('runUpgrade: header-only sync scaffolds the file when missing in project', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            const tmplContent = '# Workflow Metrics\n\n> Intro.\n\n| A | B |\n|---|---|\n';
+            fs.writeFileSync(tmplPath, tmplContent);
+            // Project does NOT have the file yet.
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const { upgraded } = runUpgrade(projectDir, pkgDir);
+            assert.ok(upgraded.includes(rel));
+            const projectPath = path.join(projectDir, rel);
+            assert.equal(fs.readFileSync(projectPath, 'utf8'), tmplContent);
         });
     });
 });

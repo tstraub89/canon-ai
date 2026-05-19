@@ -44,6 +44,14 @@ const CANON_OWNED = [
     'docs/pipeline-orchestrator.md',
 ];
 
+// Header-only sync: canon owns the header (intro + table column definitions);
+// adopter owns the rows below the table separator. Used for telemetry files
+// that the orchestrator auto-appends to (e.g., docs/pipeline-invocations.md).
+// `canon upgrade` refreshes the header without touching the rows.
+const HEADER_ONLY_SYNC = [
+    'docs/pipeline-invocations.md',
+];
+
 export function mergeDelimited(templateContent: string, projectContent: string): string | null {
     if (!CANON_START_RE.test(templateContent)) return null;
     if (!CANON_START_RE.test(projectContent)) return null;
@@ -57,6 +65,46 @@ export function mergeDelimited(templateContent: string, projectContent: string):
         templateContent.slice(0, templateEnd + CANON_END.length) +
         projectContent.slice(projectEnd + CANON_END.length)
     );
+}
+
+// Matches a Markdown table separator row: `|---|---|...|` (with optional
+// alignment colons and inline whitespace). Used to find the boundary between
+// canon-owned header content (above the separator) and adopter-owned
+// telemetry rows (below).
+//
+// `[^\S\r\n]*` is "whitespace except CR/LF" — important so the match does
+// NOT consume the line-ending characters. With `\s*` on both sides, CRLF
+// files (Windows checkouts) would consume the trailing `\r`, leaving the
+// header slice ending in `\r` and the project tail starting at `\n` — the
+// "byte-for-byte rows preserved" guarantee would break. The lookahead
+// `(?=\r?\n|$)` anchors to end-of-line without consuming it.
+// (Codex P2 on PR #80.)
+const TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
+
+/**
+ * Header-only sync for telemetry files. The template ends at the table
+ * separator line (it never contains rows); the project file extends the
+ * template with auto-appended rows below the separator. On upgrade:
+ *   - Take the new header from the template (everything up to and including
+ *     its table separator).
+ *   - Take the tail (everything AFTER the separator) from the project,
+ *     preserving accumulated telemetry rows byte-for-byte.
+ *
+ * Returns null if either file is missing a table separator — fail safely
+ * rather than corrupt the project's data.
+ */
+export function mergeHeaderOnly(templateContent: string, projectContent: string): string | null {
+    const projectMatch = TABLE_SEPARATOR_RE.exec(projectContent);
+    const templateMatch = TABLE_SEPARATOR_RE.exec(templateContent);
+    if (!projectMatch || !templateMatch) return null;
+
+    const templateSepEnd = (templateMatch.index ?? 0) + templateMatch[0].length;
+    const projectSepEnd = (projectMatch.index ?? 0) + projectMatch[0].length;
+
+    const templateHeader = templateContent.slice(0, templateSepEnd);
+    const projectTail = projectContent.slice(projectSepEnd);
+
+    return templateHeader + projectTail;
 }
 
 export interface UpgradeResult {
@@ -132,6 +180,45 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         }
 
         pending.push({ rel, projectPath, content: merged });
+    }
+
+    // --- Header-only sync (telemetry files) ---
+    // Refresh the canon-owned header above the table separator; preserve
+    // appended telemetry rows below it byte-for-byte. Skipped if the project
+    // file's table separator can't be located (treat as corrupted; don't
+    // risk data loss).
+    for (const rel of HEADER_ONLY_SYNC) {
+        const projectPath = join(cwd, rel);
+        const templatePath = join(pkgDir, 'templates', rel);
+
+        if (!existsSync(templatePath)) {
+            skipped.push(rel);
+            continue;
+        }
+        const templateContent = readFileSync(templatePath, 'utf8');
+
+        if (!existsSync(projectPath)) {
+            // First-install / missing: scaffold the template wholesale.
+            mkdirSync(dirname(projectPath), { recursive: true });
+            writeFileSync(projectPath, templateContent);
+            upgraded.push(rel);
+            continue;
+        }
+
+        const projectContent = readFileSync(projectPath, 'utf8');
+        const merged = mergeHeaderOnly(templateContent, projectContent);
+
+        if (merged === null) {
+            skipped.push(`${rel} (no markdown table separator found — header-only sync needs the rows-below boundary)`);
+            continue;
+        }
+        if (merged === projectContent) {
+            unchanged.push(rel);
+            continue;
+        }
+
+        writeFileSync(projectPath, merged);
+        upgraded.push(rel);
     }
 
     // --- Canon-owned files (skills, etc.) ---

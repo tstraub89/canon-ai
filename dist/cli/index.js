@@ -1733,6 +1733,9 @@ var CANON_OWNED = [
   // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
   "docs/pipeline-orchestrator.md"
 ];
+var HEADER_ONLY_SYNC = [
+  "docs/pipeline-invocations.md"
+];
 function mergeDelimited(templateContent, projectContent) {
   if (!CANON_START_RE2.test(templateContent)) return null;
   if (!CANON_START_RE2.test(projectContent)) return null;
@@ -1740,6 +1743,17 @@ function mergeDelimited(templateContent, projectContent) {
   const projectEnd = projectContent.indexOf(CANON_END2);
   if (templateEnd === -1 || projectEnd === -1) return null;
   return templateContent.slice(0, templateEnd + CANON_END2.length) + projectContent.slice(projectEnd + CANON_END2.length);
+}
+var TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
+function mergeHeaderOnly(templateContent, projectContent) {
+  const projectMatch = TABLE_SEPARATOR_RE.exec(projectContent);
+  const templateMatch = TABLE_SEPARATOR_RE.exec(templateContent);
+  if (!projectMatch || !templateMatch) return null;
+  const templateSepEnd = (templateMatch.index ?? 0) + templateMatch[0].length;
+  const projectSepEnd = (projectMatch.index ?? 0) + projectMatch[0].length;
+  const templateHeader = templateContent.slice(0, templateSepEnd);
+  const projectTail = projectContent.slice(projectSepEnd);
+  return templateHeader + projectTail;
 }
 function isPathDirty(cwd, relPath) {
   const result = spawnSync8("git", ["status", "--porcelain", "--", relPath], {
@@ -1782,6 +1796,33 @@ function runUpgrade(cwd, pkgDir, options = {}) {
       continue;
     }
     pending.push({ rel, projectPath, content: merged });
+  }
+  for (const rel of HEADER_ONLY_SYNC) {
+    const projectPath = join5(cwd, rel);
+    const templatePath = join5(pkgDir, "templates", rel);
+    if (!existsSync4(templatePath)) {
+      skipped.push(rel);
+      continue;
+    }
+    const templateContent = readFileSync2(templatePath, "utf8");
+    if (!existsSync4(projectPath)) {
+      mkdirSync2(dirname4(projectPath), { recursive: true });
+      writeFileSync2(projectPath, templateContent);
+      upgraded.push(rel);
+      continue;
+    }
+    const projectContent = readFileSync2(projectPath, "utf8");
+    const merged = mergeHeaderOnly(templateContent, projectContent);
+    if (merged === null) {
+      skipped.push(`${rel} (no markdown table separator found \u2014 header-only sync needs the rows-below boundary)`);
+      continue;
+    }
+    if (merged === projectContent) {
+      unchanged.push(rel);
+      continue;
+    }
+    writeFileSync2(projectPath, merged);
+    upgraded.push(rel);
   }
   for (const rel of CANON_OWNED) {
     const projectPath = join5(cwd, rel);
