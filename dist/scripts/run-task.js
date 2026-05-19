@@ -393,7 +393,7 @@ function worktreePath(taskId) {
 function isWorktreeEnabled(taskIds) {
   return readStatus(taskIds[0]).worktree === true;
 }
-function getActiveCwd(taskIds) {
+function getActiveCwd(taskIds, options = {}) {
   if (isWorktreeEnabled(taskIds)) {
     const wt = worktreePath(taskIds[0]);
     if (fs3.existsSync(wt)) return wt;
@@ -401,6 +401,12 @@ function getActiveCwd(taskIds) {
     if (branch) {
       const existing = findExistingWorktreeForBranch2(branch);
       if (existing) return existing;
+      if (options.tolerateMissingWorktree) {
+        warn(
+          `Worktree for task '${taskIds[0]}' is expected but missing \u2014 continuing with REPO_ROOT. (Partial-cleanup state recovery.)`
+        );
+        return REPO_ROOT;
+      }
       die(
         `Worktree for task '${taskIds[0]}' is expected but missing.
   Restore or recreate the worktree before continuing.`
@@ -975,6 +981,9 @@ function isPlanCombined2(status) {
   return isPlanCombined({ task_size: status.task_size, delicate: status.delicate });
 }
 
+// scripts/run-task/agents/claude.ts
+import { spawn as spawn2 } from "child_process";
+
 // scripts/run-task/metrics.ts
 import fs4 from "fs";
 import path5 from "path";
@@ -1153,6 +1162,45 @@ function formatLiveTick(event) {
 
 // scripts/run-task/agents/claude.ts
 var CLAUDE_RESUME_NOT_FOUND_RE = /No conversation found with session ID/i;
+var CLAUDE_UNKNOWN_EFFORT_RE = /unknown (?:option|flag)[^\n]*--effort/i;
+var CLAUDE_TOO_OLD_HINT = "Claude Code is too old for canon \u2014 run `canon doctor` to verify (canon requires Claude Code 2.1.72+).";
+function printClaudeTooOldHint(capturedStderr) {
+  if (CLAUDE_UNKNOWN_EFFORT_RE.test(capturedStderr)) {
+    console.error(CLAUDE_TOO_OLD_HINT);
+  }
+}
+function runInteractiveClaude(args, cwd) {
+  return new Promise((resolve) => {
+    const child = spawn2("claude", args, {
+      cwd,
+      stdio: ["inherit", "inherit", "pipe"]
+    });
+    let capturedStderr = "";
+    let settled = false;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      resolve(code);
+    };
+    if (child.stderr) {
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => {
+        capturedStderr += chunk;
+        process.stderr.write(chunk);
+      });
+    }
+    child.on("error", (err) => {
+      console.error(err.message);
+      finish(1);
+    });
+    child.on("close", (code) => {
+      if (typeof code === "number" && code !== 0) {
+        printClaudeTooOldHint(capturedStderr);
+      }
+      finish(typeof code === "number" ? code : 1);
+    });
+  });
+}
 async function runClaude(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT) {
   info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : "Calling Claude Code...");
   info(`Model: ${model} | Effort: ${effort}`);
@@ -1172,7 +1220,11 @@ async function runClaude(prompt, interactive, resumeId, model, effort, metricsCo
       if (cwd !== REPO_ROOT) args.push("--add-dir", cwd);
       if (resumeId) args.push("--resume", resumeId);
       args.push(resumeId ? toResumePrompt(prompt) : prompt);
-      runCommandOrDie("claude", args, { cwd });
+      const exitCode = await runInteractiveClaude(args, cwd);
+      if (exitCode !== 0) {
+        status = "failed";
+        process.exit(exitCode);
+      }
       return {
         exitCode: 0,
         signal: null,
@@ -1268,6 +1320,7 @@ async function runClaude(prompt, interactive, resumeId, model, effort, metricsCo
         process.exit(1);
       }
       if (typeof result.exitCode === "number" && result.exitCode !== 0) {
+        printClaudeTooOldHint(result.capturedStderr);
         status = "failed";
         process.exit(result.exitCode);
       }
@@ -1531,8 +1584,14 @@ function validateHandoff(taskId) {
 }
 function canonicalizeValidationCheck(value) {
   const backtickMatch = value.match(/`([^`]+)`/);
-  const base = backtickMatch ? backtickMatch[1] : value.split(/\s+[—–-]\s+/)[0];
-  const normalized = base.replace(/`/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  let base;
+  if (backtickMatch && !backtickMatch[1].endsWith("\\")) {
+    base = backtickMatch[1];
+  } else {
+    const stripped = value.replace(/\\`/g, "").replace(/`/g, "");
+    base = stripped.split(/\s+[—–-]\s+/)[0];
+  }
+  const normalized = base.replace(/\s+/g, " ").trim().toLowerCase();
   if (normalized.includes(" ")) {
     return normalized.split(" ").at(-1) ?? normalized;
   }
@@ -1602,12 +1661,14 @@ function validateHandoffAgainstSpec(specPath, handoffPath, latestResults) {
     const canonical = canonicalizeValidationCheck(required);
     const row = rowMap.get(canonical);
     if (!row) {
-      issues.push(`Validation Required item missing from handoff.md: ${required}`);
+      const present = [...rowMap.keys()];
+      const hint = present.length > 0 ? ` Handoff has rows for: ${present.join(", ")}. (Required canonicalized to: '${canonical}'.)` : " Handoff has no Validation Outcomes rows.";
+      issues.push(`Validation Required item missing from handoff.md: ${required}.${hint}`);
       continue;
     }
     const note = row.notes ? ` (${row.notes})` : "";
     if (isPendingResult(row.result)) {
-      issues.push(`Validation Required item missing from handoff.md: ${required}`);
+      issues.push(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`);
       continue;
     }
     if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
@@ -1630,7 +1691,7 @@ function validateHandoffAgainstSpec(specPath, handoffPath, latestResults) {
     if (isUnrelatedFailResult(row.result)) {
       const hasFileRef = /\w+\.\w+|:\d+/.test(row.notes ?? "");
       if (!hasFileRef) {
-        issues.push(`Validation Required item marked Fail \u2013 unrelated without a specific test/file reference in Notes (must name the failing test file or path): ${required}`);
+        issues.push(`Validation Required item marked Fail \u2013 unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`);
       }
       continue;
     }
@@ -1795,11 +1856,18 @@ function parseHandoffFiles(taskId) {
   for (const rows of tables) {
     for (const row of rows) {
       const firstColumn = Object.values(row)[0] ?? "";
-      const match = firstColumn.match(/`([^`]+)`/);
-      if (match?.[1]) files.add(match[1]);
+      const extracted = extractHandoffPath(firstColumn);
+      if (extracted) files.add(extracted);
     }
   }
   return [...files];
+}
+function extractHandoffPath(cell) {
+  const backtick = cell.match(/`([^`]+)`/);
+  if (backtick?.[1]) return backtick[1].trim();
+  const mdLink = cell.match(/\[([^\]]+)\]\([^)]*\)/);
+  if (mdLink?.[1]) return mdLink[1].trim();
+  return null;
 }
 var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
 function isPipelineOwnedTaskArtifact(filePath, taskIds) {
@@ -3737,6 +3805,10 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
     );
   }
 }
+function isPipelineOwnedPath(filePath, taskIds) {
+  if (taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`))) return true;
+  return PIPELINE_TELEMETRY_FILES.includes(filePath);
+}
 function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   const primaryStatus = readStatus(taskIds[0]);
   const title = getTitle(primaryStatus);
@@ -3747,8 +3819,34 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     }
   }
   if (allHandoffFiles.size === 0) {
-    warn2("No files found in handoff.md Changes tables \u2014 skipping auto-commit.");
-    warn2("Stage and commit manually, or ensure all handoff.md files have a Changes table.");
+    const emptyDebug = { cwd, handoffFiles: [] };
+    const dirtyCheck = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
+    Object.assign(emptyDebug, {
+      dirtyStatusOk: dirtyCheck.ok,
+      dirtyStatusRaw: dirtyCheck.stdout,
+      dirtyStatusError: dirtyCheck.stderr
+    });
+    if (!dirtyCheck.ok) {
+      appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-dirty-check-failed" });
+      die(`Auto-commit aborted: handoff.md Changes table empty AND failed to inspect dirty files: ${dirtyCheck.stderr || "unknown error"}`);
+    }
+    const allDirty = [...parsePorcelain(dirtyCheck.stdout)];
+    const sourceDirty = allDirty.filter((f) => !isPipelineOwnedPath(f, taskIds));
+    Object.assign(emptyDebug, { allDirty, sourceDirty });
+    if (sourceDirty.length > 0) {
+      appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-but-source-dirty" });
+      die(
+        `Auto-commit aborted: handoff.md Changes table is empty but the working tree has
+  source-file changes outside the pipeline-owned paths.
+  This usually means the agent made changes but did not populate the Changes table
+  in handoff.md \u2014 or the table format was not recognized by the parser (backtick
+  paths and markdown links are both supported as of 2026-05-18).
+  Dirty source files (truncated to first 20):
+` + sourceDirty.slice(0, 20).map((f) => `    ${f}`).join("\n") + `
+  Resolve manually: fix handoff.md or commit/discard the dirty files.`
+      );
+    }
+    appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-clean-or-pipeline-only" });
     return;
   }
   const handoffFiles = [...allHandoffFiles];
@@ -3955,6 +4053,72 @@ function createDraftPRForTask(taskIds, branchName) {
   }
   info2(`Draft PR created: ${prResult.stdout || branchName}`);
 }
+function formatExistingPRMessage(prNum, prUrl) {
+  return `Existing draft PR: #${prNum} (${prUrl})`;
+}
+function parseOriginRepoSlug(remoteUrl) {
+  const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
+  return match?.[1] ?? null;
+}
+function lookupPRUrl(prNum) {
+  if (ghAvailable) {
+    const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "url", "--jq", ".url"]);
+    if (result.ok && result.stdout.trim()) return result.stdout.trim();
+  }
+  const remoteResult = runCommand("git", ["remote", "get-url", "origin"]);
+  if (remoteResult.ok) {
+    const repoSlug = parseOriginRepoSlug(remoteResult.stdout);
+    if (repoSlug) return `https://github.com/${repoSlug}/pull/${prNum}`;
+  }
+  return `(PR #${prNum})`;
+}
+function formatCompleteStateBanner(taskIds, state) {
+  const body = (() => {
+    switch (state.kind) {
+      case "open_pr":
+        return `  Open PR: #${state.prNum} (${state.prUrl})
+  Next:    \`canon run ${taskIds.join(" ")} --ship\` to merge + archive.`;
+      case "pushed_no_pr":
+        return `  Branch ${state.branch} is on origin but no open PR.
+  Next:    \`canon run ${taskIds.join(" ")} --pr\` to (re)open the draft PR, or
+           \`canon run ${taskIds.join(" ")} --ship\` if the work is already merged to ${state.baseBranch}.`;
+      case "unpushed":
+        return `  Local branch ${state.branch} is not on origin.
+  Next:    \`canon run ${taskIds.join(" ")} --pr\` to push and open a draft PR.
+           (For a no-PR flow: merge to ${state.baseBranch} manually, push, then run --ship.)`;
+    }
+  })();
+  return [
+    "",
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "  TASK COMPLETE \u2014 already past human_review.",
+    "",
+    body,
+    "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    ""
+  ].join("\n");
+}
+function inspectCompleteState(branch, taskIds) {
+  const baseBranch = getBaseBranch(taskIds);
+  const remoteExists = gitSafeAt2(REPO_ROOT2, "rev-parse", "--verify", `origin/${branch}`).ok;
+  if (!remoteExists) {
+    return { kind: "unpushed", branch, baseBranch };
+  }
+  const prNum = ghAvailable ? findOpenPRNumber(branch, baseBranch) : null;
+  if (prNum === null) {
+    return { kind: "pushed_no_pr", branch, baseBranch };
+  }
+  const prUrl = lookupPRUrl(prNum);
+  return { kind: "open_pr", branch, prNum, prUrl };
+}
+function printCompleteStateBanner(taskIds) {
+  const branches = [...new Set(taskIds.map((id) => resolveTaskBranchName(id)))];
+  for (const branch of branches) {
+    const tasksOnBranch = taskIds.filter((id) => resolveTaskBranchName(id) === branch);
+    const state = inspectCompleteState(branch, tasksOnBranch);
+    console.log(formatCompleteStateBanner(tasksOnBranch, state));
+  }
+}
 function commitHumanReviewFiles(taskIds, cwd) {
   mirrorHumanReviewDocsToCwd(cwd);
   const dirtyResult = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall");
@@ -3962,17 +4126,26 @@ function commitHumanReviewFiles(taskIds, cwd) {
     die2(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || "unknown error"}`);
   }
   const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
-  if (dirtyEntries.length === 0 && cliArgs.pr) {
+  if (dirtyEntries.length === 0 && (cliArgs.pr || cliArgs.push)) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
-      const remoteRef = gitSafeAt2(cwd, "rev-parse", "--verify", `origin/${branchName2}`);
-      const openPR = ghAvailable ? findOpenPRNumber(branchName2) : null;
-      if (remoteRef.ok && openPR === null) {
-        info2(`--pr retry detected: tree clean, branch ${branchName2} on origin, no open PR. Creating PR only.`);
-        createDraftPRForTask(taskIds, branchName2);
+      const baseBranch = getBaseBranch(taskIds);
+      const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName2, baseBranch) : null;
+      info2(`Clean tree. Pushing ${branchName2}...`);
+      const pushResult2 = gitSafeAt2(cwd, "push", "origin", branchName2);
+      if (!pushResult2.ok) {
+        die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
+      }
+      if (cliArgs.pr && openPR !== null) {
+        const prUrl = lookupPRUrl(openPR);
+        info2(formatExistingPRMessage(openPR, prUrl));
         return;
       }
+      if (cliArgs.pr) {
+        createDraftPRForTask(taskIds, branchName2);
+      }
+      return;
     }
   }
   if (dirtyEntries.length === 0) {
@@ -4129,6 +4302,7 @@ function assertTaskBranchPushed(taskId) {
 }
 function assertOriginTaskBranchAbsent(taskId) {
   const branchName = resolveTaskBranchName(taskId);
+  const baseBranch = getBaseBranch([taskId]);
   const lsRemote = gitSafe("ls-remote", "--heads", "origin", `refs/heads/${branchName}`);
   if (!lsRemote.ok) {
     warn2(
@@ -4138,6 +4312,27 @@ function assertOriginTaskBranchAbsent(taskId) {
   }
   if (!lsRemote.stdout.trim()) return;
   const remoteSha = lsRemote.stdout.trim().split(/\s+/)[0];
+  const mergedPrNum = ghAvailable ? findMergedPRNumber(branchName, baseBranch) : null;
+  if (mergedPrNum !== null) {
+    const prHead = getMergedPRHeadSha(mergedPrNum);
+    if (prHead === null) {
+    } else if (prHead !== remoteSha) {
+      die(
+        `--ship aborted: origin/${branchName} is at ${remoteSha.slice(0, 7)} but the merged PR #${mergedPrNum} merged head ${prHead.slice(0, 7)}. New commits were pushed to the branch after the PR merged. Resolve manually \u2014 those commits are not in the merged work.`
+      );
+    } else {
+      info2(
+        `origin/${branchName} still exists at ${remoteSha.slice(0, 7)} (matches merged PR #${mergedPrNum} head). Deleting the remote branch \u2014 the merged content is in the base.`
+      );
+      const del = gitSafe("push", "origin", `--delete`, branchName);
+      if (!del.ok) {
+        die(
+          `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but \`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || "unknown error"}. Delete the remote branch manually and re-run --ship.`
+        );
+      }
+      return;
+    }
+  }
   die(
     `--ship aborted: origin/${branchName} still exists at ${remoteSha.slice(0, 7)} but no PR was merged this run.
   Either the remote branch has commits that were never PR'd, or a prior merge
@@ -4147,9 +4342,22 @@ function assertOriginTaskBranchAbsent(taskId) {
     - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`
   );
 }
+function findMergedPRNumber(branch, baseBranch) {
+  if (!ghAvailable) return null;
+  return findPRNumberExact(branch, baseBranch, "merged");
+}
+function getMergedPRHeadSha(prNum) {
+  if (!ghAvailable) return null;
+  const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "headRefOid", "--jq", ".headRefOid"]);
+  if (!result.ok) return null;
+  const sha = result.stdout.trim();
+  if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null;
+  return sha;
+}
 function assertNoOpenPRForTask(taskId) {
   const branchName = resolveTaskBranchName(taskId);
-  const prNum = findOpenPRNumber(branchName);
+  const baseBranch = getBaseBranch([taskId]);
+  const prNum = findOpenPRNumber(branchName, baseBranch);
   if (prNum !== null) {
     die(
       `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.
@@ -4159,19 +4367,37 @@ function assertNoOpenPRForTask(taskId) {
     );
   }
 }
-function findOpenPRNumber(branch) {
+function findOpenPRNumber(branch, baseBranch) {
   if (!ghAvailable) return null;
-  const result = runCommand("gh", ["pr", "list", "--head", branch, "--state", "open", "--json", "number", "--jq", ".[0].number"]);
-  if (!result.ok || !result.stdout.trim() || result.stdout.trim() === "null") return null;
-  const num = Number.parseInt(result.stdout.trim(), 10);
-  return Number.isNaN(num) ? null : num;
+  return findPRNumberExact(branch, baseBranch, "open");
+}
+function findPRNumberExact(branch, baseBranch, state) {
+  if (!ghAvailable) return null;
+  const args = ["pr", "list", "--head", branch, "--state", state, "--limit", "1000", "--json", "number,headRefName"];
+  if (baseBranch !== null) args.push("--base", baseBranch);
+  const result = runCommand("gh", args);
+  if (!result.ok || !result.stdout.trim()) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  for (const entry of parsed) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const headRefName = entry.headRefName;
+    const number = entry.number;
+    if (headRefName === branch && typeof number === "number") return number;
+  }
+  return null;
 }
 function mergeOpenPRsAndPull(taskIds) {
   const baseBranch = getBaseBranch(taskIds);
   const branches = [...new Set(taskIds.map((id) => resolveTaskBranchName(id)))];
   let anyMerged = false;
   for (const branch of branches) {
-    const prNum = findOpenPRNumber(branch);
+    const prNum = findOpenPRNumber(branch, baseBranch);
     if (!prNum) continue;
     info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via squash...`);
     const result = runCommand("gh", ["pr", "merge", String(prNum), "--squash", "--delete-branch"]);
@@ -4282,12 +4508,13 @@ function shipTasks(taskIds) {
   for (const taskId of taskIds) {
     const currentPhase = getCurrentPhase(readStatus(taskId));
     if (currentPhase !== "human_review") continue;
-    const taskCwd = getActiveCwd([taskId]);
+    const taskCwd = getActiveCwd([taskId], { tolerateMissingWorktree: true });
+    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path15.join(taskCwd, "tasks");
     const gateResult = checkPhaseGate(
       taskId,
       "human_review",
       void 0,
-      path15.join(taskCwd, "tasks")
+      tasksRootForGate
     );
     if (!gateResult.ok) {
       die(`--ship aborted for '${taskId}': ${gateResult.reason}`);
@@ -4438,6 +4665,16 @@ async function runPhase(phase, state) {
     console.log("  Re-run with --push to commit task artifacts and push, or --pr to also create a draft PR.");
     console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
     console.log("");
+    process.exit(0);
+  }
+  if (phase === "complete") {
+    const taskIds2 = tasks.map((t) => t.taskId);
+    if (cliArgs.push || cliArgs.pr) {
+      const cwd = getActiveCwd(taskIds2);
+      commitHumanReviewFiles(taskIds2, cwd);
+      process.exit(0);
+    }
+    printCompleteStateBanner(taskIds2);
     process.exit(0);
   }
   die2(`Unknown phase: ${String(phase)}`);

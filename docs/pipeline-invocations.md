@@ -90,3 +90,9 @@
 | 2026-05-17T03:05:53.401Z | canon-self-contained | implement | codex | gpt-5.5 | 0 | 2072.7s | 23734382 | ok |
 | 2026-05-17T03:28:47.105Z | canon-self-contained | code_review | claude | sonnet | 0 | 267.1s | 1333235 | ok |
 | 2026-05-17T03:34:48.017Z | canon-self-contained | qa | claude | sonnet | 0 | 360.5s | 1676684 | ok |
+| 2026-05-17T22:16:55.313Z | claude-min-version | implement | codex | gpt-5.4-mini | 0 | 219.5s | 2451103 | ok |
+| 2026-05-17T22:18:31.948Z | claude-min-version | code_review | claude | sonnet | 0 | 96.4s | 347346 | ok |
+| 2026-05-17T22:20:22.346Z | claude-min-version | qa | claude | sonnet | 0 | 110.2s | 399177 | ok |
+| 2026-05-18T14:11:35.455Z | pr-at-complete | implement | codex | gpt-5.4-mini | 0 | 848.9s | 10410641 | ok |
+| 2026-05-18T14:14:49.009Z | pr-at-complete | code_review | claude | sonnet | 0 | 193.3s | 1055353 | ok |
+| 2026-05-18T14:17:22.453Z | pr-at-complete | qa | claude | sonnet | 0 | 153.3s | 484439 | ok |

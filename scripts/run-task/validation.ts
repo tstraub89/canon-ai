@@ -88,9 +88,36 @@ export function validateHandoff(taskId: string): string[] {
 }
 
 export function canonicalizeValidationCheck(value: string): string {
+    // Prefer the first clean backtick-bounded span as a shortcut (the common
+    // case: cells like `npm run lint`). Reject the shortcut ONLY when the
+    // captured group ends with `\` — that signals the regex stopped at an
+    // escaped backtick (the closing `\``), so the capture is a prefix of an
+    // escaped-backtick form (e.g. `Type checking: \`npm run type-check:all\``
+    // captures `npm run type-check:all\`). Falling back in that case strips
+    // `\`` sequences and processes the cell as plain text.
+    //
+    // Important: only checking the END preserves the shortcut for cells with
+    // INTERNAL backslashes (regex, paths) — `grep \w+` captures `grep \w+`,
+    // does not end with `\`, uses the shortcut, canonicalizes to `\w+`.
+    // (Codex P2 on PR #81 iter 1: the original `.includes('\\')` form rejected
+    // ALL backslashes inside the span, which pushed legitimate checks into
+    // the plain-text fallback and produced wrong canonical keys.)
     const backtickMatch = value.match(/`([^`]+)`/);
-    const base = backtickMatch ? backtickMatch[1] : value.split(/\s+[—–-]\s+/)[0];
-    const normalized = base.replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    let base: string;
+    if (backtickMatch && !backtickMatch[1].endsWith('\\')) {
+        base = backtickMatch[1];
+    } else {
+        // Strip `\`` escape sequences (literal backslash + backtick), then
+        // remove bare remaining backticks. Preserves legitimate backslashes
+        // in check labels — `grep \w+`, Windows paths, etc. — because we
+        // only consume the backslash when it's directly followed by a
+        // backtick. (Codex P2 on PR #71 iter 1: original `[`\\]/g` form
+        // stripped EVERY backslash globally, which would corrupt such
+        // labels and collapse distinct checks into the same canonical key.)
+        const stripped = value.replace(/\\`/g, '').replace(/`/g, '');
+        base = stripped.split(/\s+[—–-]\s+/)[0];
+    }
+    const normalized = base.replace(/\s+/g, ' ').trim().toLowerCase();
     // If the token looks like a command (contains spaces, e.g. "npm run lint"), use
     // the last word as the canonical key so it matches the short-name form ("lint").
     if (normalized.includes(' ')) {
@@ -245,7 +272,16 @@ export function validateHandoffAgainstSpec(
         const canonical = canonicalizeValidationCheck(required);
         const row = rowMap.get(canonical);
         if (!row) {
-            issues.push(`Validation Required item missing from handoff.md: ${required}`);
+            // Distinguish "no row at all" from "row present but canonicalized
+            // to a different key." The second case usually means a slight
+            // mismatch between the spec phrasing and the handoff cell text;
+            // surface the present keys so the user can spot it without
+            // chasing the wrong root cause. (Issue #71.)
+            const present = [...rowMap.keys()];
+            const hint = present.length > 0
+                ? ` Handoff has rows for: ${present.join(', ')}. (Required canonicalized to: '${canonical}'.)`
+                : ' Handoff has no Validation Outcomes rows.';
+            issues.push(`Validation Required item missing from handoff.md: ${required}.${hint}`);
             continue;
         }
         const note = row.notes ? ` (${row.notes})` : '';
@@ -253,7 +289,7 @@ export function validateHandoffAgainstSpec(
         // Required items in `pending` template state count as missing — the
         // agent didn't actually fill in the row.
         if (isPendingResult(row.result)) {
-            issues.push(`Validation Required item missing from handoff.md: ${required}`);
+            issues.push(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`);
             continue;
         }
         if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
@@ -283,14 +319,18 @@ export function validateHandoffAgainstSpec(
         }
         // `fail – unrelated` is accepted only when Notes contains a filename
         // with an extension (`\w+\.\w+`, e.g. `foo.test.ts`) or a line ref
-        // (`:\d+`, e.g. `file:42`). A bare `/` is intentionally excluded —
-        // it matches prose like "CI/network flake" without naming a real
-        // test file. A vague note like "pre-existing flake" is rejected.
-        // The reviewer then assesses credibility at code_review.
+        // (`:\d+`, e.g. `file:42`). Vague prose like "pre-existing flake"
+        // or "CI/network flake" is rejected — the reviewer assesses
+        // credibility at code_review using the named reference. Issue #71
+        // proposed broadening (paths without extension, npm-script citations)
+        // but every broader pattern we considered either false-positives on
+        // prose (`unit/e2e failure`, `test: failed`) or requires opinionated
+        // folder-name lists — keep the tight set and address the diagnostics
+        // angle of the issue instead (better error messages elsewhere).
         if (isUnrelatedFailResult(row.result)) {
             const hasFileRef = /\w+\.\w+|:\d+/.test(row.notes ?? '');
             if (!hasFileRef) {
-                issues.push(`Validation Required item marked Fail – unrelated without a specific test/file reference in Notes (must name the failing test file or path): ${required}`);
+                issues.push(`Validation Required item marked Fail – unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`);
             }
             continue;
         }
@@ -561,11 +601,33 @@ export function parseHandoffFiles(taskId: string): string[] {
     for (const rows of tables) {
         for (const row of rows) {
             const firstColumn = Object.values(row)[0] ?? '';
-            const match = firstColumn.match(/`([^`]+)`/);
-            if (match?.[1]) files.add(match[1]);
+            const extracted = extractHandoffPath(firstColumn);
+            if (extracted) files.add(extracted);
         }
     }
     return [...files];
+}
+
+/**
+ * Extracts the file path from the first-column cell of a handoff Changes
+ * table row. Two recognized formats:
+ *
+ *   - Backticked: `` `path/to/file.ts` ``
+ *   - Markdown link: `[path/to/file.ts](https://...)` or `[path/to/file.ts](some/local/link)`
+ *
+ * Codex's handoffs alternate between these forms across runs; pre-2026-05-18
+ * only the backtick form was supported, causing `autoCommitCode` to silently
+ * no-op on markdown-link handoffs (the empty-handoff branch returned without
+ * committing). Exported for unit testing.
+ */
+export function extractHandoffPath(cell: string): string | null {
+    // Backtick form first (more specific): `path`.
+    const backtick = cell.match(/`([^`]+)`/);
+    if (backtick?.[1]) return backtick[1].trim();
+    // Markdown link form: [path](anything). Path is everything inside [].
+    const mdLink = cell.match(/\[([^\]]+)\]\([^)]*\)/);
+    if (mdLink?.[1]) return mdLink[1].trim();
+    return null;
 }
 
 const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);

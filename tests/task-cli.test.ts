@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { taskList, taskNew, taskPhase, taskPostMergeSync, taskReleaseInit, taskResetSpecReview, taskStatus } from '../src/task/index.js';
+import { findUntrackedClobberPaths, taskList, taskNew, taskPhase, taskPostMergeSync, taskReleaseInit, taskResetSpecReview, taskStatus } from '../src/task/index.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
 
 const WORKSPACE_ROOT = process.cwd();
@@ -243,12 +243,134 @@ void test('task reset-spec-review archives prior review and resets loop-local fi
     });
 });
 
-void test('task post-merge-sync rejects a dirty working tree', () => {
-    withTempDir('post-merge-sync-', root => {
-        git(root, ['init', '-b', 'main']);
-        fs.writeFileSync(path.join(root, 'dirty.txt'), 'dirty\n', 'utf8');
-        withCwd(root, () => {
-            assert.throws(() => taskPostMergeSync(), /working tree is dirty/);
+void test('task post-merge-sync rejects dirty tracked files when about to reset --hard', () => {
+    // Set up: local main is ahead of origin/main but only with telemetry-only
+    // commits (taskPostMergeSync's reset-to-origin path). Working tree has a
+    // dirty TRACKED file. reset --hard would destroy it → refuse.
+    withTempDir('post-merge-sync-dirty-', root => {
+        const origin = path.join(root, 'origin.git');
+        const work = path.join(root, 'work');
+        git(root, ['init', '--bare', origin]);
+        git(root, ['init', '-b', 'main', work]);
+        git(work, ['config', 'user.email', 'test@example.com']);
+        git(work, ['config', 'user.name', 'Test User']);
+        // Initial commit on main + push to origin.
+        fs.writeFileSync(path.join(work, 'src.txt'), 'original\n', 'utf8');
+        fs.mkdirSync(path.join(work, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(work, 'docs', 'pipeline-invocations.md'), '# metrics\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'init']);
+        git(work, ['remote', 'add', 'origin', origin]);
+        git(work, ['push', '-u', 'origin', 'main']);
+        // Telemetry-only commit ahead of origin (will be the "reset-able" diff).
+        fs.appendFileSync(path.join(work, 'docs', 'pipeline-invocations.md'), 'row\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'telemetry']);
+        // Now make src.txt dirty (tracked, modified, uncommitted).
+        fs.writeFileSync(path.join(work, 'src.txt'), 'dirty\n', 'utf8');
+        withCwd(work, () => {
+            assert.throws(() => taskPostMergeSync(), /dirty tracked files/);
+        });
+    });
+});
+
+void test('findUntrackedClobberPaths: case A — exact path match', () => {
+    const target = new Set(['src.txt', 'docs/a.md', 'lib/b.ts']);
+    assert.deepEqual(findUntrackedClobberPaths([], target), []);
+    assert.deepEqual(findUntrackedClobberPaths(['scratch.txt'], target), []);
+    assert.deepEqual(findUntrackedClobberPaths(['src.txt'], target), ['src.txt']);
+    assert.deepEqual(
+        findUntrackedClobberPaths(['scratch.txt', 'src.txt', 'lib/b.ts', 'other.md'], target),
+        ['src.txt', 'lib/b.ts'],
+    );
+});
+
+void test('findUntrackedClobberPaths: case B — local dir under a target file path', () => {
+    // Target tracks `foo` as a file. Local has untracked `foo/bar.txt`,
+    // so `foo` is a directory locally. reset --hard wipes the directory
+    // to write the file.
+    const target = new Set(['foo', 'docs/a.md']);
+    assert.deepEqual(findUntrackedClobberPaths(['foo/bar.txt'], target), ['foo/bar.txt']);
+    assert.deepEqual(findUntrackedClobberPaths(['foo/bar/baz.txt'], target), ['foo/bar/baz.txt']);
+    // Sanity: a sibling untracked file outside the colliding ancestor is fine.
+    assert.deepEqual(findUntrackedClobberPaths(['other.txt'], target), []);
+});
+
+void test('findUntrackedClobberPaths: case C — local file at a target directory path', () => {
+    // Target tracks `foo/bar.txt`. Local has untracked `foo` as a file.
+    // reset --hard removes the file to create the directory.
+    const target = new Set(['foo/bar.txt', 'foo/qux.txt', 'docs/a.md']);
+    assert.deepEqual(findUntrackedClobberPaths(['foo'], target), ['foo']);
+    // Untracked file at a path with NO target prefix → no conflict.
+    assert.deepEqual(findUntrackedClobberPaths(['unrelated'], target), []);
+});
+
+void test('findUntrackedClobberPaths: multiple conflict modes in one call', () => {
+    const target = new Set(['foo', 'src/main.ts', 'docs/a.md']);
+    assert.deepEqual(
+        findUntrackedClobberPaths(
+            ['foo/bar.txt', 'src/main.ts', 'src', 'scratch.txt'],
+            target,
+        ),
+        ['foo/bar.txt', 'src/main.ts', 'src'],
+    );
+});
+
+void test('task post-merge-sync allows untracked files that do NOT conflict with the target tree', () => {
+    // Untracked files survive reset --hard cleanly when their paths aren't in
+    // the target tree. The GP report's `.gitignore`d scratch dir is a common
+    // case — should not block post-merge-sync.
+    withTempDir('post-merge-sync-untracked-safe-', root => {
+        const origin = path.join(root, 'origin.git');
+        const work = path.join(root, 'work');
+        git(root, ['init', '--bare', origin]);
+        git(root, ['init', '-b', 'main', work]);
+        git(work, ['config', 'user.email', 'test@example.com']);
+        git(work, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(work, 'src.txt'), 'tracked\n', 'utf8');
+        fs.mkdirSync(path.join(work, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(work, 'docs', 'pipeline-invocations.md'), '# metrics\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'init']);
+        git(work, ['remote', 'add', 'origin', origin]);
+        git(work, ['push', '-u', 'origin', 'main']);
+        // Telemetry-only commit ahead.
+        fs.appendFileSync(path.join(work, 'docs', 'pipeline-invocations.md'), 'row\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'telemetry']);
+        // Untracked file at a path NOT in origin/main → safe to reset --hard.
+        fs.writeFileSync(path.join(work, 'scratch-notes.txt'), 'my untracked notes\n', 'utf8');
+        withCwd(work, () => {
+            captureStdout(() => { taskPostMergeSync(); });
+            // Verify reset --hard succeeded (HEAD is now at origin/main).
+            assert.equal(git(work, ['rev-list', '--count', 'origin/main..HEAD']), '0');
+            // Untracked file survives.
+            assert.ok(fs.existsSync(path.join(work, 'scratch-notes.txt')));
+        });
+    });
+});
+
+void test('task post-merge-sync allows untracked files when in sync with origin', () => {
+    // Untracked files survive `git reset --hard`, so post-merge-sync should
+    // not refuse on their account. Set up: local == origin, untracked file
+    // present → should succeed.
+    withTempDir('post-merge-sync-untracked-', root => {
+        const origin = path.join(root, 'origin.git');
+        const work = path.join(root, 'work');
+        git(root, ['init', '--bare', origin]);
+        git(root, ['init', '-b', 'main', work]);
+        git(work, ['config', 'user.email', 'test@example.com']);
+        git(work, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(work, 'src.txt'), 'original\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'init']);
+        git(work, ['remote', 'add', 'origin', origin]);
+        git(work, ['push', '-u', 'origin', 'main']);
+        // Untracked file in the working tree.
+        fs.writeFileSync(path.join(work, 'scratch.txt'), 'untracked\n', 'utf8');
+        withCwd(work, () => {
+            const out = captureStdout(() => { taskPostMergeSync(); });
+            assert.match(out, /in sync with origin\/main/);
         });
     });
 });

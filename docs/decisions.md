@@ -122,6 +122,8 @@ Decisions can be reopened, but only with **strong justification and human approv
   - Format follows Keep a Changelog conventions.
   - The repo is currently private; the package is published from `main`. A future public release would not change the changelog model — `CHANGELOG.md` stays in-tree.
 
+- **Release mechanics**: How to actually execute a release (version bump commands, lockfile refresh, tag-and-publish flow, hotfix path, auto-release workflow) lives in [`release-process.md`](release-process.md). That doc is the source of truth for *how*; this entry is the source of truth for *what counts as a bump and who authorizes it*. Notable rule from `release-process.md`: never use `sed` to bump versions in `package.json` or `package-lock.json` — use `npm version --no-git-tag-version` + `npm install --package-lock-only`. The 1.1.3 picocolors lockfile incident was caused by exactly that footgun.
+
 ---
 
 ## Auto-commit owned by the orchestrator (not the agent)

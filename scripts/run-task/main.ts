@@ -267,6 +267,18 @@ function verifyHandoffFilesCommitted(
     }
 }
 
+/**
+ * True for paths the pipeline writes itself and that the agent need not list
+ * in the handoff Changes table: task artifacts under `tasks/<id>/` and
+ * append-only telemetry files. Managed docs (architecture.md, decisions.md,
+ * etc.) are deliberately NOT in this set — those are user content; if they're
+ * dirty after implement, the agent should list them in Changes.
+ */
+function isPipelineOwnedPath(filePath: string, taskIds: readonly string[]): boolean {
+    if (taskIds.some(id => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`))) return true;
+    return (splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath);
+}
+
 function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const primaryStatus = splitState.readStatus(taskIds[0]);
     const title = getTitle(primaryStatus);
@@ -279,8 +291,49 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     }
 
     if (allHandoffFiles.size === 0) {
-        warn('No files found in handoff.md Changes tables — skipping auto-commit.');
-        warn('Stage and commit manually, or ensure all handoff.md files have a Changes table.');
+        // Empty handoff Changes table is hostile when the working tree has
+        // *source-file* changes: it means the agent made changes but didn't
+        // (or couldn't) populate the table, so auto-commit can't proceed AND
+        // the downstream code-review step will read working-tree diff instead
+        // of a real commit — a silent-false-success class. Distinguish:
+        //   - Clean tree (or only pipeline-owned dirty paths) → genuinely no
+        //     source changes. Silent return — preserves the legitimate "implement
+        //     decided no source change was needed" path.
+        //   - Source-file dirty paths present → bug. Hard fail so the operator
+        //     sees it.
+        //
+        // (Pre-2026-05-18 this branch unconditionally warned and returned. The
+        // source-dirty class slipped through silently; surfaced via the
+        // pr-at-complete pipeline run where Codex's handoff used markdown-link
+        // path syntax that the parser missed.)
+        const emptyDebug: Record<string, unknown> = { cwd, handoffFiles: [] };
+        const dirtyCheck = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+        Object.assign(emptyDebug, {
+            dirtyStatusOk: dirtyCheck.ok,
+            dirtyStatusRaw: dirtyCheck.stdout,
+            dirtyStatusError: dirtyCheck.stderr,
+        });
+        if (!dirtyCheck.ok) {
+            appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-dirty-check-failed' });
+            splitCli.die(`Auto-commit aborted: handoff.md Changes table empty AND failed to inspect dirty files: ${dirtyCheck.stderr || 'unknown error'}`);
+        }
+        const allDirty = [...splitGit.parsePorcelain(dirtyCheck.stdout)];
+        const sourceDirty = allDirty.filter(f => !isPipelineOwnedPath(f, taskIds));
+        Object.assign(emptyDebug, { allDirty, sourceDirty });
+        if (sourceDirty.length > 0) {
+            appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-but-source-dirty' });
+            splitCli.die(
+                `Auto-commit aborted: handoff.md Changes table is empty but the working tree has\n` +
+                `  source-file changes outside the pipeline-owned paths.\n` +
+                `  This usually means the agent made changes but did not populate the Changes table\n` +
+                `  in handoff.md — or the table format was not recognized by the parser (backtick\n` +
+                `  paths and markdown links are both supported as of 2026-05-18).\n` +
+                `  Dirty source files (truncated to first 20):\n` +
+                sourceDirty.slice(0, 20).map(f => `    ${f}`).join('\n') +
+                `\n  Resolve manually: fix handoff.md or commit/discard the dirty files.`,
+            );
+        }
+        appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-clean-or-pipeline-only' });
         return;
     }
 
@@ -519,6 +572,80 @@ function createDraftPRForTask(taskIds: string[], branchName: string): void {
     info(`Draft PR created: ${prResult.stdout || branchName}`);
 }
 
+export function formatExistingPRMessage(prNum: number, prUrl: string): string {
+    return `Existing draft PR: #${prNum} (${prUrl})`;
+}
+
+function parseOriginRepoSlug(remoteUrl: string): string | null {
+    const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
+    return match?.[1] ?? null;
+}
+
+function lookupPRUrl(prNum: number): string {
+    if (ghAvailable) {
+        const result = splitGit.runCommand('gh', ['pr', 'view', String(prNum), '--json', 'url', '--jq', '.url']);
+        if (result.ok && result.stdout.trim()) return result.stdout.trim();
+    }
+
+    const remoteResult = splitGit.runCommand('git', ['remote', 'get-url', 'origin']);
+    if (remoteResult.ok) {
+        const repoSlug = parseOriginRepoSlug(remoteResult.stdout);
+        if (repoSlug) return `https://github.com/${repoSlug}/pull/${prNum}`;
+    }
+
+    return `(PR #${prNum})`;
+}
+
+export type CompleteState =
+    | { kind: 'open_pr'; branch: string; prNum: number; prUrl: string }
+    | { kind: 'pushed_no_pr'; branch: string; baseBranch: string }
+    | { kind: 'unpushed'; branch: string; baseBranch: string };
+
+export function formatCompleteStateBanner(taskIds: string[], state: CompleteState): string {
+    const body = (() => {
+        switch (state.kind) {
+            case 'open_pr':
+                return `  Open PR: #${state.prNum} (${state.prUrl})\n  Next:    \`canon run ${taskIds.join(' ')} --ship\` to merge + archive.`;
+            case 'pushed_no_pr':
+                return `  Branch ${state.branch} is on origin but no open PR.\n  Next:    \`canon run ${taskIds.join(' ')} --pr\` to (re)open the draft PR, or\n           \`canon run ${taskIds.join(' ')} --ship\` if the work is already merged to ${state.baseBranch}.`;
+            case 'unpushed':
+                return `  Local branch ${state.branch} is not on origin.\n  Next:    \`canon run ${taskIds.join(' ')} --pr\` to push and open a draft PR.\n           (For a no-PR flow: merge to ${state.baseBranch} manually, push, then run --ship.)`;
+        }
+    })();
+    return [
+        '',
+        '════════════════════════════════════════════════════════',
+        '  TASK COMPLETE — already past human_review.',
+        '',
+        body,
+        '════════════════════════════════════════════════════════',
+        '',
+    ].join('\n');
+}
+
+function inspectCompleteState(branch: string, taskIds: string[]): CompleteState {
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const remoteExists = gitSafeAt(REPO_ROOT, 'rev-parse', '--verify', `origin/${branch}`).ok;
+    if (!remoteExists) {
+        return { kind: 'unpushed', branch, baseBranch };
+    }
+    const prNum = ghAvailable ? findOpenPRNumber(branch, baseBranch) : null;
+    if (prNum === null) {
+        return { kind: 'pushed_no_pr', branch, baseBranch };
+    }
+    const prUrl = lookupPRUrl(prNum);
+    return { kind: 'open_pr', branch, prNum, prUrl };
+}
+
+function printCompleteStateBanner(taskIds: string[]): void {
+    const branches = [...new Set(taskIds.map(id => resolveTaskBranchName(id)))];
+    for (const branch of branches) {
+        const tasksOnBranch = taskIds.filter(id => resolveTaskBranchName(id) === branch);
+        const state = inspectCompleteState(branch, tasksOnBranch);
+        console.log(formatCompleteStateBanner(tasksOnBranch, state));
+    }
+}
+
 function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
     mirrorHumanReviewDocsToCwd(cwd);
 
@@ -534,17 +661,48 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
     // --pr run where commit+push succeeded but `gh pr create` failed
     // transiently (network, rate limit). Skip the commit step and re-attempt
     // PR creation only. Caught via canon-ai PR #39 CodeRabbit finding #1.
-    if (dirtyEntries.length === 0 && cliArgs.pr) {
+    if (dirtyEntries.length === 0 && (cliArgs.pr || cliArgs.push)) {
         const branchResult = gitSafeAt(cwd, 'rev-parse', '--abbrev-ref', 'HEAD');
         const branchName = branchResult.ok ? branchResult.stdout.trim() : '';
         if (branchName) {
-            const remoteRef = gitSafeAt(cwd, 'rev-parse', '--verify', `origin/${branchName}`);
-            const openPR = ghAvailable ? findOpenPRNumber(branchName) : null;
-            if (remoteRef.ok && openPR === null) {
-                info(`--pr retry detected: tree clean, branch ${branchName} on origin, no open PR. Creating PR only.`);
-                createDraftPRForTask(taskIds, branchName);
+            // For --pr: gh-authoritative PR check first. gh sees the
+            // origin-side state directly and is robust to stale local
+            // remote-tracking refs. An existing open PR wins regardless of
+            // whether `origin/<branch>` looks fresh locally.
+            // (Prevents the duplicate-PR-create regression; PR #75 iter 1.)
+            const baseBranch = splitGit.getBaseBranch(taskIds);
+            const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName, baseBranch) : null;
+
+            // Always push before reporting / creating the PR. `git push` is
+            // idempotent — no-op when origin already has the local tip,
+            // pushes the difference otherwise. We do NOT short-circuit on
+            // `git rev-parse origin/<branch>` because the local
+            // remote-tracking ref can be stale (a prior push failed
+            // mid-flight, or refs were never fetched). Letting git push
+            // run is the safe default.
+            //
+            // Important: this push runs even when an open PR is found
+            // below. Codex P1 on release PR #82: skipping the push on the
+            // "PR exists" branch leaves the PR stale when new local
+            // commits landed after the PR was opened (clean tree + open
+            // PR is NOT a guarantee that origin matches HEAD).
+            // (Spec ACs 1+3, complete-state banner contract; PR #75 iter 2.)
+            info(`Clean tree. Pushing ${branchName}...`);
+            const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
+            if (!pushResult.ok) {
+                die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
+            }
+
+            if (cliArgs.pr && openPR !== null) {
+                const prUrl = lookupPRUrl(openPR);
+                info(formatExistingPRMessage(openPR, prUrl));
                 return;
             }
+
+            if (cliArgs.pr) {
+                createDraftPRForTask(taskIds, branchName);
+            }
+            return;
         }
     }
 
@@ -783,6 +941,7 @@ function assertTaskBranchPushed(taskId: string): void {
  */
 function assertOriginTaskBranchAbsent(taskId: string): void {
     const branchName = resolveTaskBranchName(taskId);
+    const baseBranch = splitGit.getBaseBranch([taskId]);
     // Query origin directly via ls-remote rather than the local tracking ref. When
     // origin/<branch> was deleted from another checkout, `git fetch --prune origin
     // <branch>` does NOT prune the stale local tracking ref, so a `rev-parse
@@ -805,6 +964,50 @@ function assertOriginTaskBranchAbsent(taskId: string): void {
     if (!lsRemote.stdout.trim()) return; // Empty output → branch absent on origin — expected.
 
     const remoteSha = lsRemote.stdout.trim().split(/\s+/)[0];
+
+    // Recovery path: if a PR for this branch was already merged INTO THE
+    // CURRENT BASE (e.g., the operator merged via the GitHub UI without
+    // --delete-branch), the remote branch is a stale leftover, not unmerged
+    // work. Auto-delete it instead of forcing the operator into a manual
+    // `git push origin --delete` step. Detected by `gh pr list --state
+    // merged --head <branch> --base <baseBranch>` — gh is authoritative
+    // on origin's PR state.
+    //
+    // Safety: only auto-delete if the remote tip matches the merged PR's head
+    // SHA. If new commits were pushed to the branch after the PR merged, the
+    // remote tip will differ — refuse to avoid destroying that work. The
+    // `--base` filter is also a safety property: a PR merged into a DIFFERENT
+    // base branch doesn't prove the current base has the work, so we must not
+    // delete the remote branch on that signal. (Codex P1 on PR #77.)
+    const mergedPrNum = ghAvailable ? findMergedPRNumber(branchName, baseBranch) : null;
+    if (mergedPrNum !== null) {
+        const prHead = getMergedPRHeadSha(mergedPrNum);
+        if (prHead === null) {
+            // Couldn't verify the PR's head — fall through to the die path.
+            // Safer than auto-deleting blind.
+        } else if (prHead !== remoteSha) {
+            splitCli.die(
+                `--ship aborted: origin/${branchName} is at ${remoteSha.slice(0, 7)} but the merged ` +
+                `PR #${mergedPrNum} merged head ${prHead.slice(0, 7)}. New commits were pushed to the ` +
+                `branch after the PR merged. Resolve manually — those commits are not in the merged work.`,
+            );
+        } else {
+            info(
+                `origin/${branchName} still exists at ${remoteSha.slice(0, 7)} (matches merged PR #${mergedPrNum} head). ` +
+                `Deleting the remote branch — the merged content is in the base.`,
+            );
+            const del = splitGit.gitSafe('push', 'origin', `--delete`, branchName);
+            if (!del.ok) {
+                splitCli.die(
+                    `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but ` +
+                    `\`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || 'unknown error'}. ` +
+                    `Delete the remote branch manually and re-run --ship.`,
+                );
+            }
+            return;
+        }
+    }
+
     splitCli.die(
         `--ship aborted: origin/${branchName} still exists at ${remoteSha.slice(0, 7)} but no PR was merged this run.\n` +
         `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
@@ -816,13 +1019,47 @@ function assertOriginTaskBranchAbsent(taskId: string): void {
 }
 
 /**
+ * Returns the number of a recently-merged PR whose head EXACTLY matches
+ * `branch` AND whose base matches `baseBranch`, or null if none.
+ *
+ * `gh pr list --head <branch>` is documented to filter by branch-name prefix
+ * (gh CLI issue #10816), so a query for `task/foo` can return PRs for
+ * `task/foo-fix`. Auto-deleting based on that match would be a data-loss
+ * bug. We fetch `headRefName` in the JSON and enforce exact equality in
+ * code before returning the match. (Codex P1 on PR #77 iter 2; first P1
+ * was about `--base` specificity.)
+ *
+ * Base-specific so we never read "merged into a different branch" as proof
+ * that the current shipping base received the work.
+ */
+function findMergedPRNumber(branch: string, baseBranch: string): number | null {
+    if (!ghAvailable) return null;
+    return findPRNumberExact(branch, baseBranch, 'merged');
+}
+
+/**
+ * Returns the head commit SHA of a merged PR, or null if the lookup fails.
+ * Used by `assertOriginTaskBranchAbsent` to verify the current remote tip
+ * matches what was actually merged before auto-deleting the branch.
+ */
+function getMergedPRHeadSha(prNum: number): string | null {
+    if (!ghAvailable) return null;
+    const result = splitGit.runCommand('gh', ['pr', 'view', String(prNum), '--json', 'headRefOid', '--jq', '.headRefOid']);
+    if (!result.ok) return null;
+    const sha = result.stdout.trim();
+    if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null;
+    return sha;
+}
+
+/**
  * Verify there is no open PR for the task's branch. Called after mergeOpenPRsAndPull
  * returned false (no PR was merged this run) — a defensive cross-check against gh
  * transient issues that might have caused findOpenPRNumber to return null spuriously.
  */
 function assertNoOpenPRForTask(taskId: string): void {
     const branchName = resolveTaskBranchName(taskId);
-    const prNum = findOpenPRNumber(branchName);
+    const baseBranch = splitGit.getBaseBranch([taskId]);
+    const prNum = findOpenPRNumber(branchName, baseBranch);
     if (prNum !== null) {
         splitCli.die(
             `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
@@ -834,15 +1071,59 @@ function assertNoOpenPRForTask(taskId: string): void {
 }
 
 /**
- * Find the number of an open PR whose head branch matches `branch`.
- * Returns null if gh CLI is unavailable, no PR found, or lookup fails.
+ * Find the number of an open PR whose head branch EXACTLY matches `branch`
+ * AND whose base branch matches `baseBranch`. Returns null if gh CLI is
+ * unavailable, no PR found, or lookup fails.
+ *
+ * Uses `findPRNumberExact` (not a raw `--head` jq filter) because `gh pr
+ * list --head <branch>` is documented to filter by prefix (gh CLI issue
+ * #10816). A prefix-match here would print the wrong PR's URL on
+ * idempotent `--pr` retry, or false-block `--ship` via
+ * `assertNoOpenPRForTask`. (Codex P1 on PR #77 iter 2.)
+ *
+ * `baseBranch` is required (not nullable like findPRNumberExact's param):
+ * every caller in this file operates on a specific task with a known
+ * base, and skipping the base filter risks squash-merging a wrong-base
+ * PR into the wrong base (e.g., an operator-opened PR targeting `main`
+ * when canon expects `dev`). The symmetric base-filter in
+ * findMergedPRNumber was added for exactly this reason on PR #77;
+ * findOpenPRNumber + mergeOpenPRsAndPull missed it. (Codex P2 on
+ * release PR #82 integration audit.)
  */
-function findOpenPRNumber(branch: string): number | null {
+function findOpenPRNumber(branch: string, baseBranch: string): number | null {
     if (!ghAvailable) return null;
-    const result = splitGit.runCommand('gh', ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--jq', '.[0].number']);
-    if (!result.ok || !result.stdout.trim() || result.stdout.trim() === 'null') return null;
-    const num = Number.parseInt(result.stdout.trim(), 10);
-    return Number.isNaN(num) ? null : num;
+    return findPRNumberExact(branch, baseBranch, 'open');
+}
+
+/**
+ * Shared exact-head-ref PR lookup. `gh pr list --head <branch>` filters by
+ * prefix, so we fetch the full result set and enforce `headRefName === branch`
+ * in code. `baseBranch` is optional (some callers want any base match).
+ * `state` is `open` | `merged` | `closed`.
+ *
+ * `--limit 1000` is effectively unbounded for any sane repo: gh internally
+ * pages the underlying GitHub API to fulfill the limit. A previous version
+ * used `--limit 20`, which silently dropped exact matches when a repo had
+ * many similarly-prefixed PRs (e.g., a long-running release branch with
+ * dozens of open task/* PRs). At 1000+ similarly-prefixed PRs the prefix
+ * match is the bigger problem. (Codex P2 on release PR #82.)
+ */
+function findPRNumberExact(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): number | null {
+    if (!ghAvailable) return null;
+    const args = ['pr', 'list', '--head', branch, '--state', state, '--limit', '1000', '--json', 'number,headRefName'];
+    if (baseBranch !== null) args.push('--base', baseBranch);
+    const result = splitGit.runCommand('gh', args);
+    if (!result.ok || !result.stdout.trim()) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(result.stdout); } catch { return null; }
+    if (!Array.isArray(parsed)) return null;
+    for (const entry of parsed) {
+        if (typeof entry !== 'object' || entry === null) continue;
+        const headRefName = (entry as { headRefName?: unknown }).headRefName;
+        const number = (entry as { number?: unknown }).number;
+        if (headRefName === branch && typeof number === 'number') return number;
+    }
+    return null;
 }
 
 /**
@@ -860,7 +1141,7 @@ function mergeOpenPRsAndPull(taskIds: string[]): boolean {
     const branches = [...new Set(taskIds.map(id => resolveTaskBranchName(id)))];
     let anyMerged = false;
     for (const branch of branches) {
-        const prNum = findOpenPRNumber(branch);
+        const prNum = findOpenPRNumber(branch, baseBranch);
         if (!prNum) continue;
         splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via squash...`);
         // --delete-branch removes the remote branch; local cleanup happens post-teardown.
@@ -1013,12 +1294,28 @@ function shipTasks(taskIds: string[]): void {
     for (const taskId of taskIds) {
         const currentPhase = getCurrentPhase(splitState.readStatus(taskId));
         if (currentPhase !== 'human_review') continue;
-        const taskCwd = splitWorktree.getActiveCwd([taskId]);
+        // Resolve the tasks-root for the gate read. Three signals, in
+        // priority order:
+        //   1. CANON_TASKS_DIR_OVERRIDE (env override; test/temp setups).
+        //   2. The active worktree for the task (worktree mode — `handoff.md`
+        //      and `done.md` live under `<worktree>/tasks/<id>/`, NOT the
+        //      supervising checkout).
+        //   3. REPO_ROOT/tasks (non-worktree default).
+        // `tolerateMissingWorktree: true` lets --ship recover from partial-
+        // cleanup state (e.g., a user manually `git worktree remove`'d before
+        // re-running --ship); when the worktree is already gone we fall back
+        // to REPO_ROOT, which is what the supervising checkout has.
+        // (Codex P2 on PR #77 iter 1: previous form used `path.dirname(
+        // taskDirFor(taskId))` unconditionally, which honored the env override
+        // but ignored the worktree — gate would read stale artifacts.)
+        const taskCwd = splitWorktree.getActiveCwd([taskId], { tolerateMissingWorktree: true });
+        const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE
+            ?? path.join(taskCwd, 'tasks');
         const gateResult = splitValidation.checkPhaseGate(
             taskId,
             'human_review',
             undefined,
-            path.join(taskCwd, 'tasks'),
+            tasksRootForGate,
         );
         if (!gateResult.ok) {
             splitCli.die(`--ship aborted for '${taskId}': ${gateResult.reason}`);
@@ -1241,7 +1538,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     if ((phase as Phase) === 'qa') {
         return runQaPhase(state, cliArgs.interactive);
     }
-    if ((phase as Phase) === 'human_review') {
+    if (phase === 'human_review') {
         const taskIds = tasks.map(t => t.taskId);
         if (cliArgs.push || cliArgs.pr) {
             const cwd = splitWorktree.getActiveCwd(taskIds);
@@ -1261,6 +1558,17 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
         console.log('  Re-run with --push to commit task artifacts and push, or --pr to also create a draft PR.');
         console.log('════════════════════════════════════════════════════════');
         console.log('');
+        process.exit(0);
+    }
+    if (phase === 'complete') {
+        const taskIds = tasks.map(t => t.taskId);
+        if (cliArgs.push || cliArgs.pr) {
+            const cwd = splitWorktree.getActiveCwd(taskIds);
+            commitHumanReviewFiles(taskIds, cwd);
+            process.exit(0);
+        }
+
+        printCompleteStateBanner(taskIds);
         process.exit(0);
     }
 

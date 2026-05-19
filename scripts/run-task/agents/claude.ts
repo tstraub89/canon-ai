@@ -1,12 +1,58 @@
+import { spawn } from 'node:child_process';
 import { REPO_ROOT, config } from '../env.js';
 import { info, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
-import { runCommandOrDie } from '../git.js';
 import { toResumePrompt } from '../prompts/helpers.js';
 import { formatLiveTick, streamProcess } from './stream.js';
 import type { ClaudeRunResult } from '../types.js';
 
 export const CLAUDE_RESUME_NOT_FOUND_RE = /No conversation found with session ID/i;
+export const CLAUDE_UNKNOWN_EFFORT_RE = /unknown (?:option|flag)[^\n]*--effort/i;
+
+const CLAUDE_TOO_OLD_HINT = 'Claude Code is too old for canon — run `canon doctor` to verify (canon requires Claude Code 2.1.72+).';
+
+function printClaudeTooOldHint(capturedStderr: string): void {
+    if (CLAUDE_UNKNOWN_EFFORT_RE.test(capturedStderr)) {
+        console.error(CLAUDE_TOO_OLD_HINT);
+    }
+}
+
+function runInteractiveClaude(args: string[], cwd: string): Promise<number> {
+    return new Promise((resolve) => {
+        const child = spawn('claude', args, {
+            cwd,
+            stdio: ['inherit', 'inherit', 'pipe'],
+        });
+        let capturedStderr = '';
+        let settled = false;
+
+        const finish = (code: number): void => {
+            if (settled) return;
+            settled = true;
+            resolve(code);
+        };
+
+        if (child.stderr) {
+            child.stderr.setEncoding('utf8');
+            child.stderr.on('data', (chunk: string) => {
+                capturedStderr += chunk;
+                process.stderr.write(chunk);
+            });
+        }
+
+        child.on('error', err => {
+            console.error(err.message);
+            finish(1);
+        });
+
+        child.on('close', code => {
+            if (typeof code === 'number' && code !== 0) {
+                printClaudeTooOldHint(capturedStderr);
+            }
+            finish(typeof code === 'number' ? code : 1);
+        });
+    });
+}
 
 export async function runClaude(
     prompt: string,
@@ -37,7 +83,11 @@ export async function runClaude(
             if (cwd !== REPO_ROOT) args.push('--add-dir', cwd);
             if (resumeId) args.push('--resume', resumeId);
             args.push(resumeId ? toResumePrompt(prompt) : prompt);
-            runCommandOrDie('claude', args, { cwd });
+            const exitCode = await runInteractiveClaude(args, cwd);
+            if (exitCode !== 0) {
+                status = 'failed';
+                process.exit(exitCode);
+            }
             return {
                 exitCode: 0,
                 signal: null,
@@ -134,6 +184,7 @@ export async function runClaude(
             if (result.spawnError) { console.error(result.spawnError.message); status = 'failed'; process.exit(1); }
             if (result.stalled) { status = 'failed'; process.exit(1); }
             if (typeof result.exitCode === 'number' && result.exitCode !== 0) {
+                printClaudeTooOldHint(result.capturedStderr);
                 status = 'failed';
                 process.exit(result.exitCode);
             }

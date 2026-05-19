@@ -14,16 +14,32 @@
       "Bash(git *)",
       "Bash(gh *)",
 
-      "Bash(jq *)",
       "Bash(sed *)",
       "Bash(awk *)",
-
       "Bash(ls *)",
       "Bash(find *)",
 
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(wc *)",
+      "Bash(echo *)",
+      "Bash(tr *)",
+      "Bash(xargs *)",
+      "Bash(tee *)",
+      "Bash(jq *)",
+
       "Bash(npm run *)",
+      "Bash(npm test)",
+      "Bash(npm test *)",
+      "Bash(npm audit)",
+      "Bash(npm audit *)",
+      "Bash(npm ci)",
+      "Bash(npm ci *)",
 
       "Bash(npx canon *)",
+      "Bash(npx tsc *)",
       "Bash(canon *)",
 
       "Bash(npx tsx *)",
@@ -52,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && echo '## In-progress tasks' && ./scripts/task.sh list 2>/dev/null || echo '(none)'"
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && echo '## In-progress tasks' && canon task list 2>/dev/null || echo '(none)'"
           }
         ]
       }

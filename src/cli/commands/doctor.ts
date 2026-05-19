@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { isAvailable } from '../deps.js';
@@ -17,7 +18,14 @@ const EXPECTED_TEMPLATES = [
 ];
 
 // Canon's recommended .claude/settings.json permissions.allow entries.
-// Kept in sync with README's "Skip the permission prompts" block.
+// Kept in sync with README's "Skip the permission prompts" block — the
+// `README "Skip the permission prompts" allowlist matches RECOMMENDED_ALLOW`
+// test in tests/cli.test.ts will fail CI if these drift apart.
+//
+// Most entries are for *pipeline composition* — Claude prefers its built-in
+// Read / Glob / Grep tools for raw file reads and codebase search; bash
+// equivalents (`cat`, `head`, `grep`, etc.) are only reached for when
+// commands need to be chained (e.g., `cat foo.json | jq '.bar'`).
 export const RECOMMENDED_ALLOW = [
     'Bash(git *)',
     'Bash(gh *)',
@@ -25,8 +33,30 @@ export const RECOMMENDED_ALLOW = [
     'Bash(awk *)',
     'Bash(ls *)',
     'Bash(find *)',
+    'Bash(cat *)',
+    'Bash(head *)',
+    'Bash(tail *)',
+    'Bash(grep *)',
+    'Bash(wc *)',
+    'Bash(echo *)',
+    'Bash(tr *)',
+    'Bash(xargs *)',
+    'Bash(tee *)',
+    'Bash(jq *)',
     'Bash(npm run *)',
+    // Both bare and `*`-suffixed forms are required: Claude Code's `Bash(npm
+    // test *)` pattern matches `npm test --watch` etc. but does not match
+    // bare `npm test` (no trailing space for the glob to consume). Bare and
+    // flagged forms are both common — CI runs `npm test` bare and
+    // `npm audit --omit=dev` flagged.
+    'Bash(npm test)',
+    'Bash(npm test *)',
+    'Bash(npm audit)',
+    'Bash(npm audit *)',
+    'Bash(npm ci)',
+    'Bash(npm ci *)',
     'Bash(npx canon *)',
+    'Bash(npx tsc *)',
     'Bash(canon *)',
     'Bash(codex *)',
     'Skill(canon-init)',
@@ -39,6 +69,24 @@ export const RECOMMENDED_ALLOW = [
     'Skill(canon-changelog)',
     'Skill(canon-changelog:*)',
 ];
+
+export const MIN_CLAUDE_VERSION = { major: 2, minor: 1, patch: 72 };
+
+export interface ParsedClaudeVersion {
+    major: number;
+    minor: number;
+    patch: number;
+}
+
+export function parseClaudeVersion(raw: string): ParsedClaudeVersion | null {
+    const match = raw.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+    if (!match) return null;
+    return {
+        major: parseInt(match[1], 10),
+        minor: parseInt(match[2], 10),
+        patch: parseInt(match[3], 10),
+    };
+}
 
 // --- individual checks ---
 
@@ -73,6 +121,56 @@ export function checkBinary(cmd: string, required: boolean, hint: string): Check
         status: required ? 'fail' : 'warn',
         detail: hint,
     };
+}
+
+type ClaudeVersionRunner = () => string;
+
+const defaultClaudeVersionRunner: ClaudeVersionRunner = () => execSync('claude --version', { encoding: 'utf8' });
+
+export function checkClaudeVersion(runner: ClaudeVersionRunner = defaultClaudeVersionRunner): Check {
+    let raw: string;
+    try {
+        raw = runner();
+    } catch {
+        return {
+            label: 'claude (version unreadable)',
+            status: 'warn',
+            detail: 'Could not read `claude --version` output — verify your Claude Code install',
+        };
+    }
+
+    const parsed = parseClaudeVersion(raw);
+    if (!parsed) {
+        const preview = raw.trim() || '<empty>';
+        return {
+            label: `claude (unparseable: ${preview.slice(0, 32)})`,
+            status: 'warn',
+            detail: 'Could not parse `claude --version` output — verify your Claude Code install',
+        };
+    }
+
+    const label = `claude ${parsed.major}.${parsed.minor}.${parsed.patch}`;
+    const tooOld =
+        parsed.major < MIN_CLAUDE_VERSION.major ||
+        (
+            parsed.major === MIN_CLAUDE_VERSION.major &&
+            parsed.minor < MIN_CLAUDE_VERSION.minor
+        ) ||
+        (
+            parsed.major === MIN_CLAUDE_VERSION.major &&
+            parsed.minor === MIN_CLAUDE_VERSION.minor &&
+            parsed.patch < MIN_CLAUDE_VERSION.patch
+        );
+
+    if (tooOld) {
+        return {
+            label,
+            status: 'fail',
+            detail: 'Claude Code 2.1.72+ required — npm install -g @anthropic-ai/claude-code',
+        };
+    }
+
+    return { label, status: 'pass' };
 }
 
 export function checkAgentFile(cwd: string, filename: string): Check {
@@ -255,6 +353,7 @@ export function doctorCmd(_args: string[]): void {
         checkNodeVersion(),
         checkBinary('git', true, 'https://git-scm.com/downloads'),
         checkBinary('claude', true, 'npm install -g @anthropic-ai/claude-code'),
+        ...(isAvailable('claude') ? [checkClaudeVersion()] : []),
         checkBinary('codex', true, 'npm install -g @openai/codex'),
         checkBinary('gh', false, 'brew install gh && gh auth login  (required for --pr / --push)'),
     ];

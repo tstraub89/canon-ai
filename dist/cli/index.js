@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli/commands/doctor.ts
+import { execSync as execSync2 } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
@@ -71,8 +72,30 @@ var RECOMMENDED_ALLOW = [
   "Bash(awk *)",
   "Bash(ls *)",
   "Bash(find *)",
+  "Bash(cat *)",
+  "Bash(head *)",
+  "Bash(tail *)",
+  "Bash(grep *)",
+  "Bash(wc *)",
+  "Bash(echo *)",
+  "Bash(tr *)",
+  "Bash(xargs *)",
+  "Bash(tee *)",
+  "Bash(jq *)",
   "Bash(npm run *)",
+  // Both bare and `*`-suffixed forms are required: Claude Code's `Bash(npm
+  // test *)` pattern matches `npm test --watch` etc. but does not match
+  // bare `npm test` (no trailing space for the glob to consume). Bare and
+  // flagged forms are both common — CI runs `npm test` bare and
+  // `npm audit --omit=dev` flagged.
+  "Bash(npm test)",
+  "Bash(npm test *)",
+  "Bash(npm audit)",
+  "Bash(npm audit *)",
+  "Bash(npm ci)",
+  "Bash(npm ci *)",
   "Bash(npx canon *)",
+  "Bash(npx tsc *)",
   "Bash(canon *)",
   "Bash(codex *)",
   "Skill(canon-init)",
@@ -85,6 +108,16 @@ var RECOMMENDED_ALLOW = [
   "Skill(canon-changelog)",
   "Skill(canon-changelog:*)"
 ];
+var MIN_CLAUDE_VERSION = { major: 2, minor: 1, patch: 72 };
+function parseClaudeVersion(raw) {
+  const match = raw.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return {
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10)
+  };
+}
 function checkPlatform() {
   const isWindows = process.platform === "win32";
   if (!isWindows) return { label: "platform", status: "pass" };
@@ -114,6 +147,38 @@ function checkBinary(cmd, required, hint) {
     detail: hint
   };
 }
+var defaultClaudeVersionRunner = () => execSync2("claude --version", { encoding: "utf8" });
+function checkClaudeVersion(runner = defaultClaudeVersionRunner) {
+  let raw;
+  try {
+    raw = runner();
+  } catch {
+    return {
+      label: "claude (version unreadable)",
+      status: "warn",
+      detail: "Could not read `claude --version` output \u2014 verify your Claude Code install"
+    };
+  }
+  const parsed = parseClaudeVersion(raw);
+  if (!parsed) {
+    const preview = raw.trim() || "<empty>";
+    return {
+      label: `claude (unparseable: ${preview.slice(0, 32)})`,
+      status: "warn",
+      detail: "Could not parse `claude --version` output \u2014 verify your Claude Code install"
+    };
+  }
+  const label = `claude ${parsed.major}.${parsed.minor}.${parsed.patch}`;
+  const tooOld = parsed.major < MIN_CLAUDE_VERSION.major || parsed.major === MIN_CLAUDE_VERSION.major && parsed.minor < MIN_CLAUDE_VERSION.minor || parsed.major === MIN_CLAUDE_VERSION.major && parsed.minor === MIN_CLAUDE_VERSION.minor && parsed.patch < MIN_CLAUDE_VERSION.patch;
+  if (tooOld) {
+    return {
+      label,
+      status: "fail",
+      detail: "Claude Code 2.1.72+ required \u2014 npm install -g @anthropic-ai/claude-code"
+    };
+  }
+  return { label, status: "pass" };
+}
 function checkAgentFile(cwd, filename) {
   const path8 = join(cwd, filename);
   if (!existsSync(path8)) {
@@ -142,7 +207,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.1.3";
+  const installedVersion = "1.2.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -275,6 +340,7 @@ function doctorCmd(_args) {
     checkNodeVersion(),
     checkBinary("git", true, "https://git-scm.com/downloads"),
     checkBinary("claude", true, "npm install -g @anthropic-ai/claude-code"),
+    ...isAvailable("claude") ? [checkClaudeVersion()] : [],
     checkBinary("codex", true, "npm install -g @openai/codex"),
     checkBinary("gh", false, "brew install gh && gh auth login  (required for --pr / --push)")
   ];
@@ -384,7 +450,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.1.3";
+  const version = "1.2.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -837,8 +903,14 @@ function computeLatestValidationResults(handoffContent) {
 }
 function canonicalizeValidationCheck(value) {
   const backtickMatch = value.match(/`([^`]+)`/);
-  const base = backtickMatch ? backtickMatch[1] : value.split(/\s+[—–-]\s+/)[0];
-  const normalized = base.replace(/`/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  let base;
+  if (backtickMatch && !backtickMatch[1].endsWith("\\")) {
+    base = backtickMatch[1];
+  } else {
+    const stripped = value.replace(/\\`/g, "").replace(/`/g, "");
+    base = stripped.split(/\s+[—–-]\s+/)[0];
+  }
+  const normalized = base.replace(/\s+/g, " ").trim().toLowerCase();
   if (normalized.includes(" ")) {
     return normalized.split(" ").at(-1) ?? normalized;
   }
@@ -1318,6 +1390,36 @@ function ensureGitAvailable() {
     throw new Error("Error: git is required.");
   }
 }
+function findUntrackedClobberPaths(untracked, targetTreeFiles) {
+  const conflicts = [];
+  for (const u of untracked) {
+    if (targetTreeFiles.has(u)) {
+      conflicts.push(u);
+      continue;
+    }
+    let p = u;
+    let hit = false;
+    while (true) {
+      const slash = p.lastIndexOf("/");
+      if (slash === -1) break;
+      p = p.slice(0, slash);
+      if (targetTreeFiles.has(p)) {
+        conflicts.push(u);
+        hit = true;
+        break;
+      }
+    }
+    if (hit) continue;
+    const prefix = `${u}/`;
+    for (const t of targetTreeFiles) {
+      if (t.startsWith(prefix)) {
+        conflicts.push(u);
+        break;
+      }
+    }
+  }
+  return conflicts;
+}
 function taskPostMergeSync(branchArg) {
   ensureGitAvailable();
   let targetBranch = branchArg ?? "";
@@ -1329,9 +1431,6 @@ function taskPostMergeSync(branchArg) {
   if (current !== targetBranch) {
     throw new Error(`Error: post-merge-sync expects you to be on '${targetBranch}' (you are on '${current}').`);
   }
-  if (git2(["status", "--porcelain"])) {
-    throw new Error("Error: working tree is dirty. Commit or stash local changes before running post-merge-sync.");
-  }
   console.log(`\u2192 Fetching origin/${targetBranch}...`);
   const fetch = runGit(["fetch", "origin", targetBranch]);
   if (fetch.error || fetch.status !== 0) {
@@ -1341,12 +1440,14 @@ function taskPostMergeSync(branchArg) {
   const behind = Number.parseInt(git2(["rev-list", "--count", `${targetBranch}..origin/${targetBranch}`]) || "0", 10);
   if (ahead === 0 && behind === 0) {
     console.log(`\u2713 ${targetBranch} is in sync with origin/${targetBranch}.`);
+    nudgeShippableTasks();
     return;
   }
   if (ahead === 0 && behind > 0) {
     console.log(`\u2192 ${targetBranch} is ${behind} commit(s) behind origin/${targetBranch}, fast-forwarding...`);
     const pull = runGit(["pull", "--ff-only", "origin", targetBranch], { stdio: "inherit" });
     if (pull.error || pull.status !== 0) throw new Error(pull.error?.message ?? "git pull failed");
+    nudgeShippableTasks();
     return;
   }
   const diff = git2(["diff", "--name-only", `origin/${targetBranch}..${targetBranch}`]);
@@ -1354,12 +1455,30 @@ function taskPostMergeSync(branchArg) {
     (file) => !/^(docs\/pipeline-invocations\.md|docs\/task-quality-log\.md|docs\/lessons-learned\.md|tasks\/)/.test(file)
   );
   if (sourcePaths.length === 0) {
+    if (git2(["diff", "--name-only", "HEAD"]) || git2(["diff", "--cached", "--name-only"])) {
+      throw new Error(
+        "Error: working tree has dirty tracked files and post-merge-sync is about to `git reset --hard`.\n  Commit or stash the tracked changes before re-running."
+      );
+    }
+    const localFiles = git2(["ls-files", "--others"]).split("\n").filter(Boolean);
+    if (localFiles.length > 0) {
+      const targetTreeFiles = new Set(
+        git2(["ls-tree", "-r", `origin/${targetBranch}`, "--name-only"]).split("\n").filter(Boolean)
+      );
+      const conflicting = findUntrackedClobberPaths(localFiles, targetTreeFiles);
+      if (conflicting.length > 0) {
+        throw new Error(
+          "Error: local files (untracked or gitignored) match paths tracked in `origin/" + targetBranch + "`.\n  `git reset --hard` would silently overwrite them:\n" + conflicting.map((f) => `    ${f}`).join("\n") + "\n  Move, rename, or remove these files before re-running."
+        );
+      }
+    }
     console.log(`\u2192 ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch}, but only via`);
     console.log("  pipeline telemetry / task-state edits that have been absorbed by squash merges.");
     console.log(`  Hard-resetting to origin/${targetBranch}...`);
     const reset = runGit(["reset", "--hard", `origin/${targetBranch}`], { stdio: "inherit" });
     if (reset.error || reset.status !== 0) throw new Error(reset.error?.message ?? "git reset failed");
     console.log(`\u2713 ${targetBranch} reset to origin/${targetBranch} (${git2(["log", "-1", "--format=%h"])}).`);
+    nudgeShippableTasks();
     return;
   }
   console.log(`\u26A0\uFE0F  ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch} with non-telemetry changes:`);
@@ -1370,6 +1489,35 @@ function taskPostMergeSync(branchArg) {
   console.log(`(\`git push origin ${targetBranch}\`) if they're real work, or rebase manually`);
   console.log("if they conflict with the squash merge.");
   throw new Error("");
+}
+function nudgeShippableTasks() {
+  const root = tasksRoot();
+  if (!fs6.existsSync(root)) return;
+  const shippable = [];
+  for (const entry of fs6.readdirSync(root).sort()) {
+    if (entry === "_archive" || entry.startsWith("_")) continue;
+    const statusPath = path7.join(root, entry, "status.json");
+    if (!fs6.existsSync(statusPath)) continue;
+    let status;
+    try {
+      status = readJsonFile(statusPath);
+    } catch {
+      continue;
+    }
+    const phase = derivePhase(status);
+    if (phase !== "human_review" && phase !== "complete") continue;
+    const branchName = status.branch?.trim();
+    if (!branchName) continue;
+    const ls = runGit(["ls-remote", "--heads", "--exit-code", "origin", branchName]);
+    if (ls.error) continue;
+    if (ls.status === 0) continue;
+    if (ls.status === 2) shippable.push(entry);
+  }
+  if (shippable.length === 0) return;
+  console.log("");
+  console.log("\u2139 Task(s) appear merged (remote branch gone) but not yet archived:");
+  for (const id of shippable) console.log(`    ${id}`);
+  console.log("  Run `canon run <id> --ship` on each to archive + clean up.");
 }
 function updatePackageVersion(filePath, version, updateLockRoot = false) {
   const parsed = readJsonFile(filePath);
@@ -1585,6 +1733,9 @@ var CANON_OWNED = [
   // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
   "docs/pipeline-orchestrator.md"
 ];
+var HEADER_ONLY_SYNC = [
+  "docs/pipeline-invocations.md"
+];
 function mergeDelimited(templateContent, projectContent) {
   if (!CANON_START_RE2.test(templateContent)) return null;
   if (!CANON_START_RE2.test(projectContent)) return null;
@@ -1593,10 +1744,39 @@ function mergeDelimited(templateContent, projectContent) {
   if (templateEnd === -1 || projectEnd === -1) return null;
   return templateContent.slice(0, templateEnd + CANON_END2.length) + projectContent.slice(projectEnd + CANON_END2.length);
 }
-function runUpgrade(cwd, pkgDir) {
+var TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
+function mergeHeaderOnly(templateContent, projectContent) {
+  const projectMatch = TABLE_SEPARATOR_RE.exec(projectContent);
+  const templateMatch = TABLE_SEPARATOR_RE.exec(templateContent);
+  if (!projectMatch || !templateMatch) return null;
+  const templateSepEnd = (templateMatch.index ?? 0) + templateMatch[0].length;
+  const projectSepEnd = (projectMatch.index ?? 0) + projectMatch[0].length;
+  const templateHeader = templateContent.slice(0, templateSepEnd);
+  const projectTail = projectContent.slice(projectSepEnd);
+  return templateHeader + projectTail;
+}
+function isPathDirty(cwd, relPath) {
+  const result = spawnSync8("git", ["status", "--porcelain", "--", relPath], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  if (result.status !== 0 || result.error) return false;
+  for (const line of (result.stdout ?? "").split("\n")) {
+    if (!line.trim()) continue;
+    const xy = line.slice(0, 2);
+    if (xy === "??") continue;
+    return true;
+  }
+  return false;
+}
+function runUpgrade(cwd, pkgDir, options = {}) {
   const upgraded = [];
   const unchanged = [];
   const skipped = [];
+  const wouldUpgrade = [];
+  const dirtyRefused = [];
+  const pending = [];
   for (const rel of DELIMITED) {
     const projectPath = join5(cwd, rel);
     const templatePath = join5(pkgDir, "templates", rel);
@@ -1615,8 +1795,31 @@ function runUpgrade(cwd, pkgDir) {
       unchanged.push(rel);
       continue;
     }
-    writeFileSync2(projectPath, merged);
-    upgraded.push(rel);
+    pending.push({ rel, projectPath, content: merged });
+  }
+  for (const rel of HEADER_ONLY_SYNC) {
+    const projectPath = join5(cwd, rel);
+    const templatePath = join5(pkgDir, "templates", rel);
+    if (!existsSync4(templatePath)) {
+      skipped.push(rel);
+      continue;
+    }
+    const templateContent = readFileSync2(templatePath, "utf8");
+    if (!existsSync4(projectPath)) {
+      pending.push({ rel, projectPath, content: templateContent });
+      continue;
+    }
+    const projectContent = readFileSync2(projectPath, "utf8");
+    const merged = mergeHeaderOnly(templateContent, projectContent);
+    if (merged === null) {
+      skipped.push(`${rel} (no markdown table separator found \u2014 header-only sync needs the rows-below boundary)`);
+      continue;
+    }
+    if (merged === projectContent) {
+      unchanged.push(rel);
+      continue;
+    }
+    pending.push({ rel, projectPath, content: merged });
   }
   for (const rel of CANON_OWNED) {
     const projectPath = join5(cwd, rel);
@@ -1632,36 +1835,106 @@ function runUpgrade(cwd, pkgDir) {
         unchanged.push(rel);
         continue;
       }
-    } else {
-      mkdirSync2(dirname4(projectPath), { recursive: true });
     }
-    writeFileSync2(projectPath, templateContent);
-    upgraded.push(rel);
+    pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.1.3";
+  const newVersion = "1.2.0";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
-    mkdirSync2(dirname4(versionPath), { recursive: true });
-    writeFileSync2(versionPath, newVersion + "\n");
-    upgraded.push(".canon/version");
+    pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
   }
-  return { upgraded, unchanged, skipped };
+  const dirty = [];
+  const clean = [];
+  for (const op of pending) {
+    if (isPathDirty(cwd, op.rel)) dirty.push(op);
+    else clean.push(op);
+  }
+  if (options.check) {
+    for (const op of clean) wouldUpgrade.push(op.rel);
+    for (const op of dirty) dirtyRefused.push(op.rel);
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
+  }
+  if (dirty.length > 0 && !options.force) {
+    for (const op of dirty) dirtyRefused.push(op.rel);
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
+  }
+  const toWrite = options.force ? pending : clean;
+  for (const op of toWrite) {
+    mkdirSync2(dirname4(op.projectPath), { recursive: true });
+    writeFileSync2(op.projectPath, op.content);
+    upgraded.push(op.rel);
+  }
+  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
 }
-function upgradeCmd(_args) {
-  const { upgraded, unchanged, skipped } = runUpgrade(process.cwd(), packageDir4);
-  if (upgraded.length > 0) {
+function parseUpgradeArgs(args2) {
+  const options = {};
+  for (const arg of args2) {
+    if (arg === "--check" || arg === "--dry-run") options.check = true;
+    else if (arg === "--force") options.force = true;
+    else if (arg === "--no-stage") options.noStage = true;
+    else {
+      throw new Error(`canon upgrade: unknown flag '${arg}'. Supported: --check (--dry-run), --force, --no-stage.`);
+    }
+  }
+  return options;
+}
+function upgradeCmd(args2) {
+  const options = parseUpgradeArgs(args2);
+  const result = runUpgrade(process.cwd(), packageDir4, options);
+  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused } = result;
+  console.log("\ncanon upgrade" + (options.check ? " --check" : "") + "\n");
+  if (options.check) {
+    if (wouldUpgrade.length > 0) {
+      console.log("Would update:");
+      for (const f of wouldUpgrade) console.log(`  \u2191 ${f}`);
+      console.log("");
+    }
+    if (dirtyRefused.length > 0) {
+      console.log("Would refuse (dirty in git \u2014 pass --force to overwrite):");
+      for (const f of dirtyRefused) console.log(`  \u26A0 ${f}`);
+      console.log("");
+    }
+    if (unchanged.length > 0) {
+      console.log("Already up to date:");
+      for (const f of unchanged) console.log(`  = ${f}`);
+      console.log("");
+    }
+    if (skipped.length > 0) {
+      console.log("Skipped:");
+      for (const f of skipped) console.log(`  ? ${f}`);
+      console.log("");
+    }
+    if (wouldUpgrade.length === 0 && dirtyRefused.length === 0 && unchanged.length === 0 && skipped.length === 0) {
+      console.log("No canon-managed files found. Run `canon init` to set up canon in this repo.\n");
+    } else {
+      console.log("(dry run \u2014 no files written.) Re-run without --check to apply.\n");
+    }
+    return;
+  }
+  if (dirtyRefused.length > 0) {
+    console.log("Refused (dirty in git \u2014 pass --force to overwrite, or commit/stash these paths first):");
+    for (const f of dirtyRefused) console.log(`  \u26A0 ${f}`);
+    console.log("");
+    console.log("No files were upgraded. Resolve the dirty paths and re-run, or pass `--force`.");
+    process.exit(2);
+  }
+  if (upgraded.length > 0 && !options.noStage) {
     const r = spawnSync8("git", ["add", ...upgraded], { cwd: process.cwd(), stdio: "inherit" });
     if (r.status !== 0) {
       console.error("\nwarning: failed to stage changes \u2014 run `git add` manually.");
     }
   }
-  console.log("\ncanon upgrade\n");
   if (upgraded.length > 0) {
     console.log("Updated:");
     for (const f of upgraded) console.log(`  \u2191 ${f}`);
-    console.log("\nReview:  git diff --staged");
-    console.log("Revert:  git checkout -- <file>\n");
+    if (!options.noStage) {
+      console.log("\nReview:  git diff --staged");
+      console.log("Revert:  git checkout -- <file>\n");
+    } else {
+      console.log("\n(--no-stage: files written but not staged. Review:  git diff)");
+      console.log("Stage:   git add <file>\n");
+    }
   }
   if (unchanged.length > 0) {
     console.log("Already up to date:");
@@ -1743,7 +2016,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.1.3");
+  console.log("1.2.0");
 }
 switch (command) {
   case "doctor":

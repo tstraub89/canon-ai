@@ -102,6 +102,12 @@ tsup's `loader: { '.md': 'text' }` config makes `import content from './foo.md'`
 
 The orchestrator's auto-commit step after `implement` stages only files that appear as dirty in the worktree at commit time. If `syncWorktreeArtifacts` moves worktree edits to the supervising checkout (resetting the worktree copy to HEAD) before auto-commit runs, those files show as clean in the worktree and are silently omitted from the commit — even if they are listed in the handoff Changes table. The post-commit coverage check correctly flags the mismatch ("no commit touches this path in dev..HEAD"), but the recovery requires a manual follow-up commit. When editing docs inside a worktree-isolated task, verify they are still dirty in the worktree before auto-commit fires; if in doubt, commit them explicitly before the phase closes.
 
+### Subprocess tests for `main.ts` must use the active worktree's cwd
+
+*(2026-05-18, source: pr-at-complete)*
+
+When writing child-process tests that spawn the canon CLI (`node dist/scripts/run-task.js` or `tsx scripts/run-task/main.ts`) inside a linked worktree, the subprocess `cwd` must be the active worktree root — not the supervising checkout's root. Using the wrong root causes the subprocess to load the stale compiled artifact or source file from a different checkout, meaning changes that exist only in the current worktree are invisible to the test. The failure mode is silent: the test may pass against old behavior and miss the exact new branch being tested. Fix: derive the test cwd from `import.meta.url` or `__dirname` resolved relative to the test file's own location in the worktree, or pass `process.cwd()` explicitly when the test suite is invoked from the worktree root. Canonical example: `tests/run-task-safety.test.ts` in this task's worktree, per `tasks/_archive/pr-at-complete/notes.md` [implement].
+
 ### Migration-tolerance test fixtures for retiring schema keys must build the key dynamically
 
 *(2026-05-16, source: retire-runtime-validation)*

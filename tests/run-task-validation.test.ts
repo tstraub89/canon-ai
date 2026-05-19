@@ -13,8 +13,10 @@ import {
 } from '../scripts/run-task/state.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
 import {
+    canonicalizeValidationCheck,
     checkAcCoveragePlaceholders,
     computeLatestValidationResults,
+    extractHandoffPath,
     parseHandoffFiles,
     validateHandoffAgainstSpec,
     verifyHandoffAgainstDiffFromData,
@@ -142,6 +144,89 @@ function withTempTaskHandoff(
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
+
+// ── canonicalizeValidationCheck (issue #71) ──────────────────────────────────
+
+void test('canonicalizeValidationCheck: plain backtick-quoted command → last word', () => {
+    assert.equal(canonicalizeValidationCheck('`npm run lint`'), 'lint');
+    assert.equal(canonicalizeValidationCheck('`npm test`'), 'test');
+});
+
+void test('canonicalizeValidationCheck: cell with escaped backticks no longer leaves trailing backslash in canonical', () => {
+    // Pre-fix regression: the cell `Type checking: \`npm run type-check:all\``
+    // canonicalized to `type-check:all\` (with trailing backslash) because the
+    // first-backtick-span match included the `\`. Fix strips both backticks
+    // and backslashes when the captured span includes a backslash.
+    assert.equal(
+        canonicalizeValidationCheck('Type checking: \\`npm run type-check:all\\`'),
+        'type-check:all',
+    );
+});
+
+void test('canonicalizeValidationCheck: preserves legitimate backslashes in labels (e.g. regex escapes)', () => {
+    // Codex P2 on PR #71 iter 1: the fallback originally stripped EVERY
+    // backslash globally, which would corrupt labels like `grep \w+`. The
+    // narrowed pattern only consumes `\`` (backslash-then-backtick) so
+    // freestanding backslashes pass through.
+    assert.equal(
+        canonicalizeValidationCheck('Pattern grep: \\`grep \\w+\\`'),
+        '\\w+',
+    );
+});
+
+void test('canonicalizeValidationCheck: backtick span with internal backslash uses shortcut (Codex P2 on PR #81 iter 1)', () => {
+    // Regression guard: the escaped-backtick guard previously fired on ANY
+    // backslash inside the captured span (`.includes('\\')`), which pushed
+    // legitimate checks with surrounding prose into the plain-text fallback
+    // and produced wrong canonical keys (the last prose word instead of the
+    // code-spanned token). The narrowed `.endsWith('\\')` guard only fires
+    // when the captured span ends with `\` — the actual escaped-backtick
+    // signature.
+    assert.equal(
+        canonicalizeValidationCheck('Do `grep \\w+` check'),
+        '\\w+',
+    );
+    // Path-style content with internal backslash also uses the shortcut.
+    assert.equal(
+        canonicalizeValidationCheck('Run `node C:\\path\\to\\script.js` to verify'),
+        'c:\\path\\to\\script.js',
+    );
+});
+
+void test('canonicalizeValidationCheck: plain text with no backticks falls back to dash-split last word', () => {
+    assert.equal(canonicalizeValidationCheck('lint — runs eslint'), 'lint');
+    assert.equal(canonicalizeValidationCheck('lint'), 'lint');
+});
+
+void test('canonicalizeValidationCheck: clean backtick span wins over surrounding prose (no regression)', () => {
+    // The pre-fix shortcut: when a clean backtick-bounded span is present,
+    // only that span is canonicalized — surrounding prose is ignored.
+    assert.equal(canonicalizeValidationCheck('`lint` and other stuff'), 'lint');
+});
+
+void test('validateHandoffAgainstSpec: missing row error includes the canonical key + present rows hint', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run type-check`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run lint` | Pass | ok |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.equal(issues.length, 1);
+            // Diagnostic now lists what the handoff DOES have so the user
+            // can spot a canonicalization mismatch instead of chasing a
+            // false "row missing" root cause.
+            assert.match(issues[0], /missing from handoff\.md/);
+            assert.match(issues[0], /canonicalized to: 'type-check'/);
+            assert.match(issues[0], /Handoff has rows for: lint/);
+        },
+    );
+});
 
 void test('validateHandoffAgainstSpec rejects N/A for a required validation check', () => {
     withTempPair(
@@ -357,6 +442,56 @@ void test('parseHandoffFiles unions baseline Changes and iteration Changes table
         '',
     ].join('\n'), () => {
         assert.deepEqual(parseHandoffFiles('union-task'), ['src/base.ts', 'src/iter.ts']);
+    });
+});
+
+void test('extractHandoffPath: backtick-quoted path', () => {
+    assert.equal(extractHandoffPath('`src/foo.ts`'), 'src/foo.ts');
+    assert.equal(extractHandoffPath('`src/foo.ts` some annotation'), 'src/foo.ts');
+});
+
+void test('extractHandoffPath: markdown-link path', () => {
+    assert.equal(extractHandoffPath('[src/foo.ts](https://github.com/x/y/blob/main/src/foo.ts)'), 'src/foo.ts');
+    assert.equal(extractHandoffPath('[src/foo.ts](/Users/local/path/src/foo.ts)'), 'src/foo.ts');
+});
+
+void test('extractHandoffPath: backtick wins over markdown link if both present', () => {
+    // First column might mix forms (e.g., legacy edits + markdown). Prefer backtick.
+    assert.equal(extractHandoffPath('`src/a.ts` and [src/b.ts](url)'), 'src/a.ts');
+});
+
+void test('extractHandoffPath: markdown-link URL with parens still captures the path', () => {
+    // The captured group is everything inside `[...]`. The URL part `(...)`
+    // closing on the first `)` is fine for our purposes — we never read the
+    // destination, only the path.
+    assert.equal(
+        extractHandoffPath('[src/foo.ts](/tmp/build(foo)/src/foo.ts)'),
+        'src/foo.ts',
+    );
+    assert.equal(
+        extractHandoffPath('[src/foo.ts](https://github.com/x/y/pull/123)'),
+        'src/foo.ts',
+    );
+});
+
+void test('extractHandoffPath: returns null for no recognized format', () => {
+    assert.equal(extractHandoffPath('plain text src/foo.ts'), null);
+    assert.equal(extractHandoffPath(''), null);
+});
+
+void test('parseHandoffFiles: accepts markdown-link format in Changes table', () => {
+    withTempTaskHandoff('mdlink-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| [src/main.ts](/abs/path/src/main.ts) | refactor |',
+        '| [tests/main.test.ts](https://github.com/x/y/blob/main/tests/main.test.ts) | new tests |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseHandoffFiles('mdlink-task').sort(), ['src/main.ts', 'tests/main.test.ts']);
     });
 });
 
@@ -957,7 +1092,7 @@ void test('validateHandoffAgainstSpec: Fail – unrelated without notes is rejec
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
             assert.equal(issues.length, 1);
-            assert.match(issues[0], /Fail.*unrelated.*without a specific test\/file reference/);
+            assert.match(issues[0], /Fail.*unrelated.*needs a specific test\/file reference/);
         },
     );
 });
@@ -977,7 +1112,7 @@ void test('validateHandoffAgainstSpec: Fail – unrelated with vague notes (no f
             (specPath, handoffPath) => {
                 const issues = validateHandoffAgainstSpec(specPath, handoffPath);
                 assert.equal(issues.length, 1, `expected rejection for notes: "${vague}"`);
-                assert.match(issues[0], /Fail.*unrelated.*without a specific test\/file reference/);
+                assert.match(issues[0], /Fail.*unrelated.*needs a specific test\/file reference/);
             },
         );
     }
@@ -1216,7 +1351,9 @@ void test('regression: validateHandoffAgainstSpec rejects a row with the 1b temp
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
             assert.equal(issues.length, 1);
-            assert.match(issues[0], /missing from handoff/);
+            // New (issue #71): "present but unfilled" distinguishes the
+            // template-pending case from the row-absent case.
+            assert.match(issues[0], /present but unfilled.*template 'pending' state/);
         },
     );
 });

@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { mergeDelimited, runUpgrade } from '../src/cli/commands/upgrade.js';
+import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, runUpgrade } from '../src/cli/commands/upgrade.js';
 import { detectInstallType } from '../src/cli/commands/update.js';
 import { scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
@@ -15,6 +16,9 @@ import {
     checkCanonVersion,
     checkLocalSettingsGitignored,
     checkRecommendedPermissions,
+    checkClaudeVersion,
+    parseClaudeVersion,
+    MIN_CLAUDE_VERSION,
     RECOMMENDED_ALLOW,
 } from '../src/cli/commands/doctor.js';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
@@ -134,6 +138,66 @@ void test('checkNodeVersion: current process is ≥24 → pass', () => {
     const check = checkNodeVersion();
     assert.equal(check.status, 'pass');
     assert.match(check.label, /^node v\d+/);
+});
+
+// ── parseClaudeVersion ─────────────────────────────────────────────────────
+
+void test('parseClaudeVersion: parses "2.1.143 (Claude Code)" → { 2, 1, 143 }', () => {
+    assert.deepEqual(parseClaudeVersion('2.1.143 (Claude Code)'), { major: 2, minor: 1, patch: 143 });
+});
+
+void test('parseClaudeVersion: parses "2.1.72" (no suffix) → { 2, 1, 72 }', () => {
+    assert.deepEqual(parseClaudeVersion('2.1.72'), { major: 2, minor: 1, patch: 72 });
+});
+
+void test('parseClaudeVersion: returns null for "" (empty)', () => {
+    assert.equal(parseClaudeVersion(''), null);
+});
+
+void test('parseClaudeVersion: returns null for "Claude Code v??" (non-semver)', () => {
+    assert.equal(parseClaudeVersion('Claude Code v??'), null);
+});
+
+// ── checkClaudeVersion ──────────────────────────────────────────────────────
+
+void test('checkClaudeVersion: pass for 2.1.143', () => {
+    const check = checkClaudeVersion(() => '2.1.143 (Claude Code)');
+    assert.equal(check.status, 'pass');
+    assert.equal(check.label, 'claude 2.1.143');
+});
+
+void test('checkClaudeVersion: pass for 2.1.72 (exact minimum)', () => {
+    const check = checkClaudeVersion(() => '2.1.72 (Claude Code)');
+    assert.equal(check.status, 'pass');
+    assert.equal(check.label, 'claude 2.1.72');
+});
+
+void test('checkClaudeVersion: fail for 2.1.71 (one below)', () => {
+    const check = checkClaudeVersion(() => '2.1.71 (Claude Code)');
+    assert.equal(check.status, 'fail');
+    assert.match(check.detail ?? '', /2\.1\.72\+ required/);
+});
+
+void test('checkClaudeVersion: fail for 2.1.34 (James\'s reported version)', () => {
+    const check = checkClaudeVersion(() => '2.1.34 (Claude Code)');
+    assert.equal(check.status, 'fail');
+    assert.match(check.label, /^claude 2\.1\.34$/);
+});
+
+void test('checkClaudeVersion: pass for 3.0.0 (future major)', () => {
+    const check = checkClaudeVersion(() => '3.0.0 (Claude Code)');
+    assert.equal(check.status, 'pass');
+    assert.equal(check.label, 'claude 3.0.0');
+});
+
+void test('checkClaudeVersion: warn for unparseable output', () => {
+    const check = checkClaudeVersion(() => 'Claude Code v??');
+    assert.equal(check.status, 'warn');
+    assert.match(check.detail ?? '', /verify your Claude Code install/);
+});
+
+void test('checkClaudeVersion: exports the fixed minimum version', () => {
+    assert.deepEqual(MIN_CLAUDE_VERSION, { major: 2, minor: 1, patch: 72 });
 });
 
 // ── checkAgentFile ───────────────────────────────────────────────────────────
@@ -711,6 +775,407 @@ void test('runUpgrade: task template unchanged → not in upgraded', () => {
     });
 });
 
+// ── mergeHeaderOnly (telemetry header sync) ──────────────────────────────────
+
+void test('mergeHeaderOnly: refreshes canon header, preserves project rows byte-for-byte', () => {
+    const template = [
+        '# Workflow Metrics',
+        '',
+        '> NEW intro from updated canon template.',
+        '> Tokens reframed for the next version.',
+        '',
+        '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+        '|---|---|---|---|---|---|---|---|---|',
+    ].join('\n');
+
+    const projectRowsTail = '\n| 2026-05-01T10:00:00Z | foo | implement | codex | gpt-5.4-mini | 1 | 22s | 5234 | ok |\n| 2026-05-01T10:01:00Z | foo | code_review | claude | sonnet | 1 | 18s | 4112 | ok |\n';
+    const project = [
+        '# Workflow Metrics',
+        '',
+        '> OLD intro before the refresh.',
+        '',
+        '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+        '|---|---|---|---|---|---|---|---|---|',
+    ].join('\n') + projectRowsTail;
+
+    const merged = mergeHeaderOnly(template, project);
+    assert.ok(merged);
+    assert.ok(merged.includes('NEW intro from updated canon template.'), 'new header content present');
+    assert.ok(!merged.includes('OLD intro before the refresh.'), 'old header content removed');
+    assert.ok(merged.endsWith(projectRowsTail), 'project rows preserved byte-for-byte (tail unchanged)');
+});
+
+void test('mergeHeaderOnly: CRLF line endings preserved byte-for-byte (Codex P2 on PR #80)', () => {
+    // The separator regex must not consume `\r` from a CRLF file, or the
+    // header slice would end with `\r` and the project tail would start at
+    // `\n` — breaking the byte-for-byte guarantee for telemetry rows.
+    const eol = '\r\n';
+    const tplCrlf = [
+        '# Workflow Metrics',
+        '',
+        '> NEW intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join(eol);
+    const projectRowsTailCrlf = `${eol}| 2026-05-01T10:00:00Z | row1 |${eol}| 2026-05-01T10:01:00Z | row2 |${eol}`;
+    const prjCrlf = [
+        '# Workflow Metrics',
+        '',
+        '> OLD intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join(eol) + projectRowsTailCrlf;
+
+    const mergedCrlf = mergeHeaderOnly(tplCrlf, prjCrlf);
+    assert.ok(mergedCrlf);
+    assert.ok(mergedCrlf.endsWith(projectRowsTailCrlf), 'CRLF project rows tail preserved verbatim');
+    // No bare LF in the tail (would indicate spliced line endings).
+    assert.ok(!/[^\r]\n/.test(mergedCrlf.slice(-100)), 'no bare LF spliced into CRLF content');
+});
+
+void test('mergeHeaderOnly: project file with no rows yet — just refreshes header', () => {
+    const template = [
+        '# Workflow Metrics',
+        '',
+        '> NEW intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join('\n');
+    const project = [
+        '# Workflow Metrics',
+        '',
+        '> OLD intro.',
+        '',
+        '| A | B |',
+        '|---|---|',
+    ].join('\n');
+
+    const merged = mergeHeaderOnly(template, project);
+    assert.ok(merged);
+    assert.equal(merged, template, 'no rows on project side → result equals template');
+});
+
+void test('mergeHeaderOnly: project missing table separator → null', () => {
+    const template = '# Header\n| A |\n|---|\n';
+    const project = '# Header\n\n(no table at all)\n';
+    assert.equal(mergeHeaderOnly(template, project), null);
+});
+
+void test('mergeHeaderOnly: template missing table separator → null', () => {
+    const template = '# Header\n\nNo table here.\n';
+    const project = '# Header\n| A |\n|---|\n| 1 |\n';
+    assert.equal(mergeHeaderOnly(template, project), null);
+});
+
+void test('mergeHeaderOnly: identical content → result equals input (upgrade reports as unchanged)', () => {
+    const content = '# Workflow Metrics\n\n> intro.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+    assert.equal(mergeHeaderOnly(content, content), content);
+});
+
+void test('runUpgrade: header-only sync refreshes telemetry header + preserves rows', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            const newHeader = [
+                '# Workflow Metrics',
+                '',
+                '> NEW header from this canon release.',
+                '',
+                '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+                '|---|---|---|---|---|---|---|---|---|',
+            ].join('\n');
+            fs.writeFileSync(tmplPath, newHeader);
+
+            const projectPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+            const oldHeader = [
+                '# Workflow Metrics',
+                '',
+                '> OLD header.',
+                '',
+                '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
+                '|---|---|---|---|---|---|---|---|---|',
+            ].join('\n');
+            const adopterRows = '\n| 2026-04-30T09:00:00Z | task-a | implement | codex | x | 1 | 12s | 9000 | ok |\n| 2026-04-30T09:01:00Z | task-a | code_review | claude | y | 1 | 8s | 5100 | ok |\n';
+            fs.writeFileSync(projectPath, oldHeader + adopterRows);
+
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const { upgraded } = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(upgraded.includes(rel), 'telemetry file should be upgraded');
+            const written = fs.readFileSync(projectPath, 'utf8');
+            assert.ok(written.includes('NEW header from this canon release.'), 'new header landed');
+            assert.ok(!written.includes('OLD header.'), 'old header replaced');
+            assert.ok(written.endsWith(adopterRows), 'adopter rows preserved verbatim');
+        });
+    });
+});
+
+void test('runUpgrade: header-only sync scaffolds the file when missing in project', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            const tmplContent = '# Workflow Metrics\n\n> Intro.\n\n| A | B |\n|---|---|\n';
+            fs.writeFileSync(tmplPath, tmplContent);
+            // Project does NOT have the file yet.
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const { upgraded } = runUpgrade(projectDir, pkgDir);
+            assert.ok(upgraded.includes(rel));
+            const projectPath = path.join(projectDir, rel);
+            assert.equal(fs.readFileSync(projectPath, 'utf8'), tmplContent);
+        });
+    });
+});
+
+void test('runUpgrade --check: header-only sync reports wouldUpgrade without writing (Codex P1 on PR #82)', () => {
+    // Header-only writes used to go direct to disk, bypassing the --check
+    // dry-run contract added in #79. Confirm they now route through the
+    // pending queue and respect --check.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            const tmplContent = '# Metrics\n\n> NEW intro.\n\n| A | B |\n|---|---|\n';
+            fs.writeFileSync(tmplPath, tmplContent);
+            const projectPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+            const oldContent = '# Metrics\n\n> OLD intro.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+            fs.writeFileSync(projectPath, oldContent);
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            fs.writeFileSync(path.join(canonDir, 'version'), `${process.env['CANON_VERSION'] ?? 'dev'}\n`);
+
+            const result = runUpgrade(projectDir, pkgDir, { check: true });
+
+            assert.ok(result.wouldUpgrade.includes(rel), 'header-only file in wouldUpgrade');
+            assert.deepEqual(result.upgraded, [], '--check writes nothing');
+            assert.equal(fs.readFileSync(projectPath, 'utf8'), oldContent, 'project file untouched');
+        });
+    });
+});
+
+void test('runUpgrade: dirty header-only target refused without --force (Codex P1 on PR #82)', () => {
+    // Header-only writes also bypassed the dirty-refusal gate. Confirm a
+    // tracked local edit to pipeline-invocations.md now refuses without --force.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: projectDir });
+            execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: projectDir });
+            execFileSync('git', ['config', 'user.name', 'T'], { cwd: projectDir });
+
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            fs.writeFileSync(tmplPath, '# Metrics\n\n> NEW.\n\n| A | B |\n|---|---|\n');
+            const projectPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+            const committed = '# Metrics\n\n> OLD.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+            fs.writeFileSync(projectPath, committed);
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            fs.writeFileSync(path.join(canonDir, 'version'), `${process.env['CANON_VERSION'] ?? 'dev'}\n`);
+            execFileSync('git', ['add', '-A'], { cwd: projectDir });
+            execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectDir });
+            // Local edit on the tracked file — dirty.
+            const localEdit = committed + '| 3 | 4 |\n';
+            fs.writeFileSync(projectPath, localEdit);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes(rel), 'dirty header-only target refused');
+            assert.deepEqual(result.upgraded, [], 'nothing written on refusal');
+            assert.equal(fs.readFileSync(projectPath, 'utf8'), localEdit, 'local edit preserved');
+        });
+    });
+});
+
+// ── runUpgrade safety flags (--check, --force, dirty refusal) ────────────────
+
+function gitInit(dir: string): void {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: dir });
+}
+
+function gitAddCommit(dir: string, message: string): void {
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', message], { cwd: dir });
+}
+
+function setupSkillTemplate(pkgDir: string, content: string): string {
+    const rel = '.claude/skills/canon-spec/SKILL.md';
+    const tmplSkill = path.join(pkgDir, 'templates', rel);
+    fs.mkdirSync(path.dirname(tmplSkill), { recursive: true });
+    fs.writeFileSync(tmplSkill, content);
+    return rel;
+}
+
+void test('parseUpgradeArgs: accepts --check, --dry-run, --force, --no-stage', () => {
+    assert.deepEqual(parseUpgradeArgs([]), {});
+    assert.deepEqual(parseUpgradeArgs(['--check']), { check: true });
+    assert.deepEqual(parseUpgradeArgs(['--dry-run']), { check: true });
+    assert.deepEqual(parseUpgradeArgs(['--force']), { force: true });
+    assert.deepEqual(parseUpgradeArgs(['--no-stage']), { noStage: true });
+    assert.deepEqual(parseUpgradeArgs(['--check', '--force']), { check: true, force: true });
+});
+
+void test('parseUpgradeArgs: rejects unknown flag', () => {
+    assert.throws(() => parseUpgradeArgs(['--what']), /unknown flag '--what'/);
+});
+
+void test('runUpgrade --check: reports wouldUpgrade without writing', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'OLD skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+
+            const result = runUpgrade(projectDir, pkgDir, { check: true });
+
+            assert.ok(result.wouldUpgrade.includes(rel), 'would upgrade the skill');
+            assert.deepEqual(result.upgraded, [], '--check writes nothing');
+            assert.equal(
+                fs.readFileSync(projectSkillPath, 'utf8'),
+                'OLD skill content',
+                'file on disk untouched',
+            );
+        });
+    });
+});
+
+void test('runUpgrade: dirty managed target refused without --force', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'COMMITTED skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            gitAddCommit(projectDir, 'initial commit');
+            // Make the managed file dirty (modified tracked).
+            fs.writeFileSync(projectSkillPath, 'LOCAL EDITS in progress');
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes(rel), 'dirty target reported');
+            assert.deepEqual(result.upgraded, [], 'nothing written when dirty refusal fires');
+            assert.equal(
+                fs.readFileSync(projectSkillPath, 'utf8'),
+                'LOCAL EDITS in progress',
+                'dirty file preserved on disk',
+            );
+        });
+    });
+});
+
+void test('runUpgrade --force: dirty managed target is overwritten', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'COMMITTED skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            gitAddCommit(projectDir, 'initial commit');
+            fs.writeFileSync(projectSkillPath, 'LOCAL EDITS to discard');
+
+            const result = runUpgrade(projectDir, pkgDir, { force: true });
+
+            assert.ok(result.upgraded.includes(rel), 'dirty target upgraded under --force');
+            assert.deepEqual(result.dirtyRefused, [], 'no refusals under --force');
+            assert.equal(
+                fs.readFileSync(projectSkillPath, 'utf8'),
+                'NEW skill content',
+                'file overwritten with template',
+            );
+        });
+    });
+});
+
+void test('runUpgrade: locally-deleted tracked managed file is refused without --force', () => {
+    // Codex P1 on PR 4 iter 1: previous gate skipped the dirty check for
+    // paths that didn't exist on disk, letting `canon upgrade` silently
+    // re-create files the user had intentionally deleted. The check now
+    // asks git regardless of `existsSync()`, so a tracked deletion still
+    // refuses.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'COMMITTED skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            gitAddCommit(projectDir, 'initial commit');
+            // Operator intentionally deleted the managed file locally.
+            fs.unlinkSync(projectSkillPath);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes(rel), 'deletion is a dirty state — refused');
+            assert.deepEqual(result.upgraded, []);
+            assert.ok(!fs.existsSync(projectSkillPath), 'file not recreated on refusal');
+        });
+    });
+});
+
+void test('runUpgrade: untracked dirty status does NOT trigger refusal', () => {
+    // First-install scenario: the managed path exists locally but isn't yet
+    // tracked in git. `git status` shows it as `??` (untracked); we treat
+    // untracked as clean since there's no committed history to lose.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            const rel = setupSkillTemplate(pkgDir, 'NEW skill content');
+            const projectSkillPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectSkillPath), { recursive: true });
+            fs.writeFileSync(projectSkillPath, 'untracked skill content');
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            const ver = process.env['CANON_VERSION'] ?? 'dev';
+            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+            // Note: no `git add` — file is untracked.
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.upgraded.includes(rel), 'untracked file upgraded without refusal');
+            assert.deepEqual(result.dirtyRefused, []);
+        });
+    });
+});
+
 // ── runUpgrade against real templates ────────────────────────────────────────
 
 void test('runUpgrade: real templates dir produces valid merged CLAUDE.md', () => {
@@ -734,4 +1199,90 @@ void test('runUpgrade: real templates dir produces valid merged CLAUDE.md', () =
         assert.ok(result.includes(CANON_END), 'result has canon end');
         assert.ok(result.includes('## Adopter Section'), 'project tail preserved');
     });
+});
+
+// ── README / doctor allowlist drift ──────────────────────────────────────────
+
+void test('README Prerequisites Claude Code floor matches MIN_CLAUDE_VERSION (Codex P2 on release PR #82 audit)', () => {
+    // Same drift-prevention pattern as the RECOMMENDED_ALLOW test below: when
+    // the doctor's version floor bumps (e.g., a new Claude Code flag becomes
+    // load-bearing), CI must catch a README that still advertises the old
+    // floor. Adopters seeing contradictory floors is exactly the adopter-
+    // perspective friction this batch was meant to close.
+    const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const match = readme.match(/Claude Code \(≥ (\d+)\.(\d+)\.(\d+)\)/);
+    assert.ok(match, 'README Prerequisites line "Claude Code (≥ X.Y.Z)" not found');
+    const [, major, minor, patch] = match;
+    assert.deepEqual(
+        { major: Number(major), minor: Number(minor), patch: Number(patch) },
+        MIN_CLAUDE_VERSION,
+        'README Claude Code floor drifted from MIN_CLAUDE_VERSION (src/cli/commands/doctor.ts)',
+    );
+});
+
+void test('README "Skip the permission prompts" allowlist matches RECOMMENDED_ALLOW', () => {
+    const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const blockMatch = readme.match(
+        /### Skip the permission prompts[\s\S]*?```json\n([\s\S]*?)\n```/,
+    );
+    assert.ok(blockMatch, 'README "Skip the permission prompts" json block not found');
+    const parsed: unknown = JSON.parse(blockMatch[1]);
+    if (
+        typeof parsed !== 'object' || parsed === null ||
+        typeof (parsed as { permissions?: unknown }).permissions !== 'object'
+    ) {
+        throw new Error('README json block missing permissions object');
+    }
+    const allow = (parsed as { permissions: { allow?: unknown } }).permissions.allow;
+    assert.ok(Array.isArray(allow), 'README permissions.allow must be an array');
+    const allowStrings = allow.map(entry => {
+        if (typeof entry !== 'string') {
+            throw new Error('README permissions.allow contained a non-string entry');
+        }
+        return entry;
+    });
+    assert.deepEqual(
+        [...allowStrings].sort(),
+        [...RECOMMENDED_ALLOW].sort(),
+        'README allowlist drifted from RECOMMENDED_ALLOW (src/cli/commands/doctor.ts)',
+    );
+});
+
+// ── Retired-phase drift in shipped docs ──────────────────────────────────────
+
+// Add to this list whenever an orchestrator phase is retired. The test below
+// guards against retired phase names slipping back into operational docs.
+// Phrasings we don't want anywhere — both the snake_case key and the
+// human-prose form that appeared in the old tier diagrams.
+const RETIRED_PHASE_TOKENS = ['runtime_validation', 'Orchestrator runtime validation'];
+
+// Operational docs the test scans. These describe how the pipeline operates
+// today; retired phase names must not appear here. Historical / supersession
+// records (`decisions.md`, `lessons-learned.md`, `BACKLOG.md`, `CHANGELOG.md`)
+// are intentionally excluded — they describe *why* the phase was retired and
+// must reference it by name.
+const OPERATIONAL_DOCS = [
+    'AGENTS.md',
+    'CLAUDE.md',
+    'CODEX.md',
+    'docs/pipeline-orchestrator.md',
+    'templates/AGENTS.md',
+    'templates/CLAUDE.md',
+    'templates/CODEX.md',
+    'templates/docs/pipeline-orchestrator.md',
+];
+
+void test('operational docs do not mention retired phase names', () => {
+    for (const rel of OPERATIONAL_DOCS) {
+        // Case-insensitive comparison catches capitalization variants like
+        // "orchestrator runtime validation" or "Orchestrator Runtime Validation"
+        // that would slip past a literal substring check.
+        const content = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8').toLowerCase();
+        for (const token of RETIRED_PHASE_TOKENS) {
+            assert.ok(
+                !content.includes(token.toLowerCase()),
+                `${rel} mentions retired phase token "${token}" — remove or update the diagram/reference`,
+            );
+        }
+    }
 });

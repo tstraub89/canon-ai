@@ -76,7 +76,7 @@ canon run <task-id>
 
 - **Node 24+**
 - **git**
-- **Claude Code** — `npm install -g @anthropic-ai/claude-code`
+- **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
 - **Codex CLI** — `npm install -g @openai/codex`
 - **gh** (optional, for `--pr` / `--push`) — `brew install gh && gh auth login`
 
@@ -85,6 +85,8 @@ canon run <task-id>
 ```bash
 npm install -g --install-links github:tstraub89/canon-ai
 ```
+
+> **Private distribution.** canon-ai is distributed from a private GitHub repo and requires access to `tstraub89/canon-ai` (run `gh auth login` first or have git configured for that repo). It is **not** published on the public npm registry. The license is proprietary during this phase — see [License](#license).
 
 > `--install-links` is required because npm otherwise symlinks the global install to its git cache rather than copying the committed `dist/`, which leaves the `canon` bin pointing at a transient path and command-not-found after the install reports success. The flag packs+installs as a regular dependency, which is what you want for a stable global CLI.
 
@@ -111,7 +113,7 @@ canon run my-first-feature
 
 ### Skip the permission prompts (optional)
 
-Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations. To avoid a Claude Code permission prompt on every step, drop these into `.claude/settings.json` under `permissions.allow`:
+Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short shell pipelines for inspecting task state (`cat tasks/X/status.json | jq '.phases'`). To avoid a Claude Code permission prompt on every step, drop these into `.claude/settings.json` under `permissions.allow`:
 
 ```json
 {
@@ -119,15 +121,30 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations. To avoid a Cl
     "allow": [
       "Bash(git *)",
       "Bash(gh *)",
-      "Bash(jq *)",
       "Bash(sed *)",
       "Bash(awk *)",
       "Bash(ls *)",
       "Bash(find *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(wc *)",
+      "Bash(echo *)",
+      "Bash(tr *)",
+      "Bash(xargs *)",
+      "Bash(tee *)",
+      "Bash(jq *)",
       "Bash(npm run *)",
+      "Bash(npm test)",
+      "Bash(npm test *)",
+      "Bash(npm audit)",
+      "Bash(npm audit *)",
+      "Bash(npm ci)",
+      "Bash(npm ci *)",
       "Bash(npx canon *)",
+      "Bash(npx tsc *)",
       "Bash(canon *)",
-      "Bash(npx tsx *)",
       "Bash(codex *)",
       "Skill(canon-init)",
       "Skill(canon-spec)",
@@ -143,6 +160,8 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations. To avoid a Cl
 }
 ```
 
+> The shell-tool entries above (`cat`, `head`, `grep`, `wc`, …) are for **pipeline composition**, not raw file reads. Claude prefers its built-in `Read` / `Glob` / `Grep` tools when fetching a file's contents or searching the codebase; the bash equivalents only get reached for when commands need to be chained (e.g., `cat foo.json | jq '.bar'`, `git diff | grep "version" | head -20`).
+
 Claude Code creates `settings.json` on first use — check what's already there before pasting. For a personal "full send" allowlist that doesn't get committed, use `.claude/settings.local.json` (and make sure it's gitignored — `canon doctor` will warn you if it isn't).
 
 ### Key commands
@@ -157,7 +176,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 | `canon run <id>` | Run the full pipeline for a task |
 | `canon run <id> --step` | Run one phase then stop |
 | `canon run <id> --pr` | Push branch and open a draft PR |
-| `canon upgrade` | Sync vendored files to match installed version |
+| `canon upgrade` | Sync vendored files to match installed version. Refuses to overwrite locally-modified managed files unless `--force` is set. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
 | `canon update` | Update the canon-ai package itself |
 
 Full `canon task` subcommand reference is in `docs/pipeline-orchestrator.md`.
@@ -243,15 +262,15 @@ The implication: **the value of canon compounds with use**. A 6-month-old canon 
 
 ## Roadmap
 
-**Phase 1 (now)**: Layer 1 + Layer 2 ship. npm package `canon-ai` with full CLI. `/canon-init` skill for interactive project bootstrap. Validate against real projects.
+**Phase 1 (now)**: Layer 1 + Layer 2 ship. Full CLI installable from private GitHub. `/canon-init` skill for interactive project bootstrap. Validate against real projects. Public npm publication is *not* part of Phase 1 — distribution stays private while the surface stabilizes.
 
 **Phase 2 (next)**: Make the implementer slot pluggable — adapter interface for Codex CLI, Gemini CLI, Aider, others. Architect slot stays Claude Code (skills are load-bearing).
 
-**Phase 3 (research)**: Productize. Hosted bootstrap service? Per-language scaffolds? Marketplace for `docs/patterns.md` starter packs (Next.js patterns, Rails patterns, etc.)? TBD based on Phase 1 validation.
+**Phase 3 (research)**: Productize. Public npm release? Hosted bootstrap service? Per-language scaffolds? Marketplace for `docs/patterns.md` starter packs (Next.js patterns, Rails patterns, etc.)? TBD based on Phase 1 validation.
 
 ## License
 
-Proprietary. See `LICENSE`. This may eventually open-source — that decision lives downstream of Phase 1 validation.
+Proprietary and confidential during this phase — see [`LICENSE`](LICENSE). Distribution is private (access to `tstraub89/canon-ai` required); canon-ai is **not** published on the public npm registry. Reuse and redistribution rights are intentionally constrained while the surface stabilizes. Open-sourcing remains possible downstream of Phase 1 validation, but is not committed.
 
 ## Origin
 
