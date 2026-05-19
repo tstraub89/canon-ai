@@ -2,6 +2,19 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.3.0] — 2026-05-19
+
+Hotfix release responding to a GP dogfood that exposed two related failure classes: the 1.2.0 handoff parser silently extracted bare filenames from Codex's combined/wildcard rows (triggering downstream `diff→handoff` mismatches), and the auto-commit state machine had no operator escape hatch when manual recovery was needed — leaving the pipeline wedged after a manual commit.
+
+### Added
+
+- **`canon task accept <id> <phase> [--force]` — operator escape hatch for manually-committed work.** When an operator has manually committed implementation work on the task branch and `canon run` keeps re-running auto-commit against the already-landed commit, `canon task accept` marks the phase done AND sets `phases.<phase>.operator_accepted: true` so the post-phase dispatch (auto-commit for implement) is skipped on subsequent runs. Today only the `implement` phase is supported. Guards: (1) clean source-tree (pipeline-owned paths like `tasks/<id>/...` and `PIPELINE_TELEMETRY_FILES` exempt), (2) non-empty `baseRef..HEAD`, (3) handoff Changes table has no malformed rows, (4) handoff coverage matches the diff (every diff file in the handoff and vice versa). `--force` bypasses all four. The acceptance is pinned to `operator_accepted_sha` (HEAD at accept time) — a later commit on the task branch invalidates the skip — and is automatically cleared whenever `implement` is moved away from `done` (reroute, changes_requested, manual `canon task phase`). Auto-commit also re-checks working-tree cleanliness on each dispatch so an accept followed by uncommitted edits cannot silently bypass auto-commit. Surfaced by the GP starter-preview-renderer wedge.
+
+### Fixed
+
+- **Strict handoff Changes-table parser rejects combined rows, wildcards, and unfilled placeholders.** The 1.2.0 parser ran a single permissive `` /`([^`]+)`/ `` regex against the first column and returned whatever match it found — so a row like `` `sitemap.xml`, `llms.txt` `` silently extracted `sitemap.xml` (a non-existent root path) and the real `public/sitemap.xml` was dropped. The new strict parser anchors the cell to either `` `path` `` or `[path](url)`, rejects multiple paths in one cell, rejects `*` and `?` wildcards (square brackets allowed — they're valid filename chars), and rejects unfilled angle-bracket placeholders like `` `<path>` ``. The new `parseHandoffChangesRows()` returns both accepted files and malformed-row errors. Both the code_review pre-flight (`validateHandoff`) and auto-commit now surface the cell-level rejection reason instead of failing later with cryptic "missing file" errors. The implement evidence-advance path (`tryEvidenceAdvance('implement')`) also blocks on malformed rows so the phase doesn't auto-advance before auto-commit gets a chance to reject. Surfaced by the GP starter-preview-renderer wedge.
+- **Handoff template no longer ships with literal `<path>` placeholder rows.** Both the baseline `## Changes` table and the iteration `### Changes` template in `.canon/templates/handoff.md` previously included an example row `` | `<path>` | ... | `` that the 1.2.0 parser would extract verbatim if Codex left it in. The new templates carry a one-line format hint above each table and start with an empty body — Codex populates rows from scratch, and the strict parser rejects any `<placeholder>` that slips through with a clear "template placeholder left unfilled" error. Mirrored to `templates/.canon/templates/handoff.md` per the canon-delimited-files parallel-edit rule.
+
 ## [1.2.0] — 2026-05-18
 
 ### Added

@@ -8,7 +8,7 @@ import { runQaPhase } from './phases/qa.js';
 import { runSpecPhase } from './phases/spec.js';
 import { runSpecReviewPhase } from './phases/spec-review.js';
 import * as splitTypes from './types.js';
-import type { PhaseRunResult } from './types.js';
+import type { PhaseEntry, PhaseRunResult } from './types.js';
 import * as splitCli from './cli.js';
 import * as splitEnv from './env.js';
 import * as splitState from './state.js';
@@ -279,15 +279,79 @@ function isPipelineOwnedPath(filePath: string, taskIds: readonly string[]): bool
     return (splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath);
 }
 
+/**
+ * True iff the bundle's auto-commit step should be skipped because the
+ * operator already manually committed and ran `canon task accept`.
+ *
+ * Three checks (all must hold):
+ *   1. Every task in the bundle has `phases.implement.operator_accepted: true`.
+ *   2. Current HEAD matches the recorded `operator_accepted_sha` on every task.
+ *      Pins the acceptance to a specific commit so a later commit on the
+ *      task branch invalidates the skip.
+ *   3. The working tree has no source-file dirt outside pipeline-owned paths.
+ *      Without this, an operator could accept, then leave new uncommitted
+ *      edits, and the next `canon run` would silently bypass auto-commit
+ *      against fresh dirty files.
+ *
+ * Bundle is all-or-nothing — accepting one task's implement but not the
+ * others would leave autocommit half-running on the unaccepted tasks.
+ */
+function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boolean {
+    const allAccepted = taskIds.every(taskId => {
+        const status = splitState.readStatus(taskId);
+        return status.phases?.implement?.operator_accepted === true;
+    });
+    if (!allAccepted) return false;
+
+    const head = splitGit.gitSafeAt(cwd, 'rev-parse', 'HEAD');
+    if (!head.ok) return false;
+    const currentSha = head.stdout.trim();
+    if (!currentSha) return false;
+
+    const shaMatch = taskIds.every(taskId => {
+        const status = splitState.readStatus(taskId);
+        const recorded = (status.phases?.implement?.operator_accepted_sha ?? '').trim();
+        return recorded !== '' && recorded === currentSha;
+    });
+    if (!shaMatch) return false;
+
+    // Source-tree must be clean (pipeline-owned paths are fine). Skipping
+    // auto-commit when the tree has fresh source edits would let them slip
+    // straight into code_review.
+    const dirty = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+    if (!dirty.ok) return false;
+    if (dirty.stdout.trim() === '') return true;
+    const dirtyPaths = [...splitGit.parsePorcelain(dirty.stdout)];
+    const sourceDirty = dirtyPaths.filter(p => !isPipelineOwnedPath(p, taskIds));
+    return sourceDirty.length === 0;
+}
+
 function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const primaryStatus = splitState.readStatus(taskIds[0]);
     const title = getTitle(primaryStatus);
 
+    if (operatorAcceptedImplement(taskIds, cwd)) {
+        splitCli.info('Auto-commit skipped — implement phase was operator-accepted (canon task accept) and HEAD still matches the accepted SHA.');
+        return;
+    }
+
     const allHandoffFiles = new Set<string>();
+    const allMalformed: Array<{ taskId: string; cell: string; reason: string }> = [];
     for (const taskId of taskIds) {
-        for (const file of splitValidation.parseHandoffFiles(taskId)) {
-            allHandoffFiles.add(file);
+        const { files, malformed } = splitValidation.parseHandoffChangesRows(taskId);
+        for (const file of files) allHandoffFiles.add(file);
+        for (const entry of malformed) {
+            allMalformed.push({ taskId, cell: entry.cell, reason: entry.reason });
         }
+    }
+    if (allMalformed.length > 0) {
+        const lines = allMalformed.map(m => `    [${m.taskId}] '${m.cell}': ${m.reason}`);
+        splitCli.die(
+            `Auto-commit aborted: handoff.md Changes table has malformed rows.\n` +
+            lines.join('\n') +
+            `\n  Fix each row to one path per line in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),\n` +
+            `  then re-run. Combined paths, wildcards, and unfilled \`<placeholder>\` rows are not accepted.`
+        );
     }
 
     if (allHandoffFiles.size === 0) {
@@ -1451,6 +1515,7 @@ function rerouteFromHumanReview(taskIds: string[]): void {
             // marker so session-resumed Codex can't confuse a new reroute with a duplicate
             // of a prior one — the static prompt text is otherwise identical each round.
             implement.reroute_count = (implement.reroute_count ?? 0) + 1;
+            clearImplementOperatorAcceptance(implement);
         }
         const codeReview = status.phases.code_review;
         if (codeReview) {
@@ -1479,10 +1544,24 @@ function rerouteFromHumanReview(taskIds: string[]): void {
     splitCli.info('   as the contract. The main-repo spec is synced into the worktree at the start of implement.');
 }
 
+function clearImplementOperatorAcceptance(implement: PhaseEntry | undefined): void {
+    if (!implement) return;
+    // When implement reopens (reroute, changes_requested), a prior
+    // `canon task accept` is stale by definition — the operator-accepted SHA
+    // belongs to a discarded iteration. Leaving the flag set would let the
+    // next dispatch skip auto-commit against fresh implement work.
+    delete implement.operator_accepted;
+    delete implement.operator_accepted_sha;
+    delete implement.operator_accepted_at;
+}
+
 function routeBackTo(taskIds: string[], targetPhase: Phase): void {
     const targetIdx = PHASE_ORDER.indexOf(targetPhase);
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
+        if (targetIdx <= PHASE_ORDER.indexOf('implement')) {
+            clearImplementOperatorAcceptance(status.phases.implement);
+        }
         // Reset the target phase AND every downstream phase back to pending.
         //
         // Why downstream too: deriveTopLevelStatus() walks PHASE_ORDER and
@@ -1614,15 +1693,26 @@ function readArtifact(taskId: string, name: string): string | null {
 function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
     switch (phase) {
         case 'implement': {
-            // Three gates before auto-advancing (each rules out a different false-positive):
+            // Four gates before auto-advancing (each rules out a different false-positive):
             //  1. handoff.md Changes table is non-empty (basic sanity)
-            //  2. validateHandoff passes — same rule Claude's code review applies:
+            //  2. no malformed rows — wildcards, combined paths, unfilled placeholders
+            //     each fail downstream in autoCommitCode anyway, but failing here lets
+            //     the one-shot retry surface the cell-level error to Codex instead of
+            //     letting the phase auto-advance and then die at auto-commit.
+            //  3. validateHandoff passes — same rule Claude's code review applies:
             //     Validation Outcomes table has no Fail and AC Coverage is present.
             //     Catches "Codex wrote a draft handoff before validation actually passed".
-            //  3. at least one listed file exists on disk — catches phantom/hallucinated
+            //  4. at least one listed file exists on disk — catches phantom/hallucinated
             //     filenames in the Changes table.
-            const files = splitValidation.parseHandoffFiles(taskId);
-            if (files.length === 0) return { advanced: false, note: 'handoff.md Changes table is empty' };
+            const { files, malformed } = splitValidation.parseHandoffChangesRows(taskId);
+            if (files.length === 0 && malformed.length === 0) {
+                return { advanced: false, note: 'handoff.md Changes table is empty' };
+            }
+            if (malformed.length > 0) {
+                const sample = malformed.slice(0, 3).map(m => `'${m.cell}': ${m.reason}`).join('; ');
+                const tail = malformed.length > 3 ? ` (+${malformed.length - 3} more)` : '';
+                return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
+            }
             const issues = splitValidation.validateHandoffAgainstSpec(
                 path.join(taskDirFor(taskId), 'spec.md'),
                 path.join(taskDirFor(taskId), 'handoff.md'),

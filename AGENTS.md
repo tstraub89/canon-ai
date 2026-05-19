@@ -114,6 +114,7 @@ canon task new <TASK-ID> <title>               # Create task from templates
 canon task list                                # List all tasks with current phase
 canon task status <TASK-ID>                    # Show full task status
 canon task phase <TASK-ID> <phase> <status>    # Update phase status
+canon task accept <TASK-ID> <phase>            # Operator escape hatch: mark phase done + skip auto-commit on next run
 ```
 
 ### Commit Ownership

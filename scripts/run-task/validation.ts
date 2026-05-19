@@ -81,6 +81,10 @@ export function validateHandoff(taskId: string): string[] {
         }
         issues.push(...checkAcCoveragePlaceholders(content));
         issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults));
+        const { malformed } = parseHandoffChangesRows(taskId);
+        for (const entry of malformed) {
+            issues.push(`Changes table row '${entry.cell}': ${entry.reason}`);
+        }
     } catch {
         issues.push('handoff.md not found');
     }
@@ -586,14 +590,43 @@ export function checkPhaseGate(
 }
 
 export function parseHandoffFiles(taskId: string): string[] {
+    return parseHandoffChangesRows(taskId).files;
+}
+
+/**
+ * Parses the handoff's baseline `## Changes` and per-iteration `### Changes`
+ * tables. Returns both the accepted paths and any rows whose first-column cell
+ * failed strict path validation (so callers can surface actionable errors
+ * instead of silently dropping the row).
+ *
+ * "Malformed" covers the failure classes that bit the GP starter-preview
+ * bundle in 1.2.0:
+ *
+ *   - combined rows like `` `a.ts`, `b.ts` `` (parser picked the first backtick
+ *     and silently dropped the rest; the diff→handoff preflight then flagged
+ *     the missing paths as a mismatch).
+ *   - prose-with-embedded-paths like `` `sitemap.xml` regenerated `` (the bare
+ *     filename got extracted instead of the real `public/sitemap.xml` path).
+ *   - wildcards like `src/content/examples/*.md` (extracted verbatim, then
+ *     failed the existence check because no file is literally named `*.md`).
+ *   - left-in template placeholders like `` `<path>` ``.
+ *
+ * Rejecting these loudly at parse time is what the strict 1.2.0 preflight
+ * was supposed to do — it just rejected too late in the wrong place.
+ */
+export function parseHandoffChangesRows(taskId: string): {
+    files: string[];
+    malformed: Array<{ cell: string; reason: string }>;
+} {
     const handoffPath = path.join(taskDirFor(taskId), 'handoff.md');
     let content: string;
     try {
         content = fs.readFileSync(handoffPath, 'utf8');
     } catch {
-        return [];
+        return { files: [], malformed: [] };
     }
     const files = new Set<string>();
+    const malformed: Array<{ cell: string; reason: string }> = [];
     const tables = [
         parseTable(content, 'Changes'),
         ...extractSectionBodies(content, /^## Iteration\b/).map(body => parseTableH3(body, 'Changes')),
@@ -601,33 +634,117 @@ export function parseHandoffFiles(taskId: string): string[] {
     for (const rows of tables) {
         for (const row of rows) {
             const firstColumn = Object.values(row)[0] ?? '';
-            const extracted = extractHandoffPath(firstColumn);
-            if (extracted) files.add(extracted);
+            if (!firstColumn.trim()) continue;
+            const result = parseHandoffPathCell(firstColumn);
+            if (result.kind === 'ok') {
+                files.add(result.path);
+            } else {
+                malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+            }
         }
     }
-    return [...files];
+    return { files: [...files], malformed };
+}
+
+export type HandoffPathCellResult =
+    | { kind: 'ok'; path: string }
+    | { kind: 'malformed'; reason: string };
+
+/**
+ * Strictly parses a single handoff Changes table cell. The cell must EITHER
+ * be a backticked path (optionally followed by a non-path annotation), OR a
+ * markdown link of the form `[path](url)`. Combined rows, wildcards, and
+ * template placeholders are rejected with a specific reason string.
+ *
+ * Why strict: the lax pre-1.3.0 form ran a `/`([^`]+)`/` regex anywhere in
+ * the cell and returned the first match. Prose like `` AC-9: `sitemap.xml`
+ * passes `` extracted `sitemap.xml`, then the existence check failed against
+ * the real `public/sitemap.xml`. Strict parsing surfaces the malformed row
+ * to the operator instead of silently extracting a wrong path.
+ */
+export function parseHandoffPathCell(cell: string): HandoffPathCellResult {
+    const trimmed = cell.trim();
+    if (!trimmed) return { kind: 'malformed', reason: 'empty cell' };
+
+    const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
+    const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]*\)/g)];
+
+    if (backtickGroups.length + mdLinkGroups.length > 1) {
+        const tokens = [
+            ...backtickGroups.map(m => `\`${m[1]}\``),
+            ...mdLinkGroups.map(m => `[${m[1]}](...)`),
+        ];
+        return {
+            kind: 'malformed',
+            reason: `multiple paths in one cell (${tokens.join(', ')}) — list one path per row`,
+        };
+    }
+
+    if (backtickGroups.length === 1) {
+        if (!/^`[^`]+`(?:\s+.*)?$/.test(trimmed)) {
+            return {
+                kind: 'malformed',
+                reason: `backticked path must be at the start of the cell, optionally followed by an annotation — got: ${snippet(trimmed)}`,
+            };
+        }
+        return validateExtractedPath(backtickGroups[0][1].trim());
+    }
+
+    if (mdLinkGroups.length === 1) {
+        // Greedy `.*` in the URL slot accepts nested parens like
+        // `[src/foo.ts](/tmp/build(foo)/src/foo.ts)` — the URL is never read,
+        // only the label inside `[...]`. The mdLinkGroups counter above used
+        // `[^)]*` (non-greedy) so two real links `[a](u) [b](v)` still get
+        // caught as "multiple paths"; only the SINGLE-link case reaches here.
+        if (!/^\[[^\]]+\]\(.*\)(?:\s+.*)?$/.test(trimmed)) {
+            return {
+                kind: 'malformed',
+                reason: `markdown link must be at the start of the cell — got: ${snippet(trimmed)}`,
+            };
+        }
+        return validateExtractedPath(mdLinkGroups[0][1].trim());
+    }
+
+    return {
+        kind: 'malformed',
+        reason: `no recognized path — first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`,
+    };
+}
+
+function snippet(value: string): string {
+    return value.length > 80 ? `${value.slice(0, 77)}...` : value;
+}
+
+function validateExtractedPath(extracted: string): HandoffPathCellResult {
+    if (!extracted) return { kind: 'malformed', reason: 'empty path inside backticks/link' };
+    // Only `*` and `?` are rejected as wildcards — both are invalid characters
+    // in real filenames on every supported platform, so their presence is
+    // unambiguously a glob. Square brackets ARE valid in filenames (e.g.
+    // `src/foo[beta].ts`) so we don't flag those even though they're shell-glob
+    // character classes in principle.
+    if (/[*?]/.test(extracted)) {
+        return {
+            kind: 'malformed',
+            reason: `wildcard not allowed in '${extracted}' — list each file explicitly so the diff→handoff check can match`,
+        };
+    }
+    if (extracted.includes('<') || extracted.includes('>')) {
+        return {
+            kind: 'malformed',
+            reason: `template placeholder left unfilled in '${extracted}' — replace with a real file path`,
+        };
+    }
+    return { kind: 'ok', path: extracted };
 }
 
 /**
- * Extracts the file path from the first-column cell of a handoff Changes
- * table row. Two recognized formats:
- *
- *   - Backticked: `` `path/to/file.ts` ``
- *   - Markdown link: `[path/to/file.ts](https://...)` or `[path/to/file.ts](some/local/link)`
- *
- * Codex's handoffs alternate between these forms across runs; pre-2026-05-18
- * only the backtick form was supported, causing `autoCommitCode` to silently
- * no-op on markdown-link handoffs (the empty-handoff branch returned without
- * committing). Exported for unit testing.
+ * Lenient wrapper preserved for callers that just want a path-or-null. New
+ * call sites should prefer `parseHandoffPathCell` so they can surface the
+ * specific rejection reason.
  */
 export function extractHandoffPath(cell: string): string | null {
-    // Backtick form first (more specific): `path`.
-    const backtick = cell.match(/`([^`]+)`/);
-    if (backtick?.[1]) return backtick[1].trim();
-    // Markdown link form: [path](anything). Path is everything inside [].
-    const mdLink = cell.match(/\[([^\]]+)\]\([^)]*\)/);
-    if (mdLink?.[1]) return mdLink[1].trim();
-    return null;
+    const result = parseHandoffPathCell(cell);
+    return result.kind === 'ok' ? result.path : null;
 }
 
 const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);
@@ -700,7 +817,7 @@ export function verifyHandoffAgainstDiffFromData(
     return issues;
 }
 
-function parseDiffNameStatus(stdout: string): { diffFiles: string[]; renamePairs: Array<[string, string]> } {
+export function parseDiffNameStatus(stdout: string): { diffFiles: string[]; renamePairs: Array<[string, string]> } {
     const diffFiles: string[] = [];
     const renamePairs: Array<[string, string]> = [];
     for (const line of stdout.split('\n')) {

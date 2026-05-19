@@ -1577,6 +1577,10 @@ function validateHandoff(taskId) {
     }
     issues.push(...checkAcCoveragePlaceholders(content));
     issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults));
+    const { malformed } = parseHandoffChangesRows(taskId);
+    for (const entry of malformed) {
+      issues.push(`Changes table row '${entry.cell}': ${entry.reason}`);
+    }
   } catch {
     issues.push("handoff.md not found");
   }
@@ -1841,14 +1845,18 @@ ${list}
   return { ok: true };
 }
 function parseHandoffFiles(taskId) {
+  return parseHandoffChangesRows(taskId).files;
+}
+function parseHandoffChangesRows(taskId) {
   const handoffPath = path6.join(taskDirFor(taskId), "handoff.md");
   let content;
   try {
     content = fs5.readFileSync(handoffPath, "utf8");
   } catch {
-    return [];
+    return { files: [], malformed: [] };
   }
   const files = /* @__PURE__ */ new Set();
+  const malformed = [];
   const tables = [
     parseTable(content, "Changes"),
     ...extractSectionBodies(content, /^## Iteration\b/).map((body) => parseTableH3(body, "Changes"))
@@ -1856,18 +1864,73 @@ function parseHandoffFiles(taskId) {
   for (const rows of tables) {
     for (const row of rows) {
       const firstColumn = Object.values(row)[0] ?? "";
-      const extracted = extractHandoffPath(firstColumn);
-      if (extracted) files.add(extracted);
+      if (!firstColumn.trim()) continue;
+      const result = parseHandoffPathCell(firstColumn);
+      if (result.kind === "ok") {
+        files.add(result.path);
+      } else {
+        malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+      }
     }
   }
-  return [...files];
+  return { files: [...files], malformed };
 }
-function extractHandoffPath(cell) {
-  const backtick = cell.match(/`([^`]+)`/);
-  if (backtick?.[1]) return backtick[1].trim();
-  const mdLink = cell.match(/\[([^\]]+)\]\([^)]*\)/);
-  if (mdLink?.[1]) return mdLink[1].trim();
-  return null;
+function parseHandoffPathCell(cell) {
+  const trimmed = cell.trim();
+  if (!trimmed) return { kind: "malformed", reason: "empty cell" };
+  const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
+  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]*\)/g)];
+  if (backtickGroups.length + mdLinkGroups.length > 1) {
+    const tokens = [
+      ...backtickGroups.map((m) => `\`${m[1]}\``),
+      ...mdLinkGroups.map((m) => `[${m[1]}](...)`)
+    ];
+    return {
+      kind: "malformed",
+      reason: `multiple paths in one cell (${tokens.join(", ")}) \u2014 list one path per row`
+    };
+  }
+  if (backtickGroups.length === 1) {
+    if (!/^`[^`]+`(?:\s+.*)?$/.test(trimmed)) {
+      return {
+        kind: "malformed",
+        reason: `backticked path must be at the start of the cell, optionally followed by an annotation \u2014 got: ${snippet(trimmed)}`
+      };
+    }
+    return validateExtractedPath(backtickGroups[0][1].trim());
+  }
+  if (mdLinkGroups.length === 1) {
+    if (!/^\[[^\]]+\]\(.*\)(?:\s+.*)?$/.test(trimmed)) {
+      return {
+        kind: "malformed",
+        reason: `markdown link must be at the start of the cell \u2014 got: ${snippet(trimmed)}`
+      };
+    }
+    return validateExtractedPath(mdLinkGroups[0][1].trim());
+  }
+  return {
+    kind: "malformed",
+    reason: `no recognized path \u2014 first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`
+  };
+}
+function snippet(value) {
+  return value.length > 80 ? `${value.slice(0, 77)}...` : value;
+}
+function validateExtractedPath(extracted) {
+  if (!extracted) return { kind: "malformed", reason: "empty path inside backticks/link" };
+  if (/[*?]/.test(extracted)) {
+    return {
+      kind: "malformed",
+      reason: `wildcard not allowed in '${extracted}' \u2014 list each file explicitly so the diff\u2192handoff check can match`
+    };
+  }
+  if (extracted.includes("<") || extracted.includes(">")) {
+    return {
+      kind: "malformed",
+      reason: `template placeholder left unfilled in '${extracted}' \u2014 replace with a real file path`
+    };
+  }
+  return { kind: "ok", path: extracted };
 }
 var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
 function isPipelineOwnedTaskArtifact(filePath, taskIds) {
@@ -3175,6 +3238,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     }
   }
   const entry = ensurePhaseEntry(status, phaseArg);
+  const previousStatus = entry.status;
   entry.status = statusArg;
   status.updated = today();
   if (verdictArg && Object.hasOwn(entry, "verdict")) {
@@ -3182,6 +3246,11 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   }
   if (REVIEW_PHASES.has(phaseArg)) {
     updateReviewCounters(entry, verdictArg);
+  }
+  if (phaseArg === "implement" && previousStatus === "done" && statusArg !== "done") {
+    delete entry.operator_accepted;
+    delete entry.operator_accepted_sha;
+    delete entry.operator_accepted_at;
   }
   writeStatusAtomic(statusPath, status);
   if (verdictArg) {
@@ -3809,14 +3878,53 @@ function isPipelineOwnedPath(filePath, taskIds) {
   if (taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`))) return true;
   return PIPELINE_TELEMETRY_FILES.includes(filePath);
 }
+function operatorAcceptedImplement(taskIds, cwd) {
+  const allAccepted = taskIds.every((taskId) => {
+    const status = readStatus(taskId);
+    return status.phases?.implement?.operator_accepted === true;
+  });
+  if (!allAccepted) return false;
+  const head = gitSafeAt(cwd, "rev-parse", "HEAD");
+  if (!head.ok) return false;
+  const currentSha = head.stdout.trim();
+  if (!currentSha) return false;
+  const shaMatch = taskIds.every((taskId) => {
+    const status = readStatus(taskId);
+    const recorded = (status.phases?.implement?.operator_accepted_sha ?? "").trim();
+    return recorded !== "" && recorded === currentSha;
+  });
+  if (!shaMatch) return false;
+  const dirty = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
+  if (!dirty.ok) return false;
+  if (dirty.stdout.trim() === "") return true;
+  const dirtyPaths = [...parsePorcelain(dirty.stdout)];
+  const sourceDirty = dirtyPaths.filter((p) => !isPipelineOwnedPath(p, taskIds));
+  return sourceDirty.length === 0;
+}
 function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   const primaryStatus = readStatus(taskIds[0]);
   const title = getTitle(primaryStatus);
+  if (operatorAcceptedImplement(taskIds, cwd)) {
+    info("Auto-commit skipped \u2014 implement phase was operator-accepted (canon task accept) and HEAD still matches the accepted SHA.");
+    return;
+  }
   const allHandoffFiles = /* @__PURE__ */ new Set();
+  const allMalformed = [];
   for (const taskId of taskIds) {
-    for (const file of parseHandoffFiles(taskId)) {
-      allHandoffFiles.add(file);
+    const { files, malformed } = parseHandoffChangesRows(taskId);
+    for (const file of files) allHandoffFiles.add(file);
+    for (const entry of malformed) {
+      allMalformed.push({ taskId, cell: entry.cell, reason: entry.reason });
     }
+  }
+  if (allMalformed.length > 0) {
+    const lines = allMalformed.map((m) => `    [${m.taskId}] '${m.cell}': ${m.reason}`);
+    die(
+      `Auto-commit aborted: handoff.md Changes table has malformed rows.
+` + lines.join("\n") + `
+  Fix each row to one path per line in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),
+  then re-run. Combined paths, wildcards, and unfilled \`<placeholder>\` rows are not accepted.`
+    );
   }
   if (allHandoffFiles.size === 0) {
     const emptyDebug = { cwd, handoffFiles: [] };
@@ -4589,6 +4697,7 @@ function rerouteFromHumanReview(taskIds) {
       implement.status = "pending";
       implement.rerouted = true;
       implement.reroute_count = (implement.reroute_count ?? 0) + 1;
+      clearImplementOperatorAcceptance(implement);
     }
     const codeReview = status.phases.code_review;
     if (codeReview) {
@@ -4610,10 +4719,19 @@ function rerouteFromHumanReview(taskIds) {
   info("   Amendment section with the new requirements. review.md alone is not sufficient \u2014 Codex reads spec.md");
   info("   as the contract. The main-repo spec is synced into the worktree at the start of implement.");
 }
+function clearImplementOperatorAcceptance(implement) {
+  if (!implement) return;
+  delete implement.operator_accepted;
+  delete implement.operator_accepted_sha;
+  delete implement.operator_accepted_at;
+}
 function routeBackTo(taskIds, targetPhase) {
   const targetIdx = PHASE_ORDER2.indexOf(targetPhase);
   for (const taskId of taskIds) {
     const status = readStatus(taskId);
+    if (targetIdx <= PHASE_ORDER2.indexOf("implement")) {
+      clearImplementOperatorAcceptance(status.phases.implement);
+    }
     for (let i = targetIdx; i < PHASE_ORDER2.length; i += 1) {
       const phaseEntry = status.phases[PHASE_ORDER2[i]];
       if (phaseEntry) phaseEntry.status = "pending";
@@ -4691,8 +4809,15 @@ function readArtifact(taskId, name) {
 function tryEvidenceAdvance(taskId, phase) {
   switch (phase) {
     case "implement": {
-      const files = parseHandoffFiles(taskId);
-      if (files.length === 0) return { advanced: false, note: "handoff.md Changes table is empty" };
+      const { files, malformed } = parseHandoffChangesRows(taskId);
+      if (files.length === 0 && malformed.length === 0) {
+        return { advanced: false, note: "handoff.md Changes table is empty" };
+      }
+      if (malformed.length > 0) {
+        const sample = malformed.slice(0, 3).map((m) => `'${m.cell}': ${m.reason}`).join("; ");
+        const tail = malformed.length > 3 ? ` (+${malformed.length - 3} more)` : "";
+        return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
+      }
       const issues = validateHandoffAgainstSpec(
         path15.join(taskDirFor2(taskId), "spec.md"),
         path15.join(taskDirFor2(taskId), "handoff.md")

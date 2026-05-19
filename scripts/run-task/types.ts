@@ -37,6 +37,23 @@ export type PhaseEntry = {
     auto_block_count?: number;
     rerouted?: boolean;
     reroute_count?: number;
+    /**
+     * Set by `canon task accept <id> implement` when an operator has manually
+     * committed work outside the pipeline and wants to advance past auto-commit.
+     * Causes the post-implement dispatch to skip `autoCommitCode` — but only
+     * when the current HEAD still matches `operator_accepted_sha`. If HEAD has
+     * moved past the accepted commit, the flag is treated as stale and normal
+     * auto-commit validation runs.
+     */
+    operator_accepted?: boolean;
+    /** ISO date the phase was operator-accepted. Diagnostic-only. */
+    operator_accepted_at?: string;
+    /**
+     * HEAD SHA at the time of `canon task accept`. Pairs with `operator_accepted`
+     * so a stale flag from a prior accept does not silently bypass auto-commit
+     * after later edits land on the task branch.
+     */
+    operator_accepted_sha?: string;
 };
 
 export type Escalation = {

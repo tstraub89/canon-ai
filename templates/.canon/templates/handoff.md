@@ -6,9 +6,10 @@
 
 ## Changes
 
+> One row per file changed. The first column must be either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — no wildcards, no combined paths, no placeholder text. Each row's path must exist in `git diff <base>...HEAD` after auto-commit.
+
 | File | What Changed |
 |---|---|
-| `<path>` | ... |
 
 ## Canon Governance
 
@@ -88,9 +89,10 @@ On revision rounds, append below this line:
 
 ### Changes
 
+> One row per file changed in this iteration. Same format as the baseline Changes table — `` `path/to/file.ext` `` or `[path/to/file.ext](url)` only.
+
 | File | What Changed |
 |---|---|
-| `<path>` | ... |
 
 > **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
 

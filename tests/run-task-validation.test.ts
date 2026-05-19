@@ -17,7 +17,9 @@ import {
     checkAcCoveragePlaceholders,
     computeLatestValidationResults,
     extractHandoffPath,
+    parseHandoffChangesRows,
     parseHandoffFiles,
+    parseHandoffPathCell,
     validateHandoffAgainstSpec,
     verifyHandoffAgainstDiffFromData,
 } from '../scripts/run-task/validation.js';
@@ -455,9 +457,58 @@ void test('extractHandoffPath: markdown-link path', () => {
     assert.equal(extractHandoffPath('[src/foo.ts](/Users/local/path/src/foo.ts)'), 'src/foo.ts');
 });
 
-void test('extractHandoffPath: backtick wins over markdown link if both present', () => {
-    // First column might mix forms (e.g., legacy edits + markdown). Prefer backtick.
-    assert.equal(extractHandoffPath('`src/a.ts` and [src/b.ts](url)'), 'src/a.ts');
+void test('extractHandoffPath: rejects multiple paths in a single cell (combined row)', () => {
+    // Pre-1.3.0 this returned the FIRST path silently — the rest got dropped,
+    // and the diff→handoff preflight then flagged them as mismatches. The
+    // strict parser rejects the cell outright so the malformed row is the
+    // actionable error rather than a downstream symptom.
+    assert.equal(extractHandoffPath('`src/a.ts` and [src/b.ts](url)'), null);
+    assert.equal(extractHandoffPath('`src/a.ts`, `src/b.ts`'), null);
+});
+
+void test('parseHandoffPathCell allows bracketed filenames like src/foo[beta].ts', () => {
+    // Square brackets are valid filename characters even though shell globs
+    // treat them as character classes. The wildcard check must not over-reject.
+    const result = parseHandoffPathCell('`src/foo[beta].ts`');
+    assert.equal(result.kind, 'ok');
+    if (result.kind === 'ok') assert.equal(result.path, 'src/foo[beta].ts');
+});
+
+void test('parseHandoffPathCell surfaces the specific rejection reason', () => {
+    {
+        const result = parseHandoffPathCell('`src/a.ts`, `src/b.ts`');
+        assert.equal(result.kind, 'malformed');
+        if (result.kind === 'malformed') {
+            assert.match(result.reason, /multiple paths/);
+            assert.match(result.reason, /one path per row/);
+        }
+    }
+    {
+        const result = parseHandoffPathCell('`src/content/examples/*.md`');
+        assert.equal(result.kind, 'malformed');
+        if (result.kind === 'malformed') {
+            assert.match(result.reason, /wildcard not allowed/);
+        }
+    }
+    {
+        const result = parseHandoffPathCell('`<path>`');
+        assert.equal(result.kind, 'malformed');
+        if (result.kind === 'malformed') {
+            assert.match(result.reason, /template placeholder/);
+        }
+    }
+    {
+        const result = parseHandoffPathCell('AC-9: `sitemap.xml` regenerated');
+        assert.equal(result.kind, 'malformed');
+        if (result.kind === 'malformed') {
+            assert.match(result.reason, /at the start of the cell/);
+        }
+    }
+    {
+        const result = parseHandoffPathCell('`src/foo.ts`');
+        assert.equal(result.kind, 'ok');
+        if (result.kind === 'ok') assert.equal(result.path, 'src/foo.ts');
+    }
 });
 
 void test('extractHandoffPath: markdown-link URL with parens still captures the path', () => {
@@ -492,6 +543,37 @@ void test('parseHandoffFiles: accepts markdown-link format in Changes table', ()
         '',
     ].join('\n'), () => {
         assert.deepEqual(parseHandoffFiles('mdlink-task').sort(), ['src/main.ts', 'tests/main.test.ts']);
+    });
+});
+
+void test('parseHandoffChangesRows surfaces malformed rows from baseline + iteration Changes tables', () => {
+    withTempTaskHandoff('malformed-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/good.ts` | clean baseline row |',
+        '| `src/content/examples/*.md` | wildcard — should be rejected |',
+        '| `<path>` | template placeholder — should be rejected |',
+        '',
+        '## Iteration 2 — addressing review round 1',
+        '',
+        '### Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/iter.ts`, `src/also-iter.ts` | combined row — should be rejected |',
+        '',
+    ].join('\n'), () => {
+        const { files, malformed } = parseHandoffChangesRows('malformed-task');
+        assert.deepEqual(files, ['src/good.ts']);
+        assert.equal(malformed.length, 3);
+        const reasons = malformed.map(m => m.reason).join('\n');
+        assert.match(reasons, /wildcard not allowed/);
+        assert.match(reasons, /template placeholder/);
+        assert.match(reasons, /multiple paths in one cell/);
     });
 });
 
