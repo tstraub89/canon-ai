@@ -740,6 +740,32 @@ export function formatExistingPRMessage(prNum: number, prUrl: string): string {
     return `Existing draft PR: #${prNum} (${prUrl})`;
 }
 
+/**
+ * Idempotent `--pr` at `human_review`: if origin already has an open PR for
+ * this branch/base, print its URL; otherwise create the draft PR. Both
+ * `human_review` paths (clean-tree retry and dirty-tree commit-then-create)
+ * funnel through here so a re-run of `canon run <id> --pr` after the PR has
+ * been opened can't die on `gh pr create`'s "PR already exists" exit code.
+ *
+ * The 1.2.0 changelog claimed `--pr` was idempotent at `human_review`, but
+ * only the clean-tree retry branch actually had the existing-PR check
+ * (issue #72's fix targeted only the `complete` and clean-tree paths). The
+ * dirty-tree path went straight to `createDraftPRForTask` and died on the
+ * `gh` exit when GP rebuilt task artifacts on an already-PR'd branch (1.3.0
+ * failure mode #10).
+ */
+function reportOrCreatePR(taskIds: string[], branchName: string): void {
+    if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const openPR = findOpenPRNumber(branchName, baseBranch);
+    if (openPR !== null) {
+        const prUrl = lookupPRUrl(openPR);
+        info(formatExistingPRMessage(openPR, prUrl));
+        return;
+    }
+    createDraftPRForTask(taskIds, branchName);
+}
+
 function parseOriginRepoSlug(remoteUrl: string): string | null {
     const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
     return match?.[1] ?? null;
@@ -829,14 +855,6 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         const branchResult = gitSafeAt(cwd, 'rev-parse', '--abbrev-ref', 'HEAD');
         const branchName = branchResult.ok ? branchResult.stdout.trim() : '';
         if (branchName) {
-            // For --pr: gh-authoritative PR check first. gh sees the
-            // origin-side state directly and is robust to stale local
-            // remote-tracking refs. An existing open PR wins regardless of
-            // whether `origin/<branch>` looks fresh locally.
-            // (Prevents the duplicate-PR-create regression; PR #75 iter 1.)
-            const baseBranch = splitGit.getBaseBranch(taskIds);
-            const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName, baseBranch) : null;
-
             // Always push before reporting / creating the PR. `git push` is
             // idempotent — no-op when origin already has the local tip,
             // pushes the difference otherwise. We do NOT short-circuit on
@@ -857,15 +875,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
 
-            if (cliArgs.pr && openPR !== null) {
-                const prUrl = lookupPRUrl(openPR);
-                info(formatExistingPRMessage(openPR, prUrl));
-                return;
-            }
-
-            if (cliArgs.pr) {
-                createDraftPRForTask(taskIds, branchName);
-            }
+            if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
             return;
         }
     }
@@ -949,9 +959,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
 
-    if (cliArgs.pr) {
-        createDraftPRForTask(taskIds, branchName);
-    }
+    if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
 }
 
 function printDryRunPlan(state: PipelineState): void {

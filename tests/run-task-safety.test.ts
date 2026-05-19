@@ -1073,6 +1073,63 @@ void test('main --pr does NOT match an open PR on the wrong base (Codex P2 on re
     });
 });
 
+void test('main --pr at human_review with dirty allowed files is idempotent when an open PR already exists (GP #10)', () => {
+    // 1.2.0's --pr idempotency only fired on the clean-tree retry path. The
+    // dirty-tree commit-then-create path went straight to `gh pr create` and
+    // died on its "PR already exists" exit code. GP's starter-preview-renderer
+    // bundle hit this when QA finished writing artifacts and `--pr` ran while
+    // tasks/<id>/done.md was still uncommitted — the PR (already opened on a
+    // prior run) caused canon to exit 1 even though the work succeeded.
+    withTempDir('run-task-human-review-pr-dirty-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.human_review = { status: 'pending', agent: 'human' };
+        writeTaskStatus(tasksRoot, 'task-a', status);
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            // Dirty file is on the allowlist — this is the "QA wrote done.md
+            // and canon needs to commit + push + report" path.
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+            FAKE_GH_PR_NUMBER: '94',
+            FAKE_GH_PR_URL: 'https://github.com/x/y/pull/94',
+        });
+
+        // 1.3.0 expectation: the existing PR is detected after the commit + push,
+        // canon prints the URL, and exits 0. Pre-fix this exited 1 with the
+        // `gh pr create` "PR already exists" stderr propagated up.
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Existing draft PR: #94 \(https:\/\/github\.com\/x\/y\/pull\/94\)/);
+        // The commit + push must still happen for QA artifacts to reach origin
+        // before the PR-exists branch returns.
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.match(gitLog, /^commit /m, 'commit must run on dirty-tree path');
+        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run on dirty-tree path');
+    });
+});
+
 void test('main --pr on complete still rejects dirty files outside the human_review allowlist', () => {
     withTempDir('run-task-complete-pr-dirty-', dir => {
         const tasksRoot = path.join(dir, 'tasks');

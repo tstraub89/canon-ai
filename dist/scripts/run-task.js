@@ -4241,6 +4241,17 @@ function createDraftPRForTask(taskIds, branchName) {
 function formatExistingPRMessage(prNum, prUrl) {
   return `Existing draft PR: #${prNum} (${prUrl})`;
 }
+function reportOrCreatePR(taskIds, branchName) {
+  if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
+  const baseBranch = getBaseBranch(taskIds);
+  const openPR = findOpenPRNumber(branchName, baseBranch);
+  if (openPR !== null) {
+    const prUrl = lookupPRUrl(openPR);
+    info2(formatExistingPRMessage(openPR, prUrl));
+    return;
+  }
+  createDraftPRForTask(taskIds, branchName);
+}
 function parseOriginRepoSlug(remoteUrl) {
   const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
   return match?.[1] ?? null;
@@ -4315,21 +4326,12 @@ function commitHumanReviewFiles(taskIds, cwd) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
-      const baseBranch = getBaseBranch(taskIds);
-      const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName2, baseBranch) : null;
       info2(`Clean tree. Pushing ${branchName2}...`);
       const pushResult2 = gitSafeAt2(cwd, "push", "origin", branchName2);
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
       }
-      if (cliArgs.pr && openPR !== null) {
-        const prUrl = lookupPRUrl(openPR);
-        info2(formatExistingPRMessage(openPR, prUrl));
-        return;
-      }
-      if (cliArgs.pr) {
-        createDraftPRForTask(taskIds, branchName2);
-      }
+      if (cliArgs.pr) reportOrCreatePR(taskIds, branchName2);
       return;
     }
   }
@@ -4398,9 +4400,7 @@ function commitHumanReviewFiles(taskIds, cwd) {
   if (!pushResult.ok) {
     die2(`Human review push failed: ${pushResult.stderr || "unknown error"}`);
   }
-  if (cliArgs.pr) {
-    createDraftPRForTask(taskIds, branchName);
-  }
+  if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
 }
 function printDryRunPlan(state) {
   const { tasks } = state;
