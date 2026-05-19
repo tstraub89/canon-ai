@@ -9,8 +9,10 @@ import { spawnSync } from 'node:child_process';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 import {
     buildHumanReviewStagePaths,
+    findPullRequestTemplate,
     formatCompleteStateBanner,
     formatExistingPRMessage,
+    resolveCanonPrBody,
 } from '../scripts/run-task/main.js';
 import { ensureBranch, ensureCheckedOutBaseBranch } from '../scripts/run-task/git.js';
 import { commitArchiveChanges } from '../scripts/run-task/main.js';
@@ -773,6 +775,59 @@ void test('formatExistingPRMessage returns the idempotent existing-PR message', 
         formatExistingPRMessage(17, 'https://github.com/x/y/pull/17'),
         'Existing draft PR: #17 (https://github.com/x/y/pull/17)',
     );
+});
+
+// ── resolveCanonPrBody (ninja-mode PR body) ─────────────────────────────────
+
+void test('resolveCanonPrBody: default (no env var) returns null so gh uses its own defaults', () => {
+    assert.equal(resolveCanonPrBody(['foo'], 'Foo task title', {}), null);
+});
+
+void test('resolveCanonPrBody: empty env var still returns null (treated as opt-out)', () => {
+    assert.equal(resolveCanonPrBody(['foo'], 'Foo task title', { CANON_PR_BODY: '' }), null);
+});
+
+void test('resolveCanonPrBody: env var expands $LABEL and $TITLE placeholders for single task', () => {
+    const out = resolveCanonPrBody(['fix-hover'], 'Fix hover state', {
+        CANON_PR_BODY: 'Generated for $LABEL\n\nTitle: $TITLE',
+    });
+    assert.equal(out, 'Generated for fix-hover\n\nTitle: Fix hover state');
+});
+
+void test('resolveCanonPrBody: env var joins multiple task IDs into $LABEL', () => {
+    const out = resolveCanonPrBody(['a', 'b', 'c'], 'Bundle title', {
+        CANON_PR_BODY: 'Tasks: $LABEL',
+    });
+    assert.equal(out, 'Tasks: a, b, c');
+});
+
+void test('findPullRequestTemplate: returns null when no template exists', () => {
+    withTempDir('canon-pr-template-', dir => {
+        assert.equal(findPullRequestTemplate(dir), null);
+    });
+});
+
+void test('findPullRequestTemplate: finds .github/pull_request_template.md', () => {
+    withTempDir('canon-pr-template-', dir => {
+        const githubDir = path.join(dir, '.github');
+        fs.mkdirSync(githubDir, { recursive: true });
+        const expected = path.join(githubDir, 'pull_request_template.md');
+        fs.writeFileSync(expected, '## Summary\n');
+        assert.equal(findPullRequestTemplate(dir), expected);
+    });
+});
+
+void test('findPullRequestTemplate: docs/ subdirectory location', () => {
+    // Tests the docs/ fallback location in the candidate list — separate from
+    // the .github/ case-sensitivity story (macOS treats lowercase + uppercase
+    // basenames as the same file there, so testing both adds no coverage).
+    withTempDir('canon-pr-template-', dir => {
+        const docsDir = path.join(dir, 'docs');
+        fs.mkdirSync(docsDir, { recursive: true });
+        const expected = path.join(docsDir, 'pull_request_template.md');
+        fs.writeFileSync(expected, '## Summary\n');
+        assert.equal(findPullRequestTemplate(dir), expected);
+    });
 });
 
 void test('main prints the complete-phase banner when the task is already complete', () => {

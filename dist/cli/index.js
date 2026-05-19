@@ -1314,7 +1314,7 @@ function usage() {
     "  list",
     "  status <TASK-ID>",
     "  phase <TASK-ID> <phase> <status> [verdict]",
-    "  accept <TASK-ID> <phase> [--force]",
+    "  accept <TASK-ID...> <phase> [--force]",
     "  reset-spec-review <TASK-ID>",
     "  post-merge-sync [<branch>]",
     "  release-init <version>"
@@ -1493,16 +1493,28 @@ function taskList() {
     return;
   }
   const rows = [];
+  let invalidCount = 0;
   for (const entry of fs6.readdirSync(root).sort()) {
     if (entry === "_archive") continue;
     const statusPath = path7.join(root, entry, "status.json");
     if (!fs6.existsSync(statusPath)) continue;
-    const status = readJsonFile(statusPath);
-    rows.push({
-      id: entry,
-      title: status.title ?? "(untitled)",
-      phase: derivePhase(status)
-    });
+    try {
+      const status = readJsonFile(statusPath);
+      const phase = derivePhase(status);
+      rows.push({
+        id: entry,
+        title: status.title ?? "(untitled)",
+        phase
+      });
+    } catch (error) {
+      invalidCount += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      rows.push({
+        id: entry,
+        title: "(invalid status.json)",
+        phase: `INVALID: ${message}`
+      });
+    }
   }
   if (rows.length === 0) {
     console.log("No tasks found.");
@@ -1512,6 +1524,9 @@ function taskList() {
   console.log(`${"----".padEnd(25)} ${"-----".padEnd(40)} -------------`);
   for (const row of rows) {
     console.log(`${row.id.padEnd(25)} ${row.title.padEnd(40)} ${row.phase}`);
+  }
+  if (invalidCount > 0) {
+    throw new Error(`${invalidCount} task(s) had invalid status.json \u2014 see INVALID: rows above. Fix the malformed files or remove the task dir.`);
   }
 }
 function taskStatus(id) {
@@ -1623,27 +1638,64 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     console.log(`Updated ${id}: ${phaseArg} \u2192 ${statusArg}`);
   }
 }
-function taskAccept(id, phaseArg, options = {}) {
-  if (!id) throw new Error("Error: usage: canon task accept <TASK-ID> <phase> [--force]");
+function taskAccept(ids, phaseArg, options = {}) {
+  if (ids.length === 0) throw new Error("Error: usage: canon task accept <TASK-ID...> <phase> [--force]");
   if (!phaseArg) throw new Error("Error: phase required (currently only `implement` is supported)");
-  validateTaskId(id);
+  for (const id of ids) validateTaskId(id);
   assertValidPhase(phaseArg);
   if (phaseArg !== "implement") {
     throw new Error(
-      `Error: 'canon task accept' currently only supports the implement phase. Got '${phaseArg}'. For other phases use \`canon task phase ${id} ${phaseArg} done [verdict]\`.`
+      `Error: 'canon task accept' currently only supports the implement phase. Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
     );
   }
-  const taskCwd = resolveTaskCwd(id);
-  const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs6.existsSync(statusPath)) {
-    throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
+  const ctxByTask = /* @__PURE__ */ new Map();
+  for (const id of ids) {
+    const taskCwd = resolveTaskCwd(id);
+    const statusPath = taskStatusFileForCwd(taskCwd, id);
+    if (!fs6.existsSync(statusPath)) {
+      throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
+    }
+    const status = readJsonFile(statusPath);
+    ctxByTask.set(id, { id, taskCwd, statusPath, status });
   }
-  const status = readJsonFile(statusPath);
-  const gitCwd = status.worktree === true ? taskCwd : process.cwd();
+  const worktreeModes = /* @__PURE__ */ new Set();
+  for (const ctx of ctxByTask.values()) {
+    worktreeModes.add(ctx.status.worktree === true);
+  }
+  if (worktreeModes.size > 1) {
+    const worktreeTasks = [];
+    const mainTasks = [];
+    for (const ctx of ctxByTask.values()) {
+      (ctx.status.worktree === true ? worktreeTasks : mainTasks).push(ctx.id);
+    }
+    throw new Error(
+      `Error: bundled accept cannot mix worktree and non-worktree tasks. Worktree tasks: [${worktreeTasks.join(", ")}]. Non-worktree tasks: [${mainTasks.join(", ")}]. Run accept separately for each tree.`
+    );
+  }
+  function resolveExpectedTreeForCtx(ctx) {
+    if (ctx.status.worktree === true) return ctx.taskCwd;
+    const out = runGit(["rev-parse", "--show-toplevel"], { cwd: process.cwd() });
+    if (!out.error && out.status === 0) return (out.stdout ?? "").trim() || process.cwd();
+    return process.cwd();
+  }
+  const primary = ctxByTask.get(ids[0]);
+  const gitCwdRaw = resolveExpectedTreeForCtx(primary);
+  const gitCwd = safeRealpath(gitCwdRaw);
+  for (const ctx of ctxByTask.values()) {
+    const expectedRaw = resolveExpectedTreeForCtx(ctx);
+    const expected = safeRealpath(expectedRaw);
+    if (expected !== gitCwd) {
+      throw new Error(
+        `Error: bundled accept requires all tasks to share a working tree. Task '${ids[0]}' resolves to ${gitCwdRaw} but task '${ctx.id}' resolves to ${expectedRaw}. Run accept once per worktree.`
+      );
+    }
+  }
   if (!options.force) {
-    const blocked = priorIncompletePhases(status, phaseArg);
-    if (blocked.length > 0) {
-      throw new Error(`Error: cannot accept ${phaseArg} \u2014 prior phases not done: ${blocked.join(",")}`);
+    for (const ctx of ctxByTask.values()) {
+      const blocked = priorIncompletePhases(ctx.status, phaseArg);
+      if (blocked.length > 0) {
+        throw new Error(`Error: cannot accept ${phaseArg} for '${ctx.id}' \u2014 prior phases not done: ${blocked.join(",")}`);
+      }
     }
     ensureGitAvailable();
     const dirty = git2(["status", "--porcelain=v1", "-uall"], { cwd: gitCwd });
@@ -1651,7 +1703,7 @@ function taskAccept(id, phaseArg, options = {}) {
     const sourceDirty = dirtyLines.filter((line) => {
       const dirtyPath = parsePorcelainPath(line);
       if (!dirtyPath) return true;
-      return !isPipelineOwnedAcceptPath(dirtyPath, id, gitCwd);
+      return !ids.some((id) => isPipelineOwnedAcceptPath(dirtyPath, id, gitCwd));
     });
     if (sourceDirty.length > 0) {
       throw new Error(
@@ -1661,13 +1713,21 @@ function taskAccept(id, phaseArg, options = {}) {
   Commit or stash these changes first, or re-run with --force if you genuinely want to ignore them.`
       );
     }
-    const baseBranch = (status.base_branch ?? "").trim();
-    if (!baseBranch) {
-      throw new Error("Error: status.json is missing base_branch \u2014 cannot determine the diff baseline for accept.");
+    const baseBranches = /* @__PURE__ */ new Set();
+    for (const ctx of ctxByTask.values()) {
+      const b = (ctx.status.base_branch ?? "").trim();
+      if (!b) throw new Error(`Error: status.json for '${ctx.id}' is missing base_branch \u2014 cannot determine the diff baseline for accept.`);
+      baseBranches.add(b);
     }
+    if (baseBranches.size > 1) {
+      throw new Error(
+        `Error: bundled accept requires all tasks to share base_branch. Got: ${[...baseBranches].join(", ")}. Accept one bundle at a time.`
+      );
+    }
+    const baseBranch = [...baseBranches][0];
     if (!gitOk(["rev-parse", "--verify", baseBranch], { cwd: gitCwd })) {
       throw new Error(
-        `Error: base branch '${baseBranch}' is not reachable from ${taskCwd}. Fetch it or pass --force if you know the diff baseline is intentional.`
+        `Error: base branch '${baseBranch}' is not reachable from ${gitCwd}. Fetch it or pass --force if you know the diff baseline is intentional.`
       );
     }
     const diffResult = runGit(["diff", `${baseBranch}...HEAD`, "--name-status", "-M"], { cwd: gitCwd });
@@ -1681,24 +1741,32 @@ function taskAccept(id, phaseArg, options = {}) {
   Commit your changes on the task branch first, or pass --force to accept an empty implement phase anyway.`
       );
     }
-    const { files: handoffFiles, malformed } = parseHandoffChangesRows(id);
-    if (malformed.length > 0) {
-      const lines = malformed.slice(0, 10).map((m) => `    '${m.cell}': ${m.reason}`);
-      const tail = malformed.length > 10 ? `
-    (+${malformed.length - 10} more)` : "";
+    const handoffFilesByTask = /* @__PURE__ */ new Map();
+    const allHandoffFiles = /* @__PURE__ */ new Set();
+    const allMalformed = [];
+    for (const ctx of ctxByTask.values()) {
+      const { files, malformed } = parseHandoffChangesRows(ctx.id);
+      handoffFilesByTask.set(ctx.id, files);
+      for (const file of files) allHandoffFiles.add(file);
+      for (const m of malformed) allMalformed.push({ taskId: ctx.id, cell: m.cell, reason: m.reason });
+    }
+    if (allMalformed.length > 0) {
+      const lines = allMalformed.slice(0, 10).map((m) => `    [${m.taskId}] '${m.cell}': ${m.reason}`);
+      const tail = allMalformed.length > 10 ? `
+    (+${allMalformed.length - 10} more)` : "";
       throw new Error(
         `Error: handoff.md has malformed Changes rows \u2014 fix these before accepting.
 ` + lines.join("\n") + tail + `
   Use --force to accept anyway, but the code_review pre-flight will still reject the run.`
       );
     }
-    const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, gitCwd);
+    const gitIgnoredHandoffFiles = filterGitIgnoredPaths([...allHandoffFiles], gitCwd);
     const coverageIssues = verifyHandoffAgainstDiffFromData(
-      [id],
+      [...ids],
       {
         diffFiles,
         renamePairs,
-        handoffFilesByTask: /* @__PURE__ */ new Map([[id, handoffFiles]]),
+        handoffFilesByTask,
         gitIgnoredHandoffFiles
       }
     );
@@ -1713,35 +1781,73 @@ function taskAccept(id, phaseArg, options = {}) {
       );
     }
   }
-  const implementEntry = ensurePhaseEntry(status, "implement");
-  implementEntry.status = "done";
-  implementEntry.operator_accepted = true;
-  implementEntry.operator_accepted_at = today();
   const headRevParse = runGit(["rev-parse", "HEAD"], { cwd: gitCwd });
-  if (!headRevParse.error && headRevParse.status === 0) {
-    implementEntry.operator_accepted_sha = (headRevParse.stdout ?? "").trim();
-  } else {
-    implementEntry.operator_accepted_sha = "";
+  const sharedSha = !headRevParse.error && headRevParse.status === 0 ? (headRevParse.stdout ?? "").trim() : "";
+  const originalSnapshots = /* @__PURE__ */ new Map();
+  for (const ctx of ctxByTask.values()) {
+    try {
+      originalSnapshots.set(ctx.statusPath, fs6.readFileSync(ctx.statusPath, "utf8"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
+    }
   }
-  status.updated = today();
-  writeStatusAtomic(statusPath, status);
-  const notesPath = path7.join(taskDirForCwd(taskCwd, id), "notes.md");
-  const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` \u2014 auto-commit will be skipped.${options.force ? " (--force)" : ""}`;
+  const completedWrites = [];
   try {
-    if (fs6.existsSync(notesPath)) {
-      fs6.appendFileSync(notesPath, `
-${noteLine}
-`, "utf8");
-    } else {
-      fs6.writeFileSync(notesPath, `${noteLine}
-`, "utf8");
+    for (const ctx of ctxByTask.values()) {
+      const implementEntry = ensurePhaseEntry(ctx.status, "implement");
+      implementEntry.status = "done";
+      implementEntry.operator_accepted = true;
+      implementEntry.operator_accepted_at = today();
+      implementEntry.operator_accepted_sha = sharedSha;
+      ctx.status.updated = today();
+      writeStatusAtomic(ctx.statusPath, ctx.status);
+      completedWrites.push(ctx.statusPath);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`Warning: failed to log to notes.md: ${message}`);
+    const rollbackErrors = [];
+    for (const filePath of completedWrites) {
+      const original = originalSnapshots.get(filePath);
+      if (original === void 0) continue;
+      try {
+        fs6.writeFileSync(filePath, original, "utf8");
+      } catch (rollbackErr) {
+        const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+        rollbackErrors.push(`    ${filePath}: ${message}`);
+      }
+    }
+    const originalMessage = error instanceof Error ? error.message : String(error);
+    if (rollbackErrors.length > 0) {
+      throw new Error(
+        `Error: bundled accept failed mid-write AND rollback also failed.
+  Original error: ${originalMessage}
+  Rollback failures (the following status.json files are in an inconsistent state):
+` + rollbackErrors.join("\n") + `
+  Restore manually from git history.`
+      );
+    }
+    throw new Error(`Error: bundled accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
   }
+  for (const ctx of ctxByTask.values()) {
+    const notesPath = path7.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+    const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` \u2014 auto-commit will be skipped.${options.force ? " (--force)" : ""}`;
+    try {
+      if (fs6.existsSync(notesPath)) {
+        fs6.appendFileSync(notesPath, `
+${noteLine}
+`, "utf8");
+      } else {
+        fs6.writeFileSync(notesPath, `${noteLine}
+`, "utf8");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Warning: failed to log to notes.md for ${ctx.id}: ${message}`);
+    }
+  }
+  const label = ids.length === 1 ? ids[0] : `[${ids.join(", ")}]`;
   console.log(
-    `Accepted ${id}: implement \u2192 done (operator_accepted=true).` + (options.force ? " (--force)" : "") + `
+    `Accepted ${label}: implement \u2192 done (operator_accepted=true).` + (options.force ? " (--force)" : "") + `
   Auto-commit will be skipped on subsequent \`canon run\` invocations. The next phase (code_review) will run normally against the committed work.`
   );
 }
@@ -2073,7 +2179,12 @@ function taskCmd(args2) {
       case "accept": {
         const force = rest.includes("--force");
         const positional = rest.filter((arg) => arg !== "--force");
-        taskAccept(positional[0] ?? "", positional[1] ?? "", { force });
+        if (positional.length < 2) {
+          throw new Error("Error: usage: canon task accept <TASK-ID...> <phase> [--force]");
+        }
+        const acceptPhase = positional[positional.length - 1];
+        const acceptIds = positional.slice(0, -1);
+        taskAccept(acceptIds, acceptPhase, { force });
         break;
       }
       case "reset-spec-review":

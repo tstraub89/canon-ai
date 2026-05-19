@@ -284,6 +284,41 @@
 
 ## 🛠️ Tooling & Dev Experience
 
+- [ ] **Artifact consistency lint (`canon task lint` / `canon verify`)** *(filed by James, [issue #84](https://github.com/tstraub89/canon-ai/issues/84), 2026-05-19)*
+  - **Scope**: A `canon task lint` (or `canon verify` / `canon doctor --tasks`) mode that catches cross-artifact rollup drift before a task or bundle is marked ready. Adopter dogfood surfaced the failure mode: a decision ledger was corrected to 49 decisions, but sibling artifacts (status.json `founder_decisions_total: 48`, prose rollups, synthesis docs) still said 48 — agents fixed the authoritative source while leaving stale rollups elsewhere.
+  - **Why it's wanted**: canon's value is the paper trail staying trustworthy. In larger multi-agent runs, duplicated counts and rollups are exactly where drift appears, and human/agent review tends to miss numeric mismatches across files.
+  - **Check categories** (start narrow + generic, parsing markdown tables with the existing `markdown-table.ts` parser):
+    - Markdown decision-row counts match declared status.json counters.
+    - Bundle/synthesis totals match child ledgers.
+    - Known placeholder phrases absent from final task artifacts (template-leak detector).
+    - status.json phase/verdict agrees with required artifact existence (extension of current phase-gate logic).
+    - User-configurable assertions: e.g. `tasks/<id>/decision-ledger.md table count == status.decisions_total` declared per-project in a `.canon/lint-rules.toml`.
+  - **Sequencing**: The "phase status/verdict ↔ artifact existence" check overlaps the Wave 3 status-counter + invariant-gate cluster. If that lands first, this entry absorbs the cross-file rollup checks on top of the same engine; if this lands first, it carries the same status-counter scope.
+  - **Effort**: `M` for the generic table-count + status-counter consistency engine + 3-4 built-in checks. `S` per additional built-in check.
+
+- [ ] **Manual / off-pipeline canon mode with post-hoc independent review** *(filed by James, [issue #85](https://github.com/tstraub89/canon-ai/issues/85), 2026-05-19)*
+  - **Scope**: An explicit `execution_mode: "manual_canon"` (or similar) recorded on a task's `status.json` for the case where a user asks an agent to run a long Canon-shaped workflow directly — producing specs/plans/reviews/implementation artifacts without the orchestrator owning every phase transition. Useful in messy real projects and probably unavoidable, but blurs canon's normal guarantees unless the task state records that an operator substitution happened.
+  - **What the canonical flow guarantees that manual mode breaks**: Claude writes specs/plans/reviews/QA, Codex reviews specs and implements, no agent reviews its own work, orchestrator owns phase routing and artifact gates. Manual end-to-end runs may produce canon-shaped artifacts and even run useful checks, but downstream readers can over-trust them as if all phase ownership and cross-review gates held.
+  - **Proposed status.json shape**:
+    ```json
+    {
+      "execution_mode": "manual_canon",
+      "operator_substitution": {
+        "agent": "claude|codex|human",
+        "reason": "long-running bundle / emergency CAPA / external constraints",
+        "requires_post_hoc_independent_review": true
+      }
+    }
+    ```
+  - **Behavior**:
+    - `canon task list/status` displays `manual_canon` visibly.
+    - `canon run` refuses to advance to `qa`/`human_review` until an independent post-hoc review artifact exists (different agent than the one who wrote the manual artifacts).
+    - `done.md` / handoff templates carry a short disclosure when manual mode was used.
+    - `canon doctor --tasks` warns if a manual-mode task lacks the required independent review.
+  - **Why it matters**: keeps canon pragmatic without weakening guarantees. Manual end-to-end runs stay supported, but the task record honestly distinguishes orchestrator-owned vs. canon-shaped manual runs that still need independent review before being treated as done.
+  - **Risks to watch**: scope creep into a parallel pipeline. The mode should be a flag and a few gates, not a rebuild of the orchestrator. Also: the "independent post-hoc review" needs a concrete mechanism — likely a new artifact `independent-review.md` plus a phase gate that requires it, signed by a different agent slot than the one named in `operator_substitution.agent`.
+  - **Effort**: `M`.
+
 - [ ] **`canon dogfood-report` command** *(framed 2026-05-10 from TokenAnxiety discussion #27, item 9)*
   - **Scope**: A tooling command that produces a structured retrospective on canon's behavior across a set of tasks — iteration counts (current + cumulative), validation gaps, post-closeout fixes, declared-vs-executable drift findings. The shape of report James wrote manually for discussion #27, but generated mechanically from canon's telemetry files + git log.
   - **Why it's wanted**: dogfood reports are how canon learns about itself. James hand-assembled #27 from `task-quality-log.md` + `pipeline-invocations.md` + `lessons-learned.md` + git log of post-closeout commits. That's exactly the kind of synthesis that should be a command, not a manual exercise — both because the manual version is expensive (~half a day per report) and because canon's own observability story should not be "rely on the human to dig through artifacts."

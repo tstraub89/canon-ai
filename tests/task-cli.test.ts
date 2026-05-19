@@ -181,6 +181,28 @@ void test('task list prints rows and handles an empty task directory', () => {
     });
 });
 
+void test('task list does not crash on non-canonical status.json (issue #83)', () => {
+    withTasksRoot(tasksRoot => {
+        // James's repro: status.json with no `phases` object at all.
+        const badDir = path.join(tasksRoot, 'noncanonical');
+        fs.mkdirSync(badDir);
+        fs.writeFileSync(path.join(badDir, 'status.json'), JSON.stringify({
+            id: 'noncanonical',
+            title: 'Noncanonical status shape',
+            status: 'paper_gate',
+        }, null, 2));
+        // A valid task alongside so we can confirm the listing isn't aborted by
+        // the bad sibling.
+        writeTask(tasksRoot, 'valid-task', makeStatus('valid-task', { title: 'Valid' }));
+
+        const output = captureStdout(() => {
+            assert.throws(() => taskList(), /1 task\(s\) had invalid status\.json/);
+        });
+        assert.match(output, /valid-task\s+Valid\s+spec/);
+        assert.match(output, /noncanonical\s+\(invalid status\.json\)\s+INVALID:/);
+    });
+});
+
 void test('task status prints formatted JSON and errors for missing tasks', () => {
     withTasksRoot(tasksRoot => {
         writeTask(tasksRoot, 'status-task');
@@ -322,7 +344,7 @@ void test('task accept marks implement done, sets operator_accepted, logs to not
 
         withCwd(work, () => {
             withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
-                captureStdout(() => taskAccept('accept-task', 'implement'));
+                captureStdout(() => taskAccept(['accept-task'], 'implement'));
                 const updated = readStatusFile(taskDir);
                 assert.equal(updated.phases.implement?.status, 'done');
                 assert.equal(updated.phases.implement?.operator_accepted, true);
@@ -340,7 +362,7 @@ void test('task accept rejects non-implement phases', () => {
     withTasksRoot(tasksRoot => {
         writeTask(tasksRoot, 'accept-task');
         assert.throws(
-            () => taskAccept('accept-task', 'code_review'),
+            () => taskAccept(['accept-task'], 'code_review'),
             /only supports the implement phase/,
         );
     });
@@ -369,11 +391,11 @@ void test('task accept refuses dirty working tree without --force', () => {
         withCwd(work, () => {
             withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
                 assert.throws(
-                    () => taskAccept('accept-task', 'implement'),
+                    () => taskAccept(['accept-task'], 'implement'),
                     /working tree is not clean/,
                 );
                 // --force bypasses the guard.
-                captureStdout(() => taskAccept('accept-task', 'implement', { force: true }));
+                captureStdout(() => taskAccept(['accept-task'], 'implement', { force: true }));
                 const updated = readStatusFile(taskDir);
                 assert.equal(updated.phases.implement?.operator_accepted, true);
             });
@@ -405,10 +427,10 @@ void test('task accept refuses when handoff coverage does not match the diff', (
         withCwd(work, () => {
             withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
                 assert.throws(
-                    () => taskAccept('accept-task', 'implement'),
+                    () => taskAccept(['accept-task'], 'implement'),
                     /handoff\.md does not match `git diff/,
                 );
-                captureStdout(() => taskAccept('accept-task', 'implement', { force: true }));
+                captureStdout(() => taskAccept(['accept-task'], 'implement', { force: true }));
                 const updated = readStatusFile(taskDir);
                 assert.equal(updated.phases.implement?.operator_accepted, true);
             });
@@ -440,7 +462,7 @@ void test('task accept refuses malformed handoff rows without --force', () => {
         withCwd(work, () => {
             withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
                 assert.throws(
-                    () => taskAccept('accept-task', 'implement'),
+                    () => taskAccept(['accept-task'], 'implement'),
                     /malformed Changes rows/,
                 );
             });
@@ -488,9 +510,97 @@ void test('task accept exempts gitignored handoff entries from the coverage chec
 
         withCwd(work, () => {
             withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
-                captureStdout(() => taskAccept('accept-task', 'implement'));
+                captureStdout(() => taskAccept(['accept-task'], 'implement'));
                 const updated = readStatusFile(taskDir);
                 assert.equal(updated.phases.implement?.operator_accepted, true);
+            });
+        });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept rejects bundles mixing worktree and non-worktree tasks', () => {
+    const { root, work, tasksRoot, taskDir: taskDirA } = setupAcceptRepo();
+    try {
+        const taskDirB = path.join(tasksRoot, 'task-b');
+        fs.mkdirSync(taskDirB);
+        writeAcceptTaskStatus(taskDirA);
+        // Task B is declared as a worktree task (in-memory only — empty branch
+        // makes resolveTaskCwd fall through to REPO_ROOT without dying on a
+        // missing worktree, which is enough for the mixed-mode guard to fire).
+        // Task A keeps worktree: false.
+        const statusB = JSON.parse(fs.readFileSync(path.join(taskDirA, 'status.json'), 'utf8')) as StatusJson;
+        statusB.id = 'task-b';
+        statusB.worktree = true;
+        statusB.branch = '';
+        fs.writeFileSync(path.join(taskDirB, 'status.json'), `${JSON.stringify(statusB, null, 2)}\n`);
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                assert.throws(
+                    () => taskAccept(['accept-task', 'task-b'], 'implement'),
+                    /cannot mix worktree and non-worktree tasks/,
+                );
+            });
+        });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept handles bundle: unions handoffs across multiple tasks for coverage', () => {
+    const { root, work, tasksRoot, taskDir: taskDirA } = setupAcceptRepo();
+    try {
+        const taskDirB = path.join(tasksRoot, 'task-b');
+        fs.mkdirSync(taskDirB, { recursive: true });
+        writeAcceptTaskStatus(taskDirA);
+        // Re-use writeAcceptTaskStatus by writing the second task's status by hand
+        // (the helper hardcodes the task ID).
+        const statusB = JSON.parse(fs.readFileSync(path.join(taskDirA, 'status.json'), 'utf8')) as StatusJson;
+        statusB.id = 'task-b';
+        statusB.title = 'Task task-b';
+        fs.writeFileSync(path.join(taskDirB, 'status.json'), `${JSON.stringify(statusB, null, 2)}\n`);
+
+        // Each handoff lists only its own files. A single manual commit covers both.
+        fs.writeFileSync(path.join(taskDirA, 'handoff.md'), [
+            '# Implementation Handoff: accept-task',
+            '', '## Changes', '',
+            '| File | What Changed |',
+            '|---|---|',
+            '| `a.ts` | task A change |',
+            '',
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(taskDirB, 'handoff.md'), [
+            '# Implementation Handoff: task-b',
+            '', '## Changes', '',
+            '| File | What Changed |',
+            '|---|---|',
+            '| `b.ts` | task B change |',
+            '',
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(work, 'a.ts'), 'A\n', 'utf8');
+        fs.writeFileSync(path.join(work, 'b.ts'), 'B\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'bundle commit']);
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                // Single-task accept of task A would fail because b.ts is in the
+                // diff but not in A's handoff — exercise that to anchor the fix.
+                assert.throws(
+                    () => taskAccept(['accept-task'], 'implement'),
+                    /diff→handoff: b\.ts in diff but not in any bundle handoff/,
+                );
+                // Bundled accept succeeds: the union covers both files.
+                captureStdout(() => taskAccept(['accept-task', 'task-b'], 'implement'));
+                const a = JSON.parse(fs.readFileSync(path.join(taskDirA, 'status.json'), 'utf8')) as StatusJson;
+                const b = JSON.parse(fs.readFileSync(path.join(taskDirB, 'status.json'), 'utf8')) as StatusJson;
+                assert.equal(a.phases.implement?.operator_accepted, true);
+                assert.equal(b.phases.implement?.operator_accepted, true);
+                // Both tasks pin the same HEAD SHA so the orchestrator's
+                // all-or-nothing skip stays symmetric.
+                assert.equal(a.phases.implement?.operator_accepted_sha, b.phases.implement?.operator_accepted_sha);
             });
         });
     } finally {
@@ -519,7 +629,7 @@ void test('task accept records operator_accepted_sha so a later commit invalidat
 
         withCwd(work, () => {
             withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
-                captureStdout(() => taskAccept('accept-task', 'implement'));
+                captureStdout(() => taskAccept(['accept-task'], 'implement'));
             });
         });
 
@@ -566,7 +676,7 @@ void test('task accept refuses when no work has landed (empty baseRef..HEAD)', (
         withCwd(work, () => {
             withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
                 assert.throws(
-                    () => taskAccept('accept-task', 'implement'),
+                    () => taskAccept(['accept-task'], 'implement'),
                     /no work has landed/,
                 );
             });

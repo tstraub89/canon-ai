@@ -38,7 +38,7 @@ function usage(): string {
         '  list',
         '  status <TASK-ID>',
         '  phase <TASK-ID> <phase> <status> [verdict]',
-        '  accept <TASK-ID> <phase> [--force]',
+        '  accept <TASK-ID...> <phase> [--force]',
         '  reset-spec-review <TASK-ID>',
         '  post-merge-sync [<branch>]',
         '  release-init <version>',
@@ -251,16 +251,34 @@ export function taskList(): void {
         return;
     }
     const rows: Array<{ id: string; title: string; phase: string }> = [];
+    // Track invalid tasks so we can exit non-zero — one malformed status.json
+    // should not crash the entire listing (issue #83), but the operator
+    // shouldn't be left thinking everything is fine either.
+    let invalidCount = 0;
     for (const entry of fs.readdirSync(root).sort()) {
         if (entry === '_archive') continue;
         const statusPath = path.join(root, entry, 'status.json');
         if (!fs.existsSync(statusPath)) continue;
-        const status = readJsonFile<StatusJson>(statusPath);
-        rows.push({
-            id: entry,
-            title: status.title ?? '(untitled)',
-            phase: derivePhase(status),
-        });
+        try {
+            const status = readJsonFile<StatusJson>(statusPath);
+            // `derivePhase` reads `status.phases[...].status` and crashes if
+            // `phases` is missing — easy to hit with hand-written or imported
+            // status.json shapes. Wrap so a single bad row degrades gracefully.
+            const phase = derivePhase(status);
+            rows.push({
+                id: entry,
+                title: status.title ?? '(untitled)',
+                phase,
+            });
+        } catch (error) {
+            invalidCount += 1;
+            const message = error instanceof Error ? error.message : String(error);
+            rows.push({
+                id: entry,
+                title: '(invalid status.json)',
+                phase: `INVALID: ${message}`,
+            });
+        }
     }
 
     if (rows.length === 0) {
@@ -272,6 +290,9 @@ export function taskList(): void {
     console.log(`${'----'.padEnd(25)} ${'-----'.padEnd(40)} -------------`);
     for (const row of rows) {
         console.log(`${row.id.padEnd(25)} ${row.title.padEnd(40)} ${row.phase}`);
+    }
+    if (invalidCount > 0) {
+        throw new Error(`${invalidCount} task(s) had invalid status.json — see INVALID: rows above. Fix the malformed files or remove the task dir.`);
     }
 }
 
@@ -422,46 +443,106 @@ export function taskPhase(id: string, phaseArg: string, statusArg: string, verdi
  * own coverage rule). Bypass the guards with `--force` when recovering from
  * a fundamentally broken state.
  */
-export function taskAccept(id: string, phaseArg: string, options: { force?: boolean } = {}): void {
-    if (!id) throw new Error('Error: usage: canon task accept <TASK-ID> <phase> [--force]');
+export function taskAccept(ids: readonly string[], phaseArg: string, options: { force?: boolean } = {}): void {
+    if (ids.length === 0) throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--force]');
     if (!phaseArg) throw new Error('Error: phase required (currently only `implement` is supported)');
-    validateTaskId(id);
+    for (const id of ids) validateTaskId(id);
     assertValidPhase(phaseArg);
 
     if (phaseArg !== 'implement') {
         throw new Error(
             `Error: 'canon task accept' currently only supports the implement phase. ` +
-            `Got '${phaseArg}'. For other phases use \`canon task phase ${id} ${phaseArg} done [verdict]\`.`
+            `Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
         );
     }
 
-    const taskCwd = resolveTaskCwd(id);
-    const statusPath = taskStatusFileForCwd(taskCwd, id);
-    if (!fs.existsSync(statusPath)) {
-        throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
-    }
-    const status = readJsonFile<StatusJson>(statusPath);
+    type TaskCtx = {
+        id: string;
+        taskCwd: string;
+        statusPath: string;
+        status: StatusJson;
+    };
 
-    // Git operations target where the operator's manual commit lives:
-    //   - Worktree tasks → the worktree path (resolveTaskCwd already returns it).
-    //   - Non-worktree tasks → process.cwd(), because resolveTaskCwd falls back
-    //     to a module-load REPO_ROOT that is unaware of test cwd overrides and
-    //     of operators who invoke canon from a different checkout than where
-    //     it was originally installed.
-    const gitCwd = status.worktree === true ? taskCwd : process.cwd();
+    const ctxByTask = new Map<string, TaskCtx>();
+    for (const id of ids) {
+        const taskCwd = resolveTaskCwd(id);
+        const statusPath = taskStatusFileForCwd(taskCwd, id);
+        if (!fs.existsSync(statusPath)) {
+            throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
+        }
+        const status = readJsonFile<StatusJson>(statusPath);
+        ctxByTask.set(id, { id, taskCwd, statusPath, status });
+    }
+
+    // All bundled tasks must share a single working tree — accept's coverage
+    // check unions every task's handoff against ONE `baseRef..HEAD` diff.
+    //
+    // First: bundles that mix `worktree: true` and `worktree: false` tasks
+    // are rejected outright. There is no `process.cwd()` value that maps
+    // sensibly to both the main checkout AND a worktree at once, so attempting
+    // a unified diff baseline would silently target only one of them (Codex
+    // P1, rounds 9-10). Operators with mixed bundles must accept each tree
+    // separately.
+    const worktreeModes = new Set<boolean>();
+    for (const ctx of ctxByTask.values()) {
+        worktreeModes.add(ctx.status.worktree === true);
+    }
+    if (worktreeModes.size > 1) {
+        const worktreeTasks: string[] = [];
+        const mainTasks: string[] = [];
+        for (const ctx of ctxByTask.values()) {
+            (ctx.status.worktree === true ? worktreeTasks : mainTasks).push(ctx.id);
+        }
+        throw new Error(
+            `Error: bundled accept cannot mix worktree and non-worktree tasks. ` +
+            `Worktree tasks: [${worktreeTasks.join(', ')}]. Non-worktree tasks: [${mainTasks.join(', ')}]. ` +
+            `Run accept separately for each tree.`
+        );
+    }
+
+    // Same-tree check for the homogeneous case:
+    //   - All worktree → each task's resolveTaskCwd points at its own worktree.
+    //     Two different worktrees → reject.
+    //   - All non-worktree → there's only one main checkout per repo by
+    //     definition, so the comparison is a no-op but harmless.
+    // Canonicalize via realpath before comparing — macOS aliases `/var` and
+    // `/private/var`, and resolveTaskCwd() vs. `git rev-parse --show-toplevel`
+    // can return equivalent directories with different string spellings.
+    function resolveExpectedTreeForCtx(ctx: TaskCtx): string {
+        if (ctx.status.worktree === true) return ctx.taskCwd;
+        const out = runGit(['rev-parse', '--show-toplevel'], { cwd: process.cwd() });
+        if (!out.error && out.status === 0) return (out.stdout ?? '').trim() || process.cwd();
+        return process.cwd();
+    }
+    const primary = ctxByTask.get(ids[0])!;
+    const gitCwdRaw = resolveExpectedTreeForCtx(primary);
+    const gitCwd = safeRealpath(gitCwdRaw);
+    for (const ctx of ctxByTask.values()) {
+        const expectedRaw = resolveExpectedTreeForCtx(ctx);
+        const expected = safeRealpath(expectedRaw);
+        if (expected !== gitCwd) {
+            throw new Error(
+                `Error: bundled accept requires all tasks to share a working tree. ` +
+                `Task '${ids[0]}' resolves to ${gitCwdRaw} but task '${ctx.id}' resolves to ${expectedRaw}. ` +
+                `Run accept once per worktree.`
+            );
+        }
+    }
 
     if (!options.force) {
-        const blocked = priorIncompletePhases(status, phaseArg);
-        if (blocked.length > 0) {
-            throw new Error(`Error: cannot accept ${phaseArg} — prior phases not done: ${blocked.join(',')}`);
+        for (const ctx of ctxByTask.values()) {
+            const blocked = priorIncompletePhases(ctx.status, phaseArg);
+            if (blocked.length > 0) {
+                throw new Error(`Error: cannot accept ${phaseArg} for '${ctx.id}' — prior phases not done: ${blocked.join(',')}`);
+            }
         }
 
         ensureGitAvailable();
 
         // Filter out pipeline-owned paths from the dirty check:
-        //   - `tasks/<id>/...` for the task being accepted (the command itself
-        //     mutates status.json and notes.md, so these are always "dirty" by
-        //     the time the check runs)
+        //   - `tasks/<id>/...` for every task being accepted (each command run
+        //     mutates that task's status.json and notes.md, so these are always
+        //     "dirty" by the time the check runs)
         //   - pipeline telemetry files
         // Surprises from genuine uncommitted source edits still trip the guard.
         const dirty = git(['status', '--porcelain=v1', '-uall'], { cwd: gitCwd });
@@ -469,7 +550,7 @@ export function taskAccept(id: string, phaseArg: string, options: { force?: bool
         const sourceDirty = dirtyLines.filter(line => {
             const dirtyPath = parsePorcelainPath(line);
             if (!dirtyPath) return true;
-            return !isPipelineOwnedAcceptPath(dirtyPath, id, gitCwd);
+            return !ids.some(id => isPipelineOwnedAcceptPath(dirtyPath, id, gitCwd));
         });
         if (sourceDirty.length > 0) {
             throw new Error(
@@ -480,13 +561,25 @@ export function taskAccept(id: string, phaseArg: string, options: { force?: bool
             );
         }
 
-        const baseBranch = (status.base_branch ?? '').trim();
-        if (!baseBranch) {
-            throw new Error('Error: status.json is missing base_branch — cannot determine the diff baseline for accept.');
+        // Every task in a bundle must agree on base_branch. Mismatched bases
+        // would imply two separate diff baselines — there's no single
+        // `baseRef..HEAD` that satisfies coverage for both.
+        const baseBranches = new Set<string>();
+        for (const ctx of ctxByTask.values()) {
+            const b = (ctx.status.base_branch ?? '').trim();
+            if (!b) throw new Error(`Error: status.json for '${ctx.id}' is missing base_branch — cannot determine the diff baseline for accept.`);
+            baseBranches.add(b);
         }
+        if (baseBranches.size > 1) {
+            throw new Error(
+                `Error: bundled accept requires all tasks to share base_branch. ` +
+                `Got: ${[...baseBranches].join(', ')}. Accept one bundle at a time.`
+            );
+        }
+        const baseBranch = [...baseBranches][0];
         if (!gitOk(['rev-parse', '--verify', baseBranch], { cwd: gitCwd })) {
             throw new Error(
-                `Error: base branch '${baseBranch}' is not reachable from ${taskCwd}. ` +
+                `Error: base branch '${baseBranch}' is not reachable from ${gitCwd}. ` +
                 `Fetch it or pass --force if you know the diff baseline is intentional.`
             );
         }
@@ -503,30 +596,36 @@ export function taskAccept(id: string, phaseArg: string, options: { force?: bool
             );
         }
 
-        // Verify the handoff Changes table actually describes the committed work.
-        // Without this, `canon task accept` would set operator_accepted and skip
-        // autoCommitCode forever, letting a stale or empty handoff sail past the
-        // coverage check until code_review's pre-flight catches it one phase later.
-        // Catching it here surfaces the mismatch at the point the operator can act
-        // on it (edit the handoff, re-run accept) rather than after another phase has
-        // started spending budget.
-        const { files: handoffFiles, malformed } = parseHandoffChangesRows(id);
-        if (malformed.length > 0) {
-            const lines = malformed.slice(0, 10).map(m => `    '${m.cell}': ${m.reason}`);
-            const tail = malformed.length > 10 ? `\n    (+${malformed.length - 10} more)` : '';
+        // Per-task handoff parse, then union for coverage. Each task's
+        // malformed rows are reported with the task ID so the operator can
+        // fix the right file. Coverage is bundle-wide: a single manual commit
+        // can legitimately contain files belonging to multiple tasks, and
+        // each task's handoff only lists its own.
+        const handoffFilesByTask = new Map<string, string[]>();
+        const allHandoffFiles = new Set<string>();
+        const allMalformed: Array<{ taskId: string; cell: string; reason: string }> = [];
+        for (const ctx of ctxByTask.values()) {
+            const { files, malformed } = parseHandoffChangesRows(ctx.id);
+            handoffFilesByTask.set(ctx.id, files);
+            for (const file of files) allHandoffFiles.add(file);
+            for (const m of malformed) allMalformed.push({ taskId: ctx.id, cell: m.cell, reason: m.reason });
+        }
+        if (allMalformed.length > 0) {
+            const lines = allMalformed.slice(0, 10).map(m => `    [${m.taskId}] '${m.cell}': ${m.reason}`);
+            const tail = allMalformed.length > 10 ? `\n    (+${allMalformed.length - 10} more)` : '';
             throw new Error(
                 `Error: handoff.md has malformed Changes rows — fix these before accepting.\n` +
                 lines.join('\n') + tail +
                 `\n  Use --force to accept anyway, but the code_review pre-flight will still reject the run.`
             );
         }
-        const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, gitCwd);
+        const gitIgnoredHandoffFiles = filterGitIgnoredPaths([...allHandoffFiles], gitCwd);
         const coverageIssues = verifyHandoffAgainstDiffFromData(
-            [id],
+            [...ids],
             {
                 diffFiles,
                 renamePairs,
-                handoffFilesByTask: new Map([[id, handoffFiles]]),
+                handoffFilesByTask,
                 gitIgnoredHandoffFiles,
             },
         );
@@ -541,40 +640,86 @@ export function taskAccept(id: string, phaseArg: string, options: { force?: bool
         }
     }
 
-    const implementEntry = ensurePhaseEntry(status, 'implement');
-    implementEntry.status = 'done';
-    implementEntry.operator_accepted = true;
-    implementEntry.operator_accepted_at = today();
-    // Capture HEAD so a later commit on the task branch invalidates the skip.
-    // Without this, `operator_accepted: true` is permanent and any subsequent
-    // edits + `canon run` would bypass auto-commit forever.
+    // Capture HEAD once for the whole bundle — every accepted task pins the
+    // same SHA so the orchestrator's all-or-nothing skip logic remains
+    // symmetric across the bundle.
     const headRevParse = runGit(['rev-parse', 'HEAD'], { cwd: gitCwd });
-    if (!headRevParse.error && headRevParse.status === 0) {
-        implementEntry.operator_accepted_sha = (headRevParse.stdout ?? '').trim();
-    } else {
-        // --force path can land here if HEAD is unborn; record empty so the
-        // skip is effectively keyed to "no HEAD yet" and the next run with a
-        // real HEAD invalidates it.
-        implementEntry.operator_accepted_sha = '';
-    }
-    status.updated = today();
-    writeStatusAtomic(statusPath, status);
+    const sharedSha = (!headRevParse.error && headRevParse.status === 0)
+        ? (headRevParse.stdout ?? '').trim()
+        : '';
 
-    const notesPath = path.join(taskDirForCwd(taskCwd, id), 'notes.md');
-    const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` — auto-commit will be skipped.${options.force ? ' (--force)' : ''}`;
+    // Snapshot original status.json bytes BEFORE any mutation so a mid-bundle
+    // write failure can roll the bundle back to its pre-accept state. POSIX
+    // doesn't give us cross-file atomicity, but rollback is the next-best
+    // guarantee: either every task in the bundle ends accepted, or none do.
+    const originalSnapshots = new Map<string, string>();
+    for (const ctx of ctxByTask.values()) {
+        try {
+            originalSnapshots.set(ctx.statusPath, fs.readFileSync(ctx.statusPath, 'utf8'));
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
+        }
+    }
+
+    const completedWrites: string[] = [];
     try {
-        if (fs.existsSync(notesPath)) {
-            fs.appendFileSync(notesPath, `\n${noteLine}\n`, 'utf8');
-        } else {
-            fs.writeFileSync(notesPath, `${noteLine}\n`, 'utf8');
+        for (const ctx of ctxByTask.values()) {
+            const implementEntry = ensurePhaseEntry(ctx.status, 'implement');
+            implementEntry.status = 'done';
+            implementEntry.operator_accepted = true;
+            implementEntry.operator_accepted_at = today();
+            implementEntry.operator_accepted_sha = sharedSha;
+            ctx.status.updated = today();
+            writeStatusAtomic(ctx.statusPath, ctx.status);
+            completedWrites.push(ctx.statusPath);
         }
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Warning: failed to log to notes.md: ${message}`);
+        // Roll back any status writes that already succeeded before the failure.
+        const rollbackErrors: string[] = [];
+        for (const filePath of completedWrites) {
+            const original = originalSnapshots.get(filePath);
+            if (original === undefined) continue;
+            try {
+                fs.writeFileSync(filePath, original, 'utf8');
+            } catch (rollbackErr) {
+                const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+                rollbackErrors.push(`    ${filePath}: ${message}`);
+            }
+        }
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        if (rollbackErrors.length > 0) {
+            throw new Error(
+                `Error: bundled accept failed mid-write AND rollback also failed.\n` +
+                `  Original error: ${originalMessage}\n` +
+                `  Rollback failures (the following status.json files are in an inconsistent state):\n` +
+                rollbackErrors.join('\n') +
+                `\n  Restore manually from git history.`
+            );
+        }
+        throw new Error(`Error: bundled accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
     }
 
+    for (const ctx of ctxByTask.values()) {
+        const notesPath = path.join(taskDirForCwd(ctx.taskCwd, ctx.id), 'notes.md');
+        const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` — auto-commit will be skipped.${options.force ? ' (--force)' : ''}`;
+        try {
+            if (fs.existsSync(notesPath)) {
+                fs.appendFileSync(notesPath, `\n${noteLine}\n`, 'utf8');
+            } else {
+                fs.writeFileSync(notesPath, `${noteLine}\n`, 'utf8');
+            }
+        } catch (error) {
+            // notes.md is diagnostic-only — a write failure here doesn't
+            // invalidate the accept itself. Warn and continue.
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`Warning: failed to log to notes.md for ${ctx.id}: ${message}`);
+        }
+    }
+
+    const label = ids.length === 1 ? ids[0] : `[${ids.join(', ')}]`;
     console.log(
-        `Accepted ${id}: implement → done (operator_accepted=true).` +
+        `Accepted ${label}: implement → done (operator_accepted=true).` +
         (options.force ? ' (--force)' : '') +
         `\n  Auto-commit will be skipped on subsequent \`canon run\` invocations. The next phase (code_review) will run normally against the committed work.`
     );
@@ -1022,7 +1167,13 @@ export function taskCmd(args: string[]): void {
             case 'accept': {
                 const force = rest.includes('--force');
                 const positional = rest.filter(arg => arg !== '--force');
-                taskAccept(positional[0] ?? '', positional[1] ?? '', { force });
+                if (positional.length < 2) {
+                    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--force]');
+                }
+                // Last positional arg is the phase; everything before is a task ID.
+                const acceptPhase = positional[positional.length - 1];
+                const acceptIds = positional.slice(0, -1);
+                taskAccept(acceptIds, acceptPhase, { force });
                 break;
             }
             case 'reset-spec-review':
