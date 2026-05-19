@@ -734,6 +734,25 @@ function validateExtractedPath(extracted: string): HandoffPathCellResult {
             reason: `template placeholder left unfilled in '${extracted}' — replace with a real file path`,
         };
     }
+    // Absolute paths and `..`-traversals can never be valid repo-relative
+    // entries — handoff paths must resolve under the worktree. More importantly:
+    // `git check-ignore --stdin` exits 128 (no partial stdout) the moment ONE
+    // input resolves outside the cwd, which would poison the entire batched
+    // gitignored-filter call and silently fail back to "treat nothing as
+    // gitignored" for the legitimate entries in the same handoff. Reject these
+    // at the parse boundary so downstream batches stay clean.
+    if (/^([a-zA-Z]:)?[\\/]/.test(extracted)) {
+        return {
+            kind: 'malformed',
+            reason: `absolute path '${extracted}' not allowed — handoff paths must be repo-relative`,
+        };
+    }
+    if (extracted.split(/[\\/]/).includes('..')) {
+        return {
+            kind: 'malformed',
+            reason: `parent-directory traversal in '${extracted}' not allowed — handoff paths must be repo-relative`,
+        };
+    }
     return { kind: 'ok', path: extracted };
 }
 

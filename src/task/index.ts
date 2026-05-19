@@ -505,14 +505,20 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
     //     Two different worktrees → reject.
     //   - All non-worktree → there's only one main checkout per repo by
     //     definition, so the comparison is a no-op but harmless.
+    //
+    // For non-worktree tasks, we deliberately do NOT use `process.cwd()` or
+    // `git rev-parse --show-toplevel` as the reference — both are sensitive to
+    // where the operator invoked canon from. If the shell is inside a linked
+    // worktree, `--show-toplevel` returns the worktree path even though the
+    // non-worktree task's files live in the main checkout (codex P1, round 11).
+    // Resolve through `--git-common-dir` instead: its parent is the main
+    // checkout regardless of which worktree the operator launched from.
     // Canonicalize via realpath before comparing — macOS aliases `/var` and
-    // `/private/var`, and resolveTaskCwd() vs. `git rev-parse --show-toplevel`
-    // can return equivalent directories with different string spellings.
+    // `/private/var`, and resolveTaskCwd() vs. the derived root can return
+    // equivalent directories with different string spellings.
     function resolveExpectedTreeForCtx(ctx: TaskCtx): string {
         if (ctx.status.worktree === true) return ctx.taskCwd;
-        const out = runGit(['rev-parse', '--show-toplevel'], { cwd: process.cwd() });
-        if (!out.error && out.status === 0) return (out.stdout ?? '').trim() || process.cwd();
-        return process.cwd();
+        return resolveMainCheckoutRoot();
     }
     const primary = ctxByTask.get(ids[0])!;
     const gitCwdRaw = resolveExpectedTreeForCtx(primary);
@@ -642,11 +648,28 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
 
     // Capture HEAD once for the whole bundle — every accepted task pins the
     // same SHA so the orchestrator's all-or-nothing skip logic remains
-    // symmetric across the bundle.
+    // symmetric across the bundle. Refuse to write an empty SHA: the
+    // orchestrator correctly rejects empty SHAs at skip-time, so writing
+    // accepted=true with sha='' silently demotes the accept (operator thinks
+    // it stuck; the next run runs auto-commit normally anyway, no harm done
+    // but the report is misleading). Better to fail loudly here so the
+    // operator can resolve the HEAD lookup issue first.
     const headRevParse = runGit(['rev-parse', 'HEAD'], { cwd: gitCwd });
-    const sharedSha = (!headRevParse.error && headRevParse.status === 0)
-        ? (headRevParse.stdout ?? '').trim()
-        : '';
+    if (headRevParse.error || headRevParse.status !== 0) {
+        const stderr = (headRevParse.stderr ?? '').trim() || 'unknown error';
+        throw new Error(
+            `Error: failed to read HEAD from ${gitCwd} (${stderr}). ` +
+            `Cannot pin operator_accepted_sha — accept would silently demote on the next run. ` +
+            `Verify the working tree has a HEAD (no unborn branch / detached state issues), then re-run.`
+        );
+    }
+    const sharedSha = (headRevParse.stdout ?? '').trim();
+    if (!sharedSha) {
+        throw new Error(
+            `Error: \`git rev-parse HEAD\` from ${gitCwd} returned an empty string. ` +
+            `Refusing to accept without a usable SHA — see above for the working-tree state.`
+        );
+    }
 
     // Snapshot original status.json bytes BEFORE any mutation so a mid-bundle
     // write failure can roll the bundle back to its pre-accept state. POSIX
@@ -825,6 +848,28 @@ function resolveRepoRootForAccept(gitCwd: string): string {
  * if the leaf doesn't exist yet (e.g., an untracked file's parent dir exists
  * but the file does not at check time on some platforms).
  */
+/**
+ * Returns the main checkout's working-tree root, regardless of whether the
+ * shell is currently inside the main checkout, a linked worktree, or a
+ * subdirectory. Used by `taskAccept` for non-worktree tasks so the diff
+ * baseline and HEAD pin target the same checkout the task's files live in,
+ * not whatever happens to be the operator's cwd.
+ *
+ * Mechanism: `git rev-parse --git-common-dir` returns the shared `.git`
+ * directory's path; its parent directory is the main checkout. From a linked
+ * worktree, `--show-toplevel` would return the worktree root instead — that
+ * was the cwd-sensitive bug codex flagged on round 11 of PR #86.
+ *
+ * Falls back to `process.cwd()` if git fails (e.g., test fixture without git).
+ */
+function resolveMainCheckoutRoot(): string {
+    const out = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: process.cwd() });
+    if (out.error || out.status !== 0) return process.cwd();
+    const gitCommonDir = (out.stdout ?? '').trim();
+    if (!gitCommonDir) return process.cwd();
+    return path.dirname(gitCommonDir);
+}
+
 function safeRealpath(target: string): string {
     try {
         return fs.realpathSync(target);

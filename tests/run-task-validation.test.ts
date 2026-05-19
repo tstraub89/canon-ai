@@ -466,6 +466,30 @@ void test('extractHandoffPath: rejects multiple paths in a single cell (combined
     assert.equal(extractHandoffPath('`src/a.ts`, `src/b.ts`'), null);
 });
 
+void test('parseHandoffPathCell rejects absolute paths', () => {
+    // Absolute paths poison `git check-ignore --stdin` (exits 128, returns no
+    // partial stdout) — rejecting them at the parse boundary keeps the
+    // batched gitignored-filter call clean for legitimate entries in the same
+    // handoff.
+    const posixResult = parseHandoffPathCell('`/etc/passwd`');
+    assert.equal(posixResult.kind, 'malformed');
+    if (posixResult.kind === 'malformed') assert.match(posixResult.reason, /absolute path/);
+
+    const windowsResult = parseHandoffPathCell('`C:\\\\Users\\\\foo.ts`');
+    assert.equal(windowsResult.kind, 'malformed');
+    if (windowsResult.kind === 'malformed') assert.match(windowsResult.reason, /absolute path/);
+});
+
+void test('parseHandoffPathCell rejects parent-directory traversal paths', () => {
+    const result = parseHandoffPathCell('`../outside-repo.ts`');
+    assert.equal(result.kind, 'malformed');
+    if (result.kind === 'malformed') assert.match(result.reason, /parent-directory traversal/);
+
+    const nested = parseHandoffPathCell('`src/../../foo.ts`');
+    assert.equal(nested.kind, 'malformed');
+    if (nested.kind === 'malformed') assert.match(nested.reason, /parent-directory traversal/);
+});
+
 void test('parseHandoffPathCell allows bracketed filenames like src/foo[beta].ts', () => {
     // Square brackets are valid filename characters even though shell globs
     // treat them as character classes. The wildcard check must not over-reject.

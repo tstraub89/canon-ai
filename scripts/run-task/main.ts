@@ -714,7 +714,15 @@ function createDraftPRForTask(taskIds: string[], branchName: string): void {
         // Prefer the repo's PR template if it exists so adopters keep their
         // template content; otherwise `--fill` populates from the task-branch
         // commit messages. Either way: no canon attribution leaks.
-        const templatePath = findPullRequestTemplate(REPO_ROOT);
+        //
+        // Resolve the template from the active worktree, not REPO_ROOT — in
+        // worktree mode the branch may have edited or added the template, and
+        // adopters expect the BRANCH-HEAD version to be used for the PR they
+        // are about to open (codex P2, round 11 of PR #86). Fall back to
+        // REPO_ROOT if no worktree is active.
+        const activeCwd = splitWorktree.getActiveCwd(taskIds);
+        const templatePath =
+            findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT);
         if (templatePath) {
             args.push('--body-file', templatePath);
         } else {

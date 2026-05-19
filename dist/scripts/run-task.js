@@ -1944,6 +1944,18 @@ function validateExtractedPath(extracted) {
       reason: `template placeholder left unfilled in '${extracted}' \u2014 replace with a real file path`
     };
   }
+  if (/^([a-zA-Z]:)?[\\/]/.test(extracted)) {
+    return {
+      kind: "malformed",
+      reason: `absolute path '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
+  if (extracted.split(/[\\/]/).includes("..")) {
+    return {
+      kind: "malformed",
+      reason: `parent-directory traversal in '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
   return { kind: "ok", path: extracted };
 }
 var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
@@ -4212,7 +4224,8 @@ function createDraftPRForTask(taskIds, branchName) {
   if (body !== null) {
     args.push("--body", body);
   } else {
-    const templatePath = findPullRequestTemplate(REPO_ROOT2);
+    const activeCwd = getActiveCwd(taskIds);
+    const templatePath = findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
     if (templatePath) {
       args.push("--body-file", templatePath);
     } else {

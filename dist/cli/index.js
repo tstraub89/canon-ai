@@ -1236,6 +1236,18 @@ function validateExtractedPath(extracted) {
       reason: `template placeholder left unfilled in '${extracted}' \u2014 replace with a real file path`
     };
   }
+  if (/^([a-zA-Z]:)?[\\/]/.test(extracted)) {
+    return {
+      kind: "malformed",
+      reason: `absolute path '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
+  if (extracted.split(/[\\/]/).includes("..")) {
+    return {
+      kind: "malformed",
+      reason: `parent-directory traversal in '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
   return { kind: "ok", path: extracted };
 }
 var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
@@ -1674,9 +1686,7 @@ function taskAccept(ids, phaseArg, options = {}) {
   }
   function resolveExpectedTreeForCtx(ctx) {
     if (ctx.status.worktree === true) return ctx.taskCwd;
-    const out = runGit(["rev-parse", "--show-toplevel"], { cwd: process.cwd() });
-    if (!out.error && out.status === 0) return (out.stdout ?? "").trim() || process.cwd();
-    return process.cwd();
+    return resolveMainCheckoutRoot();
   }
   const primary = ctxByTask.get(ids[0]);
   const gitCwdRaw = resolveExpectedTreeForCtx(primary);
@@ -1782,7 +1792,18 @@ function taskAccept(ids, phaseArg, options = {}) {
     }
   }
   const headRevParse = runGit(["rev-parse", "HEAD"], { cwd: gitCwd });
-  const sharedSha = !headRevParse.error && headRevParse.status === 0 ? (headRevParse.stdout ?? "").trim() : "";
+  if (headRevParse.error || headRevParse.status !== 0) {
+    const stderr = (headRevParse.stderr ?? "").trim() || "unknown error";
+    throw new Error(
+      `Error: failed to read HEAD from ${gitCwd} (${stderr}). Cannot pin operator_accepted_sha \u2014 accept would silently demote on the next run. Verify the working tree has a HEAD (no unborn branch / detached state issues), then re-run.`
+    );
+  }
+  const sharedSha = (headRevParse.stdout ?? "").trim();
+  if (!sharedSha) {
+    throw new Error(
+      `Error: \`git rev-parse HEAD\` from ${gitCwd} returned an empty string. Refusing to accept without a usable SHA \u2014 see above for the working-tree state.`
+    );
+  }
   const originalSnapshots = /* @__PURE__ */ new Map();
   for (const ctx of ctxByTask.values()) {
     try {
@@ -1916,6 +1937,13 @@ function resolveRepoRootForAccept(gitCwd) {
   const result = runGit(["rev-parse", "--show-toplevel"], { cwd: gitCwd });
   if (result.error || result.status !== 0) return gitCwd;
   return (result.stdout ?? "").trim() || gitCwd;
+}
+function resolveMainCheckoutRoot() {
+  const out = runGit(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: process.cwd() });
+  if (out.error || out.status !== 0) return process.cwd();
+  const gitCommonDir = (out.stdout ?? "").trim();
+  if (!gitCommonDir) return process.cwd();
+  return path7.dirname(gitCommonDir);
 }
 function safeRealpath(target) {
   try {

@@ -667,6 +667,34 @@ void test('taskPhase clears operator_accepted when implement moves away from don
     });
 });
 
+void test('task accept refuses (does not silently demote) when HEAD cannot be read', () => {
+    // If --force bypasses earlier guards but `git rev-parse HEAD` then fails,
+    // earlier versions wrote operator_accepted_sha = '' and reported success.
+    // The skip-time check correctly rejects empty SHAs so no harm done, but
+    // the operator was misled into thinking auto-commit would be bypassed.
+    // 1.3.0 throws loudly instead.
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir);
+        // Detach HEAD to an unborn-like state by removing it.
+        fs.rmSync(path.join(work, '.git', 'HEAD'));
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                assert.throws(
+                    () => taskAccept(['accept-task'], 'implement', { force: true }),
+                    /failed to read HEAD|empty string/,
+                );
+                // Status untouched — accept did not partially mutate.
+                const status = JSON.parse(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8')) as StatusJson;
+                assert.notEqual(status.phases.implement?.operator_accepted, true);
+            });
+        });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 void test('task accept refuses when no work has landed (empty baseRef..HEAD)', () => {
     const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
     try {
