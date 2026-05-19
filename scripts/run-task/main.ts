@@ -932,6 +932,7 @@ function assertTaskBranchPushed(taskId: string): void {
  */
 function assertOriginTaskBranchAbsent(taskId: string): void {
     const branchName = resolveTaskBranchName(taskId);
+    const baseBranch = splitGit.getBaseBranch([taskId]);
     // Query origin directly via ls-remote rather than the local tracking ref. When
     // origin/<branch> was deleted from another checkout, `git fetch --prune origin
     // <branch>` does NOT prune the stale local tracking ref, so a `rev-parse
@@ -954,6 +955,50 @@ function assertOriginTaskBranchAbsent(taskId: string): void {
     if (!lsRemote.stdout.trim()) return; // Empty output → branch absent on origin — expected.
 
     const remoteSha = lsRemote.stdout.trim().split(/\s+/)[0];
+
+    // Recovery path: if a PR for this branch was already merged INTO THE
+    // CURRENT BASE (e.g., the operator merged via the GitHub UI without
+    // --delete-branch), the remote branch is a stale leftover, not unmerged
+    // work. Auto-delete it instead of forcing the operator into a manual
+    // `git push origin --delete` step. Detected by `gh pr list --state
+    // merged --head <branch> --base <baseBranch>` — gh is authoritative
+    // on origin's PR state.
+    //
+    // Safety: only auto-delete if the remote tip matches the merged PR's head
+    // SHA. If new commits were pushed to the branch after the PR merged, the
+    // remote tip will differ — refuse to avoid destroying that work. The
+    // `--base` filter is also a safety property: a PR merged into a DIFFERENT
+    // base branch doesn't prove the current base has the work, so we must not
+    // delete the remote branch on that signal. (Codex P1 on PR #77.)
+    const mergedPrNum = ghAvailable ? findMergedPRNumber(branchName, baseBranch) : null;
+    if (mergedPrNum !== null) {
+        const prHead = getMergedPRHeadSha(mergedPrNum);
+        if (prHead === null) {
+            // Couldn't verify the PR's head — fall through to the die path.
+            // Safer than auto-deleting blind.
+        } else if (prHead !== remoteSha) {
+            splitCli.die(
+                `--ship aborted: origin/${branchName} is at ${remoteSha.slice(0, 7)} but the merged ` +
+                `PR #${mergedPrNum} merged head ${prHead.slice(0, 7)}. New commits were pushed to the ` +
+                `branch after the PR merged. Resolve manually — those commits are not in the merged work.`,
+            );
+        } else {
+            info(
+                `origin/${branchName} still exists at ${remoteSha.slice(0, 7)} (matches merged PR #${mergedPrNum} head). ` +
+                `Deleting the remote branch — the merged content is in the base.`,
+            );
+            const del = splitGit.gitSafe('push', 'origin', `--delete`, branchName);
+            if (!del.ok) {
+                splitCli.die(
+                    `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but ` +
+                    `\`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || 'unknown error'}. ` +
+                    `Delete the remote branch manually and re-run --ship.`,
+                );
+            }
+            return;
+        }
+    }
+
     splitCli.die(
         `--ship aborted: origin/${branchName} still exists at ${remoteSha.slice(0, 7)} but no PR was merged this run.\n` +
         `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
@@ -962,6 +1007,39 @@ function assertOriginTaskBranchAbsent(taskId: string): void {
         `    - If unmerged work: open + merge a PR (gh pr create --base <base> --head ${branchName} ...).\n` +
         `    - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`,
     );
+}
+
+/**
+ * Returns the number of a recently-merged PR whose head EXACTLY matches
+ * `branch` AND whose base matches `baseBranch`, or null if none.
+ *
+ * `gh pr list --head <branch>` is documented to filter by branch-name prefix
+ * (gh CLI issue #10816), so a query for `task/foo` can return PRs for
+ * `task/foo-fix`. Auto-deleting based on that match would be a data-loss
+ * bug. We fetch `headRefName` in the JSON and enforce exact equality in
+ * code before returning the match. (Codex P1 on PR #77 iter 2; first P1
+ * was about `--base` specificity.)
+ *
+ * Base-specific so we never read "merged into a different branch" as proof
+ * that the current shipping base received the work.
+ */
+function findMergedPRNumber(branch: string, baseBranch: string): number | null {
+    if (!ghAvailable) return null;
+    return findPRNumberExact(branch, baseBranch, 'merged');
+}
+
+/**
+ * Returns the head commit SHA of a merged PR, or null if the lookup fails.
+ * Used by `assertOriginTaskBranchAbsent` to verify the current remote tip
+ * matches what was actually merged before auto-deleting the branch.
+ */
+function getMergedPRHeadSha(prNum: number): string | null {
+    if (!ghAvailable) return null;
+    const result = splitGit.runCommand('gh', ['pr', 'view', String(prNum), '--json', 'headRefOid', '--jq', '.headRefOid']);
+    if (!result.ok) return null;
+    const sha = result.stdout.trim();
+    if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null;
+    return sha;
 }
 
 /**
@@ -983,15 +1061,42 @@ function assertNoOpenPRForTask(taskId: string): void {
 }
 
 /**
- * Find the number of an open PR whose head branch matches `branch`.
+ * Find the number of an open PR whose head branch EXACTLY matches `branch`.
  * Returns null if gh CLI is unavailable, no PR found, or lookup fails.
+ *
+ * Uses `findPRNumberExact` (not a raw `--head` jq filter) because `gh pr
+ * list --head <branch>` is documented to filter by prefix (gh CLI issue
+ * #10816). A prefix-match here would print the wrong PR's URL on
+ * idempotent `--pr` retry, or false-block `--ship` via
+ * `assertNoOpenPRForTask`. (Codex P1 on PR #77 iter 2.)
  */
 function findOpenPRNumber(branch: string): number | null {
     if (!ghAvailable) return null;
-    const result = splitGit.runCommand('gh', ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--jq', '.[0].number']);
-    if (!result.ok || !result.stdout.trim() || result.stdout.trim() === 'null') return null;
-    const num = Number.parseInt(result.stdout.trim(), 10);
-    return Number.isNaN(num) ? null : num;
+    return findPRNumberExact(branch, null, 'open');
+}
+
+/**
+ * Shared exact-head-ref PR lookup. `gh pr list --head <branch>` filters by
+ * prefix, so we fetch a small batch and enforce `headRefName === branch` in
+ * code. `baseBranch` is optional (some callers want any base match).
+ * `state` is `open` | `merged` | `closed`.
+ */
+function findPRNumberExact(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): number | null {
+    if (!ghAvailable) return null;
+    const args = ['pr', 'list', '--head', branch, '--state', state, '--limit', '20', '--json', 'number,headRefName'];
+    if (baseBranch !== null) args.push('--base', baseBranch);
+    const result = splitGit.runCommand('gh', args);
+    if (!result.ok || !result.stdout.trim()) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(result.stdout); } catch { return null; }
+    if (!Array.isArray(parsed)) return null;
+    for (const entry of parsed) {
+        if (typeof entry !== 'object' || entry === null) continue;
+        const headRefName = (entry as { headRefName?: unknown }).headRefName;
+        const number = (entry as { number?: unknown }).number;
+        if (headRefName === branch && typeof number === 'number') return number;
+    }
+    return null;
 }
 
 /**
@@ -1162,12 +1267,28 @@ function shipTasks(taskIds: string[]): void {
     for (const taskId of taskIds) {
         const currentPhase = getCurrentPhase(splitState.readStatus(taskId));
         if (currentPhase !== 'human_review') continue;
-        const taskCwd = splitWorktree.getActiveCwd([taskId]);
+        // Resolve the tasks-root for the gate read. Three signals, in
+        // priority order:
+        //   1. CANON_TASKS_DIR_OVERRIDE (env override; test/temp setups).
+        //   2. The active worktree for the task (worktree mode — `handoff.md`
+        //      and `done.md` live under `<worktree>/tasks/<id>/`, NOT the
+        //      supervising checkout).
+        //   3. REPO_ROOT/tasks (non-worktree default).
+        // `tolerateMissingWorktree: true` lets --ship recover from partial-
+        // cleanup state (e.g., a user manually `git worktree remove`'d before
+        // re-running --ship); when the worktree is already gone we fall back
+        // to REPO_ROOT, which is what the supervising checkout has.
+        // (Codex P2 on PR #77 iter 1: previous form used `path.dirname(
+        // taskDirFor(taskId))` unconditionally, which honored the env override
+        // but ignored the worktree — gate would read stale artifacts.)
+        const taskCwd = splitWorktree.getActiveCwd([taskId], { tolerateMissingWorktree: true });
+        const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE
+            ?? path.join(taskCwd, 'tasks');
         const gateResult = splitValidation.checkPhaseGate(
             taskId,
             'human_review',
             undefined,
-            path.join(taskCwd, 'tasks'),
+            tasksRootForGate,
         );
         if (!gateResult.ok) {
             splitCli.die(`--ship aborted for '${taskId}': ${gateResult.reason}`);

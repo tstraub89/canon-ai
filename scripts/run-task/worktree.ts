@@ -35,7 +35,19 @@ export function isWorktreeEnabled(taskIds: string[]): boolean {
     return readStatus(taskIds[0]).worktree === true;
 }
 
-export function getActiveCwd(taskIds: string[]): string {
+export interface GetActiveCwdOptions {
+    /**
+     * When true: if the worktree is expected (worktree: true in status.json) but
+     * missing from disk, log a warning and return REPO_ROOT instead of dying.
+     * Use for callers that can recover from partial-cleanup state (e.g., the
+     * --ship flow, where a user may have manually `git worktree remove`'d
+     * the directory before re-running --ship). Default false enforces the
+     * pre-existing strict behavior for active-pipeline callers.
+     */
+    tolerateMissingWorktree?: boolean;
+}
+
+export function getActiveCwd(taskIds: string[], options: GetActiveCwdOptions = {}): string {
     if (isWorktreeEnabled(taskIds)) {
         const wt = worktreePath(taskIds[0]);
         if (fs.existsSync(wt)) return wt;
@@ -43,6 +55,13 @@ export function getActiveCwd(taskIds: string[]): string {
         if (branch) {
             const existing = findExistingWorktreeForBranch(branch);
             if (existing) return existing;
+            if (options.tolerateMissingWorktree) {
+                warn(
+                    `Worktree for task '${taskIds[0]}' is expected but missing — ` +
+                    `continuing with REPO_ROOT. (Partial-cleanup state recovery.)`,
+                );
+                return REPO_ROOT;
+            }
             die(
                 `Worktree for task '${taskIds[0]}' is expected but missing.\n` +
                 `  Restore or recreate the worktree before continuing.`,

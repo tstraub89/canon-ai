@@ -393,7 +393,7 @@ function worktreePath(taskId) {
 function isWorktreeEnabled(taskIds) {
   return readStatus(taskIds[0]).worktree === true;
 }
-function getActiveCwd(taskIds) {
+function getActiveCwd(taskIds, options = {}) {
   if (isWorktreeEnabled(taskIds)) {
     const wt = worktreePath(taskIds[0]);
     if (fs3.existsSync(wt)) return wt;
@@ -401,6 +401,12 @@ function getActiveCwd(taskIds) {
     if (branch) {
       const existing = findExistingWorktreeForBranch2(branch);
       if (existing) return existing;
+      if (options.tolerateMissingWorktree) {
+        warn(
+          `Worktree for task '${taskIds[0]}' is expected but missing \u2014 continuing with REPO_ROOT. (Partial-cleanup state recovery.)`
+        );
+        return REPO_ROOT;
+      }
       die(
         `Worktree for task '${taskIds[0]}' is expected but missing.
   Restore or recreate the worktree before continuing.`
@@ -4295,6 +4301,7 @@ function assertTaskBranchPushed(taskId) {
 }
 function assertOriginTaskBranchAbsent(taskId) {
   const branchName = resolveTaskBranchName(taskId);
+  const baseBranch = getBaseBranch([taskId]);
   const lsRemote = gitSafe("ls-remote", "--heads", "origin", `refs/heads/${branchName}`);
   if (!lsRemote.ok) {
     warn2(
@@ -4304,6 +4311,27 @@ function assertOriginTaskBranchAbsent(taskId) {
   }
   if (!lsRemote.stdout.trim()) return;
   const remoteSha = lsRemote.stdout.trim().split(/\s+/)[0];
+  const mergedPrNum = ghAvailable ? findMergedPRNumber(branchName, baseBranch) : null;
+  if (mergedPrNum !== null) {
+    const prHead = getMergedPRHeadSha(mergedPrNum);
+    if (prHead === null) {
+    } else if (prHead !== remoteSha) {
+      die(
+        `--ship aborted: origin/${branchName} is at ${remoteSha.slice(0, 7)} but the merged PR #${mergedPrNum} merged head ${prHead.slice(0, 7)}. New commits were pushed to the branch after the PR merged. Resolve manually \u2014 those commits are not in the merged work.`
+      );
+    } else {
+      info2(
+        `origin/${branchName} still exists at ${remoteSha.slice(0, 7)} (matches merged PR #${mergedPrNum} head). Deleting the remote branch \u2014 the merged content is in the base.`
+      );
+      const del = gitSafe("push", "origin", `--delete`, branchName);
+      if (!del.ok) {
+        die(
+          `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but \`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || "unknown error"}. Delete the remote branch manually and re-run --ship.`
+        );
+      }
+      return;
+    }
+  }
   die(
     `--ship aborted: origin/${branchName} still exists at ${remoteSha.slice(0, 7)} but no PR was merged this run.
   Either the remote branch has commits that were never PR'd, or a prior merge
@@ -4312,6 +4340,18 @@ function assertOriginTaskBranchAbsent(taskId) {
     - If unmerged work: open + merge a PR (gh pr create --base <base> --head ${branchName} ...).
     - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`
   );
+}
+function findMergedPRNumber(branch, baseBranch) {
+  if (!ghAvailable) return null;
+  return findPRNumberExact(branch, baseBranch, "merged");
+}
+function getMergedPRHeadSha(prNum) {
+  if (!ghAvailable) return null;
+  const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "headRefOid", "--jq", ".headRefOid"]);
+  if (!result.ok) return null;
+  const sha = result.stdout.trim();
+  if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null;
+  return sha;
 }
 function assertNoOpenPRForTask(taskId) {
   const branchName = resolveTaskBranchName(taskId);
@@ -4327,10 +4367,28 @@ function assertNoOpenPRForTask(taskId) {
 }
 function findOpenPRNumber(branch) {
   if (!ghAvailable) return null;
-  const result = runCommand("gh", ["pr", "list", "--head", branch, "--state", "open", "--json", "number", "--jq", ".[0].number"]);
-  if (!result.ok || !result.stdout.trim() || result.stdout.trim() === "null") return null;
-  const num = Number.parseInt(result.stdout.trim(), 10);
-  return Number.isNaN(num) ? null : num;
+  return findPRNumberExact(branch, null, "open");
+}
+function findPRNumberExact(branch, baseBranch, state) {
+  if (!ghAvailable) return null;
+  const args = ["pr", "list", "--head", branch, "--state", state, "--limit", "20", "--json", "number,headRefName"];
+  if (baseBranch !== null) args.push("--base", baseBranch);
+  const result = runCommand("gh", args);
+  if (!result.ok || !result.stdout.trim()) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  for (const entry of parsed) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const headRefName = entry.headRefName;
+    const number = entry.number;
+    if (headRefName === branch && typeof number === "number") return number;
+  }
+  return null;
 }
 function mergeOpenPRsAndPull(taskIds) {
   const baseBranch = getBaseBranch(taskIds);
@@ -4448,12 +4506,13 @@ function shipTasks(taskIds) {
   for (const taskId of taskIds) {
     const currentPhase = getCurrentPhase(readStatus(taskId));
     if (currentPhase !== "human_review") continue;
-    const taskCwd = getActiveCwd([taskId]);
+    const taskCwd = getActiveCwd([taskId], { tolerateMissingWorktree: true });
+    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path15.join(taskCwd, "tasks");
     const gateResult = checkPhaseGate(
       taskId,
       "human_review",
       void 0,
-      path15.join(taskCwd, "tasks")
+      tasksRootForGate
     );
     if (!gateResult.ok) {
       die(`--ship aborted for '${taskId}': ${gateResult.reason}`);
