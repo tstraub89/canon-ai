@@ -197,7 +197,22 @@ function verifyHandoffFilesCommitted(
     debug: Record<string, unknown>,
 ): void {
     const baseRef = getBaseBranch(taskIds);
-    const postStatus = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall', '--', ...handoffFiles);
+    // Gitignored handoff entries (build-generated artifacts) skip the post-commit
+    // verification entirely — they cannot appear in `git status` (ignored),
+    // `git log` (untracked), or `git diff HEAD` (untracked). The same gitignored
+    // exemption is applied upstream in `autoCommitCode` and downstream in
+    // `verifyHandoffAgainstDiff`; without it here, the success path still aborts
+    // after staging on a perfectly-valid generator+artifact handoff.
+    const gitIgnoredHandoffFiles = splitGit.filterGitIgnoredPaths(handoffFiles, cwd);
+    const verifiableHandoffFiles = handoffFiles.filter(f => !gitIgnoredHandoffFiles.has(f));
+    Object.assign(debug, {
+        verifyGitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles],
+    });
+    if (verifiableHandoffFiles.length === 0) {
+        appendAutoCommitDebug(taskIds, { ...debug, result: 'verify-all-gitignored' });
+        return;
+    }
+    const postStatus = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall', '--', ...verifiableHandoffFiles);
     const missing: string[] = [];
 
     if (!postStatus.ok) {
@@ -213,7 +228,7 @@ function verifyHandoffFilesCommitted(
 
     const stillDirty = splitGit.parsePorcelain(postStatus.stdout);
 
-    for (const filePath of handoffFiles) {
+    for (const filePath of verifiableHandoffFiles) {
         if (stillDirty.has(filePath)) {
             missing.push(`${filePath} — still dirty after auto-commit`);
             continue;
@@ -235,7 +250,7 @@ function verifyHandoffFilesCommitted(
     // iteration 3 of handoff-verifier; this is the canonical defense, not the
     // duplicate `git diff HEAD` check that originally lived only in autoCommitCode's
     // success path. See docs/lessons-learned.md for the incident.
-    const wtDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...handoffFiles);
+    const wtDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...verifiableHandoffFiles);
     if (!wtDiff.ok) {
         Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
         appendAutoCommitDebug(taskIds, debug);
@@ -430,9 +445,18 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
 
     const dirtyFiles = splitGit.parsePorcelain(dirtyResult.stdout);
     const toStage = handoffFiles.filter(f => dirtyFiles.has(f));
+    // Gitignored handoff entries — typically build-generated artifacts like
+    // `public/sitemap.xml` that Codex legitimately references in the Changes
+    // table to describe build output. They will never appear in
+    // `git diff base...HEAD` (not tracked), never show in `git status` (ignored),
+    // and `ls-files --error-unmatch` rejects them. Exempt them from the
+    // existence/tracked checks below — the script that generated them is the
+    // real change and should be listed alongside.
+    const gitIgnoredHandoffFiles = splitGit.filterGitIgnoredPaths(handoffFiles, cwd);
     Object.assign(debug, {
         dirtyFiles: [...dirtyFiles],
         toStage,
+        gitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles],
     });
 
     // Verify every handoff file is accounted for. If a handoff entry isn't
@@ -445,6 +469,7 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const baseRefForLog = splitGit.getBaseBranch(taskIds);
     for (const f of allHandoffFiles) {
         if (dirtyFiles.has(f)) continue;
+        if (gitIgnoredHandoffFiles.has(f)) continue;
         const exists = fs.existsSync(path.join(cwd, f));
         if (!exists) {
             // Path is absent from the working tree — accept it if a commit on
@@ -1724,12 +1749,34 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
                 const wt = splitWorktree.worktreePath(taskId);
                 if (fs.existsSync(wt)) checkRoots.push(wt);
             }
-            const existingFiles = files.filter(f => checkRoots.some(root => fs.existsSync(path.join(root, f))));
+            // Gitignored handoff entries (build-generated artifacts) are exempt
+            // from the "exists on disk" check — they may not have been built yet
+            // and don't represent real source changes anyway. Pre-filter so a
+            // handoff of `[src/generator.ts, public/sitemap.xml]` advances on
+            // the strength of the script existing, ignoring the artifact.
+            // But a handoff containing ONLY gitignored entries has no real
+            // source evidence — refuse to advance, same as zero-existing.
+            //
+            // Resolve gitignore from the active worktree (last-pushed checkRoot)
+            // when present; branch-local `.gitignore` rules don't exist in the
+            // supervising checkout. Falls back to REPO_ROOT for non-worktree tasks.
+            const ignoreCwd = checkRoots[checkRoots.length - 1];
+            const gitIgnored = splitGit.filterGitIgnoredPaths(files, ignoreCwd);
+            const verifiableFiles = files.filter(f => !gitIgnored.has(f));
+            if (verifiableFiles.length === 0) {
+                return {
+                    advanced: false,
+                    note: `handoff.md lists ${files.length} file(s) but all are gitignored — at least one tracked source file is required as evidence`,
+                };
+            }
+            const existingFiles = verifiableFiles.filter(f =>
+                checkRoots.some(root => fs.existsSync(path.join(root, f)))
+            );
             if (existingFiles.length === 0) {
                 return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk` };
             }
             taskPhase(taskId, 'implement', 'done');
-            return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk), validation clean` };
+            return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk, ${gitIgnored.size} gitignored), validation clean` };
         }
         case 'code_review': {
             const content = readArtifact(taskId, 'review.md');

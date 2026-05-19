@@ -9,6 +9,7 @@ import {
     parseHandoffChangesRows,
     verifyHandoffAgainstDiffFromData,
 } from '../../scripts/run-task/validation.js';
+import { filterGitIgnoredPaths } from '../../scripts/run-task/git.js';
 import { deriveTopLevelStatus, resolveTaskCwd } from '../../scripts/run-task/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../../scripts/run-task/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../../scripts/run-task/types.js';
@@ -519,9 +520,15 @@ export function taskAccept(id: string, phaseArg: string, options: { force?: bool
                 `\n  Use --force to accept anyway, but the code_review pre-flight will still reject the run.`
             );
         }
+        const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, gitCwd);
         const coverageIssues = verifyHandoffAgainstDiffFromData(
             [id],
-            { diffFiles, renamePairs, handoffFilesByTask: new Map([[id, handoffFiles]]) },
+            {
+                diffFiles,
+                renamePairs,
+                handoffFilesByTask: new Map([[id, handoffFiles]]),
+                gitIgnoredHandoffFiles,
+            },
         );
         if (coverageIssues.length > 0) {
             const lines = coverageIssues.slice(0, 10).map(i => `    ${i}`);

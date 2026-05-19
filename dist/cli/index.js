@@ -2,7 +2,8 @@
 
 // src/cli/commands/doctor.ts
 import { execSync as execSync2 } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 
 // src/cli/deps.ts
@@ -246,6 +247,110 @@ function checkCodexConfig(cwd) {
   if (existsSync(path8)) return { label: ".codex/config.toml", status: "pass" };
   return { label: ".codex/config.toml", status: "warn", detail: "missing \u2014 Codex will use defaults" };
 }
+function parseCodexProjectTrust(tomlContent) {
+  const result = /* @__PURE__ */ new Map();
+  const lines = tomlContent.split("\n");
+  let currentProject = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const header = trimmed.match(/^\[projects\."(.+)"\]\s*(?:#.*)?$/);
+    if (header) {
+      currentProject = header[1];
+      continue;
+    }
+    if (trimmed.startsWith("[")) {
+      currentProject = null;
+      continue;
+    }
+    if (currentProject) {
+      const trust = trimmed.match(/^trust_level\s*=\s*"([^"]+)"\s*(?:#.*)?$/);
+      if (trust) {
+        result.set(currentProject, trust[1]);
+      }
+    }
+  }
+  return result;
+}
+function safeRealpathOrSelf(target) {
+  try {
+    return realpathSync(target);
+  } catch {
+    return target;
+  }
+}
+function checkCodexProjectTrust(cwd) {
+  const label = "codex project trust";
+  const configPath = join(homedir(), ".codex", "config.toml");
+  if (!existsSync(configPath)) {
+    return {
+      label,
+      status: "warn",
+      detail: `${configPath} not found \u2014 run \`codex\` once interactively to initialize, or add a [projects."<path>"] entry manually before \`canon run\``
+    };
+  }
+  let trustMap;
+  try {
+    const content = readFileSync(configPath, "utf8");
+    trustMap = parseCodexProjectTrust(content);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { label, status: "warn", detail: `failed to read ${configPath}: ${message}` };
+  }
+  let workspaceRoot = cwd;
+  try {
+    const out = execSync2("git rev-parse --show-toplevel", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    if (out) workspaceRoot = out;
+  } catch {
+  }
+  const canonicalWorkspace = safeRealpathOrSelf(workspaceRoot);
+  for (const [project, level] of trustMap) {
+    const canonicalProject = safeRealpathOrSelf(project);
+    if (canonicalProject === canonicalWorkspace) {
+      if (level === "trusted") {
+        return { label, status: "pass", detail: `${workspaceRoot} is trusted` };
+      }
+      return {
+        label,
+        status: "warn",
+        detail: `${workspaceRoot} has an explicit trust_level = "${level}" in ${configPath}. Change it to "trusted" or remove the block:
+        [projects."${workspaceRoot}"]
+        trust_level = "trusted"`
+      };
+    }
+  }
+  const ancestors = [];
+  for (const [project, level] of trustMap) {
+    const canonicalProject = safeRealpathOrSelf(project);
+    if (canonicalWorkspace.startsWith(`${canonicalProject}/`)) {
+      ancestors.push({ project, level, depth: canonicalProject.length });
+    }
+  }
+  if (ancestors.length > 0) {
+    ancestors.sort((a, b) => b.depth - a.depth);
+    const nearest = ancestors[0];
+    if (nearest.level === "trusted") {
+      return {
+        label,
+        status: "pass",
+        detail: `inherited from trusted parent ${nearest.project}`
+      };
+    }
+    return {
+      label,
+      status: "warn",
+      detail: `nearest ancestor ${nearest.project} has trust_level = "${nearest.level}" \u2014 codex exec will fail. Add an explicit trusted entry for this workspace:
+        [projects."${workspaceRoot}"]
+        trust_level = "trusted"`
+    };
+  }
+  return {
+    label,
+    status: "warn",
+    detail: `${workspaceRoot} is not in ${configPath} \u2014 codex exec will fail hard on first invocation. Add this block to fix:
+        [projects."${workspaceRoot}"]
+        trust_level = "trusted"`
+  };
+}
 function readAllowFromSettings(path8) {
   if (!existsSync(path8)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
   try {
@@ -354,6 +459,7 @@ function doctorCmd(_args) {
   ];
   const configChecks = [
     checkCodexConfig(cwd),
+    checkCodexProjectTrust(cwd),
     checkRecommendedPermissions(cwd),
     checkLocalSettingsGitignored(cwd)
   ];
@@ -649,6 +755,20 @@ function gitSafeAt(cwd, ...args2) {
   const result = spawnSync4("git", args2, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
   return { ok: result.status === 0, stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim() };
+}
+function filterGitIgnoredPaths(paths, cwd) {
+  if (paths.length === 0) return /* @__PURE__ */ new Set();
+  const result = spawnSync4("git", ["check-ignore", "--stdin", "-z"], {
+    cwd,
+    input: `${paths.join("\0")}\0`,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0 && result.status !== 1) {
+    return /* @__PURE__ */ new Set();
+  }
+  const stdout = result.stdout ?? "";
+  return new Set(stdout.split("\0").filter((p) => p.length > 0));
 }
 
 // scripts/run-task/canon-snapshot.ts
@@ -1124,6 +1244,7 @@ function isPipelineOwnedTaskArtifact(filePath, taskIds) {
 }
 function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   const renamePairs = inputs.renamePairs ?? [];
+  const gitIgnored = inputs.gitIgnoredHandoffFiles ?? /* @__PURE__ */ new Set();
   const coveredPaths = new Set(inputs.diffFiles);
   for (const [oldPath, newPath] of renamePairs) {
     coveredPaths.add(oldPath);
@@ -1140,6 +1261,7 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   for (const taskId of taskIds) {
     const files = handoffFilesByTask.get(taskId) ?? [];
     for (const filePath of files) {
+      if (gitIgnored.has(filePath)) continue;
       if (!coveredPaths.has(filePath)) {
         issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff`);
       }
@@ -1570,9 +1692,15 @@ function taskAccept(id, phaseArg, options = {}) {
   Use --force to accept anyway, but the code_review pre-flight will still reject the run.`
       );
     }
+    const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, gitCwd);
     const coverageIssues = verifyHandoffAgainstDiffFromData(
       [id],
-      { diffFiles, renamePairs, handoffFilesByTask: /* @__PURE__ */ new Map([[id, handoffFiles]]) }
+      {
+        diffFiles,
+        renamePairs,
+        handoffFilesByTask: /* @__PURE__ */ new Map([[id, handoffFiles]]),
+        gitIgnoredHandoffFiles
+      }
     );
     if (coverageIssues.length > 0) {
       const lines = coverageIssues.slice(0, 10).map((i) => `    ${i}`);

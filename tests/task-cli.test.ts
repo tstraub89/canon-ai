@@ -450,6 +450,54 @@ void test('task accept refuses malformed handoff rows without --force', () => {
     }
 });
 
+void test('task accept exempts gitignored handoff entries from the coverage check', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        // Move .gitignore onto main (before the task branch) so the only
+        // diff on the task branch is the generator script. public/sitemap.xml
+        // is ignored under that rule.
+        git(work, ['checkout', 'main']);
+        fs.writeFileSync(path.join(work, '.gitignore'), 'public/sitemap.xml\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'add gitignore']);
+        git(work, ['checkout', 'task/accept']);
+        git(work, ['merge', 'main', '--no-edit']);
+
+        writeAcceptTaskStatus(taskDir);
+        // public/sitemap.xml is gitignored — a regenerated build artifact.
+        // Codex lists both the generator script (real change) and the artifact
+        // (description of build output). Coverage check should ignore the
+        // gitignored entry instead of failing on it.
+        fs.mkdirSync(path.join(work, 'public'));
+        fs.writeFileSync(path.join(work, 'public/sitemap.xml'), '<urlset/>\n', 'utf8');
+        fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+            '# Implementation Handoff: accept-task',
+            '',
+            '## Changes',
+            '',
+            '| File | What Changed |',
+            '|---|---|',
+            '| `scripts/generate-sitemap.ts` | regenerates sitemap |',
+            '| `public/sitemap.xml` | regenerated output (gitignored) |',
+            '',
+        ].join('\n'), 'utf8');
+        fs.mkdirSync(path.join(work, 'scripts'));
+        fs.writeFileSync(path.join(work, 'scripts/generate-sitemap.ts'), 'export {};\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'add generator script']);
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                captureStdout(() => taskAccept('accept-task', 'implement'));
+                const updated = readStatusFile(taskDir);
+                assert.equal(updated.phases.implement?.operator_accepted, true);
+            });
+        });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 void test('task accept records operator_accepted_sha so a later commit invalidates the skip', () => {
     const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
     try {

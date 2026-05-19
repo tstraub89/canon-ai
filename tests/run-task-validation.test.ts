@@ -634,6 +634,25 @@ void test('verifyHandoffAgainstDiffFromData accepts iteration-added files covere
     });
 });
 
+void test('verifyHandoffAgainstDiffFromData exempts gitignored handoff entries from handoff→diff check', () => {
+    // Build-generated artifacts like `public/sitemap.xml` that Codex
+    // legitimately references in the Changes table to describe build output.
+    // They cannot appear in `git diff base...HEAD` (not tracked) so the
+    // standard handoff→diff check would always reject them. Callers compute
+    // the gitignored subset via filterGitIgnoredPaths and pass it in.
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a'],
+        {
+            diffFiles: ['scripts/generate-sitemap.ts'],
+            handoffFilesByTask: makeHandoffMap({
+                'task-a': ['scripts/generate-sitemap.ts', 'public/sitemap.xml'],
+            }),
+            gitIgnoredHandoffFiles: new Set(['public/sitemap.xml']),
+        },
+    );
+    assert.deepEqual(issues, []);
+});
+
 void test('verifyHandoffAgainstDiffFromData rejects a handoff file missing from diff', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],

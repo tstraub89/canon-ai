@@ -639,6 +639,20 @@ function gitSafeAtRaw(cwd, ...args) {
   if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
   return { ok: result.status === 0, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
 }
+function filterGitIgnoredPaths(paths, cwd) {
+  if (paths.length === 0) return /* @__PURE__ */ new Set();
+  const result = spawnSync3("git", ["check-ignore", "--stdin", "-z"], {
+    cwd,
+    input: `${paths.join("\0")}\0`,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0 && result.status !== 1) {
+    return /* @__PURE__ */ new Set();
+  }
+  const stdout = result.stdout ?? "";
+  return new Set(stdout.split("\0").filter((p) => p.length > 0));
+}
 function commitTaskArtifactsToBase(taskIds, _artifactFiles) {
   void _artifactFiles;
   for (const taskId of taskIds) {
@@ -1938,6 +1952,7 @@ function isPipelineOwnedTaskArtifact(filePath, taskIds) {
 }
 function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   const renamePairs = inputs.renamePairs ?? [];
+  const gitIgnored = inputs.gitIgnoredHandoffFiles ?? /* @__PURE__ */ new Set();
   const coveredPaths = new Set(inputs.diffFiles);
   for (const [oldPath, newPath] of renamePairs) {
     coveredPaths.add(oldPath);
@@ -1954,6 +1969,7 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   for (const taskId of taskIds) {
     const files = handoffFilesByTask.get(taskId) ?? [];
     for (const filePath of files) {
+      if (gitIgnored.has(filePath)) continue;
       if (!coveredPaths.has(filePath)) {
         issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff`);
       }
@@ -1998,7 +2014,14 @@ function verifyHandoffAgainstDiff(taskIds, baseRef) {
   const handoffFilesByTask = new Map(
     taskIds.map((taskId) => [taskId, parseHandoffFiles(taskId)])
   );
-  return verifyHandoffAgainstDiffFromData(taskIds, { diffFiles, renamePairs, handoffFilesByTask });
+  const allHandoffPaths = [...new Set([...handoffFilesByTask.values()].flat())];
+  const gitIgnoredHandoffFiles = filterGitIgnoredPaths(allHandoffPaths, cwd);
+  return verifyHandoffAgainstDiffFromData(taskIds, {
+    diffFiles,
+    renamePairs,
+    handoffFilesByTask,
+    gitIgnoredHandoffFiles
+  });
 }
 
 // scripts/run-task/context.ts
@@ -3823,7 +3846,16 @@ function appendAutoCommitDebug(taskIds, details) {
 }
 function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
   const baseRef = getBaseBranch2(taskIds);
-  const postStatus = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall", "--", ...handoffFiles);
+  const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
+  const verifiableHandoffFiles = handoffFiles.filter((f) => !gitIgnoredHandoffFiles.has(f));
+  Object.assign(debug, {
+    verifyGitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles]
+  });
+  if (verifiableHandoffFiles.length === 0) {
+    appendAutoCommitDebug(taskIds, { ...debug, result: "verify-all-gitignored" });
+    return;
+  }
+  const postStatus = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall", "--", ...verifiableHandoffFiles);
   const missing = [];
   if (!postStatus.ok) {
     Object.assign(debug, {
@@ -3836,7 +3868,7 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
     die2(`Auto-commit coverage check failed: could not inspect post-commit status: ${postStatus.stderr || "unknown error"}`);
   }
   const stillDirty = parsePorcelain(postStatus.stdout);
-  for (const filePath of handoffFiles) {
+  for (const filePath of verifiableHandoffFiles) {
     if (stillDirty.has(filePath)) {
       missing.push(`${filePath} \u2014 still dirty after auto-commit`);
       continue;
@@ -3846,7 +3878,7 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
       missing.push(`${filePath} \u2014 no commit touches this path in ${baseRef}..HEAD`);
     }
   }
-  const wtDiff = gitSafeAtRaw2(cwd, "diff", "HEAD", "--name-only", "--", ...handoffFiles);
+  const wtDiff = gitSafeAtRaw2(cwd, "diff", "HEAD", "--name-only", "--", ...verifiableHandoffFiles);
   if (!wtDiff.ok) {
     Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
     appendAutoCommitDebug(taskIds, debug);
@@ -3980,14 +4012,17 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   }
   const dirtyFiles = parsePorcelain(dirtyResult.stdout);
   const toStage = handoffFiles.filter((f) => dirtyFiles.has(f));
+  const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
   Object.assign(debug, {
     dirtyFiles: [...dirtyFiles],
-    toStage
+    toStage,
+    gitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles]
   });
   const missing = [];
   const baseRefForLog = getBaseBranch(taskIds);
   for (const f of allHandoffFiles) {
     if (dirtyFiles.has(f)) continue;
+    if (gitIgnoredHandoffFiles.has(f)) continue;
     const exists = fs14.existsSync(path15.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);
@@ -4829,12 +4864,23 @@ function tryEvidenceAdvance(taskId, phase) {
         const wt = worktreePath(taskId);
         if (fs14.existsSync(wt)) checkRoots.push(wt);
       }
-      const existingFiles = files.filter((f) => checkRoots.some((root) => fs14.existsSync(path15.join(root, f))));
+      const ignoreCwd = checkRoots[checkRoots.length - 1];
+      const gitIgnored = filterGitIgnoredPaths(files, ignoreCwd);
+      const verifiableFiles = files.filter((f) => !gitIgnored.has(f));
+      if (verifiableFiles.length === 0) {
+        return {
+          advanced: false,
+          note: `handoff.md lists ${files.length} file(s) but all are gitignored \u2014 at least one tracked source file is required as evidence`
+        };
+      }
+      const existingFiles = verifiableFiles.filter(
+        (f) => checkRoots.some((root) => fs14.existsSync(path15.join(root, f)))
+      );
       if (existingFiles.length === 0) {
         return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk` };
       }
       taskPhase(taskId, "implement", "done");
-      return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk), validation clean` };
+      return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk, ${gitIgnored.size} gitignored), validation clean` };
     }
     case "code_review": {
       const content = readArtifact(taskId, "review.md");

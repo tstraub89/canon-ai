@@ -50,6 +50,36 @@ export function gitSafeAtRaw(cwd: string, ...args: string[]): CommandResult {
     return { ok: result.status === 0, stdout: result.stdout ?? '', stderr: (result.stderr ?? '').trim() };
 }
 
+/**
+ * Returns the subset of `paths` that `git check-ignore` reports as gitignored
+ * in `cwd`. Used to exempt build-generated artifacts (e.g. regenerated
+ * `public/sitemap.xml`) from handoff coverage and auto-commit existence
+ * checks — Codex may legitimately reference them in the Changes table to
+ * describe build output, but they will never appear in `git diff base...HEAD`
+ * and shouldn't trigger the "file missing from working tree" branch.
+ *
+ * Single batched invocation: `git check-ignore --stdin` reads NUL-delimited
+ * paths and prints the ignored subset, NUL-delimited. Exit 0 = at least one
+ * path was ignored, 1 = none were, 128 = error. We treat 0 and 1 as success
+ * (the output is authoritative either way) and any error as "no paths
+ * ignored" — failing closed would mean treating uncertain state as "definitely
+ * not ignored," which is the same default as the pre-1.3.x behavior.
+ */
+export function filterGitIgnoredPaths(paths: readonly string[], cwd: string): Set<string> {
+    if (paths.length === 0) return new Set();
+    const result = spawnSync('git', ['check-ignore', '--stdin', '-z'], {
+        cwd,
+        input: `${paths.join('\0')}\0`,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (result.error || (result.status !== 0 && result.status !== 1)) {
+        return new Set();
+    }
+    const stdout = result.stdout ?? '';
+    return new Set(stdout.split('\0').filter(p => p.length > 0));
+}
+
 export function commitTaskArtifactsToBase(taskIds: string[], _artifactFiles: ReadonlySet<string>): void {
     void _artifactFiles;
     for (const taskId of taskIds) {

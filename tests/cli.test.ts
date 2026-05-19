@@ -18,6 +18,7 @@ import {
     checkRecommendedPermissions,
     checkClaudeVersion,
     parseClaudeVersion,
+    parseCodexProjectTrust,
     MIN_CLAUDE_VERSION,
     RECOMMENDED_ALLOW,
 } from '../src/cli/commands/doctor.js';
@@ -493,6 +494,89 @@ void test('checkRecommendedPermissions: malformed settings.local.json → warn p
         assert.equal(check.label, '.claude/settings.local.json');
         assert.match(check.detail ?? '', /not valid JSON/i);
     });
+});
+
+// ── parseCodexProjectTrust ──────────────────────────────────────────────────
+
+void test('parseCodexProjectTrust: extracts project paths and trust levels', () => {
+    const config = [
+        'model = "gpt-5.4-mini"',
+        'sandbox_mode = "workspace-write"',
+        '',
+        '[projects."/Users/x/repo-a"]',
+        'trust_level = "trusted"',
+        '',
+        '[projects."/Users/x/repo-b"]',
+        'trust_level = "untrusted"',
+        '',
+        '[projects."/Users/x/repo-c"]',
+        '# no trust_level set — should not appear in the map',
+        '',
+    ].join('\n');
+    const result = parseCodexProjectTrust(config);
+    assert.equal(result.get('/Users/x/repo-a'), 'trusted');
+    assert.equal(result.get('/Users/x/repo-b'), 'untrusted');
+    assert.equal(result.has('/Users/x/repo-c'), false);
+});
+
+void test('parseCodexProjectTrust: ignores trust_level outside [projects.*] blocks', () => {
+    // A stray `trust_level` at the top of the file (or under some unrelated
+    // table) must not be associated with a previously-seen project block.
+    const config = [
+        'trust_level = "trusted"',
+        '',
+        '[projects."/Users/x/repo-a"]',
+        'trust_level = "trusted"',
+        '',
+        '[other]',
+        'trust_level = "untrusted"',
+        '',
+    ].join('\n');
+    const result = parseCodexProjectTrust(config);
+    assert.equal(result.size, 1);
+    assert.equal(result.get('/Users/x/repo-a'), 'trusted');
+});
+
+void test('parseCodexProjectTrust: empty input returns empty map', () => {
+    assert.equal(parseCodexProjectTrust('').size, 0);
+});
+
+void test('parseCodexProjectTrust: accepts inline TOML comments after the value', () => {
+    const config = [
+        '[projects."/Users/x/repo"]',
+        'trust_level = "trusted" # added manually 2026-05-19',
+        '',
+    ].join('\n');
+    const result = parseCodexProjectTrust(config);
+    assert.equal(result.get('/Users/x/repo'), 'trusted');
+});
+
+void test('parseCodexProjectTrust: accepts inline TOML comments on the table header', () => {
+    const config = [
+        '[projects."/Users/x/repo"] # trusted manually',
+        'trust_level = "trusted"',
+        '',
+    ].join('\n');
+    const result = parseCodexProjectTrust(config);
+    assert.equal(result.get('/Users/x/repo'), 'trusted');
+});
+
+void test('parseCodexProjectTrust: explicit untrusted child overrides trusted parent in caller logic', () => {
+    // The parser itself just records each block's declared level — the
+    // "explicit-wins-over-inherited" rule lives in checkCodexProjectTrust.
+    // This test pins the data the check operates on: both entries must
+    // round-trip exactly so the override logic has the right inputs.
+    const config = [
+        '[projects."/Users/x"]',
+        'trust_level = "trusted"',
+        '',
+        '[projects."/Users/x/repo"]',
+        'trust_level = "untrusted"',
+        '',
+    ].join('\n');
+    const result = parseCodexProjectTrust(config);
+    assert.equal(result.get('/Users/x'), 'trusted');
+    assert.equal(result.get('/Users/x/repo'), 'untrusted');
 });
 
 // ── scaffoldTemplates ────────────────────────────────────────────────────────
