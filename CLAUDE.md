@@ -14,16 +14,16 @@ Claude operates in two distinct modes:
 **Pipeline mode** (invoked by the orchestrator as a separate agent session):
 - Plan writing (full tier, after Codex spec review), code review, QA summary.
 
-**Spec gate**: The human always reviews the spec before the pipeline advances — invoke `run-task.ts` only after they approve.
+**Spec gate**: The human always reviews the spec before the pipeline advances — invoke `canon run <id>` only after they approve.
 
-**Pipeline rule**: Claude Code (the operator session — the one the human talks to directly) invokes `scripts/run-task.ts` to drive pipeline phases and monitors progress. Pipeline-spawned Claude sessions write `review.md` and `done.md` (and, for full-tier tasks, `plan.md`) — that keeps orchestrator guardrails intact, session resumption working, and the operator session's context clean. If you catch yourself reading the diff to assess spec compliance in the operator session, stop and kick the phase to the pipeline instead.
+**Pipeline rule**: Claude Code (the operator session — the one the human talks to directly) invokes `canon run <id>` to drive pipeline phases and monitors progress. Pipeline-spawned Claude sessions write `review.md` and `done.md` (and, for full-tier tasks, `plan.md`) — that keeps orchestrator guardrails intact, session resumption working, and the operator session's context clean. If you catch yourself reading the diff to assess spec compliance in the operator session, stop and kick the phase to the pipeline instead.
 
 A human shell can also operate canon directly (`canon run <id>` in a terminal), useful for headless / scripted use. Codex can technically operate but canon was not designed for it — see [`docs/pipeline-orchestrator.md` §Operator](docs/pipeline-orchestrator.md) for why.
 
 **Modifying canon's own harness or policy** (the orchestrator scripts, task templates, agent configs, or AGENTS.md / CLAUDE.md / CODEX.md themselves) is allowed both inline and through the pipeline. The split:
 
 - **Trivial** (≤ ~10 lines, no logic change, doc tweak, single-file rename): inline. Canon overhead isn't worth it.
-- **Non-trivial** (new pipeline phase, new validation gate, behavior change in `run-task.ts`, structural template changes): through canon, with worktree isolation. The supervising orchestrator runs from the main checkout while edits land in the worktree, so the pipeline is shielded from edits to itself mid-run.
+- **Non-trivial** (new pipeline phase, new validation gate, behavior change in the orchestrator, structural template changes): through canon, with worktree isolation. The supervising orchestrator runs from the main checkout while edits land in the worktree, so the pipeline is shielded from edits to itself mid-run.
 
 When a project adopts canon, this same rule applies to *their* modifications of canon's harness/policy in their adoption.
 
@@ -48,14 +48,14 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 
 ## Task Workflow
 
-**Orchestrator mechanics live in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md)** — `run-task.ts` flags, env vars, model/effort matrix, task sizing tables, bundle mode, review-loop caps, session resumption, reroute. Read on demand when invoking the pipeline; not every conversational session needs it loaded.
+**Orchestrator mechanics live in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md)** — `canon run` flags, env vars, model/effort matrix, task sizing tables, bundle mode, review-loop caps, session resumption, reroute. Read on demand when invoking the pipeline; not every conversational session needs it loaded.
 
 **Quick refs you'll use most**:
 - `canon run <id> --step --expect <phase>` — run one phase with a phase-mismatch guard.
 - `MAX_REVIEW_LOOPS=5 canon run <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block.
 - **`canon run <id> --pr`** — when a task reaches `human_review`, always use `--pr` to push the branch and open the draft PR. Do not skip this. `--ship` is post-merge cleanup only — running it before the PR merges archives the task without the implementation landing.
 - Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — anything where a regression has unbounded blast radius. The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`). **Project-specific delicate-flag domain examples** (auth, payments, persistent storage, PHI handling, security-relevant cryptography, orchestrator routing logic, etc.) live in [`docs/product-context.md`](docs/product-context.md) — adopters list theirs there.
-- **One pipeline per worktree.** Multiple `run-task.ts` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
+- **One pipeline per worktree.** Multiple `canon run` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
 - **Prefer `canon task` helpers over hand-editing `status.json`.** `canon task phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
 - **`canon task` key ops**: `canon task new <id> "Title"` — scaffold a task; `canon task list` — show all tasks; `canon task phase <id> <phase> <status>` — advance a phase; `canon task post-merge-sync` — reconcile after squash-merge. Full subcommand list in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md#task-management-canon-task).
 
@@ -165,12 +165,13 @@ When writing specs:
 - **Test files are per-feature, not per-helper**: Before naming a new test file in a spec, list existing test files. Consolidate new helpers into one feature-named test file rather than creating a new one per helper.
 - **Strong-semantic mode names need product-owner sign-off on full scope before narrow scoping**: When a mode or toggle uses a term that naturally implies full constraint ("locked", "linked", "synced", "frozen", "fixed"), the human will read the strong meaning by default. Spec'ing it narrowly creates a hidden mismatch that surfaces in human testing as a code-review reroute. Verify what the name means *in full*, or pick a less load-bearing name.
 - **Verify that symbols named in spec ACs actually exist in the codebase**: Before marking spec done, grep for every function or symbol referenced by name in an AC. A name that doesn't exist causes Codex to implement against the actual code shape while noting the mismatch — the review loop then has to adjudicate whether the AC or the implementation is wrong, burning an unnecessary iteration.
+- **For large-removal tasks with structural grep ACs, generate the allow-list from `git grep`, not the Affected Files table**: When a spec includes an AC of the form "this string must not appear outside these paths," the spec author's allow-list is written from their mental model. The Affected Files table only lists files the author expects to *touch* — it misses historical telemetry docs, archived `status.json` snapshots, template mirrors, and other files that legitimately contain the retiring symbol but weren't in the author's mental model. During spec_review, the Codex reviewer should run the grep against the *current* tree to discover the full allow-list and flag additions before implementation begins. A missed allow-list entry forces a spec revision mid-review and burns an iteration.
 
 ### Code-review rules of thumb
 
 - **Reviewer diffs against the task baseline, not `main`, on release branches**: On a shared release branch that may be many commits ahead of `main`, diffing against `main` attributes unrelated work to the current task. Always diff against the task's baseline.
 - **Verify handoff claims by running `git diff HEAD -- <file>`**: The pipeline's auto-commit step can silently drop edits to files not listed in the handoff's Changes table. Don't trust the handoff — diff the actual working tree to confirm claimed fixes landed.
-- **Commit manual changes before invoking `run-task.ts`**: When making manual code changes in the same session that spawns the pipeline orchestrator, always commit before kicking off `run-task.ts`. The orchestrator spawns fresh agent sessions that read the working tree — uncommitted changes create a mismatch.
+- **Commit manual changes before invoking `canon run`**: When making manual code changes in the same session that spawns the pipeline, always commit before kicking off `canon run`. The orchestrator spawns fresh agent sessions that read the working tree — uncommitted changes create a mismatch.
 - **Delicate-task review must audit cross-cutting guards at every mutation entry point**: When a `delicate: true` task refactors a state/data layer, explicitly verify that auth, gating, and payment guards still hold at *every* mutation chokepoint after the refactor — not just at the call sites the spec called out.
 
 ## Review Responsibilities

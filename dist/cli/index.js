@@ -2,8 +2,9 @@
 
 // src/cli/commands/doctor.ts
 import { execSync as execSync2 } from "child_process";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, realpathSync } from "fs";
+import { homedir } from "os";
+import { join, sep as pathSep } from "path";
 
 // src/cli/deps.ts
 import { execSync } from "child_process";
@@ -207,7 +208,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.2.0";
+  const installedVersion = "1.3.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -245,6 +246,110 @@ function checkCodexConfig(cwd) {
   const path8 = join(cwd, ".codex", "config.toml");
   if (existsSync(path8)) return { label: ".codex/config.toml", status: "pass" };
   return { label: ".codex/config.toml", status: "warn", detail: "missing \u2014 Codex will use defaults" };
+}
+function parseCodexProjectTrust(tomlContent) {
+  const result = /* @__PURE__ */ new Map();
+  const lines = tomlContent.split("\n");
+  let currentProject = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const header = trimmed.match(/^\[projects\."(.+)"\]\s*(?:#.*)?$/);
+    if (header) {
+      currentProject = header[1];
+      continue;
+    }
+    if (trimmed.startsWith("[")) {
+      currentProject = null;
+      continue;
+    }
+    if (currentProject) {
+      const trust = trimmed.match(/^trust_level\s*=\s*"([^"]+)"\s*(?:#.*)?$/);
+      if (trust) {
+        result.set(currentProject, trust[1]);
+      }
+    }
+  }
+  return result;
+}
+function safeRealpathOrSelf(target) {
+  try {
+    return realpathSync(target);
+  } catch {
+    return target;
+  }
+}
+function checkCodexProjectTrust(cwd) {
+  const label = "codex project trust";
+  const configPath = join(homedir(), ".codex", "config.toml");
+  if (!existsSync(configPath)) {
+    return {
+      label,
+      status: "warn",
+      detail: `${configPath} not found \u2014 run \`codex\` once interactively to initialize, or add a [projects."<path>"] entry manually before \`canon run\``
+    };
+  }
+  let trustMap;
+  try {
+    const content = readFileSync(configPath, "utf8");
+    trustMap = parseCodexProjectTrust(content);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { label, status: "warn", detail: `failed to read ${configPath}: ${message}` };
+  }
+  let workspaceRoot = cwd;
+  try {
+    const out = execSync2("git rev-parse --show-toplevel", { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    if (out) workspaceRoot = out;
+  } catch {
+  }
+  const canonicalWorkspace = safeRealpathOrSelf(workspaceRoot);
+  for (const [project, level] of trustMap) {
+    const canonicalProject = safeRealpathOrSelf(project);
+    if (canonicalProject === canonicalWorkspace) {
+      if (level === "trusted") {
+        return { label, status: "pass", detail: `${workspaceRoot} is trusted` };
+      }
+      return {
+        label,
+        status: "warn",
+        detail: `${workspaceRoot} has an explicit trust_level = "${level}" in ${configPath}. Change it to "trusted" or remove the block:
+        [projects."${workspaceRoot}"]
+        trust_level = "trusted"`
+      };
+    }
+  }
+  const ancestors = [];
+  for (const [project, level] of trustMap) {
+    const canonicalProject = safeRealpathOrSelf(project);
+    if (canonicalWorkspace.startsWith(`${canonicalProject}${pathSep}`)) {
+      ancestors.push({ project, level, depth: canonicalProject.length });
+    }
+  }
+  if (ancestors.length > 0) {
+    ancestors.sort((a, b) => b.depth - a.depth);
+    const nearest = ancestors[0];
+    if (nearest.level === "trusted") {
+      return {
+        label,
+        status: "pass",
+        detail: `inherited from trusted parent ${nearest.project}`
+      };
+    }
+    return {
+      label,
+      status: "warn",
+      detail: `nearest ancestor ${nearest.project} has trust_level = "${nearest.level}" \u2014 codex exec will fail. Add an explicit trusted entry for this workspace:
+        [projects."${workspaceRoot}"]
+        trust_level = "trusted"`
+    };
+  }
+  return {
+    label,
+    status: "warn",
+    detail: `${workspaceRoot} is not in ${configPath} \u2014 codex exec will fail hard on first invocation. Add this block to fix:
+        [projects."${workspaceRoot}"]
+        trust_level = "trusted"`
+  };
 }
 function readAllowFromSettings(path8) {
   if (!existsSync(path8)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
@@ -354,6 +459,7 @@ function doctorCmd(_args) {
   ];
   const configChecks = [
     checkCodexConfig(cwd),
+    checkCodexProjectTrust(cwd),
     checkRecommendedPermissions(cwd),
     checkLocalSettingsGitignored(cwd)
   ];
@@ -450,7 +556,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.2.0";
+  const version = "1.3.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -649,6 +755,20 @@ function gitSafeAt(cwd, ...args2) {
   const result = spawnSync4("git", args2, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
   return { ok: result.status === 0, stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim() };
+}
+function filterGitIgnoredPaths(paths, cwd) {
+  if (paths.length === 0) return /* @__PURE__ */ new Set();
+  const result = spawnSync4("git", ["check-ignore", "--stdin", "-z"], {
+    cwd,
+    input: `${paths.join("\0")}\0`,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0 && result.status !== 1) {
+    return /* @__PURE__ */ new Set();
+  }
+  const stdout = result.stdout ?? "";
+  return new Set(stdout.split("\0").filter((p) => p.length > 0));
 }
 
 // scripts/run-task/canon-snapshot.ts
@@ -1033,6 +1153,161 @@ ${list}
   }
   return { ok: true };
 }
+function parseHandoffChangesRows(taskId) {
+  const handoffPath = path6.join(taskDirFor(taskId), "handoff.md");
+  let content;
+  try {
+    content = fs5.readFileSync(handoffPath, "utf8");
+  } catch {
+    return { files: [], malformed: [] };
+  }
+  const files = /* @__PURE__ */ new Set();
+  const malformed = [];
+  const tables = [
+    parseTable(content, "Changes"),
+    ...extractSectionBodies(content, /^## Iteration\b/).map((body) => parseTableH3(body, "Changes"))
+  ];
+  for (const rows of tables) {
+    for (const row of rows) {
+      const firstColumn = Object.values(row)[0] ?? "";
+      if (!firstColumn.trim()) continue;
+      const result = parseHandoffPathCell(firstColumn);
+      if (result.kind === "ok") {
+        files.add(result.path);
+      } else {
+        malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+      }
+    }
+  }
+  return { files: [...files], malformed };
+}
+function parseHandoffPathCell(cell) {
+  const trimmed = cell.trim();
+  if (!trimmed) return { kind: "malformed", reason: "empty cell" };
+  const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
+  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]*\)/g)];
+  if (backtickGroups.length + mdLinkGroups.length > 1) {
+    const tokens = [
+      ...backtickGroups.map((m) => `\`${m[1]}\``),
+      ...mdLinkGroups.map((m) => `[${m[1]}](...)`)
+    ];
+    return {
+      kind: "malformed",
+      reason: `multiple paths in one cell (${tokens.join(", ")}) \u2014 list one path per row`
+    };
+  }
+  if (backtickGroups.length === 1) {
+    if (!/^`[^`]+`(?:\s+.*)?$/.test(trimmed)) {
+      return {
+        kind: "malformed",
+        reason: `backticked path must be at the start of the cell, optionally followed by an annotation \u2014 got: ${snippet(trimmed)}`
+      };
+    }
+    return validateExtractedPath(backtickGroups[0][1].trim());
+  }
+  if (mdLinkGroups.length === 1) {
+    if (!/^\[[^\]]+\]\(.*\)(?:\s+.*)?$/.test(trimmed)) {
+      return {
+        kind: "malformed",
+        reason: `markdown link must be at the start of the cell \u2014 got: ${snippet(trimmed)}`
+      };
+    }
+    return validateExtractedPath(mdLinkGroups[0][1].trim());
+  }
+  return {
+    kind: "malformed",
+    reason: `no recognized path \u2014 first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`
+  };
+}
+function snippet(value) {
+  return value.length > 80 ? `${value.slice(0, 77)}...` : value;
+}
+function validateExtractedPath(extracted) {
+  if (!extracted) return { kind: "malformed", reason: "empty path inside backticks/link" };
+  if (/[*?]/.test(extracted)) {
+    return {
+      kind: "malformed",
+      reason: `wildcard not allowed in '${extracted}' \u2014 list each file explicitly so the diff\u2192handoff check can match`
+    };
+  }
+  if (extracted.includes("<") || extracted.includes(">")) {
+    return {
+      kind: "malformed",
+      reason: `template placeholder left unfilled in '${extracted}' \u2014 replace with a real file path`
+    };
+  }
+  if (/^([a-zA-Z]:)?[\\/]/.test(extracted)) {
+    return {
+      kind: "malformed",
+      reason: `absolute path '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
+  if (extracted.split(/[\\/]/).includes("..")) {
+    return {
+      kind: "malformed",
+      reason: `parent-directory traversal in '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
+  return { kind: "ok", path: extracted };
+}
+var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
+function isPipelineOwnedTaskArtifact(filePath, taskIds) {
+  return taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`));
+}
+function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
+  const renamePairs = inputs.renamePairs ?? [];
+  const gitIgnored = inputs.gitIgnoredHandoffFiles ?? /* @__PURE__ */ new Set();
+  const coveredPaths = new Set(inputs.diffFiles);
+  for (const [oldPath, newPath] of renamePairs) {
+    coveredPaths.add(oldPath);
+    coveredPaths.add(newPath);
+  }
+  const handoffFilesByTask = /* @__PURE__ */ new Map();
+  const bundleHandoffFiles = /* @__PURE__ */ new Set();
+  for (const taskId of taskIds) {
+    const files = inputs.handoffFilesByTask.get(taskId) ?? [];
+    handoffFilesByTask.set(taskId, files);
+    for (const filePath of files) bundleHandoffFiles.add(filePath);
+  }
+  const issues = [];
+  for (const taskId of taskIds) {
+    const files = handoffFilesByTask.get(taskId) ?? [];
+    for (const filePath of files) {
+      if (gitIgnored.has(filePath)) continue;
+      if (!coveredPaths.has(filePath)) {
+        issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff`);
+      }
+    }
+  }
+  for (const filePath of inputs.diffFiles) {
+    if (HANDOFF_DIFF_EXEMPT_PATHS.has(filePath)) continue;
+    if (isPipelineOwnedTaskArtifact(filePath, taskIds)) continue;
+    if (bundleHandoffFiles.has(filePath)) continue;
+    issues.push(`diff\u2192handoff: ${filePath} in diff but not in any bundle handoff`);
+  }
+  for (const [oldPath, newPath] of renamePairs) {
+    if (HANDOFF_DIFF_EXEMPT_PATHS.has(oldPath) && HANDOFF_DIFF_EXEMPT_PATHS.has(newPath)) continue;
+    if (isPipelineOwnedTaskArtifact(oldPath, taskIds) || isPipelineOwnedTaskArtifact(newPath, taskIds)) continue;
+    if (bundleHandoffFiles.has(oldPath) || bundleHandoffFiles.has(newPath)) continue;
+    issues.push(`diff\u2192handoff: rename ${oldPath} \u2192 ${newPath} \u2014 neither path in any bundle handoff`);
+  }
+  return issues;
+}
+function parseDiffNameStatus(stdout) {
+  const diffFiles = [];
+  const renamePairs = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    const parts = line.split("	");
+    const status = parts[0];
+    if ((status.startsWith("R") || status.startsWith("C")) && parts.length >= 3) {
+      renamePairs.push([parts[1], parts[2]]);
+    } else if (parts.length >= 2) {
+      diffFiles.push(parts[1]);
+    }
+  }
+  return { diffFiles, renamePairs };
+}
 
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
@@ -1051,6 +1326,7 @@ function usage() {
     "  list",
     "  status <TASK-ID>",
     "  phase <TASK-ID> <phase> <status> [verdict]",
+    "  accept <TASK-ID...> <phase> [--force]",
     "  reset-spec-review <TASK-ID>",
     "  post-merge-sync [<branch>]",
     "  release-init <version>"
@@ -1229,16 +1505,28 @@ function taskList() {
     return;
   }
   const rows = [];
+  let invalidCount = 0;
   for (const entry of fs6.readdirSync(root).sort()) {
     if (entry === "_archive") continue;
     const statusPath = path7.join(root, entry, "status.json");
     if (!fs6.existsSync(statusPath)) continue;
-    const status = readJsonFile(statusPath);
-    rows.push({
-      id: entry,
-      title: status.title ?? "(untitled)",
-      phase: derivePhase(status)
-    });
+    try {
+      const status = readJsonFile(statusPath);
+      const phase = derivePhase(status);
+      rows.push({
+        id: entry,
+        title: status.title ?? "(untitled)",
+        phase
+      });
+    } catch (error) {
+      invalidCount += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      rows.push({
+        id: entry,
+        title: "(invalid status.json)",
+        phase: `INVALID: ${message}`
+      });
+    }
   }
   if (rows.length === 0) {
     console.log("No tasks found.");
@@ -1248,6 +1536,9 @@ function taskList() {
   console.log(`${"----".padEnd(25)} ${"-----".padEnd(40)} -------------`);
   for (const row of rows) {
     console.log(`${row.id.padEnd(25)} ${row.title.padEnd(40)} ${row.phase}`);
+  }
+  if (invalidCount > 0) {
+    throw new Error(`${invalidCount} task(s) had invalid status.json \u2014 see INVALID: rows above. Fix the malformed files or remove the task dir.`);
   }
 }
 function taskStatus(id) {
@@ -1338,6 +1629,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     }
   }
   const entry = ensurePhaseEntry(status, phaseArg);
+  const previousStatus = entry.status;
   entry.status = statusArg;
   status.updated = today();
   if (verdictArg && Object.hasOwn(entry, "verdict")) {
@@ -1346,12 +1638,239 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   if (REVIEW_PHASES.has(phaseArg)) {
     updateReviewCounters(entry, verdictArg);
   }
+  if (phaseArg === "implement" && previousStatus === "done" && statusArg !== "done") {
+    delete entry.operator_accepted;
+    delete entry.operator_accepted_sha;
+    delete entry.operator_accepted_at;
+  }
   writeStatusAtomic(statusPath, status);
   if (verdictArg) {
     console.log(`Updated ${id}: ${phaseArg} \u2192 ${statusArg} (verdict: ${verdictArg})`);
   } else {
     console.log(`Updated ${id}: ${phaseArg} \u2192 ${statusArg}`);
   }
+}
+function taskAccept(ids, phaseArg, options = {}) {
+  if (ids.length === 0) throw new Error("Error: usage: canon task accept <TASK-ID...> <phase> [--force]");
+  if (!phaseArg) throw new Error("Error: phase required (currently only `implement` is supported)");
+  for (const id of ids) validateTaskId(id);
+  assertValidPhase(phaseArg);
+  if (phaseArg !== "implement") {
+    throw new Error(
+      `Error: 'canon task accept' currently only supports the implement phase. Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
+    );
+  }
+  const ctxByTask = /* @__PURE__ */ new Map();
+  for (const id of ids) {
+    const taskCwd = resolveTaskCwd(id);
+    const statusPath = taskStatusFileForCwd(taskCwd, id);
+    if (!fs6.existsSync(statusPath)) {
+      throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
+    }
+    const status = readJsonFile(statusPath);
+    ctxByTask.set(id, { id, taskCwd, statusPath, status });
+  }
+  const worktreeModes = /* @__PURE__ */ new Set();
+  for (const ctx of ctxByTask.values()) {
+    worktreeModes.add(ctx.status.worktree === true);
+  }
+  if (worktreeModes.size > 1) {
+    const worktreeTasks = [];
+    const mainTasks = [];
+    for (const ctx of ctxByTask.values()) {
+      (ctx.status.worktree === true ? worktreeTasks : mainTasks).push(ctx.id);
+    }
+    throw new Error(
+      `Error: bundled accept cannot mix worktree and non-worktree tasks. Worktree tasks: [${worktreeTasks.join(", ")}]. Non-worktree tasks: [${mainTasks.join(", ")}]. Run accept separately for each tree.`
+    );
+  }
+  function resolveExpectedTreeForCtx(ctx) {
+    if (ctx.status.worktree === true) return ctx.taskCwd;
+    return resolveMainCheckoutRoot();
+  }
+  const primary = ctxByTask.get(ids[0]);
+  const gitCwdRaw = resolveExpectedTreeForCtx(primary);
+  const gitCwd = safeRealpath(gitCwdRaw);
+  for (const ctx of ctxByTask.values()) {
+    const expectedRaw = resolveExpectedTreeForCtx(ctx);
+    const expected = safeRealpath(expectedRaw);
+    if (expected !== gitCwd) {
+      throw new Error(
+        `Error: bundled accept requires all tasks to share a working tree. Task '${ids[0]}' resolves to ${gitCwdRaw} but task '${ctx.id}' resolves to ${expectedRaw}. Run accept once per worktree.`
+      );
+    }
+  }
+  if (!options.force) {
+    for (const ctx of ctxByTask.values()) {
+      const blocked = priorIncompletePhases(ctx.status, phaseArg);
+      if (blocked.length > 0) {
+        throw new Error(`Error: cannot accept ${phaseArg} for '${ctx.id}' \u2014 prior phases not done: ${blocked.join(",")}`);
+      }
+    }
+    ensureGitAvailable();
+    const dirty = git2(["status", "--porcelain=v1", "-uall"], { cwd: gitCwd });
+    const dirtyLines = dirty.split("\n").filter((line) => line.trim() !== "");
+    const sourceDirty = dirtyLines.filter((line) => {
+      const dirtyPath = parsePorcelainPath(line);
+      if (!dirtyPath) return true;
+      return !ids.some((id) => isPipelineOwnedAcceptPath(dirtyPath, id, gitCwd));
+    });
+    if (sourceDirty.length > 0) {
+      throw new Error(
+        `Error: working tree is not clean \u2014 accept would silently skip uncommitted changes.
+  Dirty source paths (first 20):
+` + sourceDirty.slice(0, 20).map((line) => `    ${line}`).join("\n") + `
+  Commit or stash these changes first, or re-run with --force if you genuinely want to ignore them.`
+      );
+    }
+    const baseBranches = /* @__PURE__ */ new Set();
+    for (const ctx of ctxByTask.values()) {
+      const b = (ctx.status.base_branch ?? "").trim();
+      if (!b) throw new Error(`Error: status.json for '${ctx.id}' is missing base_branch \u2014 cannot determine the diff baseline for accept.`);
+      baseBranches.add(b);
+    }
+    if (baseBranches.size > 1) {
+      throw new Error(
+        `Error: bundled accept requires all tasks to share base_branch. Got: ${[...baseBranches].join(", ")}. Accept one bundle at a time.`
+      );
+    }
+    const baseBranch = [...baseBranches][0];
+    if (!gitOk(["rev-parse", "--verify", baseBranch], { cwd: gitCwd })) {
+      throw new Error(
+        `Error: base branch '${baseBranch}' is not reachable from ${gitCwd}. Fetch it or pass --force if you know the diff baseline is intentional.`
+      );
+    }
+    const diffResult = runGit(["diff", `${baseBranch}...HEAD`, "--name-status", "-M"], { cwd: gitCwd });
+    if (diffResult.error || diffResult.status !== 0) {
+      throw new Error(`Error: git diff ${baseBranch}...HEAD failed: ${(diffResult.stderr ?? "").trim() || "unknown error"}`);
+    }
+    const { diffFiles, renamePairs } = parseDiffNameStatus(diffResult.stdout ?? "");
+    if (diffFiles.length === 0 && renamePairs.length === 0) {
+      throw new Error(
+        `Error: ${baseBranch}...HEAD is empty \u2014 no work has landed on this branch.
+  Commit your changes on the task branch first, or pass --force to accept an empty implement phase anyway.`
+      );
+    }
+    const handoffFilesByTask = /* @__PURE__ */ new Map();
+    const allHandoffFiles = /* @__PURE__ */ new Set();
+    const allMalformed = [];
+    for (const ctx of ctxByTask.values()) {
+      const { files, malformed } = parseHandoffChangesRows(ctx.id);
+      handoffFilesByTask.set(ctx.id, files);
+      for (const file of files) allHandoffFiles.add(file);
+      for (const m of malformed) allMalformed.push({ taskId: ctx.id, cell: m.cell, reason: m.reason });
+    }
+    if (allMalformed.length > 0) {
+      const lines = allMalformed.slice(0, 10).map((m) => `    [${m.taskId}] '${m.cell}': ${m.reason}`);
+      const tail = allMalformed.length > 10 ? `
+    (+${allMalformed.length - 10} more)` : "";
+      throw new Error(
+        `Error: handoff.md has malformed Changes rows \u2014 fix these before accepting.
+` + lines.join("\n") + tail + `
+  Use --force to accept anyway, but the code_review pre-flight will still reject the run.`
+      );
+    }
+    const gitIgnoredHandoffFiles = filterGitIgnoredPaths([...allHandoffFiles], gitCwd);
+    const coverageIssues = verifyHandoffAgainstDiffFromData(
+      [...ids],
+      {
+        diffFiles,
+        renamePairs,
+        handoffFilesByTask,
+        gitIgnoredHandoffFiles
+      }
+    );
+    if (coverageIssues.length > 0) {
+      const lines = coverageIssues.slice(0, 10).map((i) => `    ${i}`);
+      const tail = coverageIssues.length > 10 ? `
+    (+${coverageIssues.length - 10} more)` : "";
+      throw new Error(
+        `Error: handoff.md does not match \`git diff ${baseBranch}...HEAD\` \u2014 fix the Changes table before accepting:
+` + lines.join("\n") + tail + `
+  Use --force to accept anyway, but the code_review pre-flight will still reject the run.`
+      );
+    }
+  }
+  const headRevParse = runGit(["rev-parse", "HEAD"], { cwd: gitCwd });
+  if (headRevParse.error || headRevParse.status !== 0) {
+    const stderr = (headRevParse.stderr ?? "").trim() || "unknown error";
+    throw new Error(
+      `Error: failed to read HEAD from ${gitCwd} (${stderr}). Cannot pin operator_accepted_sha \u2014 accept would silently demote on the next run. Verify the working tree has a HEAD (no unborn branch / detached state issues), then re-run.`
+    );
+  }
+  const sharedSha = (headRevParse.stdout ?? "").trim();
+  if (!sharedSha) {
+    throw new Error(
+      `Error: \`git rev-parse HEAD\` from ${gitCwd} returned an empty string. Refusing to accept without a usable SHA \u2014 see above for the working-tree state.`
+    );
+  }
+  const originalSnapshots = /* @__PURE__ */ new Map();
+  for (const ctx of ctxByTask.values()) {
+    try {
+      originalSnapshots.set(ctx.statusPath, fs6.readFileSync(ctx.statusPath, "utf8"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
+    }
+  }
+  const completedWrites = [];
+  try {
+    for (const ctx of ctxByTask.values()) {
+      const implementEntry = ensurePhaseEntry(ctx.status, "implement");
+      implementEntry.status = "done";
+      implementEntry.operator_accepted = true;
+      implementEntry.operator_accepted_at = today();
+      implementEntry.operator_accepted_sha = sharedSha;
+      ctx.status.updated = today();
+      writeStatusAtomic(ctx.statusPath, ctx.status);
+      completedWrites.push(ctx.statusPath);
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const filePath of completedWrites) {
+      const original = originalSnapshots.get(filePath);
+      if (original === void 0) continue;
+      try {
+        fs6.writeFileSync(filePath, original, "utf8");
+      } catch (rollbackErr) {
+        const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+        rollbackErrors.push(`    ${filePath}: ${message}`);
+      }
+    }
+    const originalMessage = error instanceof Error ? error.message : String(error);
+    if (rollbackErrors.length > 0) {
+      throw new Error(
+        `Error: bundled accept failed mid-write AND rollback also failed.
+  Original error: ${originalMessage}
+  Rollback failures (the following status.json files are in an inconsistent state):
+` + rollbackErrors.join("\n") + `
+  Restore manually from git history.`
+      );
+    }
+    throw new Error(`Error: bundled accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
+  }
+  for (const ctx of ctxByTask.values()) {
+    const notesPath = path7.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+    const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` \u2014 auto-commit will be skipped.${options.force ? " (--force)" : ""}`;
+    try {
+      if (fs6.existsSync(notesPath)) {
+        fs6.appendFileSync(notesPath, `
+${noteLine}
+`, "utf8");
+      } else {
+        fs6.writeFileSync(notesPath, `${noteLine}
+`, "utf8");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Warning: failed to log to notes.md for ${ctx.id}: ${message}`);
+    }
+  }
+  const label = ids.length === 1 ? ids[0] : `[${ids.join(", ")}]`;
+  console.log(
+    `Accepted ${label}: implement \u2192 done (operator_accepted=true).` + (options.force ? " (--force)" : "") + `
+  Auto-commit will be skipped on subsequent \`canon run\` invocations. The next phase (code_review) will run normally against the committed work.`
+  );
 }
 function taskResetSpecReview(id) {
   if (!id) throw new Error("Error: usage: canon task reset-spec-review <TASK-ID>");
@@ -1388,6 +1907,55 @@ function ensureGitAvailable() {
   const result = spawnSync6("git", ["--version"], { stdio: "ignore" });
   if (result.error || result.status !== 0) {
     throw new Error("Error: git is required.");
+  }
+}
+function parsePorcelainPath(line) {
+  if (line.length < 3) return null;
+  const raw = line.slice(3).trim();
+  if (!raw) return null;
+  const arrow = raw.lastIndexOf(" -> ");
+  const tail = arrow >= 0 ? raw.slice(arrow + 4) : raw;
+  return tail.replace(/^"|"$/g, "");
+}
+function isPipelineOwnedAcceptPath(filePath, taskId, gitCwd) {
+  const repoRootForPaths = resolveRepoRootForAccept(gitCwd);
+  const dirtyAbsolute = path7.isAbsolute(filePath) ? filePath : path7.resolve(repoRootForPaths, filePath);
+  const canonicalDirty = safeRealpath(dirtyAbsolute);
+  const root = tasksRoot();
+  const rootAbsolute = path7.isAbsolute(root) ? root : path7.resolve(repoRootForPaths, root);
+  const canonicalRoot = safeRealpath(rootAbsolute);
+  const taskCanonical = path7.join(canonicalRoot, taskId);
+  if (canonicalDirty === taskCanonical) return true;
+  if (canonicalDirty.startsWith(`${taskCanonical}${path7.sep}`)) return true;
+  for (const telemetry of PIPELINE_TELEMETRY_FILES) {
+    const telemetryAbsolute = path7.resolve(repoRootForPaths, telemetry);
+    if (safeRealpath(telemetryAbsolute) === canonicalDirty) return true;
+  }
+  return false;
+}
+function resolveRepoRootForAccept(gitCwd) {
+  const result = runGit(["rev-parse", "--show-toplevel"], { cwd: gitCwd });
+  if (result.error || result.status !== 0) return gitCwd;
+  return (result.stdout ?? "").trim() || gitCwd;
+}
+function resolveMainCheckoutRoot() {
+  const out = runGit(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: process.cwd() });
+  if (out.error || out.status !== 0) return process.cwd();
+  const gitCommonDir = (out.stdout ?? "").trim();
+  if (!gitCommonDir) return process.cwd();
+  return path7.dirname(gitCommonDir);
+}
+function safeRealpath(target) {
+  try {
+    return fs6.realpathSync(target);
+  } catch {
+    const parent = path7.dirname(target);
+    if (parent === target) return target;
+    try {
+      return path7.join(fs6.realpathSync(parent), path7.basename(target));
+    } catch {
+      return target;
+    }
   }
 }
 function findUntrackedClobberPaths(untracked, targetTreeFiles) {
@@ -1636,6 +2204,17 @@ function taskCmd(args2) {
       case "phase":
         taskPhase(rest[0] ?? "", rest[1] ?? "", rest[2] ?? "", rest[3]);
         break;
+      case "accept": {
+        const force = rest.includes("--force");
+        const positional = rest.filter((arg) => arg !== "--force");
+        if (positional.length < 2) {
+          throw new Error("Error: usage: canon task accept <TASK-ID...> <phase> [--force]");
+        }
+        const acceptPhase = positional[positional.length - 1];
+        const acceptIds = positional.slice(0, -1);
+        taskAccept(acceptIds, acceptPhase, { force });
+        break;
+      }
       case "reset-spec-review":
         taskResetSpecReview(rest[0] ?? "");
         break;
@@ -1839,7 +2418,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.2.0";
+  const newVersion = "1.3.0";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -2016,7 +2595,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.2.0");
+  console.log("1.3.0");
 }
 switch (command) {
   case "doctor":

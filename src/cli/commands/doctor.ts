@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { homedir } from 'os';
+import { join, sep as pathSep } from 'path';
 import { isAvailable } from '../deps.js';
 
 interface Check {
@@ -246,6 +247,155 @@ export function checkCodexConfig(cwd: string): Check {
     return { label: '.codex/config.toml', status: 'warn', detail: 'missing — Codex will use defaults' };
 }
 
+/**
+ * Parses the global `~/.codex/config.toml` and returns a map of project paths
+ * to their declared trust level. Codex creates `[projects."<absolute-path>"]`
+ * blocks the first time a user opens that workspace interactively and clicks
+ * "trust"; canon spawns `codex exec` from worktree paths, so if a workspace
+ * has never been opened manually, codex fails hard with no actionable output.
+ *
+ * Format we parse (loose — no full TOML parser dep):
+ *
+ *   [projects."/Users/x/repo"]
+ *   trust_level = "trusted"
+ *
+ * Other keys inside the project block are ignored.
+ */
+export function parseCodexProjectTrust(tomlContent: string): Map<string, string> {
+    const result = new Map<string, string>();
+    const lines = tomlContent.split('\n');
+    let currentProject: string | null = null;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        // TOML also allows trailing `# comment` after the closing `]`.
+        const header = trimmed.match(/^\[projects\."(.+)"\]\s*(?:#.*)?$/);
+        if (header) {
+            currentProject = header[1];
+            continue;
+        }
+        if (trimmed.startsWith('[')) {
+            currentProject = null;
+            continue;
+        }
+        if (currentProject) {
+            // TOML allows an inline `# comment` after the value — accept it.
+            const trust = trimmed.match(/^trust_level\s*=\s*"([^"]+)"\s*(?:#.*)?$/);
+            if (trust) {
+                result.set(currentProject, trust[1]);
+            }
+        }
+    }
+    return result;
+}
+
+function safeRealpathOrSelf(target: string): string {
+    try { return realpathSync(target); } catch { return target; }
+}
+
+export function checkCodexProjectTrust(cwd: string): Check {
+    const label = 'codex project trust';
+    const configPath = join(homedir(), '.codex', 'config.toml');
+    if (!existsSync(configPath)) {
+        return {
+            label,
+            status: 'warn',
+            detail: `${configPath} not found — run \`codex\` once interactively to initialize, or add a [projects."<path>"] entry manually before \`canon run\``,
+        };
+    }
+
+    let trustMap: Map<string, string>;
+    try {
+        const content = readFileSync(configPath, 'utf8');
+        trustMap = parseCodexProjectTrust(content);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { label, status: 'warn', detail: `failed to read ${configPath}: ${message}` };
+    }
+
+    // Identify the workspace root that codex would key on. Prefer the git
+    // toplevel (which canon's worktree paths all live under); fall back to
+    // cwd if git isn't initialized.
+    let workspaceRoot = cwd;
+    try {
+        const out = execSync('git rev-parse --show-toplevel', { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+        if (out) workspaceRoot = out;
+    } catch { /* not in a git repo — fall through */ }
+    const canonicalWorkspace = safeRealpathOrSelf(workspaceRoot);
+
+    // Direct match wins absolutely — an explicit entry for this workspace
+    // overrides any parent's trust (otherwise an `untrusted` child under a
+    // trusted parent would be silently reported as trusted).
+    for (const [project, level] of trustMap) {
+        const canonicalProject = safeRealpathOrSelf(project);
+        if (canonicalProject === canonicalWorkspace) {
+            if (level === 'trusted') {
+                return { label, status: 'pass', detail: `${workspaceRoot} is trusted` };
+            }
+            return {
+                label,
+                status: 'warn',
+                detail:
+                    `${workspaceRoot} has an explicit trust_level = "${level}" in ${configPath}. ` +
+                    `Change it to "trusted" or remove the block:\n` +
+                    `        [projects."${workspaceRoot}"]\n` +
+                    `        trust_level = "trusted"`,
+            };
+        }
+    }
+
+    // No exact entry — fall back to parent inheritance. Codex's trust UI treats
+    // child paths as inheriting from a trusted parent; mirror that here so we
+    // don't false-warn when (e.g.) `/Users/x` is trusted and the workspace is
+    // `/Users/x/myrepo` with no entry of its own.
+    //
+    // Nearest-ancestor wins: a closer untrusted entry overrides a more distant
+    // trusted one (e.g. `/Users/x` trusted + `/Users/x/repo` untrusted, with
+    // workspace `/Users/x/repo/sub` → treat as untrusted). Otherwise file
+    // ordering in the TOML would determine the result.
+    type Ancestor = { project: string; level: string; depth: number };
+    const ancestors: Ancestor[] = [];
+    for (const [project, level] of trustMap) {
+        const canonicalProject = safeRealpathOrSelf(project);
+        // `path.sep` rather than literal `/` so Windows (and any non-POSIX
+        // platform) matches `C:\Users\me\repo` against trusted parent
+        // `C:\Users\me` correctly. `realpath` returns native separators, so
+        // both operands here are already in the platform's form.
+        if (canonicalWorkspace.startsWith(`${canonicalProject}${pathSep}`)) {
+            ancestors.push({ project, level, depth: canonicalProject.length });
+        }
+    }
+    if (ancestors.length > 0) {
+        ancestors.sort((a, b) => b.depth - a.depth);
+        const nearest = ancestors[0];
+        if (nearest.level === 'trusted') {
+            return {
+                label,
+                status: 'pass',
+                detail: `inherited from trusted parent ${nearest.project}`,
+            };
+        }
+        return {
+            label,
+            status: 'warn',
+            detail:
+                `nearest ancestor ${nearest.project} has trust_level = "${nearest.level}" — codex exec will fail. ` +
+                `Add an explicit trusted entry for this workspace:\n` +
+                `        [projects."${workspaceRoot}"]\n` +
+                `        trust_level = "trusted"`,
+        };
+    }
+
+    return {
+        label,
+        status: 'warn',
+        detail:
+            `${workspaceRoot} is not in ${configPath} — codex exec will fail hard on first invocation. ` +
+            `Add this block to fix:\n` +
+            `        [projects."${workspaceRoot}"]\n` +
+            `        trust_level = "trusted"`,
+    };
+}
+
 function readAllowFromSettings(path: string): { allow: Set<string>; status: 'ok' | 'missing' | 'invalid' } {
     if (!existsSync(path)) return { allow: new Set(), status: 'missing' };
     try {
@@ -369,6 +519,7 @@ export function doctorCmd(_args: string[]): void {
 
     const configChecks: Check[] = [
         checkCodexConfig(cwd),
+        checkCodexProjectTrust(cwd),
         checkRecommendedPermissions(cwd),
         checkLocalSettingsGitignored(cwd),
     ];

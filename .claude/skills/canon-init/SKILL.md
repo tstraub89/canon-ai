@@ -195,4 +195,4 @@ Then print a summary:
 - Whether the Claude permissions allowlist was updated
 - Any sections left intentionally thin, and why
 - Next step: `git diff --staged` to review, then commit when satisfied
-- How to run the pipeline once you have a task ready: `canon run <id>` (or `npx tsx scripts/run-task.ts <id>` without global install)
+- How to run the pipeline once you have a task ready: `canon run <id>`

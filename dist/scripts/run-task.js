@@ -639,6 +639,20 @@ function gitSafeAtRaw(cwd, ...args) {
   if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
   return { ok: result.status === 0, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
 }
+function filterGitIgnoredPaths(paths, cwd) {
+  if (paths.length === 0) return /* @__PURE__ */ new Set();
+  const result = spawnSync3("git", ["check-ignore", "--stdin", "-z"], {
+    cwd,
+    input: `${paths.join("\0")}\0`,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0 && result.status !== 1) {
+    return /* @__PURE__ */ new Set();
+  }
+  const stdout = result.stdout ?? "";
+  return new Set(stdout.split("\0").filter((p) => p.length > 0));
+}
 function commitTaskArtifactsToBase(taskIds, _artifactFiles) {
   void _artifactFiles;
   for (const taskId of taskIds) {
@@ -1577,6 +1591,10 @@ function validateHandoff(taskId) {
     }
     issues.push(...checkAcCoveragePlaceholders(content));
     issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults));
+    const { malformed } = parseHandoffChangesRows(taskId);
+    for (const entry of malformed) {
+      issues.push(`Changes table row '${entry.cell}': ${entry.reason}`);
+    }
   } catch {
     issues.push("handoff.md not found");
   }
@@ -1841,14 +1859,18 @@ ${list}
   return { ok: true };
 }
 function parseHandoffFiles(taskId) {
+  return parseHandoffChangesRows(taskId).files;
+}
+function parseHandoffChangesRows(taskId) {
   const handoffPath = path6.join(taskDirFor(taskId), "handoff.md");
   let content;
   try {
     content = fs5.readFileSync(handoffPath, "utf8");
   } catch {
-    return [];
+    return { files: [], malformed: [] };
   }
   const files = /* @__PURE__ */ new Set();
+  const malformed = [];
   const tables = [
     parseTable(content, "Changes"),
     ...extractSectionBodies(content, /^## Iteration\b/).map((body) => parseTableH3(body, "Changes"))
@@ -1856,18 +1878,85 @@ function parseHandoffFiles(taskId) {
   for (const rows of tables) {
     for (const row of rows) {
       const firstColumn = Object.values(row)[0] ?? "";
-      const extracted = extractHandoffPath(firstColumn);
-      if (extracted) files.add(extracted);
+      if (!firstColumn.trim()) continue;
+      const result = parseHandoffPathCell(firstColumn);
+      if (result.kind === "ok") {
+        files.add(result.path);
+      } else {
+        malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+      }
     }
   }
-  return [...files];
+  return { files: [...files], malformed };
 }
-function extractHandoffPath(cell) {
-  const backtick = cell.match(/`([^`]+)`/);
-  if (backtick?.[1]) return backtick[1].trim();
-  const mdLink = cell.match(/\[([^\]]+)\]\([^)]*\)/);
-  if (mdLink?.[1]) return mdLink[1].trim();
-  return null;
+function parseHandoffPathCell(cell) {
+  const trimmed = cell.trim();
+  if (!trimmed) return { kind: "malformed", reason: "empty cell" };
+  const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
+  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]*\)/g)];
+  if (backtickGroups.length + mdLinkGroups.length > 1) {
+    const tokens = [
+      ...backtickGroups.map((m) => `\`${m[1]}\``),
+      ...mdLinkGroups.map((m) => `[${m[1]}](...)`)
+    ];
+    return {
+      kind: "malformed",
+      reason: `multiple paths in one cell (${tokens.join(", ")}) \u2014 list one path per row`
+    };
+  }
+  if (backtickGroups.length === 1) {
+    if (!/^`[^`]+`(?:\s+.*)?$/.test(trimmed)) {
+      return {
+        kind: "malformed",
+        reason: `backticked path must be at the start of the cell, optionally followed by an annotation \u2014 got: ${snippet(trimmed)}`
+      };
+    }
+    return validateExtractedPath(backtickGroups[0][1].trim());
+  }
+  if (mdLinkGroups.length === 1) {
+    if (!/^\[[^\]]+\]\(.*\)(?:\s+.*)?$/.test(trimmed)) {
+      return {
+        kind: "malformed",
+        reason: `markdown link must be at the start of the cell \u2014 got: ${snippet(trimmed)}`
+      };
+    }
+    return validateExtractedPath(mdLinkGroups[0][1].trim());
+  }
+  return {
+    kind: "malformed",
+    reason: `no recognized path \u2014 first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`
+  };
+}
+function snippet(value) {
+  return value.length > 80 ? `${value.slice(0, 77)}...` : value;
+}
+function validateExtractedPath(extracted) {
+  if (!extracted) return { kind: "malformed", reason: "empty path inside backticks/link" };
+  if (/[*?]/.test(extracted)) {
+    return {
+      kind: "malformed",
+      reason: `wildcard not allowed in '${extracted}' \u2014 list each file explicitly so the diff\u2192handoff check can match`
+    };
+  }
+  if (extracted.includes("<") || extracted.includes(">")) {
+    return {
+      kind: "malformed",
+      reason: `template placeholder left unfilled in '${extracted}' \u2014 replace with a real file path`
+    };
+  }
+  if (/^([a-zA-Z]:)?[\\/]/.test(extracted)) {
+    return {
+      kind: "malformed",
+      reason: `absolute path '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
+  if (extracted.split(/[\\/]/).includes("..")) {
+    return {
+      kind: "malformed",
+      reason: `parent-directory traversal in '${extracted}' not allowed \u2014 handoff paths must be repo-relative`
+    };
+  }
+  return { kind: "ok", path: extracted };
 }
 var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
 function isPipelineOwnedTaskArtifact(filePath, taskIds) {
@@ -1875,6 +1964,7 @@ function isPipelineOwnedTaskArtifact(filePath, taskIds) {
 }
 function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   const renamePairs = inputs.renamePairs ?? [];
+  const gitIgnored = inputs.gitIgnoredHandoffFiles ?? /* @__PURE__ */ new Set();
   const coveredPaths = new Set(inputs.diffFiles);
   for (const [oldPath, newPath] of renamePairs) {
     coveredPaths.add(oldPath);
@@ -1891,6 +1981,7 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   for (const taskId of taskIds) {
     const files = handoffFilesByTask.get(taskId) ?? [];
     for (const filePath of files) {
+      if (gitIgnored.has(filePath)) continue;
       if (!coveredPaths.has(filePath)) {
         issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff`);
       }
@@ -1935,7 +2026,14 @@ function verifyHandoffAgainstDiff(taskIds, baseRef) {
   const handoffFilesByTask = new Map(
     taskIds.map((taskId) => [taskId, parseHandoffFiles(taskId)])
   );
-  return verifyHandoffAgainstDiffFromData(taskIds, { diffFiles, renamePairs, handoffFilesByTask });
+  const allHandoffPaths = [...new Set([...handoffFilesByTask.values()].flat())];
+  const gitIgnoredHandoffFiles = filterGitIgnoredPaths(allHandoffPaths, cwd);
+  return verifyHandoffAgainstDiffFromData(taskIds, {
+    diffFiles,
+    renamePairs,
+    handoffFilesByTask,
+    gitIgnoredHandoffFiles
+  });
 }
 
 // scripts/run-task/context.ts
@@ -3175,6 +3273,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     }
   }
   const entry = ensurePhaseEntry(status, phaseArg);
+  const previousStatus = entry.status;
   entry.status = statusArg;
   status.updated = today();
   if (verdictArg && Object.hasOwn(entry, "verdict")) {
@@ -3182,6 +3281,11 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   }
   if (REVIEW_PHASES.has(phaseArg)) {
     updateReviewCounters(entry, verdictArg);
+  }
+  if (phaseArg === "implement" && previousStatus === "done" && statusArg !== "done") {
+    delete entry.operator_accepted;
+    delete entry.operator_accepted_sha;
+    delete entry.operator_accepted_at;
   }
   writeStatusAtomic(statusPath, status);
   if (verdictArg) {
@@ -3754,7 +3858,16 @@ function appendAutoCommitDebug(taskIds, details) {
 }
 function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
   const baseRef = getBaseBranch2(taskIds);
-  const postStatus = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall", "--", ...handoffFiles);
+  const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
+  const verifiableHandoffFiles = handoffFiles.filter((f) => !gitIgnoredHandoffFiles.has(f));
+  Object.assign(debug, {
+    verifyGitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles]
+  });
+  if (verifiableHandoffFiles.length === 0) {
+    appendAutoCommitDebug(taskIds, { ...debug, result: "verify-all-gitignored" });
+    return;
+  }
+  const postStatus = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall", "--", ...verifiableHandoffFiles);
   const missing = [];
   if (!postStatus.ok) {
     Object.assign(debug, {
@@ -3767,7 +3880,7 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
     die2(`Auto-commit coverage check failed: could not inspect post-commit status: ${postStatus.stderr || "unknown error"}`);
   }
   const stillDirty = parsePorcelain(postStatus.stdout);
-  for (const filePath of handoffFiles) {
+  for (const filePath of verifiableHandoffFiles) {
     if (stillDirty.has(filePath)) {
       missing.push(`${filePath} \u2014 still dirty after auto-commit`);
       continue;
@@ -3777,7 +3890,7 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
       missing.push(`${filePath} \u2014 no commit touches this path in ${baseRef}..HEAD`);
     }
   }
-  const wtDiff = gitSafeAtRaw2(cwd, "diff", "HEAD", "--name-only", "--", ...handoffFiles);
+  const wtDiff = gitSafeAtRaw2(cwd, "diff", "HEAD", "--name-only", "--", ...verifiableHandoffFiles);
   if (!wtDiff.ok) {
     Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
     appendAutoCommitDebug(taskIds, debug);
@@ -3809,14 +3922,53 @@ function isPipelineOwnedPath(filePath, taskIds) {
   if (taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`))) return true;
   return PIPELINE_TELEMETRY_FILES.includes(filePath);
 }
+function operatorAcceptedImplement(taskIds, cwd) {
+  const allAccepted = taskIds.every((taskId) => {
+    const status = readStatus(taskId);
+    return status.phases?.implement?.operator_accepted === true;
+  });
+  if (!allAccepted) return false;
+  const head = gitSafeAt(cwd, "rev-parse", "HEAD");
+  if (!head.ok) return false;
+  const currentSha = head.stdout.trim();
+  if (!currentSha) return false;
+  const shaMatch = taskIds.every((taskId) => {
+    const status = readStatus(taskId);
+    const recorded = (status.phases?.implement?.operator_accepted_sha ?? "").trim();
+    return recorded !== "" && recorded === currentSha;
+  });
+  if (!shaMatch) return false;
+  const dirty = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
+  if (!dirty.ok) return false;
+  if (dirty.stdout.trim() === "") return true;
+  const dirtyPaths = [...parsePorcelain(dirty.stdout)];
+  const sourceDirty = dirtyPaths.filter((p) => !isPipelineOwnedPath(p, taskIds));
+  return sourceDirty.length === 0;
+}
 function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   const primaryStatus = readStatus(taskIds[0]);
   const title = getTitle(primaryStatus);
+  if (operatorAcceptedImplement(taskIds, cwd)) {
+    info("Auto-commit skipped \u2014 implement phase was operator-accepted (canon task accept) and HEAD still matches the accepted SHA.");
+    return;
+  }
   const allHandoffFiles = /* @__PURE__ */ new Set();
+  const allMalformed = [];
   for (const taskId of taskIds) {
-    for (const file of parseHandoffFiles(taskId)) {
-      allHandoffFiles.add(file);
+    const { files, malformed } = parseHandoffChangesRows(taskId);
+    for (const file of files) allHandoffFiles.add(file);
+    for (const entry of malformed) {
+      allMalformed.push({ taskId, cell: entry.cell, reason: entry.reason });
     }
+  }
+  if (allMalformed.length > 0) {
+    const lines = allMalformed.map((m) => `    [${m.taskId}] '${m.cell}': ${m.reason}`);
+    die(
+      `Auto-commit aborted: handoff.md Changes table has malformed rows.
+` + lines.join("\n") + `
+  Fix each row to one path per line in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),
+  then re-run. Combined paths, wildcards, and unfilled \`<placeholder>\` rows are not accepted.`
+    );
   }
   if (allHandoffFiles.size === 0) {
     const emptyDebug = { cwd, handoffFiles: [] };
@@ -3872,14 +4024,17 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   }
   const dirtyFiles = parsePorcelain(dirtyResult.stdout);
   const toStage = handoffFiles.filter((f) => dirtyFiles.has(f));
+  const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
   Object.assign(debug, {
     dirtyFiles: [...dirtyFiles],
-    toStage
+    toStage,
+    gitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles]
   });
   const missing = [];
   const baseRefForLog = getBaseBranch(taskIds);
   for (const f of allHandoffFiles) {
     if (dirtyFiles.has(f)) continue;
+    if (gitIgnoredHandoffFiles.has(f)) continue;
     const exists = fs14.existsSync(path15.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);
@@ -4030,12 +4185,31 @@ function buildHumanReviewStagePaths(taskIds, dirtyEntries) {
   }
   return [...stagePaths];
 }
+function findPullRequestTemplate(repoRoot) {
+  const candidates = [
+    path15.join(repoRoot, ".github", "pull_request_template.md"),
+    path15.join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
+    path15.join(repoRoot, "docs", "pull_request_template.md"),
+    path15.join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
+    path15.join(repoRoot, "pull_request_template.md"),
+    path15.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
+  ];
+  for (const candidate of candidates) {
+    if (fs14.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+function resolveCanonPrBody(taskIds, title, env = process.env) {
+  const template = env.CANON_PR_BODY;
+  if (template === void 0 || template === "") return null;
+  const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(", ");
+  return template.replaceAll("$LABEL", label).replaceAll("$TITLE", title);
+}
 function createDraftPRForTask(taskIds, branchName) {
   if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
   const baseBranch = getBaseBranch2(taskIds);
   const title = getTitle(readStatus(taskIds[0]));
-  const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(", ");
-  const prResult = runCommand("gh", [
+  const args = [
     "pr",
     "create",
     "--draft",
@@ -4044,10 +4218,21 @@ function createDraftPRForTask(taskIds, branchName) {
     "--head",
     branchName,
     "--title",
-    title,
-    "--body",
-    `Auto-generated by canon-ai for ${label}.`
-  ]);
+    title
+  ];
+  const body = resolveCanonPrBody(taskIds, title);
+  if (body !== null) {
+    args.push("--body", body);
+  } else {
+    const activeCwd = getActiveCwd(taskIds);
+    const templatePath = findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
+    if (templatePath) {
+      args.push("--body-file", templatePath);
+    } else {
+      args.push("--fill");
+    }
+  }
+  const prResult = runCommand("gh", args);
   if (!prResult.ok) {
     die2(`Failed to create draft PR: ${prResult.stderr || "unknown error"}`);
   }
@@ -4055,6 +4240,17 @@ function createDraftPRForTask(taskIds, branchName) {
 }
 function formatExistingPRMessage(prNum, prUrl) {
   return `Existing draft PR: #${prNum} (${prUrl})`;
+}
+function reportOrCreatePR(taskIds, branchName) {
+  if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
+  const baseBranch = getBaseBranch(taskIds);
+  const openPR = findOpenPRNumber(branchName, baseBranch);
+  if (openPR !== null) {
+    const prUrl = lookupPRUrl(openPR);
+    info2(formatExistingPRMessage(openPR, prUrl));
+    return;
+  }
+  createDraftPRForTask(taskIds, branchName);
 }
 function parseOriginRepoSlug(remoteUrl) {
   const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
@@ -4130,21 +4326,12 @@ function commitHumanReviewFiles(taskIds, cwd) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
-      const baseBranch = getBaseBranch(taskIds);
-      const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName2, baseBranch) : null;
       info2(`Clean tree. Pushing ${branchName2}...`);
       const pushResult2 = gitSafeAt2(cwd, "push", "origin", branchName2);
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
       }
-      if (cliArgs.pr && openPR !== null) {
-        const prUrl = lookupPRUrl(openPR);
-        info2(formatExistingPRMessage(openPR, prUrl));
-        return;
-      }
-      if (cliArgs.pr) {
-        createDraftPRForTask(taskIds, branchName2);
-      }
+      if (cliArgs.pr) reportOrCreatePR(taskIds, branchName2);
       return;
     }
   }
@@ -4213,9 +4400,7 @@ function commitHumanReviewFiles(taskIds, cwd) {
   if (!pushResult.ok) {
     die2(`Human review push failed: ${pushResult.stderr || "unknown error"}`);
   }
-  if (cliArgs.pr) {
-    createDraftPRForTask(taskIds, branchName);
-  }
+  if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
 }
 function printDryRunPlan(state) {
   const { tasks } = state;
@@ -4589,6 +4774,7 @@ function rerouteFromHumanReview(taskIds) {
       implement.status = "pending";
       implement.rerouted = true;
       implement.reroute_count = (implement.reroute_count ?? 0) + 1;
+      clearImplementOperatorAcceptance(implement);
     }
     const codeReview = status.phases.code_review;
     if (codeReview) {
@@ -4610,10 +4796,19 @@ function rerouteFromHumanReview(taskIds) {
   info("   Amendment section with the new requirements. review.md alone is not sufficient \u2014 Codex reads spec.md");
   info("   as the contract. The main-repo spec is synced into the worktree at the start of implement.");
 }
+function clearImplementOperatorAcceptance(implement) {
+  if (!implement) return;
+  delete implement.operator_accepted;
+  delete implement.operator_accepted_sha;
+  delete implement.operator_accepted_at;
+}
 function routeBackTo(taskIds, targetPhase) {
   const targetIdx = PHASE_ORDER2.indexOf(targetPhase);
   for (const taskId of taskIds) {
     const status = readStatus(taskId);
+    if (targetIdx <= PHASE_ORDER2.indexOf("implement")) {
+      clearImplementOperatorAcceptance(status.phases.implement);
+    }
     for (let i = targetIdx; i < PHASE_ORDER2.length; i += 1) {
       const phaseEntry = status.phases[PHASE_ORDER2[i]];
       if (phaseEntry) phaseEntry.status = "pending";
@@ -4691,8 +4886,15 @@ function readArtifact(taskId, name) {
 function tryEvidenceAdvance(taskId, phase) {
   switch (phase) {
     case "implement": {
-      const files = parseHandoffFiles(taskId);
-      if (files.length === 0) return { advanced: false, note: "handoff.md Changes table is empty" };
+      const { files, malformed } = parseHandoffChangesRows(taskId);
+      if (files.length === 0 && malformed.length === 0) {
+        return { advanced: false, note: "handoff.md Changes table is empty" };
+      }
+      if (malformed.length > 0) {
+        const sample = malformed.slice(0, 3).map((m) => `'${m.cell}': ${m.reason}`).join("; ");
+        const tail = malformed.length > 3 ? ` (+${malformed.length - 3} more)` : "";
+        return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
+      }
       const issues = validateHandoffAgainstSpec(
         path15.join(taskDirFor2(taskId), "spec.md"),
         path15.join(taskDirFor2(taskId), "handoff.md")
@@ -4704,12 +4906,23 @@ function tryEvidenceAdvance(taskId, phase) {
         const wt = worktreePath(taskId);
         if (fs14.existsSync(wt)) checkRoots.push(wt);
       }
-      const existingFiles = files.filter((f) => checkRoots.some((root) => fs14.existsSync(path15.join(root, f))));
+      const ignoreCwd = checkRoots[checkRoots.length - 1];
+      const gitIgnored = filterGitIgnoredPaths(files, ignoreCwd);
+      const verifiableFiles = files.filter((f) => !gitIgnored.has(f));
+      if (verifiableFiles.length === 0) {
+        return {
+          advanced: false,
+          note: `handoff.md lists ${files.length} file(s) but all are gitignored \u2014 at least one tracked source file is required as evidence`
+        };
+      }
+      const existingFiles = verifiableFiles.filter(
+        (f) => checkRoots.some((root) => fs14.existsSync(path15.join(root, f)))
+      );
       if (existingFiles.length === 0) {
         return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk` };
       }
       taskPhase(taskId, "implement", "done");
-      return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk), validation clean` };
+      return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk, ${gitIgnored.size} gitignored), validation clean` };
     }
     case "code_review": {
       const content = readArtifact(taskId, "review.md");

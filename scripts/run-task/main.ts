@@ -8,7 +8,7 @@ import { runQaPhase } from './phases/qa.js';
 import { runSpecPhase } from './phases/spec.js';
 import { runSpecReviewPhase } from './phases/spec-review.js';
 import * as splitTypes from './types.js';
-import type { PhaseRunResult } from './types.js';
+import type { PhaseEntry, PhaseRunResult } from './types.js';
 import * as splitCli from './cli.js';
 import * as splitEnv from './env.js';
 import * as splitState from './state.js';
@@ -197,7 +197,22 @@ function verifyHandoffFilesCommitted(
     debug: Record<string, unknown>,
 ): void {
     const baseRef = getBaseBranch(taskIds);
-    const postStatus = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall', '--', ...handoffFiles);
+    // Gitignored handoff entries (build-generated artifacts) skip the post-commit
+    // verification entirely — they cannot appear in `git status` (ignored),
+    // `git log` (untracked), or `git diff HEAD` (untracked). The same gitignored
+    // exemption is applied upstream in `autoCommitCode` and downstream in
+    // `verifyHandoffAgainstDiff`; without it here, the success path still aborts
+    // after staging on a perfectly-valid generator+artifact handoff.
+    const gitIgnoredHandoffFiles = splitGit.filterGitIgnoredPaths(handoffFiles, cwd);
+    const verifiableHandoffFiles = handoffFiles.filter(f => !gitIgnoredHandoffFiles.has(f));
+    Object.assign(debug, {
+        verifyGitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles],
+    });
+    if (verifiableHandoffFiles.length === 0) {
+        appendAutoCommitDebug(taskIds, { ...debug, result: 'verify-all-gitignored' });
+        return;
+    }
+    const postStatus = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall', '--', ...verifiableHandoffFiles);
     const missing: string[] = [];
 
     if (!postStatus.ok) {
@@ -213,7 +228,7 @@ function verifyHandoffFilesCommitted(
 
     const stillDirty = splitGit.parsePorcelain(postStatus.stdout);
 
-    for (const filePath of handoffFiles) {
+    for (const filePath of verifiableHandoffFiles) {
         if (stillDirty.has(filePath)) {
             missing.push(`${filePath} — still dirty after auto-commit`);
             continue;
@@ -235,7 +250,7 @@ function verifyHandoffFilesCommitted(
     // iteration 3 of handoff-verifier; this is the canonical defense, not the
     // duplicate `git diff HEAD` check that originally lived only in autoCommitCode's
     // success path. See docs/lessons-learned.md for the incident.
-    const wtDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...handoffFiles);
+    const wtDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...verifiableHandoffFiles);
     if (!wtDiff.ok) {
         Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
         appendAutoCommitDebug(taskIds, debug);
@@ -279,15 +294,79 @@ function isPipelineOwnedPath(filePath: string, taskIds: readonly string[]): bool
     return (splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath);
 }
 
+/**
+ * True iff the bundle's auto-commit step should be skipped because the
+ * operator already manually committed and ran `canon task accept`.
+ *
+ * Three checks (all must hold):
+ *   1. Every task in the bundle has `phases.implement.operator_accepted: true`.
+ *   2. Current HEAD matches the recorded `operator_accepted_sha` on every task.
+ *      Pins the acceptance to a specific commit so a later commit on the
+ *      task branch invalidates the skip.
+ *   3. The working tree has no source-file dirt outside pipeline-owned paths.
+ *      Without this, an operator could accept, then leave new uncommitted
+ *      edits, and the next `canon run` would silently bypass auto-commit
+ *      against fresh dirty files.
+ *
+ * Bundle is all-or-nothing — accepting one task's implement but not the
+ * others would leave autocommit half-running on the unaccepted tasks.
+ */
+function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boolean {
+    const allAccepted = taskIds.every(taskId => {
+        const status = splitState.readStatus(taskId);
+        return status.phases?.implement?.operator_accepted === true;
+    });
+    if (!allAccepted) return false;
+
+    const head = splitGit.gitSafeAt(cwd, 'rev-parse', 'HEAD');
+    if (!head.ok) return false;
+    const currentSha = head.stdout.trim();
+    if (!currentSha) return false;
+
+    const shaMatch = taskIds.every(taskId => {
+        const status = splitState.readStatus(taskId);
+        const recorded = (status.phases?.implement?.operator_accepted_sha ?? '').trim();
+        return recorded !== '' && recorded === currentSha;
+    });
+    if (!shaMatch) return false;
+
+    // Source-tree must be clean (pipeline-owned paths are fine). Skipping
+    // auto-commit when the tree has fresh source edits would let them slip
+    // straight into code_review.
+    const dirty = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+    if (!dirty.ok) return false;
+    if (dirty.stdout.trim() === '') return true;
+    const dirtyPaths = [...splitGit.parsePorcelain(dirty.stdout)];
+    const sourceDirty = dirtyPaths.filter(p => !isPipelineOwnedPath(p, taskIds));
+    return sourceDirty.length === 0;
+}
+
 function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const primaryStatus = splitState.readStatus(taskIds[0]);
     const title = getTitle(primaryStatus);
 
+    if (operatorAcceptedImplement(taskIds, cwd)) {
+        splitCli.info('Auto-commit skipped — implement phase was operator-accepted (canon task accept) and HEAD still matches the accepted SHA.');
+        return;
+    }
+
     const allHandoffFiles = new Set<string>();
+    const allMalformed: Array<{ taskId: string; cell: string; reason: string }> = [];
     for (const taskId of taskIds) {
-        for (const file of splitValidation.parseHandoffFiles(taskId)) {
-            allHandoffFiles.add(file);
+        const { files, malformed } = splitValidation.parseHandoffChangesRows(taskId);
+        for (const file of files) allHandoffFiles.add(file);
+        for (const entry of malformed) {
+            allMalformed.push({ taskId, cell: entry.cell, reason: entry.reason });
         }
+    }
+    if (allMalformed.length > 0) {
+        const lines = allMalformed.map(m => `    [${m.taskId}] '${m.cell}': ${m.reason}`);
+        splitCli.die(
+            `Auto-commit aborted: handoff.md Changes table has malformed rows.\n` +
+            lines.join('\n') +
+            `\n  Fix each row to one path per line in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),\n` +
+            `  then re-run. Combined paths, wildcards, and unfilled \`<placeholder>\` rows are not accepted.`
+        );
     }
 
     if (allHandoffFiles.size === 0) {
@@ -366,9 +445,18 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
 
     const dirtyFiles = splitGit.parsePorcelain(dirtyResult.stdout);
     const toStage = handoffFiles.filter(f => dirtyFiles.has(f));
+    // Gitignored handoff entries — typically build-generated artifacts like
+    // `public/sitemap.xml` that Codex legitimately references in the Changes
+    // table to describe build output. They will never appear in
+    // `git diff base...HEAD` (not tracked), never show in `git status` (ignored),
+    // and `ls-files --error-unmatch` rejects them. Exempt them from the
+    // existence/tracked checks below — the script that generated them is the
+    // real change and should be listed alongside.
+    const gitIgnoredHandoffFiles = splitGit.filterGitIgnoredPaths(handoffFiles, cwd);
     Object.assign(debug, {
         dirtyFiles: [...dirtyFiles],
         toStage,
+        gitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles],
     });
 
     // Verify every handoff file is accounted for. If a handoff entry isn't
@@ -381,6 +469,7 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const baseRefForLog = splitGit.getBaseBranch(taskIds);
     for (const f of allHandoffFiles) {
         if (dirtyFiles.has(f)) continue;
+        if (gitIgnoredHandoffFiles.has(f)) continue;
         const exists = fs.existsSync(path.join(cwd, f));
         if (!exists) {
             // Path is absent from the working tree — accept it if a commit on
@@ -553,19 +642,94 @@ export function buildHumanReviewStagePaths(taskIds: string[], dirtyEntries: read
     return [...stagePaths];
 }
 
+/**
+ * Returns the path to the repo's pull-request template if one exists at any
+ * of GitHub's recognized locations, or `null` if not. Exported for testing.
+ */
+export function findPullRequestTemplate(repoRoot: string): string | null {
+    // GitHub recognizes both lowercase and uppercase basenames at three
+    // canonical locations (`.github/`, `docs/`, repo root). On case-insensitive
+    // filesystems (macOS, Windows) the variants collide; on case-sensitive
+    // ones (Linux servers, CI runners) they are distinct files. Probe both
+    // casings at each location so canon doesn't silently miss a template
+    // because the repo happens to use the uppercase form.
+    const candidates = [
+        path.join(repoRoot, '.github', 'pull_request_template.md'),
+        path.join(repoRoot, '.github', 'PULL_REQUEST_TEMPLATE.md'),
+        path.join(repoRoot, 'docs', 'pull_request_template.md'),
+        path.join(repoRoot, 'docs', 'PULL_REQUEST_TEMPLATE.md'),
+        path.join(repoRoot, 'pull_request_template.md'),
+        path.join(repoRoot, 'PULL_REQUEST_TEMPLATE.md'),
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+}
+
+/**
+ * Returns the `--body` value to pass to `gh pr create`, or `null` if `gh`
+ * should fall back to its own defaults (PR template, commit messages).
+ *
+ * Default behavior (1.3.0+) is `null` — no body, no canon attribution.
+ * Adopters who want the prior "Auto-generated by canon-ai" lead can set
+ * `CANON_PR_BODY` to a template string. Placeholders:
+ *   - `$LABEL` → the task ID(s) (single or comma-joined)
+ *   - `$TITLE` → the PR title
+ *
+ * Exported for unit testing.
+ */
+export function resolveCanonPrBody(
+    taskIds: readonly string[],
+    title: string,
+    env: NodeJS.ProcessEnv = process.env,
+): string | null {
+    const template = env.CANON_PR_BODY;
+    if (template === undefined || template === '') return null;
+    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
+    return template.replaceAll('$LABEL', label).replaceAll('$TITLE', title);
+}
+
 function createDraftPRForTask(taskIds: string[], branchName: string): void {
     if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
     const baseBranch = getBaseBranch(taskIds);
     const title = getTitle(splitState.readStatus(taskIds[0]));
-    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
-    const prResult = splitGit.runCommand('gh', [
+    // 1.3.0 dropped the prior `Auto-generated by canon-ai for <label>` default
+    // after the GP "ninja mode" report — leaking the tool used was the one
+    // remaining canon footprint in adopter PRs. See `resolveCanonPrBody`.
+    const args = [
         'pr', 'create',
         '--draft',
         '--base', baseBranch,
         '--head', branchName,
         '--title', title,
-        '--body', `Auto-generated by canon-ai for ${label}.`,
-    ]);
+    ];
+    const body = resolveCanonPrBody(taskIds, title);
+    if (body !== null) {
+        args.push('--body', body);
+    } else {
+        // `gh pr create` only consults `.github/pull_request_template.md`
+        // in interactive mode; in non-tty contexts (CI, background pipeline
+        // runs) it errors without a `--body` / `--body-file` / `--fill`.
+        // Prefer the repo's PR template if it exists so adopters keep their
+        // template content; otherwise `--fill` populates from the task-branch
+        // commit messages. Either way: no canon attribution leaks.
+        //
+        // Resolve the template from the active worktree, not REPO_ROOT — in
+        // worktree mode the branch may have edited or added the template, and
+        // adopters expect the BRANCH-HEAD version to be used for the PR they
+        // are about to open (codex P2, round 11 of PR #86). Fall back to
+        // REPO_ROOT if no worktree is active.
+        const activeCwd = splitWorktree.getActiveCwd(taskIds);
+        const templatePath =
+            findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT);
+        if (templatePath) {
+            args.push('--body-file', templatePath);
+        } else {
+            args.push('--fill');
+        }
+    }
+    const prResult = splitGit.runCommand('gh', args);
     if (!prResult.ok) {
         die(`Failed to create draft PR: ${prResult.stderr || 'unknown error'}`);
     }
@@ -574,6 +738,32 @@ function createDraftPRForTask(taskIds: string[], branchName: string): void {
 
 export function formatExistingPRMessage(prNum: number, prUrl: string): string {
     return `Existing draft PR: #${prNum} (${prUrl})`;
+}
+
+/**
+ * Idempotent `--pr` at `human_review`: if origin already has an open PR for
+ * this branch/base, print its URL; otherwise create the draft PR. Both
+ * `human_review` paths (clean-tree retry and dirty-tree commit-then-create)
+ * funnel through here so a re-run of `canon run <id> --pr` after the PR has
+ * been opened can't die on `gh pr create`'s "PR already exists" exit code.
+ *
+ * The 1.2.0 changelog claimed `--pr` was idempotent at `human_review`, but
+ * only the clean-tree retry branch actually had the existing-PR check
+ * (issue #72's fix targeted only the `complete` and clean-tree paths). The
+ * dirty-tree path went straight to `createDraftPRForTask` and died on the
+ * `gh` exit when GP rebuilt task artifacts on an already-PR'd branch (1.3.0
+ * failure mode #10).
+ */
+function reportOrCreatePR(taskIds: string[], branchName: string): void {
+    if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const openPR = findOpenPRNumber(branchName, baseBranch);
+    if (openPR !== null) {
+        const prUrl = lookupPRUrl(openPR);
+        info(formatExistingPRMessage(openPR, prUrl));
+        return;
+    }
+    createDraftPRForTask(taskIds, branchName);
 }
 
 function parseOriginRepoSlug(remoteUrl: string): string | null {
@@ -665,14 +855,6 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         const branchResult = gitSafeAt(cwd, 'rev-parse', '--abbrev-ref', 'HEAD');
         const branchName = branchResult.ok ? branchResult.stdout.trim() : '';
         if (branchName) {
-            // For --pr: gh-authoritative PR check first. gh sees the
-            // origin-side state directly and is robust to stale local
-            // remote-tracking refs. An existing open PR wins regardless of
-            // whether `origin/<branch>` looks fresh locally.
-            // (Prevents the duplicate-PR-create regression; PR #75 iter 1.)
-            const baseBranch = splitGit.getBaseBranch(taskIds);
-            const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName, baseBranch) : null;
-
             // Always push before reporting / creating the PR. `git push` is
             // idempotent — no-op when origin already has the local tip,
             // pushes the difference otherwise. We do NOT short-circuit on
@@ -693,15 +875,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
 
-            if (cliArgs.pr && openPR !== null) {
-                const prUrl = lookupPRUrl(openPR);
-                info(formatExistingPRMessage(openPR, prUrl));
-                return;
-            }
-
-            if (cliArgs.pr) {
-                createDraftPRForTask(taskIds, branchName);
-            }
+            if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
             return;
         }
     }
@@ -785,9 +959,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
 
-    if (cliArgs.pr) {
-        createDraftPRForTask(taskIds, branchName);
-    }
+    if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
 }
 
 function printDryRunPlan(state: PipelineState): void {
@@ -1451,6 +1623,7 @@ function rerouteFromHumanReview(taskIds: string[]): void {
             // marker so session-resumed Codex can't confuse a new reroute with a duplicate
             // of a prior one — the static prompt text is otherwise identical each round.
             implement.reroute_count = (implement.reroute_count ?? 0) + 1;
+            clearImplementOperatorAcceptance(implement);
         }
         const codeReview = status.phases.code_review;
         if (codeReview) {
@@ -1479,10 +1652,24 @@ function rerouteFromHumanReview(taskIds: string[]): void {
     splitCli.info('   as the contract. The main-repo spec is synced into the worktree at the start of implement.');
 }
 
+function clearImplementOperatorAcceptance(implement: PhaseEntry | undefined): void {
+    if (!implement) return;
+    // When implement reopens (reroute, changes_requested), a prior
+    // `canon task accept` is stale by definition — the operator-accepted SHA
+    // belongs to a discarded iteration. Leaving the flag set would let the
+    // next dispatch skip auto-commit against fresh implement work.
+    delete implement.operator_accepted;
+    delete implement.operator_accepted_sha;
+    delete implement.operator_accepted_at;
+}
+
 function routeBackTo(taskIds: string[], targetPhase: Phase): void {
     const targetIdx = PHASE_ORDER.indexOf(targetPhase);
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
+        if (targetIdx <= PHASE_ORDER.indexOf('implement')) {
+            clearImplementOperatorAcceptance(status.phases.implement);
+        }
         // Reset the target phase AND every downstream phase back to pending.
         //
         // Why downstream too: deriveTopLevelStatus() walks PHASE_ORDER and
@@ -1614,15 +1801,26 @@ function readArtifact(taskId: string, name: string): string | null {
 function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
     switch (phase) {
         case 'implement': {
-            // Three gates before auto-advancing (each rules out a different false-positive):
+            // Four gates before auto-advancing (each rules out a different false-positive):
             //  1. handoff.md Changes table is non-empty (basic sanity)
-            //  2. validateHandoff passes — same rule Claude's code review applies:
+            //  2. no malformed rows — wildcards, combined paths, unfilled placeholders
+            //     each fail downstream in autoCommitCode anyway, but failing here lets
+            //     the one-shot retry surface the cell-level error to Codex instead of
+            //     letting the phase auto-advance and then die at auto-commit.
+            //  3. validateHandoff passes — same rule Claude's code review applies:
             //     Validation Outcomes table has no Fail and AC Coverage is present.
             //     Catches "Codex wrote a draft handoff before validation actually passed".
-            //  3. at least one listed file exists on disk — catches phantom/hallucinated
+            //  4. at least one listed file exists on disk — catches phantom/hallucinated
             //     filenames in the Changes table.
-            const files = splitValidation.parseHandoffFiles(taskId);
-            if (files.length === 0) return { advanced: false, note: 'handoff.md Changes table is empty' };
+            const { files, malformed } = splitValidation.parseHandoffChangesRows(taskId);
+            if (files.length === 0 && malformed.length === 0) {
+                return { advanced: false, note: 'handoff.md Changes table is empty' };
+            }
+            if (malformed.length > 0) {
+                const sample = malformed.slice(0, 3).map(m => `'${m.cell}': ${m.reason}`).join('; ');
+                const tail = malformed.length > 3 ? ` (+${malformed.length - 3} more)` : '';
+                return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
+            }
             const issues = splitValidation.validateHandoffAgainstSpec(
                 path.join(taskDirFor(taskId), 'spec.md'),
                 path.join(taskDirFor(taskId), 'handoff.md'),
@@ -1634,12 +1832,34 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
                 const wt = splitWorktree.worktreePath(taskId);
                 if (fs.existsSync(wt)) checkRoots.push(wt);
             }
-            const existingFiles = files.filter(f => checkRoots.some(root => fs.existsSync(path.join(root, f))));
+            // Gitignored handoff entries (build-generated artifacts) are exempt
+            // from the "exists on disk" check — they may not have been built yet
+            // and don't represent real source changes anyway. Pre-filter so a
+            // handoff of `[src/generator.ts, public/sitemap.xml]` advances on
+            // the strength of the script existing, ignoring the artifact.
+            // But a handoff containing ONLY gitignored entries has no real
+            // source evidence — refuse to advance, same as zero-existing.
+            //
+            // Resolve gitignore from the active worktree (last-pushed checkRoot)
+            // when present; branch-local `.gitignore` rules don't exist in the
+            // supervising checkout. Falls back to REPO_ROOT for non-worktree tasks.
+            const ignoreCwd = checkRoots[checkRoots.length - 1];
+            const gitIgnored = splitGit.filterGitIgnoredPaths(files, ignoreCwd);
+            const verifiableFiles = files.filter(f => !gitIgnored.has(f));
+            if (verifiableFiles.length === 0) {
+                return {
+                    advanced: false,
+                    note: `handoff.md lists ${files.length} file(s) but all are gitignored — at least one tracked source file is required as evidence`,
+                };
+            }
+            const existingFiles = verifiableFiles.filter(f =>
+                checkRoots.some(root => fs.existsSync(path.join(root, f)))
+            );
             if (existingFiles.length === 0) {
                 return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk` };
             }
             taskPhase(taskId, 'implement', 'done');
-            return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk), validation clean` };
+            return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk, ${gitIgnored.size} gitignored), validation clean` };
         }
         case 'code_review': {
             const content = readArtifact(taskId, 'review.md');

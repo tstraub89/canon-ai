@@ -1,18 +1,18 @@
-# Pipeline Orchestrator — Internals Reference
+# Pipeline Orchestrator — Reference
 
-This doc is the source of truth for `scripts/run-task.ts` **internals**: pipeline tiers, model/effort selection, environment variables, worktree mechanics, auto-commit guardrails, session resumption, auto-block thresholds, and the post-merge reconciliation guardrail. Read on demand when you need to understand *why* the orchestrator behaves a certain way.
+Reference for driving canon's pipeline: CLI surface, flags, task-management subcommands, pipeline tiers, the model/effort matrix, environment variables, worktree mechanics, session resumption, auto-block thresholds, and recovery patterns. Read on demand when you need to know which flag to use, why canon picked a particular model, or how to recover from a stuck phase.
 
-For **operational** guidance — how to drive the pipeline, common command patterns, snag recovery — see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`).
+For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`).
 
-`AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *orchestration internals*.
+`AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *how to operate the pipeline*.
 
 ## Operator
 
-The operator is the session a human drives canon from — writes specs conversationally for fast-tier tasks, invokes `run-task.ts`, monitors pipeline progress, decides next moves.
+The operator is the session a human drives canon from — writes specs conversationally for fast-tier tasks, invokes `canon run`, monitors pipeline progress, decides next moves.
 
-Canon is designed for **Claude Code (or a human shell) as operator**. Pipeline-phase agents (Claude and Codex sessions spawned by `run-task.ts` for `spec_review` / `plan` / `implement` / `code_review` / `qa`) are independent sessions and never invoke the orchestrator themselves.
+Canon is designed for **Claude Code (or a human shell) as operator**. Pipeline-phase agents (Claude and Codex sessions spawned by the orchestrator for `spec_review` / `plan` / `implement` / `code_review` / `qa`) are independent sessions and never invoke the pipeline themselves.
 
-Codex can technically operate canon — it has shell access to run `run-task.ts` — but canon was not designed for this. Codex CLI's session model is optimized for execution tasks, not the extended coordination across phases that operating canon requires. Using Codex as operator also pushes Codex toward conversational tasks (spec drafting, multi-turn discussion with the human) that canon assigns to Claude; once that line blurs, cross-model independence erodes operationally even if it survives technically. The likely outcome is worse, not better, output.
+Codex can technically operate canon — it has shell access to run `canon run` — but canon was not designed for this. Codex CLI's session model is optimized for execution tasks, not the extended coordination across phases that operating canon requires. Using Codex as operator also pushes Codex toward conversational tasks (spec drafting, multi-turn discussion with the human) that canon assigns to Claude; once that line blurs, cross-model independence erodes operationally even if it survives technically. The likely outcome is worse, not better, output.
 
 If you find yourself wanting Codex as operator, use Claude Code instead and lean on Codex for the phases canon assigns to it (spec review, implementation, code review). That's canon's intended division of labor.
 
@@ -20,8 +20,6 @@ If you find yourself wanting Codex as operator, use Claude Code instead and lean
 
 ```bash
 canon run <task-id> [<task-id> ...]
-# or directly (dev / CI without package install):
-npx tsx scripts/run-task.ts <task-id> [<task-id> ...]
 ```
 
 Multiple IDs = bundle mode (see below).
@@ -43,12 +41,10 @@ Multiple IDs = bundle mode (see below).
 
 ## Task management (`canon task`)
 
-`canon task` wraps `scripts/task.sh` — the lightweight lifecycle CLI that manages task directories, `status.json`, and release branches. **No AI is spawned**; it is pure filesystem and git operations. Always prefer `canon task` helpers over hand-editing `status.json` directly — the helpers re-derive the top-level `status` pointer and keep state consistent.
+`canon task` is the lightweight lifecycle CLI that manages task directories, `status.json`, and release branches. **No AI is spawned**; it is pure filesystem and git operations. Always prefer `canon task` helpers over hand-editing `status.json` directly — the helpers re-derive the top-level `status` pointer and keep state consistent.
 
 ```bash
 canon task <subcommand> [args]
-# equivalent low-level form (dev / no package install):
-./scripts/task.sh <subcommand> [args]
 ```
 
 ### Subcommands
@@ -59,6 +55,7 @@ canon task <subcommand> [args]
 | `list` | — | Print all tasks and their current pipeline phase. |
 | `status` | `<id>` | Print full `status.json` detail for a task. |
 | `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
+| `accept` | `<id...> <phase> [--force]` | Operator escape hatch for the case where work has been manually committed outside the pipeline and `canon run` keeps re-running auto-commit against the already-landed commit. Marks the phase done AND sets `phases.<phase>.operator_accepted: true` so the post-phase dispatch (auto-commit for implement) is skipped on subsequent runs. Today only `implement` is supported. Accepts multiple task IDs for bundle mode — the handoff coverage check unions every task's handoff against one `baseRef..HEAD` diff, so siblings don't cross-reject. All tasks must share `base_branch` and working tree. Guards: clean working tree, non-empty `baseRef..HEAD`, handoff covers diff. `--force` bypasses all. |
 | `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`. |
 | `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
 | `release-init` | `<version>` | Initialize a `release/v<MAJ.MIN>` branch off main with the version bumped and an empty CHANGELOG block. |
@@ -112,11 +109,11 @@ Claude writes QA summary → Human tests
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe.
 - Codex model/effort scales with effective size (matrix below).
 
-**Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase. See [`decisions.md`](decisions.md) §"Validation runs inside agent phases" for the rationale.
+**Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
-**Bundle mode**: Pass multiple task IDs to `run-task.ts`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement.
 
-**One pipeline at a time**: Run only one task or bundle through `run-task.ts` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
+**One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
 
 ## Task Sizing Fields
 
@@ -128,7 +125,7 @@ Set in `status.json` at task creation:
 | `delicate` | `true \| false` | Forces the XL bucket (full Codex model, xhigh implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | Pauses the pipeline after `spec_review` for human review before planning (default: `true`). |
 | `worktree` | `true \| false` | Opt-in worktree isolation (default: absent/false). See Worktree Isolation below. |
-| `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `task.sh new` from the current git checkout at task creation. |
+| `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `canon task new` from the current git checkout at task creation. |
 
 ### Task sizing guide
 
@@ -151,7 +148,7 @@ This is a default — your project can adopt a stricter or looser bar in `docs/d
 
 ## Codex Model/Effort Matrix
 
-Applied by `getCodexConfig` in `scripts/run-task/policy.ts`:
+Codex model and effort scale with task size:
 
 | Phase | S | M | L | XL / delicate |
 |---|---|---|---|---|
@@ -203,14 +200,12 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 ## Canon Snapshot Stamping
 
-Every task carries a provenance snapshot in `status.json.canon`. `task.sh new` stamps it when the task is created, and the orchestrator refreshes it again before any real phase work begins so older tasks pick up the current canon checkout and CLI versions on the next pipeline run.
+Every task carries a provenance snapshot in `status.json.canon`. `canon task new` stamps it when the task is created, and the orchestrator refreshes it again before any real phase work begins so older tasks pick up the current canon checkout and CLI versions on the next pipeline run.
 
 - Native checkouts record the canon checkout SHA in both `upstream_commit` and `orchestrator_commit`.
 - Vendored checkouts record the submodule SHA in `upstream_commit` and the host repo SHA in `orchestrator_commit`.
 - Missing `codex` or `claude` binaries record `<unavailable>` instead of failing the run.
 - `--dry-run` is read-only and does not refresh the snapshot.
-
-See `scripts/run-task/canon-snapshot.ts` for the capture logic and `scripts/run-task/types.ts` for the `canon` shape.
 
 ## Auto-Branch + Auto-Commit
 
@@ -242,7 +237,7 @@ The orchestrator resumes agent sessions across phases instead of spawning fresh 
 
 ## Streaming + Stall Detection
 
-Agent invocations stream NDJSON events live rather than blocking on `spawnSync` and parsing post-exit. The `streamProcess` helper in `scripts/run-task/agents/stream.ts` spawns Claude (`--output-format stream-json --verbose`) or Codex (`--json`) with `spawn`, attaches a `readline` reader to stdout, parses each event as it arrives, and renders a one-line tick (`→ Read tasks/X/spec.md`, `← turn completed`) for live progress visibility.
+Agent invocations stream NDJSON events live rather than blocking on subprocess completion. The orchestrator spawns Claude (`--output-format stream-json --verbose`) or Codex (`--json`), parses each event as it arrives, and renders a one-line tick (`→ Read tasks/X/spec.md`, `← turn completed`) for live progress visibility.
 
 **Stall detection.** Every parsed event resets an idle timer. If the timer fires (no stdout/stderr data for the configured window), the orchestrator escalates: SIGTERM the child, then SIGKILL after a short grace if it doesn't exit. The child is treated as failed regardless of exit code when the watchdog fires.
 
@@ -314,16 +309,16 @@ Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the 
 
 **Guardrail in code**: `--ship` runs `assertLocalBaseInSyncWithOrigin()` first. It fetches `origin/<baseBranch>`, counts commits behind, and dies with a "rebase first" message if local is behind.
 
-## Pipeline-Infra Changes Are Inline
+## Customizing Canon for Your Project
 
-Changes to `scripts/run-task.ts`, `scripts/task.sh`, task templates, `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, this file, or any other orchestration surface are made inline by conversational Claude — one session, one commit, no `tasks/<id>/` directory, no Codex routing.
+Project-level customization happens at the files canon scaffolded into your repo: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads them on every session start.
+
+Task templates are managed by canon — `canon upgrade` overwrites `.canon/templates/*`. To customize a template for your project without losing your changes on upgrade, copy it to `tasks/_templates/<file>` — `canon task new` checks there first and falls back to `.canon/templates/`.
 
 ## Related References
 
 - `AGENTS.md` — workflow rules, roles, escalation, validation, git/release.
 - `CLAUDE.md` — Claude phase-specific guidance (spec authorship, code review, QA).
 - `CODEX.md` — Codex phase-specific guidance (implementation, handoff, spec review).
-- `scripts/run-task.ts` — orchestrator entry stub.
-- `scripts/run-task/` — orchestrator implementation (main, dispatchers, phase handlers, agents, policy, state, worktree, validation, prompts).
-- `scripts/task.sh` — task management helper (requires `jq`).
-- `scripts/pipeline-policy.ts` — pure routing policy (tier, model/effort, loop caps).
+- `docs/patterns.md` — implementation patterns and Known Pitfalls.
+- `docs/decisions.md` — settled architectural decisions.
