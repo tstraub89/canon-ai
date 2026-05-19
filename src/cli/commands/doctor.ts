@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, sep as pathSep } from 'path';
 import { isAvailable } from '../deps.js';
 
 interface Check {
@@ -356,7 +356,11 @@ export function checkCodexProjectTrust(cwd: string): Check {
     const ancestors: Ancestor[] = [];
     for (const [project, level] of trustMap) {
         const canonicalProject = safeRealpathOrSelf(project);
-        if (canonicalWorkspace.startsWith(`${canonicalProject}/`)) {
+        // `path.sep` rather than literal `/` so Windows (and any non-POSIX
+        // platform) matches `C:\Users\me\repo` against trusted parent
+        // `C:\Users\me` correctly. `realpath` returns native separators, so
+        // both operands here are already in the platform's form.
+        if (canonicalWorkspace.startsWith(`${canonicalProject}${pathSep}`)) {
             ancestors.push({ project, level, depth: canonicalProject.length });
         }
     }

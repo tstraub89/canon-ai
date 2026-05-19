@@ -4,7 +4,7 @@
 import { execSync as execSync2 } from "child_process";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { join, sep as pathSep } from "path";
 
 // src/cli/deps.ts
 import { execSync } from "child_process";
@@ -321,7 +321,7 @@ function checkCodexProjectTrust(cwd) {
   const ancestors = [];
   for (const [project, level] of trustMap) {
     const canonicalProject = safeRealpathOrSelf(project);
-    if (canonicalWorkspace.startsWith(`${canonicalProject}/`)) {
+    if (canonicalWorkspace.startsWith(`${canonicalProject}${pathSep}`)) {
       ancestors.push({ project, level, depth: canonicalProject.length });
     }
   }
