@@ -1,7 +1,7 @@
 ---
 name: canon-status
 description: Show where all in-progress tasks stand, flag what needs attention, and recommend the next concrete action. Read-only — no files modified.
-allowed-tools: Read Glob Grep Bash(canon task *) Bash(./scripts/task.sh *) Bash(git branch *) Bash(git log *) Bash(git status *)
+allowed-tools: Read Glob Grep Bash(canon task *) Bash(git branch *) Bash(git log *) Bash(git status *)
 effort: low
 ---
 
@@ -11,7 +11,7 @@ effort: low
 echo "Branch: $(git branch --show-current 2>/dev/null)"
 echo "Ahead of origin: $(git rev-list origin/$(git branch --show-current 2>/dev/null)..HEAD --count 2>/dev/null || echo '?') commits"
 echo ""
-canon task list 2>/dev/null || ./scripts/task.sh list 2>/dev/null || echo "(no tasks)"
+canon task list 2>/dev/null || echo "(no tasks)"
 ```
 
 ---

@@ -29,7 +29,7 @@ What *is* load-bearing canon (regardless of tone preference): agents must surfac
 
 **Per-task notes**: Any agent in any phase may append to `tasks/TASK-ID/notes.md` when it encounters surprising codebase behavior, ambiguous specs, implementation pitfalls, or friction worth remembering. Keep entries short (1–3 lines) with the phase name as prefix (e.g., `[spec_review] ...`). These are raw scratchpad observations — the QA step collates and distills them into `docs/lessons-learned.md`.
 
-**Workflow observability**: Two files track pipeline health. `docs/pipeline-invocations.md` is auto-appended by `scripts/run-task/metrics.ts` after every agent invocation (duration + tokens). `docs/task-quality-log.md` is appended by Claude during the QA/done step — tracks spec review outcomes, review iterations, dropped ACs, validation gaps, and failure phases. The product owner reviews trends periodically.
+**Workflow observability**: Two files track pipeline health. `docs/pipeline-invocations.md` is auto-appended by canon's orchestrator after every agent invocation (duration + tokens). `docs/task-quality-log.md` is appended by Claude during the QA/done step — tracks spec review outcomes, review iterations, dropped ACs, validation gaps, and failure phases. The product owner reviews trends periodically.
 
 ## Workflow
 
@@ -56,7 +56,7 @@ Claude writes QA summary → Human tests
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe. Silence is the default — a real shape concern becomes the lead reason for `changes_requested`; no concern leaves the section empty and review proceeds.
 - Codex model/effort scales with effective size: M gets mini at medium effort (low-cost sanity check), L gets mini at high, XL/delicate gets the full model at high (spec review) or xhigh (implement).
 
-**Bundle mode**: Pass multiple task IDs to `run-task.ts`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review changes_requested, the whole bundle reroutes to implement.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review changes_requested, the whole bundle reroutes to implement.
 
 **Conversational spec authorship**: Specs for emergent tasks are often written conversationally with Claude rather than through the pipeline's spec phase. Manually mark spec (and plan if written together) as done in `status.json`, then run the pipeline — it picks up from the current phase.
 
@@ -104,16 +104,16 @@ The artifact templates carry a comment block at the bottom showing the expected 
 
 ### Pipeline Orchestrator
 
-`scripts/run-task.ts` automates the standard pipeline. It reads `status.json` to determine the current phase, spawns the correct agent CLI (Claude or Codex), and advances through phases automatically — including feedback loops when spec review or code review requests changes. Only conversational Claude invokes it.
+`canon run <task-id>` invokes the orchestrator, which reads `status.json` to determine the current phase, spawns the correct agent CLI (Claude or Codex), and advances through phases automatically — including feedback loops when spec review or code review requests changes. Only conversational Claude invokes it.
 
 **Mechanics live in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md)** — flags, env vars, model/effort matrix, task sizing, auto-branch/commit, phase routing, auto-block, session resumption, human reroute. That doc is on-demand reading; no agent needs it loaded by default.
 
-Task management helper — used by both agents:
+Task management — used by both agents:
 ```bash
-canon task new <TASK-ID> <title> [--base <branch>]    # Create task from templates
-canon task list                                        # List all tasks with current phase
-canon task status <TASK-ID>                            # Show full task status
-canon task phase <TASK-ID> <phase> <status> [verdict] # Update phase status
+canon task new <TASK-ID> <title>               # Create task from templates
+canon task list                                # List all tasks with current phase
+canon task status <TASK-ID>                    # Show full task status
+canon task phase <TASK-ID> <phase> <status>    # Update phase status
 ```
 
 ### Commit Ownership

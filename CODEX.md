@@ -22,7 +22,7 @@ Codex is the **implementer and spec reviewer** in the canon-ai pipeline. See `AG
 - `docs/product-context.md` — when the task touches user-visible behavior or product terminology
 - `docs/decisions.md` — when the task proposes something that might revisit a settled decision
 
-**Task-specific context**: The orchestrator (`scripts/run-task.ts`) injects the most valuable task context directly into your prompt: task-state header (phase, mode, task size, validation checks), AC summary, `Known Risks` from the spec, `Known Pitfalls` from `docs/patterns.md`, and pre-loaded contents of files in the spec's Affected Files table when small enough. Read those injections before scanning the full spec — they're already filtered for you.
+**Task-specific context**: Canon's orchestrator injects the most valuable task context directly into your prompt: task-state header (phase, mode, task size, validation checks), AC summary, `Known Risks` from the spec, `Known Pitfalls` from `docs/patterns.md`, and pre-loaded contents of files in the spec's Affected Files table when small enough. Read those injections before scanning the full spec — they're already filtered for you.
 
 ## Task Workflow
 
