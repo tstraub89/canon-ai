@@ -4104,7 +4104,7 @@ function inspectCompleteState(branch, taskIds) {
   if (!remoteExists) {
     return { kind: "unpushed", branch, baseBranch };
   }
-  const prNum = ghAvailable ? findOpenPRNumber(branch) : null;
+  const prNum = ghAvailable ? findOpenPRNumber(branch, baseBranch) : null;
   if (prNum === null) {
     return { kind: "pushed_no_pr", branch, baseBranch };
   }
@@ -4130,7 +4130,8 @@ function commitHumanReviewFiles(taskIds, cwd) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
-      const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName2) : null;
+      const baseBranch = getBaseBranch(taskIds);
+      const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName2, baseBranch) : null;
       if (cliArgs.pr && openPR !== null) {
         const prUrl = lookupPRUrl(openPR);
         info2(formatExistingPRMessage(openPR, prUrl));
@@ -4355,7 +4356,8 @@ function getMergedPRHeadSha(prNum) {
 }
 function assertNoOpenPRForTask(taskId) {
   const branchName = resolveTaskBranchName(taskId);
-  const prNum = findOpenPRNumber(branchName);
+  const baseBranch = getBaseBranch([taskId]);
+  const prNum = findOpenPRNumber(branchName, baseBranch);
   if (prNum !== null) {
     die(
       `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.
@@ -4365,9 +4367,9 @@ function assertNoOpenPRForTask(taskId) {
     );
   }
 }
-function findOpenPRNumber(branch) {
+function findOpenPRNumber(branch, baseBranch) {
   if (!ghAvailable) return null;
-  return findPRNumberExact(branch, null, "open");
+  return findPRNumberExact(branch, baseBranch, "open");
 }
 function findPRNumberExact(branch, baseBranch, state) {
   if (!ghAvailable) return null;
@@ -4395,7 +4397,7 @@ function mergeOpenPRsAndPull(taskIds) {
   const branches = [...new Set(taskIds.map((id) => resolveTaskBranchName(id)))];
   let anyMerged = false;
   for (const branch of branches) {
-    const prNum = findOpenPRNumber(branch);
+    const prNum = findOpenPRNumber(branch, baseBranch);
     if (!prNum) continue;
     info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via squash...`);
     const result = runCommand("gh", ["pr", "merge", String(prNum), "--squash", "--delete-branch"]);

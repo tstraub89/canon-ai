@@ -629,7 +629,7 @@ function inspectCompleteState(branch: string, taskIds: string[]): CompleteState 
     if (!remoteExists) {
         return { kind: 'unpushed', branch, baseBranch };
     }
-    const prNum = ghAvailable ? findOpenPRNumber(branch) : null;
+    const prNum = ghAvailable ? findOpenPRNumber(branch, baseBranch) : null;
     if (prNum === null) {
         return { kind: 'pushed_no_pr', branch, baseBranch };
     }
@@ -670,7 +670,8 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
             // remote-tracking refs. An existing open PR wins regardless of
             // whether `origin/<branch>` looks fresh locally.
             // (Prevents the duplicate-PR-create regression; PR #75 iter 1.)
-            const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName) : null;
+            const baseBranch = splitGit.getBaseBranch(taskIds);
+            const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName, baseBranch) : null;
             if (cliArgs.pr && openPR !== null) {
                 const prUrl = lookupPRUrl(openPR);
                 info(formatExistingPRMessage(openPR, prUrl));
@@ -1049,7 +1050,8 @@ function getMergedPRHeadSha(prNum: number): string | null {
  */
 function assertNoOpenPRForTask(taskId: string): void {
     const branchName = resolveTaskBranchName(taskId);
-    const prNum = findOpenPRNumber(branchName);
+    const baseBranch = splitGit.getBaseBranch([taskId]);
+    const prNum = findOpenPRNumber(branchName, baseBranch);
     if (prNum !== null) {
         splitCli.die(
             `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
@@ -1061,18 +1063,28 @@ function assertNoOpenPRForTask(taskId: string): void {
 }
 
 /**
- * Find the number of an open PR whose head branch EXACTLY matches `branch`.
- * Returns null if gh CLI is unavailable, no PR found, or lookup fails.
+ * Find the number of an open PR whose head branch EXACTLY matches `branch`
+ * AND whose base branch matches `baseBranch`. Returns null if gh CLI is
+ * unavailable, no PR found, or lookup fails.
  *
  * Uses `findPRNumberExact` (not a raw `--head` jq filter) because `gh pr
  * list --head <branch>` is documented to filter by prefix (gh CLI issue
  * #10816). A prefix-match here would print the wrong PR's URL on
  * idempotent `--pr` retry, or false-block `--ship` via
  * `assertNoOpenPRForTask`. (Codex P1 on PR #77 iter 2.)
+ *
+ * `baseBranch` is required (not nullable like findPRNumberExact's param):
+ * every caller in this file operates on a specific task with a known
+ * base, and skipping the base filter risks squash-merging a wrong-base
+ * PR into the wrong base (e.g., an operator-opened PR targeting `main`
+ * when canon expects `dev`). The symmetric base-filter in
+ * findMergedPRNumber was added for exactly this reason on PR #77;
+ * findOpenPRNumber + mergeOpenPRsAndPull missed it. (Codex P2 on
+ * release PR #82 integration audit.)
  */
-function findOpenPRNumber(branch: string): number | null {
+function findOpenPRNumber(branch: string, baseBranch: string): number | null {
     if (!ghAvailable) return null;
-    return findPRNumberExact(branch, null, 'open');
+    return findPRNumberExact(branch, baseBranch, 'open');
 }
 
 /**
@@ -1114,7 +1126,7 @@ function mergeOpenPRsAndPull(taskIds: string[]): boolean {
     const branches = [...new Set(taskIds.map(id => resolveTaskBranchName(id)))];
     let anyMerged = false;
     for (const branch of branches) {
-        const prNum = findOpenPRNumber(branch);
+        const prNum = findOpenPRNumber(branch, baseBranch);
         if (!prNum) continue;
         splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via squash...`);
         // --delete-branch removes the remote branch; local cleanup happens post-teardown.

@@ -125,15 +125,25 @@ function setupFakeCliTools(scriptDir: string): void {
     writeExecutable(scriptDir, 'gh', [
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then',
         '  head=""',
+        '  base=""',
         '  json=0',
         '  while [ $# -gt 0 ]; do',
         '    case "$1" in',
         '      --head) head="$2"; shift 2 ;;',
+        '      --base) base="$2"; shift 2 ;;',
         '      --json) json=1; shift 2 ;;',
         '      *) shift ;;',
         '    esac',
         '  done',
         '  if [ -z "${FAKE_GH_PR_NUMBER:-}" ]; then exit 0; fi',
+        '  # When FAKE_GH_PR_BASE is set, simulate `gh pr list --base` filtering:',
+        '  # only emit the PR when the caller passes a matching --base value.',
+        '  # This is how production gh behaves and lets tests assert that callers',
+        '  # actually pass --base (P2 audit fix on release PR #82).',
+        '  if [ -n "${FAKE_GH_PR_BASE:-}" ] && [ "$base" != "${FAKE_GH_PR_BASE}" ]; then',
+        '    if [ "$json" = "1" ]; then printf "[]\\n"; fi',
+        '    exit 0',
+        '  fi',
         '  if [ "$json" = "1" ]; then',
         '    printf \'[{"number":%s,"headRefName":"%s"}]\\n\' "$FAKE_GH_PR_NUMBER" "$head"',
         '  else',
@@ -942,6 +952,54 @@ void test('main --pr at human_review is idempotent when an open PR already exist
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /Existing draft PR: #88 \(https:\/\/github\.com\/x\/y\/pull\/88\)/);
         assert.doesNotMatch(result.stdout, /TASK COMPLETE — already past human_review/);
+    });
+});
+
+void test('main --pr does NOT match an open PR on the wrong base (Codex P2 on release PR #82 audit)', () => {
+    // makeCompleteStatus() declares base_branch: 'main', so a task with an
+    // open PR against an unrelated base ('release/v9') must not be picked
+    // up as the "existing PR" for idempotent --pr. Before the fix,
+    // findOpenPRNumber ignored --base entirely; the wrong-base PR's URL
+    // would be printed and (worse) mergeOpenPRsAndPull would squash-merge
+    // it into the wrong base on --ship.
+    withTempDir('run-task-wrong-base-pr-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GH_PR_NUMBER: '99',
+            FAKE_GH_PR_URL: 'https://github.com/x/y/pull/99',
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            // gh shim: only return PR #99 if --base release/v9 (task expects main).
+            FAKE_GH_PR_BASE: 'release/v9',
+        });
+
+        // The wrong-base PR must NOT be reported as the existing draft.
+        // Note: we don't assert status === 0 because the test doesn't fully
+        // wire the push/PR-create happy path (we only care about the
+        // idempotency-check branch). The key assertion is the negative one.
+        assert.doesNotMatch(result.stdout, /Existing draft PR: #99/);
     });
 });
 

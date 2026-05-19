@@ -1203,6 +1203,23 @@ void test('runUpgrade: real templates dir produces valid merged CLAUDE.md', () =
 
 // ── README / doctor allowlist drift ──────────────────────────────────────────
 
+void test('README Prerequisites Claude Code floor matches MIN_CLAUDE_VERSION (Codex P2 on release PR #82 audit)', () => {
+    // Same drift-prevention pattern as the RECOMMENDED_ALLOW test below: when
+    // the doctor's version floor bumps (e.g., a new Claude Code flag becomes
+    // load-bearing), CI must catch a README that still advertises the old
+    // floor. Adopters seeing contradictory floors is exactly the adopter-
+    // perspective friction this batch was meant to close.
+    const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const match = readme.match(/Claude Code \(≥ (\d+)\.(\d+)\.(\d+)\)/);
+    assert.ok(match, 'README Prerequisites line "Claude Code (≥ X.Y.Z)" not found');
+    const [, major, minor, patch] = match;
+    assert.deepEqual(
+        { major: Number(major), minor: Number(minor), patch: Number(patch) },
+        MIN_CLAUDE_VERSION,
+        'README Claude Code floor drifted from MIN_CLAUDE_VERSION (src/cli/commands/doctor.ts)',
+    );
+});
+
 void test('README "Skip the permission prompts" allowlist matches RECOMMENDED_ALLOW', () => {
     const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
     const blockMatch = readme.match(
