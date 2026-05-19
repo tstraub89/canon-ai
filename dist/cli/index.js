@@ -1390,6 +1390,36 @@ function ensureGitAvailable() {
     throw new Error("Error: git is required.");
   }
 }
+function findUntrackedClobberPaths(untracked, targetTreeFiles) {
+  const conflicts = [];
+  for (const u of untracked) {
+    if (targetTreeFiles.has(u)) {
+      conflicts.push(u);
+      continue;
+    }
+    let p = u;
+    let hit = false;
+    while (true) {
+      const slash = p.lastIndexOf("/");
+      if (slash === -1) break;
+      p = p.slice(0, slash);
+      if (targetTreeFiles.has(p)) {
+        conflicts.push(u);
+        hit = true;
+        break;
+      }
+    }
+    if (hit) continue;
+    const prefix = `${u}/`;
+    for (const t of targetTreeFiles) {
+      if (t.startsWith(prefix)) {
+        conflicts.push(u);
+        break;
+      }
+    }
+  }
+  return conflicts;
+}
 function taskPostMergeSync(branchArg) {
   ensureGitAvailable();
   let targetBranch = branchArg ?? "";
@@ -1401,9 +1431,6 @@ function taskPostMergeSync(branchArg) {
   if (current !== targetBranch) {
     throw new Error(`Error: post-merge-sync expects you to be on '${targetBranch}' (you are on '${current}').`);
   }
-  if (git2(["status", "--porcelain"])) {
-    throw new Error("Error: working tree is dirty. Commit or stash local changes before running post-merge-sync.");
-  }
   console.log(`\u2192 Fetching origin/${targetBranch}...`);
   const fetch = runGit(["fetch", "origin", targetBranch]);
   if (fetch.error || fetch.status !== 0) {
@@ -1413,12 +1440,14 @@ function taskPostMergeSync(branchArg) {
   const behind = Number.parseInt(git2(["rev-list", "--count", `${targetBranch}..origin/${targetBranch}`]) || "0", 10);
   if (ahead === 0 && behind === 0) {
     console.log(`\u2713 ${targetBranch} is in sync with origin/${targetBranch}.`);
+    nudgeShippableTasks();
     return;
   }
   if (ahead === 0 && behind > 0) {
     console.log(`\u2192 ${targetBranch} is ${behind} commit(s) behind origin/${targetBranch}, fast-forwarding...`);
     const pull = runGit(["pull", "--ff-only", "origin", targetBranch], { stdio: "inherit" });
     if (pull.error || pull.status !== 0) throw new Error(pull.error?.message ?? "git pull failed");
+    nudgeShippableTasks();
     return;
   }
   const diff = git2(["diff", "--name-only", `origin/${targetBranch}..${targetBranch}`]);
@@ -1426,12 +1455,30 @@ function taskPostMergeSync(branchArg) {
     (file) => !/^(docs\/pipeline-invocations\.md|docs\/task-quality-log\.md|docs\/lessons-learned\.md|tasks\/)/.test(file)
   );
   if (sourcePaths.length === 0) {
+    if (git2(["diff", "--name-only", "HEAD"]) || git2(["diff", "--cached", "--name-only"])) {
+      throw new Error(
+        "Error: working tree has dirty tracked files and post-merge-sync is about to `git reset --hard`.\n  Commit or stash the tracked changes before re-running."
+      );
+    }
+    const localFiles = git2(["ls-files", "--others"]).split("\n").filter(Boolean);
+    if (localFiles.length > 0) {
+      const targetTreeFiles = new Set(
+        git2(["ls-tree", "-r", `origin/${targetBranch}`, "--name-only"]).split("\n").filter(Boolean)
+      );
+      const conflicting = findUntrackedClobberPaths(localFiles, targetTreeFiles);
+      if (conflicting.length > 0) {
+        throw new Error(
+          "Error: local files (untracked or gitignored) match paths tracked in `origin/" + targetBranch + "`.\n  `git reset --hard` would silently overwrite them:\n" + conflicting.map((f) => `    ${f}`).join("\n") + "\n  Move, rename, or remove these files before re-running."
+        );
+      }
+    }
     console.log(`\u2192 ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch}, but only via`);
     console.log("  pipeline telemetry / task-state edits that have been absorbed by squash merges.");
     console.log(`  Hard-resetting to origin/${targetBranch}...`);
     const reset = runGit(["reset", "--hard", `origin/${targetBranch}`], { stdio: "inherit" });
     if (reset.error || reset.status !== 0) throw new Error(reset.error?.message ?? "git reset failed");
     console.log(`\u2713 ${targetBranch} reset to origin/${targetBranch} (${git2(["log", "-1", "--format=%h"])}).`);
+    nudgeShippableTasks();
     return;
   }
   console.log(`\u26A0\uFE0F  ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch} with non-telemetry changes:`);
@@ -1442,6 +1489,35 @@ function taskPostMergeSync(branchArg) {
   console.log(`(\`git push origin ${targetBranch}\`) if they're real work, or rebase manually`);
   console.log("if they conflict with the squash merge.");
   throw new Error("");
+}
+function nudgeShippableTasks() {
+  const root = tasksRoot();
+  if (!fs6.existsSync(root)) return;
+  const shippable = [];
+  for (const entry of fs6.readdirSync(root).sort()) {
+    if (entry === "_archive" || entry.startsWith("_")) continue;
+    const statusPath = path7.join(root, entry, "status.json");
+    if (!fs6.existsSync(statusPath)) continue;
+    let status;
+    try {
+      status = readJsonFile(statusPath);
+    } catch {
+      continue;
+    }
+    const phase = derivePhase(status);
+    if (phase !== "human_review" && phase !== "complete") continue;
+    const branchName = status.branch?.trim();
+    if (!branchName) continue;
+    const ls = runGit(["ls-remote", "--heads", "--exit-code", "origin", branchName]);
+    if (ls.error) continue;
+    if (ls.status === 0) continue;
+    if (ls.status === 2) shippable.push(entry);
+  }
+  if (shippable.length === 0) return;
+  console.log("");
+  console.log("\u2139 Task(s) appear merged (remote branch gone) but not yet archived:");
+  for (const id of shippable) console.log(`    ${id}`);
+  console.log("  Run `canon run <id> --ship` on each to archive + clean up.");
 }
 function updatePackageVersion(filePath, version, updateLockRoot = false) {
   const parsed = readJsonFile(filePath);

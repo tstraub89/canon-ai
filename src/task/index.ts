@@ -425,6 +425,48 @@ function ensureGitAvailable(): void {
     }
 }
 
+/**
+ * Returns the subset of `untracked` paths that `git reset --hard <target>`
+ * would clobber. Three collision modes:
+ *
+ *   (A) Exact match: untracked `foo/bar.txt` AND target `foo/bar.txt`.
+ *   (B) Local dir / target file: untracked `foo/bar.txt` AND target tracks
+ *       `foo` as a file. Reset wipes the `foo/` directory to make room.
+ *   (C) Local file / target dir: untracked `foo` AND target tracks
+ *       `foo/bar.txt`. Reset removes the file to make a `foo/` directory.
+ *
+ * `git ls-files --others --exclude-standard` lists files, so `untracked`
+ * entries are always file paths. Exported for unit testing without the
+ * full git fixture setup.
+ */
+export function findUntrackedClobberPaths(
+    untracked: readonly string[],
+    targetTreeFiles: ReadonlySet<string>,
+): string[] {
+    const conflicts: string[] = [];
+    for (const u of untracked) {
+        // Case A
+        if (targetTreeFiles.has(u)) { conflicts.push(u); continue; }
+        // Case B: walk up u's ancestors; if any is a tracked target file, conflict.
+        let p = u;
+        let hit = false;
+        while (true) {
+            const slash = p.lastIndexOf('/');
+            if (slash === -1) break;
+            p = p.slice(0, slash);
+            if (targetTreeFiles.has(p)) { conflicts.push(u); hit = true; break; }
+        }
+        if (hit) continue;
+        // Case C: any target path under `u/` means u (a file locally) collides
+        // with a directory in target.
+        const prefix = `${u}/`;
+        for (const t of targetTreeFiles) {
+            if (t.startsWith(prefix)) { conflicts.push(u); break; }
+        }
+    }
+    return conflicts;
+}
+
 export function taskPostMergeSync(branchArg?: string): void {
     ensureGitAvailable();
     let targetBranch = branchArg ?? '';
@@ -437,9 +479,10 @@ export function taskPostMergeSync(branchArg?: string): void {
     if (current !== targetBranch) {
         throw new Error(`Error: post-merge-sync expects you to be on '${targetBranch}' (you are on '${current}').`);
     }
-    if (git(['status', '--porcelain'])) {
-        throw new Error('Error: working tree is dirty. Commit or stash local changes before running post-merge-sync.');
-    }
+    // Note: no blanket dirty-tree check here. `git fetch` doesn't care about
+    // the working tree; `git pull --ff-only` will error on real conflicts
+    // itself; the only destructive op is `git reset --hard` below, which we
+    // guard specifically before invoking.
 
     console.log(`→ Fetching origin/${targetBranch}...`);
     const fetch = runGit(['fetch', 'origin', targetBranch]);
@@ -452,6 +495,7 @@ export function taskPostMergeSync(branchArg?: string): void {
 
     if (ahead === 0 && behind === 0) {
         console.log(`✓ ${targetBranch} is in sync with origin/${targetBranch}.`);
+        nudgeShippableTasks();
         return;
     }
 
@@ -459,6 +503,7 @@ export function taskPostMergeSync(branchArg?: string): void {
         console.log(`→ ${targetBranch} is ${behind} commit(s) behind origin/${targetBranch}, fast-forwarding...`);
         const pull = runGit(['pull', '--ff-only', 'origin', targetBranch], { stdio: 'inherit' });
         if (pull.error || pull.status !== 0) throw new Error(pull.error?.message ?? 'git pull failed');
+        nudgeShippableTasks();
         return;
     }
 
@@ -468,12 +513,50 @@ export function taskPostMergeSync(branchArg?: string): void {
     );
 
     if (sourcePaths.length === 0) {
+        // About to `git reset --hard` — narrow guard that refuses only in the
+        // cases where reset --hard can destroy real local work:
+        //   1. Dirty tracked files (modified/staged): reset --hard discards them.
+        //   2. Untracked files whose path is tracked in the target tree:
+        //      reset --hard silently overwrites them.
+        // Untracked files NOT in the target tree, and `.gitignore`-ignored
+        // files, are safe — reset --hard leaves them alone. That carve-out
+        // is the point: the previous blanket `git status --porcelain` check
+        // refused on any untracked file even when it could not be clobbered,
+        // forcing adopters into needless stash/pop dances over unrelated work.
+        if (git(['diff', '--name-only', 'HEAD']) || git(['diff', '--cached', '--name-only'])) {
+            throw new Error(
+                'Error: working tree has dirty tracked files and post-merge-sync is about to `git reset --hard`.\n' +
+                '  Commit or stash the tracked changes before re-running.',
+            );
+        }
+        // `--others` without `--exclude-standard` lists both untracked AND
+        // .gitignore'd files. We need both: gitignored content at a
+        // target-tracked path is just as clobber-prone as plain untracked
+        // content. The non-colliding ignored content (the common case, e.g.
+        // a `dist/` or `_scratch/` dir not present in origin) passes the
+        // collision check below and never blocks the reset.
+        const localFiles = git(['ls-files', '--others']).split('\n').filter(Boolean);
+        if (localFiles.length > 0) {
+            const targetTreeFiles = new Set(
+                git(['ls-tree', '-r', `origin/${targetBranch}`, '--name-only']).split('\n').filter(Boolean),
+            );
+            const conflicting = findUntrackedClobberPaths(localFiles, targetTreeFiles);
+            if (conflicting.length > 0) {
+                throw new Error(
+                    'Error: local files (untracked or gitignored) match paths tracked in `origin/' + targetBranch + '`.\n' +
+                    '  `git reset --hard` would silently overwrite them:\n' +
+                    conflicting.map(f => `    ${f}`).join('\n') +
+                    '\n  Move, rename, or remove these files before re-running.',
+                );
+            }
+        }
         console.log(`→ ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch}, but only via`);
         console.log('  pipeline telemetry / task-state edits that have been absorbed by squash merges.');
         console.log(`  Hard-resetting to origin/${targetBranch}...`);
         const reset = runGit(['reset', '--hard', `origin/${targetBranch}`], { stdio: 'inherit' });
         if (reset.error || reset.status !== 0) throw new Error(reset.error?.message ?? 'git reset failed');
         console.log(`✓ ${targetBranch} reset to origin/${targetBranch} (${git(['log', '-1', '--format=%h'])}).`);
+        nudgeShippableTasks();
         return;
     }
 
@@ -485,6 +568,55 @@ export function taskPostMergeSync(branchArg?: string): void {
     console.log(`(\`git push origin ${targetBranch}\`) if they're real work, or rebase manually`);
     console.log('if they conflict with the squash merge.');
     throw new Error('');
+}
+
+/**
+ * After a successful post-merge-sync, surface any task that looks "merged but
+ * not archived" — i.e., still at human_review locally, but its remote task
+ * branch is gone (typical of a squash-merge with --delete-branch). Routes the
+ * user to `canon run <id> --ship`, which is the canonical archive command.
+ *
+ * Intentionally silent on false negatives: we don't fail or warn if we can't
+ * tell. This is a nudge, not a guard.
+ */
+function nudgeShippableTasks(): void {
+    const root = tasksRoot();
+    if (!fs.existsSync(root)) return;
+    const shippable: string[] = [];
+    for (const entry of fs.readdirSync(root).sort()) {
+        if (entry === '_archive' || entry.startsWith('_')) continue;
+        const statusPath = path.join(root, entry, 'status.json');
+        if (!fs.existsSync(statusPath)) continue;
+        let status: StatusJson;
+        try { status = readJsonFile<StatusJson>(statusPath); }
+        catch { continue; }
+        // Derive the phase from phases[] (authoritative) rather than trusting
+        // status.status (cached pointer; can be stale if a ship was
+        // interrupted mid-flight). Include both `human_review` (the typical
+        // case: pipeline parked, PR merged elsewhere, no --ship yet) and
+        // `complete` (the off-script case: user manually advanced
+        // human_review without running --ship — still archive-ready).
+        // (Codex P2 on PR #76.)
+        const phase = derivePhase(status);
+        if (phase !== 'human_review' && phase !== 'complete') continue;
+        const branchName = status.branch?.trim();
+        if (!branchName) continue;
+        // Hit origin directly to determine whether the branch still exists.
+        // The local `refs/remotes/origin/<branch>` cache is only updated when
+        // we fetch that specific branch; post-merge-sync fetched only the
+        // base branch, so the cache for deleted task branches is unreliable.
+        // `git ls-remote` queries origin authoritatively.
+        const ls = runGit(['ls-remote', '--heads', '--exit-code', 'origin', branchName]);
+        // exit 0 = branch exists; exit 2 = no matching ref (deleted); other = network/other failure.
+        if (ls.error) continue;       // network/git error — stay silent, don't false-alarm.
+        if (ls.status === 0) continue; // branch still on origin — not yet merged.
+        if (ls.status === 2) shippable.push(entry);
+    }
+    if (shippable.length === 0) return;
+    console.log('');
+    console.log('ℹ Task(s) appear merged (remote branch gone) but not yet archived:');
+    for (const id of shippable) console.log(`    ${id}`);
+    console.log('  Run `canon run <id> --ship` on each to archive + clean up.');
 }
 
 function updatePackageVersion(filePath: string, version: string, updateLockRoot = false): void {
