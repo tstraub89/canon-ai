@@ -1806,9 +1806,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     }
     const templateContent = readFileSync2(templatePath, "utf8");
     if (!existsSync4(projectPath)) {
-      mkdirSync2(dirname4(projectPath), { recursive: true });
-      writeFileSync2(projectPath, templateContent);
-      upgraded.push(rel);
+      pending.push({ rel, projectPath, content: templateContent });
       continue;
     }
     const projectContent = readFileSync2(projectPath, "utf8");
@@ -1821,8 +1819,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
       unchanged.push(rel);
       continue;
     }
-    writeFileSync2(projectPath, merged);
-    upgraded.push(rel);
+    pending.push({ rel, projectPath, content: merged });
   }
   for (const rel of CANON_OWNED) {
     const projectPath = join5(cwd, rel);

@@ -199,9 +199,8 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
 
         if (!existsSync(projectPath)) {
             // First-install / missing: scaffold the template wholesale.
-            mkdirSync(dirname(projectPath), { recursive: true });
-            writeFileSync(projectPath, templateContent);
-            upgraded.push(rel);
+            // Queued like every other write so --check / dirty-refusal apply.
+            pending.push({ rel, projectPath, content: templateContent });
             continue;
         }
 
@@ -217,8 +216,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
             continue;
         }
 
-        writeFileSync(projectPath, merged);
-        upgraded.push(rel);
+        pending.push({ rel, projectPath, content: merged });
     }
 
     // --- Canon-owned files (skills, etc.) ---

@@ -942,6 +942,69 @@ void test('runUpgrade: header-only sync scaffolds the file when missing in proje
     });
 });
 
+void test('runUpgrade --check: header-only sync reports wouldUpgrade without writing (Codex P1 on PR #82)', () => {
+    // Header-only writes used to go direct to disk, bypassing the --check
+    // dry-run contract added in #79. Confirm they now route through the
+    // pending queue and respect --check.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            const tmplContent = '# Metrics\n\n> NEW intro.\n\n| A | B |\n|---|---|\n';
+            fs.writeFileSync(tmplPath, tmplContent);
+            const projectPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+            const oldContent = '# Metrics\n\n> OLD intro.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+            fs.writeFileSync(projectPath, oldContent);
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            fs.writeFileSync(path.join(canonDir, 'version'), `${process.env['CANON_VERSION'] ?? 'dev'}\n`);
+
+            const result = runUpgrade(projectDir, pkgDir, { check: true });
+
+            assert.ok(result.wouldUpgrade.includes(rel), 'header-only file in wouldUpgrade');
+            assert.deepEqual(result.upgraded, [], '--check writes nothing');
+            assert.equal(fs.readFileSync(projectPath, 'utf8'), oldContent, 'project file untouched');
+        });
+    });
+});
+
+void test('runUpgrade: dirty header-only target refused without --force (Codex P1 on PR #82)', () => {
+    // Header-only writes also bypassed the dirty-refusal gate. Confirm a
+    // tracked local edit to pipeline-invocations.md now refuses without --force.
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: projectDir });
+            execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: projectDir });
+            execFileSync('git', ['config', 'user.name', 'T'], { cwd: projectDir });
+
+            const rel = 'docs/pipeline-invocations.md';
+            const tmplPath = path.join(pkgDir, 'templates', rel);
+            fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+            fs.writeFileSync(tmplPath, '# Metrics\n\n> NEW.\n\n| A | B |\n|---|---|\n');
+            const projectPath = path.join(projectDir, rel);
+            fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+            const committed = '# Metrics\n\n> OLD.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+            fs.writeFileSync(projectPath, committed);
+            const canonDir = path.join(projectDir, '.canon');
+            fs.mkdirSync(canonDir, { recursive: true });
+            fs.writeFileSync(path.join(canonDir, 'version'), `${process.env['CANON_VERSION'] ?? 'dev'}\n`);
+            execFileSync('git', ['add', '-A'], { cwd: projectDir });
+            execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: projectDir });
+            // Local edit on the tracked file — dirty.
+            const localEdit = committed + '| 3 | 4 |\n';
+            fs.writeFileSync(projectPath, localEdit);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes(rel), 'dirty header-only target refused');
+            assert.deepEqual(result.upgraded, [], 'nothing written on refusal');
+            assert.equal(fs.readFileSync(projectPath, 'utf8'), localEdit, 'local edit preserved');
+        });
+    });
+});
+
 // ── runUpgrade safety flags (--check, --force, dirty refusal) ────────────────
 
 function gitInit(dir: string): void {
