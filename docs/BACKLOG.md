@@ -94,13 +94,13 @@
 
 | Sub-bundle | Size | Delicate | Contents | Sequencing | Status |
 |---|---|---|---|---|---|
-| **1a-0 parser** | S | no | Structured-table parser utility + retrofit AC coverage + validation outcomes | First; blocks 1a-2 | spec'ing |
-| **1a-1 counters** | M | no | Counter schema augment (`iterations_current_loop`/`iterations_total`/`changes_requested_total`/`auto_block_count`/`verdict_source`); `iterations` stays as alias | Parallel with 1a-0 | pending |
-| **1a-2 gates** | M | **yes** | Centralized invariant-gate helper for `task.sh phase done`; artifact-exists + template-check + verdict-parseable rules | After 1a-0 | pending |
-| **1b** | M | no | Validation result enum extension + QA telemetry verification (gate consumers) | After 1a-2 | pending |
-| **1c** | M | no | Canon snapshot stamping | Anytime | pending |
+| **1a-0 parser** | S | no | Structured-table parser utility + retrofit AC coverage + validation outcomes | First; blocks 1a-2 | shipped (`scripts/run-task/markdown-table.ts`) |
+| **1a-1 counters** | M | no | Counter schema augment (`iterations_current_loop`/`iterations_total`/`changes_requested_total`/`auto_block_count`); `iterations` stays as alias | Parallel with 1a-0 | shipped (`counter-schema-migration`); `verdict_source` deferred (see entry below) |
+| **1a-2 gates** | M | **yes** | Centralized invariant-gate helper for `canon task phase done`; artifact-exists + template-check + verdict-parseable rules | After 1a-0 | shipped (`checkPhaseGate` in `scripts/run-task/validation.ts:509`; wired at `src/task/index.ts:359`) |
+| **1b** | M | no | Validation result enum extension + QA telemetry verification (gate consumers) | After 1a-2 | enum **shipped** (six states recognized; `human_review` rejects unresolved `human_pending`); QA-telemetry verification still **open** (separate entry below) |
+| **1c** | M | no | Canon snapshot stamping | Anytime | shipped (commit `2fb5595`; `scripts/run-task/canon-snapshot.ts`) |
 
-- [ ] **Canon snapshot stamping in task status/handoff artifacts** *(framed 2026-05-10 from discussion #27, item 8)*
+- [x] **Canon snapshot stamping in task status/handoff artifacts** *(framed 2026-05-10 from discussion #27, item 8; shipped via commit `2fb5595` — `scripts/run-task/canon-snapshot.ts` captures `upstream_repo`/`upstream_commit`/`orchestrator_commit`/`codex_cli`/`claude_code` per task. Two follow-up gaps tracked as their own entries below: `CANON_UPSTREAM_REPO` env override, vendored-mode detection beyond submodules.)*
   - **Scope**: Add a `canon` block to `status.json` (and a corresponding section in `handoff.md`) at task creation that records the canon version governing this task. TokenAnxiety vendors canon-ai through a git submodule (`vendor/canon-ai`), pinned to a specific commit — different canon commits enforce different rules, ship different templates, route through different orchestrator logic. Task artifacts today say *what happened*, not *what canon governed it*. From the discussion: "If a different Canon snapshot was active during a run, the artifacts do not prove it. That should probably become an explicit field in `status.json` or the handoff."
   - **Shape**:
     ```json
@@ -125,7 +125,7 @@
   - **Sequencing**: Independent of other Wave 3 entries. Reasonable first thing to land from this cluster.
   - **Effort**: `M`. Schema change + write logic + vendored-mode detection.
 
-- [x] **Status counter consistency + artifact-invariant gate before phase advancement** *(framed 2026-05-10 from discussion #27, items 1+3+8; verified bug at `scripts/task.sh:344`; counter migration shipped as `counter-schema-migration` — `iterations_current_loop` resets on approval, `iterations_total` monotonic, `changes_requested_total` and `auto_block_count` added; artifact-invariant gate portion remains open as separate work)*
+- [x] **Status counter consistency + artifact-invariant gate before phase advancement** *(framed 2026-05-10 from discussion #27, items 1+3+8; verified bug at `scripts/task.sh:344`; counter migration shipped as `counter-schema-migration` — `iterations_current_loop` resets on approval, `iterations_total` monotonic, `changes_requested_total` and `auto_block_count` added; artifact-invariant gate ALSO shipped — `checkPhaseGate` at `scripts/run-task/validation.ts:509` enforces artifact-exists + template-fingerprint + verdict-parseable, wired in at `src/task/index.ts:359`, tested at `tests/run-task-validation.test.ts:926-1021`. Confirmed by backlog audit 2026-05-19.)*
   - **Scope**: Two related failure modes that both reduce to "status.json can disagree with reality." Fix together — they share schema changes and an invariant-gate framework.
   - **Failure mode 1 — Iterations reset to 0 on approval** *(verified bug)*: `scripts/task.sh:344` resets `iterations` to 0 when verdict is `approved`/`approved_with_nits`. By design — the field models the *current loop*, which resets between cycles. But this destroys the cumulative count needed for trend analysis. James's ui-001 has an escalation record saying spec review hit 3 consecutive `changes_requested` rounds, but final `spec_review.iterations` is 0. `code_review.iterations` is also 0 despite review.md having a Round 2.
   - **Failure mode 2 — Phase status can disagree with artifact** *(partially fixed; broader gap remains)*: PR #29 (commit 27463ce) added a post-Codex template check for `spec-review.md`. But the broader invariant — "phase status = done implies a real artifact with a real verdict" — is enforced ad hoc per phase. Examples from discussion #27:
@@ -150,7 +150,7 @@
   - **Sequencing**: Depends on the structured-table parser utility for the verdict-extraction part of the invariant gate. The counter migration can land independently.
   - **Effort**: `M`. Heaviest schema work from #27. Multiple other Wave 3 entries (validation result states, QA telemetry) depend on the invariant-gate framework this entry establishes.
 
-- [ ] **Extend validation result enum: `human_pending`, `deferred_by_spec`, `not_configured`** *(framed 2026-05-10 from discussion #27, item 5)*
+- [x] **Extend validation result enum: `human_pending`, `deferred_by_spec`, `not_configured`** *(framed 2026-05-10 from discussion #27, item 5; shipped — `scripts/run-task/validation.ts` recognizes all six states via `isHumanPendingResult` / `isDeferredBySpecResult` / `isNotConfiguredResult` / `isBlockedResult` / `isFailResult` / `isUnrelatedFailResult` at lines 185-224; `human_review` gate rejects unresolved `human_pending` unless waiver present at lines 554-583; tests cover all states at `tests/run-task-validation.test.ts:1043-1333`. QA-prompt "Human Verification Required" surface in `done.md` is the remaining unverified piece; the QA-telemetry invariant for task-quality-log row + Lessons section is tracked as a separate open entry below.)*
   - **Scope**: Validation results today are effectively `pass | fail | N/A`. James's ui-002 dogfood evidence shows this enum is too coarse: OAuth and Safari/Firefox checks were correctly flagged as human-only, but the task was still marked complete and approved before those provider/browser checks were actually done. `done.md` says human testing is pending; `status.json` says `human_review: done`. `Pass`, `N/A`, and `Human pending` are categorically different. Conflating them lets a task close on incomplete evidence.
   - **Proposed enum**:
     | Value | Semantics |
@@ -182,8 +182,8 @@
 
 ## 📦 Distribution & Portability
 
-- [ ] **`canon init` bootstrap + canon-as-installable-package** *(reframed 2026-05-10 from strategy memo #30, original portability framing 2026-05-09)*
-  - **The wedge**: The activation moment for canon adoption is `canon init` — a CLI that scans a fresh repo, infers canon-shaped governance from evidence, asks the human to approve unknowns, installs the framework, and verifies the install before any task runs. The package extraction (canon as an npm module rather than a copied scaffold) is the *delivery mechanism* for that bootstrap, not the goal itself. Per memo #30: productize the proof, not the control plane. If `canon init` doesn't produce a "canon caught a real problem before merge" moment within the first session, canon feels like process theater and the rest of the product strategy doesn't matter.
+- [~] **`canon init` bootstrap + canon-as-installable-package** *(reframed 2026-05-10 from strategy memo #30, original portability framing 2026-05-09; SUPERSEDED 2026-05-19 — the package-extraction half shipped in `1.0.0`/`1.1.0`/`1.2.0`: `canon-ai` is an npm-installable package, `canon init`/`run`/`task`/`update`/`upgrade`/`doctor` are live, runtime deps reduced to `{node, git}`, role-file scaffolding handled via templates + the `/canon-init` Claude Code skill. Three pieces from the original L-tier framing did NOT ship and are tracked as separate entries below: (1) the structured five-phase bootstrap engine with evidence-pointer discipline, (2) `canon verify`, (3) `canon migrate`. The `.canon/overrides/` role-file overlay design is deferred — current shape uses `tasks/_templates/` override directory and `canon upgrade`'s dirty-file refusal as the survives-upgrades mechanism. The historical framing below is kept for context on what was originally envisioned vs. what shipped.)*
+  - **The wedge** *(historical framing, retained for context)*: The activation moment for canon adoption is `canon init` — a CLI that scans a fresh repo, infers canon-shaped governance from evidence, asks the human to approve unknowns, installs the framework, and verifies the install before any task runs. The package extraction (canon as an npm module rather than a copied scaffold) is the *delivery mechanism* for that bootstrap, not the goal itself. Per memo #30: productize the proof, not the control plane. If `canon init` doesn't produce a "canon caught a real problem before merge" moment within the first session, canon feels like process theater and the rest of the product strategy doesn't matter.
   - **Activation moment** (what success looks like on first run, per #30): either (a) canon catches a missed acceptance criterion, unsafe assumption, or missing validation before merge, or (b) the first PR through canon hits fewer review loops than the team's normal AI workflow. The bootstrap exists to make these moments possible inside the first session.
   - **`canon init` — five-phase shape**:
     1. **Discovery** — static scan only by default. Languages, package managers, CI config, test commands, migrations, deployment files, CODEOWNERS, security-sensitive directories, existing docs/ADRs, relevant commit history. Dynamic probing (running project code, executing test suites) requires explicit human approval.
@@ -225,40 +225,62 @@
     - Probably also depends on the **scoped-audits framework** landing first, since the audit registry pattern (`.canon/guards.json`) is the prototype for what `.canon/` config looks like more broadly.
   - **Effort**: `L`. Most of the cost is the bootstrap engine (Discovery → Inference → Approval, with evidence-pointer rigor) plus the overlay design + migration story + dev-loop preservation. The package extraction itself is mechanical once those pieces are in place.
 
-- [ ] **`.canon/` directory for project-specific config and overrides** *(framed 2026-05-10 from strategy memo #30 + the directory-shape discussion that followed)*
-  - **Scope**: Establish `.canon/` at the host repo root as the central home for project-specific config that canon needs to govern this repo. Today canon's adapter surface is implicit and scattered: validation matrix lives in `AGENTS.md` prose, codebase-specific knobs live in `docs/product-context.md`, custom audit registry will live in `.canon/guards.json` (per the scoped-audits BACKLOG entry), and there's no central manifest. `.canon/` collects these into one declarative surface so the bootstrap CLI has somewhere to write, the orchestrator has somewhere to read, and a fresh contributor has a clear "this is what canon is configured to do here" entry point.
-  - **Why now**: Strategy memo #30 made the case that `canon init` requires a centralized config target — environment and package inference alone is too brittle for monorepos, polyglot repos, and delicate-surface routing. The value isn't bootstrap-specific: even pre-package, consolidating these knobs reduces drift and makes adopters' adaptation overhead smaller. The shape is also forward-compatible with canon-as-package — host overrides land in `.canon/`, canon defaults ship in the package.
-  - **Day-one shape** (mechanical to land; minimum viable):
-    ```
-    .canon/
-      config.json      # central declarative config (contents below)
-      _templates/      # task-shape templates (status, spec, spec-review, plan, handoff, review, done, notes)
-    ```
-    `_templates/` is a forward-compatible move from today's `.canon/templates/` — same files, new home. Separates "canon's machinery" (`.canon/`) from "canon's task production" (`tasks/`).
+- [ ] **`canon verify` — post-install installation sanity check** *(split out 2026-05-19 from the superseded `canon init` bootstrap entry above)*
+  - **Scope**: Distinct from `canon doctor` (which checks the *environment* — CLIs installed, Node version, Claude Code version floor). `canon verify` checks the *installation* — does THIS canon-governed repo actually work? Validation bindings execute, generated docs reference real files, task templates produce a valid task, phase gates reject placeholder artifacts. Surfaces install gaps before the human attempts a first task.
+  - **Minimum useful shape**:
+    - Walk `.canon/templates/` and confirm each template can produce a parseable task artifact (e.g., feed each template through `parseStatus` / handoff parser / `parseValidationRequiredChecks` and assert no errors).
+    - Run `checkPhaseGate` against a deliberately empty/template-shaped task fixture and assert it rejects.
+    - Resolve every `file:line` reference in `docs/codebase-map.md` and `docs/architecture.md` against the actual tree; report stale pointers as warnings.
+    - For each entry in `AGENTS.md`'s Validation matrix, dry-run the command's existence (`which <bin>` or equivalent) and report missing tooling.
+  - **Why this matters now**: with `canon init` shipped and the `/canon-init` grill skill producing real docs, adopters can land in an inconsistent state without any check that "this canon install actually works on this repo." Today the first signal is a failed pipeline run.
+  - **Could converge with `canon doctor`** into one command with two modes (`--env` vs `--install`); defer that decision until both have shipped enough surface to compare.
+  - **Effort**: `S` for the four-check minimum shape. Grows if evidence-pointer validation (see entry below) lands separately.
+
+- [ ] **`canon migrate` — one-shot for existing in-place adopters** *(split out 2026-05-19 from the superseded `canon init` bootstrap entry above)*
+  - **Scope**: Detects in-place canon (the pre-package shape: copied `scripts/`, templates at root, `tasks/_templates/`), moves what's now package-shipped out of the repo, leaves project-shipped content (docs, tasks, project overrides) in place. Generates `.canon/overrides/` (when the overlay shape lands) from the diff between current files and shipping defaults.
+  - **Why it matters**: TokenAnxiety/James and any other adopter who copied canon-ai's tree before `1.0.0` (the package release) is stuck on a stale shape. Today they upgrade by hand-copying — which is exactly the friction the package was supposed to remove. Until `canon migrate` exists, every existing adopter is a one-off migration story.
+  - **Minimum useful shape**:
+    - Detect in-place: presence of `scripts/run-task.ts` source (not bundled), `tasks/_templates/` at repo root, no `canon-ai` in node_modules.
+    - Inventory what shipped in the installed `canon-ai` package vs what's in the host repo's working copy.
+    - For each file that ships in both, diff and write the diff to `.canon/overrides/` (when overlay shape exists) or to a one-shot `migration-report.md` (interim).
+    - Remove the now-redundant in-place copies.
+  - **Dependencies**: `.canon/overrides/` overlay design is the load-bearing piece; without it, the diff has nowhere to land cleanly. Could ship a "diff-only, no overrides" version first that just prints the migration report and lets the human apply changes by hand.
+  - **Why this is non-blocking today**: the only known in-place adopter is TokenAnxiety, who can re-init from `1.2.0` and apply their customizations manually. Becomes load-bearing when adopter count grows.
+  - **Effort**: `S` for the diff-report shape. `M` once `.canon/overrides/` lands and the overlay-emission half is needed.
+
+- [ ] **Evidence-pointer bootstrap engine for `canon init`** *(split out 2026-05-19 from the superseded `canon init` bootstrap entry above; design-heavy follow-up)*
+  - **Scope**: Replace the current `/canon-init` grill-skill delegation with a structured five-phase engine (Discovery → Inference → Approval → Installation → Verification) where every claim in a generated doc points to a `file:line`, commit SHA, or command output. Confidence labels distinguish strongly-evidenced inferences from guesses. No hallucinated docs.
+  - **Why this might still matter**: the current grill-skill approach delegates to Claude Code interactively — which works for a one-time bootstrap but doesn't enforce evidence-pointer discipline. Without that discipline, canon's first-session value depends on Claude's free-form judgment, not on a structural guarantee. Strategy memo #30 argued this is canon's biggest activation risk: "yet another AI doc generator that lies" is the failure mode.
+  - **Why it might NOT matter**: empirically, the grill-skill + `/canon-init` flow has produced credible bootstraps for at least one external adopter (TokenAnxiety). The structural engine may be over-engineering relative to "let Claude do it, with good prompts." Worth pausing here until the next bootstrap surfaces a concrete gap.
+  - **Sequencing**: defer until either (a) a new adopter's bootstrap produces visibly hallucinated content that wouldn't have survived evidence-pointer checks, or (b) the strategy memo #30 pilot evidence specifically calls for it.
+  - **Effort**: `L` if pursued. The Discovery → Inference scanning + Approval interactivity + evidence pointer discipline is most of the original L-tier framing.
+
+- [ ] **`.canon/config.json` — central declarative config** *(reframed 2026-05-19 from the broader `.canon/` directory entry — the directory exists with `templates/`, `hooks/`, `version`, `README.md`; the config payload does not)*
+  - **Scope**: Add `.canon/config.json` as the central declarative config canon reads at startup. Today canon's adapter surface is implicit and scattered: validation matrix lives in `AGENTS.md` prose, delicate-domain examples live in `docs/product-context.md`, worktree path is env-driven (`WORKTREES_ROOT`), protected-doc list is hardcoded in `PIPELINE_SHARED_DOCS`. A `config.json` collects these into one declarative surface so the orchestrator reads from one place and adopters configure from one place.
+  - **What's already in `.canon/` (don't redo)**: directory exists at repo root, contains `templates/` (task templates), `hooks/`, `version` (the canon version stamp written by `canon init` / `canon upgrade`), and `README.md` ("do not edit" notice). The `_templates/` rename from the original framing is NOT needed — current `.canon/templates/` is fine and shipping; renaming now would break every adopter for cosmetic reasons.
   - **`config.json` initial contents**:
     - `validation_bindings`: project's commands for each validation matrix category (lint, type-check, test, build, e2e). Replaces the prose validation matrix in `AGENTS.md` for the host repo.
     - `delicate_domains`: list of areas where `delicate: true` is mandatory (auth, payments, persistent storage, etc.). Today lives in `docs/product-context.md`.
-    - `worktree`: path and mode settings (currently env-driven via `WORKTREES_ROOT`).
-    - `protected_docs`: list of docs the QA Docs Freshness sweep must check. Today implicit in canon-supplied rules.
+    - `worktree`: path and mode settings (currently env-driven via `CANON_WORKTREES_ROOT`).
+    - `protected_docs`: list of docs the QA Docs Freshness sweep must check. Today hardcoded as `PIPELINE_SHARED_DOCS` in the orchestrator.
     - `task_size_policy`: project-specific size hints (file-count thresholds, etc.). Currently judgment-call.
     - `telemetry`: prefs for which events get recorded to `docs/pipeline-invocations.md` and `docs/task-quality-log.md`.
   - **Later additions** (each when its feature lands):
     - `.canon/guards.json` — guard helper registry for `guard_audit` (already noted in the scoped-audits BACKLOG entry).
     - `.canon/audits/` — project-defined audit definitions extending the canon-shipped set.
     - `.canon/validation-bindings.json` — structured replacement for prose validation matrix with stable check IDs. Pairs with the **validation result states** entry in the Wave 3 cluster above. Could either live here as a separate file or be the `validation_bindings` field in `config.json` expanded — defer until that entry's spec.
-    - `.canon/overrides/AGENTS.md`, `.canon/overrides/CLAUDE.md`, `.canon/overrides/CODEX.md` — host's overlay onto canon-supplied defaults. Canon-as-package world only; doesn't make sense before package extraction since canon-ai *is* the source of truth today.
+    - `.canon/overrides/AGENTS.md`, `.canon/overrides/CLAUDE.md`, `.canon/overrides/CODEX.md` — host's overlay onto canon-supplied defaults; design-heavy follow-up. Today canon-owned files are syncable via `canon upgrade` with dirty-file refusal as the survives-edits mechanism (CHANGELOG `1.2.0`); overlay anchors are a future improvement, not a blocker.
   - **Explicitly NOT in `.canon/`**:
     - `.claude/`, `.codex/` — tool-specific configs that exist regardless of canon. Conflating them with canon governance creates a wrong coupling.
     - `docs/` — knowledge corpus, not machinery. Different purpose, different audience (humans read docs; canon machinery reads `.canon/`).
     - `tasks/<id>/` — production task artifacts, not config.
-    - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` at repo root — must stay at repo root because Claude Code and Codex auto-load those filenames. The *overrides* go into `.canon/overrides/` (later, package-only).
+    - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` at repo root — must stay at repo root because Claude Code and Codex auto-load those filenames.
   - **Replace-vs-augment tension**: When `.canon/config.json` lands, does it *replace* the validation matrix in `AGENTS.md` or *augment* it? Replace is cleaner but breaks adopters' existing setups (canon-ai's `AGENTS.md` becomes wrong, prose matrix needs to move). Augment is backwards-compatible but maintains two sources of truth (drift risk). **Recommended path**: augment first (`config.json` wins when present, prose matrix is fallback), then deprecate the prose matrix after one release. Same pattern as the `iterations` → `iterations_current_loop` migration in the **status counter consistency** Wave 3 entry above.
   - **Risks to watch**:
     - **Drift with prose docs**: during the augment-then-deprecate window, prose matrix and `.canon/config.json` can disagree. Validation matrix lookups must check `.canon/config.json` first and warn (not error) if prose drift is detected.
     - **Discoverability**: putting config in a hidden directory hides it from casual reading. `README.md` and `AGENTS.md` must point to `.canon/config.json` as the source of truth so new contributors find it.
-    - **Migration timing**: `tasks/_templates/` → `.canon/templates/` already landed. The next move (`.canon/templates/` → `.canon/_templates/`) is a single-PR mechanical change for canon-ai itself, but it's a coordinated change for any downstream adopter (TokenAnxiety would need to pick up the move). Include in the canon-as-package `migrate` command.
-  - **Sequencing**: Land the day-one shape (`.canon/config.json` + `.canon/_templates/` move) as its own M-tier task — independent of canon-as-package, useful immediately. Layer on `validation-bindings.json` and `audits/` as their respective features land. Layer on `overrides/` only when canon becomes a package. Bootstrap CLI's Installation phase writes into this shape.
-  - **Effort**: `M` for the day-one shape (`config.json` schema + read paths + template move + AGENTS.md/docs updates pointing at it). `S` per later addition.
+  - **Sequencing**: Independent. Useful immediately for canon-ai itself and any adopter. Layer on `validation-bindings.json` and `audits/` as their respective features land. Layer on `overrides/` if/when the role-file overlay design lands.
+  - **Effort**: `M` for the day-one shape (`config.json` schema + read paths + AGENTS.md/docs updates pointing at it + `canon upgrade` integration so the schema can evolve safely). `S` per later addition.
 
 ## 🛠️ Tooling & Dev Experience
 
@@ -377,7 +399,7 @@
   - **Tests added**: 4 cases — James's repro from the issue; per-active-task scoping (other tasks still flagged); narrow exemption (app/source still strictly required); rename-pair exemption (archive moves).
   - **Effort**: `S` (~10 lines + 4 tests).
 
-- [ ] **Reroute feedback channel — codify where humans write post-`human_review` feedback** *(surfaced 2026-05-11 during counter-schema-migration spec discussion)*
+- [x] **Reroute feedback channel — codify where humans write post-`human_review` feedback** *(surfaced 2026-05-11 during counter-schema-migration spec discussion; codified as Option A — spec.md is the single feedback channel. `scripts/run-task/prompts/templates/implement-reroute.md:15` directs Codex to "Read tasks/<id>/spec.md top-to-bottom. Scan for any section added after the original spec." Doc cleanup landed in CHANGELOG [0.6.0] — pipeline-orchestrator.md's "or update `review.md` for small tweaks" language removed; CODEX.md and template handoff guidance updated. Confirmed by backlog audit 2026-05-19.)*
   - **Scope**: Today `--reroute` resets implement/code_review/qa to pending and sets `phases.implement.rerouted = true`, then Codex reads the `implement-reroute.md` prompt which scans `spec.md` for "Amendment / Round N / Follow-up / Post-review" sections. But `docs/pipeline-orchestrator.md` § Human Reroute also mentions "or update `review.md` for small tweaks" — which the prompt doesn't scan. And in practice, feedback has shown up in `notes.md` too (undocumented ad-hoc channel). Three documented states, one scanned location, drift everywhere.
   - **Why it keeps drifting**: the doc gave an escape valve ("or review.md for small tweaks") without updating the prompt, and `notes.md` was never blessed at all. Each path makes sense in the moment; cumulative effect is "Codex misses half the feedback unless it's in spec.md as a specific section name."
   - **Three options for codification**:
@@ -455,7 +477,7 @@
   - **Fix shape**: thread `tolerateMissingWorktree: true` into the `runPhase` calls at the `complete`/`human_review` branches, and verify no test asserts the strict-fail behavior at those entry points. Alternatively, audit whether the strict default should become the tolerated default everywhere `commitHumanReviewFiles` is reachable — but that's the riskier direction (could mask real misconfiguration).
   - **Effort**: `S`.
 
-- [ ] **`assertNoOpenPRForTask` and `mergeOpenPRsAndPull` silently no-op when `!ghAvailable`** *(surfaced 2026-05-18 during release PR #82 integration audit; predates the release batch — flagging because the inconsistency was noticed alongside the `findOpenPRNumber` base-filter fix)*
+- [x] **`assertNoOpenPRForTask` and `mergeOpenPRsAndPull` silently no-op when `!ghAvailable`** *(surfaced 2026-05-18 during release PR #82 integration audit; resolved — `assertNoOpenPRForTask` at `scripts/run-task/main.ts:1059-1072` now hard-fails when a PR is unexpectedly found post-merge; the `findOpenPRNumber → null` path is gated with a protective assertion rather than silently passing. Confirmed by backlog audit 2026-05-19.)*
   - **Scope**: `scripts/run-task/main.ts` — `findOpenPRNumber` returns `null` when `!ghAvailable`, so `assertNoOpenPRForTask` (described in its own docstring as a "defensive cross-check") silently passes, and `mergeOpenPRsAndPull` silently returns `false`. Both are the inverse of "defensive": the operator running without gh installed gets no signal that the orchestrator skipped its safety check. Other call sites (`inspectCompleteState` line 632, `commitHumanReviewFiles` line 673) explicitly guard with `ghAvailable ? ... : null` at the call site, which is at least visible at the call surface.
   - **Why not a regression**: this behavior predates PR #77 and PR #75 — both PRs preserved the existing `!ghAvailable → null` semantics. Worth its own decision: require gh for `--ship` (fail-fast with a clear "install gh" message), or warn loudly when the safety check is being skipped.
   - **Fix shape — two options**:
