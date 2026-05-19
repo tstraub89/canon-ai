@@ -284,6 +284,39 @@
 
 ## 🛠️ Tooling & Dev Experience
 
+- [ ] **`canon init --ninja-mode` (interactive prompt during `canon init`)** *(framed 2026-05-19 from GP work-repo dogfood)*
+  - **Scope**: During `canon init`, ask the operator whether canon's on-disk footprint should be **tracked in the repo** (the current default — `.canon/`, `.claude/`, `.codex/`, `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `docs/`, `tasks/` all become committed adopter content) or kept **local-only / "ninja mode"** (written to `.git/info/exclude`, never `.gitignore`, so the canon infrastructure stays invisible to teammates and PR diffs). 1.3.0 already ships the PR-body half of ninja mode via `CANON_PR_BODY` env var; this entry covers the filesystem half.
+  - **Why it's wanted**: adopters using canon in work/employer repos often don't want to advertise the tool — either because the repo has a strict committed-content policy, because the team hasn't adopted canon yet and the canon files would clutter teammate diffs, or for personal preference. Today they have to either (a) commit canon infra and live with the leak, (b) hand-edit `.git/info/exclude` after every `canon init` and `canon upgrade`, or (c) abandon canon for that repo.
+  - **Working pattern (from the GP work-repo dogfood)**: the operator's `.git/info/exclude` contained exactly these lines and the run was clean end-to-end:
+    ```
+    .canon/
+    .claude/
+    .codex/
+    AGENTS.md
+    CLAUDE.md
+    CODEX.md
+    docs/
+    tasks/
+    ```
+  - **Proposed shape**:
+    - **`canon init` prompt**: after detecting it's running in a git repo, ask "Track canon infrastructure in this repo, or keep it local-only (ninja mode)?" with the trade-offs described inline. Default to tracked (current behavior).
+    - **`--ninja-mode` flag**: non-interactive opt-in for scripting (`canon init --ninja-mode`). Mirrors the prompt's "local-only" answer.
+    - **`--no-ninja-mode` flag**: explicit opt-out for the prompt-suppressed case (e.g. `CI=true`).
+    - On "local-only", append a canon-delimited block to `.git/info/exclude` (creating the file if missing) with the pattern above. Use the same `<!-- canon:start --><!-- canon:end -->` delimiters as the existing `mergeDelimited` for upgrade safety.
+    - On `canon upgrade` re-run that delimited block so adopters who add new canon-managed files later get the updated exclusion list automatically.
+    - Persist the ninja preference in `.canon/version`'s sibling metadata (or a new `.canon/config.json`) so `canon doctor` can detect "ninja mode is active but somehow canon files are tracked" drift.
+  - **Edge cases to handle**:
+    - **Existing `docs/` tracked in adopter repo**: the exclude rule only hides *new* untracked files in `docs/`, but operators might be confused when their existing tracked files keep showing up while canon's don't. Worth a one-line caveat in the prompt.
+    - **`.git/info/exclude` already has user-authored lines**: never overwrite — append the delimited block at the end.
+    - **Multi-clone case**: `.git/info/exclude` is per-clone, not per-machine. Fresh clones of the same repo need re-init. Mention this in the prompt's trade-offs section.
+    - **`canon upgrade` semantics**: ninja-mode adopters running `canon upgrade` should still get the canon-managed files updated on disk; the existing dirty-tree refusal logic from #63 already handles "canon-managed file was modified by the operator" gracefully.
+    - **`CANON_PR_BODY` pairing**: `canon init --ninja-mode` should also print a hint suggesting the operator set `CANON_PR_BODY=""` (or leave it unset — the 1.3.0 default already produces neutral PR bodies). The two halves of ninja mode are independent but commonly used together.
+  - **What's NOT in scope**:
+    - Migrating already-tracked canon files to local-only (`git rm --cached` flow). Adopters who switch mid-stream can do that by hand.
+    - Per-file granularity (e.g. "track `docs/decisions.md` but not `tasks/`"). Start with the all-or-nothing block; add granularity only if real adopters ask for it.
+    - A `canon doctor --fix` mode that retroactively applies the exclude block. Detection is fine; auto-applying without an `init` re-run is too invasive.
+  - **Effort**: `S` — most of the surface is one prompt + one `mergeDelimited` write to `.git/info/exclude`. The detection-on-upgrade path adds maybe ~30 lines.
+
 - [ ] **Artifact consistency lint (`canon task lint` / `canon verify`)** *(filed by James, [issue #84](https://github.com/tstraub89/canon-ai/issues/84), 2026-05-19)*
   - **Scope**: A `canon task lint` (or `canon verify` / `canon doctor --tasks`) mode that catches cross-artifact rollup drift before a task or bundle is marked ready. Adopter dogfood surfaced the failure mode: a decision ledger was corrected to 49 decisions, but sibling artifacts (status.json `founder_decisions_total: 48`, prose rollups, synthesis docs) still said 48 — agents fixed the authoritative source while leaving stale rollups elsewhere.
   - **Why it's wanted**: canon's value is the paper trail staying trustworthy. In larger multi-agent runs, duplicated counts and rollups are exactly where drift appears, and human/agent review tends to miss numeric mismatches across files.
