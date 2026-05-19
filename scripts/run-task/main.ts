@@ -672,25 +672,33 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
             // (Prevents the duplicate-PR-create regression; PR #75 iter 1.)
             const baseBranch = splitGit.getBaseBranch(taskIds);
             const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName, baseBranch) : null;
-            if (cliArgs.pr && openPR !== null) {
-                const prUrl = lookupPRUrl(openPR);
-                info(formatExistingPRMessage(openPR, prUrl));
-                return;
-            }
 
-            // Otherwise (no existing PR for --pr, or --push at all): always
-            // push. `git push` is idempotent — no-op when origin already
-            // has the local tip, pushes the difference otherwise. We do
-            // NOT short-circuit on `git rev-parse origin/<branch>` because
-            // the local remote-tracking ref can be stale (a prior push
-            // failed mid-flight, or refs were never fetched). Letting
-            // git push run is the safe default.
+            // Always push before reporting / creating the PR. `git push` is
+            // idempotent — no-op when origin already has the local tip,
+            // pushes the difference otherwise. We do NOT short-circuit on
+            // `git rev-parse origin/<branch>` because the local
+            // remote-tracking ref can be stale (a prior push failed
+            // mid-flight, or refs were never fetched). Letting git push
+            // run is the safe default.
+            //
+            // Important: this push runs even when an open PR is found
+            // below. Codex P1 on release PR #82: skipping the push on the
+            // "PR exists" branch leaves the PR stale when new local
+            // commits landed after the PR was opened (clean tree + open
+            // PR is NOT a guarantee that origin matches HEAD).
             // (Spec ACs 1+3, complete-state banner contract; PR #75 iter 2.)
             info(`Clean tree. Pushing ${branchName}...`);
             const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
             if (!pushResult.ok) {
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
+
+            if (cliArgs.pr && openPR !== null) {
+                const prUrl = lookupPRUrl(openPR);
+                info(formatExistingPRMessage(openPR, prUrl));
+                return;
+            }
+
             if (cliArgs.pr) {
                 createDraftPRForTask(taskIds, branchName);
             }
@@ -1089,13 +1097,20 @@ function findOpenPRNumber(branch: string, baseBranch: string): number | null {
 
 /**
  * Shared exact-head-ref PR lookup. `gh pr list --head <branch>` filters by
- * prefix, so we fetch a small batch and enforce `headRefName === branch` in
- * code. `baseBranch` is optional (some callers want any base match).
+ * prefix, so we fetch the full result set and enforce `headRefName === branch`
+ * in code. `baseBranch` is optional (some callers want any base match).
  * `state` is `open` | `merged` | `closed`.
+ *
+ * `--limit 1000` is effectively unbounded for any sane repo: gh internally
+ * pages the underlying GitHub API to fulfill the limit. A previous version
+ * used `--limit 20`, which silently dropped exact matches when a repo had
+ * many similarly-prefixed PRs (e.g., a long-running release branch with
+ * dozens of open task/* PRs). At 1000+ similarly-prefixed PRs the prefix
+ * match is the bigger problem. (Codex P2 on release PR #82.)
  */
 function findPRNumberExact(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): number | null {
     if (!ghAvailable) return null;
-    const args = ['pr', 'list', '--head', branch, '--state', state, '--limit', '20', '--json', 'number,headRefName'];
+    const args = ['pr', 'list', '--head', branch, '--state', state, '--limit', '1000', '--json', 'number,headRefName'];
     if (baseBranch !== null) args.push('--base', baseBranch);
     const result = splitGit.runCommand('gh', args);
     if (!result.ok || !result.stdout.trim()) return null;

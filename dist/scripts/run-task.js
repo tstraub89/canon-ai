@@ -4132,15 +4132,15 @@ function commitHumanReviewFiles(taskIds, cwd) {
     if (branchName2) {
       const baseBranch = getBaseBranch(taskIds);
       const openPR = cliArgs.pr && ghAvailable ? findOpenPRNumber(branchName2, baseBranch) : null;
-      if (cliArgs.pr && openPR !== null) {
-        const prUrl = lookupPRUrl(openPR);
-        info2(formatExistingPRMessage(openPR, prUrl));
-        return;
-      }
       info2(`Clean tree. Pushing ${branchName2}...`);
       const pushResult2 = gitSafeAt2(cwd, "push", "origin", branchName2);
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
+      }
+      if (cliArgs.pr && openPR !== null) {
+        const prUrl = lookupPRUrl(openPR);
+        info2(formatExistingPRMessage(openPR, prUrl));
+        return;
       }
       if (cliArgs.pr) {
         createDraftPRForTask(taskIds, branchName2);
@@ -4373,7 +4373,7 @@ function findOpenPRNumber(branch, baseBranch) {
 }
 function findPRNumberExact(branch, baseBranch, state) {
   if (!ghAvailable) return null;
-  const args = ["pr", "list", "--head", branch, "--state", state, "--limit", "20", "--json", "number,headRefName"];
+  const args = ["pr", "list", "--head", branch, "--state", state, "--limit", "1000", "--json", "number,headRefName"];
   if (baseBranch !== null) args.push("--base", baseBranch);
   const result = runCommand("gh", args);
   if (!result.ok || !result.stdout.trim()) return null;

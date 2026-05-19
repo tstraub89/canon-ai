@@ -90,7 +90,10 @@ function setupFakeGit(scriptDir: string): void {
         '  fi',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "$FAKE_GIT_BASE_BRANCH" ]; then',
+        'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-}" ]; then',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_TASK_BRANCH:-}" ]; then',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "$FAKE_GIT_BASE_BRANCH" ]; then',
@@ -906,6 +909,7 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
             FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
             FAKE_GH_PR_NUMBER: '88',
             FAKE_GH_PR_URL: 'https://github.com/x/y/pull/88',
         });
@@ -913,6 +917,12 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /Existing draft PR: #88 \(https:\/\/github\.com\/x\/y\/pull\/88\)/);
         assert.doesNotMatch(result.stdout, /TASK COMPLETE — already past human_review/);
+        // Codex P1 on release PR #82: push MUST run even when an open PR is
+        // already detected — clean tree + open PR doesn't guarantee origin
+        // matches HEAD (new local commits after the PR was opened would be
+        // silently dropped without this push).
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run on PR-exists branch');
     });
 });
 
@@ -945,6 +955,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
             FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
             FAKE_GH_PR_NUMBER: '88',
             FAKE_GH_PR_URL: 'https://github.com/x/y/pull/88',
         });
@@ -952,6 +963,10 @@ void test('main --pr at human_review is idempotent when an open PR already exist
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /Existing draft PR: #88 \(https:\/\/github\.com\/x\/y\/pull\/88\)/);
         assert.doesNotMatch(result.stdout, /TASK COMPLETE — already past human_review/);
+        // Codex P1 on release PR #82: see complete-phase test above for full
+        // rationale — push must run even when an open PR is detected.
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run on PR-exists branch');
     });
 });
 
