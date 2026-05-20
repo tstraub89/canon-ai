@@ -34,7 +34,7 @@ Multiple IDs = bundle mode (see below).
 | `--push` | — | Push the task branch to remote at `human_review`. |
 | `--pr` | — | Push + create a draft PR at `human_review`. |
 | `--reroute` | — | Reset a task from `human_review` back to `implement` (post-review fix path). |
-| `--ship` | — | Mark tasks done and move artifacts to `_archive/`. |
+| `--ship` | — | Squash-merge any open PR for the task branch (via `gh pr merge --squash --delete-branch`), pull the base, tear down the worktree, archive `tasks/<id>/` to `_archive/`, and clean up local branches. If the PR was already merged externally, picks up at the cleanup step. |
 | `--dry-run` | — | Print the planned phases, agents, model, and effort without spawning an LLM. |
 
 **Default is full auto** — without `--step`, the pipeline runs all phases to completion (or to the next human gate).
@@ -301,9 +301,9 @@ Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the 
 
 ## Shipping & Post-Merge Reconciliation
 
-**Normal sequence**: `--pr` (push + draft PR) → PR merges → `--ship` (archive + cleanup). `--ship` is post-merge only; running it before the PR merges archives the task without the implementation branch landing.
+**Normal sequence**: `--pr` (push + draft PR) → mark PR ready, get it approved → `--ship` (merge + archive + cleanup, all in one). `--ship` calls `gh pr merge --squash --delete-branch` itself before tearing down the worktree and archiving, so don't merge the PR manually — canon's `--ship` controls the teardown ordering that prevents the "local branch held by worktree → gh fails to delete → remote branch stays around" partial-cleanup state. If you've already merged the PR externally, `--ship` detects the merge and picks up at cleanup. Running `--ship` with no PR open at all archives the task without the implementation landing — don't do that.
 
-`--ship` archives the task dir to `tasks/_archive/<id>/`, removes the worktree (if any), and marks the task complete. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
+`--ship` runs in this order: (1) merge any open PR for the task branch via `gh pr merge --squash --delete-branch`, (2) pull the base branch (now has the squashed commit), (3) run any project-specific `.canon/hooks/post-merge.sh`, (4) archive `tasks/<id>/` to `tasks/_archive/<id>/`, (5) `git worktree remove --force` if a worktree was active, (6) clean up local branches. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
 
 **Always rebase local main on `origin/main` before invoking `--ship`.** When a worktree-implemented PR squash-merges, `origin/main` picks up `tasks/<id>/` files from the squash commit. If `--ship` runs before local rebases, the task directory ends up in both `tasks/<id>/` and `tasks/_archive/<id>/` and needs manual reconciliation.
 

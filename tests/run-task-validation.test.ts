@@ -466,6 +466,14 @@ void test('extractHandoffPath: rejects multiple paths in a single cell (combined
     assert.equal(extractHandoffPath('`src/a.ts`, `src/b.ts`'), null);
 });
 
+void test('parseHandoffPathCell rejects markdown links with empty URL', () => {
+    // `[foo]()` would otherwise pass the loose regex with an empty URL.
+    // Codex won't produce this on purpose, but a template-substitution bug
+    // that strips the URL to `()` would silently slip through.
+    const result = parseHandoffPathCell('[src/foo.ts]()');
+    assert.equal(result.kind, 'malformed');
+});
+
 void test('parseHandoffPathCell rejects absolute paths', () => {
     // Absolute paths poison `git check-ignore --stdin` (exits 128, returns no
     // partial stdout) — rejecting them at the parse boundary keeps the

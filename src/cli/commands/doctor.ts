@@ -278,10 +278,12 @@ export function parseCodexProjectTrust(tomlContent: string): Map<string, string>
             continue;
         }
         if (currentProject) {
-            // TOML allows an inline `# comment` after the value — accept it.
-            const trust = trimmed.match(/^trust_level\s*=\s*"([^"]+)"\s*(?:#.*)?$/);
+            // TOML allows both `"..."` and `'...'` for string values, plus an
+            // inline `# comment` after the value. Accept either quote style;
+            // pick whichever capture group fired.
+            const trust = trimmed.match(/^trust_level\s*=\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$/);
             if (trust) {
-                result.set(currentProject, trust[1]);
+                result.set(currentProject, trust[1] ?? trust[2]);
             }
         }
     }
@@ -360,7 +362,16 @@ export function checkCodexProjectTrust(cwd: string): Check {
         // platform) matches `C:\Users\me\repo` against trusted parent
         // `C:\Users\me` correctly. `realpath` returns native separators, so
         // both operands here are already in the platform's form.
-        if (canonicalWorkspace.startsWith(`${canonicalProject}${pathSep}`)) {
+        //
+        // Root special case: when the trusted project IS the separator
+        // (`/` on POSIX or `C:\` on Windows), the project string already
+        // ends with the separator. Appending another would produce `//` /
+        // `C:\\`, which `startsWith` would never match against a real
+        // workspace path. Compare without the separator append in that case.
+        const prefix = canonicalProject.endsWith(pathSep)
+            ? canonicalProject
+            : `${canonicalProject}${pathSep}`;
+        if (canonicalWorkspace.startsWith(prefix)) {
             ancestors.push({ project, level, depth: canonicalProject.length });
         }
     }

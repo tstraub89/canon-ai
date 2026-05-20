@@ -2,6 +2,19 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.3.2] — 2026-05-19
+
+Polish patch — low-risk fixes deferred from 1.3.0/1.3.1 review rounds, plus the GP "auto-commit pathspec on already-deleted files" recovery wedge.
+
+### Fixed
+
+- **Auto-commit no longer fails with `pathspec did not match` on files already deleted in an earlier task-branch commit.** When a handoff lists a file that Codex deleted in a previous iteration (the deletion is committed in `baseRef..HEAD`, working tree no longer has the path), the prior bulk `git add -A -- <every handoff file>` call rejected the whole operation because `git add` can't match a path that doesn't exist in the working tree AND isn't tracked. The missing-file precheck already exempted these paths (case (b) — committed in `baseRef..HEAD`); the bulk-stage step now exempts them too via a new `settledDeletions` set built in the same loop. If *every* handoff path falls in this category (rare — Codex would have to delete every claimed file and not modify any), auto-commit returns cleanly without a stage step. Surfaced by the GP starter-preview-renderer task hitting this on every recovery iteration.
+- **`canon task accept` rollback now uses atomic tmp+rename instead of direct `writeFileSync`.** The forward path uses `writeStatusAtomic` (tmp + rename); the mid-bundle rollback path used a direct `writeFileSync` and would corrupt the file it was trying to restore if interrupted mid-write. Rollback now writes to `<file>.rollback.tmp` first then renames, matching the atomicity of the forward path.
+- **`parseHandoffPathCell` rejects markdown links with empty URL `[foo]()`.** Codex won't produce this on purpose, but a template-substitution bug stripping the URL would otherwise slip through with an empty link. The strict parser's URL slot now requires at least one non-paren character.
+- **`canon doctor` codex-trust check accepts single-quoted TOML values.** The codex CLI writes double-quoted (`trust_level = "trusted"`), but operators editing the config by hand often use single quotes. TOML allows both — the check now accepts either via an extended regex.
+- **`canon doctor` codex-trust check handles root `/` as a trusted ancestor.** If `~/.codex/config.toml` has an entry for `/` itself trusted (exotic but valid — would cover every workspace by inheritance), the prior `startsWith(`${canonicalProject}${pathSep}`)` produced `//` which never matched. The inherited-ancestor loop now detects the root case and compares without the trailing separator.
+- **Operator docs correct the "`--ship` is post-merge cleanup only" framing.** `--ship` calls `gh pr merge --squash --delete-branch` itself before tearing down the worktree and archiving — the operator should not merge the PR manually. The `CLAUDE.md` quick-refs, the orchestrator reference table row, the "Normal sequence" line, and the description paragraph were all updated to reflect what `--ship` actually does. (Both root and templates copies.)
+
 ## [1.3.1] — 2026-05-19
 
 Recovery release for v1.3.0. The auto-release workflow tagged v1.3.0 at the *first* commit that bumped `package.json` (`b826f2b`) rather than the merge commit, while extracting release notes from main's HEAD — so the v1.3.0 release page advertised six fixes that weren't actually in the tagged code. v1.3.0 release notes were corrected to match the tag; this release ships the missing five fixes (originally intended for 1.3.0) plus the workflow fix that prevents the mismatch from recurring. Filed by James as [#87](https://github.com/tstraub89/canon-ai/issues/87) (P0), [#88](https://github.com/tstraub89/canon-ai/issues/88) (P0), [#89](https://github.com/tstraub89/canon-ai/issues/89) (P1), [#90](https://github.com/tstraub89/canon-ai/issues/90) (P1), [#91](https://github.com/tstraub89/canon-ai/issues/91) (P2), [#92](https://github.com/tstraub89/canon-ai/issues/92) (P2).

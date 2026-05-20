@@ -208,7 +208,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.3.1";
+  const installedVersion = "1.3.2";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -263,9 +263,9 @@ function parseCodexProjectTrust(tomlContent) {
       continue;
     }
     if (currentProject) {
-      const trust = trimmed.match(/^trust_level\s*=\s*"([^"]+)"\s*(?:#.*)?$/);
+      const trust = trimmed.match(/^trust_level\s*=\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$/);
       if (trust) {
-        result.set(currentProject, trust[1]);
+        result.set(currentProject, trust[1] ?? trust[2]);
       }
     }
   }
@@ -321,7 +321,8 @@ function checkCodexProjectTrust(cwd) {
   const ancestors = [];
   for (const [project, level] of trustMap) {
     const canonicalProject = safeRealpathOrSelf(project);
-    if (canonicalWorkspace.startsWith(`${canonicalProject}${pathSep}`)) {
+    const prefix = canonicalProject.endsWith(pathSep) ? canonicalProject : `${canonicalProject}${pathSep}`;
+    if (canonicalWorkspace.startsWith(prefix)) {
       ancestors.push({ project, level, depth: canonicalProject.length });
     }
   }
@@ -556,7 +557,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.3.1";
+  const version = "1.3.2";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -1185,7 +1186,7 @@ function parseHandoffPathCell(cell) {
   const trimmed = cell.trim();
   if (!trimmed) return { kind: "malformed", reason: "empty cell" };
   const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
-  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]*\)/g)];
+  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]+\)/g)];
   if (backtickGroups.length + mdLinkGroups.length > 1) {
     const tokens = [
       ...backtickGroups.map((m) => `\`${m[1]}\``),
@@ -1206,7 +1207,7 @@ function parseHandoffPathCell(cell) {
     return validateExtractedPath(backtickGroups[0][1].trim());
   }
   if (mdLinkGroups.length === 1) {
-    if (!/^\[[^\]]+\]\(.*\)(?:\s+.*)?$/.test(trimmed)) {
+    if (!/^\[[^\]]+\]\(.+\)(?:\s+.*)?$/.test(trimmed)) {
       return {
         kind: "malformed",
         reason: `markdown link must be at the start of the cell \u2014 got: ${snippet(trimmed)}`
@@ -1831,7 +1832,9 @@ function taskAccept(ids, phaseArg, options = {}) {
       const original = originalSnapshots.get(filePath);
       if (original === void 0) continue;
       try {
-        fs6.writeFileSync(filePath, original, "utf8");
+        const tmpFile = `${filePath}.rollback.tmp`;
+        fs6.writeFileSync(tmpFile, original, "utf8");
+        fs6.renameSync(tmpFile, filePath);
       } catch (rollbackErr) {
         const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         rollbackErrors.push(`    ${filePath}: ${message}`);
@@ -2418,7 +2421,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.3.1";
+  const newVersion = "1.3.2";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -2595,7 +2598,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.3.1");
+  console.log("1.3.2");
 }
 switch (command) {
   case "doctor":

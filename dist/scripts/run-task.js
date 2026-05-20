@@ -1893,7 +1893,7 @@ function parseHandoffPathCell(cell) {
   const trimmed = cell.trim();
   if (!trimmed) return { kind: "malformed", reason: "empty cell" };
   const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
-  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]*\)/g)];
+  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]+\)/g)];
   if (backtickGroups.length + mdLinkGroups.length > 1) {
     const tokens = [
       ...backtickGroups.map((m) => `\`${m[1]}\``),
@@ -1914,7 +1914,7 @@ function parseHandoffPathCell(cell) {
     return validateExtractedPath(backtickGroups[0][1].trim());
   }
   if (mdLinkGroups.length === 1) {
-    if (!/^\[[^\]]+\]\(.*\)(?:\s+.*)?$/.test(trimmed)) {
+    if (!/^\[[^\]]+\]\(.+\)(?:\s+.*)?$/.test(trimmed)) {
       return {
         kind: "malformed",
         reason: `markdown link must be at the start of the cell \u2014 got: ${snippet(trimmed)}`
@@ -4031,6 +4031,7 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     gitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles]
   });
   const missing = [];
+  const settledDeletions = /* @__PURE__ */ new Set();
   const baseRefForLog = getBaseBranch(taskIds);
   for (const f of allHandoffFiles) {
     if (dirtyFiles.has(f)) continue;
@@ -4038,7 +4039,10 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     const exists = fs14.existsSync(path15.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);
-      if (committed.ok && committed.stdout.trim()) continue;
+      if (committed.ok && committed.stdout.trim()) {
+        settledDeletions.add(f);
+        continue;
+      }
       missing.push(`${f} \u2014 listed in handoff but missing from working tree (and no commit in ${baseRefForLog}..HEAD touches this path)`);
       continue;
     }
@@ -4047,6 +4051,7 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
       missing.push(`${f} \u2014 untracked on disk but git status did not report it (report this as a bug)`);
     }
   }
+  Object.assign(debug, { settledDeletions: [...settledDeletions] });
   if (missing.length > 0) {
     appendAutoCommitDebug(taskIds, { ...debug, missing });
     die(
@@ -4081,7 +4086,15 @@ ${stagedBeforeUnexpected.map((f) => `    ${f}`).join("\n")}
     info("Handoff files are already committed or unchanged \u2014 skipping auto-commit.");
     return;
   }
-  const addResult = gitSafeAt(cwd, "add", "-A", "--", ...handoffFiles);
+  const stageable = handoffFiles.filter((f) => !settledDeletions.has(f));
+  Object.assign(debug, { stageable });
+  if (stageable.length === 0) {
+    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
+    appendAutoCommitDebug(taskIds, { ...debug, result: "all-handoff-files-already-settled" });
+    info("All handoff files are already settled in history \u2014 skipping auto-commit.");
+    return;
+  }
+  const addResult = gitSafeAt(cwd, "add", "-A", "--", ...stageable);
   Object.assign(debug, {
     addOk: addResult.ok,
     addError: addResult.stderr

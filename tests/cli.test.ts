@@ -551,6 +551,20 @@ void test('parseCodexProjectTrust: accepts inline TOML comments after the value'
     assert.equal(result.get('/Users/x/repo'), 'trusted');
 });
 
+void test('parseCodexProjectTrust: accepts single-quoted TOML values', () => {
+    // TOML allows both `"..."` (basic strings) and `'...'` (literal strings).
+    // The codex CLI itself writes double-quoted, but operators editing the
+    // config by hand may use single quotes — accept either so canon doctor
+    // doesn't false-warn on a valid config.
+    const config = [
+        '[projects."/Users/x/repo"]',
+        "trust_level = 'trusted'",
+        '',
+    ].join('\n');
+    const result = parseCodexProjectTrust(config);
+    assert.equal(result.get('/Users/x/repo'), 'trusted');
+});
+
 void test('parseCodexProjectTrust: accepts inline TOML comments on the table header', () => {
     const config = [
         '[projects."/Users/x/repo"] # trusted manually',

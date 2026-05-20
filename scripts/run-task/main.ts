@@ -465,7 +465,17 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // — covers files deleted or renamed in an earlier commit on this branch
     // (refactor pattern: round 1 deletes ProjectContext.tsx, round 2 review
     // fixes don't re-touch it, but handoff still lists it as a Change).
+    //
+    // `settledDeletions` collects case (b)-deletion subsets — paths that
+    // don't exist on disk but whose deletion is already committed in
+    // baseRef..HEAD. They have no working-tree presence to stage, and
+    // passing them to `git add -A` would fail with `pathspec did not match`
+    // (the bulk-stage step below would die on the whole operation). Filtered
+    // out before staging. Surfaced by the GP starter-preview-renderer task
+    // hitting this on every iteration after a prototype-file deletion was
+    // committed early. See BACKLOG: GP failure mode #6.
     const missing: string[] = [];
+    const settledDeletions = new Set<string>();
     const baseRefForLog = splitGit.getBaseBranch(taskIds);
     for (const f of allHandoffFiles) {
         if (dirtyFiles.has(f)) continue;
@@ -476,7 +486,10 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
             // this branch already touched it (delete, rename, or modify-then-
             // delete-in-later-commit all show up here).
             const committed = splitGit.gitSafeAt(cwd, 'log', '--format=%H', '--max-count=1', `${baseRefForLog}..HEAD`, '--', f);
-            if (committed.ok && committed.stdout.trim()) continue;
+            if (committed.ok && committed.stdout.trim()) {
+                settledDeletions.add(f);
+                continue;
+            }
             missing.push(`${f} — listed in handoff but missing from working tree (and no commit in ${baseRefForLog}..HEAD touches this path)`);
             continue;
         }
@@ -485,6 +498,7 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
             missing.push(`${f} — untracked on disk but git status did not report it (report this as a bug)`);
         }
     }
+    Object.assign(debug, { settledDeletions: [...settledDeletions] });
     if (missing.length > 0) {
         appendAutoCommitDebug(taskIds, { ...debug, missing });
         splitCli.die(
@@ -526,7 +540,21 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // Stage every handoff path, not just paths reported by `git status`. This is
     // idempotent for clean files and avoids porcelain-output or racy-status
     // omissions dropping a valid handoff file from the commit.
-    const addResult = splitGit.gitSafeAt(cwd, 'add', '-A', '--', ...handoffFiles);
+    //
+    // Exclude `settledDeletions` — paths whose deletion is already committed
+    // in baseRef..HEAD. They have no working-tree presence, and `git add -A`
+    // would reject them with `pathspec did not match`, failing the whole
+    // bulk operation. The deletion is already in the commit history, so
+    // there's nothing to stage for them anyway.
+    const stageable = handoffFiles.filter(f => !settledDeletions.has(f));
+    Object.assign(debug, { stageable });
+    if (stageable.length === 0) {
+        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
+        appendAutoCommitDebug(taskIds, { ...debug, result: 'all-handoff-files-already-settled' });
+        splitCli.info('All handoff files are already settled in history — skipping auto-commit.');
+        return;
+    }
+    const addResult = splitGit.gitSafeAt(cwd, 'add', '-A', '--', ...stageable);
     Object.assign(debug, {
         addOk: addResult.ok,
         addError: addResult.stderr,

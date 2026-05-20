@@ -53,7 +53,7 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 **Quick refs you'll use most**:
 - `canon run <id> --step --expect <phase>` — run one phase with a phase-mismatch guard.
 - `MAX_REVIEW_LOOPS=5 canon run <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block.
-- **`canon run <id> --pr`** — when a task reaches `human_review`, always use `--pr` to push the branch and open the draft PR. Do not skip this. `--ship` is post-merge cleanup only — running it before the PR merges archives the task without the implementation landing.
+- **`canon run <id> --pr` → `canon run <id> --ship`** — when a task reaches `human_review`, run `--pr` to push the branch and open the draft PR; after the PR is marked ready and approved, run `--ship` for the merge + archive. `--ship` calls `gh pr merge --squash --delete-branch` itself, then tears down the worktree, archives the task dir, pulls the base branch, and cleans up local branches. Don't merge the PR manually — canon's `--ship` handles the worktree-teardown-before-branch-deletion ordering that `gh pr merge --delete-branch` alone trips on when a worktree holds the branch. If you've already merged the PR externally, `--ship` detects the merge and picks up at cleanup. Running `--ship` with no PR open at all archives the task without the implementation landing — don't do that.
 - Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — anything where a regression has unbounded blast radius. The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`). **Project-specific delicate-flag domain examples** (auth, payments, persistent storage, PHI handling, security-relevant cryptography, orchestrator routing logic, etc.) live in [`docs/product-context.md`](docs/product-context.md) — adopters list theirs there.
 - **One pipeline per worktree.** Multiple `canon run` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
 - **Prefer `canon task` helpers over hand-editing `status.json`.** `canon task phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
@@ -140,7 +140,7 @@ Once the task reaches `human_review`, open the draft PR with:
 canon run <id> --pr
 ```
 
-`--pr` pushes the task branch and creates a draft PR targeting `base_branch` (recorded in `status.json` at task creation — typically `dev`). Do not use `--ship` here; `--ship` is post-merge cleanup only, run after the PR merges.
+`--pr` pushes the task branch and creates a draft PR targeting `base_branch` (recorded in `status.json` at task creation — typically `dev`). Don't use `--ship` at this step — `--ship` is for after the PR is approved and ready to merge, and will do the merge + cleanup itself (see the Quick refs).
 
 ## Spec Authorship Guidelines
 

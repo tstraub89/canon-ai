@@ -667,7 +667,11 @@ export function parseHandoffPathCell(cell: string): HandoffPathCellResult {
     if (!trimmed) return { kind: 'malformed', reason: 'empty cell' };
 
     const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
-    const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]*\)/g)];
+    // Require at least one non-paren character inside the URL slot.
+    // `[foo]()` would otherwise pass the regex with an empty URL — Codex won't
+    // produce this on purpose, but a template-substitution bug where the URL
+    // gets stripped to `()` would silently slip through.
+    const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]+\)/g)];
 
     if (backtickGroups.length + mdLinkGroups.length > 1) {
         const tokens = [
@@ -696,7 +700,7 @@ export function parseHandoffPathCell(cell: string): HandoffPathCellResult {
         // only the label inside `[...]`. The mdLinkGroups counter above used
         // `[^)]*` (non-greedy) so two real links `[a](u) [b](v)` still get
         // caught as "multiple paths"; only the SINGLE-link case reaches here.
-        if (!/^\[[^\]]+\]\(.*\)(?:\s+.*)?$/.test(trimmed)) {
+        if (!/^\[[^\]]+\]\(.+\)(?:\s+.*)?$/.test(trimmed)) {
             return {
                 kind: 'malformed',
                 reason: `markdown link must be at the start of the cell — got: ${snippet(trimmed)}`,

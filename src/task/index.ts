@@ -699,12 +699,18 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
         }
     } catch (error) {
         // Roll back any status writes that already succeeded before the failure.
+        // Use tmp+rename (same shape as writeStatusAtomic) instead of a direct
+        // writeFileSync — the forward path writes atomically, so rollback must
+        // too. A signal/crash mid-rollback with a non-atomic writeFileSync
+        // would corrupt the very file rollback was trying to restore.
         const rollbackErrors: string[] = [];
         for (const filePath of completedWrites) {
             const original = originalSnapshots.get(filePath);
             if (original === undefined) continue;
             try {
-                fs.writeFileSync(filePath, original, 'utf8');
+                const tmpFile = `${filePath}.rollback.tmp`;
+                fs.writeFileSync(tmpFile, original, 'utf8');
+                fs.renameSync(tmpFile, filePath);
             } catch (rollbackErr) {
                 const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
                 rollbackErrors.push(`    ${filePath}: ${message}`);
