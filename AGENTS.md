@@ -56,6 +56,18 @@ Claude writes QA summary → Human tests
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe. Silence is the default — a real shape concern becomes the lead reason for `changes_requested`; no concern leaves the section empty and review proceeds.
 - Codex model/effort scales with effective size: M gets mini at medium effort (low-cost sanity check), L gets mini at high, XL/delicate gets the full model at high (spec review) or xhigh (implement).
 
+### Full-send mode
+
+Full-send mode is the explicit opt-in for "spec to draft PR with no human interrupts." It collapses the spec gate and the later human_review stop so canon can run from an approved spec to a draft PR without waiting for the human to babysit the pipeline.
+
+- Conversational path: `/canon-spec full send this: <description>`
+- Direct CLI path: `canon task new <id> "Title"` then `canon run --full-send <id>`
+- Use it when the human wants the full pipeline plus a draft PR, and they trust the review chains end-to-end.
+- If the task is delicate, `canon run --full-send` also requires `--force`. The task is still reviewed with the upgraded model; `--force` just acknowledges the high-commitment combination.
+- `--reroute` clears `full_send`; only re-enable after re-reading the rerouted result.
+- The mode is recorded in `status.json.full_send`, which future human-interrupt gates should honor by convention.
+- Bundle semantics: full-send applies per-task. To skip the spec gate for a bundle, every task in the invocation must have `full_send: true`. A single non-full-send task in the bundle re-engages the gate for all.
+
 **Bundle mode**: Pass multiple task IDs to `canon run`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review changes_requested, the whole bundle reroutes to implement.
 
 **Conversational spec authorship**: Specs for emergent tasks are often written conversationally with Claude rather than through the pipeline's spec phase. Manually mark spec (and plan if written together) as done in `status.json`, then run the pipeline — it picks up from the current phase.
@@ -169,7 +181,7 @@ The code is the source of truth for anything derivable from code: numbers, thres
 
 - ✗ "The retry timeout is 5000ms."
   ↳ The `5000` will drift the moment the constant changes.
-- ✓ "The retry timeout is `RETRY_TIMEOUT_MS` in `src/network/retry.ts`."
+- ✓ "The docs gate is `VALID_DIRS` in `scripts/docs-refs-check.mjs`."
   ↳ The invariant stays in the doc. The value is delegated to the symbol.
 
 **When docs ARE the source of truth** (state directly):
@@ -260,6 +272,7 @@ The matrix below is the canon-supplied **structural** matrix — it tells agents
 | Change Type | Required Check Categories |
 |---|---|
 | Most changes | Linting, type checking, unit tests |
+| Docs references | Docs references |
 | Routes / config / build | Full build |
 | UI / interaction changes | End-to-end tests |
 | Content / SEO / metadata | Prerender / sitemap / feed regeneration |

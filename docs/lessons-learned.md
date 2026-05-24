@@ -34,13 +34,21 @@ The title is the lesson — a future reader scanning headings should learn the r
 
 *(2026-04-12, source: feat-photo-swap)*
 
-When a record references another by ID, computed fields (caches, transforms, ephemeral selections) calibrated for the old reference can survive an ID swap and produce stale-data bugs that are visible to users but invisible in logs. The fix: reset every derived field at every site that writes the ID — there's no single chokepoint for this. Canonical reset helper: `resetDerivedFields()` in `src/utils/state.ts`. Grep all writers of the ID field before adding a new one.
+When a record references another by ID, computed fields (caches, transforms, ephemeral selections) calibrated for the old reference can survive an ID swap and produce stale-data bugs that are visible to users but invisible in logs. The fix: reset every derived field at every site that writes the ID — there's no single chokepoint for this. Canonical reset rule: reset derived state at every writer of the ID field. Grep all writers of the ID field before adding a new one.
 
 ---
 
 > **TODO[canon]: Real entries land here as tasks ship. New projects start with this file mostly empty — that's fine. The discipline is: after every task QA, ask the "would this have changed how a different task was approached?" question, and only write if yes.**
 
 ---
+
+### Verify the return type of a helper before designing a spec data-flow through it
+
+*(2026-05-20, source: full-send-mode)*
+
+When a spec names an existing function as the mechanism for passing a value down a data-flow (e.g., "capture the PR URL from `reportOrCreatePR`"), verify that function's actual return type before finalizing the spec. If the return type is `void`, the spec's data-flow is unimplementable and the spec will iterate (or auto-block) until the design is reworked. The fix is to find the correct source for the value before writing the AC — in this case, `inspectCompleteState` already retrieved the PR URL and was already used by the `printCompleteStateBanner` path. The lookup is fast: grep the function name, read the signature, read the return path.
+
+This is distinct from the existing "verify symbols exist" rule (CLAUDE.md spec-writing rules of thumb) — that rule guards against naming a non-existent symbol; this rule guards against a symbol that exists but whose return shape doesn't match the spec's assumed data contract. Both checks are cheap; both prevent an auto-block.
 
 ### Release-engineering workflows that blame for a SHA must read every artifact from that same SHA's tree
 
@@ -116,3 +124,41 @@ Generalization beyond this one bug: don't infer the state of one git invariant f
 ### ~~Migration-tolerance test fixtures for retiring schema keys must build the key dynamically~~
 
 *(promoted to `docs/patterns.md` "Known Pitfalls" → Test-writing pitfalls — 2026-05-18 during v1.2.0 release sweep)*
+
+### Per-task bundle flags must use `every()`, not `some()`, to gate bundle-level skips
+
+*(2026-05-21, source: full-send-mode AC-14 amendment — caught by Codex async PR review)*
+
+When a feature applies per-task in a bundle and a task-level flag controls whether a safety check is skipped, the skip must require ALL tasks to have the flag, not just one. Using `some(t => t.flag)` means a single opted-in task silently disables the check for every task in the bundle — including tasks the human never opted in. The correct form is `every(t => t.flag)`.
+
+The bug is structurally invisible: the feature works for single-task invocations (trivially `every` = `some`) and for all-opted-in bundles, but silently backdoors normal tasks in mixed bundles. Static analysis doesn't catch it; only a mixed-bundle test does.
+
+Prevention rule: whenever writing a bundle-level dispatch branch gated on a per-task flag, write the gate condition as `statuses.every(s => s.flag === true)` by default and explicitly justify it if `some()` is ever chosen. Add a mixed-bundle test as part of the same AC. Canonical example: `scripts/run-task/main.ts` and `scripts/run-task/phases/spec-review.ts`, fixed from `some` to `every` in iteration 4 of this task.
+
+### To relax a gate: narrow the allow-list, don't downgrade the die
+
+*(2026-05-22, source: scope-pr-auto-commit-to-affected-files-v2 + archived v1)*
+
+When a guard function has multiple die gates chained in sequence, trying to downgrade one gate from die to warn requires enumerating every interaction between warn-state and each downstream gate — because the downstream gates were designed assuming the upstream gate either passed cleanly or stopped the function. In v1 of this task (archived after 5 spec_review changes_requested), warn-and-skip for out-of-scope dirty files created a gate-state-machine with interactions that required iterative redesign at spec_review. v2 kept die semantics at every gate unchanged and only narrowed the allow-list, reducing the blast radius and producing a clean first-pass implementation.
+
+Rule: when the goal is "restrict what gets through," prefer narrowing the allow-list over weakening the gate behavior. The allow-list shrink is a purely additive constraint and doesn't interact with the gate state machine. The die-to-warn change interacts with every downstream gate and every error-message contract.
+
+### `getAffectedFiles` is three-dot; use a separate helper for true base-tree comparisons
+
+*(2026-05-23, source: prepr-base-drift-check)*
+
+`getAffectedFiles` in `scripts/run-task/git.ts` uses a three-dot diff (`git diff <base>...<branch>`) — it reports files the task branch changed since the merge base. That's correct for "what did this branch contribute?" (handoff validation), but it does **not** surface files where base advanced without the task branch following. Any spec that needs to answer "how does the task branch's tree compare to base's current state?" cannot reuse `getAffectedFiles`; it needs a two-dot helper instead (`git diff <base> HEAD`). The canonical implementation is `getTreeDriftFiles` in `git.ts`, added in this task. When spec-writing a new gate that compares the task branch to current base, verify which diff semantic is correct — two-dot and three-dot answer different questions and silently produce wrong results if confused.
+
+### `commitHumanReviewFiles()` reads module-level `cliArgs` — tests that set flags must route through `main()`
+
+*(2026-05-23, source: prepr-base-drift-check)*
+
+`commitHumanReviewFiles()` in `scripts/run-task/main.ts` reads the module-level `cliArgs` object that `parseArgs()` populates when `main()` is invoked. Tests that call `commitHumanReviewFiles()` directly and need to exercise a specific CLI flag (e.g., `--force`, `--push`) cannot set `cliArgs` from outside the module — they must spawn `main()` with the appropriate argv. The existing integration test pattern at `tests/run-task-safety.test.ts` (line ~1428) handles this correctly via the real-git fixture + subprocess invocation. Follow that pattern when adding tests for any flag-gated branch of `commitHumanReviewFiles`.
+
+### Module-load-time path constants that point at real repo files are a test-pollution hazard
+
+*(2026-05-20, source: full-send-mode reroute — AC-13 amendment)*
+
+When a module computes a file path from `REPO_ROOT` at load time (`const METRICS_FILE = path.join(REPO_ROOT, 'docs/...')`), any test that spawns a child process to import canon modules inherits the real repo root and writes to the real file. The bug is invisible until a manual `git status` check — automated test output gives no signal. In this task, spawned tests wrote 11 `task-a | implement` entries to `docs/pipeline-invocations.md` in the real worktree, which would have shipped to adopters on `--pr`.
+
+Two-part fix: (1) replace the module-load-time constant with a `getMetricsFile()` / `CANON_METRICS_FILE_OVERRIDE` env var pattern so spawned test processes can redirect writes to a temp path; (2) add a suite-end `git status -s docs/` cleanliness assert that catches any future path of this kind. Before adding a new write-path to a module, check whether it holds a module-load-time constant derived from `REPO_ROOT` — if so, add the env-var override before the module is imported in tests. See `scripts/run-task/metrics.ts` for the canonical override pattern and `tests/task-cli.test.ts` for the cleanliness assert placement.

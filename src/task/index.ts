@@ -1099,16 +1099,22 @@ function updatePackageVersion(filePath: string, version: string, updateLockRoot 
     writeJsonAtomic(filePath, parsed);
 }
 
-function insertChangelogBlock(filePath: string, short: string): void {
+function insertChangelogBlock(filePath: string, version: string): void {
+    // Uses bracketed full-semver + em-dash format (`## [1.6.0] — unreleased`) to
+    // match every existing canon-ai CHANGELOG entry AND the auto-release
+    // workflow's extraction regex (^## \[<version>\] — <date>). A prior format
+    // (`## v1.6 - unreleased`) drifted from both — the workflow couldn't find
+    // the block and the entries it produced disagreed with the conventions in
+    // the file it was modifying.
     const content = fs.readFileSync(filePath, 'utf8');
     const lines = content.split('\n');
     const first = lines.shift() ?? '';
     const block = [
         first,
         '',
-        `## ${short} - unreleased`,
+        `## [${version}] — unreleased`,
         '',
-        `<!-- Bullets land here as tasks for ${short} ship. The single squash-merge of release/${short} → main carries this entry to production. -->`,
+        `<!-- Bullets land here as tasks for ${version} ship. The single squash-merge of release/v${version.replace(/\.0$/, '')} → main carries this entry to production. -->`,
         ...lines,
     ];
     fs.writeFileSync(filePath, block.join('\n'), 'utf8');
@@ -1173,9 +1179,21 @@ export function taskReleaseInit(version: string, options: ReleaseInitOptions = {
     }
 
     if (fs.existsSync('CHANGELOG.md')) {
-        console.log(`→ Inserting empty changelog block for ${short}...`);
-        insertChangelogBlock('CHANGELOG.md', short);
+        console.log(`→ Inserting empty changelog block for ${version}...`);
+        insertChangelogBlock('CHANGELOG.md', version);
         filesToAdd.push('CHANGELOG.md');
+    }
+
+    // Keep .canon/version in sync with package.json. The auto-release workflow
+    // asserts package.json.version === .canon/version and dies if they drift;
+    // requiring the operator to bump .canon/version separately on every
+    // release-init was friction with no benefit — the helper already owns the
+    // package.json bump above. Conditional on the file existing because some
+    // adopter installs may not have a .canon/ directory yet.
+    if (fs.existsSync('.canon/version')) {
+        console.log(`→ Updating .canon/version to ${version}...`);
+        fs.writeFileSync('.canon/version', `${version}\n`, 'utf8');
+        filesToAdd.push('.canon/version');
     }
 
     if (filesToAdd.length > 0) {

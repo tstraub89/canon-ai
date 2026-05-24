@@ -19,7 +19,9 @@ on:
       - '!.agent/**'
       - '!.github/**/*.md'
   pull_request:
-    branches: [main, dev]
+    # No `branches:` filter — CI is cheap for canon and we want coverage on
+    # PRs against every base (main, release/**, future-named integration
+    # branches). Path filters still apply so doc-only PRs skip CI.
     paths:
       - '**'
       - '!AGENTS.md'
@@ -55,6 +57,7 @@ jobs:
       - run: npm audit --omit=dev
       - run: npm run lint
       - run: npm run type-check
+      - run: npm run docs-refs-check
       - run: npm run build
       - run: npm test
       - name: Verify committed dist/ matches a fresh build

@@ -38,7 +38,7 @@ Use this index to jump to the relevant section instead of reading the whole file
 
 > *(Synthetic example — replace with your project's real patterns.)*
 
-**Files**: `src/store/store.ts`, `src/hooks/useApi.ts`
+**Files**: `src/example/store.ts`, `src/example/useApi.ts`
 
 **Usage**:
 ```typescript

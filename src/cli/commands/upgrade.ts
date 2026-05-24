@@ -42,6 +42,10 @@ const CANON_OWNED = [
     // canon releases (post-1.1.x reframes etc.) flow through `canon upgrade`
     // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
     'docs/pipeline-orchestrator.md',
+    // First canon-managed file outside .canon/, .claude/, and
+    // docs/pipeline-orchestrator.md. Future canon-shipped utility scripts
+    // follow the same pattern.
+    'scripts/docs-refs-check.mjs',
 ];
 
 // Header-only sync: canon owns the header (intro + table column definitions);

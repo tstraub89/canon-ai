@@ -44,6 +44,8 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task/main.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task/validation.ts` | |
 | Handoff Changes-table parser | `scripts/run-task/validation.ts` | Regex-based; extracts backtick-wrapped paths |
+| Spec Affected Files parser | `scripts/run-task/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `## Design → ### Affected Files` H3 table; used by `commitHumanReviewFiles` (managed-doc allow-list) and `verifyBaseDrift` (base-drift allow-list) |
+| Base-drift gate (`--pr`/`--push`) | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts` | `verifyBaseDrift` / `verifyBaseDriftFromData` — two-dot `git diff origin/<base> HEAD` at `--pr`/`--push` time; catches cross-pipeline contamination before PR creation; `getTreeDriftFiles` in `git.ts` is the low-level helper |
 
 ## Task Lifecycle Artifacts
 
@@ -83,6 +85,7 @@ These must stay current — agents read them at session start (per phase rules i
 | Pipeline policy table tests | `tests/pipeline-policy.test.ts` | Tier, sizing, model matrix, loop caps |
 | Handoff/git porcelain parser | `tests/run-task-parse-porcelain.test.ts` | Edge cases for git status parsing |
 | Handoff validation logic | `tests/run-task-validation.test.ts` | `validateHandoff()` cases |
+| Docs refs validator | `scripts/docs-refs-check.mjs` | Markdown reference gate; run via `npm run docs-refs-check` |
 
 Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test files import directly from `scripts/`.
 

@@ -35,11 +35,30 @@ function printUsage() {
   console.log("  --interactive, -I   Open interactive agent sessions");
   console.log("  --step, -1          Run one phase then stop");
   console.log("  --expect <phase>    Assert current phase before running");
-  console.log("  --push              Push branch at human_review");
-  console.log("  --pr                Push + create draft PR at human_review");
-  console.log("  --reroute           Reset from human_review back to implement AND re-invoke the pipeline");
-  console.log("  --ship              Merge open PR, pull, archive task, commit+push, clean branches");
+  console.log("  --pr                At human_review: push branch and open a draft PR (requires gh).");
+  console.log("                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and");
+  console.log(`                      managed docs listed in spec.md's "### Affected Files" table. Dirty`);
+  console.log("                      files outside that set die with a remediation message.");
+  console.log("                      Aborts if HEAD's tree differs from origin/<base> on files not in");
+  console.log("                      spec's Affected Files (bypass with --force).");
+  console.log("  --push              At human_review: push branch only, no PR (requires gh). Same");
+  console.log("                      allow-list as --pr. Aborts if HEAD's tree differs from origin/<base>");
+  console.log("                      on files not in spec's Affected Files (bypass with --force).");
+  console.log("  --full-send         Skip the spec gate and auto-open a draft PR after clean QA");
+  console.log("  --force             Acknowledge high-commitment combinations (currently: --full-send on a delicate task)");
+  console.log("  --ship              Merge the open PR (calls gh pr merge --squash --delete-branch), tear");
+  console.log("                      down the worktree, archive the task dir, and pull the base branch. Run");
+  console.log("                      after the PR is approved \u2014 do NOT merge the PR manually first. If you");
+  console.log("                      already merged externally, --ship detects the merged state and resumes");
+  console.log("                      at cleanup.");
   console.log("  --dry-run           Print each planned phase and exit without spawning any LLM");
+  console.log("  --reroute           Reset a task from human_review back to implement after human feedback.");
+  console.log("                      Feedback channel: append a new section to tasks/<id>/spec.md describing");
+  console.log("                      what to address. Codex re-reads spec.md only \u2014 additions to review.md");
+  console.log("                      or PR comments are NOT consulted on reroute.");
+  console.log("                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`");
+  console.log('                      on round 2+. Bypass with --force. See CLAUDE.md "Reroute feedback');
+  console.log('                      channel."');
 }
 function parseArgs(argv) {
   if (argv.length === 0) {
@@ -59,6 +78,8 @@ function parseArgs(argv) {
   let reroute = false;
   let ship = false;
   let dryRun = false;
+  let fullSend = false;
+  let force = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     switch (arg) {
@@ -84,6 +105,12 @@ function parseArgs(argv) {
       case "--reroute":
         reroute = true;
         break;
+      case "--full-send":
+        fullSend = true;
+        break;
+      case "--force":
+        force = true;
+        break;
       case "--ship":
         ship = true;
         break;
@@ -95,8 +122,11 @@ function parseArgs(argv) {
         taskIds.push(arg);
     }
   }
+  if (reroute && fullSend) {
+    die("--reroute and --full-send are mutually exclusive in a single invocation. Run --reroute first, then --full-send if you want to re-trust the result.");
+  }
   if (taskIds.length === 0) die("At least one TASK-ID is required.");
-  return { taskIds, interactive, step, expectPhase, push: push2, pr, reroute, ship, dryRun };
+  return { taskIds, interactive, step, expectPhase, push: push2, pr, reroute, ship, dryRun, fullSend, force };
 }
 function validateTaskId(id) {
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -491,20 +521,6 @@ function teardownWorktree(taskId) {
   if (!result.ok) warn(`Could not remove worktree: ${result.stderr}`);
   else info("Worktree removed.");
 }
-function flushWorktreeTelemetry() {
-  const allFiles = [...PIPELINE_SHARED_DOCS];
-  const present = allFiles.filter((f) => fs3.existsSync(path3.join(REPO_ROOT, f)));
-  if (present.length === 0) return;
-  const status = gitSafe("status", "--porcelain", ...present);
-  if (!status.ok || !status.stdout.trim()) return;
-  for (const f of present) gitSafe("add", "--", f);
-  const staged = gitSafe("diff", "--cached", "--name-only");
-  if (!staged.stdout.trim()) return;
-  const targetBranch = getCurrentBranch();
-  const result = gitSafe("commit", "-m", "chore: flush pipeline telemetry");
-  if (!result.ok) warn(`Could not flush telemetry to ${targetBranch}: ${result.stderr}`);
-  else info(`Flushed pipeline telemetry to ${targetBranch}.`);
-}
 function syncWorktreeArtifacts(taskIds) {
   for (const taskId of taskIds) {
     const wt = worktreePath(taskId);
@@ -842,6 +858,13 @@ function getAffectedFiles(baseRef, cwd) {
   if (!result.ok || !result.stdout) return [];
   return parseNameStatusOutput(result.stdout);
 }
+function getTreeDriftFiles(baseRef, cwd) {
+  const result = gitSafeAtRaw(cwd, "diff", baseRef, "HEAD", "--name-status", "-M", "-z");
+  if (!result.ok) {
+    return { files: [], ok: false, stderr: result.stderr };
+  }
+  return { files: parseNameStatusOutput(result.stdout), ok: true, stderr: "" };
+}
 
 // scripts/pipeline-policy.ts
 var SIZE_ORDER = ["S", "M", "L", "XL"];
@@ -1001,10 +1024,13 @@ import { spawn as spawn2 } from "child_process";
 // scripts/run-task/metrics.ts
 import fs4 from "fs";
 import path5 from "path";
-var METRICS_FILE = path5.join(REPO_ROOT, "docs/pipeline-invocations.md");
+function getMetricsFile() {
+  return process.env.CANON_METRICS_FILE_OVERRIDE ? path5.resolve(process.env.CANON_METRICS_FILE_OVERRIDE) : path5.join(REPO_ROOT, "docs/pipeline-invocations.md");
+}
 function recordMetric(entry) {
-  if (!fs4.existsSync(METRICS_FILE)) {
-    fs4.writeFileSync(METRICS_FILE, [
+  const metricsFile = getMetricsFile();
+  if (!fs4.existsSync(metricsFile)) {
+    fs4.writeFileSync(metricsFile, [
       "# Workflow Metrics",
       "",
       "> Auto-logged by `scripts/run-task.ts`. One row per agent invocation.",
@@ -1019,7 +1045,7 @@ function recordMetric(entry) {
   const dur = (entry.durationMs / 1e3).toFixed(1) + "s";
   const tok = entry.tokens != null ? String(entry.tokens) : "-";
   fs4.appendFileSync(
-    METRICS_FILE,
+    metricsFile,
     `| ${(/* @__PURE__ */ new Date()).toISOString()} | ${entry.taskId} | ${entry.phase} | ${entry.agent} | ${safeCell(entry.model)} | ${entry.iteration ?? "-"} | ${dur} | ${tok} | ${entry.status} |
 `
   );
@@ -1625,10 +1651,55 @@ function parseValidationRequiredChecks(specPath) {
       const match = line.match(/^-\s+\[x\]\s+(.+?)\s*$/i);
       if (match?.[1]) checks.push(match[1].trim());
     }
-    return checks.length > 0 ? checks : null;
+    return checks;
   } catch {
     return null;
   }
+}
+function verifyRerouteAmendment(taskId, requiredRound) {
+  const specPath = path6.join(taskDirFor(taskId), "spec.md");
+  let content;
+  try {
+    content = fs5.readFileSync(specPath, "utf8");
+  } catch {
+    return { amended: false, reason: `spec.md missing at ${specPath}` };
+  }
+  if (requiredRound === 1) {
+    if (/^#{2,6}[ \t]+Amendment\b/im.test(content)) {
+      return { amended: true, reason: "" };
+    }
+    return {
+      amended: false,
+      reason: `no \`## Amendment\` heading found in ${specPath}`
+    };
+  }
+  const matches = content.matchAll(/^#{2,6}[ \t]+Amendment[ \t]+Round[ \t]+(\d+)\b/gim);
+  let seenRound = null;
+  for (const match of matches) {
+    const foundRound = Number(match[1]);
+    if (foundRound === requiredRound) {
+      return { amended: true, reason: "" };
+    }
+    if (seenRound === null) {
+      seenRound = foundRound;
+    }
+  }
+  if (seenRound !== null) {
+    return {
+      amended: false,
+      reason: `found \`## Amendment Round ${seenRound}\` in ${specPath}, expected \`## Amendment Round ${requiredRound}\``
+    };
+  }
+  if (/^#{2,6}[ \t]+Amendment\b/im.test(content)) {
+    return {
+      amended: false,
+      reason: `found \`## Amendment\` in ${specPath}, expected \`## Amendment Round ${requiredRound}\``
+    };
+  }
+  return {
+    amended: false,
+    reason: `no \`## Amendment Round ${requiredRound}\` heading found in ${specPath}`
+  };
 }
 function isPassResult(result) {
   return result.trim().toLowerCase().startsWith("pass");
@@ -1662,7 +1733,11 @@ function validateHandoffAgainstSpec(specPath, handoffPath, latestResults) {
   if (requiredChecks === null) {
     return ["Validation Required section is missing from spec.md"];
   }
-  if (requiredChecks.length === 0) return [];
+  if (requiredChecks.length === 0) {
+    return [
+      "Validation Required section in spec.md has no `[x]`-checked items \u2014 mark at least one required check `[x]`. The template ships with `[ ]` placeholders; the spec author marks the required checks before invoking canon. If no checks apply, use a single `[x] None \u2014 <reason>` entry to document the decision."
+    ];
+  }
   let rowMap;
   if (latestResults) {
     rowMap = latestResults;
@@ -1889,6 +1964,33 @@ function parseHandoffChangesRows(taskId) {
   }
   return { files: [...files], malformed };
 }
+function parseAffectedFilesFromSpec(taskId) {
+  const specPath = path6.join(taskDirFor(taskId), "spec.md");
+  let content;
+  try {
+    content = fs5.readFileSync(specPath, "utf8");
+  } catch {
+    return { files: [], malformed: [] };
+  }
+  const designBodies = extractSectionBodies(content, /^## Design\b/);
+  if (designBodies.length === 0) return { files: [], malformed: [] };
+  const files = /* @__PURE__ */ new Set();
+  const malformed = [];
+  for (const body of designBodies) {
+    const rows = parseTableH3(body, "Affected Files");
+    for (const row of rows) {
+      const firstColumn = Object.values(row)[0] ?? "";
+      if (!firstColumn.trim()) continue;
+      const result = parseHandoffPathCell(firstColumn);
+      if (result.kind === "ok") {
+        files.add(result.path);
+      } else {
+        malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+      }
+    }
+  }
+  return { files: [...files], malformed };
+}
 function parseHandoffPathCell(cell) {
   const trimmed = cell.trim();
   if (!trimmed) return { kind: "malformed", reason: "empty cell" };
@@ -2001,6 +2103,15 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   }
   return issues;
 }
+function verifyBaseDriftFromData(diffFiles, allowedPaths, taskIds) {
+  const drift = [];
+  for (const filePath of diffFiles) {
+    if (allowedPaths.has(filePath)) continue;
+    if (taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`))) continue;
+    drift.push(filePath);
+  }
+  return drift;
+}
 function parseDiffNameStatus(stdout) {
   const diffFiles = [];
   const renamePairs = [];
@@ -2034,6 +2145,34 @@ function verifyHandoffAgainstDiff(taskIds, baseRef) {
     handoffFilesByTask,
     gitIgnoredHandoffFiles
   });
+}
+function verifyBaseDrift(taskIds, baseBranch, cwd) {
+  const fetchResult = gitSafeAt(cwd, "fetch", "origin", baseBranch);
+  if (!fetchResult.ok) {
+    warn(
+      `Could not fetch origin/${baseBranch} (${fetchResult.stderr.trim() || "unknown"}). Skipping base-drift check \u2014 re-run --pr when network access is restored if you want this verified.`
+    );
+    return { drift: [], fetchFailed: true, diffFailed: false };
+  }
+  const driftResult = getTreeDriftFiles(`origin/${baseBranch}`, cwd);
+  if (!driftResult.ok) {
+    return { drift: [], fetchFailed: false, diffFailed: true, diffError: driftResult.stderr };
+  }
+  const allowedPaths = new Set(PIPELINE_TELEMETRY_FILES);
+  for (const taskId of taskIds) {
+    const parsed = parseAffectedFilesFromSpec(taskId);
+    for (const filePath of parsed.files) {
+      allowedPaths.add(filePath);
+    }
+    for (const malformed of parsed.malformed) {
+      warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
+    }
+  }
+  return {
+    drift: verifyBaseDriftFromData(driftResult.files, allowedPaths, taskIds),
+    fetchFailed: false,
+    diffFailed: false
+  };
 }
 
 // scripts/run-task/context.ts
@@ -2741,7 +2880,7 @@ var code_review_round_n_default = "[REVIEW ROUND {{roundN}} \u2014 verifying ite
 var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md and the matrix in AGENTS.md. Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
 // scripts/run-task/prompts/templates/implement-reroute.md
-var implement_reroute_default = 'You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n1. Read tasks/<id>/spec.md top-to-bottom. Scan for any section added after the original spec (e.g. "Amendment", "Round N", "Follow-up", "Post-review"). Those are the new requirements.\n2. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n3. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n4. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n5. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec\'s Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n6. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. The reviewer reads handoff.md as the single source of truth, not your prior session\'s context.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
+var implement_reroute_default = "You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n1. For each task above, locate the exact heading named in its entry \u2014 `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.\n2. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n3. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n4. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n5. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec's Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n6. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. The reviewer reads handoff.md as the single source of truth, not your prior session's context.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement-revisions.md
 var implement_revisions_default = "{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you're resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n{{/hasReviewFindings}}\n{{#hasReviewFindings}}\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template's \"On revision rounds\" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
@@ -2785,7 +2924,7 @@ var spec_default = "{{{header}}}\n\n{{{startup}}}\n\n{{{instructions}}}\n{{{bund
 var spec_revision_default = "You are revising specs for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks with review feedback:\n{{{reviewLines}}}\n\nAddress every `changes_requested` finding in each spec.md.{{#combined}}\nAlso update plan.md if spec changes affect the implementation approach.{{/combined}}\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/spec-review.md
-var spec_review_default = "You are reviewing {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks to review:\n{{{taskLines}}}\n\nGrounding rule: if a finding depends on code, a symbol, or a validation result, verify the current file or diff before you claim it exists. If you did not re-open it, do not infer it from memory.\n\n**Your job is to find what's wrong or missing \u2014 not to validate what's there.** Approach this as the implementer: if you had to build this, what would break, be ambiguous, or be missing? Neutral or confirmatory review is a failure mode.\n\n**First, a strategic read of the spec itself \u2014 shape before implementability.** Ask:\n- Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)\n- Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)\n- Is there a materially simpler solution that changes the shape of the work?\n- Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)\n\n**Silence is the default.** Only flag a Shape Check concern if something is actually off \u2014 do not manufacture one. A real shape concern becomes the lead reason for a `changes_requested` verdict; write it under the Shape Check section in spec-review.md. If none, leave that section as \"no concerns\" and proceed.\n\nThen for each task, actively probe implementability: Can this be implemented as written? Are ACs testable and unambiguous? Are edge cases handled? Are there type safety gaps? Are there file/interaction dependencies Claude missed? Does this conflict with existing patterns in the codebase?{{#isBundle}}\nAlso probe for cross-task conflicts or missing dependencies between tasks.{{/isBundle}}\n{{#combined}}\nReview plan.md for each task as well \u2014 flag if the approach is unsound.{{/combined}}\n\n**Classify every finding before deciding your verdict:**\n- **Blocking**: would cause wrong behavior, a silent bug, or make an AC unimplementable as written. Requires `changes_requested`.\n- **Non-blocking (nit)**: an implementation detail Codex can resolve by reading the codebase (prop flow, state threading, naming); a minor ambiguity with an obvious default; a question the plan phase should address. Does NOT require `changes_requested`.\n\n**Verdict rules:**\n- `changes_requested` \u2014 one or more blocking findings. Spec must be revised before the plan phase.\n- `approved_with_nits` \u2014 no blocking findings, but non-blocking nits worth passing forward. **Loop exits immediately.** Nits are written to spec-review.md and the plan phase picks them up.\n- `approved` \u2014 no findings worth noting.\n\n**Batch related nits.** If you have multiple non-blocking observations, include them all in one `approved_with_nits` verdict rather than raising one per round.\n\nIf you encounter surprising codebase behavior, append to tasks/<id>/notes.md (prefix: [spec_review]).\n\nFor each task, write tasks/<id>/spec-review.md using the template. Set your verdict: approved, approved_with_nits, or changes_requested.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
+var spec_review_default = "You are reviewing {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks to review:\n{{{taskLines}}}\n\n{{#fullSendActive}}\n**Full-send mode active**: The human grilled Claude to resolve the decision tree but did not read this spec before pipeline execution. Your review is the primary rigor layer before implementation. Apply your existing review rubric, but raise the bar specifically on: (1) missed cases the spec's ACs might overlook; (2) scope drift between the Decision section and the ACs; (3) ambiguity in AC verification steps. Verdict thresholds are unchanged; expectations for thoroughness are higher.\n{{/fullSendActive}}\nGrounding rule: if a finding depends on code, a symbol, or a validation result, verify the current file or diff before you claim it exists. If you did not re-open it, do not infer it from memory.\n\n**Your job is to find what's wrong or missing \u2014 not to validate what's there.** Approach this as the implementer: if you had to build this, what would break, be ambiguous, or be missing? Neutral or confirmatory review is a failure mode.\n\n**First, a strategic read of the spec itself \u2014 shape before implementability.** Ask:\n- Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)\n- Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)\n- Is there a materially simpler solution that changes the shape of the work?\n- Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)\n\n**Silence is the default.** Only flag a Shape Check concern if something is actually off \u2014 do not manufacture one. A real shape concern becomes the lead reason for a `changes_requested` verdict; write it under the Shape Check section in spec-review.md. If none, leave that section as \"no concerns\" and proceed.\n\nThen for each task, actively probe implementability: Can this be implemented as written? Are ACs testable and unambiguous? Are edge cases handled? Are there type safety gaps? Are there file/interaction dependencies Claude missed? Does this conflict with existing patterns in the codebase?{{#isBundle}}\nAlso probe for cross-task conflicts or missing dependencies between tasks.{{/isBundle}}\n{{#combined}}\nReview plan.md for each task as well \u2014 flag if the approach is unsound.{{/combined}}\n\n**Classify every finding before deciding your verdict:**\n- **Blocking**: would cause wrong behavior, a silent bug, or make an AC unimplementable as written. Requires `changes_requested`.\n- **Non-blocking (nit)**: an implementation detail Codex can resolve by reading the codebase (prop flow, state threading, naming); a minor ambiguity with an obvious default; a question the plan phase should address. Does NOT require `changes_requested`.\n\n**Verdict rules:**\n- `changes_requested` \u2014 one or more blocking findings. Spec must be revised before the plan phase.\n- `approved_with_nits` \u2014 no blocking findings, but non-blocking nits worth passing forward. **Loop exits immediately.** Nits are written to spec-review.md and the plan phase picks them up.\n- `approved` \u2014 no findings worth noting.\n\n**Batch related nits.** If you have multiple non-blocking observations, include them all in one `approved_with_nits` verdict rather than raising one per round.\n\nIf you encounter surprising codebase behavior, append to tasks/<id>/notes.md (prefix: [spec_review]).\n\nFor each task, write tasks/<id>/spec-review.md using the template. Set your verdict: approved, approved_with_nits, or changes_requested.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/index.ts
 var TEMPLATES = {
@@ -2878,6 +3017,7 @@ function promptSpecRevision(state) {
 function promptSpecReview(state) {
   const { tasks, tier } = state;
   const combined = tier === "fast";
+  const fullSendActive = tasks.some((t) => t.status.full_send === true);
   const taskLines = tasks.map(
     (t) => `- \`${t.taskId}\`: "${t.title}" \u2192 tasks/${t.taskId}/spec.md${combined ? ` and tasks/${t.taskId}/plan.md` : ""}`
   ).join("\n");
@@ -2888,6 +3028,7 @@ function promptSpecReview(state) {
     taskLines,
     combined,
     isBundle: tasks.length > 1,
+    fullSendActive,
     phaseCommands: phaseCommands(tasks.map((t) => t.taskId), "spec_review", "done", "<verdict>")
   });
 }
@@ -2969,17 +3110,22 @@ function promptImplementReroute(state, isResumedSession = false, affectedFiles, 
   const { tasks } = state;
   const stateHeader = buildImplementStateHeader(state, "reroute");
   const taskIds = tasks.map((t) => t.taskId);
-  const maxReroute = tasks.reduce((m, t) => Math.max(m, t.rerouteCount), 0);
-  const roundNum = maxReroute + 1;
-  const priorReroutes = maxReroute - 1;
-  const roundBanner = maxReroute >= 2 ? `\u26A0\uFE0F  **THIS IS ROUND ${roundNum} OF HUMAN REVIEW \u2014 REROUTE #${maxReroute}.** You have already been sent back ${priorReroutes} time${priorReroutes === 1 ? "" : "s"} before this one. This prompt is **not** a duplicate of the previous reroute you already addressed \u2014 the human has provided **new** feedback beyond what you fixed in reroute #${priorReroutes}. If your session memory says "I just finished this," that memory is from the PRIOR round. The spec has additional amendments since then. If your handoff.md references "round ${priorReroutes + 1}" or earlier, it is out-of-date \u2014 the current round is ${roundNum}.
+  const roundBanner = tasks.length === 1 ? (() => {
+    const rerouteCount = tasks[0].rerouteCount;
+    const humanReviewRound = rerouteCount + 1;
+    const priorReroutes = rerouteCount - 1;
+    return rerouteCount >= 2 ? `\u26A0\uFE0F  **THIS IS ROUND ${humanReviewRound} OF HUMAN REVIEW \u2014 REROUTE #${rerouteCount}.** You have already been sent back ${priorReroutes} time${priorReroutes === 1 ? "" : "s"} before this one. This prompt is **not** a duplicate of the previous reroute you already addressed \u2014 the human has provided **new** feedback beyond what you fixed in reroute #${priorReroutes}. If your session memory says "I just finished this," that memory is from the PRIOR round. The spec has additional amendments since then. If your handoff.md references "round ${rerouteCount}" or earlier, it is out-of-date \u2014 the current round is ${humanReviewRound}.
 
 ` : `**This is round 2 of human review \u2014 the first reroute for this task.** The human has reviewed your original implementation and sent it back with feedback that requires spec amendments.
 
 `;
-  const taskLines = tasks.map(
-    (t) => `- \`${t.taskId}\`: "${t.title}" (reroute #${t.rerouteCount}) \u2014 the spec was amended after human review. Read tasks/${t.taskId}/spec.md carefully (look for "Amendment", "Round N", "Follow-up", "Revision Notes", or similar sections that were added since your last handoff). Your previous handoff is at tasks/${t.taskId}/handoff.md.`
-  ).join("\n");
+  })() : `\u26A0\uFE0F  **This is a reroute round for a bundle of tasks.** Each task carries its own reroute count \u2014 see the per-task lines below for the round number and amendment heading specific to each task. Do **not** assume a single bundle-wide round: a bundle can mix tasks on different reroute rounds. The human has reviewed prior implementations and sent the bundle back with **new** feedback that requires spec amendments. If your session memory says "I just finished this," that memory is from a prior round \u2014 re-read each task's amended spec before changing anything.
+
+`;
+  const taskLines = tasks.map((t) => {
+    const expectedHeading = t.rerouteCount <= 1 ? "`## Amendment`" : `\`## Amendment Round ${t.rerouteCount}\``;
+    return `- \`${t.taskId}\`: "${t.title}" (entering reroute round ${t.rerouteCount}) \u2014 the spec was amended after human review. Locate ${expectedHeading} in tasks/${t.taskId}/spec.md and treat that section's content as the new requirements. Ignore prior-round sections when implementing this one. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
+  }).join("\n");
   const preamble = isResumedSession ? "Your session is being continued with spec amendments. The spec has been updated since your last turn \u2014 new ACs, new sections, or revised requirements have been added. Your existing code and codebase context are still valid; only the spec has changed." : "A human reviewed your previous implementation and sent it back with additional feedback. The spec has been updated in place \u2014 new ACs, new sections, or revised requirements have been added since you last read it. This is **not** a resume of an interrupted session: your previous work shipped, the human tried it, and now there's more to do.";
   const startup = isResumedSession ? "" : CODEX_STARTUP;
   const groundingRule = isResumedSession ? "Grounding rule: re-read the amended spec.md and your handoff.md before changing anything. Your codebase context is current, but the spec has new requirements \u2014 do not assume your prior memory of the spec is complete." : "Grounding rule: re-open the amended spec and the current handoff before changing anything. Session memory is stale by design on reroute rounds.";
@@ -3500,7 +3646,11 @@ function shouldUseImplementRevision(tasks) {
 async function runImplementPhase(state, interactive, resumeId) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
-  commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
+  const primaryStatus = readStatus(taskIds[0]);
+  const worktreeAlreadyCreated = primaryStatus.worktree === true && Boolean(primaryStatus.branch);
+  if (!worktreeAlreadyCreated) {
+    commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
+  }
   ensureBranch(taskIds);
   if (isWorktreeEnabled(taskIds)) {
     const wt = getActiveCwd(taskIds);
@@ -3686,7 +3836,8 @@ async function runSpecReviewPhase(state, interactive, resumeId) {
   const taskIds = tasks.map((t) => t.taskId);
   if (state.tier === "fast") {
     const anyGateOn = tasks.some((t) => t.status.human_spec_gate);
-    if (anyGateOn) {
+    const allFullSend = tasks.every((t) => t.status.full_send === true);
+    if (anyGateOn && !allFullSend) {
       for (const t of tasks) {
         if (t.status.human_spec_gate) {
           t.status.human_spec_gate = false;
@@ -3774,7 +3925,9 @@ var cliArgs = {
   pr: false,
   reroute: false,
   ship: false,
-  dryRun: false
+  dryRun: false,
+  fullSend: false,
+  force: false
 };
 var ghAvailable = false;
 var lastClaudeSessionId = null;
@@ -4166,8 +4319,8 @@ ${stagedAfterUnexpected.map((f) => `    ${f}`).join("\n")}
   const stagedCount = stagedAfter.stdout.trim().split("\n").filter(Boolean).length;
   info2(`Auto-committed ${stagedCount} file(s): ${message}`);
 }
-function humanReviewAllowedPath(taskIds, filePath) {
-  return taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) || PIPELINE_SHARED_DOCS.some((pathName) => pathName === filePath);
+function humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath) {
+  return taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) || PIPELINE_TELEMETRY_FILES.includes(filePath) || affectedManagedDocs.has(filePath);
 }
 function mirrorHumanReviewDocsToCwd(cwd) {
   if (cwd === REPO_ROOT2) return;
@@ -4184,14 +4337,19 @@ function mirrorHumanReviewDocsToCwd(cwd) {
     }
   }
 }
-function buildHumanReviewStagePaths(taskIds, dirtyEntries) {
+function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries) {
   const stagePaths = /* @__PURE__ */ new Set();
   for (const taskId of taskIds) {
     if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
       stagePaths.add(path15.join("tasks", taskId));
     }
   }
-  for (const relPath of PIPELINE_SHARED_DOCS) {
+  for (const relPath of PIPELINE_TELEMETRY_FILES) {
+    if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === relPath))) {
+      stagePaths.add(relPath);
+    }
+  }
+  for (const relPath of affectedManagedDocs) {
     if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === relPath))) {
       stagePaths.add(relPath);
     }
@@ -4328,14 +4486,80 @@ function printCompleteStateBanner(taskIds) {
     console.log(formatCompleteStateBanner(tasksOnBranch, state));
   }
 }
-function commitHumanReviewFiles(taskIds, cwd) {
+function enableFullSend(taskIds) {
+  for (const taskId of taskIds) {
+    const status = readStatus(taskId);
+    status.full_send = true;
+    status.human_spec_gate = false;
+    writeStatus(taskId, status);
+  }
+}
+function shouldRunFullSendTail(taskIds) {
+  return taskIds.every((taskId) => {
+    const status = readStatus(taskId);
+    return status.full_send === true && status.phases.qa?.status === "done" && status.phases.human_review?.status === "pending";
+  });
+}
+function commitHumanReviewFiles(taskIds, cwd, createPR) {
+  if (createPR) {
+    ghAvailable = isCommandAvailable("gh");
+  }
   mirrorHumanReviewDocsToCwd(cwd);
+  const baseBranch = getBaseBranch(taskIds);
+  const baseDriftResult = verifyBaseDrift(taskIds, baseBranch, cwd);
+  if (baseDriftResult.fetchFailed) {
+  } else if (baseDriftResult.diffFailed) {
+    die2(
+      `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.
+Git error: ${baseDriftResult.diffError ?? "unknown error"}
+This failure cannot be bypassed with --force.`
+    );
+  } else if (baseDriftResult.drift.length > 0) {
+    if (!cliArgs.force) {
+      die2(
+        `--pr aborted: base-drift detected. Files in the tree diff between origin/${baseBranch}
+and HEAD that are not in the spec's Affected Files (and not task-dir/telemetry):
+${baseDriftResult.drift.map((filePath) => `  ${filePath}`).join("\n")}
+The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and files listed in
+your spec's '### Affected Files' table.
+If this is a legitimate task change, add the path to spec.md '### Affected Files'
+and rerun. For a rename, list BOTH the old and new paths. If the drift is
+unexpected (likely cross-pipeline contamination from a sibling worktree's
+managed-doc sync, OR a third-party commit landed on origin/${baseBranch} while
+this pipeline was running), recover with one of:
+  - rebase onto current origin/${baseBranch} to absorb the base advance:
+      git fetch origin ${baseBranch} && git rebase origin/${baseBranch}
+  - reset a specific file to base's content if a stray task-branch commit
+    introduced it:
+      git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'
+  - revert the offending task-branch commit entirely:
+      git revert <sha>
+Bypass with --force if you've verified the drift is intentional.`
+      );
+    }
+    warn2(
+      `--force override: base-drift detected; proceeding at user request. Drifted files:
+` + baseDriftResult.drift.map((filePath) => `  ${filePath}`).join("\n")
+    );
+  }
+  const affectedManagedDocs = /* @__PURE__ */ new Set();
+  for (const taskId of taskIds) {
+    const parsed = parseAffectedFilesFromSpec(taskId);
+    for (const filePath of parsed.files) {
+      if (PIPELINE_MANAGED_DOCS.includes(filePath)) {
+        affectedManagedDocs.add(filePath);
+      }
+    }
+    for (const malformed of parsed.malformed) {
+      warn2(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
+    }
+  }
   const dirtyResult = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall");
   if (!dirtyResult.ok) {
     die2(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || "unknown error"}`);
   }
   const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
-  if (dirtyEntries.length === 0 && (cliArgs.pr || cliArgs.push)) {
+  if (dirtyEntries.length === 0 && (createPR || cliArgs.push)) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
@@ -4344,22 +4568,31 @@ function commitHumanReviewFiles(taskIds, cwd) {
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
       }
-      if (cliArgs.pr) reportOrCreatePR(taskIds, branchName2);
+      if (createPR) reportOrCreatePR(taskIds, branchName2);
       return;
     }
   }
   if (dirtyEntries.length === 0) {
     die2("Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.");
   }
-  const unexpected = dirtyEntries.filter((entry) => !entry.paths.every((pathName) => humanReviewAllowedPath(taskIds, pathName)));
+  const unexpected = dirtyEntries.filter((entry) => !entry.paths.every((pathName) => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName)));
   if (unexpected.length > 0) {
     die2(
       `Human review commit aborted: working tree has dirty files outside the human_review allowlist.
-` + unexpected.map((entry) => `    ${entry.raw}`).join("\n") + `
-  Stage only task artifacts, telemetry, and managed docs before rerunning.`
+` + unexpected.map((entry) => `  ${entry.raw}`).join("\n") + `
+The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and PIPELINE_MANAGED_DOCS entries listed in your spec's '### Affected Files' table.
+If this is a managed doc this task legitimately edits, add it to spec.md '### Affected Files' and rerun.
+If this is a source or test file, it should have been committed during the implement phase \u2014 investigate why it is dirty now (unexpected late edits or base-drift/branch contamination are possible causes) and revert with: git checkout HEAD -- <path>`
     );
   }
-  const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, dirtyEntries));
+  const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries));
+  for (const relPath of stagePaths) {
+    if (affectedManagedDocs.has(relPath)) {
+      warn2(
+        `WARNING: ${relPath} has uncommitted edits and is in PIPELINE_MANAGED_DOCS \u2014 run \`git diff HEAD -- ${relPath}\` to verify these are this task's work before --ship.`
+      );
+    }
+  }
   if (stagePaths.size === 0) {
     die2("Human review commit aborted: no allowed dirty files found to stage.");
   }
@@ -4367,7 +4600,7 @@ function commitHumanReviewFiles(taskIds, cwd) {
   if (!stagedBefore.ok) {
     die2(`Human review commit aborted: could not inspect staged files: ${stagedBefore.stderr || "unknown error"}`);
   }
-  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(taskIds, filePath));
+  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
   if (stagedBeforeUnexpected.length > 0) {
     die2(
       `Human review commit aborted: staged files are not covered by the human_review allowlist.
@@ -4389,7 +4622,7 @@ function commitHumanReviewFiles(taskIds, cwd) {
   if (stagedNames.length === 0) {
     die2("Human review commit aborted: staging produced no commit-ready files.");
   }
-  const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(taskIds, filePath));
+  const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
   if (stagedUnexpected.length > 0) {
     die2(
       `Human review commit aborted: staged files escaped the allowlist.
@@ -4413,7 +4646,7 @@ function commitHumanReviewFiles(taskIds, cwd) {
   if (!pushResult.ok) {
     die2(`Human review push failed: ${pushResult.stderr || "unknown error"}`);
   }
-  if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
+  if (createPR) reportOrCreatePR(taskIds, branchName);
 }
 function printDryRunPlan(state) {
   const { tasks } = state;
@@ -4599,10 +4832,20 @@ function mergeOpenPRsAndPull(taskIds) {
     if (!prNum) continue;
     info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via squash...`);
     const result = runCommand("gh", ["pr", "merge", String(prNum), "--squash", "--delete-branch"]);
-    if (!result.ok && !result.stderr.includes("already merged")) {
+    const localDeleteFailed = !result.ok && result.stderr.includes("used by worktree");
+    if (!result.ok && !result.stderr.includes("already merged") && !localDeleteFailed) {
       die(`Failed to merge PR #${prNum}: ${result.stderr}`);
     }
-    info(`PR #${prNum} merged.`);
+    if (localDeleteFailed) {
+      info(`PR #${prNum} merged; local branch delete deferred until worktree teardown.`);
+      for (const taskId of taskIds) {
+        if (resolveTaskBranchName(taskId) === branch) {
+          assertOriginTaskBranchAbsent(taskId);
+        }
+      }
+    } else {
+      info(`PR #${prNum} merged.`);
+    }
     anyMerged = true;
   }
   if (anyMerged) {
@@ -4632,46 +4875,6 @@ function commitArchiveChanges(taskIds, baseBranch, stagedPaths) {
   info2(`Pushing ${baseBranch}...`);
   git2("push", "origin", baseBranch);
   return { committed: true };
-}
-function maybeCreateGitHubRelease(baseBranch) {
-  if (!ghAvailable) return;
-  if (!baseBranch.startsWith("release/")) return;
-  let version;
-  try {
-    const pkg = JSON.parse(fs14.readFileSync(path15.join(REPO_ROOT2, "package.json"), "utf8"));
-    version = pkg.version ?? "";
-  } catch {
-    warn2("Could not read package.json version \u2014 skipping GitHub release creation.");
-    return;
-  }
-  if (!version) {
-    warn2("package.json has no version field \u2014 skipping GitHub release creation.");
-    return;
-  }
-  const tag = `v${version}`;
-  info2(`Creating GitHub release ${tag}...`);
-  let notes = `Release ${tag}`;
-  try {
-    const changelog = fs14.readFileSync(path15.join(REPO_ROOT2, "CHANGELOG.md"), "utf8");
-    const match = changelog.match(new RegExp(`(## v${version.replace(".", "\\.")}[\\s\\S]*?)(?=
-## |$)`));
-    if (match) notes = match[1].trim();
-  } catch {
-  }
-  const result = runCommand2("gh", [
-    "release",
-    "create",
-    tag,
-    "--title",
-    tag,
-    "--notes",
-    notes
-  ]);
-  if (!result.ok) {
-    warn2(`GitHub release creation failed: ${result.stderr || "unknown error"}`);
-  } else {
-    info2(`GitHub release ${tag} created: ${result.stdout.trim()}`);
-  }
 }
 function rewriteArchivedTaskRefs(taskIds) {
   const targets = [
@@ -4721,7 +4924,12 @@ function shipTasks(taskIds) {
   for (const taskId of taskIds) {
     assertTaskBranchPushed(taskId);
   }
-  if (taskIds.some((id) => readStatus(id).worktree === true)) flushWorktreeTelemetry();
+  if (taskIds.some((id) => readStatus(id).worktree === true)) {
+    const presentSharedDocs = PIPELINE_SHARED_DOCS.filter((relPath) => fs14.existsSync(path15.join(REPO_ROOT2, relPath)));
+    if (presentSharedDocs.length > 0) {
+      gitSafe("checkout", "HEAD", "--", ...presentSharedDocs);
+    }
+  }
   ensureCheckedOutBaseBranch(taskIds);
   const merged = mergeOpenPRsAndPull(taskIds);
   if (!merged) {
@@ -4767,7 +4975,6 @@ function shipTasks(taskIds) {
     if (result.ok) info2(`Deleted local branch ${branch}.`);
     else warn2(`Could not delete local branch ${branch}: ${result.stderr}`);
   }
-  maybeCreateGitHubRelease(baseBranch);
   info2(`Shipped ${taskIds.length} task${taskIds.length > 1 ? "s" : ""} to _archive/.`);
   process.exit(0);
 }
@@ -4778,7 +4985,45 @@ function rerouteFromHumanReview(taskIds) {
       die(`--reroute requires all tasks to be at human_review. '${taskId}' is at: ${currentPhase}`);
     }
   }
+  const amendmentFailures = [];
+  for (const taskId of taskIds) {
+    const status = readStatus(taskId);
+    const requiredRound = (status.phases.implement?.reroute_count ?? 0) + 1;
+    const result = verifyRerouteAmendment(taskId, requiredRound);
+    if (!result.amended) {
+      amendmentFailures.push({
+        taskId,
+        specPath: path15.join(taskDirFor2(taskId), "spec.md"),
+        requiredRound,
+        expectedHeading: requiredRound === 1 ? "## Amendment" : `## Amendment Round ${requiredRound}`,
+        reason: result.reason
+      });
+    }
+  }
+  if (amendmentFailures.length > 0) {
+    if (!cliArgs.force) {
+      die2(
+        `--reroute aborted: spec.md amendment required before reroute.
+` + amendmentFailures.map(
+          (failure) => [
+            `  ${failure.taskId}: ${failure.specPath}`,
+            `    required round: ${failure.requiredRound}`,
+            `    expected heading: ${failure.expectedHeading}`,
+            `    reason: ${failure.reason}`
+          ].join("\n")
+        ).join("\n") + `
+  Bypass with --force if you have verified the lack of amendment is intentional.
+  See docs/pipeline-orchestrator.md \xA7 Human Reroute for the contract.`
+      );
+    }
+    for (const failure of amendmentFailures) {
+      warn2(
+        `--force bypass: ${failure.taskId} spec.md missing required ${failure.expectedHeading} heading for round ${failure.requiredRound}; Codex will re-implement against the existing spec.`
+      );
+    }
+  }
   info(`Rerouting: human_review \u2192 implement (resetting implement, code_review, qa)`);
+  let clearedFullSend = false;
   for (const taskId of taskIds) {
     const status = readStatus(taskId);
     status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -4800,11 +5045,18 @@ function rerouteFromHumanReview(taskIds) {
     if (qa) qa.status = "pending";
     const humanReview = status.phases.human_review;
     if (humanReview) humanReview.status = "pending";
+    if (status.full_send === true) {
+      status.full_send = false;
+      clearedFullSend = true;
+    }
     writeStatus(taskId, status);
   }
   info("Status reset. Pipeline will resume from implement phase with amended-spec context.");
   info("Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.");
   info("");
+  if (clearedFullSend) {
+    info("\u26A0 full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with 'canon run --full-send <id>' if you're confident.");
+  }
   info("\u26A0  Before invoking the pipeline: ensure tasks/<id>/spec.md (in the MAIN repo, not the worktree) has an");
   info("   Amendment section with the new requirements. review.md alone is not sufficient \u2014 Codex reads spec.md");
   info("   as the contract. The main-repo spec is synced into the worktree at the start of implement.");
@@ -4856,9 +5108,52 @@ async function runPhase(phase, state) {
   }
   if (phase === "human_review") {
     const taskIds2 = tasks.map((t) => t.taskId);
+    if (shouldRunFullSendTail(taskIds2)) {
+      const branches = new Set(taskIds2.map((id) => resolveTaskBranchName(id)));
+      if (branches.size !== 1) {
+        die2(
+          `Full-send tail aborted: bundle spans multiple branches (${[...branches].join(", ")}). Today's --pr flow operates on one branch per invocation; multi-branch full-send is out of scope. Run each branch's tasks as a separate invocation.`
+        );
+      }
+      const branch = [...branches][0];
+      const cwd = getActiveCwd(taskIds2);
+      const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path15.join(cwd, "tasks");
+      for (const taskId of taskIds2) {
+        const gateResult = checkPhaseGate(taskId, "human_review", void 0, tasksRootForGate);
+        if (!gateResult.ok) {
+          die2(gateResult.reason);
+        }
+      }
+      commitHumanReviewFiles(taskIds2, cwd, true);
+      for (const taskId of taskIds2) {
+        const status = readStatus(taskId);
+        if (status.phases.human_review) {
+          status.phases.human_review.status = "done";
+        }
+        writeStatus(taskId, status);
+      }
+      const completeState = inspectCompleteState(branch, taskIds2);
+      let prUrl = "(PR URL unavailable \u2014 check GitHub)";
+      if (completeState.kind === "open_pr") {
+        prUrl = completeState.prUrl;
+      } else {
+        warn2(`Full-send: PR URL unavailable for branch ${branch}; expected open PR after --pr step`);
+      }
+      console.log("");
+      console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+      console.log("  \u2705 FULL-SEND COMPLETE \u2014 draft PR open.");
+      console.log("");
+      console.log(`  PR: ${prUrl}`);
+      console.log("");
+      console.log(`  Merge at your discretion via \`canon run ${taskIds2.join(" ")} --ship\`,`);
+      console.log("  or via GitHub once the PR is marked ready.");
+      console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+      console.log("");
+      process.exit(0);
+    }
     if (cliArgs.push || cliArgs.pr) {
       const cwd = getActiveCwd(taskIds2);
-      commitHumanReviewFiles(taskIds2, cwd);
+      commitHumanReviewFiles(taskIds2, cwd, cliArgs.pr);
       process.exit(0);
     }
     console.log("");
@@ -4879,7 +5174,7 @@ async function runPhase(phase, state) {
     const taskIds2 = tasks.map((t) => t.taskId);
     if (cliArgs.push || cliArgs.pr) {
       const cwd = getActiveCwd(taskIds2);
-      commitHumanReviewFiles(taskIds2, cwd);
+      commitHumanReviewFiles(taskIds2, cwd, cliArgs.pr);
       process.exit(0);
     }
     printCompleteStateBanner(taskIds2);
@@ -5085,7 +5380,8 @@ async function checkAndRoute(phase, taskIds) {
         return;
       }
       const tier = detectTier2(statuses);
-      if (tier === "full" && statuses.some((s) => s.human_spec_gate)) {
+      const allFullSend = statuses.every((s) => s.full_send === true);
+      if (tier === "full" && statuses.some((s) => s.human_spec_gate) && !allFullSend) {
         for (const taskId of taskIds) {
           const s = readStatus(taskId);
           s.human_spec_gate = false;
@@ -5136,7 +5432,9 @@ function checkDeps(taskIds, skipAgentDeps = false) {
         die(`${label} is required`);
       }
     }
-    ghAvailable = isCommandAvailable("gh");
+  }
+  ghAvailable = isCommandAvailable("gh");
+  if (!skipAgentDeps) {
     info(ghAvailable ? "gh CLI found \u2014 draft PR creation is available." : "gh CLI not found \u2014 PR creation will be unavailable. Push still works.");
   }
   for (const taskId of taskIds) {
@@ -5168,6 +5466,15 @@ async function main() {
     rerouteFromHumanReview(cliArgs.taskIds);
   }
   const { taskIds } = cliArgs;
+  if (cliArgs.fullSend) {
+    enableFullSend(taskIds);
+  }
+  for (const taskId of taskIds) {
+    const status = readStatus(taskId);
+    if (status.full_send === true && status.delicate === true && !cliArgs.force) {
+      die2(`--full-send on delicate task '${taskId}' requires --force. Canon's full-model review chains still run on delicate tasks under full-send, but the combination is a high-commitment stance. Re-run with --force to acknowledge.`);
+    }
+  }
   refreshCanonSnapshotsAtPaths(taskIds.map(statusFileFor));
   const initialState = buildPipelineState(taskIds);
   info2(initialState.isBundle ? `Pipeline (bundle, ${initialState.tier} tier): ${taskIds.join(", ")}` : `Pipeline (${initialState.tier} tier): ${taskIds[0]} \u2014 ${initialState.tasks[0].title}`);

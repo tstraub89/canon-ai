@@ -134,7 +134,8 @@ When `worktree: true`, the orchestrator creates a git worktree for the task. The
 | Linting | `npm run lint` (= `eslint scripts/ tests/ src/`) — required for all changes |
 | Type checking | `npm run type-check` (= `tsc -p tsconfig.json --noEmit`) |
 | Unit tests | `npm test` (= `node --test --import tsx tests/*.test.ts`) |
-| Full build | `npm run build` (= `tsup`) — emits the published `canon-ai` CLI bundle. Required for any change touching `src/` (the published package surface). |
+| Full build | `npm run build` (= `tsup` + `scripts/normalize-dist-paths.mjs` postbuild). Emits the published `canon-ai` CLI bundle from two entry points: `src/cli/index.ts` and `scripts/run-task.ts`. **Required for any change that affects `dist/` output** — i.e., changes to `src/**`, `scripts/run-task.ts`, `scripts/run-task/**`, `scripts/pipeline-policy.ts`, or anything they transitively import. **Committed `dist/` must match a fresh build** — CI runs `npm run build && git diff --exit-code -- dist/` (`.github/workflows/ci.yml`) and fails if the committed `dist/` is stale. When in doubt: run `npm run build` and commit any `dist/` deltas alongside source changes. |
+| Docs references | `npm run docs-refs-check` (= `node scripts/docs-refs-check.mjs`). Validates broken refs in markdown docs (file paths, symbols, sections, anchors). Required for any change touching `docs/`, `tasks/`, `templates/`, or root-level agent files; also required when source files referenced from docs are renamed or moved. |
 | End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `scripts/run-task/git.ts` and `scripts/run-task/validation.ts`. |
 | Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
 | Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `.canon/templates/status.json`, update parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
@@ -151,6 +152,8 @@ CI is configured via `.github/workflows/ci.yml`.
 **Matrix**: Node 24.x only.
 
 **Each job runs in order**: `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm test` → `npm run build`.
+
+Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-check` to their own GitHub Actions workflow file. canon does not ship `.github/workflows/` files to adopter repos, but `canon upgrade` does ship `scripts/docs-refs-check.mjs` and the npm script entry that invokes it.
 
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 

@@ -1,0 +1,80 @@
+{
+  "id": "docs-refs-check-canon-template",
+  "title": "Ship docs-refs-check as canon-shipped script + canon-ai CI gate",
+  "status": "complete",
+  "created": "2026-05-23",
+  "updated": "2026-05-24",
+  "branch": "task/docs-refs-check-canon-template",
+  "base_branch": "release/v1.4",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "742048e4bc49655d87efe98887758876f21a3aba",
+    "orchestrator_commit": "742048e4bc49655d87efe98887758876f21a3aba",
+    "codex_cli": "codex-cli 0.133.0",
+    "claude_code": "2.1.150 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 4,
+      "changes_requested_total": 3,
+      "auto_block_count": 1
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-05-24",
+      "phase": "code_review",
+      "iteration_count": 3,
+      "reason": "Code review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. Read tasks/<id>/review.md — if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. To resume after fixing: set phases.code_review.status = \"pending\" and phases.code_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    }
+  ],
+  "sessions": {
+    "codex_spec_review": "019e575a-c7a0-76e0-bc9f-46c3b7750847",
+    "claude_spec": "fe332a5f-44a9-43f8-a335-d0028665518a",
+    "codex": "019e5779-95b7-7ea0-8b12-7ad302175b3c",
+    "claude_review": "febed375-f1b2-4bbb-8425-fadb8d0b23cb"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

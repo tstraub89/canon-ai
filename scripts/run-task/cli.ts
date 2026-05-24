@@ -28,11 +28,30 @@ export function printUsage(): void {
     console.log('  --interactive, -I   Open interactive agent sessions');
     console.log('  --step, -1          Run one phase then stop');
     console.log('  --expect <phase>    Assert current phase before running');
-    console.log('  --push              Push branch at human_review');
-    console.log('  --pr                Push + create draft PR at human_review');
-    console.log('  --reroute           Reset from human_review back to implement AND re-invoke the pipeline');
-    console.log('  --ship              Merge open PR, pull, archive task, commit+push, clean branches');
+    console.log('  --pr                At human_review: push branch and open a draft PR (requires gh).');
+    console.log('                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and');
+    console.log('                      managed docs listed in spec.md\'s "### Affected Files" table. Dirty');
+    console.log('                      files outside that set die with a remediation message.');
+    console.log('                      Aborts if HEAD\'s tree differs from origin/<base> on files not in');
+    console.log('                      spec\'s Affected Files (bypass with --force).');
+    console.log('  --push              At human_review: push branch only, no PR (requires gh). Same');
+    console.log('                      allow-list as --pr. Aborts if HEAD\'s tree differs from origin/<base>');
+    console.log('                      on files not in spec\'s Affected Files (bypass with --force).');
+    console.log('  --full-send         Skip the spec gate and auto-open a draft PR after clean QA');
+    console.log('  --force             Acknowledge high-commitment combinations (currently: --full-send on a delicate task)');
+    console.log('  --ship              Merge the open PR (calls gh pr merge --squash --delete-branch), tear');
+    console.log('                      down the worktree, archive the task dir, and pull the base branch. Run');
+    console.log('                      after the PR is approved — do NOT merge the PR manually first. If you');
+    console.log('                      already merged externally, --ship detects the merged state and resumes');
+    console.log('                      at cleanup.');
     console.log('  --dry-run           Print each planned phase and exit without spawning any LLM');
+    console.log('  --reroute           Reset a task from human_review back to implement after human feedback.');
+    console.log('                      Feedback channel: append a new section to tasks/<id>/spec.md describing');
+    console.log('                      what to address. Codex re-reads spec.md only — additions to review.md');
+    console.log('                      or PR comments are NOT consulted on reroute.');
+    console.log('                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`');
+    console.log('                      on round 2+. Bypass with --force. See CLAUDE.md "Reroute feedback');
+    console.log('                      channel."');
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -54,6 +73,8 @@ export function parseArgs(argv: string[]): CliArgs {
     let reroute = false;
     let ship = false;
     let dryRun = false;
+    let fullSend = false;
+    let force = false;
 
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
@@ -80,6 +101,12 @@ export function parseArgs(argv: string[]): CliArgs {
             case '--reroute':
                 reroute = true;
                 break;
+            case '--full-send':
+                fullSend = true;
+                break;
+            case '--force':
+                force = true;
+                break;
             case '--ship':
                 ship = true;
                 break;
@@ -92,8 +119,12 @@ export function parseArgs(argv: string[]): CliArgs {
         }
     }
 
+    if (reroute && fullSend) {
+        die('--reroute and --full-send are mutually exclusive in a single invocation. Run --reroute first, then --full-send if you want to re-trust the result.');
+    }
+
     if (taskIds.length === 0) die('At least one TASK-ID is required.');
-    return { taskIds, interactive, step, expectPhase, push, pr, reroute, ship, dryRun };
+    return { taskIds, interactive, step, expectPhase, push, pr, reroute, ship, dryRun, fullSend, force };
 }
 
 export function validateTaskId(id: string): void {

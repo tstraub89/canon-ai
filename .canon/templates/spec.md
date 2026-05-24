@@ -27,6 +27,8 @@ Checklist of verifiable outcomes. Each item must be testable.
 
 ### Affected Files
 
+> Any protected doc Claude expects QA to touch (codebase-map, decisions, patterns, architecture, product-context, pipeline-orchestrator) must be listed here. Telemetry files (lessons-learned, task-quality-log, pipeline-invocations) are auto-committed and do not need a row.
+
 List files that will need changes, with a brief note on what changes.
 
 | File | Change |
@@ -78,4 +80,4 @@ Steps the human should perform to verify the feature works as intended. Written 
 - [ ] Plan steps (fast tier) reference actual function/file names from the codebase
 - [ ] Known Risks covers failure modes for the trickiest ACs
 - [ ] Human Test Plan uses product language only (no code, no file names)
-- [ ] Validation Required has at least one entry checked (or "None" with justification)
+- [ ] Validation Required has at least one entry marked `- [x]` (not `- [ ]`). `- [ ]` is a placeholder; the spec author flips required checks to `- [x]` before marking spec done. The orchestrator's code_review pre-flight blocks if no `[x]` items are present.

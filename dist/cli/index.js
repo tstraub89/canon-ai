@@ -43,7 +43,8 @@ function checkDeps() {
 function checkDepForFlag(flag) {
   const flagDeps = {
     "--pr": { cmd: "gh", installHint: "brew install gh && gh auth login" },
-    "--push": { cmd: "gh", installHint: "brew install gh && gh auth login" }
+    "--push": { cmd: "gh", installHint: "brew install gh && gh auth login" },
+    "--full-send": { cmd: "gh", installHint: "brew install gh && gh auth login" }
   };
   const dep = flagDeps[flag];
   if (dep && !isAvailable(dep.cmd)) {
@@ -208,7 +209,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.3.2";
+  const installedVersion = "1.4.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -557,7 +558,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.3.2";
+  const version = "1.4.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -2104,16 +2105,16 @@ function updatePackageVersion(filePath, version, updateLockRoot = false) {
   }
   writeJsonAtomic(filePath, parsed);
 }
-function insertChangelogBlock(filePath, short) {
+function insertChangelogBlock(filePath, version) {
   const content = fs6.readFileSync(filePath, "utf8");
   const lines = content.split("\n");
   const first = lines.shift() ?? "";
   const block = [
     first,
     "",
-    `## ${short} - unreleased`,
+    `## [${version}] \u2014 unreleased`,
     "",
-    `<!-- Bullets land here as tasks for ${short} ship. The single squash-merge of release/${short} \u2192 main carries this entry to production. -->`,
+    `<!-- Bullets land here as tasks for ${version} ship. The single squash-merge of release/v${version.replace(/\.0$/, "")} \u2192 main carries this entry to production. -->`,
     ...lines
   ];
   fs6.writeFileSync(filePath, block.join("\n"), "utf8");
@@ -2169,9 +2170,15 @@ function taskReleaseInit(version, options = {}) {
     }
   }
   if (fs6.existsSync("CHANGELOG.md")) {
-    console.log(`\u2192 Inserting empty changelog block for ${short}...`);
-    insertChangelogBlock("CHANGELOG.md", short);
+    console.log(`\u2192 Inserting empty changelog block for ${version}...`);
+    insertChangelogBlock("CHANGELOG.md", version);
     filesToAdd.push("CHANGELOG.md");
+  }
+  if (fs6.existsSync(".canon/version")) {
+    console.log(`\u2192 Updating .canon/version to ${version}...`);
+    fs6.writeFileSync(".canon/version", `${version}
+`, "utf8");
+    filesToAdd.push(".canon/version");
   }
   if (filesToAdd.length > 0) {
     git2(["add", ...filesToAdd]);
@@ -2313,7 +2320,11 @@ var CANON_OWNED = [
   // Pure canon documentation — adopters don't customize. Listed here so future
   // canon releases (post-1.1.x reframes etc.) flow through `canon upgrade`
   // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
-  "docs/pipeline-orchestrator.md"
+  "docs/pipeline-orchestrator.md",
+  // First canon-managed file outside .canon/, .claude/, and
+  // docs/pipeline-orchestrator.md. Future canon-shipped utility scripts
+  // follow the same pattern.
+  "scripts/docs-refs-check.mjs"
 ];
 var HEADER_ONLY_SYNC = [
   "docs/pipeline-invocations.md"
@@ -2421,7 +2432,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.3.2";
+  const newVersion = "1.4.0";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -2586,11 +2597,28 @@ canon run options:
                             phases: spec | spec_review | plan | implement |
                                     code_review | qa | human_review
   --interactive, -I       Open interactive agent sessions (default: non-interactive)
-  --pr                    At human_review: push branch and open a draft PR (requires gh)
-  --push                  At human_review: push branch only (requires gh)
-  --ship                  Post-merge cleanup: archive task dir (run after PR merges, not before)
+  --pr                    At human_review: push branch and open a draft PR (requires gh).
+                          Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and
+                          managed docs listed in spec.md's "### Affected Files" table. Dirty
+                          files outside that set die with a remediation message.
+                          Aborts if HEAD's tree differs from origin/<base> on files not in
+                          spec's Affected Files (bypass with --force).
+  --push                  At human_review: push branch only, no PR (requires gh). Same allow-list
+                          as --pr. Aborts if HEAD's tree differs from origin/<base> on files not
+                          in spec's Affected Files (bypass with --force).
+  --full-send             Skip the spec gate and auto-open a draft PR after clean QA
+  --force                 Acknowledge high-commitment combinations (currently: --full-send on a delicate task)
+  --ship                  Merge the open PR (calls gh pr merge --squash --delete-branch), tear
+                          down the worktree, archive the task dir, and pull the base branch. Run
+                          after the PR is approved \u2014 do NOT merge the PR manually first. If you
+                          already merged externally, --ship detects the merged state and resumes
+                          at cleanup.
   --dry-run               Print planned phases without running any agents
-  --reroute               Reset a task from human_review back to implement
+  --reroute               Reset a task from human_review back to implement after human feedback.
+                          Feedback channel: append a new section to tasks/<id>/spec.md describing
+                          what to address. Codex re-reads spec.md only \u2014 additions to review.md
+                          or PR comments are NOT consulted on reroute. See CLAUDE.md "Reroute
+                          feedback channel."
 
 Global:
   --version           Print canon-ai version
@@ -2598,7 +2626,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.3.2");
+  console.log("1.4.0");
 }
 switch (command) {
   case "doctor":

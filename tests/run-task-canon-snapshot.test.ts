@@ -26,6 +26,7 @@ function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): Status
         task_size: 'S',
         delicate: false,
         human_spec_gate: false,
+        full_send: false,
         worktree: false,
         phases: {
             spec: { status: 'pending', agent: 'claude' },

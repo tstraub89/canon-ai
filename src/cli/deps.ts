@@ -45,6 +45,7 @@ export function checkDepForFlag(flag: string): void {
     const flagDeps: Record<string, Dep> = {
         '--pr': { cmd: 'gh', installHint: 'brew install gh && gh auth login' },
         '--push': { cmd: 'gh', installHint: 'brew install gh && gh auth login' },
+        '--full-send': { cmd: 'gh', installHint: 'brew install gh && gh auth login' },
     };
     const dep = flagDeps[flag];
     if (dep && !isAvailable(dep.cmd)) {

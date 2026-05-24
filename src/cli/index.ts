@@ -56,11 +56,28 @@ canon run options:
                             phases: spec | spec_review | plan | implement |
                                     code_review | qa | human_review
   --interactive, -I       Open interactive agent sessions (default: non-interactive)
-  --pr                    At human_review: push branch and open a draft PR (requires gh)
-  --push                  At human_review: push branch only (requires gh)
-  --ship                  Post-merge cleanup: archive task dir (run after PR merges, not before)
+  --pr                    At human_review: push branch and open a draft PR (requires gh).
+                          Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and
+                          managed docs listed in spec.md's "### Affected Files" table. Dirty
+                          files outside that set die with a remediation message.
+                          Aborts if HEAD's tree differs from origin/<base> on files not in
+                          spec's Affected Files (bypass with --force).
+  --push                  At human_review: push branch only, no PR (requires gh). Same allow-list
+                          as --pr. Aborts if HEAD's tree differs from origin/<base> on files not
+                          in spec's Affected Files (bypass with --force).
+  --full-send             Skip the spec gate and auto-open a draft PR after clean QA
+  --force                 Acknowledge high-commitment combinations (currently: --full-send on a delicate task)
+  --ship                  Merge the open PR (calls gh pr merge --squash --delete-branch), tear
+                          down the worktree, archive the task dir, and pull the base branch. Run
+                          after the PR is approved — do NOT merge the PR manually first. If you
+                          already merged externally, --ship detects the merged state and resumes
+                          at cleanup.
   --dry-run               Print planned phases without running any agents
-  --reroute               Reset a task from human_review back to implement
+  --reroute               Reset a task from human_review back to implement after human feedback.
+                          Feedback channel: append a new section to tasks/<id>/spec.md describing
+                          what to address. Codex re-reads spec.md only — additions to review.md
+                          or PR comments are NOT consulted on reroute. See CLAUDE.md "Reroute
+                          feedback channel."
 
 Global:
   --version           Print canon-ai version

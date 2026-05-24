@@ -3,7 +3,8 @@ import path from 'node:path';
 
 import { parseTable, parseTableH3, extractSectionBodies } from './markdown-table.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
-import { filterGitIgnoredPaths, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
+import { warn } from './cli.js';
+import { filterGitIgnoredPaths, getTreeDriftFiles, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
@@ -131,6 +132,13 @@ export function canonicalizeValidationCheck(value: string): string {
 }
 
 export function parseValidationRequiredChecks(specPath: string): string[] | null {
+    // Return semantics:
+    //   - `null`            → Validation Required section is missing entirely (no `## Validation Required` header) OR spec file is unreadable.
+    //   - `[]` (empty array) → section exists but no `- [x]` items (only `- [ ]` placeholders or no items).
+    //   - non-empty `string[]` → the list of checked validation requirements.
+    // Callers must distinguish `null` from `[]` to emit the correct error — the
+    // two cases look identical to operators but have different remediation
+    // (write the section vs. mark checks `[x]`).
     try {
         const content = fs.readFileSync(specPath, 'utf8');
         const section = content.match(/## Validation Required\n\n([\s\S]*?)(?:\n## |\n# |$)/);
@@ -140,10 +148,73 @@ export function parseValidationRequiredChecks(specPath: string): string[] | null
             const match = line.match(/^-\s+\[x\]\s+(.+?)\s*$/i);
             if (match?.[1]) checks.push(match[1].trim());
         }
-        return checks.length > 0 ? checks : null;
+        return checks;
     } catch {
         return null;
     }
+}
+
+export function verifyRerouteAmendment(
+    taskId: string,
+    requiredRound: number,
+): { amended: boolean; reason: string } {
+    // Read the spec.md from the REPO_ROOT-anchored tasks dir (via taskDirFor,
+    // which respects CANON_TASKS_DIR_OVERRIDE for tests). The documented reroute
+    // workflow is "operator amends tasks/<id>/spec.md in the main repo"; canon
+    // syncs main → worktree at implement-start, so the worktree's copy is stale
+    // at pre-flight time. Reading the worktree path (the prior implementation)
+    // false-aborts a correctly-amended main-repo spec on worktree-mode tasks.
+    const specPath = path.join(taskDirFor(taskId), 'spec.md');
+    let content: string;
+    try {
+        content = fs.readFileSync(specPath, 'utf8');
+    } catch {
+        return { amended: false, reason: `spec.md missing at ${specPath}` };
+    }
+
+    // Heading-line patterns use horizontal whitespace ([ \t]) to keep the match
+    // anchored to a single line. `\s+` includes `\n`, so a spec with `## Amendment`
+    // followed by body text starting with "Round 1 amendment only." would falsely
+    // satisfy `Amendment\s+Round\s+\d+` by spanning the blank line — making the
+    // helper report `found ## Amendment Round 1` for a spec that only has bare
+    // `## Amendment`.
+    if (requiredRound === 1) {
+        if (/^#{2,6}[ \t]+Amendment\b/im.test(content)) {
+            return { amended: true, reason: '' };
+        }
+        return {
+            amended: false,
+            reason: `no \`## Amendment\` heading found in ${specPath}`,
+        };
+    }
+
+    const matches = content.matchAll(/^#{2,6}[ \t]+Amendment[ \t]+Round[ \t]+(\d+)\b/gim);
+    let seenRound: number | null = null;
+    for (const match of matches) {
+        const foundRound = Number(match[1]);
+        if (foundRound === requiredRound) {
+            return { amended: true, reason: '' };
+        }
+        if (seenRound === null) {
+            seenRound = foundRound;
+        }
+    }
+    if (seenRound !== null) {
+        return {
+            amended: false,
+            reason: `found \`## Amendment Round ${seenRound}\` in ${specPath}, expected \`## Amendment Round ${requiredRound}\``,
+        };
+    }
+    if (/^#{2,6}[ \t]+Amendment\b/im.test(content)) {
+        return {
+            amended: false,
+            reason: `found \`## Amendment\` in ${specPath}, expected \`## Amendment Round ${requiredRound}\``,
+        };
+    }
+    return {
+        amended: false,
+        reason: `no \`## Amendment Round ${requiredRound}\` heading found in ${specPath}`,
+    };
 }
 
 export type ValidationOutcomeRow = {
@@ -254,7 +325,20 @@ export function validateHandoffAgainstSpec(
     if (requiredChecks === null) {
         return ['Validation Required section is missing from spec.md'];
     }
-    if (requiredChecks.length === 0) return [];
+    if (requiredChecks.length === 0) {
+        // Distinguish from null (missing section). Section exists but no `[x]`
+        // checks marked — likely a spec authoring error where the operator left
+        // the template's `- [ ]` placeholders unchanged. Caught 2026-05-24
+        // during docs-refs-check-canon-template's code_review preflight, which
+        // auto-blocked at 3 CRs because Codex iterated against an unfixable-
+        // from-implement-side error.
+        return [
+            'Validation Required section in spec.md has no `[x]`-checked items — ' +
+            'mark at least one required check `[x]`. The template ships with `[ ]` placeholders; ' +
+            'the spec author marks the required checks before invoking canon. ' +
+            'If no checks apply, use a single `[x] None — <reason>` entry to document the decision.',
+        ];
+    }
 
     let rowMap: Map<string, ValidationOutcomeRow>;
     if (latestResults) {
@@ -646,6 +730,40 @@ export function parseHandoffChangesRows(taskId: string): {
     return { files: [...files], malformed };
 }
 
+export function parseAffectedFilesFromSpec(taskId: string): {
+    files: string[];
+    malformed: Array<{ cell: string; reason: string }>;
+} {
+    const specPath = path.join(taskDirFor(taskId), 'spec.md');
+    let content: string;
+    try {
+        content = fs.readFileSync(specPath, 'utf8');
+    } catch {
+        return { files: [], malformed: [] };
+    }
+
+    const designBodies = extractSectionBodies(content, /^## Design\b/);
+    if (designBodies.length === 0) return { files: [], malformed: [] };
+
+    const files = new Set<string>();
+    const malformed: Array<{ cell: string; reason: string }> = [];
+    for (const body of designBodies) {
+        const rows = parseTableH3(body, 'Affected Files');
+        for (const row of rows) {
+            const firstColumn = Object.values(row)[0] ?? '';
+            if (!firstColumn.trim()) continue;
+            const result = parseHandoffPathCell(firstColumn);
+            if (result.kind === 'ok') {
+                files.add(result.path);
+            } else {
+                malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+            }
+        }
+    }
+
+    return { files: [...files], malformed };
+}
+
 export type HandoffPathCellResult =
     | { kind: 'ok'; path: string }
     | { kind: 'malformed'; reason: string };
@@ -850,6 +968,20 @@ export function verifyHandoffAgainstDiffFromData(
     return issues;
 }
 
+export function verifyBaseDriftFromData(
+    diffFiles: readonly string[],
+    allowedPaths: ReadonlySet<string>,
+    taskIds: readonly string[],
+): string[] {
+    const drift: string[] = [];
+    for (const filePath of diffFiles) {
+        if (allowedPaths.has(filePath)) continue;
+        if (taskIds.some(taskId => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`))) continue;
+        drift.push(filePath);
+    }
+    return drift;
+}
+
 export function parseDiffNameStatus(stdout: string): { diffFiles: string[]; renamePairs: Array<[string, string]> } {
     const diffFiles: string[] = [];
     const renamePairs: Array<[string, string]> = [];
@@ -884,4 +1016,41 @@ export function verifyHandoffAgainstDiff(taskIds: string[], baseRef: string): st
         handoffFilesByTask,
         gitIgnoredHandoffFiles,
     });
+}
+
+export function verifyBaseDrift(
+    taskIds: string[],
+    baseBranch: string,
+    cwd: string,
+): { drift: string[]; fetchFailed: boolean; diffFailed: boolean; diffError?: string } {
+    const fetchResult = gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
+    if (!fetchResult.ok) {
+        warn(
+            `Could not fetch origin/${baseBranch} (${fetchResult.stderr.trim() || 'unknown'}). ` +
+            `Skipping base-drift check — re-run --pr when network access is restored if you want this verified.`,
+        );
+        return { drift: [], fetchFailed: true, diffFailed: false };
+    }
+
+    const driftResult = getTreeDriftFiles(`origin/${baseBranch}`, cwd);
+    if (!driftResult.ok) {
+        return { drift: [], fetchFailed: false, diffFailed: true, diffError: driftResult.stderr };
+    }
+
+    const allowedPaths = new Set<string>(PIPELINE_TELEMETRY_FILES);
+    for (const taskId of taskIds) {
+        const parsed = parseAffectedFilesFromSpec(taskId);
+        for (const filePath of parsed.files) {
+            allowedPaths.add(filePath);
+        }
+        for (const malformed of parsed.malformed) {
+            warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
+        }
+    }
+
+    return {
+        drift: verifyBaseDriftFromData(driftResult.files, allowedPaths, taskIds),
+        fetchFailed: false,
+        diffFailed: false,
+    };
 }

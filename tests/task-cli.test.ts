@@ -76,6 +76,7 @@ function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): Status
         task_size: 'S',
         delicate: false,
         human_spec_gate: false,
+        full_send: false,
         worktree: false,
         phases: {
             spec: { status: 'pending', agent: 'claude' },
@@ -145,6 +146,7 @@ void test('task new creates a task from templates and rejects existing tasks', (
             assert.equal(status.id, 'new-task');
             assert.equal(status.title, 'New Task');
             assert.equal(status.base_branch, 'dev');
+            assert.equal(status.full_send, false);
             assert.ok(fs.existsSync(path.join(taskDir, 'spec.md')));
 
             assert.throws(() => taskNew(['new-task', 'Again']), /Task directory tasks\/new-task already exists/);
@@ -857,7 +859,9 @@ function setupReleaseRepo(): { root: string; work: string; origin: string } {
     fs.writeFileSync(path.join(work, 'package.json'), `${JSON.stringify({ name: 'fixture', version: '1.0.0' }, null, 2)}\n`, 'utf8');
     fs.writeFileSync(path.join(work, 'package-lock.json'), `${JSON.stringify({ name: 'fixture', version: '1.0.0', packages: { '': { version: '1.0.0' } } }, null, 2)}\n`, 'utf8');
     fs.writeFileSync(path.join(work, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
-    git(work, ['add', 'package.json', 'package-lock.json', 'CHANGELOG.md']);
+    fs.mkdirSync(path.join(work, '.canon'), { recursive: true });
+    fs.writeFileSync(path.join(work, '.canon/version'), '1.0.0\n', 'utf8');
+    git(work, ['add', 'package.json', 'package-lock.json', 'CHANGELOG.md', '.canon/version']);
     git(work, ['commit', '-m', 'init']);
     git(work, ['remote', 'add', 'origin', origin]);
     git(work, ['push', '-u', 'origin', 'main']);
@@ -878,10 +882,45 @@ void test('task release-init creates release branch, bumps files, commits, and u
         const lock = JSON.parse(fs.readFileSync(path.join(work, 'package-lock.json'), 'utf8')) as PackageLockFixture;
         assert.equal(pkg.version, '1.6.0');
         assert.equal(lock.packages[''].version, '1.6.0');
-        assert.match(fs.readFileSync(path.join(work, 'CHANGELOG.md'), 'utf8'), /## v1\.6 - unreleased/);
+        // CHANGELOG block must use bracketed full-semver + em-dash to match the
+        // auto-release workflow's extraction regex (^## \[<version>\] — <date>)
+        // and the canonical format every existing canon-ai CHANGELOG entry uses.
+        const changelog = fs.readFileSync(path.join(work, 'CHANGELOG.md'), 'utf8');
+        assert.match(changelog, /## \[1\.6\.0\] — unreleased/);
+        // .canon/version must track package.json — the auto-release workflow
+        // asserts they agree and dies otherwise.
+        assert.equal(fs.readFileSync(path.join(work, '.canon/version'), 'utf8'), '1.6.0\n');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
+});
+
+void test('task release-init skips .canon/version when the file does not exist (adopter without .canon/ dir)', () => {
+    // Some adopter installs may not have a .canon/ directory yet. The write
+    // should be conditional — its absence is not an error.
+    withTempDir('release-init-no-canon-version-', root => {
+        const origin = path.join(root, 'origin.git');
+        const work = path.join(root, 'work');
+        git(root, ['init', '--bare', origin]);
+        git(root, ['init', '-b', 'main', work]);
+        git(work, ['config', 'user.email', 'test@example.com']);
+        git(work, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(work, 'package.json'), `${JSON.stringify({ name: 'fixture', version: '1.0.0' }, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(work, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        git(work, ['add', 'package.json', 'CHANGELOG.md']);
+        git(work, ['commit', '-m', 'init']);
+        git(work, ['remote', 'add', 'origin', origin]);
+        git(work, ['push', '-u', 'origin', 'main']);
+        withCwd(work, () => {
+            captureStdout(() => taskReleaseInit('1.6.0', { pushFn: () => undefined }));
+        });
+        // .canon/version still does not exist (we didn't create it).
+        assert.equal(fs.existsSync(path.join(work, '.canon/version')), false);
+        // package.json and CHANGELOG.md still bumped/updated.
+        const pkg = JSON.parse(fs.readFileSync(path.join(work, 'package.json'), 'utf8')) as PackageJsonFixture;
+        assert.equal(pkg.version, '1.6.0');
+        assert.match(fs.readFileSync(path.join(work, 'CHANGELOG.md'), 'utf8'), /## \[1\.6\.0\] — unreleased/);
+    });
 });
 
 function runTaskCmd(cwd: string, args: string[], env: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
@@ -954,6 +993,15 @@ void test('task phase routes to the task worktree status.json', () => {
         assert.equal(worktreeStatus.phases.spec?.status, 'done');
         assert.equal(worktreeStatus.status, 'spec_review');
     });
+});
+
+void test('docs telemetry files stay clean after the suite', () => {
+    const result = spawnSync('git', ['status', '-s', '--', 'docs/pipeline-invocations.md', 'docs/task-quality-log.md', 'docs/lessons-learned.md'], {
+        cwd: WORKSPACE_ROOT,
+        encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '', `unexpected docs pollution:\n${result.stdout}`);
 });
 
 void test('bundled orchestrator help is invocable once from dist', () => {

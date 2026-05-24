@@ -100,6 +100,7 @@ function makeStatus(overrides: Partial<StatusJson> = {}): StatusJson {
         task_size: 'S',
         delicate: false,
         human_spec_gate: false,
+        full_send: false,
         worktree: false,
         phases: {
             spec: phase('claude'),
@@ -207,6 +208,13 @@ void test('promptSpecReview', () => {
     recordOrAssert('promptSpecReview', actual);
 });
 
+void test('promptSpecReview injects the full-send rigor block when status.full_send is true', () => {
+    const fullSendState = makeState(makeTask({ status: makeStatus({ full_send: true }) }));
+    const actual = normalize(promptSpecReview(fullSendState));
+    assert.match(actual, /Full-send mode active/);
+    assert.match(actual, /primary rigor layer before implementation/);
+});
+
 void test('promptPlan', () => {
     const actual = normalize(promptPlan(planState));
     recordOrAssert('promptPlan', actual);
@@ -239,6 +247,57 @@ void test('promptImplementRevisions', () => {
 void test('promptImplementReroute', () => {
     const actual = normalize(promptImplementReroute(rerouteState, false, [], 'main'));
     recordOrAssert('promptImplementReroute', actual);
+});
+
+// Regression: a bundle of tasks at mixed reroute counts must NOT receive a single
+// bundle-wide round number in the banner (Codex P2 — anchoring problem: task A
+// entering reroute #1 was previously told the bundle was on "round 3 / reroute #2"
+// because the banner was derived from max(rerouteCount) across the bundle).
+void test('promptImplementReroute mixed-bundle banner is neutral and per-task lines are correct', () => {
+    const taskA = makeTask({ rerouteCount: 1 });
+    const taskBId = 'test-pf-002';
+    const taskBStatus = makeStatus({ id: taskBId, title: 'Bundle peer' });
+    const taskB = makeTask({
+        taskId: taskBId,
+        title: 'Bundle peer',
+        rerouteCount: 2,
+        status: taskBStatus,
+    });
+    // Materialize task B's directory so context helpers (taskDirFor) find it.
+    const taskBDir = path.join(tmpRoot, taskBId);
+    fs.mkdirSync(taskBDir, { recursive: true });
+    fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskBStatus, null, 2));
+    fs.writeFileSync(path.join(taskBDir, 'spec.md'), goldenTemplate);
+
+    const bundleState: PipelineState = { tasks: [taskA, taskB], tier: 'full', isBundle: true };
+    const output = normalize(promptImplementReroute(bundleState, false, [], 'main'));
+
+    // Banner is neutral and explicitly disclaims a single bundle-wide round.
+    assert.match(output, /This is a reroute round for a bundle of tasks/);
+    assert.match(output, /Each task carries its own reroute count/);
+    assert.match(output, /a bundle can mix tasks on different reroute rounds/);
+
+    // The misstatement form the bug produced must not appear (case-sensitive — the
+    // state header legitimately contains lowercase `reroute #N`).
+    assert.doesNotMatch(output, /THIS IS ROUND \d+ OF HUMAN REVIEW/);
+    assert.doesNotMatch(output, /REROUTE #\d+\.\*\*/);
+
+    // Per-task lines name the correct heading for each task's own reroute count.
+    assert.match(output, /test-pf-001.*entering reroute round 1.*`## Amendment`/);
+    assert.match(output, /test-pf-002.*entering reroute round 2.*`## Amendment Round 2`/);
+});
+
+// Regression: a single task at reroute #2+ should retain the strong "you've been
+// sent back N times" banner — that anchoring is unambiguous for a single task.
+void test('promptImplementReroute single-task at reroute #2 retains strong-anchor banner', () => {
+    const task = makeTask({ rerouteCount: 2, specReviewVerdict: 'approved' });
+    const state: PipelineState = { tasks: [task], tier: 'full', isBundle: false };
+    const output = normalize(promptImplementReroute(state, false, [], 'main'));
+
+    assert.match(output, /THIS IS ROUND 3 OF HUMAN REVIEW — REROUTE #2/);
+    assert.match(output, /sent back 1 time before this one/);
+    // Per-task line for round 2 uses the `## Amendment Round 2` heading form.
+    assert.match(output, new RegExp(`${TASK_ID}.*entering reroute round 2.*\`## Amendment Round 2\``));
 });
 
 void test('promptCodeReview_round1', () => {

@@ -73,6 +73,8 @@ let cliArgs: CliArgs = {
     reroute: false,
     ship: false,
     dryRun: false,
+    fullSend: false,
+    force: false,
 };
 let ghAvailable = false;
 // Claude session ID captured after each Claude-run phase for session resumption.
@@ -82,6 +84,10 @@ let lastCodexSessionId: string | null = null;
 // Non-zero Codex exit (e.g. MCP warnings) doesn't necessarily mean failure.
 // checkAndRoute validates by reading status.json instead of trusting exit code alone.
 let lastCodexExitStatus = 0;
+
+export function setCliArgsForTest(next: Partial<CliArgs>): void {
+    cliArgs = { ...cliArgs, ...next };
+}
 
 // ── Output helpers ─────────────────────────────────────────────────────────
 
@@ -632,9 +638,14 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     info(`Auto-committed ${stagedCount} file(s): ${message}`);
 }
 
-function humanReviewAllowedPath(taskIds: string[], filePath: string): boolean {
+function humanReviewAllowedPath(
+    taskIds: string[],
+    affectedManagedDocs: ReadonlySet<string>,
+    filePath: string,
+): boolean {
     return taskIds.some(taskId => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) ||
-        splitWorktree.PIPELINE_SHARED_DOCS.some(pathName => pathName === filePath);
+        (splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath) ||
+        affectedManagedDocs.has(filePath);
 }
 
 function mirrorHumanReviewDocsToCwd(cwd: string): void {
@@ -655,14 +666,23 @@ function mirrorHumanReviewDocsToCwd(cwd: string): void {
     }
 }
 
-export function buildHumanReviewStagePaths(taskIds: string[], dirtyEntries: readonly PorcelainEntry[]): string[] {
+export function buildHumanReviewStagePaths(
+    taskIds: string[],
+    affectedManagedDocs: ReadonlySet<string>,
+    dirtyEntries: readonly PorcelainEntry[],
+): string[] {
     const stagePaths = new Set<string>();
     for (const taskId of taskIds) {
         if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
             stagePaths.add(path.join('tasks', taskId));
         }
     }
-    for (const relPath of splitWorktree.PIPELINE_SHARED_DOCS) {
+    for (const relPath of splitWorktree.PIPELINE_TELEMETRY_FILES) {
+        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === relPath))) {
+            stagePaths.add(relPath);
+        }
+    }
+    for (const relPath of affectedManagedDocs) {
         if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === relPath))) {
             stagePaths.add(relPath);
         }
@@ -864,8 +884,81 @@ function printCompleteStateBanner(taskIds: string[]): void {
     }
 }
 
-function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
+export function enableFullSend(taskIds: string[]): void {
+    for (const taskId of taskIds) {
+        const status = splitState.readStatus(taskId);
+        status.full_send = true;
+        status.human_spec_gate = false;
+        splitState.writeStatus(taskId, status);
+    }
+}
+
+function shouldRunFullSendTail(taskIds: string[]): boolean {
+    return taskIds.every(taskId => {
+        const status = splitState.readStatus(taskId);
+        return status.full_send === true &&
+            status.phases.qa?.status === 'done' &&
+            status.phases.human_review?.status === 'pending';
+    });
+}
+
+export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR: boolean): void {
+    if (createPR) {
+        ghAvailable = splitGit.isCommandAvailable('gh');
+    }
     mirrorHumanReviewDocsToCwd(cwd);
+
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const baseDriftResult = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
+    if (baseDriftResult.fetchFailed) {
+        // warn already emitted by verifyBaseDrift; offline runs keep the prior best-effort behavior.
+    } else if (baseDriftResult.diffFailed) {
+        die(
+            `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.\n` +
+            `Git error: ${baseDriftResult.diffError ?? 'unknown error'}\n` +
+            `This failure cannot be bypassed with --force.`
+        );
+    } else if (baseDriftResult.drift.length > 0) {
+        if (!cliArgs.force) {
+            die(
+                `--pr aborted: base-drift detected. Files in the tree diff between origin/${baseBranch}\n` +
+                `and HEAD that are not in the spec's Affected Files (and not task-dir/telemetry):\n` +
+                `${baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
+                `The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and files listed in\n` +
+                `your spec's '### Affected Files' table.\n` +
+                `If this is a legitimate task change, add the path to spec.md '### Affected Files'\n` +
+                `and rerun. For a rename, list BOTH the old and new paths. If the drift is\n` +
+                `unexpected (likely cross-pipeline contamination from a sibling worktree's\n` +
+                `managed-doc sync, OR a third-party commit landed on origin/${baseBranch} while\n` +
+                `this pipeline was running), recover with one of:\n` +
+                `  - rebase onto current origin/${baseBranch} to absorb the base advance:\n` +
+                `      git fetch origin ${baseBranch} && git rebase origin/${baseBranch}\n` +
+                `  - reset a specific file to base's content if a stray task-branch commit\n` +
+                `    introduced it:\n` +
+                `      git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'\n` +
+                `  - revert the offending task-branch commit entirely:\n` +
+                `      git revert <sha>\n` +
+                `Bypass with --force if you've verified the drift is intentional.`
+            );
+        }
+        warn(
+            `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +
+            baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')
+        );
+    }
+
+    const affectedManagedDocs = new Set<string>();
+    for (const taskId of taskIds) {
+        const parsed = splitValidation.parseAffectedFilesFromSpec(taskId);
+        for (const filePath of parsed.files) {
+            if ((splitWorktree.PIPELINE_MANAGED_DOCS as readonly string[]).includes(filePath)) {
+                affectedManagedDocs.add(filePath);
+            }
+        }
+        for (const malformed of parsed.malformed) {
+            warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
+        }
+    }
 
     const dirtyResult = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
     if (!dirtyResult.ok) {
@@ -879,7 +972,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
     // --pr run where commit+push succeeded but `gh pr create` failed
     // transiently (network, rate limit). Skip the commit step and re-attempt
     // PR creation only. Caught via canon-ai PR #39 CodeRabbit finding #1.
-    if (dirtyEntries.length === 0 && (cliArgs.pr || cliArgs.push)) {
+    if (dirtyEntries.length === 0 && (createPR || cliArgs.push)) {
         const branchResult = gitSafeAt(cwd, 'rev-parse', '--abbrev-ref', 'HEAD');
         const branchName = branchResult.ok ? branchResult.stdout.trim() : '';
         if (branchName) {
@@ -903,7 +996,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
 
-            if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
+            if (createPR) reportOrCreatePR(taskIds, branchName);
             return;
         }
     }
@@ -912,16 +1005,29 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         die('Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.');
     }
 
-    const unexpected = dirtyEntries.filter(entry => !entry.paths.every(pathName => humanReviewAllowedPath(taskIds, pathName)));
+    const unexpected = dirtyEntries.filter(entry => !entry.paths.every(pathName => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName)));
     if (unexpected.length > 0) {
         die(
             `Human review commit aborted: working tree has dirty files outside the human_review allowlist.\n` +
-            unexpected.map(entry => `    ${entry.raw}`).join('\n') +
-            `\n  Stage only task artifacts, telemetry, and managed docs before rerunning.`
+            unexpected.map(entry => `  ${entry.raw}`).join('\n') + `\n` +
+            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and PIPELINE_MANAGED_DOCS entries listed in your spec's '### Affected Files' table.\n` +
+            `If this is a managed doc this task legitimately edits, add it to spec.md '### Affected Files' and rerun.\n` +
+            `If this is a source or test file, it should have been committed during the implement phase — ` +
+            `investigate why it is dirty now (unexpected late edits or base-drift/branch contamination are possible causes) ` +
+            `and revert with: git checkout HEAD -- <path>`
         );
     }
 
-    const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, dirtyEntries));
+    const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries));
+
+    for (const relPath of stagePaths) {
+        if (affectedManagedDocs.has(relPath)) {
+            warn(
+                `WARNING: ${relPath} has uncommitted edits and is in PIPELINE_MANAGED_DOCS — ` +
+                `run \`git diff HEAD -- ${relPath}\` to verify these are this task's work before --ship.`
+            );
+        }
+    }
 
     if (stagePaths.size === 0) {
         die('Human review commit aborted: no allowed dirty files found to stage.');
@@ -935,7 +1041,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         .split('\n')
         .map(line => line.trim())
         .filter(Boolean)
-        .filter(filePath => !humanReviewAllowedPath(taskIds, filePath));
+        .filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
     if (stagedBeforeUnexpected.length > 0) {
         die(
             `Human review commit aborted: staged files are not covered by the human_review allowlist.\n` +
@@ -959,7 +1065,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
     if (stagedNames.length === 0) {
         die('Human review commit aborted: staging produced no commit-ready files.');
     }
-    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(taskIds, filePath));
+    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
     if (stagedUnexpected.length > 0) {
         die(
             `Human review commit aborted: staged files escaped the allowlist.\n` +
@@ -987,7 +1093,7 @@ function commitHumanReviewFiles(taskIds: string[], cwd: string): void {
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
 
-    if (cliArgs.pr) reportOrCreatePR(taskIds, branchName);
+    if (createPR) reportOrCreatePR(taskIds, branchName);
 }
 
 function printDryRunPlan(state: PipelineState): void {
@@ -1346,10 +1452,38 @@ function mergeOpenPRsAndPull(taskIds: string[]): boolean {
         splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via squash...`);
         // --delete-branch removes the remote branch; local cleanup happens post-teardown.
         const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), '--squash', '--delete-branch']);
-        if (!result.ok && !result.stderr.includes('already merged')) {
+        // `gh pr merge --delete-branch` deletes remote then local branch. When a
+        // worktree holds the local branch, the local-delete step fails after the
+        // merge AND remote-delete already succeeded — gh exits non-zero on a
+        // SUCCESSFUL merge. The function-level comment above documents that
+        // local-delete failure is expected here; tolerate that specific stderr.
+        // Without this guard, --ship would die after the PR was actually merged,
+        // leaving the operator in a half-cleaned state (PR merged, worktree intact,
+        // local branch present) requiring manual recovery.
+        const localDeleteFailed = !result.ok && result.stderr.includes('used by worktree');
+        if (!result.ok && !result.stderr.includes('already merged') && !localDeleteFailed) {
             splitCli.die(`Failed to merge PR #${prNum}: ${result.stderr}`);
         }
-        splitCli.info(`PR #${prNum} merged.`);
+        if (localDeleteFailed) {
+            splitCli.info(`PR #${prNum} merged; local branch delete deferred until worktree teardown.`);
+            // gh's --delete-branch on a non-zero exit does not guarantee both
+            // remote and local deletes succeeded — the local-delete failure
+            // could have aborted the remote-delete too in some failure modes.
+            // Setting anyMerged = true below SKIPS the downstream
+            // assertOriginTaskBranchAbsent() safety net (only runs on the
+            // !merged path). Apply the same verification here for the task
+            // IDs that mapped to this branch so a stale origin ref doesn't
+            // silently survive --ship. The function dies on mismatch and
+            // auto-recovers when the PR is confirmed merged with matching
+            // head SHA.
+            for (const taskId of taskIds) {
+                if (resolveTaskBranchName(taskId) === branch) {
+                    assertOriginTaskBranchAbsent(taskId);
+                }
+            }
+        } else {
+            splitCli.info(`PR #${prNum} merged.`);
+        }
         anyMerged = true;
     }
     if (anyMerged) {
@@ -1402,49 +1536,6 @@ export function commitArchiveChanges(
     info(`Pushing ${baseBranch}...`);
     git('push', 'origin', baseBranch);
     return { committed: true };
-}
-
-/**
- * If the base branch is a release branch (release/v<X.Y>) and gh is available,
- * extract the version from package.json and create a GitHub release tag.
- * No-op for tasks branching off main.
- */
-function maybeCreateGitHubRelease(baseBranch: string): void {
-    if (!ghAvailable) return;
-    if (!baseBranch.startsWith('release/')) return;
-
-    // Read version from package.json (already bumped by release-init)
-    let version: string;
-    try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version?: string };
-        version = pkg.version ?? '';
-    } catch {
-        warn('Could not read package.json version — skipping GitHub release creation.');
-        return;
-    }
-    if (!version) { warn('package.json has no version field — skipping GitHub release creation.'); return; }
-
-    const tag = `v${version}`;
-    info(`Creating GitHub release ${tag}...`);
-    // Extract the changelog block for this version to use as release notes.
-    let notes = `Release ${tag}`;
-    try {
-        const changelog = fs.readFileSync(path.join(REPO_ROOT, 'CHANGELOG.md'), 'utf8');
-        // Match the block starting with ## v<major.minor> up to the next ## heading
-        const match = changelog.match(new RegExp(`(## v${version.replace('.', '\\.')}[\\s\\S]*?)(?=\n## |$)`));
-        if (match) notes = match[1].trim();
-    } catch { /* no changelog — use default notes */ }
-
-    const result = runCommand('gh', [
-        'release', 'create', tag,
-        '--title', tag,
-        '--notes', notes,
-    ]);
-    if (!result.ok) {
-        warn(`GitHub release creation failed: ${result.stderr || 'unknown error'}`);
-    } else {
-        info(`GitHub release ${tag} created: ${result.stdout.trim()}`);
-    }
 }
 
 /**
@@ -1535,8 +1626,23 @@ function shipTasks(taskIds: string[]): void {
         assertTaskBranchPushed(taskId);
     }
 
-    // Flush any telemetry before merging so the PR doesn't pick it up.
-    if (taskIds.some(id => splitState.readStatus(id).worktree === true)) splitWorktree.flushWorktreeTelemetry();
+    // Worktree-mode tasks: discard REPO_ROOT's dirty mirror of PIPELINE_SHARED_DOCS
+    // so the subsequent `git pull` (in mergeOpenPRsAndPull) doesn't trip on a working
+    // tree that diverges from the about-to-merge content. The task branch already
+    // carries the canonical post-pipeline state of these docs (via commitHumanReviewFiles
+    // at --pr time, which mirrors REPO_ROOT's dirty mirror back into the worktree and
+    // commits it); the squash merge brings them to base atomically with the rest of the
+    // task content. The previous flushWorktreeTelemetry call here committed the dirty
+    // mirror to base directly, creating a duplicate commit on base that diverged from the
+    // task branch's evolved versions and produced merge conflicts on `docs/task-quality-log.md`
+    // and `docs/lessons-learned.md` at PR-merge time. Diagnosed during PR #95's ship cycle.
+    if (taskIds.some(id => splitState.readStatus(id).worktree === true)) {
+        const presentSharedDocs = splitWorktree.PIPELINE_SHARED_DOCS
+            .filter(relPath => fs.existsSync(path.join(REPO_ROOT, relPath)));
+        if (presentSharedDocs.length > 0) {
+            splitGit.gitSafe('checkout', 'HEAD', '--', ...presentSharedDocs);
+        }
+    }
 
     splitGit.ensureCheckedOutBaseBranch(taskIds);
 
@@ -1619,23 +1725,65 @@ function shipTasks(taskIds: string[]): void {
         else warn(`Could not delete local branch ${branch}: ${result.stderr}`);
     }
 
-    // Create a GitHub release if this is a release-branch PR.
-    maybeCreateGitHubRelease(baseBranch);
-
     info(`Shipped ${taskIds.length} task${taskIds.length > 1 ? 's' : ''} to _archive/.`);
     process.exit(0);
 }
 
 // ── Reroute ────────────────────────────────────────────────────────────────
 
-function rerouteFromHumanReview(taskIds: string[]): void {
+export function rerouteFromHumanReview(taskIds: string[]): void {
     for (const taskId of taskIds) {
         const currentPhase = getCurrentPhase(splitState.readStatus(taskId));
         if (currentPhase !== 'human_review') {
             splitCli.die(`--reroute requires all tasks to be at human_review. '${taskId}' is at: ${currentPhase}`);
         }
     }
+    const amendmentFailures: Array<{
+        taskId: string;
+        specPath: string;
+        requiredRound: number;
+        expectedHeading: string;
+        reason: string;
+    }> = [];
+    for (const taskId of taskIds) {
+        const status = splitState.readStatus(taskId);
+        const requiredRound = (status.phases.implement?.reroute_count ?? 0) + 1;
+        const result = splitValidation.verifyRerouteAmendment(taskId, requiredRound);
+        if (!result.amended) {
+            amendmentFailures.push({
+                taskId,
+                specPath: path.join(taskDirFor(taskId), 'spec.md'),
+                requiredRound,
+                expectedHeading: requiredRound === 1 ? '## Amendment' : `## Amendment Round ${requiredRound}`,
+                reason: result.reason,
+            });
+        }
+    }
+    if (amendmentFailures.length > 0) {
+        if (!cliArgs.force) {
+            die(
+                `--reroute aborted: spec.md amendment required before reroute.\n` +
+                amendmentFailures.map(failure =>
+                    [
+                        `  ${failure.taskId}: ${failure.specPath}`,
+                        `    required round: ${failure.requiredRound}`,
+                        `    expected heading: ${failure.expectedHeading}`,
+                        `    reason: ${failure.reason}`,
+                    ].join('\n')
+                ).join('\n') +
+                `\n  Bypass with --force if you have verified the lack of amendment is intentional.\n` +
+                `  See docs/pipeline-orchestrator.md § Human Reroute for the contract.`
+            );
+        }
+        for (const failure of amendmentFailures) {
+            warn(
+                `--force bypass: ${failure.taskId} spec.md missing required ${failure.expectedHeading} heading for round ${failure.requiredRound}; ` +
+                `Codex will re-implement against the existing spec.`
+            );
+        }
+    }
     splitCli.info(`Rerouting: human_review → implement (resetting implement, code_review, qa)`);
+    let clearedFullSend = false;
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
         status.updated = new Date().toISOString().slice(0, 10);
@@ -1670,11 +1818,18 @@ function rerouteFromHumanReview(taskIds: string[]): void {
         if (qa) qa.status = 'pending';
         const humanReview = status.phases.human_review;
         if (humanReview) humanReview.status = 'pending';
+        if (status.full_send === true) {
+            status.full_send = false;
+            clearedFullSend = true;
+        }
         splitState.writeStatus(taskId, status);
     }
     splitCli.info('Status reset. Pipeline will resume from implement phase with amended-spec context.');
     splitCli.info('Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.');
     splitCli.info('');
+    if (clearedFullSend) {
+        splitCli.info('⚠ full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with \'canon run --full-send <id>\' if you\'re confident.');
+    }
     splitCli.info('⚠  Before invoking the pipeline: ensure tasks/<id>/spec.md (in the MAIN repo, not the worktree) has an');
     splitCli.info('   Amendment section with the new requirements. review.md alone is not sufficient — Codex reads spec.md');
     splitCli.info('   as the contract. The main-repo spec is synced into the worktree at the start of implement.');
@@ -1755,9 +1910,61 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     }
     if (phase === 'human_review') {
         const taskIds = tasks.map(t => t.taskId);
+        if (shouldRunFullSendTail(taskIds)) {
+            const branches = new Set(taskIds.map(id => resolveTaskBranchName(id)));
+            if (branches.size !== 1) {
+                die(
+                    `Full-send tail aborted: bundle spans multiple branches (${[...branches].join(', ')}). Today's --pr flow operates on one branch per invocation; multi-branch full-send is out of scope. Run each branch's tasks as a separate invocation.`
+                );
+            }
+
+            const branch = [...branches][0];
+            const cwd = splitWorktree.getActiveCwd(taskIds);
+            const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path.join(cwd, 'tasks');
+
+            // Bundle atomicity: write human_review.status = done only after the
+            // PR-creation helper returns successfully for every task.
+            for (const taskId of taskIds) {
+                const gateResult = splitValidation.checkPhaseGate(taskId, 'human_review', undefined, tasksRootForGate);
+                if (!gateResult.ok) {
+                    die(gateResult.reason);
+                }
+            }
+
+            commitHumanReviewFiles(taskIds, cwd, true);
+
+            for (const taskId of taskIds) {
+                const status = splitState.readStatus(taskId);
+                if (status.phases.human_review) {
+                    status.phases.human_review.status = 'done';
+                }
+                splitState.writeStatus(taskId, status);
+            }
+
+            const completeState = inspectCompleteState(branch, taskIds);
+            let prUrl = '(PR URL unavailable — check GitHub)';
+            if (completeState.kind === 'open_pr') {
+                prUrl = completeState.prUrl;
+            } else {
+                warn(`Full-send: PR URL unavailable for branch ${branch}; expected open PR after --pr step`);
+            }
+
+            console.log('');
+            console.log('════════════════════════════════════════════════════════');
+            console.log('  ✅ FULL-SEND COMPLETE — draft PR open.');
+            console.log('');
+            console.log(`  PR: ${prUrl}`);
+            console.log('');
+            console.log(`  Merge at your discretion via \`canon run ${taskIds.join(' ')} --ship\`,`);
+            console.log('  or via GitHub once the PR is marked ready.');
+            console.log('════════════════════════════════════════════════════════');
+            console.log('');
+            process.exit(0);
+        }
+
         if (cliArgs.push || cliArgs.pr) {
             const cwd = splitWorktree.getActiveCwd(taskIds);
-            commitHumanReviewFiles(taskIds, cwd);
+            commitHumanReviewFiles(taskIds, cwd, cliArgs.pr);
             process.exit(0);
         }
 
@@ -1779,7 +1986,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
         const taskIds = tasks.map(t => t.taskId);
         if (cliArgs.push || cliArgs.pr) {
             const cwd = splitWorktree.getActiveCwd(taskIds);
-            commitHumanReviewFiles(taskIds, cwd);
+            commitHumanReviewFiles(taskIds, cwd, cliArgs.pr);
             process.exit(0);
         }
 
@@ -2076,7 +2283,10 @@ async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
             }
             // Full tier: human gate fires after Codex spec_review completes
             const tier = splitPolicy.detectTier(statuses);
-            if (tier === 'full' && statuses.some(s => s.human_spec_gate)) {
+            const allFullSend = statuses.every(s => s.full_send === true);
+            // Bundle gate skip is all-or-nothing: one normal task re-engages the
+            // gate for the whole invocation.
+            if (tier === 'full' && statuses.some(s => s.human_spec_gate) && !allFullSend) {
                 for (const taskId of taskIds) {
                     const s = splitState.readStatus(taskId);
                     s.human_spec_gate = false;
@@ -2134,7 +2344,20 @@ function checkDeps(taskIds: string[], skipAgentDeps = false): void {
                 splitCli.die(`${label} is required`);
             }
         }
-        ghAvailable = splitGit.isCommandAvailable('gh');
+    }
+    // gh availability must be detected even when skipAgentDeps is true.
+    // --ship and --dry-run set skipAgentDeps to skip the claude/codex checks
+    // (those CLIs aren't invoked on those paths), but gh IS invoked: --ship
+    // calls findOpenPRNumber/findMergedPRNumber/getMergedPRHeadSha for its
+    // merge step and externally-merged recovery path. Until this fix, those
+    // calls all returned null silently because ghAvailable stayed at its
+    // module-load default of false, causing --ship to never invoke
+    // `gh pr merge` and the recovery in assertOriginTaskBranchAbsent to never
+    // detect an already-merged PR. "--ship is post-merge-only" framing in
+    // earlier docs/memory was a symptom of this bug, not a design choice.
+    // Diagnosed live in PR #95's ship attempt on 2026-05-21.
+    ghAvailable = splitGit.isCommandAvailable('gh');
+    if (!skipAgentDeps) {
         splitCli.info(ghAvailable
             ? 'gh CLI found — draft PR creation is available.'
             : 'gh CLI not found — PR creation will be unavailable. Push still works.');
@@ -2180,6 +2403,15 @@ export async function main(): Promise<void> {
     }
 
     const { taskIds } = cliArgs;
+    if (cliArgs.fullSend) {
+        enableFullSend(taskIds);
+    }
+    for (const taskId of taskIds) {
+        const status = splitState.readStatus(taskId);
+        if (status.full_send === true && status.delicate === true && !cliArgs.force) {
+            die(`--full-send on delicate task '${taskId}' requires --force. Canon's full-model review chains still run on delicate tasks under full-send, but the combination is a high-commitment stance. Re-run with --force to acknowledge.`);
+        }
+    }
     refreshCanonSnapshotsAtPaths(taskIds.map(splitState.statusFileFor));
     const initialState = buildPipelineState(taskIds);
 

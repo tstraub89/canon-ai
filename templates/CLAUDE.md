@@ -16,6 +16,8 @@ Claude operates in two distinct modes:
 
 **Spec gate**: The human always reviews the spec before the pipeline advances — invoke `canon run <id>` only after they approve.
 
+If the human clearly wants no interrupts or "draft PR when done" behavior, pass `--full-send` to `/canon-spec` (for example when they say "full send", "full-send", "yolo it", "don't bother me", or "no interrupts"). If you invoke `canon run --full-send` directly on a delicate task, append `--force` and say so before launching — the run will still use the upgraded model, but it opens the PR without another checkpoint.
+
 **Pipeline rule**: Claude Code (the operator session — the one the human talks to directly) invokes `canon run <id>` to drive pipeline phases and monitors progress. Pipeline-spawned Claude sessions write `review.md` and `done.md` (and, for full-tier tasks, `plan.md`) — that keeps orchestrator guardrails intact, session resumption working, and the operator session's context clean. If you catch yourself reading the diff to assess spec compliance in the operator session, stop and kick the phase to the pipeline instead.
 
 A human shell can also operate canon directly (`canon run <id>` in a terminal), useful for headless / scripted use. Codex can technically operate but canon was not designed for it — see [`docs/pipeline-orchestrator.md` §Operator](docs/pipeline-orchestrator.md) for why.
@@ -52,7 +54,7 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 
 **Quick refs you'll use most**:
 - `canon run <id> --step --expect <phase>` — run one phase with a phase-mismatch guard.
-- `MAX_REVIEW_LOOPS=5 canon run <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block.
+- `MAX_REVIEW_LOOPS=5 canon run <id> --step` — env-var override; never hand-edit `status.json` to bypass auto-block. **Caveat**: before raising the cap, check whether Codex's iteration notes describe the recurring finding as "stale," "the claim is wrong," or "not actionable from this side." Same-finding-N-iterations often means the spec or validator is wrong, not the implementation — raising the cap just iterates further against an unfixable error. Inspect spec.md and `tasks/<id>/review.md`; if Codex is right that the finding is unactionable, fix the spec/validator and reset `iterations_current_loop` per the auto-block message instead of raising.
 - **`canon run <id> --pr` → `canon run <id> --ship`** — when a task reaches `human_review`, run `--pr` to push the branch and open the draft PR; after the PR is marked ready and approved, run `--ship` for the merge + archive. `--ship` calls `gh pr merge --squash --delete-branch` itself, then tears down the worktree, archives the task dir, pulls the base branch, and cleans up local branches. Don't merge the PR manually — canon's `--ship` handles the worktree-teardown-before-branch-deletion ordering that `gh pr merge --delete-branch` alone trips on when a worktree holds the branch. If you've already merged the PR externally, `--ship` detects the merge and picks up at cleanup. Running `--ship` with no PR open at all archives the task without the implementation landing — don't do that.
 - Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — anything where a regression has unbounded blast radius. The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`). **Project-specific delicate-flag domain examples** (auth, payments, persistent storage, PHI handling, security-relevant cryptography, orchestrator routing logic, etc.) live in [`docs/product-context.md`](docs/product-context.md) — adopters list theirs there.
 - **One pipeline per worktree.** Multiple `canon run` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
@@ -140,7 +142,7 @@ Once the task reaches `human_review`, open the draft PR with:
 canon run <id> --pr
 ```
 
-`--pr` pushes the task branch and creates a draft PR targeting `base_branch` (recorded in `status.json` at task creation — typically `dev`). Don't use `--ship` at this step — `--ship` is for after the PR is approved and ready to merge, and will do the merge + cleanup itself (see the Quick refs).
+`--pr` pushes the task branch and creates a draft PR targeting `base_branch` (recorded in `status.json` at task creation — auto-detected from the current git checkout, so this is `main` for one-off work or whatever release-accumulation branch your project uses). Don't use `--ship` at this step — `--ship` is for after the PR is approved and ready to merge, and will do the merge + cleanup itself (see the Quick refs).
 
 ## Spec Authorship Guidelines
 
@@ -164,7 +166,7 @@ When writing specs:
 - **E2E tests change only when intended behavior changes**: If an E2E test fails after a code change and the behavior change was not planned, the *code* is broken — not the test. Don't update the test to pass against the regression.
 - **Test files are per-feature, not per-helper**: Before naming a new test file in a spec, list existing test files. Consolidate new helpers into one feature-named test file rather than creating a new one per helper.
 - **Strong-semantic mode names need product-owner sign-off on full scope before narrow scoping**: When a mode or toggle uses a term that naturally implies full constraint ("locked", "linked", "synced", "frozen", "fixed"), the human will read the strong meaning by default. Spec'ing it narrowly creates a hidden mismatch that surfaces in human testing as a code-review reroute. Verify what the name means *in full*, or pick a less load-bearing name.
-- **Verify that symbols named in spec ACs actually exist in the codebase**: Before marking spec done, grep for every function or symbol referenced by name in an AC. A name that doesn't exist causes Codex to implement against the actual code shape while noting the mismatch — the review loop then has to adjudicate whether the AC or the implementation is wrong, burning an unnecessary iteration.
+- **Verify that symbols named in spec ACs actually exist in the codebase AND that their return shape matches the spec's assumed data contract**: Before marking spec done, grep for every function or symbol referenced by name in an AC — then read its return type. A symbol that exists but returns `void` or a different type than the spec assumes makes the AC unimplementable and causes an auto-block when Codex discovers the mismatch during implementation. The name check and the return-type check are both cheap; do both.
 - **For large-removal tasks with structural grep ACs, generate the allow-list from `git grep`, not the Affected Files table**: When a spec includes an AC of the form "this string must not appear outside these paths," the spec author's allow-list is written from their mental model. The Affected Files table only lists files the author expects to *touch* — it misses historical telemetry docs, archived `status.json` snapshots, template mirrors, and other files that legitimately contain the retiring symbol but weren't in the author's mental model. During spec_review, the Codex reviewer should run the grep against the *current* tree to discover the full allow-list and flag additions before implementation begins. A missed allow-list entry forces a spec revision mid-review and burns an iteration.
 
 ### Code-review rules of thumb
@@ -208,7 +210,7 @@ Project commands (lint, type-check, test, build, dev server, etc.) live in [`doc
 
 **AGENTS.md is the source of truth for PR rules.** Common failure point — read it before opening a PR. Key requirements:
 
-- PR body must start from `.github/pull_request_template.md` if your project has one
+- PR body must start from .github/pull_request_template.md if your project has one
 - Check remote branch state before creating branches or resetting (`git log origin/main..main`)
 - Never force-push main
 

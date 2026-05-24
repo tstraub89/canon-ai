@@ -78,6 +78,16 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
+## Full-send mode collapses the spec gate and human_review stop behind one explicit flag
+
+**Decision**: Canon's "spec to draft PR with no human interrupts" flow is an explicit `status.json.full_send` mode, enabled by `canon run --full-send` and cleared by `--reroute`.
+
+**Why**: The alternative was to rely on manual `status.json` edits or to add a separate `canon task new --full-send` creation path. That would have split the mechanism across multiple surfaces and made the opt-in easy to miss. A single file-backed flag keeps the state observable, lets the dispatcher honor it consistently at both human interrupt points, and preserves the existing review chains and PR creation path instead of creating a special pipeline.
+
+**Rule**: When adding a new human-interrupt gate, check whether it should honor `status.json.full_send` by convention. If it should, the router must clear or bypass that gate explicitly in code; don't add a parallel flag or a one-off manual workaround.
+
+---
+
 ## Pure routing policy extracted into `pipeline-policy.ts`
 
 **Decision**: Tier detection, sizing, model/effort selection, and loop-cap defaults live in a pure side-effect-free module (`scripts/pipeline-policy.ts`). The orchestrator passes resolved config in; the policy returns decisions out.
@@ -184,7 +194,7 @@ Periodic application: when running an audit on canon (TokenAnxiety-style dogfood
 
 ## Validation runs inside agent phases (supersedes orchestrator-run `runtime_validation`)
 
-**Decision**: Validation execution lives inside agent phases — Codex runs project-specific checks during `implement`; Claude verifies in Stage 1 code review by reading the outcomes table critically and re-running selectively when anything looks off. The orchestrator does not run independent validation checks. The `runtime_validation` phase as currently shipped (orchestrator-run smoke + planned `.canon/phases.ts` extension point) is being retired as a consequence; that retirement work has its own task.
+**Decision**: Validation execution lives inside agent phases — Codex runs project-specific checks during `implement`; Claude verifies in Stage 1 code review by reading the outcomes table critically and re-running selectively when anything looks off. The orchestrator does not run independent validation checks. The `runtime_validation` phase as currently shipped (orchestrator-run smoke plus a planned project-policy loader extension point) is being retired as a consequence; that retirement work has its own task.
 
 **Why**: The earlier model treated the orchestrator as an independent witness against agents hallucinating Pass results. Two findings collapse that thesis:
 
@@ -211,4 +221,4 @@ What the orchestrator does uniquely (and these stand): routes between phases and
 
 5. **The validation-authority boundary in `AGENTS.md` is removed by the retirement task.** Going forward there is one validation outcomes section, authored by Codex during implement. There is no separate orchestrator-authored counterpart.
 
-**Supersedes**: The validation-authority boundary previously documented in `AGENTS.md` (Codex authors `## Validation Outcomes`; orchestrator authors `## Runtime Validation Outcomes`). Also supersedes the unshipped design that would have added a `.canon/phases.ts` project-policy loader as an extension point for `runtime_validation` (`tasks/project-phases/` — deleted; design rationale in conversation history 2026-05-15).
+**Supersedes**: The validation-authority boundary previously documented in `AGENTS.md` (Codex authors `## Validation Outcomes`; orchestrator authors `## Runtime Validation Outcomes`). Also supersedes the unshipped design that would have added a project-policy loader extension point for `runtime_validation` (`tasks/project-phases/` — deleted; design rationale in conversation history 2026-05-15).

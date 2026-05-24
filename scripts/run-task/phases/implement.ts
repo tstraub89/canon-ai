@@ -24,7 +24,25 @@ export async function runImplementPhase(
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
-    commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
+    // Only commit task artifacts to base on the FIRST implement-phase call.
+    // On the first call the worktree doesn't exist yet, and the commit puts
+    // the scaffold (status.json, done.md, handoff.md, review.md — files the
+    // explicit copy loop below doesn't cover) onto base so the new worktree
+    // inherits them via branch creation in `ensureBranch`. On subsequent
+    // calls (reroutes, code-review-driven iteration cycles) the worktree
+    // already exists, and re-committing the latest REPO_ROOT snapshot to
+    // base creates divergent commits that fight with the task branch's
+    // evolved state at PR-merge time — causing the recurring `task(<id>):
+    // commit artifacts pre-pipeline` conflict class diagnosed during
+    // canon-ai-dev's PR #95 ship on 2026-05-21. Worktree-mode tasks with a
+    // recorded branch are post-first-implement; skip the commit. Legacy
+    // worktree:false tasks always run it (there's no other place for the
+    // scaffold to live).
+    const primaryStatus = readStatus(taskIds[0]);
+    const worktreeAlreadyCreated = primaryStatus.worktree === true && Boolean(primaryStatus.branch);
+    if (!worktreeAlreadyCreated) {
+        commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
+    }
     ensureBranch(taskIds);
 
     if (isWorktreeEnabled(taskIds)) {

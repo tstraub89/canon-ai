@@ -24,7 +24,10 @@ export async function runSpecReviewPhase(
 
     if (state.tier === 'fast') {
         const anyGateOn = tasks.some(t => t.status.human_spec_gate);
-        if (anyGateOn) {
+        const allFullSend = tasks.every(t => t.status.full_send === true);
+        // Bundle gate skip is all-or-nothing: one normal task re-engages the
+        // spec gate for the whole invocation.
+        if (anyGateOn && !allFullSend) {
             for (const t of tasks) {
                 if (t.status.human_spec_gate) {
                     t.status.human_spec_gate = false;

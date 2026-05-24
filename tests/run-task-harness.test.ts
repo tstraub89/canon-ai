@@ -244,15 +244,24 @@ void test('parseValidationRequiredChecks returns checked validation requirements
     });
 });
 
-void test('parseValidationRequiredChecks returns null when the section is missing or empty', () => {
-    withTempDir('run-task-harness-spec-empty-', dir => {
+void test('parseValidationRequiredChecks returns null when the section is missing entirely', () => {
+    withTempDir('run-task-harness-spec-missing-', dir => {
         const missingPath = path.join(dir, 'missing-spec.md');
         fs.writeFileSync(missingPath, ['# Spec', '', '## Overview', '', 'No validation section.', ''].join('\n'), 'utf8');
         assert.equal(parseValidationRequiredChecks(missingPath), null);
+    });
+});
 
+void test('parseValidationRequiredChecks returns empty array when the section exists but has no `[x]` items', () => {
+    // Distinct from the missing-section case so callers can emit the right
+    // error: the missing case requires writing the section; the empty case
+    // requires marking `[x]` checks. Conflating these (returning null for
+    // both) misled an operator during docs-refs-check-canon-template's
+    // code_review preflight on 2026-05-24.
+    withTempDir('run-task-harness-spec-empty-', dir => {
         const emptyPath = path.join(dir, 'empty-spec.md');
         fs.writeFileSync(emptyPath, ['# Spec', '', '## Validation Required', '', '- [ ] `npm run lint`', ''].join('\n'), 'utf8');
-        assert.equal(parseValidationRequiredChecks(emptyPath), null);
+        assert.deepEqual(parseValidationRequiredChecks(emptyPath), []);
     });
 });
 

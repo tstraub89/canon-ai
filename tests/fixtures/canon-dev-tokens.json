@@ -1,0 +1,10 @@
+{
+  "_comment": "Tokens that must not leak into adopter-shipped content (templates/, root CANON_OWNED docs, dist/, README). The active release branch name lives here so the leakage test updates when canon-ai rotates branches; intentionally-generic future-version examples in docs (e.g., 'release/v1.6' as a placeholder) are NOT in this list and pass. Update active_release_branch when canon-ai cuts a new release branch (release-init does this implicitly). Add to tokens when a new dogfooding project's name might appear in dev comments / examples.",
+  "active_release_branch": "release/v1.4",
+  "tokens": [
+    "canon-ai-dev",
+    "GalleryPlanner",
+    "gallery_wall",
+    "TokenAnxiety"
+  ]
+}

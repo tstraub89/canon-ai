@@ -1,6 +1,6 @@
 ---
 name: canon-spec
-description: Write a scoped implementation spec for a new task. Explores the codebase, grills for M/L/XL tasks, proposes scope for approval, then creates the task directory and writes spec.md. For S tasks, also writes plan.md and kicks off the pipeline after approval.
+description: Write a scoped implementation spec for a new task. Explores the codebase, grills for M/L/XL tasks, proposes scope for approval, then creates the task directory and writes spec.md. Also supports full-send mode: if the human asks for "full send" / "full-send" or passes `--full-send`, the skill runs spec → pipeline → draft PR without further interrupts. For S tasks, also writes plan.md and kicks off the pipeline after approval.
 argument-hint: "[task description or title]"
 allowed-tools: Read Glob Grep Write Edit Agent Bash(canon task *) Bash(canon run *) Bash(git branch *) Bash(git status *) Bash(git log *)
 effort: high
@@ -63,6 +63,10 @@ Synthesize the sub-agent's findings before proceeding.
 
 ### Phase 3 — Scope alignment
 
+Before grilling, detect full-send intent from `$ARGUMENTS`: if it contains an explicit `--full-send` flag or the phrase `full send` / `full-send` (case-insensitive), enter full-send mode, print the acknowledgment line below, and carry that mode through the rest of the workflow.
+
+`Full-send mode detected. I'll grill, write the spec, and run the pipeline through to a draft PR without further interrupts.`
+
 Assess task size from the description and exploration findings:
 - **S**: 1–2 files, clearly bounded, low uncertainty
 - **M**: several files, well-understood approach, < 1 day
@@ -124,6 +128,8 @@ After scope is approved:
 2. Edit `tasks/TASK-ID/status.json`: set `task_size`, `delicate`, and `human_spec_gate: true`.
 
 3. Write `tasks/TASK-ID/spec.md` using `.canon/templates/spec.md` as structure. Fill every section — no placeholders, no "TBD".
+   - If full-send mode is active, prepend this line immediately after the title block and before `## Problem`:
+     `> **Full-send mode**: This spec was produced in full-send mode.`
 
 4. Set `spec.status` to `"done"` in `status.json`.
 
@@ -160,3 +166,12 @@ Self-check before presenting:
    ```bash
    canon run TASK-ID
    ```
+
+**Full-send tasks:** if the task was detected as full-send, invoke the pipeline with `--full-send` instead of the plain run. If the task is delicate, print this acknowledgment block before launching, then append `--force`:
+```text
+⚠ Delicate + full-send: canon's review chains still run with the upgraded model, but no human checkpoint exists before the PR opens. Reply "stop" within 5 seconds to abort, or anything else (including silence) to proceed.
+```
+Then launch:
+```bash
+canon run --full-send [--force] TASK-ID
+```

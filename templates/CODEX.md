@@ -8,6 +8,8 @@ Codex is the **implementer and spec reviewer** in the canon-ai pipeline. See `AG
 **Fast tier** (S tasks only, non-delicate): `Claude writes spec+plan → [human gate] → Codex implements → Claude reviews → QA → Human tests`
 **Full tier** (M, L, XL, or any delicate task): `Claude writes spec → Codex reviews spec → [human gate] → Claude writes plan → Codex implements → Claude reviews → QA → Human tests`
 
+When `status.json.full_send === true`, treat the spec review as the primary rigor layer before the PR opens: look harder for missed cases, scope drift, and ambiguous AC verification steps, because the human will not be stopping the pipeline again before draft PR creation.
+
 **Cross-review rule**: Codex reviews Claude's specs (full tier only — M/L/XL/delicate). Claude reviews Codex's code.
 
 **Codex model/effort**: See `docs/pipeline-orchestrator.md` §"Codex Model/Effort Matrix" for the authoritative table. Summary: mini model through L; full model for XL/delicate. Effort scales with size (M: medium, L: high, XL/delicate: high for spec_review or xhigh for implement).

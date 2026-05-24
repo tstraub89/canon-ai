@@ -162,7 +162,7 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short sh
 
 > The shell-tool entries above (`cat`, `head`, `grep`, `wc`, …) are for **pipeline composition**, not raw file reads. Claude prefers its built-in `Read` / `Glob` / `Grep` tools when fetching a file's contents or searching the codebase; the bash equivalents only get reached for when commands need to be chained (e.g., `cat foo.json | jq '.bar'`, `git diff | grep "version" | head -20`).
 
-Claude Code creates `settings.json` on first use — check what's already there before pasting. For a personal "full send" allowlist that doesn't get committed, use `.claude/settings.local.json` (and make sure it's gitignored — `canon doctor` will warn you if it isn't).
+Claude Code creates `settings.json` on first use — check what's already there before pasting. For a personal "full send" allowlist that doesn't get committed, use your local Claude Code settings file (and make sure it is gitignored — `canon doctor` will warn you if it isn't).
 
 ### Key commands
 

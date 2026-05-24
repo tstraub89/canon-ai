@@ -332,3 +332,11 @@ export function getAffectedFiles(baseRef: string, cwd: string): string[] {
     if (!result.ok || !result.stdout) return [];
     return parseNameStatusOutput(result.stdout);
 }
+
+export function getTreeDriftFiles(baseRef: string, cwd: string): { files: string[]; ok: boolean; stderr: string } {
+    const result = gitSafeAtRaw(cwd, 'diff', baseRef, 'HEAD', '--name-status', '-M', '-z');
+    if (!result.ok) {
+        return { files: [], ok: false, stderr: result.stderr };
+    }
+    return { files: parseNameStatusOutput(result.stdout), ok: true, stderr: '' };
+}

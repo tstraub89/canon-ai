@@ -1,0 +1,71 @@
+{
+  "id": "prepr-base-drift-check",
+  "title": "Pre-pr base-drift check",
+  "status": "complete",
+  "created": "2026-05-23",
+  "updated": "2026-05-23",
+  "branch": "",
+  "base_branch": "release/v1.4",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "620b5b8bf9235d8635c2a8f73a5533096b7a631b",
+    "orchestrator_commit": "620b5b8bf9235d8635c2a8f73a5533096b7a631b",
+    "codex_cli": "codex-cli 0.133.0",
+    "claude_code": "2.1.150 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019e55c0-7a9c-7a31-8826-a34f6da44185",
+    "claude_spec": "c585d5fa-e228-4621-81ce-697ed6c9a749"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

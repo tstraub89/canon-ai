@@ -4,11 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 import {
     buildHumanReviewStagePaths,
+    enableFullSend,
     findPullRequestTemplate,
     formatCompleteStateBanner,
     formatExistingPRMessage,
@@ -58,12 +59,12 @@ function setupFakeGit(scriptDir: string): void {
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "show-ref" ] && [ "${2:-}" = "--verify" ] && [ "${3:-}" = "--quiet" ]; then',
-        '  if [ "${4:-}" = "refs/heads/$FAKE_GIT_BASE_BRANCH" ]; then exit 0; fi',
+        '  if [ "${4:-}" = "refs/heads/${FAKE_GIT_BASE_BRANCH:-main}" ]; then exit 0; fi',
         '  if [ "${4:-}" = "refs/heads/$FAKE_GIT_TASK_BRANCH" ]; then exit 1; fi',
         '  exit 1',
         'fi',
-        'if [ "${1:-}" = "checkout" ] && [ "${2:-}" = "$FAKE_GIT_BASE_BRANCH" ]; then',
-        '  printf "%s\\n" "$FAKE_GIT_BASE_BRANCH" > "$FAKE_GIT_CURRENT_BRANCH"',
+        'if [ "${1:-}" = "checkout" ] && [ "${2:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
+        '  printf "%s\\n" "${FAKE_GIT_BASE_BRANCH:-main}" > "$FAKE_GIT_CURRENT_BRANCH"',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "checkout" ] && [ "${2:-}" = "-b" ] && [ "${3:-}" = "$FAKE_GIT_TASK_BRANCH" ]; then',
@@ -79,6 +80,21 @@ function setupFakeGit(scriptDir: string): void {
         'fi',
         'if [ "${1:-}" = "status" ] && [ "${2:-}" = "--porcelain=v1" ]; then',
         '  if [ -n "${FAKE_GIT_STATUS_OUTPUT:-}" ]; then printf "%s\\n" "$FAKE_GIT_STATUS_OUTPUT"; fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "diff" ] && [ "${2:-}" != "--cached" ]; then',
+        '  if [ "${FAKE_GIT_DRIFT_DIFF_FAIL:-}" = "1" ]; then',
+        '    printf "%s\\n" "${FAKE_GIT_DRIFT_DIFF_ERROR:-tree diff failed}" >&2',
+        '    exit 1',
+        '  fi',
+        '  if [ -n "${FAKE_GIT_DRIFT_FILES:-}" ]; then',
+        '    OLDIFS="$IFS"',
+        '    IFS=","',
+        '    for FILE in $FAKE_GIT_DRIFT_FILES; do',
+        '      printf "M\\0%s\\0" "$FILE"',
+        '    done',
+        '    IFS="$OLDIFS"',
+        '  fi',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "diff" ] && [ "${2:-}" = "--cached" ] && [ "${3:-}" = "--name-only" ]; then',
@@ -98,10 +114,10 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_TASK_BRANCH:-}" ]; then',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "$FAKE_GIT_BASE_BRANCH" ]; then',
+        'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "rev-list" ] && [ "${2:-}" = "--count" ] && [ "${3:-}" = "HEAD..origin/$FAKE_GIT_BASE_BRANCH" ]; then',
+        'if [ "${1:-}" = "rev-list" ] && [ "${2:-}" = "--count" ] && [ "${3:-}" = "HEAD..origin/${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
         '  printf "%s\\n" "${FAKE_GIT_REVLIST_COUNT:-0}"',
         '  exit 0',
         'fi',
@@ -128,6 +144,18 @@ function setupFakeCliTools(scriptDir: string): void {
     writeExecutable(scriptDir, 'claude', ['exit 0']);
     writeExecutable(scriptDir, 'codex', ['exit 0']);
     writeExecutable(scriptDir, 'gh', [
+        'if [ -n "${FAKE_GH_LOG:-}" ]; then printf "%s\\n" "$*" >> "$FAKE_GH_LOG"; fi',
+        'state_file="${FAKE_GH_PR_STATE_FILE:-}"',
+        'read_pr_state() {',
+        '  if [ -n "$state_file" ] && [ -f "$state_file" ]; then',
+        '    IFS="|" read -r FAKE_GH_STATE_NUMBER FAKE_GH_STATE_URL FAKE_GH_STATE_BASE FAKE_GH_STATE_HEAD < "$state_file"',
+        '  else',
+        '    FAKE_GH_STATE_NUMBER="${FAKE_GH_PR_NUMBER:-}"',
+        '    FAKE_GH_STATE_URL="${FAKE_GH_PR_URL:-}"',
+        '    FAKE_GH_STATE_BASE="${FAKE_GH_PR_BASE:-}"',
+        '    FAKE_GH_STATE_HEAD="${FAKE_GH_PR_HEAD:-}"',
+        '  fi',
+        '}',
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then',
         '  head=""',
         '  base=""',
@@ -140,23 +168,49 @@ function setupFakeCliTools(scriptDir: string): void {
         '      *) shift ;;',
         '    esac',
         '  done',
-        '  if [ -z "${FAKE_GH_PR_NUMBER:-}" ]; then exit 0; fi',
+        '  read_pr_state',
+        '  if [ -z "$FAKE_GH_STATE_NUMBER" ]; then exit 0; fi',
         '  # When FAKE_GH_PR_BASE is set, simulate `gh pr list --base` filtering:',
         '  # only emit the PR when the caller passes a matching --base value.',
         '  # This is how production gh behaves and lets tests assert that callers',
         '  # actually pass --base (P2 audit fix on release PR #82).',
-        '  if [ -n "${FAKE_GH_PR_BASE:-}" ] && [ "$base" != "${FAKE_GH_PR_BASE}" ]; then',
+        '  if [ -n "$FAKE_GH_STATE_BASE" ] && [ -n "$base" ] && [ "$base" != "$FAKE_GH_STATE_BASE" ]; then',
         '    if [ "$json" = "1" ]; then printf "[]\\n"; fi',
         '    exit 0',
         '  fi',
         '  if [ "$json" = "1" ]; then',
-        '    printf \'[{"number":%s,"headRefName":"%s"}]\\n\' "$FAKE_GH_PR_NUMBER" "$head"',
+        '    printf \'[{"number":%s,"headRefName":"%s"}]\\n\' "$FAKE_GH_STATE_NUMBER" "${FAKE_GH_STATE_HEAD:-$head}"',
         '  else',
-        '    printf "%s\\n" "$FAKE_GH_PR_NUMBER"',
+        '    printf "%s\\n" "$FAKE_GH_STATE_NUMBER"',
         '  fi',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "create" ]; then',
+        '  number="${FAKE_GH_PR_CREATE_NUMBER:-101}"',
+        '  url="${FAKE_GH_PR_CREATE_URL:-https://github.com/x/y/pull/$number}"',
+        '  head=""',
+        '  base=""',
+        '  if [ "${FAKE_GH_PR_CREATE_FAIL:-}" = "1" ]; then',
+        '    printf "%s\\n" "${FAKE_GH_PR_CREATE_ERROR:-draft PR creation failed}" >&2',
+        '    exit 1',
+        '  fi',
+        '  while [ $# -gt 0 ]; do',
+        '    case "$1" in',
+        '      --head) head="$2"; shift 2 ;;',
+        '      --base) base="$2"; shift 2 ;;',
+        '      *) shift ;;',
+        '    esac',
+        '  done',
+        '  if [ -n "$state_file" ]; then',
+        '    printf "%s|%s|%s|%s\\n" "$number" "$url" "$base" "$head" > "$state_file"',
+        '  fi',
+        '  printf "%s\\n" "$url"',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then',
+        '  pr_num="${3:-}"',
+        '  read_pr_state',
+        '  if [ -n "$FAKE_GH_STATE_NUMBER" ] && [ "$pr_num" = "$FAKE_GH_STATE_NUMBER" ] && [ -n "$FAKE_GH_STATE_URL" ]; then printf "%s\\n" "$FAKE_GH_STATE_URL"; exit 0; fi',
         '  if [ -n "${FAKE_GH_PR_URL:-}" ]; then printf "%s\\n" "$FAKE_GH_PR_URL"; exit 0; fi',
         '  exit 1',
         'fi',
@@ -192,6 +246,8 @@ function runNodeInline(
     env: NodeJS.ProcessEnv,
     cwd = process.cwd(),
 ): { status: number | null; stderr: string; stdout: string } {
+    const telemetryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-metrics-'));
+    const telemetryFile = path.join(telemetryDir, 'pipeline-invocations.md');
     const result = spawnSync(process.execPath, [
         '--import',
         path.join(REPO_ROOT, 'tests', 'md-loader-register.mjs'),
@@ -201,14 +257,37 @@ function runNodeInline(
         script,
     ], {
         cwd,
-        env,
+        env: {
+            ...env,
+            CANON_METRICS_FILE_OVERRIDE: env.CANON_METRICS_FILE_OVERRIDE ?? telemetryFile,
+        },
         encoding: 'utf8',
     });
+    fs.rmSync(telemetryDir, { recursive: true, force: true });
     return {
         status: result.status,
         stderr: result.stderr ?? '',
         stdout: result.stdout ?? '',
     };
+}
+
+function gitIn(cwd: string, ...args: string[]): void {
+    execFileSync('git', args, { cwd, stdio: 'ignore' });
+}
+
+function makeGitFixture(dir: string): { localDir: string; originDir: string } {
+    const originDir = path.join(dir, 'origin.git');
+    const localDir = path.join(dir, 'local');
+    execFileSync('git', ['init', '--bare', originDir], { stdio: 'ignore' });
+    execFileSync('git', ['clone', originDir, localDir], { stdio: 'ignore' });
+    gitIn(localDir, 'config', 'user.email', 'test@example.com');
+    gitIn(localDir, 'config', 'user.name', 'Test User');
+    gitIn(localDir, 'checkout', '-b', 'main');
+    fs.writeFileSync(path.join(localDir, 'initial-fixture.txt'), 'initial\n', 'utf8');
+    gitIn(localDir, 'add', 'initial-fixture.txt');
+    gitIn(localDir, 'commit', '-m', 'initial');
+    gitIn(localDir, 'push', '-u', 'origin', 'main');
+    return { localDir, originDir };
 }
 
 function makeCompleteStatus(taskId: string, branch: string): Record<string, unknown> {
@@ -217,6 +296,7 @@ function makeCompleteStatus(taskId: string, branch: string): Record<string, unkn
         title: taskId,
         branch,
         base_branch: 'main',
+        full_send: false,
         worktree: false,
         phases: {
             spec: { status: 'done', agent: 'claude' },
@@ -228,6 +308,105 @@ function makeCompleteStatus(taskId: string, branch: string): Record<string, unkn
             human_review: { status: 'done', agent: 'human' },
         },
     };
+}
+
+function writeAffectedFilesSpec(tasksRoot: string, taskId: string, fileCells: readonly string[]): void {
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'spec.md'), [
+        `# Spec: ${taskId}`,
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        ...fileCells.map(cell => `| ${cell} | fixture change |`),
+        '',
+    ].join('\n'), 'utf8');
+}
+
+type HumanReviewHarness = {
+    dir: string;
+    tasksRoot: string;
+    fakeBins: string;
+    fakeGitDir: string;
+    currentBranchPath: string;
+    gitLogPath: string;
+};
+
+function setupHumanReviewHarness(dir: string, taskIds: readonly string[]): HumanReviewHarness {
+    const tasksRoot = path.join(dir, 'tasks');
+    const fakeBins = path.join(dir, 'fake-bins');
+    const fakeGitDir = path.join(fakeBins, 'git-bin');
+    fs.mkdirSync(fakeBins, { recursive: true });
+    fs.mkdirSync(fakeGitDir, { recursive: true });
+    setupFakeGit(fakeGitDir);
+    setupFakeCliTools(fakeBins);
+
+    for (const taskId of taskIds) {
+        writeTaskStatus(tasksRoot, taskId, makeCompleteStatus(taskId, 'task/task-a'));
+        writeAffectedFilesSpec(tasksRoot, taskId, []);
+    }
+
+    const currentBranchPath = path.join(dir, 'current-branch.txt');
+    fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+    return {
+        dir,
+        tasksRoot,
+        fakeBins,
+        fakeGitDir,
+        currentBranchPath,
+        gitLogPath: path.join(dir, 'git.log'),
+    };
+}
+
+function runHumanReviewCommit(
+    harness: HumanReviewHarness,
+    taskIds: readonly string[],
+    env: Record<string, string>,
+): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+        `commitHumanReviewFiles(${JSON.stringify(taskIds)}, ${JSON.stringify(harness.dir)}, false);`,
+    ].join('\n'), {
+        ...process.env,
+        PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        CANON_TASKS_DIR_OVERRIDE: harness.tasksRoot,
+        FAKE_GIT_LOG: harness.gitLogPath,
+        FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
+        FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+        FAKE_GIT_REMOTE_EXISTS: '1',
+        FAKE_GIT_BASE_BRANCH: 'main',
+        FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        ...env,
+    });
+}
+
+function combinedOutput(result: { stderr: string; stdout: string }): string {
+    return `${result.stdout}\n${result.stderr}`;
+}
+
+function writeApprovedSpecReview(tasksRoot: string, taskId: string): void {
+    fs.mkdirSync(path.join(tasksRoot, taskId), { recursive: true });
+    fs.writeFileSync(path.join(tasksRoot, taskId, 'spec-review.md'), [
+        '# Spec Review',
+        '',
+        '- [x] Approved',
+        '',
+    ].join('\n'), 'utf8');
+}
+
+function writePopulatedPlan(tasksRoot: string, taskId: string): void {
+    fs.mkdirSync(path.join(tasksRoot, taskId), { recursive: true });
+    fs.writeFileSync(path.join(tasksRoot, taskId, 'plan.md'), [
+        '# Plan',
+        '',
+        '1. Implement the change.',
+        '',
+    ].join('\n'), 'utf8');
 }
 
 void test('ensureBranch creates a task branch from the declared release base, not main', () => {
@@ -506,8 +685,8 @@ void test('REPO_ROOT stays anchored to the supervising checkout when imported fr
     });
 });
 
-void test('buildHumanReviewStagePaths includes protected docs in the human_review commit set', () => {
-    const paths = buildHumanReviewStagePaths(['task-a'], [
+void test('buildHumanReviewStagePaths includes only task artifacts, telemetry, and affected managed docs', () => {
+    const paths = buildHumanReviewStagePaths(['task-a'], new Set(['docs/codebase-map.md', 'docs/patterns.md']), [
         {
             raw: '?? tasks/task-a/handoff.md',
             indexStatus: '?',
@@ -539,20 +718,18 @@ void test('buildHumanReviewStagePaths includes protected docs in the human_revie
             paths: ['docs/patterns.md'],
         },
         {
-            raw: ' M docs/product-context.md',
+            raw: ' M docs/lessons-learned.md',
             indexStatus: ' ',
             worktreeStatus: 'M',
-            paths: ['docs/product-context.md'],
+            paths: ['docs/lessons-learned.md'],
         },
     ]);
 
     assert.deepEqual(paths, [
         'tasks/task-a',
-        'docs/architecture.md',
+        'docs/lessons-learned.md',
         'docs/codebase-map.md',
-        'docs/decisions.md',
         'docs/patterns.md',
-        'docs/product-context.md',
     ]);
 });
 
@@ -1208,6 +1385,1155 @@ void test('main --ship still works when the task is already complete', () => {
             fs.rmSync(taskDir, { recursive: true, force: true });
             fs.rmSync(archiveDir, { recursive: true, force: true });
         }
+    });
+});
+
+void test('enableFullSend writes full_send and clears human_spec_gate for every task', () => {
+    withTempDir('run-task-full-send-enable-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        writeTaskStatus(tasksRoot, 'task-a', {
+            id: 'task-a',
+            title: 'task-a',
+            base_branch: 'main',
+            human_spec_gate: true,
+            full_send: false,
+            worktree: false,
+            phases: {},
+        });
+        writeTaskStatus(tasksRoot, 'task-b', {
+            id: 'task-b',
+            title: 'task-b',
+            base_branch: 'main',
+            human_spec_gate: true,
+            full_send: false,
+            worktree: false,
+            phases: {},
+        });
+
+        withFakeGitEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        }, () => {
+            enableFullSend(['task-a', 'task-b']);
+        });
+
+        const statusA = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            human_spec_gate?: boolean;
+        };
+        const statusB = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-b', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            human_spec_gate?: boolean;
+        };
+
+        assert.equal(statusA.full_send, true);
+        assert.equal(statusA.human_spec_gate, false);
+        assert.equal(statusB.full_send, true);
+        assert.equal(statusB.human_spec_gate, false);
+    });
+});
+
+void test('fast-tier spec review keeps the gate when a bundle mixes full-send and normal tasks', () => {
+    withTempDir('run-task-full-send-fast-mixed-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        for (const [taskId, fullSend] of [['task-a', true], ['task-b', false]] as const) {
+            writeTaskStatus(tasksRoot, taskId, {
+                id: taskId,
+                title: taskId,
+                base_branch: 'main',
+                task_size: 'S',
+                human_spec_gate: true,
+                full_send: fullSend,
+                worktree: false,
+                phases: {
+                    spec: { status: 'done', agent: 'claude' },
+                    spec_review: { status: 'pending', agent: 'codex' },
+                    plan: { status: 'pending', agent: 'claude' },
+                },
+            });
+            writeApprovedSpecReview(tasksRoot, taskId);
+            writePopulatedPlan(tasksRoot, taskId);
+        }
+
+        const result = runNodeInline([
+            "import { buildPipelineState } from './scripts/run-task/main.ts';",
+            "import { runSpecReviewPhase } from './scripts/run-task/phases/spec-review.ts';",
+            '(async () => {',
+            "  const state = buildPipelineState(['task-a', 'task-b']);",
+            '  await runSpecReviewPhase(state, false, null);',
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /SPEC GATE — Review before Codex implements\./);
+
+        const statusA = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            human_spec_gate?: boolean;
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        const statusB = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-b', 'status.json'), 'utf8')) as {
+            human_spec_gate?: boolean;
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        assert.equal(statusA.human_spec_gate, false);
+        assert.equal(statusB.human_spec_gate, false);
+        assert.equal(statusA.phases?.spec_review?.status, 'pending');
+        assert.equal(statusB.phases?.spec_review?.status, 'pending');
+        assert.equal(statusA.phases?.plan?.status, 'pending');
+        assert.equal(statusB.phases?.plan?.status, 'pending');
+    });
+});
+
+void test('fast-tier spec review skips the gate when every task is full-send', () => {
+    withTempDir('run-task-full-send-fast-all-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        for (const taskId of ['task-a', 'task-b']) {
+            writeTaskStatus(tasksRoot, taskId, {
+                id: taskId,
+                title: taskId,
+                base_branch: 'main',
+                task_size: 'S',
+                human_spec_gate: true,
+                full_send: true,
+                worktree: false,
+                phases: {
+                    spec: { status: 'done', agent: 'claude' },
+                    spec_review: { status: 'pending', agent: 'codex' },
+                    plan: { status: 'pending', agent: 'claude' },
+                },
+            });
+            writeApprovedSpecReview(tasksRoot, taskId);
+            writePopulatedPlan(tasksRoot, taskId);
+        }
+
+        const result = runNodeInline([
+            "import { buildPipelineState } from './scripts/run-task/main.ts';",
+            "import { runSpecReviewPhase } from './scripts/run-task/phases/spec-review.ts';",
+            '(async () => {',
+            "  const state = buildPipelineState(['task-a', 'task-b']);",
+            '  await runSpecReviewPhase(state, false, null);',
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stdout, /SPEC GATE — Review before Codex implements\./);
+
+        const statusA = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        const statusB = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-b', 'status.json'), 'utf8')) as {
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        assert.equal(statusA.phases?.spec_review?.status, 'done');
+        assert.equal(statusB.phases?.spec_review?.status, 'done');
+        assert.equal(statusA.phases?.plan?.status, 'done');
+        assert.equal(statusB.phases?.plan?.status, 'done');
+    });
+});
+
+void test('commitHumanReviewFiles(createPR = false) pushes without opening a PR', () => {
+    withTempDir('run-task-commit-pr-false-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', {
+            id: 'task-a',
+            title: 'task-a',
+            base_branch: 'main',
+            full_send: false,
+            human_spec_gate: false,
+            worktree: false,
+            phases: {
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+        fs.writeFileSync(path.join(tasksRoot, 'task-a', 'handoff.md'), [
+            '# Implementation Handoff: task-a',
+            '',
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `lint` | Pass | ok |',
+            '',
+        ].join('\n'), 'utf8');
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+        const ghLogPath = path.join(dir, 'gh.log');
+
+        const result = runNodeInline([
+            "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+            `commitHumanReviewFiles(['task-a'], ${JSON.stringify(dir)}, false);`,
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/handoff.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/handoff.md',
+            FAKE_GH_LOG: ghLogPath,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.match(gitLog, /^push origin task\/task-a$/m);
+        assert.equal(fs.existsSync(ghLogPath), false);
+    });
+});
+
+void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree retry', () => {
+    withTempDir('run-task-commit-pr-true-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        writeTaskStatus(tasksRoot, 'task-a', {
+            id: 'task-a',
+            title: 'task-a',
+            base_branch: 'main',
+            full_send: false,
+            human_spec_gate: false,
+            worktree: false,
+            phases: {
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+        const gitLogPath = path.join(dir, 'git.log');
+        const ghLogPath = path.join(dir, 'gh.log');
+
+        const result = runNodeInline([
+            "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+            `commitHumanReviewFiles(['task-a'], ${JSON.stringify(dir)}, true);`,
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: gitLogPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_STATUS_OUTPUT: '',
+            FAKE_GIT_DIFF_OUTPUT: '',
+            FAKE_GH_LOG: ghLogPath,
+            FAKE_GH_PR_CREATE_NUMBER: '202',
+            FAKE_GH_PR_CREATE_URL: 'https://github.com/x/y/pull/202',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+
+        const gitLog = fs.readFileSync(gitLogPath, 'utf8');
+        assert.match(gitLog, /^push origin task\/task-a$/m);
+        const ghLog = fs.readFileSync(ghLogPath, 'utf8');
+        assert.match(ghLog, /^pr list /m);
+        assert.match(ghLog, /^pr create /m);
+    });
+});
+
+void test('main --full-send --force advances to draft PR and marks human_review done', () => {
+    withTempDir('run-task-full-send-tail-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.delicate = true;
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.qa = { status: 'done', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+        status.full_send = false;
+        status.human_spec_gate = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+        fs.writeFileSync(path.join(tasksRoot, 'task-a', 'handoff.md'), [
+            '# Implementation Handoff: task-a',
+            '',
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `lint` | Pass | ok |',
+            '',
+        ].join('\n'), 'utf8');
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+        const prStateFile = path.join(dir, 'gh-pr-state.txt');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--full-send', '--force'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GH_PR_STATE_FILE: prStateFile,
+            FAKE_GH_PR_CREATE_NUMBER: '101',
+            FAKE_GH_PR_CREATE_URL: 'https://github.com/x/y/pull/101',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /FULL-SEND COMPLETE — draft PR open\./);
+        assert.match(result.stdout, /PR: https:\/\/github\.com\/x\/y\/pull\/101/);
+        assert.equal((result.stdout.match(/^  PR: https:\/\/github\.com\/x\/y\/pull\/101$/gm) ?? []).length, 1);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            human_spec_gate?: boolean;
+            phases?: { human_review?: { status?: string } };
+        };
+        assert.equal(updated.full_send, true);
+        assert.equal(updated.human_spec_gate, false);
+        assert.equal(updated.phases?.human_review?.status, 'done');
+
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.match(gitLog, /^push origin task\/task-a$/m);
+        assert.match(gitLog, /^rev-parse --abbrev-ref HEAD$/m);
+        assert.ok(fs.existsSync(prStateFile));
+    });
+});
+
+void test('main full-send tail falls back to a placeholder when inspectCompleteState cannot see the PR', () => {
+    withTempDir('run-task-full-send-pr-placeholder-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.qa = { status: 'done', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+        status.full_send = false;
+        status.human_spec_gate = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+        fs.writeFileSync(path.join(tasksRoot, 'task-a', 'handoff.md'), [
+            '# Implementation Handoff: task-a',
+            '',
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `lint` | Pass | ok |',
+            '',
+        ].join('\n'), 'utf8');
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GH_PR_CREATE_NUMBER: '303',
+            FAKE_GH_PR_CREATE_URL: 'https://github.com/x/y/pull/303',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /PR: \(PR URL unavailable — check GitHub\)/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            phases?: { human_review?: { status?: string } };
+        };
+        assert.equal(updated.phases?.human_review?.status, 'done');
+    });
+});
+
+void test('main full-tier mixed bundle keeps the spec gate when not every task is full-send', () => {
+    withTempDir('run-task-full-send-full-mixed-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        for (const [taskId, fullSend] of [['task-a', true], ['task-b', false]] as const) {
+            const status = makeCompleteStatus(taskId, 'task/task-a');
+            const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+            phases.spec_review = { status: 'pending', agent: 'codex' };
+            phases.plan = { status: 'pending', agent: 'claude' };
+            status.task_size = 'M';
+            status.full_send = fullSend;
+            status.human_spec_gate = true;
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeApprovedSpecReview(tasksRoot, taskId);
+        }
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', 'task-b', '--step'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GH_PR_CREATE_NUMBER: '404',
+            FAKE_GH_PR_CREATE_URL: 'https://github.com/x/y/pull/404',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /SPEC GATE — Human review required before planning\./);
+        assert.match(result.stdout, /When ready: canon run task-a task-b/);
+
+        const statusA = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            human_spec_gate?: boolean;
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        const statusB = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-b', 'status.json'), 'utf8')) as {
+            human_spec_gate?: boolean;
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        assert.equal(statusA.human_spec_gate, false);
+        assert.equal(statusB.human_spec_gate, false);
+        assert.equal(statusA.phases?.spec_review?.status, 'done');
+        assert.equal(statusB.phases?.spec_review?.status, 'done');
+        assert.equal(statusA.phases?.plan?.status, 'pending');
+        assert.equal(statusB.phases?.plan?.status, 'pending');
+    });
+});
+
+void test('main full-tier all-full-send bundle skips the spec gate', () => {
+    withTempDir('run-task-full-send-full-all-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        for (const taskId of ['task-a', 'task-b']) {
+            const status = makeCompleteStatus(taskId, 'task/task-a');
+            const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+            phases.spec_review = { status: 'pending', agent: 'codex' };
+            phases.plan = { status: 'pending', agent: 'claude' };
+            status.task_size = 'M';
+            status.full_send = true;
+            status.human_spec_gate = true;
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeApprovedSpecReview(tasksRoot, taskId);
+        }
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', 'task-b', '--step'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GH_PR_CREATE_NUMBER: '405',
+            FAKE_GH_PR_CREATE_URL: 'https://github.com/x/y/pull/405',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stdout, /SPEC GATE — Human review required before planning\./);
+        assert.match(result.stdout, /Next phase: plan/);
+
+        const statusA = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        const statusB = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-b', 'status.json'), 'utf8')) as {
+            phases?: { spec_review?: { status?: string }; plan?: { status?: string } };
+        };
+        assert.equal(statusA.phases?.spec_review?.status, 'done');
+        assert.equal(statusB.phases?.spec_review?.status, 'done');
+        assert.equal(statusA.phases?.plan?.status, 'pending');
+        assert.equal(statusB.phases?.plan?.status, 'pending');
+    });
+});
+
+void test('main --full-send on a delicate task without --force dies before phase routing', () => {
+    withTempDir('run-task-full-send-force-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.delicate = true;
+        status.full_send = false;
+        status.human_spec_gate = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+        });
+
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.stderr, /--full-send on delicate task 'task-a' requires --force/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            human_spec_gate?: boolean;
+        };
+        assert.equal(updated.full_send, true);
+        assert.equal(updated.human_spec_gate, false);
+
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.doesNotMatch(gitLog, /^push /m);
+    });
+});
+
+void test('commitHumanReviewFiles dies on out-of-scope managed docs with actionable allowlist guidance', () => {
+    withTempDir('run-task-human-review-managed-out-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M docs/codebase-map.md',
+            FAKE_GIT_DIFF_OUTPUT: '',
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /allowlist/);
+        assert.match(result.stderr, /PIPELINE_MANAGED_DOCS/);
+        assert.match(result.stderr, /Affected Files/);
+        assert.match(result.stderr, /implement phase/);
+        assert.match(result.stderr, /git checkout HEAD --/);
+    });
+});
+
+void test('commitHumanReviewFiles commits in-scope managed docs and emits one advisory warning', () => {
+    withTempDir('run-task-human-review-managed-in-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`docs/codebase-map.md`']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M docs/codebase-map.md',
+            FAKE_GIT_DIFF_OUTPUT: 'docs/codebase-map.md',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const output = combinedOutput(result);
+        assert.equal((output.match(/WARNING: docs\/codebase-map\.md/g) ?? []).length, 1);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- docs\/codebase-map\.md$/m);
+        assert.match(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles commits telemetry files without managed-doc advisory', () => {
+    withTempDir('run-task-human-review-telemetry-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M docs/lessons-learned.md',
+            FAKE_GIT_DIFF_OUTPUT: 'docs/lessons-learned.md',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(combinedOutput(result), /WARNING:/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- docs\/lessons-learned\.md$/m);
+        assert.match(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles base-drift gate accepts files listed in Affected Files', () => {
+    withTempDir('run-task-base-drift-allowed-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`docs/codebase-map.md`']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_DRIFT_FILES: 'docs/codebase-map.md',
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(combinedOutput(result), /base-drift detected/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles base-drift gate dies on drift outside the allowlist', () => {
+    withTempDir('run-task-base-drift-die-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_DRIFT_FILES: 'docs/decisions.md',
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+        });
+
+        assert.notEqual(result.status, 0);
+        const output = combinedOutput(result);
+        assert.match(output, /docs\/decisions\.md/);
+        assert.match(output, /--force/);
+        assert.match(output, /PIPELINE_TELEMETRY_FILES/);
+        assert.match(output, /Affected Files/);
+        assert.match(output, /git checkout origin\/main -- <path>/);
+        assert.match(output, /git revert <sha>/);
+        assert.doesNotMatch(output, /git checkout HEAD --/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.doesNotMatch(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles base-drift gate warns and proceeds with --force', () => {
+    withTempDir('run-task-base-drift-force-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--push', '--force'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: harness.tasksRoot,
+            FAKE_GIT_LOG: harness.gitLogPath,
+            FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_DRIFT_FILES: 'docs/decisions.md',
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const output = combinedOutput(result);
+        assert.match(output, /--force override: base-drift detected/);
+        assert.match(output, /docs\/decisions\.md/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^commit /m);
+        assert.match(gitLog, /^push origin task\/task-a$/m);
+    });
+});
+
+void test('commitHumanReviewFiles base-drift gate fails closed when tree diff fails', () => {
+    withTempDir('run-task-base-drift-diff-fail-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_DRIFT_DIFF_FAIL: '1',
+            FAKE_GIT_DRIFT_DIFF_ERROR: 'fatal: simulated tree diff failure',
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+        });
+
+        assert.notEqual(result.status, 0);
+        const output = combinedOutput(result);
+        assert.match(output, /could not compute base-drift diff against origin\/main/);
+        assert.match(output, /fatal: simulated tree diff failure/);
+        assert.match(output, /cannot be bypassed with --force/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.doesNotMatch(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles base-drift gate dies when the base branch advanced outside Affected Files', () => {
+    withTempDir('run-task-base-drift-mode1-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const { localDir, originDir } = makeGitFixture(dir);
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/demo'));
+        writeAffectedFilesSpec(tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+
+        gitIn(localDir, 'checkout', '-b', 'task/demo');
+        const taskFile = path.join(localDir, 'scripts', 'run-task', 'main.ts');
+        fs.mkdirSync(path.dirname(taskFile), { recursive: true });
+        fs.writeFileSync(taskFile, 'task content\n', 'utf8');
+        gitIn(localDir, 'add', 'scripts/run-task/main.ts');
+        gitIn(localDir, 'commit', '-m', 'task change');
+
+        const thirdPartyDir = path.join(dir, 'third-party');
+        execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
+        gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
+        gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
+        const baseAdvanceFile = path.join(thirdPartyDir, 'docs', 'decisions.md');
+        fs.mkdirSync(path.dirname(baseAdvanceFile), { recursive: true });
+        fs.writeFileSync(baseAdvanceFile, 'third-party content\n', 'utf8');
+        gitIn(thirdPartyDir, 'add', 'docs/decisions.md');
+        gitIn(thirdPartyDir, 'commit', '-m', 'third-party base advance');
+        gitIn(thirdPartyDir, 'push', 'origin', 'main');
+
+        const result = runNodeInline([
+            "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+            `commitHumanReviewFiles(['task-a'], ${JSON.stringify(localDir)}, false);`,
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.notEqual(result.status, 0);
+        const output = combinedOutput(result);
+        assert.match(output, /base-drift detected/);
+        assert.match(output, /docs\/decisions\.md/);
+        assert.doesNotMatch(output, /scripts\/run-task\/main\.ts\s*$/m);
+    });
+});
+
+void test('commitHumanReviewFiles unions affected managed docs across bundled tasks', () => {
+    withTempDir('run-task-human-review-bundle-union-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a', 'task-b']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`docs/codebase-map.md`']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-b', ['`docs/patterns.md`']);
+
+        const result = runHumanReviewCommit(harness, ['task-a', 'task-b'], {
+            FAKE_GIT_STATUS_OUTPUT: [' M docs/codebase-map.md', ' M docs/patterns.md'].join('\n'),
+            FAKE_GIT_DIFF_OUTPUT: ['docs/codebase-map.md', 'docs/patterns.md'].join('\n'),
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- docs\/codebase-map\.md$/m);
+        assert.match(gitLog, /^add -A -- docs\/patterns\.md$/m);
+        assert.match(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles warns on malformed affected-file rows without allowing the placeholder', () => {
+    withTempDir('run-task-human-review-malformed-row-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`docs/codebase-map.md`', '`<path>`']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M docs/codebase-map.md',
+            FAKE_GIT_DIFF_OUTPUT: 'docs/codebase-map.md',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(combinedOutput(result), /task-a spec\.md Affected Files row malformed/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- docs\/codebase-map\.md$/m);
+        assert.doesNotMatch(gitLog, /<path>/);
+    });
+});
+
+void test('commitHumanReviewFiles does not allow non-managed affected-file entries', () => {
+    withTempDir('run-task-human-review-source-out-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M scripts/run-task/main.ts',
+            FAKE_GIT_DIFF_OUTPUT: '',
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /working tree has dirty files outside the human_review allowlist/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.doesNotMatch(gitLog, /^commit /m);
+        assert.doesNotMatch(gitLog, /^add -A -- scripts\/run-task\/main\.ts$/m);
+    });
+});
+
+void test('commitHumanReviewFiles filters mixed managed and non-managed affected-file entries per path', () => {
+    withTempDir('run-task-human-review-mixed-filter-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', [
+            '`docs/codebase-map.md`',
+            '`tests/run-task-safety.test.ts`',
+        ]);
+
+        const managedResult = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M docs/codebase-map.md',
+            FAKE_GIT_DIFF_OUTPUT: 'docs/codebase-map.md',
+        });
+
+        assert.equal(managedResult.status, 0, managedResult.stderr);
+        assert.match(combinedOutput(managedResult), /WARNING: docs\/codebase-map\.md/);
+
+        const sourceResult = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M tests/run-task-safety.test.ts',
+            FAKE_GIT_DIFF_OUTPUT: '',
+        });
+
+        assert.notEqual(sourceResult.status, 0);
+        assert.match(sourceResult.stderr, /working tree has dirty files outside the human_review allowlist/);
+    });
+});
+
+void test('main full-send tail fails closed when human_review gate rejects the task', () => {
+    withTempDir('run-task-full-send-gate-fail-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.qa = { status: 'done', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+        status.full_send = false;
+        status.human_spec_gate = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        });
+
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.stderr, /handoff\.md|human_review|gate/i);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            phases?: { human_review?: { status?: string } };
+        };
+        assert.equal(updated.phases?.human_review?.status, 'pending');
+
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.doesNotMatch(gitLog, /^push /m);
+    });
+});
+
+void test('main --full-send rejects multi-branch bundles before gate or PR creation', () => {
+    withTempDir('run-task-full-send-bundle-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const taskA = makeCompleteStatus('task-a', 'task/task-a');
+        const taskB = makeCompleteStatus('task-b', 'task/task-b');
+        for (const [taskId, status] of [['task-a', taskA], ['task-b', taskB]] as const) {
+            const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+            phases.qa = { status: 'done', agent: 'claude' };
+            phases.human_review = { status: 'pending', agent: 'human' };
+            status.full_send = false;
+            status.human_spec_gate = true;
+            writeTaskStatus(tasksRoot, taskId, status);
+        }
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', 'task-b', '--full-send'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        });
+
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.stderr, /Full-send tail aborted: bundle spans multiple branches/);
+
+        const statusA = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            phases?: { human_review?: { status?: string } };
+        };
+        const statusB = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-b', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            phases?: { human_review?: { status?: string } };
+        };
+        assert.equal(statusA.full_send, true);
+        assert.equal(statusB.full_send, true);
+        assert.equal(statusA.phases?.human_review?.status, 'pending');
+        assert.equal(statusB.phases?.human_review?.status, 'pending');
+
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.doesNotMatch(gitLog, /^push /m);
+    });
+});
+
+void test('main rejects hand-edited full_send plus delicate without --force', () => {
+    withTempDir('run-task-full-send-hand-edit-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.qa = { status: 'done', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+        status.delicate = true;
+        status.full_send = true;
+        status.human_spec_gate = false;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        });
+
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.stderr, /--full-send on delicate task 'task-a' requires --force/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            phases?: { human_review?: { status?: string } };
+        };
+        assert.equal(updated.full_send, true);
+        assert.equal(updated.phases?.human_review?.status, 'pending');
+
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.doesNotMatch(gitLog, /^push /m);
+    });
+});
+
+void test('main full-send tail fails closed when draft PR creation fails', () => {
+    withTempDir('run-task-full-send-pr-fail-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.qa = { status: 'done', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+        status.full_send = false;
+        status.human_spec_gate = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+        fs.writeFileSync(path.join(tasksRoot, 'task-a', 'handoff.md'), [
+            '# Implementation Handoff: task-a',
+            '',
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `lint` | Pass | ok |',
+            '',
+        ].join('\n'), 'utf8');
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GH_PR_CREATE_FAIL: '1',
+            FAKE_GH_PR_CREATE_ERROR: 'draft PR creation failed',
+        });
+
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.stderr, /draft PR creation failed/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            phases?: { human_review?: { status?: string } };
+        };
+        assert.equal(updated.phases?.human_review?.status, 'pending');
+
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.match(gitLog, /^push origin task\/task-a$/m);
+    });
+});
+
+void test('main --reroute clears full_send', () => {
+    withTempDir('run-task-reroute-full-send-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.human_review = { status: 'pending', agent: 'human' };
+        status.full_send = true;
+        status.human_spec_gate = false;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+        const worktreesRoot = path.join(dir, 'worktrees');
+        writeTaskStatus(path.join(worktreesRoot, 'task-a', 'tasks'), 'task-a', status);
+        // Pre-flight reads the main-repo spec.md (via taskDirFor → CANON_TASKS_DIR_OVERRIDE)
+        // per the documented "operator amends main-repo spec" convention.
+        const amendmentSpec = [
+            '# Spec',
+            '',
+            '## Amendment',
+            '',
+            'Reroute spec amendment for the full_send regression test.',
+            '',
+        ].join('\n');
+        fs.writeFileSync(path.join(tasksRoot, 'task-a', 'spec.md'), amendmentSpec, 'utf8');
+        fs.writeFileSync(path.join(worktreesRoot, 'task-a', 'tasks', 'task-a', 'spec.md'), amendmentSpec, 'utf8');
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--reroute'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stdout, /full_send cleared/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
+            full_send?: boolean;
+            phases?: {
+                implement?: { status?: string };
+                code_review?: { status?: string };
+                qa?: { status?: string };
+                human_review?: { status?: string };
+            };
+        };
+        assert.equal(updated.full_send, false);
+        assert.equal(updated.phases?.implement?.status, 'in_progress');
+        assert.equal(updated.phases?.code_review?.status, 'pending');
+        assert.equal(updated.phases?.qa?.status, 'pending');
+        assert.equal(updated.phases?.human_review?.status, 'pending');
+    });
+});
+
+void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
+    withTempDir('run-task-metrics-override-', dir => {
+        const telemetryFile = path.join(dir, 'pipeline-invocations.md');
+        const result = runNodeInline([
+            "import { recordMetric } from './scripts/run-task/metrics.ts';",
+            "recordMetric({ taskId: 'metrics-override', phase: 'implement', agent: 'codex', model: 'gpt-5.4-mini', durationMs: 0, status: 'ok', tokens: null, iteration: 0 });",
+        ].join('\n'), {
+            ...process.env,
+            CANON_METRICS_FILE_OVERRIDE: telemetryFile,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(fs.existsSync(telemetryFile), true);
+        const contents = fs.readFileSync(telemetryFile, 'utf8');
+        assert.match(contents, /metrics-override/);
     });
 });
 

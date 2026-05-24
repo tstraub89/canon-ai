@@ -2,6 +2,43 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.4.0] — 2026-05-24
+
+<!-- Adopter-visible bullets land here as tasks for 1.4.0 ship. canon-ai-internal scope (release-process changes, dev-branch retirement, etc.) belongs in docs/lessons-learned.md or docs/decisions.md, not here — adopters don't see how canon itself is developed. -->
+
+### Added
+
+- **Full-send mode for "spec to draft PR with no human interrupts."** `canon run --full-send <id>` now clears the spec gate, runs the normal pipeline, and opens a draft PR after QA without waiting for a human to re-invoke `--pr`. The conversational `/canon-spec` skill detects full-send intent from either `--full-send` or natural-language "full send" / "full-send" phrasing and carries the same mode through to the pipeline. Delicate tasks require `--force` to acknowledge the higher-commitment combination, and `--reroute` clears the mode so a retried run starts from a fresh human review decision.
+- **`canon run --pr` base-drift safety gate.** Before opening the PR, `--pr` diffs the worktree's HEAD against `origin/<base_branch>`; any file outside the spec's *Affected Files* aborts the step. Catches third-party commits that land on base mid-pipeline and get re-introduced by Codex. `--force` bypasses. PR #97.
+- **`canon run --pr` auto-commit allow-list scoped to spec's *Affected Files*.** `--pr` now stages only paths declared in the spec's *Affected Files* (plus pipeline-managed artifacts); out-of-scope dirty files surface as warnings instead of being silently swept into the PR. Inert-ifies the cross-pipeline managed-doc-sync contamination class. PR #96.
+- **`canon run --reroute` pre-flight gate: spec.md amendment required.** `--reroute` refuses to bounce back to `implement` unless `spec.md` has `## Amendment` (round 1) or `## Amendment Round N` (round 2+). Catches the failure mode where review feedback is pasted into `review.md` (which Codex doesn't re-read at reroute time) while `spec.md` is unchanged. `--force` bypasses. PR #99.
+- **`docs-refs-check` script + CI gate.** New utility script at `scripts/docs-refs-check.mjs` validates markdown ref hygiene (broken file paths, symbol-in-file refs, section refs, anchor links). Wired into canon-ai's own CI between type-check and test. Ships to adopters via `canon upgrade`; adopters opt in by adding `npm run docs-refs-check` to their own workflow. Originally written by tstraub89/gallery_wall; adapted with attribution.
+
+### Changed
+
+- **`CLAUDE.md` no longer claims `base_branch` is "typically `dev`".** Replaced with "auto-detected from the current git checkout — `main` for one-off work or whatever release-accumulation branch your project uses." Reflects the wider variety of adopter branch models (single-tier task→main, release-branch flows like GP, etc.) rather than implying canon-ai's prior dev-integration model as the recommended default.
+- **Expanded `--help` for `--reroute`, `--pr` / `--push`, `--ship`.** Each flag's help now names the expected starting state, files read/written, and alternatives — counterweight to the "operator-Claude pattern-matches a flag by name and skips the docs" pattern.
+
+### Fixed
+
+- **Implementation-phase no longer re-commits the task scaffold to base on every invocation.** For worktree-mode tasks, only the FIRST implement call commits the scaffold to base; subsequent calls (reroutes, code-review iterations) skip the auto-commit. Eliminates the recurring `task(<id>): commit artifacts pre-pipeline` commits (5+ per task) that diverged from the task branch and produced PR-merge conflicts. Legacy `worktree: false` tasks unaffected.
+- **`canon run --ship` detects `gh` availability.** Module-load init left `ghAvailable = false`, and `checkDeps()` guarded `gh` detection behind `!skipAgentDeps` — so `--ship` and `--dry-run` never detected it. `gh pr merge` never fired, and the externally-merged recovery in `assertOriginTaskBranchAbsent` never detected an already-merged PR. The merge code path was silently dead since at least 1.3.2; the "--ship is post-merge-only" framing in earlier docs was a symptom of this bug, not a design choice.
+- **`canon run --ship` no longer commits dirty pipeline-shared docs to base.** The `--ship` preamble previously flushed any dirty REPO_ROOT `docs/lessons-learned.md`, `docs/task-quality-log.md`, `docs/pipeline-invocations.md`, `docs/decisions.md` to base as `chore: flush pipeline telemetry`, diverging from the task branch's already-committed versions and producing PR-merge conflicts. The flush is now a clean discard (`git checkout HEAD --` on REPO_ROOT) for worktree-mode tasks — the task branch is canonical and the squash merge brings docs to base atomically. Legacy `worktree: false` unaffected.
+- **`canon run --ship` no longer creates a GitHub release.** `maybeCreateGitHubRelease` had been calling `gh release create v<package.json version>` whenever `--ship` ran with a `release/*` base. The call was inert through 1.3.x (masked by the gh-availability bug); 1.4.0's fix unmasked it. For multi-task release flows it fired per task on the same version, tagged whatever commit `gh release create` resolves (remote default branch, not the release branch), and embedded the still-`- unreleased` CHANGELOG block. Shipping a task isn't a release event; the helper is removed entirely — adopters who want release automation should drive it from their own workflow (e.g. canon-ai-dev's `auto-release.yml`). Surfaced by GP's 1.4.0 dogfood when their third v1.7.1 task ship created a premature release pointing at a stale commit.
+- **`canon run --ship` tolerates a worktree-held local branch on `gh pr merge --delete-branch`.** The local-branch delete defers to worktree teardown when `gh` exits non-zero on it (the squash merge itself succeeded). Follow-ons: `assertOriginTaskBranchAbsent` safety net still fires on the tolerance path, and the dev-token leakage regression scan extended to `dist/cli/index.js` + `dist/scripts/run-task.js`.
+- **`parseValidationRequiredChecks` distinguishes empty section from missing section.** Empty `- [ ]` placeholders previously surfaced as "section missing." Pre-flight error now names the actual remediation ("mark at least one required check with `- [x]`"). Surfaced via MAX_REVIEW_LOOPS during 1.4 development.
+- **`canon task release-init` writes `.canon/version` and uses canonical CHANGELOG block format.** Both gaps surfaced during canon-ai's switch to release-branch-per-version; `.canon/version` is written when present, and the new CHANGELOG block uses the standard `## [<version>] — YYYY-MM-DD` header.
+
+### Known limitations (scoped for 1.5)
+
+> Tracked failure modes against 1.4.0. Each has a workaround; structural fixes are scoped for 1.5. Detail in [`docs/BACKLOG.md`](docs/BACKLOG.md).
+
+- **`canon run --ship` crashes on non-worktree tasks (`ENOENT`)** — `shipTasks` switches to base before re-reading `status.json`. Workaround: `gh pr merge --squash --delete-branch <n> && git pull && canon run <id> --ship`. Worktree-mode unaffected.
+- **`parseAffectedFilesFromSpec` reads REPO_ROOT in worktree mode** — worktree-side spec edits aren't seen by the new `--pr` gates. Workaround: also write the edit to `REPO_ROOT/tasks/<id>/spec.md`.
+- **`--pr` base-drift gate fires on QA-promoted managed-doc edits** — QA-side edits to `docs/codebase-map.md` etc. aren't in the spec's *Affected Files*. Workaround: backfill them into *Affected Files* before `--pr`.
+- **`--pr` base-drift gate: directory-form *Affected Files* entries don't match per-file diff paths** — `src/foo/` won't match `src/foo/bar.ts`. Workaround: enumerate files explicitly.
+- **Main-repo accumulates stale `tasks/<id>/` artifacts that block `git pull` during `--ship`** — sync mirrors into the main repo are left dirty. Workaround: `git restore tasks/<id>/` in the main repo, then re-run `--ship`. Structural fix: the `worktree-canonical-task-state` BACKLOG entry.
+
 ## [1.3.2] — 2026-05-19
 
 Polish patch — low-risk fixes deferred from 1.3.0/1.3.1 review rounds, plus the GP "auto-commit pathspec on already-deleted files" recovery wedge.

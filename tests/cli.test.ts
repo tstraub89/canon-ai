@@ -1384,3 +1384,89 @@ void test('operational docs do not mention retired phase names', () => {
         }
     }
 });
+
+// ── canon-development leakage into adopter-shipped content ───────────────────
+
+// Read the active release branch name from a single fixture so the test
+// updates when canon-ai rotates to a new release branch, and so the leakage
+// regression doesn't fire on intentionally-generic future-version examples in
+// adopter docs (e.g., `release/v1.6` as a template placeholder).
+//
+// Format: { "active_release_branch": "release/vX.Y", "tokens": [...] }.
+// `tokens` includes canon-ai's dogfooding-project nicknames + the dev repo
+// path. Add new tokens here as canon-ai's dogfood roster grows.
+//
+// Filed as a regression test after canon-ai 1.4.0's init shipped
+// `release/v1.4` as an example in adopter-facing CLAUDE.md — the second
+// instance of this class after 1.1.1's GalleryPlanner cleanup (canon-ai #18).
+// Both got caught by manual audit, not automation.
+type CanonDevTokens = {
+    active_release_branch: string;
+    tokens: string[];
+};
+
+// Files canon-ai ships to adopters via `canon init` and `canon upgrade`.
+// `templates/` is the source of truth for `canon upgrade`; `CANON_OWNED` root
+// files are what `canon init` scaffolds in target repos and `canon upgrade`
+// refreshes in-place. `dist/` ships in the npm package — leaks there reach
+// every adopter via `npm install canon-ai`.
+const ADOPTER_SHIPPED_PATHS = [
+    'templates/AGENTS.md',
+    'templates/CLAUDE.md',
+    'templates/CODEX.md',
+    'templates/.canon/templates/spec.md',
+    'templates/.canon/templates/plan.md',
+    'templates/.canon/templates/handoff.md',
+    'templates/.canon/templates/review.md',
+    'templates/.canon/templates/done.md',
+    'templates/.canon/templates/notes.md',
+    'templates/.canon/templates/spec-review.md',
+    'templates/.canon/templates/status.json',
+    // Root CANON_OWNED files (canon-ai-dev's own dogfood copies of the
+    // templates/ versions, kept in parallel per the canon-delimited-files
+    // memory). Scanned to catch the case where the root copy drifts and
+    // accumulates dev-specifics that templates/ doesn't have — that's the
+    // exact leak shape that produced 1.4.0's `release/v1.4` slip in
+    // CLAUDE.md.
+    'AGENTS.md',
+    'CLAUDE.md',
+    'CODEX.md',
+    // Bundled dist/ ships in the canon-ai npm package (per package.json
+    // `files`). Bundled JS may include string literals from source — a
+    // banned token making it into a source-file string would land in
+    // dist/*.js and ship to every adopter via `npm install canon-ai`.
+    // Scan both build entries.
+    'dist/cli/index.js',
+    'dist/scripts/run-task.js',
+    // README.md is canon-ai's own marketing page (origin story, install
+    // instructions for the canon-ai package), NOT a CANON_OWNED file that
+    // `canon init` or `canon upgrade` ships to adopter repos. Adopters write
+    // their own README. Intentional mentions of dogfooding projects in this
+    // README (GalleryPlanner origin attribution, etc.) are NOT leaks — they
+    // explain canon's provenance, which is correct content for canon-ai's
+    // marketing page. Excluded from the scan.
+];
+
+void test('adopter-shipped content does not leak canon-development tokens', () => {
+    const fixturePath = path.join(REPO_ROOT, 'tests/fixtures/canon-dev-tokens.json');
+    const fixtureRaw = fs.readFileSync(fixturePath, 'utf8');
+    const fixture = JSON.parse(fixtureRaw) as CanonDevTokens;
+    const banned = [fixture.active_release_branch, ...fixture.tokens];
+
+    const failures: string[] = [];
+    for (const rel of ADOPTER_SHIPPED_PATHS) {
+        const fullPath = path.join(REPO_ROOT, rel);
+        if (!fs.existsSync(fullPath)) continue;
+        const content = fs.readFileSync(fullPath, 'utf8');
+        for (const token of banned) {
+            if (content.includes(token)) {
+                failures.push(`${rel} contains canon-dev token "${token}"`);
+            }
+        }
+    }
+    assert.deepEqual(
+        failures,
+        [],
+        'adopter-shipped files leak canon-development tokens — see tests/fixtures/canon-dev-tokens.json',
+    );
+});

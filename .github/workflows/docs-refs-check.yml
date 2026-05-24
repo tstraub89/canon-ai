@@ -1,0 +1,35 @@
+name: docs-refs-check
+
+on:
+  pull_request:
+    # No `branches:` filter — runs on PRs against any base so docs-only PRs
+    # to integration/feature branches (which the main CI workflow skips via
+    # path filter) can't silently merge broken refs. Per Codex P2 review.
+    paths:
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'CODEX.md'
+      - 'docs/**'
+      - 'tasks/**'
+      - '!tasks/_templates/**'
+      - '.github/**/*.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docs-refs-check:
+    name: docs-refs-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run docs-refs-check

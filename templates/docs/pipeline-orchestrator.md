@@ -213,7 +213,23 @@ Every task carries a provenance snapshot in `status.json.canon`. `canon task new
 
 **Auto-commit**: After implement passes validation, the orchestrator auto-commits source files listed in `handoff.md`'s Changes table — including `### Changes` tables in `## Iteration N` sections (files introduced in later review rounds are valid). If any non-task source files remain dirty after staging, the commit is aborted and the pipeline stops for manual intervention. `handoff.md` must list every changed file including both sides of renames. Specs with a missing or empty `## Validation Required` section are rejected at this gate — handoff validation cannot be bypassed by omitting the section.
 
-At `human_review` with `--push` or `--pr`, the orchestrator auto-commits task artifacts, telemetry, and the managed docs listed in `PIPELINE_MANAGED_DOCS` before pushing. Changelog and version bump remain a manual human + Claude step.
+At `human_review` with `--push` or `--pr`, the orchestrator auto-commits a scoped allow-list before pushing:
+
+- **`tasks/<id>/`** — task artifacts (spec, plan, handoff, review, done, notes).
+- **`PIPELINE_TELEMETRY_FILES`** (`docs/lessons-learned.md`, `docs/task-quality-log.md`, `docs/pipeline-invocations.md`) — always auto-committed.
+- **`PIPELINE_MANAGED_DOCS` ∩ spec's `### Affected Files`** — a managed doc (`docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/pipeline-orchestrator.md`, `docs/product-context.md`) is auto-committed only if the task's `spec.md` `### Affected Files` table lists it. Tasks that legitimately edit a managed doc must list it in Affected Files.
+
+If a dirty file falls outside this union, the pipeline dies with an actionable message describing the allow-list, suggesting either adding the file to `spec.md '### Affected Files'` (for managed docs) or reverting with `git checkout HEAD -- <path>` (for source/test files that should have been committed in the implement phase).
+
+Non-managed Affected Files entries (source files, test files, fixtures) do not enter the `human_review` allow-list. The Affected Files carve-out at `human_review` is restricted to `PIPELINE_MANAGED_DOCS` only.
+
+When a managed doc is committed via the Affected Files allow-list, an advisory warning fires per file inviting the operator to `git diff HEAD -- <path>` to verify the content before `--ship` (residual guard against same-file sibling-pipeline overlap).
+
+Before that dirty-tree auto-commit path runs, `commitHumanReviewFiles` also runs the base-drift check for `--pr` and `--push`: it fetches `origin/<base>` and compares `origin/<base>` to `HEAD` with a two-dot tree diff (`git diff origin/<base> HEAD --name-status -M -z`). Any diff path outside the spec's `### Affected Files`, `tasks/<id>/`, and `PIPELINE_TELEMETRY_FILES` is drift and aborts the run. This catches cross-pipeline contamination Mode 1 (the base branch advanced while the task branch was running) and wider Mode 2 (foreign content was already committed to the task branch before `--pr`). It is complementary to the dirty-tree gate: the dirty-tree gate stops bad content from being committed at `human_review`, while base-drift stops already-committed branch content from being pushed or PR'd.
+
+For renames, both the old path and the new path must appear in the spec's `### Affected Files` table. The two-dot diff uses rename detection and surfaces both sides; listing only one side leaves the other as drift. `--force` bypasses detected drift with a loud warning after the operator has verified it, but `--force` does not bypass diff-computation failure.
+
+Changelog and version bump remain a manual human + Claude step.
 
 ## Phase Routing + Auto-Block
 
@@ -299,11 +315,13 @@ If the human rejects at `human_review`, use `--reroute` to atomically reset `imp
 
 Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the main repo** (not the worktree) as an Amendment section. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract. The main-repo spec is synced into the worktree at the start of implement, so any amendment written to the worktree path will be overwritten.
 
+The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation.
+
 ## Shipping & Post-Merge Reconciliation
 
 **Normal sequence**: `--pr` (push + draft PR) → mark PR ready, get it approved → `--ship` (merge + archive + cleanup, all in one). `--ship` calls `gh pr merge --squash --delete-branch` itself before tearing down the worktree and archiving, so don't merge the PR manually — canon's `--ship` controls the teardown ordering that prevents the "local branch held by worktree → gh fails to delete → remote branch stays around" partial-cleanup state. If you've already merged the PR externally, `--ship` detects the merge and picks up at cleanup. Running `--ship` with no PR open at all archives the task without the implementation landing — don't do that.
 
-`--ship` runs in this order: (1) merge any open PR for the task branch via `gh pr merge --squash --delete-branch`, (2) pull the base branch (now has the squashed commit), (3) run any project-specific `.canon/hooks/post-merge.sh`, (4) archive `tasks/<id>/` to `tasks/_archive/<id>/`, (5) `git worktree remove --force` if a worktree was active, (6) clean up local branches. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
+`--ship` runs in this order: (1) merge any open PR for the task branch via `gh pr merge --squash --delete-branch`, (2) pull the base branch (now has the squashed commit), (3) run any project-specific post-merge hook under `.canon/hooks/`, (4) archive `tasks/<id>/` to `tasks/_archive/<id>/`, (5) `git worktree remove --force` if a worktree was active, (6) clean up local branches. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
 
 **Always rebase local main on `origin/main` before invoking `--ship`.** When a worktree-implemented PR squash-merges, `origin/main` picks up `tasks/<id>/` files from the squash commit. If `--ship` runs before local rebases, the task directory ends up in both `tasks/<id>/` and `tasks/_archive/<id>/` and needs manual reconciliation.
 

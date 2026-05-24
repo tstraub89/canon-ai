@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,11 +18,15 @@ import {
     checkAcCoveragePlaceholders,
     computeLatestValidationResults,
     extractHandoffPath,
+    parseAffectedFilesFromSpec,
     parseHandoffChangesRows,
     parseHandoffFiles,
     parseHandoffPathCell,
     validateHandoffAgainstSpec,
+    verifyBaseDrift,
+    verifyBaseDriftFromData,
     verifyHandoffAgainstDiffFromData,
+    verifyRerouteAmendment,
 } from '../scripts/run-task/validation.js';
 
 function withTempPair(
@@ -145,6 +150,100 @@ function withTempTaskHandoff(
         else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
         fs.rmSync(root, { recursive: true, force: true });
     }
+}
+
+function withTempTaskSpec(
+    taskId: string,
+    specContent: string | null,
+    fn: (cwd: string, tasksRoot: string) => void,
+): void {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'affected-files-spec-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    if (specContent !== null) {
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), specContent, 'utf8');
+    }
+
+    const prevOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        fn(root, tasksRoot);
+    } finally {
+        if (prevOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+function writeAffectedFilesSpec(tasksRoot: string, taskId: string, fileCells: readonly string[]): void {
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'spec.md'), [
+        `# Spec: ${taskId}`,
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        ...fileCells.map(cell => `| ${cell} | fixture change |`),
+        '',
+    ].join('\n'), 'utf8');
+}
+
+function withTempTaskSpecs(
+    specs: Record<string, readonly string[]>,
+    fn: (tasksRoot: string) => void,
+): void {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-specs-'));
+    const tasksRoot = path.join(root, 'tasks');
+    for (const [taskId, fileCells] of Object.entries(specs)) {
+        writeAffectedFilesSpec(tasksRoot, taskId, fileCells);
+    }
+
+    const prevOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        fn(tasksRoot);
+    } finally {
+        if (prevOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+function captureConsoleError<T>(fn: () => T): { result: T; stderr: string } {
+    const original = console.error;
+    const messages: string[] = [];
+    console.error = (...args: unknown[]) => {
+        messages.push(args.map(arg => String(arg)).join(' '));
+    };
+    try {
+        return { result: fn(), stderr: messages.join('\n') };
+    } finally {
+        console.error = original;
+    }
+}
+
+function gitIn(cwd: string, ...args: string[]): void {
+    execFileSync('git', args, { cwd, stdio: 'ignore' });
+}
+
+function makeGitFixture(dir: string): { localDir: string; originDir: string } {
+    const originDir = path.join(dir, 'origin.git');
+    const localDir = path.join(dir, 'local');
+    execFileSync('git', ['init', '--bare', originDir], { stdio: 'ignore' });
+    execFileSync('git', ['clone', originDir, localDir], { stdio: 'ignore' });
+    gitIn(localDir, 'config', 'user.email', 'test@example.com');
+    gitIn(localDir, 'config', 'user.name', 'Test User');
+    gitIn(localDir, 'checkout', '-b', 'main');
+    fs.writeFileSync(path.join(localDir, 'initial-fixture.txt'), 'initial\n', 'utf8');
+    gitIn(localDir, 'add', 'initial-fixture.txt');
+    gitIn(localDir, 'commit', '-m', 'initial');
+    gitIn(localDir, 'push', '-u', 'origin', 'main');
+    return { localDir, originDir };
 }
 
 // ── canonicalizeValidationCheck (issue #71) ──────────────────────────────────
@@ -308,7 +407,9 @@ void test('validateHandoffAgainstSpec fails closed when Validation Required exis
         ].join('\n'),
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.deepEqual(issues, ['Validation Required section is missing from spec.md']);
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /Validation Required section in spec\.md has no `\[x\]`-checked items/);
+            assert.match(issues[0], /mark at least one required check `\[x\]`/);
         },
     );
 });
@@ -444,6 +545,126 @@ void test('parseHandoffFiles unions baseline Changes and iteration Changes table
         '',
     ].join('\n'), () => {
         assert.deepEqual(parseHandoffFiles('union-task'), ['src/base.ts', 'src/iter.ts']);
+    });
+});
+
+void test('parseAffectedFilesFromSpec returns valid paths from the Design Affected Files table', () => {
+    withTempTaskSpec('affected-task', [
+        '# Spec: affected task',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `scripts/run-task/main.ts` | update allow-list |',
+        '| [tests/run-task-safety.test.ts](https://github.com/example/repo/blob/main/tests/run-task-safety.test.ts) | add safety tests |',
+        '| `docs/pipeline-orchestrator.md` | document behavior |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('affected-task'), {
+            files: [
+                'scripts/run-task/main.ts',
+                'tests/run-task-safety.test.ts',
+                'docs/pipeline-orchestrator.md',
+            ],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec returns empty result when spec.md is missing', () => {
+    withTempTaskSpec('missing-spec-task', null, () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('missing-spec-task'), {
+            files: [],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec returns empty result when Design section is missing', () => {
+    withTempTaskSpec('no-design-task', [
+        '# Spec: no design',
+        '',
+        '## Problem',
+        '',
+        'Nothing here.',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `docs/codebase-map.md` | should not be parsed outside Design |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('no-design-task'), {
+            files: [],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec returns empty result when Affected Files H3 is missing', () => {
+    withTempTaskSpec('no-affected-files-task', [
+        '# Spec: no affected files',
+        '',
+        '## Design',
+        '',
+        '### Interaction Dependencies',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `docs/codebase-map.md` | should not be parsed from a different H3 |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('no-affected-files-task'), {
+            files: [],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec reports malformed placeholder rows', () => {
+    withTempTaskSpec('malformed-affected-task', [
+        '# Spec: malformed affected files',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `docs/codebase-map.md` | valid managed doc |',
+        '| `<path>` | placeholder left in template |',
+        '',
+    ].join('\n'), () => {
+        const result = parseAffectedFilesFromSpec('malformed-affected-task');
+        assert.deepEqual(result.files, ['docs/codebase-map.md']);
+        assert.equal(result.malformed.length, 1);
+        assert.equal(result.malformed[0].cell, '`<path>`');
+        assert.match(result.malformed[0].reason, /template placeholder/);
+    });
+});
+
+void test('parseAffectedFilesFromSpec accepts backtick and markdown-link path cells', () => {
+    withTempTaskSpec('format-affected-task', [
+        '# Spec: affected files formats',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `path/foo.ts` | backtick form |',
+        '| [path/bar.ts](https://github.com/example/repo/blob/main/path/bar.ts) | markdown-link form |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('format-affected-task'), {
+            files: ['path/foo.ts', 'path/bar.ts'],
+            malformed: [],
+        });
     });
 });
 
@@ -790,6 +1011,280 @@ void test('verifyHandoffAgainstDiffFromData: rename uncovered emits one issue na
     assert.ok(issues[0].includes('src/old-name.ts'));
     assert.ok(issues[0].includes('src/new-name.ts'));
     assert.ok(issues[0].includes('diff→handoff'));
+});
+
+void test('verifyBaseDriftFromData: empty diff returns no drift', () => {
+    assert.deepEqual(verifyBaseDriftFromData([], new Set(), ['task-a']), []);
+});
+
+void test('verifyBaseDriftFromData: file listed in spec allowlist is accepted', () => {
+    assert.deepEqual(
+        verifyBaseDriftFromData(['docs/codebase-map.md'], new Set(['docs/codebase-map.md']), ['task-a']),
+        [],
+    );
+});
+
+void test('verifyBaseDriftFromData: file outside spec allowlist is drift', () => {
+    assert.deepEqual(
+        verifyBaseDriftFromData(['docs/decisions.md'], new Set(['docs/codebase-map.md']), ['task-a']),
+        ['docs/decisions.md'],
+    );
+});
+
+void test('verifyBaseDriftFromData: active task-dir files are accepted without allowlist entry', () => {
+    assert.deepEqual(
+        verifyBaseDriftFromData(['tasks/task-a/handoff.md'], new Set(), ['task-a']),
+        [],
+    );
+});
+
+void test('verifyBaseDriftFromData: telemetry file in allowlist is accepted', () => {
+    assert.deepEqual(
+        verifyBaseDriftFromData(['docs/pipeline-invocations.md'], new Set(['docs/pipeline-invocations.md']), ['task-a']),
+        [],
+    );
+});
+
+void test('verifyBaseDriftFromData: bundle unions disjoint task allowlists', () => {
+    assert.deepEqual(
+        verifyBaseDriftFromData(
+            ['docs/codebase-map.md', 'scripts/run-task/main.ts'],
+            new Set(['docs/codebase-map.md', 'scripts/run-task/main.ts']),
+            ['task-a', 'task-b'],
+        ),
+        [],
+    );
+});
+
+void test('verifyBaseDriftFromData: deleted path from name-status output is drift when not allowed', () => {
+    const diffFiles = parseNameStatusOutput('D\0docs/deleted-file.md\0');
+    assert.deepEqual(
+        verifyBaseDriftFromData(diffFiles, new Set(), ['task-a']),
+        ['docs/deleted-file.md'],
+    );
+});
+
+void test('verifyBaseDriftFromData: rename requires both old and new paths in allowlist', () => {
+    const diffFiles = parseNameStatusOutput('R100\0docs/old-name.md\0docs/new-name.md\0');
+    assert.deepEqual(
+        verifyBaseDriftFromData(diffFiles, new Set(['docs/new-name.md']), ['task-a']),
+        ['docs/old-name.md'],
+    );
+});
+
+void test('verifyBaseDrift: fetch failure warns and returns fetchFailed without drift', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-offline-'));
+    try {
+        execFileSync('git', ['init', dir], { stdio: 'ignore' });
+        gitIn(dir, 'remote', 'add', 'origin', path.join(dir, 'missing-origin.git'));
+        withTempTaskSpecs({ 'task-a': [] }, () => {
+            const { result, stderr } = captureConsoleError(() => verifyBaseDrift(['task-a'], 'main', dir));
+            assert.deepEqual(result, { drift: [], fetchFailed: true, diffFailed: false });
+            assert.match(stderr, /Could not fetch origin\/main/);
+            assert.match(stderr, /Skipping base-drift check/);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDrift: malformed affected-file rows warn and do not enter the allowlist', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-malformed-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        withTempTaskSpecs({ 'task-a': ['`<path>`'] }, () => {
+            const { result, stderr } = captureConsoleError(() => verifyBaseDrift(['task-a'], 'main', localDir));
+            assert.deepEqual(result, { drift: [], fetchFailed: false, diffFailed: false });
+            assert.match(stderr, /task-a spec\.md Affected Files row malformed/);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDrift: diff failure after successful fetch returns diffFailed and git error', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-diff-fail-'));
+    try {
+        const { originDir } = makeGitFixture(dir);
+        const emptyLocalDir = path.join(dir, 'empty-local');
+        execFileSync('git', ['init', emptyLocalDir], { stdio: 'ignore' });
+        gitIn(emptyLocalDir, 'remote', 'add', 'origin', originDir);
+
+        withTempTaskSpecs({ 'task-a': [] }, () => {
+            const result = verifyBaseDrift(['task-a'], 'main', emptyLocalDir);
+            assert.equal(result.fetchFailed, false);
+            assert.equal(result.diffFailed, true);
+            assert.deepEqual(result.drift, []);
+            assert.equal(typeof result.diffError, 'string');
+            assert.ok((result.diffError ?? '').length > 0);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDrift: two-dot diff catches base-advance drift that three-dot would miss', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-mode1-'));
+    try {
+        const { localDir, originDir } = makeGitFixture(dir);
+        gitIn(localDir, 'checkout', '-b', 'task/demo');
+        const taskFile = path.join(localDir, 'scripts', 'run-task', 'main.ts');
+        fs.mkdirSync(path.dirname(taskFile), { recursive: true });
+        fs.writeFileSync(taskFile, 'task content\n', 'utf8');
+        gitIn(localDir, 'add', 'scripts/run-task/main.ts');
+        gitIn(localDir, 'commit', '-m', 'task change');
+
+        const thirdPartyDir = path.join(dir, 'third-party');
+        execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
+        gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
+        gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
+        const baseAdvanceFile = path.join(thirdPartyDir, 'docs', 'decisions.md');
+        fs.mkdirSync(path.dirname(baseAdvanceFile), { recursive: true });
+        fs.writeFileSync(baseAdvanceFile, 'third-party content\n', 'utf8');
+        gitIn(thirdPartyDir, 'add', 'docs/decisions.md');
+        gitIn(thirdPartyDir, 'commit', '-m', 'third-party base advance');
+        gitIn(thirdPartyDir, 'push', 'origin', 'main');
+
+        withTempTaskSpecs({ 'task-a': ['`scripts/run-task/main.ts`'] }, () => {
+            const result = verifyBaseDrift(['task-a'], 'main', localDir);
+            assert.equal(result.fetchFailed, false);
+            assert.equal(result.diffFailed, false);
+            assert.deepEqual(result.drift, ['docs/decisions.md']);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyRerouteAmendment: round 1 accepts `## Amendment`', () => {
+    withTempTaskSpec('reroute-round-1-amendment', [
+        '# Spec',
+        '',
+        '## Amendment',
+        '',
+        'New direction.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-1-amendment', 1);
+        assert.equal(result.amended, true);
+        assert.equal(result.reason, '');
+    });
+});
+
+void test('verifyRerouteAmendment: round 1 accepts lowercase h3 amendment headings', () => {
+    withTempTaskSpec('reroute-round-1-lowercase', [
+        '# Spec',
+        '',
+        '### amendment',
+        '',
+        'New direction.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-1-lowercase', 1);
+        assert.equal(result.amended, true);
+        assert.equal(result.reason, '');
+    });
+});
+
+void test('verifyRerouteAmendment: round 1 accepts strict round-1 form', () => {
+    withTempTaskSpec('reroute-round-1-strict', [
+        '# Spec',
+        '',
+        '## Amendment Round 1',
+        '',
+        'New direction.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-1-strict', 1);
+        assert.equal(result.amended, true);
+        assert.equal(result.reason, '');
+    });
+});
+
+void test('verifyRerouteAmendment: round 1 rejects missing Amendment headings', () => {
+    withTempTaskSpec('reroute-round-1-missing', [
+        '# Spec',
+        '',
+        '## Overview',
+        '',
+        'No amendment heading here.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-1-missing', 1);
+        assert.equal(result.amended, false);
+        assert.match(result.reason, /no `## Amendment` heading found/);
+    });
+});
+
+void test('verifyRerouteAmendment: round 1 rejects legacy Follow-up headings', () => {
+    withTempTaskSpec('reroute-round-1-legacy', [
+        '# Spec',
+        '',
+        '## Follow-up',
+        '',
+        'New direction.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-1-legacy', 1);
+        assert.equal(result.amended, false);
+        assert.match(result.reason, /no `## Amendment` heading found/);
+    });
+});
+
+void test('verifyRerouteAmendment: round 2 accepts `## Amendment Round 2`', () => {
+    withTempTaskSpec('reroute-round-2-amendment', [
+        '# Spec',
+        '',
+        '## Amendment Round 2',
+        '',
+        'Second-round direction.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-2-amendment', 2);
+        assert.equal(result.amended, true);
+        assert.equal(result.reason, '');
+    });
+});
+
+void test('verifyRerouteAmendment: round 2 reports the seen round when only round 1 exists', () => {
+    withTempTaskSpec('reroute-round-2-mismatch', [
+        '# Spec',
+        '',
+        '## Amendment Round 1',
+        '',
+        'First-round direction only.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-2-mismatch', 2);
+        assert.equal(result.amended, false);
+        assert.match(result.reason, /found `## Amendment Round 1`/);
+        assert.match(result.reason, /expected `## Amendment Round 2`/);
+    });
+});
+
+void test('verifyRerouteAmendment: round 2 rejects the bare round-1 Amendment heading', () => {
+    withTempTaskSpec('reroute-round-2-bare', [
+        '# Spec',
+        '',
+        '## Amendment',
+        '',
+        'Only the first round heading is present.',
+        '',
+    ].join('\n'), () => {
+        const result = verifyRerouteAmendment('reroute-round-2-bare', 2);
+        assert.equal(result.amended, false);
+        assert.match(result.reason, /found `## Amendment`/);
+        assert.match(result.reason, /expected `## Amendment Round 2`/);
+    });
+});
+
+void test('verifyRerouteAmendment: missing spec.md reports the path in the reason', () => {
+    withTempTaskSpec('reroute-round-missing-file', null, () => {
+        const result = verifyRerouteAmendment('reroute-round-missing-file', 2);
+        assert.equal(result.amended, false);
+        assert.match(result.reason, /spec\.md missing at/);
+        assert.match(result.reason, /reroute-round-missing-file/);
+    });
 });
 
 // ─── Cumulative-handoff bug #1: validateHandoff must respect later iteration re-runs ───

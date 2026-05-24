@@ -82,6 +82,12 @@ export type StatusJson = {
     task_size?: TaskSize;
     delicate?: boolean;
     human_spec_gate?: boolean;
+    /**
+     * When true: collapses the human_spec_gate interrupt and, after a clean
+     * QA pass, auto-runs the PR-creation branch of the human_review flow.
+     * Future human-interrupt gates should honor this flag by convention.
+     */
+    full_send?: boolean;
     worktree?: boolean;
     canon?: CanonStamp;
     phases: Partial<Record<Phase, PhaseEntry>>;
@@ -106,6 +112,8 @@ export type CliArgs = {
     reroute: boolean;
     ship: boolean;
     dryRun: boolean;
+    fullSend: boolean;
+    force: boolean;
 };
 
 export type TaskContext = {
