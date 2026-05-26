@@ -34,6 +34,19 @@ export type PhaseEntry = {
     iterations_current_loop?: number;
     iterations_total?: number;
     changes_requested_total?: number;
+    /**
+     * Counts orchestrator-side pre-flight rejections (handoff validation
+     * failures that reject without invoking the reviewer) in the current
+     * loop. Reset to 0 when a real reviewer round returns approved /
+     * approved_with_nits. Watched alongside `iterations_current_loop` by the
+     * review-loop auto-block — persistent pre-flight failures must trip the
+     * cap so the pipeline can't bounce implement→pre-flight→implement
+     * forever. Separate from `iterations_current_loop` because pre-flight
+     * rejection isn't a Claude review round — counting it there would skip
+     * Stage 1 on the next real review via the round-N prompt path.
+     */
+    preflight_rejections_current_loop?: number;
+    preflight_rejections_total?: number;
     auto_block_count?: number;
     rerouted?: boolean;
     reroute_count?: number;
@@ -148,6 +161,7 @@ export type MetricEntry = {
     durationMs: number;
     status: 'ok' | 'failed';
     tokens?: number;
+    activeCwd?: string;
 };
 
 export type ImplementMode = 'fresh' | 'revision' | 'reroute' | 'resume';

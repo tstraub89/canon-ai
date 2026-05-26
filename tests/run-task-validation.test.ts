@@ -937,6 +937,39 @@ void test('verifyHandoffAgainstDiffFromData rejects a diff file missing from all
     assert.ok(issues[0].includes('src/baz.ts'));
 });
 
+void test('verifyHandoffAgainstDiffFromData exempts PIPELINE_TELEMETRY_FILES from diff→handoff check', () => {
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a'],
+        {
+            diffFiles: [
+                'src/foo.ts',
+                'docs/lessons-learned.md',
+                'docs/pipeline-invocations.md',
+                'docs/task-quality-log.md',
+            ],
+            handoffFilesByTask: makeHandoffMap({
+                'task-a': ['src/foo.ts'],
+            }),
+        },
+    );
+    assert.deepEqual(issues, []);
+});
+
+void test('verifyHandoffAgainstDiffFromData still rejects non-telemetry diff files missing from handoff when telemetry is also present', () => {
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a'],
+        {
+            diffFiles: ['docs/lessons-learned.md', 'src/baz.ts'],
+            handoffFilesByTask: makeHandoffMap({
+                'task-a': [],
+            }),
+        },
+    );
+    assert.equal(issues.length, 1);
+    assert.ok(issues[0].includes('src/baz.ts'));
+    assert.ok(!issues[0].includes('lessons-learned'));
+});
+
 void test('verifyHandoffAgainstDiffFromData respects bundle-wide handoff unions', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a', 'task-b'],
@@ -1121,6 +1154,140 @@ void test('verifyBaseDrift: diff failure after successful fetch returns diffFail
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+function writeMinimalStatus(
+    tasksRoot: string,
+    taskId: string,
+    overrides: { qaStatus?: 'pending' | 'in_progress' | 'done' } = {},
+): void {
+    const statusFile = path.join(tasksRoot, taskId, 'status.json');
+    const status: StatusJson = {
+        id: taskId,
+        title: taskId,
+        status: 'qa',
+        created: '2026-05-26',
+        updated: '2026-05-26',
+        branch: `task/${taskId}`,
+        base_branch: 'main',
+        task_size: 'S',
+        delicate: false,
+        human_spec_gate: false,
+        worktree: false,
+        phases: {
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'done', agent: 'claude', verdict: 'approved' },
+            qa: { status: overrides.qaStatus ?? 'pending', agent: 'claude' },
+            human_review: { status: 'pending', agent: 'human' },
+        },
+    };
+    writeStatusToFile(statusFile, status);
+}
+
+void test('verifyBaseDrift: directory-form Affected Files entry accepts subpaths', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-dirform-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        gitIn(localDir, 'checkout', '-b', 'task/demo');
+        const distFile = path.join(localDir, 'dist', 'cli', 'index.js');
+        fs.mkdirSync(path.dirname(distFile), { recursive: true });
+        fs.writeFileSync(distFile, 'bundle\n', 'utf8');
+        gitIn(localDir, 'add', 'dist/cli/index.js');
+        gitIn(localDir, 'commit', '-m', 'rebuild dist');
+
+        withTempTaskSpecs({ 'task-a': ['`dist/`'] }, () => {
+            const result = verifyBaseDrift(['task-a'], 'main', localDir);
+            assert.equal(result.fetchFailed, false);
+            assert.equal(result.diffFailed, false);
+            assert.deepEqual(result.drift, []);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDrift: directory-form prefix does not bleed across siblings', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-dirform-bleed-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        gitIn(localDir, 'checkout', '-b', 'task/demo');
+        const siblingFile = path.join(localDir, 'dist-other', 'foo.js');
+        fs.mkdirSync(path.dirname(siblingFile), { recursive: true });
+        fs.writeFileSync(siblingFile, 'sibling\n', 'utf8');
+        gitIn(localDir, 'add', 'dist-other/foo.js');
+        gitIn(localDir, 'commit', '-m', 'sibling dir');
+
+        withTempTaskSpecs({ 'task-a': ['`dist/`'] }, () => {
+            const result = verifyBaseDrift(['task-a'], 'main', localDir);
+            assert.deepEqual(result.drift, ['dist-other/foo.js']);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDrift: QA-done task auto-allowlists PIPELINE_MANAGED_DOCS', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-qa-done-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        gitIn(localDir, 'checkout', '-b', 'task/demo');
+        const patternsFile = path.join(localDir, 'docs', 'patterns.md');
+        fs.mkdirSync(path.dirname(patternsFile), { recursive: true });
+        fs.writeFileSync(patternsFile, '# Patterns\n\nNew QA-promoted lesson.\n', 'utf8');
+        gitIn(localDir, 'add', 'docs/patterns.md');
+        gitIn(localDir, 'commit', '-m', 'QA promotes lesson into patterns');
+
+        withTempTaskSpecs({ 'task-a': ['`scripts/run-task/main.ts`'] }, (tasksRoot) => {
+            writeMinimalStatus(tasksRoot, 'task-a', { qaStatus: 'done' });
+            const result = verifyBaseDrift(['task-a'], 'main', localDir);
+            assert.deepEqual(result.drift, []);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDrift: QA-pending task does NOT auto-allowlist managed docs', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-qa-pending-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        gitIn(localDir, 'checkout', '-b', 'task/demo');
+        const patternsFile = path.join(localDir, 'docs', 'patterns.md');
+        fs.mkdirSync(path.dirname(patternsFile), { recursive: true });
+        fs.writeFileSync(patternsFile, '# Patterns\n\nPremature edit.\n', 'utf8');
+        gitIn(localDir, 'add', 'docs/patterns.md');
+        gitIn(localDir, 'commit', '-m', 'edit before QA completes');
+
+        withTempTaskSpecs({ 'task-a': ['`scripts/run-task/main.ts`'] }, (tasksRoot) => {
+            writeMinimalStatus(tasksRoot, 'task-a', { qaStatus: 'pending' });
+            const result = verifyBaseDrift(['task-a'], 'main', localDir);
+            assert.deepEqual(result.drift, ['docs/patterns.md']);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDriftFromData: allowedPrefixes accepts subpaths under the prefix', () => {
+    assert.deepEqual(
+        verifyBaseDriftFromData(
+            ['dist/cli/index.js'],
+            new Set(),
+            ['task-a'],
+            ['dist/'],
+        ),
+        [],
+    );
+});
+
+void test('verifyBaseDriftFromData: empty allowedPrefixes leaves the legacy 3-arg signature behavior intact', () => {
+    assert.deepEqual(
+        verifyBaseDriftFromData(['dist/cli/index.js'], new Set(), ['task-a']),
+        ['dist/cli/index.js'],
+    );
 });
 
 void test('verifyBaseDrift: two-dot diff catches base-advance drift that three-dot would miss', () => {

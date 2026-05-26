@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { config } from '../env.js';
 import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
+import { taskDirFor } from '../state.js';
 import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
 import type { PipelineState } from '../types.js';
@@ -166,7 +170,7 @@ export function promptImplement(
         stateHeader: buildImplementStateHeader(state, mode),
         startup: CODEX_STARTUP,
         risksBlock: buildKnownRisks(taskIds),
-        pitfallsBlock: buildKnownPitfalls(),
+        pitfallsBlock: buildKnownPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
         affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         taskLines,
@@ -197,16 +201,45 @@ export function promptImplementRevisions(
     const { tasks } = state;
     const stateHeader = buildImplementStateHeader(state, 'revision');
     const maxCodeReviewIter = tasks.reduce((m, t) => Math.max(m, t.iterations), 0);
-    const hasReviewFindings = maxCodeReviewIter > 0;
+    // Pre-flight rejection also routes back to implement but doesn't bump
+    // `iterations` (it's not a Claude review round — see
+    // taskPhasePreflightRejected). Detect it so the revision prompt still
+    // points Codex at review.md (which contains the BLOCKED block listing
+    // handoff-format issues to fix). Without this branch, the prompt's
+    // reviewLines would be empty and Codex wouldn't be told to address the
+    // pre-flight findings (Codex P1 on the prior iteration of the fix).
+    const maxPreflightRejections = tasks.reduce(
+        (m, t) => Math.max(m, t.status.phases.code_review?.preflight_rejections_current_loop ?? 0),
+        0,
+    );
+    // Pre-flight takes priority when present — it's an input-validation
+    // failure that must be fixed before any further code-review work, even
+    // if prior real review rounds also had findings. Mutually exclusive
+    // routing simplifies Codex's task: address the pre-flight now, get back
+    // into a state where the real review can run, then any unresolved prior
+    // findings will surface in the next real review round naturally.
+    // (Codex P2 on the prior iteration: pre-flight after a real review round
+    // was rendering review-revision instructions instead of pre-flight
+    // instructions in the mixed-history case.)
+    const hasPreflightFindings = maxPreflightRejections > 0;
+    const hasReviewFindings = maxCodeReviewIter > 0 && !hasPreflightFindings;
     const iterationN = maxCodeReviewIter + 1;
     const priorRound = maxCodeReviewIter;
-    const iterBanner = `[ITERATION ${iterationN} — addressing code review round ${priorRound}]`;
-    const handoffAppend = `## Iteration ${iterationN} — addressing review round ${priorRound}`;
+    const iterBanner = hasPreflightFindings
+        ? `[ITERATION ${iterationN} — addressing pre-flight handoff rejection (no Claude review yet)]`
+        : `[ITERATION ${iterationN} — addressing code review round ${priorRound}]`;
+    const handoffAppend = hasPreflightFindings
+        ? `## Iteration ${iterationN} — addressing pre-flight handoff rejection`
+        : `## Iteration ${iterationN} — addressing review round ${priorRound}`;
     const reviewLines = hasReviewFindings
         ? tasks.map(t =>
             `- \`${t.taskId}\` → read \`tasks/${t.taskId}/review.md\` (most recent \`## Round ${priorRound}\` section only — earlier rounds are already addressed)`
         ).join('\n')
-        : '';
+        : hasPreflightFindings
+            ? tasks.map(t =>
+                `- \`${t.taskId}\` → read \`tasks/${t.taskId}/review.md\` (\`## Pre-Flight Rejection\` block lists handoff-format issues; no Claude review ran). Address every listed item — usually a malformed Validation Outcomes table or missing AC Coverage rows.`
+            ).join('\n')
+            : '';
 
     return render('implement-revisions.md', {
         projectName: config.projectName,
@@ -217,6 +250,7 @@ export function promptImplementRevisions(
         iterBanner,
         handoffAppend,
         hasReviewFindings,
+        hasPreflightFindings,
         iterationN,
         priorRound,
         reviewLines,
@@ -283,11 +317,42 @@ export function promptImplementReroute(
         preamble,
         groundingRule,
         risksBlock: buildKnownRisks(taskIds),
-        pitfallsBlock: buildKnownPitfalls(),
+        pitfallsBlock: buildKnownPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
         affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         taskLines,
         phaseCommands: phaseCommands(taskIds, 'implement', 'done'),
+    });
+}
+
+/**
+ * Defense-in-depth check against the historical "pre-flight rejection counts
+ * as a Claude review round" bug. If review.md lacks a `## Stage 1` heading
+ * for ANY task in the bundle, the prior "round" was a pre-flight rejection
+ * (or template, or missing entirely) — not a real Stage 1 + Stage 2 review.
+ * In that case we must use the Round-1 prompt so Claude fills the AC table
+ * from scratch, regardless of what iteration counters say.
+ *
+ * This guards two scenarios the iteration-counter fix alone can't catch:
+ *   1. Legacy status files whose counters are already corrupted from past
+ *      pre-flight rejections.
+ *   2. Future regressions that bump iteration counters incorrectly without
+ *      writing a real Stage 1 review.
+ */
+function bundleHasRealPriorReview(taskIds: readonly string[]): boolean {
+    return taskIds.every(taskId => {
+        // taskDirFor honors CANON_TASKS_DIR_OVERRIDE (test paths) AND the
+        // standard worktree+tasks/<id>/ production layout — required for the
+        // golden tests in run-task-prompts.test.ts to see the test fixture's
+        // review.md at the override path.
+        const reviewPath = path.join(taskDirFor(taskId), 'review.md');
+        try {
+            const content = fs.readFileSync(reviewPath, 'utf8');
+            // Stage 1 heading present and review.md isn't the unfilled template.
+            return /^## Stage 1\b/m.test(content) && !content.includes('[TASK-ID]');
+        } catch {
+            return false;
+        }
     });
 }
 
@@ -297,7 +362,10 @@ export function promptCodeReview(
     scopedDiff: ScopedDiff | null = null,
 ): string {
     const { tasks } = state;
-    const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
+    const rawMaxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
+    // Force Round 1 if any task's review.md lacks a real prior Stage 1 review —
+    // see bundleHasRealPriorReview docstring for the bug class this prevents.
+    const maxIter = bundleHasRealPriorReview(tasks.map(t => t.taskId)) ? rawMaxIter : 0;
     const resolvedBaseBranch = baseBranch ?? getBaseBranch(tasks.map(t => t.taskId));
     const hasDiff = scopedDiff !== null;
 

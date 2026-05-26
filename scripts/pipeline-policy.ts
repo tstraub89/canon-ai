@@ -26,6 +26,13 @@ export type PolicyConfig = {
     claudeModelSpec: string;
     claudeModelPlan: string;
     claudeModelReview: string;
+    // Code-review model for L/XL/delicate. Sonnet at xhigh kept missing
+    // lifecycle/state-machine bugs that Codex CLI review caught at PR open
+    // (buffer-arming-on-failure class, project-switch flushes, etc.).
+    // Bumping the model — not just effort — closes the Claude/Codex tier
+    // asymmetry: Codex implement already runs `codexModelFull` on XL; Claude
+    // review was still on `claudeModelReview` regardless of size.
+    claudeModelReviewLarge: string;
     claudeModelQa: string;
     codexModelMini: string;
     codexModelFull: string;
@@ -135,10 +142,11 @@ function claudeModelFor(config: PolicyConfig, phase: ClaudePhase): string {
     switch (phase) {
         case 'spec': return config.claudeModelSpec;
         case 'plan': return config.claudeModelPlan;
-        case 'code_review': return config.claudeModelReview;
         case 'qa': return config.claudeModelQa;
-        // spec_review, implement, human_review aren't Claude phases; fall back
-        // to the spec model so resumed Claude sessions survive accidental use.
+        // code_review is size-keyed (see codeReviewMatrix in claudeMatrix); not
+        // resolved through this helper. spec_review, implement, human_review
+        // aren't Claude phases; fall back to the spec model so resumed Claude
+        // sessions survive accidental use.
         default: return config.claudeModelSpec;
     }
 }
@@ -162,10 +170,21 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
             XL: { model, effort: 'high' },
         };
     };
+    // code_review splits model by size: small (Sonnet) for S/M where the
+    // work is checklist-shaped AC verification; large (Opus) for L/XL/delicate
+    // where lifecycle/state-machine reasoning is what catches the bugs Codex
+    // CLI review was finding post-PR. Delicate promotes to XL effective size,
+    // so it picks up the large model automatically.
+    const codeReviewMatrix = (): Record<TaskSize, ClaudeModelConfig> => ({
+        S:  { model: config.claudeModelReview,      effort: 'medium' },
+        M:  { model: config.claudeModelReview,      effort: 'high' },
+        L:  { model: config.claudeModelReviewLarge, effort: 'high' },
+        XL: { model: config.claudeModelReviewLarge, effort: 'xhigh' },
+    });
     return {
         spec:        buildHigh('spec'),
         plan:        buildHigh('plan', 'high'),  // sonnet doesn't support xhigh
-        code_review: buildHigh('code_review'),
+        code_review: codeReviewMatrix(),
         qa:          buildMedium('qa'),
     };
 }

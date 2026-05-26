@@ -235,12 +235,11 @@ If Claude and Codex disagree on approach, escalate to the human with a clear sum
 - Push only when the user asked for it.
 - If you use an external package API in changed code, treat it as an external API touch and provide citations (when external API tracking is wired in this project).
 - For data-affecting behavior, ship the safer guarded version first.
-
 ## Implementation Rules
 
 **Project-specific implementation rules live in [`docs/patterns.md`](docs/patterns.md).** Patterns + Known Pitfalls describe how state, styling, testing, performance, gating, assets, analytics, and any other project-specific concerns are handled. Agents read that file at session start; the orchestrator pre-injects task-relevant pitfalls into Codex's implement prompt.
 
-The rules below are canon-supplied universals — they apply to every project canon-ai is dropped into.
+The rules below are canon-supplied universals — they apply to every project canon is dropped into.
 
 ### Safe-First Rules
 
@@ -337,3 +336,5 @@ When a task cycle completes, the human sees `tasks/TASK-ID/done.md` containing:
 <!-- canon:end -->
 
 <!-- Your project additions below — `canon upgrade` will not touch this section -->
+
+- Canon-managed files are root-authoritative and `templates/` is derived; see [CLAUDE.md](./CLAUDE.md) for the full sync/hook/CI convention and the `CANON_OWNED` / `DELIMITED` split.

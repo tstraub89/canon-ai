@@ -1,6 +1,6 @@
 ---
 name: canon-init
-description: Fill canon scaffold docs with real project content. Reads the codebase, confirms inferences, grills on product and team context, then writes all docs. Run once after `canon init` to go from stubs to project-specific content.
+description: Use right after running `canon init` on a fresh repo, or when canon's scaffold docs (`docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`) still contain `<placeholder>` text or "TBD" stubs. Triggers on "fill in the canon docs", "set up canon for this project", "go from scaffold to real content", or explicit `/canon-init` invocation. Run once per project lifecycle.
 argument-hint: ""
 allowed-tools: Read Glob Grep Write Edit Agent Bash(git add *) Bash(git status *)
 effort: high
@@ -110,56 +110,7 @@ Topics to cover — skip any that the codebase already answered:
 
 Write every stub doc with real, project-specific content. No placeholders. No "TBD". If you realize you're missing information for a section mid-write, ask one targeted question before writing that section.
 
-### `docs/product-context.md`
-- **Product Overview**: 1–2 paragraph elevator pitch
-- **Core Concepts & Terminology**: fill the glossary table with real terms; remove example rows
-- **Primary User Flows**: 2–4 concrete flows the codebase supports
-- **`delicate` flag domain examples**: the project-specific surfaces confirmed in the grill
-- **Free vs. Paid Feature Split**: fill if applicable; remove this section if the product has no tiers
-- **Business Rules**: non-obvious product rules (trial periods, data retention, geo restrictions, etc.); omit if none
-- **Voice & Tone**: fill if there are user-facing copy conventions; remove if not relevant
-
-### `docs/architecture.md`
-- **Tech Stack**: fill the bullet list from confirmed inferences
-- **High-Level Architecture**: a short block diagram or prose description of the major pieces
-- **Data Flow**: walk through what happens for the most common user action (input → state mutation → persistence → external services)
-- **Boundaries & Contracts**: API schema location, storage layer interface, any worker protocols
-- **Validation table**: bind each category to the actual `npm run ...` (or equivalent) command; mark N/A with rationale for categories that don't apply
-- **CI**: describe what runs on push and what blocks merges; state "no CI configured" if absent
-- **Cross-Cutting Concerns**: fill only the subsections that exist in this project (auth lifecycle, error tracking, feature flags, i18n, accessibility)
-
-### `docs/codebase-map.md`
-- **Entry Points**: app entry point, core type definitions, global config, routes/navigation
-- **State & Data**: fill with real file paths and one-line descriptions
-- **UI / Components**: fill if this project has a UI; remove section if purely backend
-- **Workers / Background**: fill if applicable; remove if not
-- **API / Backend**: fill if applicable
-- **Tests**: real test directory paths
-- **Config**: real config file paths agents might need to edit
-- **Feature Wiring Maps**: replace the placeholder wiring maps with 2–3 real feature trails specific to this project (e.g., "add a new API endpoint", "add a gated feature")
-
-### `docs/decisions.md`
-- At least 3–5 entries covering major settled decisions: why this stack, why this auth approach, key architectural choices. Include the rationale, not just the decision.
-
-### `docs/patterns.md`
-- Implementation patterns the team has settled on: at least one per major layer (API, data, UI if applicable)
-- **Known Pitfalls** section: fill with footguns from the grill session and codebase exploration
-- Leave the template structure intact; fill each section that applies
-
-### `docs/lessons-learned.md`
-- Add any lessons surfaced during the grill (confirmed incidents, footguns, past regressions)
-- Leave empty rather than fabricate — this doc grows over time with real tasks
-
-### Agent config files — merge protocol
-
-If any of `AGENTS.md`, `CLAUDE.md`, `CODEX.md` had project-specific content below `<!-- canon:end -->` (noted in Phase 0):
-
-1. For each custom section, classify it:
-   - **Redundant with canon** → drop it (canon handles this structurally)
-   - **Project-specific addition** → keep it below `<!-- canon:end -->`
-   - **Conflict with canon** → surface it to the project owner and wait for a decision before writing
-2. Rewrite the file: canon block unchanged between its delimiters, project additions below `<!-- canon:end -->`.
-3. Never modify content between `<!-- canon:start -->` and `<!-- canon:end -->`.
+For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/lessons-learned.md`, plus the merge protocol for `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
 
 ---
 
@@ -196,3 +147,13 @@ Then print a summary:
 - Any sections left intentionally thin, and why
 - Next step: `git diff --staged` to review, then commit when satisfied
 - How to run the pipeline once you have a task ready: `canon run <id>`
+
+---
+
+## Related
+
+- `/canon-spec` — author the first task once scaffold docs are filled.
+- `/canon-status` — verify the project's task state.
+- `/canon-pipeline` — once a task exists, drive it through the pipeline.
+- `AGENTS.md` — workflow rules; the `## Release Rules` section governs how `/canon-changelog` calibrates.
+- `docs/pipeline-orchestrator.md` — pipeline internals for when tasks are running.

@@ -1,6 +1,6 @@
 ---
 name: canon-status
-description: Show where all in-progress tasks stand, flag what needs attention, and recommend the next concrete action. Read-only — no files modified.
+description: Use when the human asks where canon tasks stand — "where are we", "pipeline status", "what's in flight", "what should I work on next", "what's blocked", or explicit `/canon-status` invocation. Also use at session start when several canon tasks may be in progress and a map of what needs attention vs. what's still running is needed. Read-only — surfaces task phase, blockers, and recommended next action across all in-progress tasks.
 allowed-tools: Read Glob Grep Bash(canon task *) Bash(git branch *) Bash(git log *) Bash(git status *)
 effort: low
 ---
@@ -90,3 +90,12 @@ Things worth saying:
 - If there's nothing in flight and nothing needs attention: "Pipeline is idle. Create a new task with `canon task new <id> "Title"`."
 
 Don't pad. If there's nothing to say, don't say it.
+
+---
+
+## Related
+
+- `/canon-spec` — author a new task when status shows the pipeline idle or "needs a next action."
+- `/canon-pipeline` — drive an in-flight task forward.
+- `/canon-review` — pre-flight a spec before invoking the pipeline.
+- `/canon-changelog` — draft release notes when status shows shipped tasks.

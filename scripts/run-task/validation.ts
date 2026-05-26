@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { parseTable, parseTableH3, extractSectionBodies } from './markdown-table.js';
-import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
+import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
 import { filterGitIgnoredPaths, getTreeDriftFiles, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
-import { taskDirFor } from './state.js';
+import { readStatus, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
 export function escapeRegExp(value: string): string {
@@ -158,12 +158,9 @@ export function verifyRerouteAmendment(
     taskId: string,
     requiredRound: number,
 ): { amended: boolean; reason: string } {
-    // Read the spec.md from the REPO_ROOT-anchored tasks dir (via taskDirFor,
-    // which respects CANON_TASKS_DIR_OVERRIDE for tests). The documented reroute
-    // workflow is "operator amends tasks/<id>/spec.md in the main repo"; canon
-    // syncs main → worktree at implement-start, so the worktree's copy is stale
-    // at pre-flight time. Reading the worktree path (the prior implementation)
-    // false-aborts a correctly-amended main-repo spec on worktree-mode tasks.
+    // taskDirFor resolves to the active task directory, so reroute pre-flight
+    // checks the worktree spec when one exists and REPO_ROOT only before the
+    // task has entered worktree-backed phases.
     const specPath = path.join(taskDirFor(taskId), 'spec.md');
     let content: string;
     try {
@@ -888,7 +885,15 @@ export function extractHandoffPath(cell: string): string | null {
     return result.kind === 'ok' ? result.path : null;
 }
 
-const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set([]);
+// Pipeline telemetry files are written by Claude QA (`done.md`) and the
+// orchestrator itself (`pipeline-invocations.md`), not by Codex. After a reroute,
+// prior-cycle telemetry edits can remain in the cumulative branch diff and
+// otherwise trigger false diff→handoff failures on the next implement pass.
+// PR #107 surfaced the bug: Codex's round-2 handoff ended up mirroring QA's
+// telemetry writes just to satisfy this pre-flight. Exempt telemetry here so
+// the handoff stays scoped to current-cycle Codex work; the handoff→diff check
+// below still rejects telemetry paths if Codex claims them in the handoff.
+const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set<string>(PIPELINE_TELEMETRY_FILES);
 
 // Pipeline-owned task artifacts (anything under `tasks/<active-id>/`) never need
 // to appear in the handoff Changes table — they describe the implementation,
@@ -972,10 +977,12 @@ export function verifyBaseDriftFromData(
     diffFiles: readonly string[],
     allowedPaths: ReadonlySet<string>,
     taskIds: readonly string[],
+    allowedPrefixes: readonly string[] = [],
 ): string[] {
     const drift: string[] = [];
     for (const filePath of diffFiles) {
         if (allowedPaths.has(filePath)) continue;
+        if (allowedPrefixes.some(prefix => filePath.startsWith(prefix))) continue;
         if (taskIds.some(taskId => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`))) continue;
         drift.push(filePath);
     }
@@ -1038,18 +1045,41 @@ export function verifyBaseDrift(
     }
 
     const allowedPaths = new Set<string>(PIPELINE_TELEMETRY_FILES);
+    const allowedPrefixes: string[] = [];
     for (const taskId of taskIds) {
         const parsed = parseAffectedFilesFromSpec(taskId);
         for (const filePath of parsed.files) {
-            allowedPaths.add(filePath);
+            // Trailing-slash entries are directory-form scope (e.g., `dist/` covers
+            // `dist/cli/index.js`). Kept with the slash so prefix matching is
+            // boundary-correct: `dist/` does not accept `dist-other/foo`.
+            if (filePath.endsWith('/')) {
+                allowedPrefixes.push(filePath);
+            } else {
+                allowedPaths.add(filePath);
+            }
         }
         for (const malformed of parsed.malformed) {
             warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
         }
+
+        // QA's "Docs Freshness" sweep promotes lessons into PIPELINE_MANAGED_DOCS.
+        // The promotion target is downstream of what the spec author could have
+        // predicted, so once qa is done, auto-allowlist managed docs to avoid
+        // forcing a spec backfill before --pr.
+        try {
+            if (readStatus(taskId).phases.qa?.status === 'done') {
+                for (const doc of PIPELINE_MANAGED_DOCS) {
+                    allowedPaths.add(doc);
+                }
+            }
+        } catch {
+            // readStatus failures (missing/malformed status.json) leave the
+            // pre-QA allowlist in place — strictly safer than auto-widening.
+        }
     }
 
     return {
-        drift: verifyBaseDriftFromData(driftResult.files, allowedPaths, taskIds),
+        drift: verifyBaseDriftFromData(driftResult.files, allowedPaths, taskIds, allowedPrefixes),
         fetchFailed: false,
         diffFailed: false,
     };

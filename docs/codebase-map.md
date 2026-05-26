@@ -36,8 +36,9 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | CLI parsing and logging | `scripts/run-task/cli.ts` | Args, usage, `die` / `info` / `warn` |
 | State I/O and session storage | `scripts/run-task/state.ts` | `status.json`, derived status, task/worktree path helpers |
 | Git plumbing and porcelain parsing | `scripts/run-task/git.ts` | Branch helpers, commits, porcelain parsers |
-| Worktree management and telemetry sync | `scripts/run-task/worktree.ts` | Worktree lifecycle plus pipeline telemetry files |
+| Worktree management | `scripts/run-task/worktree.ts` | Worktree lifecycle, cleanup/detect helpers, `findExistingWorktreeForBranch`, and pipeline file registries |
 | Validation gates and diff checks | `scripts/run-task/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
+| Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `scripts/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
 | Task management helper (status.json updates, phase transitions) | `scripts/task.sh` | jq-driven; agents and humans both use it |
 | Phase routing logic (phase order, transitions) | `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
@@ -86,6 +87,7 @@ These must stay current — agents read them at session start (per phase rules i
 | Handoff/git porcelain parser | `tests/run-task-parse-porcelain.test.ts` | Edge cases for git status parsing |
 | Handoff validation logic | `tests/run-task-validation.test.ts` | `validateHandoff()` cases |
 | Docs refs validator | `scripts/docs-refs-check.mjs` | Markdown reference gate; run via `npm run docs-refs-check` |
+| Canon-managed template sync | `tests/sync-canon-templates.test.ts` | Sync direction, delimiter preservation, CLI check, hook regression |
 
 Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test files import directly from `scripts/`.
 
@@ -94,6 +96,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | What | Where | Notes |
 |---|---|---|
 | Node/TS project metadata, npm scripts | `package.json` | `test`, `type-check`, `task`, `run-task` scripts |
+| Pre-commit sync hook | `package.json` | `simple-git-hooks` config plus `sync-templates` scripts |
 | GitHub Actions CI workflow | `.github/workflows/ci.yml` | Triggers, matrix, audit, lint, type-check, test; see `docs/architecture.md` `## CI` |
 | ESLint flat config | `eslint.config.mjs` | `@typescript-eslint/recommendedTypeChecked`, `projectService: true` |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `scripts/` and `tests/` only |

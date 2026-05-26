@@ -148,6 +148,7 @@ void test('task new creates a task from templates and rejects existing tasks', (
             assert.equal(status.base_branch, 'dev');
             assert.equal(status.full_send, false);
             assert.ok(fs.existsSync(path.join(taskDir, 'spec.md')));
+            assert.equal(fs.existsSync(path.join(root, 'dev-worktrees', 'new-task')), false);
 
             assert.throws(() => taskNew(['new-task', 'Again']), /Task directory tasks\/new-task already exists/);
         });
@@ -202,6 +203,64 @@ void test('task list does not crash on non-canonical status.json (issue #83)', (
         });
         assert.match(output, /valid-task\s+Valid\s+spec/);
         assert.match(output, /noncanonical\s+\(invalid status\.json\)\s+INVALID:/);
+    });
+});
+
+void test('task list renders INVALID row for orphan-worktree state (does not abort listing)', () => {
+    // Orphan state: status.json says worktree:true with a branch, but
+    // dev-worktrees/<id>/ is missing AND no checkout exists for the branch.
+    // Pre-fix, taskDirForCwd → resolveTaskCwd would die(), aborting the
+    // entire listing on the first orphan task (regression of issue #83 after
+    // PR #104's worktree-canonical rewire).
+    withTasksRoot(tasksRoot => {
+        const worktreesRoot = path.join(path.dirname(tasksRoot), 'dev-worktrees');
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        writeTask(tasksRoot, 'orphan-task', makeStatus('orphan-task', {
+            title: 'Orphan',
+            worktree: true,
+            branch: 'task/orphan-task-never-existed',
+        }));
+        writeTask(tasksRoot, 'healthy-task', makeStatus('healthy-task', { title: 'Healthy' }));
+
+        withEnv({ CANON_WORKTREES_ROOT: worktreesRoot }, () => {
+            const output = captureStdout(() => {
+                assert.throws(() => taskList(), /1 task\(s\) had invalid status\.json/);
+            });
+            assert.match(output, /orphan-task\s+Orphan\s+INVALID: worktree missing/);
+            assert.match(output, /healthy-task\s+Healthy\s+spec/);
+        });
+    });
+});
+
+void test('task list renders INVALID row for stale-worktree state (dir present, no status.json inside)', () => {
+    // Stale state: dev-worktrees/<id>/ exists on disk but has no valid
+    // `tasks/<id>/status.json` inside it (e.g., after a partial
+    // `git worktree remove` that left the directory behind, or a manual rm
+    // -rf of the inner files). resolveTaskCwd's `if (fs.existsSync(directStatus))
+    // return directWorktree;` check fails, then it falls through to the
+    // findExistingWorktreeForBranch lookup and die()s if no checkout exists.
+    // The orphan detector must mirror that same usability test, not just
+    // check fs.existsSync(directWorktree).
+    withTasksRoot(tasksRoot => {
+        const worktreesRoot = path.join(path.dirname(tasksRoot), 'dev-worktrees');
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        // Create the worktree directory but leave it empty (no nested
+        // tasks/<id>/status.json — the file resolveTaskCwd actually checks).
+        fs.mkdirSync(path.join(worktreesRoot, 'stale-task'), { recursive: true });
+        writeTask(tasksRoot, 'stale-task', makeStatus('stale-task', {
+            title: 'Stale',
+            worktree: true,
+            branch: 'task/stale-task-never-existed',
+        }));
+        writeTask(tasksRoot, 'healthy-task', makeStatus('healthy-task', { title: 'Healthy' }));
+
+        withEnv({ CANON_WORKTREES_ROOT: worktreesRoot }, () => {
+            const output = captureStdout(() => {
+                assert.throws(() => taskList(), /1 task\(s\) had invalid status\.json/);
+            });
+            assert.match(output, /stale-task\s+Stale\s+INVALID: worktree missing/);
+            assert.match(output, /healthy-task\s+Healthy\s+spec/);
+        });
     });
 });
 
@@ -923,6 +982,44 @@ void test('task release-init skips .canon/version when the file does not exist (
     });
 });
 
+void test('task release-init inserts new block after intro blockquote, before first existing version block', () => {
+    // Regression for the 1.5.0 init bug: the new ## block was inserted
+    // directly after the H1, pushing any intro blockquote (e.g.,
+    // "> Format follows Keep a Changelog...") below the new entry.
+    // The blockquote is file-level meta and belongs between the H1 and
+    // the first version block.
+    const { root, work } = setupReleaseRepo();
+    try {
+        const initialChangelog = [
+            '# Changelog',
+            '',
+            '> Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).',
+            '',
+            '## [1.0.0] — 2026-05-01',
+            '',
+            '- Initial release.',
+            '',
+        ].join('\n');
+        fs.writeFileSync(path.join(work, 'CHANGELOG.md'), initialChangelog, 'utf8');
+        git(work, ['add', 'CHANGELOG.md']);
+        git(work, ['commit', '-m', 'changelog with intro blockquote']);
+        withCwd(work, () => {
+            captureStdout(() => taskReleaseInit('1.6.0', { pushFn: () => undefined }));
+        });
+        const result = fs.readFileSync(path.join(work, 'CHANGELOG.md'), 'utf8');
+        // New block must appear AFTER the intro blockquote and BEFORE the
+        // prior version block.
+        const blockquoteIdx = result.indexOf('> Format follows');
+        const newBlockIdx = result.indexOf('## [1.6.0] — unreleased');
+        const priorBlockIdx = result.indexOf('## [1.0.0] — 2026-05-01');
+        assert.ok(blockquoteIdx > 0, 'intro blockquote should still be in the file');
+        assert.ok(newBlockIdx > blockquoteIdx, 'new block must follow the blockquote');
+        assert.ok(priorBlockIdx > newBlockIdx, 'prior block must follow the new block');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 function runTaskCmd(cwd: string, args: string[], env: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
     const code = [
         `import(${JSON.stringify(path.join(WORKSPACE_ROOT, 'src/task/index.ts'))})`,
@@ -992,6 +1089,131 @@ void test('task phase routes to the task worktree status.json', () => {
         assert.equal(mainStatus.phases.spec?.status, 'pending');
         assert.equal(worktreeStatus.phases.spec?.status, 'done');
         assert.equal(worktreeStatus.status, 'spec_review');
+    });
+});
+
+void test('task status and list read task worktree status when present', () => {
+    withTempDir('task-worktree-status-list-', root => {
+        const repo = path.join(root, 'repo');
+        const worktreesRoot = path.join(root, 'worktrees');
+        const worktree = path.join(worktreesRoot, 'worktree-visible');
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        git(root, ['init', '-b', 'main', repo]);
+        git(repo, ['config', 'user.email', 'test@example.com']);
+        git(repo, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n', 'utf8');
+        git(repo, ['add', 'README.md']);
+        git(repo, ['commit', '-m', 'init']);
+        git(repo, ['worktree', 'add', '-b', 'task/worktree-visible', worktree, 'main']);
+
+        const mainTaskDir = path.join(repo, 'tasks', 'worktree-visible');
+        const worktreeTaskDir = path.join(worktree, 'tasks', 'worktree-visible');
+        fs.mkdirSync(mainTaskDir, { recursive: true });
+        fs.mkdirSync(worktreeTaskDir, { recursive: true });
+        fs.writeFileSync(path.join(mainTaskDir, 'status.json'), `${JSON.stringify(makeStatus('worktree-visible', {
+            title: 'Main scaffold',
+            branch: 'task/worktree-visible',
+            worktree: true,
+        }), null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(makeStatus('worktree-visible', {
+            title: 'Live worktree',
+            branch: 'task/worktree-visible',
+            worktree: true,
+            phases: {
+                ...makeStatus('worktree-visible').phases,
+                spec: { status: 'done', agent: 'claude' },
+            },
+        }), null, 2)}\n`, 'utf8');
+
+        const rootOnlyDir = path.join(repo, 'tasks', 'root-only');
+        fs.mkdirSync(rootOnlyDir, { recursive: true });
+        fs.writeFileSync(path.join(rootOnlyDir, 'status.json'), `${JSON.stringify(makeStatus('root-only', {
+            title: 'Root only',
+        }), null, 2)}\n`, 'utf8');
+
+        const env = { CANON_WORKTREES_ROOT: worktreesRoot };
+        const statusResult = runTaskCmd(repo, ['status', 'worktree-visible'], env);
+        assert.equal(statusResult.status, 0, statusResult.stderr);
+        assert.match(statusResult.stdout, /"title": "Live worktree"/);
+        assert.doesNotMatch(statusResult.stdout, /Main scaffold/);
+
+        const listResult = runTaskCmd(repo, ['list'], env);
+        assert.equal(listResult.status, 0, listResult.stderr);
+        assert.match(listResult.stdout, /worktree-visible\s+Live worktree\s+spec_review/);
+        assert.match(listResult.stdout, /root-only\s+Root only\s+spec/);
+        assert.doesNotMatch(listResult.stdout, /Main scaffold/);
+    });
+});
+
+void test('task accept routes writes to the task worktree status.json', () => {
+    withTempDir('task-worktree-accept-', root => {
+        const repo = path.join(root, 'repo');
+        const worktreesRoot = path.join(root, 'worktrees');
+        const worktree = path.join(worktreesRoot, 'worktree-accept');
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        git(root, ['init', '-b', 'main', repo]);
+        git(repo, ['config', 'user.email', 'test@example.com']);
+        git(repo, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n', 'utf8');
+        git(repo, ['add', 'README.md']);
+        git(repo, ['commit', '-m', 'init']);
+        git(repo, ['worktree', 'add', '-b', 'task/worktree-accept', worktree, 'main']);
+
+        const phases: StatusJson['phases'] = {
+            ...makeStatus('worktree-accept').phases,
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: {
+                status: 'done',
+                agent: 'codex',
+                verdict: 'approved',
+                iterations: 0,
+                iterations_current_loop: 0,
+                iterations_total: 0,
+                changes_requested_total: 0,
+                auto_block_count: 0,
+            },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'in_progress', agent: 'codex' },
+        };
+        const status = makeStatus('worktree-accept', {
+            branch: 'task/worktree-accept',
+            base_branch: 'main',
+            worktree: true,
+            phases,
+        });
+        const mainTaskDir = path.join(repo, 'tasks', 'worktree-accept');
+        const worktreeTaskDir = path.join(worktree, 'tasks', 'worktree-accept');
+        fs.mkdirSync(mainTaskDir, { recursive: true });
+        fs.mkdirSync(worktreeTaskDir, { recursive: true });
+        fs.writeFileSync(path.join(mainTaskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'handoff.md'), [
+            '# Implementation Handoff: worktree-accept',
+            '',
+            '## Changes',
+            '',
+            '| File | What Changed |',
+            '|---|---|',
+            '| `src.txt` | worktree implementation |',
+            '',
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(worktree, 'src.txt'), 'work\n', 'utf8');
+        git(worktree, ['add', 'src.txt']);
+        git(worktree, ['commit', '-m', 'implement work']);
+
+        const result = runTaskCmd(repo, ['accept', 'worktree-accept', 'implement'], {
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            CANON_SKIP_PHASE_GATE: '1',
+        });
+        assert.equal(result.status, 0, result.stderr);
+
+        const mainStatus = readStatusFile(mainTaskDir);
+        const worktreeStatus = readStatusFile(worktreeTaskDir);
+        assert.equal(mainStatus.phases.implement?.status, 'in_progress');
+        assert.equal(worktreeStatus.phases.implement?.status, 'done');
+        assert.equal(worktreeStatus.phases.implement?.operator_accepted, true);
+        assert.equal(fs.existsSync(path.join(mainTaskDir, 'notes.md')), false);
+        assert.match(fs.readFileSync(path.join(worktreeTaskDir, 'notes.md'), 'utf8'), /Operator accepted implement phase/);
     });
 });
 

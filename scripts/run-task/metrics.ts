@@ -4,14 +4,14 @@ import path from 'node:path';
 import { REPO_ROOT } from './env.js';
 import type { MetricEntry } from './types.js';
 
-export function getMetricsFile(): string {
+export function getMetricsFile(activeCwd?: string): string {
     return process.env.CANON_METRICS_FILE_OVERRIDE
         ? path.resolve(process.env.CANON_METRICS_FILE_OVERRIDE)
-        : path.join(REPO_ROOT, 'docs/pipeline-invocations.md');
+        : path.join(activeCwd ?? REPO_ROOT, 'docs/pipeline-invocations.md');
 }
 
 export function recordMetric(entry: MetricEntry): void {
-    const metricsFile = getMetricsFile();
+    const metricsFile = getMetricsFile(entry.activeCwd);
     if (!fs.existsSync(metricsFile)) {
         fs.writeFileSync(metricsFile, [
             '# Workflow Metrics',

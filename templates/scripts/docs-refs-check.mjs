@@ -2,9 +2,8 @@
 /**
  * docs-refs-check.mjs
  *
- * Adapted from tstraub89/gallery_wall's scripts/docs-refs-check.mjs with
- * attribution. Validates markdown references in canon-ai docs and task
- * artifacts so stale paths, symbols, sections, and anchors fail fast.
+ * Validates markdown references in canon-managed docs and task artifacts
+ * so stale paths, symbols, sections, and anchors fail fast.
  *
  * Checked ref classes:
  *   1. Backtick file-path refs: `path/to/file.ts`
@@ -22,8 +21,16 @@
  * Intentional forward-ref guidance: if a doc needs to mention a symbol or file
  * that does not exist yet, use prose or another reference style that does not
  * match these four validators.
+ *
+ * Gitignore handling: refs whose target path is gitignored (per
+ * `git check-ignore`, batched once at startup) are skipped. This keeps local
+ * vs. CI behavior consistent for paths that legitimately exist on a
+ * developer machine but never on a fresh clone (e.g.,
+ * `.claude/settings.local.json`). Falls back to "no skip" outside a git
+ * repo so the script remains usable in test fixtures.
  */
 
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -42,6 +49,15 @@ const VALID_DIRS = new Set([
     '.codex',
     'templates',
 ]);
+
+// Adopters: extend after `canon upgrade` to skip archive/log conventions
+// (e.g., 'docs/archive', 'docs/personas', 'docs/changelogs.md'). Entries
+// match the repo-relative POSIX path of each source file by exact match
+// (skip just that file — use this for individual append-only logs like
+// 'docs/changelogs.md') or by directory prefix ('docs/archive' skips every
+// file under 'docs/archive/'). Trailing slashes on entries are normalized
+// away, so 'docs/archive' and 'docs/archive/' behave identically.
+const NOISY_SOURCE_PATHS = [];
 
 const ROOT_MARKDOWN_FILES = ['AGENTS.md', 'CLAUDE.md', 'CODEX.md', 'README.md'];
 const MARKDOWN_ROOT_DIRS = ['docs', 'tasks', 'templates'];
@@ -179,6 +195,7 @@ function resolveRepoRelative(repoRoot, relPath) {
 }
 
 function isPlaceholderTarget(target) {
+    if (target.includes('...')) return true;
     if (/[<>\[\]\*\?]/.test(target)) return true;
     if (target.endsWith('/')) return true;
 
@@ -191,6 +208,17 @@ function isPlaceholderTarget(target) {
     }
 
     return false;
+}
+
+// Narrower than `isPlaceholderTarget`: symbol names commonly collide
+// with the path-oriented PLACEHOLDER_SEGMENTS list (e.g., a real export
+// named `id`, `name`, `task`, or `symbol` would be misread as a
+// placeholder and silently bypassed). The only symbol form we want
+// treated as a placeholder is `...` — the marker-range pattern that
+// motivated the BACKLOG entry (e.g.,
+// `` `<!-- canon:start -->...<!-- canon:end -->` in `AGENTS.md` ``).
+function isPlaceholderSymbol(symbol) {
+    return symbol.includes('...');
 }
 
 function isAllowedDocTarget(target) {
@@ -214,19 +242,162 @@ function isLineCitationTarget(target) {
 
 // `templates/` markdown is intentionally scanned — those files ship to
 // adopters via `canon upgrade`, so broken refs there would propagate
-// silently. Only spec.md / plan.md templates (which contain placeholder
-// refs by design) and the BACKLOG (deliberate forward-refs to unbuilt
-// work) are exempt.
-function isNoisySourceFile(relPath) {
+// silently. Three exempt classes, each by named purpose (not by filename
+// suffix alone):
+//
+// 1. `docs/BACKLOG.md` — deliberate forward-refs to unbuilt work.
+// 2. spec.md / plan.md / notes.md / spec-review.md TEMPLATES under any
+//    `templates/` directory — contain `<placeholder>` refs by design.
+// 3. Task spec.md / plan.md / notes.md / spec-review.md at
+//    `tasks/<id>/`. spec.md and plan.md describe work to be done,
+//    including symbols/files the task will create — forward refs are
+//    intrinsic, not stale. notes.md and spec-review.md are
+//    hypothetical-friendly: notes.md accumulates "Codex tried <path>
+//    but it didn't exist"; spec-review.md captures reviewer thought
+//    experiments referencing files that may not exist. Refs there are
+//    exploration artifacts, not assertions. `handoff.md` / `review.md`
+//    / `done.md` are deliberately NOT exempt — those are records of
+//    real work and broken refs there are real bugs (e.g., a test plan
+//    pointing at a wrong path). Spec ref hygiene at archive time is
+//    the Stage 1 code reviewer's job; once archived, the dir moves to
+//    `tasks/_archive/` which the directory walker already excludes.
+//    (CI can't distinguish "active task being shipped now" from
+//    "parked task describing future work." Per Codex P1 review on
+//    PR #100 — the carve-out is intentional.) `<id>` here matches the
+//    documented `tasks/_templates/` override path too — `_templates`
+//    is a single non-slash path component, so the `[^/]+` segment
+//    exempts override-template placeholders alongside real task
+//    artifacts.
+function isNoisySourceFile(relPath, skipPaths = []) {
+    if (skipPaths.some(entry => {
+        const norm = entry.endsWith('/') ? entry.slice(0, -1) : entry;
+        return relPath === norm || relPath.startsWith(norm + '/');
+    })) return true;
     return (
         relPath === 'docs/BACKLOG.md' ||
-        /\/(spec|plan)\.md$/.test(relPath)
+        /(?:^|\/)templates\/(?:.*\/)?(spec|plan|notes|spec-review)\.md$/.test(relPath) ||
+        /^tasks\/[^/]+\/(spec|plan|notes|spec-review)\.md$/.test(relPath)
     );
 }
 
-function findBrokenRefs(repoRoot) {
+// Batched `git check-ignore --stdin -z` lookup. Mirrors the pattern from
+// `scripts/run-task/git.ts:filterGitIgnoredPaths`. Returns empty on any
+// failure (including running outside a git repo, where git exits 128) so
+// behavior degrades to the pre-1.5 "no skip" mode rather than failing
+// closed. Doc refs to paths that legitimately exist in the working tree
+// but are gitignored (e.g., `.claude/settings.local.json`, written by
+// Claude Code on first permission grant) previously caused inconsistent
+// pass/fail between local runs and CI; the skip lets the check stay
+// silent on paths git already treats as transient.
+// Resolve an anchor-link's path component (e.g., `../AGENTS.md`,
+// `./generated.md`, or `docs/foo.md`) to its repo-relative POSIX form.
+// Returns null for paths that resolve outside the repo, for URLs, or
+// for empty input. The same normalization runs at collection and lookup
+// time so set keys agree across both sites.
+function normalizeAnchorLinkPath(sourceFile, repoRoot, linkPath) {
+    if (!linkPath) return null;
+    if (linkPath.startsWith('http://') || linkPath.startsWith('https://')) return null;
+    const resolved = path.resolve(path.dirname(sourceFile), linkPath);
+    const relative = path.relative(repoRoot, resolved);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
+    return toPosixPath(relative);
+}
+
+function collectGitIgnoredTargets(repoRoot, candidateTargets) {
+    if (candidateTargets.size === 0) return new Set();
+    // Drop inputs git check-ignore can't process. Each form below makes
+    // git exit 128 and tank the whole batch:
+    //   - `../foo`: anchor-link relative paths are pre-normalized, but
+    //     backtick refs like `` `../dev-worktrees` `` in repo docs are
+    //     added raw.
+    //   - `/canon-spec`, `/absolute/path`: slash-prefixed tokens are
+    //     interpreted as absolute paths outside the worktree. Repo docs
+    //     contain backtick slash-command refs (`` `/canon-spec` ``,
+    //     `` `/canon-pipeline` ``, etc.) on purpose.
+    //   - `./foo`, http(s) URLs: not gitignore-checkable.
+    // Such refs can never be gitignored matches anyway; skipping them
+    // here keeps the rest of the batch live so the .gitignored skip
+    // actually works in CI.
+    const safe = [...candidateTargets].filter(target =>
+        !target.startsWith('./') &&
+        !target.startsWith('../') &&
+        !target.startsWith('/') &&
+        !target.startsWith('http://') &&
+        !target.startsWith('https://'),
+    );
+    if (safe.length === 0) return new Set();
+    const result = spawnSync('git', ['check-ignore', '--stdin', '-z'], {
+        cwd: repoRoot,
+        input: `${safe.join('\0')}\0`,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (result.error || (result.status !== 0 && result.status !== 1)) {
+        return new Set();
+    }
+    return new Set((result.stdout ?? '').split('\0').filter(p => p.length > 0));
+}
+
+function collectCandidateTargetPaths(markdownFiles, repoRoot, skipPaths) {
+    const targets = new Set();
+    for (const sourceFile of markdownFiles) {
+        const relSourceFile = toPosixPath(path.relative(repoRoot, sourceFile));
+        if (isNoisySourceFile(relSourceFile, skipPaths)) continue;
+        const text = readText(sourceFile);
+        const lines = text.split(/\r?\n/);
+        let inFence = false;
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (/^(```|~~~)/.test(trimmed)) {
+                inFence = !inFence;
+                continue;
+            }
+            if (inFence) continue;
+            for (const match of line.matchAll(/`([^`]+)`(?!\s+in\s+`|\s+§")/g)) {
+                targets.add(match[1]);
+            }
+            for (const match of line.matchAll(/`([^`]+)`\s+in\s+`([^`]+)`/g)) {
+                targets.add(match[2]);
+            }
+            for (const match of line.matchAll(/`([^`]+\.md)`\s+§"([^"]+)"/g)) {
+                targets.add(match[1]);
+            }
+            for (const match of line.matchAll(/(!?)\[([^\]]*)\]\(([^)]+)\)/g)) {
+                if (match[1] === '!') continue;
+                const raw = match[3].trim().replace(/\s+"[^"]*"\s*$/, '');
+                if (!raw.includes('#')) continue;
+                const [linkPath] = raw.split('#', 2);
+                const normalized = normalizeAnchorLinkPath(sourceFile, repoRoot, linkPath);
+                if (normalized) targets.add(normalized);
+            }
+        }
+    }
+    return targets;
+}
+
+function findBrokenRefs(repoRoot, options = {}) {
+    const skipPaths = options.skipPaths ?? NOISY_SOURCE_PATHS;
     const findings = [];
-    const markdownFiles = collectMarkdownFiles(repoRoot);
+    const allMarkdownFiles = collectMarkdownFiles(repoRoot);
+
+    // First pass: skip gitignored markdown source files entirely.
+    // This is broader than just self-anchor false positives — refs of
+    // any kind inside a gitignored doc are excluded. Rationale:
+    // gitignored files don't exist on a fresh clone (CI), so scanning
+    // them locally would reintroduce exactly the local-vs-CI skew this
+    // feature exists to remove. A broken ref inside a generated /
+    // local-only doc is by definition not in the repo's authoritative
+    // content. Trade-off accepted in favor of CI consistency, per the
+    // BACKLOG entry's framing.
+    const sourceRelByAbs = new Map(
+        allMarkdownFiles.map(abs => [abs, toPosixPath(path.relative(repoRoot, abs))]),
+    );
+    const ignoredSources = collectGitIgnoredTargets(repoRoot, new Set(sourceRelByAbs.values()));
+    const markdownFiles = allMarkdownFiles.filter(abs => !ignoredSources.has(sourceRelByAbs.get(abs)));
+
+    // Second pass: collect and check ref targets from the surviving sources.
+    const candidateTargets = collectCandidateTargetPaths(markdownFiles, repoRoot, skipPaths);
+    const gitIgnoredTargets = collectGitIgnoredTargets(repoRoot, candidateTargets);
     const textCache = new Map();
     const headingCache = new Map();
 
@@ -255,7 +426,7 @@ function findBrokenRefs(repoRoot) {
 
     for (const sourceFile of markdownFiles) {
         const relSourceFile = toPosixPath(path.relative(repoRoot, sourceFile));
-        if (isNoisySourceFile(relSourceFile)) continue;
+        if (isNoisySourceFile(relSourceFile, skipPaths)) continue;
 
         const sourceText = getText(sourceFile);
         const lines = sourceText.split(/\r?\n/);
@@ -282,6 +453,7 @@ function findBrokenRefs(repoRoot) {
                 if (isPlaceholderTarget(target)) continue;
                 const topLevel = target.split('/')[0];
                 if (!VALID_DIRS.has(topLevel)) continue;
+                if (gitIgnoredTargets.has(target)) continue;
 
                 const targetPath = resolveRepoRelative(repoRoot, target);
                 if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isFile()) {
@@ -296,6 +468,8 @@ function findBrokenRefs(repoRoot) {
                 if (isLineCitationTarget(target)) continue;
                 if (!isAllowedDocTarget(target)) continue;
                 if (isPlaceholderTarget(target)) continue;
+                if (isPlaceholderSymbol(symbol)) continue;
+                if (gitIgnoredTargets.has(target)) continue;
                 const targetPath = resolveRepoRelative(repoRoot, target);
 
                 if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isFile()) {
@@ -317,6 +491,7 @@ function findBrokenRefs(repoRoot) {
                 if (isLineCitationTarget(target)) continue;
                 if (!isAllowedDocTarget(target)) continue;
                 if (isPlaceholderTarget(target) || isPlaceholderTarget(headingText)) continue;
+                if (gitIgnoredTargets.has(target)) continue;
                 const targetPath = resolveRepoRelative(repoRoot, target);
 
                 if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isFile()) {
@@ -344,6 +519,10 @@ function findBrokenRefs(repoRoot) {
                 if (!anchor) continue;
                 if (PLACEHOLDER_SEGMENTS.has(slugify(anchor))) continue;
                 if (linkPath && !isAllowedAnchorLinkPath(linkPath)) continue;
+                if (linkPath) {
+                    const normalized = normalizeAnchorLinkPath(sourceFile, repoRoot, linkPath);
+                    if (normalized && gitIgnoredTargets.has(normalized)) continue;
+                }
 
                 const targetPath = linkPath
                     ? path.resolve(path.dirname(sourceFile), linkPath)
@@ -365,8 +544,8 @@ function findBrokenRefs(repoRoot) {
     return findings;
 }
 
-export function runChecks(repoRoot) {
-    return findBrokenRefs(repoRoot);
+export function runChecks(repoRoot, options = {}) {
+    return findBrokenRefs(repoRoot, options);
 }
 
 function printFindings(findings) {
@@ -393,4 +572,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exitCode = main();
 }
 
-export { VALID_DIRS, main };
+export { VALID_DIRS, NOISY_SOURCE_PATHS, main };

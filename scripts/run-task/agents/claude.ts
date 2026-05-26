@@ -60,7 +60,7 @@ export async function runClaude(
     resumeId: string | null,
     model: string,
     effort: string,
-    metricsContext?: { taskId: string; phase: string; iteration?: number },
+    metricsContext?: { taskId: string; phase: string; iteration?: number; activeCwd?: string },
     cwd = REPO_ROOT,
 ): Promise<ClaudeRunResult> {
     info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : 'Calling Claude Code...');

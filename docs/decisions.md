@@ -58,6 +58,16 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
+## Worktree-canonical task state from implement onward
+
+**Decision**: From implement onward, the task worktree is the source of truth for task-scoped state: `tasks/<id>/` artifacts and per-task telemetry rows. REPO_ROOT remains the source of truth for project-level resources and for pre-implement task state before a worktree exists.
+
+**Why**: The previous dual-source model kept REPO_ROOT and the worktree in sync through mirror steps. That created stale parser reads, dirty REPO_ROOT task artifacts during `--ship`, and ambiguous operator guidance about which copy to amend. A single runtime resolver closes that bug class without changing the pre-implement scaffold flow.
+
+**Rule**: Use `taskDirFor()` for general task-state reads and writes; it resolves to the worktree when one exists and REPO_ROOT otherwise. Use `taskDirForRepoRoot()` only for operations that intentionally need REPO_ROOT semantics regardless of worktree state, such as `resolveTaskCwd`, `commitTaskArtifactsToBase`, and the post-teardown archive move in `shipTasks`. Do not reintroduce REPO_ROOT mirrors of task artifacts or telemetry after plan; managed-doc coordination is a separate concern.
+
+---
+
 ## Two-stage code review with Stage 1 as a gate
 
 **Decision**: Code review runs in two stages. Stage 1 verifies spec compliance (validation outcomes, AC coverage, dropped sections); if Stage 1 fails, Stage 2 (code quality) is skipped entirely and the review sends back to Codex.

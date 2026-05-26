@@ -5,6 +5,7 @@ import { info, warn } from '../cli.js';
 import { getClaudeConfig } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
 import { taskDirFor } from '../state.js';
+import { getActiveCwd } from '../worktree.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptPlan } from '../prompts/index.js';
 import { isTemplateUnfilled } from '../validation.js';
@@ -20,12 +21,14 @@ export async function runPlanPhase(
     info(`Phase: plan (Claude writes plan${state.isBundle ? 's' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'plan', 'in_progress');
     const cfg = getClaudeConfig('plan', tasks);
+    const activeCwd = getActiveCwd(taskIds);
     const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'plan',
         iteration: tasks[0].status.phases.plan?.iterations_current_loop
             ?? tasks[0].status.phases.plan?.iterations
             ?? 0,
+        activeCwd,
     });
     for (const t of tasks) {
         const planPath = path.join(taskDirFor(t.taskId), 'plan.md');

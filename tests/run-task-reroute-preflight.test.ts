@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const WORKTREE_ROOT = process.cwd();
@@ -24,6 +24,14 @@ function writeTaskStatus(tasksRoot: string, taskId: string, status: Record<strin
     const taskDir = path.join(tasksRoot, taskId);
     fs.mkdirSync(taskDir, { recursive: true });
     fs.writeFileSync(path.join(taskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+}
+
+function initGitRepo(dir: string): void {
+    execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: dir });
+}
+
+function worktreeTasksRoot(worktreesRoot: string, taskId: string): string {
+    return path.join(worktreesRoot, taskId, 'tasks');
 }
 
 function makeRerouteStatus(taskId: string, branch: string, rerouteCount = 0): Record<string, unknown> {
@@ -59,6 +67,12 @@ function runReroute(
 ): { status: number | null; stdout: string; stderr: string } {
     const telemetryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reroute-preflight-metrics-'));
     const telemetryFile = path.join(telemetryDir, 'pipeline-invocations.md');
+    const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        CANON_WORKTREES_ROOT: path.join(cwd, 'worktrees'),
+        CANON_METRICS_FILE_OVERRIDE: telemetryFile,
+    };
+    delete env.CANON_TASKS_DIR_OVERRIDE;
     const result = spawnSync(process.execPath, [
         '--import',
         MD_LOADER,
@@ -73,12 +87,7 @@ function runReroute(
     ], {
         cwd,
         encoding: 'utf8',
-        env: {
-            ...process.env,
-            CANON_TASKS_DIR_OVERRIDE: path.join(cwd, 'tasks'),
-            CANON_WORKTREES_ROOT: path.join(cwd, 'worktrees'),
-            CANON_METRICS_FILE_OVERRIDE: telemetryFile,
-        },
+        env,
     });
     fs.rmSync(telemetryDir, { recursive: true, force: true });
     return {
@@ -92,15 +101,16 @@ function readStatus(tasksRoot: string, taskId: string): Record<string, unknown> 
     return JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as Record<string, unknown>;
 }
 
-void test('rerouteFromHumanReview reads main-repo spec.md, ignoring worktree contents (P2 regression: pre-flight previously used resolveTaskCwd → worktree path, which false-aborted a correctly-amended main-repo spec)', () => {
-    withTempDir('reroute-preflight-main-repo-source-', dir => {
+void test('rerouteFromHumanReview reads worktree spec.md when a task worktree exists', () => {
+    withTempDir('reroute-preflight-worktree-source-', dir => {
+        initGitRepo(dir);
         const tasksRoot = path.join(dir, 'tasks');
         const worktreesRoot = path.join(dir, 'worktrees');
         const taskId = 'task-a';
         const status = makeRerouteStatus(taskId, 'task/task-a');
         writeTaskStatus(tasksRoot, taskId, status);
-        writeTaskStatus(path.join(worktreesRoot, taskId, 'tasks'), taskId, status);
-        // Main-repo spec is what the operator amends (per docs). Pre-flight MUST read this.
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        // REPO_ROOT still has the pre-implement scaffold.
         writeSpec(dir, taskId, [
             '# Spec',
             '',
@@ -109,61 +119,22 @@ void test('rerouteFromHumanReview reads main-repo spec.md, ignoring worktree con
             'No amendment heading here.',
             '',
         ].join('\n'));
-        // Worktree spec has the amendment — irrelevant to the pre-flight after the P2 fix.
-        // (Pre-fix, the gate read this path and let the reroute proceed; post-fix it ignores it.)
+        // The worktree copy is canonical past implement and carries the amendment.
         writeSpec(path.join(worktreesRoot, taskId), taskId, [
             '# Spec',
             '',
             '## Amendment',
             '',
-            'Worktree amendment that should not satisfy the gate.',
+            'Worktree amendment that should satisfy the gate.',
             '',
         ].join('\n'));
 
-        const before = fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8');
-        const result = runReroute(dir, [taskId], false);
-
-        assert.notEqual(result.status, 0);
-        assert.match(result.stderr, /spec\.md amendment required before reroute/);
-        assert.match(result.stderr, /task-a/);
-        assert.match(result.stderr, /expected heading: ## Amendment/);
-        // The reported spec path is the main-repo path (tasks/...), not the worktree path.
-        assert.match(result.stderr, /tasks\/task-a\/spec\.md/);
-        assert.doesNotMatch(result.stderr, /worktrees\/task-a/);
-        assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8'), before);
-    });
-});
-
-void test('rerouteFromHumanReview accepts a correctly-amended main-repo spec on a worktree-mode task', () => {
-    withTempDir('reroute-preflight-main-repo-pass-', dir => {
-        const tasksRoot = path.join(dir, 'tasks');
-        const worktreesRoot = path.join(dir, 'worktrees');
-        const taskId = 'task-a';
-        const status = makeRerouteStatus(taskId, 'task/task-a');
-        writeTaskStatus(tasksRoot, taskId, status);
-        writeTaskStatus(path.join(worktreesRoot, taskId, 'tasks'), taskId, status);
-        // Main-repo has the amendment. Worktree is stale (sync hasn't run yet at pre-flight time).
-        writeSpec(dir, taskId, [
-            '# Spec',
-            '',
-            '## Amendment',
-            '',
-            'Operator amended the main-repo spec; canon will sync this into the worktree at implement-start.',
-            '',
-        ].join('\n'));
-        writeSpec(path.join(worktreesRoot, taskId), taskId, [
-            '# Spec',
-            '',
-            '## Overview',
-            '',
-            'Worktree copy is stale — sync runs at implement-start.',
-            '',
-        ].join('\n'));
-
+        const rootBefore = fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8');
         const result = runReroute(dir, [taskId], false);
 
         assert.equal(result.status, 0, `expected reroute to succeed; stderr was:\n${result.stderr}`);
-        const updated = readStatus(tasksRoot, taskId) as {
+        assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8'), rootBefore);
+        const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
             phases?: { implement?: { status?: string; rerouted?: boolean; reroute_count?: number } };
         };
         assert.equal(updated.phases?.implement?.status, 'pending');
@@ -172,15 +143,55 @@ void test('rerouteFromHumanReview accepts a correctly-amended main-repo spec on 
     });
 });
 
-void test('rerouteFromHumanReview with --force proceeds and records reroute metadata', () => {
-    withTempDir('reroute-preflight-force-', dir => {
+void test('rerouteFromHumanReview rejects stale worktree spec even if REPO_ROOT spec is amended', () => {
+    withTempDir('reroute-preflight-worktree-required-', dir => {
+        initGitRepo(dir);
         const tasksRoot = path.join(dir, 'tasks');
         const worktreesRoot = path.join(dir, 'worktrees');
         const taskId = 'task-a';
         const status = makeRerouteStatus(taskId, 'task/task-a');
         writeTaskStatus(tasksRoot, taskId, status);
-        writeTaskStatus(path.join(worktreesRoot, taskId, 'tasks'), taskId, status);
-        // Main-repo spec lacks the amendment; --force bypasses.
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        // REPO_ROOT has the amendment, but it is no longer the live source once the worktree exists.
+        writeSpec(dir, taskId, [
+            '# Spec',
+            '',
+            '## Amendment',
+            '',
+            'Operator amended the wrong copy.',
+            '',
+        ].join('\n'));
+        writeSpec(path.join(worktreesRoot, taskId), taskId, [
+            '# Spec',
+            '',
+            '## Overview',
+            '',
+            'Worktree copy is stale and should block reroute.',
+            '',
+        ].join('\n'));
+
+        const rootBefore = fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8');
+        const worktreeBefore = fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json'), 'utf8');
+        const result = runReroute(dir, [taskId], false);
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /spec\.md amendment required before reroute/);
+        assert.match(result.stderr, /worktrees\/task-a\/tasks\/task-a\/spec\.md/);
+        assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8'), rootBefore);
+        assert.equal(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json'), 'utf8'), worktreeBefore);
+    });
+});
+
+void test('rerouteFromHumanReview with --force proceeds and records reroute metadata', () => {
+    withTempDir('reroute-preflight-force-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a');
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        // Worktree spec lacks the amendment; --force bypasses.
         writeSpec(dir, taskId, [
             '# Spec',
             '',
@@ -189,12 +200,22 @@ void test('rerouteFromHumanReview with --force proceeds and records reroute meta
             'This amendment is intentionally omitted.',
             '',
         ].join('\n'));
+        writeSpec(path.join(worktreesRoot, taskId), taskId, [
+            '# Spec',
+            '',
+            '## Overview',
+            '',
+            'This amendment is intentionally omitted.',
+            '',
+        ].join('\n'));
 
+        const rootBefore = fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8');
         const result = runReroute(dir, [taskId], true);
 
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stderr, /--force bypass: task-a spec\.md missing required ## Amendment heading for round 1/);
-        const updated = readStatus(tasksRoot, taskId) as {
+        assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8'), rootBefore);
+        const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
             phases?: { implement?: { status?: string; rerouted?: boolean; reroute_count?: number } };
         };
         assert.equal(updated.phases?.implement?.status, 'pending');
@@ -205,15 +226,16 @@ void test('rerouteFromHumanReview with --force proceeds and records reroute meta
 
 void test('rerouteFromHumanReview reports every failing task in a bundle', () => {
     withTempDir('reroute-preflight-bundle-', dir => {
+        initGitRepo(dir);
         const tasksRoot = path.join(dir, 'tasks');
         const worktreesRoot = path.join(dir, 'worktrees');
         const taskIds = ['task-a', 'task-b', 'task-c'];
         for (const taskId of taskIds) {
             const status = makeRerouteStatus(taskId, `task/${taskId}`);
             writeTaskStatus(tasksRoot, taskId, status);
-            writeTaskStatus(path.join(worktreesRoot, taskId, 'tasks'), taskId, status);
-            // Each main-repo spec lacks the amendment; pre-flight reads main-repo.
-            writeSpec(dir, taskId, [
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            // Each worktree spec lacks the amendment; pre-flight reads the active worktree.
+            writeSpec(path.join(worktreesRoot, taskId), taskId, [
                 '# Spec',
                 '',
                 '## Overview',
@@ -223,7 +245,7 @@ void test('rerouteFromHumanReview reports every failing task in a bundle', () =>
             ].join('\n'));
         }
 
-        const before = taskIds.map(taskId => fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8'));
+        const before = taskIds.map(taskId => fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json'), 'utf8'));
         const result = runReroute(dir, taskIds, false);
 
         assert.notEqual(result.status, 0);
@@ -233,21 +255,22 @@ void test('rerouteFromHumanReview reports every failing task in a bundle', () =>
         }
         assert.match(result.stderr, /Bypass with --force if you have verified the lack of amendment is intentional\./);
         taskIds.forEach((taskId, index) => {
-            assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8'), before[index]);
+            assert.equal(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json'), 'utf8'), before[index]);
         });
     });
 });
 
 void test('rerouteFromHumanReview enforces the round-2 heading and accepts the strict round-2 form after amendment', () => {
     withTempDir('reroute-preflight-round-two-', dir => {
+        initGitRepo(dir);
         const tasksRoot = path.join(dir, 'tasks');
         const worktreesRoot = path.join(dir, 'worktrees');
         const taskId = 'task-a';
         const status = makeRerouteStatus(taskId, 'task/task-a', 1);
         writeTaskStatus(tasksRoot, taskId, status);
-        writeTaskStatus(path.join(worktreesRoot, taskId, 'tasks'), taskId, status);
-        // Main-repo spec only has the round-1 form; pre-flight requires Round 2.
-        writeSpec(dir, taskId, [
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        // Worktree spec only has the round-1 form; pre-flight requires Round 2.
+        writeSpec(path.join(worktreesRoot, taskId), taskId, [
             '# Spec',
             '',
             '## Amendment',
@@ -261,8 +284,8 @@ void test('rerouteFromHumanReview enforces the round-2 heading and accepts the s
         assert.match(first.stderr, /expected heading: ## Amendment Round 2/);
         assert.match(first.stderr, /found `## Amendment`/);
 
-        // Operator updates the main-repo spec to the strict round-2 form; gate clears.
-        writeSpec(dir, taskId, [
+        // Operator updates the worktree spec to the strict round-2 form; gate clears.
+        writeSpec(path.join(worktreesRoot, taskId), taskId, [
             '# Spec',
             '',
             '## Amendment Round 2',
@@ -273,7 +296,7 @@ void test('rerouteFromHumanReview enforces the round-2 heading and accepts the s
 
         const second = runReroute(dir, [taskId], false);
         assert.equal(second.status, 0, second.stderr);
-        const updated = readStatus(tasksRoot, taskId) as {
+        const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
             phases?: { implement?: { status?: string; rerouted?: boolean; reroute_count?: number } };
         };
         assert.equal(updated.phases?.implement?.status, 'pending');

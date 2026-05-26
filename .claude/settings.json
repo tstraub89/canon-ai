@@ -55,7 +55,9 @@
       "Skill(canon-spec)",
       "Skill(canon-spec:*)",
       "Skill(canon-pipeline)",
-      "Skill(canon-pipeline:*)"
+      "Skill(canon-pipeline:*)",
+      "Skill(canon-review)",
+      "Skill(canon-review:*)"
     ],
     "additionalDirectories": [
       "../dev-worktrees"

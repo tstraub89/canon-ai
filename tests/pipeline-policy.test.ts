@@ -17,7 +17,8 @@ import {
 const TEST_CONFIG: PolicyConfig = {
     claudeModelSpec: 'opus',
     claudeModelPlan: 'sonnet',
-    claudeModelReview: 'opus',
+    claudeModelReview: 'sonnet',
+    claudeModelReviewLarge: 'opus',
     claudeModelQa: 'sonnet',
     codexModelMini: 'mini',
     codexModelFull: 'full',
@@ -124,13 +125,17 @@ void test('codex matrix: delicate M uses XL row (effective size)', () => {
 });
 
 // ── Claude model/effort matrix ──────────────────────────────────────────────
+//
+// Most Claude phases use one model across all sizes — varying effort, not
+// model — so we pin them at a representative size (M). code_review is the
+// exception: it splits model by size (small for S/M, large for L/XL) so the
+// matrix below enumerates every size.
 
 type ClaudeRow = { phase: ClaudePhase; expected: { model: string; effort: string } };
 const CLAUDE_TABLE: ClaudeRow[] = [
-    { phase: 'spec',        expected: { model: 'opus',   effort: 'high'   } },
-    { phase: 'plan',        expected: { model: 'sonnet', effort: 'high'   } },
-    { phase: 'code_review', expected: { model: 'opus',   effort: 'high'   } },
-    { phase: 'qa',          expected: { model: 'sonnet', effort: 'medium' } },
+    { phase: 'spec', expected: { model: 'opus',   effort: 'high'   } },
+    { phase: 'plan', expected: { model: 'sonnet', effort: 'high'   } },
+    { phase: 'qa',   expected: { model: 'sonnet', effort: 'medium' } },
 ];
 
 for (const row of CLAUDE_TABLE) {
@@ -139,6 +144,26 @@ for (const row of CLAUDE_TABLE) {
         assert.deepEqual(p.claude(row.phase), row.expected);
     });
 }
+
+type CodeReviewRow = { size: TaskSize; expected: { model: string; effort: string } };
+const CODE_REVIEW_TABLE: CodeReviewRow[] = [
+    { size: 'S',  expected: { model: 'sonnet', effort: 'medium' } },
+    { size: 'M',  expected: { model: 'sonnet', effort: 'high'   } },
+    { size: 'L',  expected: { model: 'opus',   effort: 'high'   } },
+    { size: 'XL', expected: { model: 'opus',   effort: 'xhigh'  } },
+];
+
+for (const row of CODE_REVIEW_TABLE) {
+    void test(`claude model: code_review × ${row.size} → ${row.expected.model}/${row.expected.effort}`, () => {
+        const p = getPipelinePolicy([s(row.size)], TEST_CONFIG);
+        assert.deepEqual(p.claude('code_review'), row.expected);
+    });
+}
+
+void test('claude model: delicate M code_review uses XL slot (large model + xhigh)', () => {
+    const p = getPipelinePolicy([s('M', true)], TEST_CONFIG);
+    assert.deepEqual(p.claude('code_review'), { model: 'opus', effort: 'xhigh' });
+});
 
 // ── Standalone helpers (detectTier, isPlanCombined, size helpers) ──────────
 //

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
+import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -16,37 +17,6 @@ export interface UpgradeOptions {
 
 const CANON_END = '<!-- canon:end -->';
 const CANON_START_RE = /<!-- canon:start[^>]* -->/;
-
-// Agent files: have canon:start/end delimiters — replace canon block, preserve project tail
-const DELIMITED = ['AGENTS.md', 'CLAUDE.md', 'CODEX.md'];
-
-// Canon-owned files: no delimiters, fully managed by canon — overwrite entirely.
-// .canon/templates/ are the canonical defaults; projects override per-file by
-// placing a copy in tasks/_templates/ (never touched by upgrade). See .canon/README.md.
-const CANON_OWNED = [
-    '.canon/README.md',
-    '.claude/skills/canon-init/SKILL.md',
-    '.claude/skills/canon-spec/SKILL.md',
-    '.claude/skills/canon-pipeline/SKILL.md',
-    '.claude/skills/canon-status/SKILL.md',
-    '.claude/skills/canon-changelog/SKILL.md',
-    '.canon/templates/status.json',
-    '.canon/templates/spec.md',
-    '.canon/templates/plan.md',
-    '.canon/templates/handoff.md',
-    '.canon/templates/spec-review.md',
-    '.canon/templates/review.md',
-    '.canon/templates/done.md',
-    '.canon/templates/notes.md',
-    // Pure canon documentation — adopters don't customize. Listed here so future
-    // canon releases (post-1.1.x reframes etc.) flow through `canon upgrade`
-    // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
-    'docs/pipeline-orchestrator.md',
-    // First canon-managed file outside .canon/, .claude/, and
-    // docs/pipeline-orchestrator.md. Future canon-shipped utility scripts
-    // follow the same pattern.
-    'scripts/docs-refs-check.mjs',
-];
 
 // Header-only sync: canon owns the header (intro + table column definitions);
 // adopter owns the rows below the table separator. Used for telemetry files

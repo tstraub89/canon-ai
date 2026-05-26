@@ -1,6 +1,6 @@
 ---
 name: canon-changelog
-description: Draft or update CHANGELOG entries from completed tasks. Reads the "Proposed Changelog" sections that the QA pipeline writes into done.md, synthesizes them into a release entry, and commits after approval. Branch-aware — handles fresh entries on main, in-progress unreleased blocks on release branches, and finalization. Install only for projects that do versioned releases.
+description: Use when the human asks to draft release notes, update CHANGELOG.md, or add entries for shipped tasks — phrases like "draft the changelog", "write release notes", "add a bullet for <task>", "finalize the release", "we're shipping vX.Y", or explicit `/canon-changelog` invocation. Auto-detects fresh release vs. in-progress unreleased block vs. finalization mode from branch + CHANGELOG state. Requires the project to do versioned releases (CHANGELOG.md present + AGENTS.md §"Release Rules" defined).
 argument-hint: "[optional: version override e.g. 1.5.0, or single task ID to add one bullet]"
 allowed-tools: Read Glob Grep Write Edit Bash(git log *) Bash(git diff *) Bash(git status *) Bash(git branch *) Bash(git rev-parse *) Bash(git add *) Bash(git commit *)
 effort: medium
@@ -210,3 +210,11 @@ git commit -m "docs(changelog): finalize vX.Y release notes"
 ```
 
 Confirm the commit hash. Stop. Do not push. Tell the user: "When ready, run `git push origin <branch>`."
+
+---
+
+## Related
+
+- `/canon-status` — confirm what's in flight or recently shipped before drafting.
+- `/canon-pipeline` — for `release-init`, hotfix absorption, and finalize-ship operations.
+- `AGENTS.md` §"Release Rules" — defines the changelog audience and SemVer interpretation this skill calibrates against.

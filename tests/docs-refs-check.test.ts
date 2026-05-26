@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runChecks } from '../scripts/docs-refs-check.mjs';
+import { NOISY_SOURCE_PATHS, runChecks } from '../scripts/docs-refs-check.mjs';
 
 function makeTempRepo(
     setup: (root: string) => void,
@@ -253,6 +253,359 @@ void test('anchor links: relative-path cross-file missing anchor fails', () => {
                     line: 1,
                     ref: '[link](../AGENTS.md#missing-section)',
                     reason: 'anchor not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('NOISY_SOURCE_PATHS: directory-prefix skip silences files under that tree, not adjacent names', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/archive/old.md', 'See `scripts/nonexistent.ts`.\n');
+            writeFile(root, 'docs/archive-notes/file.md', 'See `scripts/nonexistent.ts`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root, { skipPaths: ['docs/archive'] }), [
+                {
+                    file: 'docs/archive-notes/file.md',
+                    line: 1,
+                    ref: '`scripts/nonexistent.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('NOISY_SOURCE_PATHS: exact-file skip silences only that file, not paths that string-start-with it', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/changelogs.md', 'See `scripts/nonexistent.ts`.\n');
+            writeFile(root, 'docs/changelogs.md-notes/file.md', 'See `scripts/nonexistent.ts`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root, { skipPaths: ['docs/changelogs.md'] }), [
+                {
+                    file: 'docs/changelogs.md-notes/file.md',
+                    line: 1,
+                    ref: '`scripts/nonexistent.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('NOISY_SOURCE_PATHS: trailing slash on entry is normalized away', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/archive/old.md', 'See `scripts/nonexistent.ts`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root, { skipPaths: ['docs/archive/'] }), []);
+        },
+    );
+});
+
+void test('isPlaceholderTarget: backtick ref containing ... is treated as placeholder', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/ellipsis.md', 'See `src/...`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('NOISY_SOURCE_PATHS: module default skip list is consulted when no options are passed', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/archive/old.md', 'See `scripts/nonexistent.ts`.\n');
+        },
+        root => {
+            NOISY_SOURCE_PATHS.push('docs/archive');
+            try {
+                assert.deepEqual(runChecks(root), []);
+            } finally {
+                NOISY_SOURCE_PATHS.length = 0;
+            }
+
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/archive/old.md',
+                    line: 1,
+                    ref: '`scripts/nonexistent.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('tasks/<id>/notes.md is exempt: hypothetical ref to a missing file passes', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'tasks/example-task/notes.md',
+                'Codex tried `scripts/never-existed.ts` but it did not exist.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('tasks/<id>/spec-review.md is exempt: hypothetical ref to a missing file passes', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'tasks/example-task/spec-review.md',
+                'The spec should test against `docs/imagined-fixture.md`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('tasks/<id>/handoff.md is NOT exempt: broken ref still fails (record of real work)', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'tasks/example-task/handoff.md',
+                'Changes touched `scripts/never-existed.ts`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'tasks/example-task/handoff.md',
+                    line: 1,
+                    ref: '`scripts/never-existed.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('symbol-in-file refs: placeholder symbol (contains ...) passes even when target exists', () => {
+    // Regression for the canon-docs-dedup done.md failure on
+    // `<!-- canon:start -->...<!-- canon:end -->` in `AGENTS.md`. The
+    // target exists; the symbol contains `...` and is a placeholder
+    // describing a marker range, not a literal string to find. Symmetric
+    // with the target-side `...` handling shipped in PR #101.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/symbol-placeholder.md',
+                'Edit between `<!-- canon:start -->...<!-- canon:end -->` in `AGENTS.md`.\n',
+            );
+            writeFile(root, 'AGENTS.md', '<!-- canon:start -->\n\nstuff\n\n<!-- canon:end -->\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('symbol-in-file refs: common identifier names (id, name, task) are NOT placeholders for symbol validation', () => {
+    // Codex P2 round 4: PLACEHOLDER_SEGMENTS is path-oriented and would
+    // silently bypass real symbol refs whose names happen to overlap
+    // (`id`, `name`, `task`, etc.). The narrower isPlaceholderSymbol
+    // only short-circuits on the `...` marker-range pattern.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/symbol-named-id.md',
+                'See `id` in `src/types.ts`.\n',
+            );
+            writeFile(root, 'src/types.ts', 'export const counter = 1;\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/symbol-named-id.md',
+                    line: 1,
+                    ref: '`id` in `src/types.ts`',
+                    reason: 'symbol not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('symbol-in-file refs: non-placeholder symbol genuinely missing still fails (negative control)', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/symbol-real-miss.md',
+                'See `GenuinelyMissingSymbol` in `src/fixture.ts`.\n',
+            );
+            writeFile(root, 'src/fixture.ts', 'export const ExistingSymbol = 1;\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/symbol-real-miss.md',
+                    line: 1,
+                    ref: '`GenuinelyMissingSymbol` in `src/fixture.ts`',
+                    reason: 'symbol not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('gitignored target paths are skipped (no finding when target is gitignored)', () => {
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', '.claude/settings.local.json\n');
+            writeFile(
+                root,
+                'docs/gitignored-ref.md',
+                'See `.claude/settings.local.json`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored skip survives parent-relative anchor links elsewhere in the repo', () => {
+    // Regression for Codex review on this change: `../AGENTS.md` from a
+    // nested doc gets fed raw into `git check-ignore`, which exits 128
+    // ("outside repository") and tanks the whole batch. Without the
+    // safe-filter, the gitignored skip would silently disable itself
+    // for the entire run.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', '.claude/settings.local.json\n');
+            writeFile(root, 'AGENTS.md', '# Title\n\n## Section\n');
+            writeFile(
+                root,
+                'docs/nested/source.md',
+                'See [section](../../AGENTS.md#section). Also ref `.claude/settings.local.json`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored skip survives backtick refs to outside-repo paths in scanned docs', () => {
+    // Regression for Codex P1: this repo has docs with refs like
+    // `` `../dev-worktrees` `` (e.g., docs/codebase-map.md). Without
+    // the outside-repo safety filter in collectGitIgnoredTargets, those
+    // make git check-ignore exit 128 and silently disable the
+    // gitignored skip for the whole run.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', '.claude/settings.local.json\n');
+            writeFile(
+                root,
+                'docs/refs.md',
+                'See `../dev-worktrees` and `.claude/settings.local.json`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored skip survives slash-command backtick refs in scanned docs', () => {
+    // Regression for Codex P1 round 3: this repo's docs contain refs
+    // like `` `/canon-spec` ``. Git treats those as absolute paths and
+    // exits 128, which would tank the whole batch and disable the
+    // gitignored skip.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', '.claude/settings.local.json\n');
+            writeFile(
+                root,
+                'docs/refs.md',
+                'Run `/canon-spec` then ref `.claude/settings.local.json`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored markdown source files are skipped from scanning (self-anchor false positive)', () => {
+    // Codex P2 round 3: a generated/local-only `docs/generated.md`
+    // with `[link](#missing-anchor)` would otherwise produce an
+    // "anchor not found" finding even though the source file itself
+    // is gitignored.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', 'docs/generated.md\n');
+            writeFile(
+                root,
+                'docs/generated.md',
+                '# Generated\n\n[link](#missing-anchor)\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored skip applies to relative anchor-link paths (./gitignored.md#anchor)', () => {
+    // Anchor links commonly use relative paths from nested docs. After
+    // normalization to repo-relative POSIX, the gitignore lookup should
+    // still match. Codex P2 follow-up to the parent-relative correctness
+    // fix above.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', 'docs/generated.md\n');
+            writeFile(root, 'docs/source.md', 'See [section](./generated.md#anchor).\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored skip does not silence other genuinely missing paths (negative control)', () => {
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', '.claude/settings.local.json\n');
+            writeFile(
+                root,
+                'docs/mixed-refs.md',
+                'Gitignored `.claude/settings.local.json` plus missing `scripts/genuinely-missing.ts`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/mixed-refs.md',
+                    line: 1,
+                    ref: '`scripts/genuinely-missing.ts`',
+                    reason: 'missing file',
                 },
             ]);
         },

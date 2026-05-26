@@ -42,13 +42,9 @@ When a record references another by ID, computed fields (caches, transforms, eph
 
 ---
 
-### Verify the return type of a helper before designing a spec data-flow through it
+### ~~Verify the return type of a helper before designing a spec data-flow through it~~
 
-*(2026-05-20, source: full-send-mode)*
-
-When a spec names an existing function as the mechanism for passing a value down a data-flow (e.g., "capture the PR URL from `reportOrCreatePR`"), verify that function's actual return type before finalizing the spec. If the return type is `void`, the spec's data-flow is unimplementable and the spec will iterate (or auto-block) until the design is reworked. The fix is to find the correct source for the value before writing the AC — in this case, `inspectCompleteState` already retrieved the PR URL and was already used by the `printCompleteStateBanner` path. The lookup is fast: grep the function name, read the signature, read the return path.
-
-This is distinct from the existing "verify symbols exist" rule (CLAUDE.md spec-writing rules of thumb) — that rule guards against naming a non-existent symbol; this rule guards against a symbol that exists but whose return shape doesn't match the spec's assumed data contract. Both checks are cheap; both prevent an auto-block.
+*(promoted to `CLAUDE.md` "Spec-writing rules of thumb" — 2026-05-24; both the "symbol exists" and "return shape matches" checks now appear in the same sentence)*
 
 ### Release-engineering workflows that blame for a SHA must read every artifact from that same SHA's tree
 
@@ -125,40 +121,48 @@ Generalization beyond this one bug: don't infer the state of one git invariant f
 
 *(promoted to `docs/patterns.md` "Known Pitfalls" → Test-writing pitfalls — 2026-05-18 during v1.2.0 release sweep)*
 
-### Per-task bundle flags must use `every()`, not `some()`, to gate bundle-level skips
+### ~~Per-task bundle flags must use `every()`, not `some()`, to gate bundle-level skips~~
 
-*(2026-05-21, source: full-send-mode AC-14 amendment — caught by Codex async PR review)*
+*(promoted to `docs/patterns.md` "Bundle-gate conditions must use `every()`, not `some()`" — 2026-05-24)*
 
-When a feature applies per-task in a bundle and a task-level flag controls whether a safety check is skipped, the skip must require ALL tasks to have the flag, not just one. Using `some(t => t.flag)` means a single opted-in task silently disables the check for every task in the bundle — including tasks the human never opted in. The correct form is `every(t => t.flag)`.
+### ~~`getAffectedFiles` is three-dot; use a separate helper for true base-tree comparisons~~
 
-The bug is structurally invisible: the feature works for single-task invocations (trivially `every` = `some`) and for all-opted-in bundles, but silently backdoors normal tasks in mixed bundles. Static analysis doesn't catch it; only a mixed-bundle test does.
+*(promoted to `docs/patterns.md` "`getAffectedFiles` uses three-dot diff semantics" — 2026-05-24)*
 
-Prevention rule: whenever writing a bundle-level dispatch branch gated on a per-task flag, write the gate condition as `statuses.every(s => s.flag === true)` by default and explicitly justify it if `some()` is ever chosen. Add a mixed-bundle test as part of the same AC. Canonical example: `scripts/run-task/main.ts` and `scripts/run-task/phases/spec-review.ts`, fixed from `some` to `every` in iteration 4 of this task.
+### ~~`commitHumanReviewFiles()` reads module-level `cliArgs` — tests that set flags must route through `main()`~~
 
-### To relax a gate: narrow the allow-list, don't downgrade the die
+*(promoted to `docs/patterns.md` "Test-writing pitfalls" — 2026-05-24)*
 
-*(2026-05-22, source: scope-pr-auto-commit-to-affected-files-v2 + archived v1)*
+### ~~Task artifact files outside spec.md/plan.md are scanned by the docs-refs gate~~
 
-When a guard function has multiple die gates chained in sequence, trying to downgrade one gate from die to warn requires enumerating every interaction between warn-state and each downstream gate — because the downstream gates were designed assuming the upstream gate either passed cleanly or stopped the function. In v1 of this task (archived after 5 spec_review changes_requested), warn-and-skip for out-of-scope dirty files created a gate-state-machine with interactions that required iterative redesign at spec_review. v2 kept die semantics at every gate unchanged and only narrowed the allow-list, reducing the blast radius and producing a clean first-pass implementation.
+*(promoted to `docs/patterns.md` "Test-writing pitfalls" — 2026-05-24)*
 
-Rule: when the goal is "restrict what gets through," prefer narrowing the allow-list over weakening the gate behavior. The allow-list shrink is a purely additive constraint and doesn't interact with the gate state machine. The die-to-warn change interacts with every downstream gate and every error-message contract.
+### ~~To relax a gate: narrow the allow-list, don't downgrade the die~~
 
-### `getAffectedFiles` is three-dot; use a separate helper for true base-tree comparisons
+*(promoted to `docs/patterns.md` "Known Pitfalls" — 2026-05-24)*
 
-*(2026-05-23, source: prepr-base-drift-check)*
+### ~~When a file drops out of a handoff diff, remove it from ALL prior Changes tables, not just the current iteration block~~
 
-`getAffectedFiles` in `scripts/run-task/git.ts` uses a three-dot diff (`git diff <base>...<branch>`) — it reports files the task branch changed since the merge base. That's correct for "what did this branch contribute?" (handoff validation), but it does **not** surface files where base advanced without the task branch following. Any spec that needs to answer "how does the task branch's tree compare to base's current state?" cannot reuse `getAffectedFiles`; it needs a two-dot helper instead (`git diff <base> HEAD`). The canonical implementation is `getTreeDriftFiles` in `git.ts`, added in this task. When spec-writing a new gate that compares the task branch to current base, verify which diff semantic is correct — two-dot and three-dot answer different questions and silently produce wrong results if confused.
+*(promoted to `docs/patterns.md` "Known Pitfalls" — 2026-05-24)*
 
-### `commitHumanReviewFiles()` reads module-level `cliArgs` — tests that set flags must route through `main()`
+### ~~Module-load-time path constants that point at real repo files are a test-pollution hazard~~
 
-*(2026-05-23, source: prepr-base-drift-check)*
+*(promoted to `docs/patterns.md` "Test-writing pitfalls" — 2026-05-24)*
 
-`commitHumanReviewFiles()` in `scripts/run-task/main.ts` reads the module-level `cliArgs` object that `parseArgs()` populates when `main()` is invoked. Tests that call `commitHumanReviewFiles()` directly and need to exercise a specific CLI flag (e.g., `--force`, `--push`) cannot set `cliArgs` from outside the module — they must spawn `main()` with the appropriate argv. The existing integration test pattern at `tests/run-task-safety.test.ts` (line ~1428) handles this correctly via the real-git fixture + subprocess invocation. Follow that pattern when adding tests for any flag-gated branch of `commitHumanReviewFiles`.
+### Extract a private REPO_ROOT-only resolver to break a self-reference cycle rather than threading an explicit cwd through all callers
 
-### Module-load-time path constants that point at real repo files are a test-pollution hazard
+*(2026-05-25, source: worktree-canonical-task-state)*
 
-*(2026-05-20, source: full-send-mode reroute — AC-13 amendment)*
+When rewiring a resolver function (`taskDirFor`) to route through another resolver (`resolveTaskCwd`), check whether the second resolver calls the first — if it does, the naive rewire creates infinite recursion. The fix is to extract a private function that hard-codes the pre-rewire behavior (REPO_ROOT-anchored lookup), use it inside the inner resolver to break the cycle, and let the public function use the new routing for everyone else. The previous attempt on the same codebase (parser-cwd task) threaded an explicit `cwd` parameter through callers instead; Codex spec_review ran 3 rounds catching missed call sites before the task was abandoned. The private-function approach is ~4 lines and requires zero call-site changes. When you see "route X through resolver Y but Y already calls X," reach for the private-function extraction, not parameter threading.
 
-When a module computes a file path from `REPO_ROOT` at load time (`const METRICS_FILE = path.join(REPO_ROOT, 'docs/...')`), any test that spawns a child process to import canon modules inherits the real repo root and writes to the real file. The bug is invisible until a manual `git status` check — automated test output gives no signal. In this task, spawned tests wrote 11 `task-a | implement` entries to `docs/pipeline-invocations.md` in the real worktree, which would have shipped to adopters on `--pr`.
+### ESM entry-point modules that double as test subjects need an `import.meta.url` guard
 
-Two-part fix: (1) replace the module-load-time constant with a `getMetricsFile()` / `CANON_METRICS_FILE_OVERRIDE` env var pattern so spawned test processes can redirect writes to a temp path; (2) add a suite-end `git status -s docs/` cleanliness assert that catches any future path of this kind. Before adding a new write-path to a module, check whether it holds a module-load-time constant derived from `REPO_ROOT` — if so, add the env-var override before the module is imported in tests. See `scripts/run-task/metrics.ts` for the canonical override pattern and `tests/task-cli.test.ts` for the cleanliness assert placement.
+*(2026-05-25, source: orchestrator-survive-sighup)*
+
+When a Node ESM entry-point module (a CLI main file) needs to be importable by tests — so the test can exercise code that installs at module top-level, such as a signal handler — the direct-run code must be guarded with `if (import.meta.url === pathToFileURL(process.argv[1]).href)` (or a `fileURLToPath` equivalent). Without the guard, importing the module in a test triggers `main()` and runs the full application. The guard is transparent to the normal CLI path. Canonical example: `scripts/run-task.ts` with its SIGHUP handler that needed direct importability for `tests/run-task-signals.test.ts`. Would have changed test design on any prior task that tested entry-point behavior via subprocess spawning alone — the focused-harness pattern (import the module, exercise the installed handler) is simpler and avoids the subprocess timing issues noted in "STALL_TIMEOUT_MS" — related test-writing pitfalls in `docs/patterns.md`.
+
+### When a spec gate sub-problem triggers ≥3 spec_review iteration rounds, carve it out rather than iterating further
+
+*(2026-05-25, source: worktree-canonical-task-state)*
+
+AC-22g (telemetry discrimination gate) accumulated 5 spec_review iterations, each round finding a new edge case in the per-file parser design: bundle label splitting, staged-vs-unstaged diff inspection, append-only discipline validation, different table column positions per file, heading-bounded entry parsing for prose files, preamble-edit scope. None of these were spec-text ambiguities — they were inherent complexity in the parser surface that wasn't visible until the prior round's fix exposed the next layer. After round 5 the gate was carved out entirely and filed as a separate BACKLOG item with a format-agnostic byte-offset design (~110 lines total vs. 5 rounds of increasingly complex parser spec). Rule of thumb: if the same gate sub-problem returns with a new bug class after 3 spec_review rounds, the gate design is the problem. Options: (1) carve it out if it's separable; (2) redesign from scratch with a simpler invariant; (3) accept a narrower gate that's simpler to specify correctly. Iterating on a fundamentally complex design produces a spec that is correct but unmaintainable.

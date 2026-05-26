@@ -100,6 +100,7 @@ const warn = splitCli.warn;
 // ── File system ────────────────────────────────────────────────────────────
 
 const taskDirFor = splitState.taskDirFor;
+const taskDirForRepoRoot = splitState.taskDirForRepoRoot;
 const readStatus = splitState.readStatus;
 const deriveTopLevelStatus = splitState.deriveTopLevelStatus;
 
@@ -642,34 +643,19 @@ function humanReviewAllowedPath(
     taskIds: string[],
     affectedManagedDocs: ReadonlySet<string>,
     filePath: string,
+    affectedPrefixes: ReadonlySet<string> = new Set(),
 ): boolean {
     return taskIds.some(taskId => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) ||
         (splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath) ||
-        affectedManagedDocs.has(filePath);
-}
-
-function mirrorHumanReviewDocsToCwd(cwd: string): void {
-    if (cwd === REPO_ROOT) return;
-    for (const relPath of splitWorktree.PIPELINE_SHARED_DOCS) {
-        const src = path.join(REPO_ROOT, relPath);
-        const dest = path.join(cwd, relPath);
-        if (!fs.existsSync(src)) continue;
-        // Skip if the worktree copy has uncommitted changes — preserve QA edits.
-        const dirty = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '--', relPath);
-        if (dirty.ok && dirty.stdout.trim()) continue;
-        try {
-            fs.mkdirSync(path.dirname(dest), { recursive: true });
-            fs.copyFileSync(src, dest);
-        } catch {
-            // Best-effort mirror: the final dirty-set validation below is authoritative.
-        }
-    }
+        affectedManagedDocs.has(filePath) ||
+        [...affectedPrefixes].some(prefix => filePath.startsWith(prefix));
 }
 
 export function buildHumanReviewStagePaths(
     taskIds: string[],
     affectedManagedDocs: ReadonlySet<string>,
     dirtyEntries: readonly PorcelainEntry[],
+    affectedPrefixes: ReadonlySet<string> = new Set(),
 ): string[] {
     const stagePaths = new Set<string>();
     for (const taskId of taskIds) {
@@ -685,6 +671,14 @@ export function buildHumanReviewStagePaths(
     for (const relPath of affectedManagedDocs) {
         if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === relPath))) {
             stagePaths.add(relPath);
+        }
+    }
+    // Directory-form Affected Files entries (e.g. `dist/`) — stage the prefix
+    // itself when any dirty entry falls under it. `git add -A -- dist/` stages
+    // every dirty path under the prefix in one call.
+    for (const prefix of affectedPrefixes) {
+        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName.startsWith(prefix)))) {
+            stagePaths.add(prefix);
         }
     }
     return [...stagePaths];
@@ -906,7 +900,6 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     if (createPR) {
         ghAvailable = splitGit.isCommandAvailable('gh');
     }
-    mirrorHumanReviewDocsToCwd(cwd);
 
     const baseBranch = splitGit.getBaseBranch(taskIds);
     const baseDriftResult = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
@@ -924,8 +917,9 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 `--pr aborted: base-drift detected. Files in the tree diff between origin/${baseBranch}\n` +
                 `and HEAD that are not in the spec's Affected Files (and not task-dir/telemetry):\n` +
                 `${baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
-                `The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and files listed in\n` +
-                `your spec's '### Affected Files' table.\n` +
+                `The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, files listed in\n` +
+                `your spec's '### Affected Files' table (directory-form entries like 'dist/' match\n` +
+                `subpaths), and PIPELINE_MANAGED_DOCS (auto-allowlisted once qa.status = done).\n` +
                 `If this is a legitimate task change, add the path to spec.md '### Affected Files'\n` +
                 `and rerun. For a rename, list BOTH the old and new paths. If the drift is\n` +
                 `unexpected (likely cross-pipeline contamination from a sibling worktree's\n` +
@@ -948,15 +942,37 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     }
 
     const affectedManagedDocs = new Set<string>();
+    const affectedPrefixes = new Set<string>();
     for (const taskId of taskIds) {
         const parsed = splitValidation.parseAffectedFilesFromSpec(taskId);
         for (const filePath of parsed.files) {
-            if ((splitWorktree.PIPELINE_MANAGED_DOCS as readonly string[]).includes(filePath)) {
+            if (filePath.endsWith('/')) {
+                // Directory-form entries like `dist/` cover any subpath.
+                // Kept with the trailing slash so prefix matching is
+                // boundary-correct (does not accept `dist-other/foo`).
+                affectedPrefixes.add(filePath);
+            } else if ((splitWorktree.PIPELINE_MANAGED_DOCS as readonly string[]).includes(filePath)) {
                 affectedManagedDocs.add(filePath);
             }
         }
         for (const malformed of parsed.malformed) {
             warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
+        }
+
+        // QA's "Docs Freshness" sweep can edit any PIPELINE_MANAGED_DOCS entry,
+        // not just ones the spec author predicted. Once qa is done for a task,
+        // union the full managed-docs set so the human-review gate accepts the
+        // promotion without forcing a manual spec backfill before --pr.
+        // Mirrors the same union in verifyBaseDrift (validation.ts).
+        try {
+            if (splitState.readStatus(taskId).phases.qa?.status === 'done') {
+                for (const doc of splitWorktree.PIPELINE_MANAGED_DOCS) {
+                    affectedManagedDocs.add(doc);
+                }
+            }
+        } catch {
+            // Missing/malformed status.json: leave the spec-only allowlist as-is.
+            // Strictly safer than auto-widening when state is unreadable.
         }
     }
 
@@ -1005,20 +1021,22 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die('Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.');
     }
 
-    const unexpected = dirtyEntries.filter(entry => !entry.paths.every(pathName => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName)));
+    const unexpected = dirtyEntries.filter(entry => !entry.paths.every(pathName => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName, affectedPrefixes)));
     if (unexpected.length > 0) {
         die(
             `Human review commit aborted: working tree has dirty files outside the human_review allowlist.\n` +
             unexpected.map(entry => `  ${entry.raw}`).join('\n') + `\n` +
-            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and PIPELINE_MANAGED_DOCS entries listed in your spec's '### Affected Files' table.\n` +
-            `If this is a managed doc this task legitimately edits, add it to spec.md '### Affected Files' and rerun.\n` +
+            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, PIPELINE_MANAGED_DOCS entries listed\n` +
+            `in your spec's '### Affected Files' table (directory-form entries like 'dist/' match subpaths),\n` +
+            `and all PIPELINE_MANAGED_DOCS once qa.status = done (QA's Docs Freshness auto-allowlist).\n` +
+            `If this is a managed doc this task legitimately edits before QA, add it to spec.md '### Affected Files' and rerun.\n` +
             `If this is a source or test file, it should have been committed during the implement phase — ` +
             `investigate why it is dirty now (unexpected late edits or base-drift/branch contamination are possible causes) ` +
             `and revert with: git checkout HEAD -- <path>`
         );
     }
 
-    const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries));
+    const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, affectedPrefixes));
 
     for (const relPath of stagePaths) {
         if (affectedManagedDocs.has(relPath)) {
@@ -1041,7 +1059,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         .split('\n')
         .map(line => line.trim())
         .filter(Boolean)
-        .filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+        .filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
     if (stagedBeforeUnexpected.length > 0) {
         die(
             `Human review commit aborted: staged files are not covered by the human_review allowlist.\n` +
@@ -1065,7 +1083,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     if (stagedNames.length === 0) {
         die('Human review commit aborted: staging produced no commit-ready files.');
     }
-    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
     if (stagedUnexpected.length > 0) {
         die(
             `Human review commit aborted: staged files escaped the allowlist.\n` +
@@ -1131,9 +1149,7 @@ function printDryRunPlan(state: PipelineState): void {
  * Refuse to ship if local <baseBranch> is behind origin/<baseBranch>.
  * Only called when no PR was merged (i.e., user merged manually before --ship).
  */
-function assertLocalBaseInSyncWithOrigin(taskIds: string[]): void {
-    const baseBranch = getBaseBranch(taskIds);
-
+function assertLocalBaseInSyncWithOrigin(baseBranch: string): void {
     const fetchResult = gitSafe('fetch', 'origin', baseBranch);
     if (!fetchResult.ok) {
         warn(
@@ -1245,9 +1261,7 @@ function assertTaskBranchPushed(taskId: string): void {
  *     than have the safety check pass spuriously next time).
  * Either way, shipping silently would orphan the remote commits.
  */
-function assertOriginTaskBranchAbsent(taskId: string): void {
-    const branchName = resolveTaskBranchName(taskId);
-    const baseBranch = splitGit.getBaseBranch([taskId]);
+function assertOriginTaskBranchAbsent(branchName: string, baseBranch: string): void {
     // Query origin directly via ls-remote rather than the local tracking ref. When
     // origin/<branch> was deleted from another checkout, `git fetch --prune origin
     // <branch>` does NOT prune the stale local tracking ref, so a `rev-parse
@@ -1362,9 +1376,7 @@ function getMergedPRHeadSha(prNum: number): string | null {
  * returned false (no PR was merged this run) — a defensive cross-check against gh
  * transient issues that might have caused findOpenPRNumber to return null spuriously.
  */
-function assertNoOpenPRForTask(taskId: string): void {
-    const branchName = resolveTaskBranchName(taskId);
-    const baseBranch = splitGit.getBaseBranch([taskId]);
+function assertNoOpenPRForTask(branchName: string, baseBranch: string): void {
     const prNum = findOpenPRNumber(branchName, baseBranch);
     if (prNum !== null) {
         splitCli.die(
@@ -1441,10 +1453,17 @@ function findPRNumberExact(branch: string, baseBranch: string | null, state: 'op
  * branch is used by a worktree — that's fine; we clean local branches ourselves
  * after teardown.
  */
-function mergeOpenPRsAndPull(taskIds: string[]): boolean {
-    const baseBranch = splitGit.getBaseBranch(taskIds);
+function mergeOpenPRsAndPull(
+    taskIds: string[],
+    baseBranch: string,
+    branchByTaskId: ReadonlyMap<string, string>,
+): boolean {
     // Deduplicate branch names (bundles share one branch)
-    const branches = [...new Set(taskIds.map(id => resolveTaskBranchName(id)))];
+    const branches = [...new Set(taskIds.map(id => {
+        const branchName = branchByTaskId.get(id);
+        if (!branchName) splitCli.die(`Missing pre-switch branch snapshot for task '${id}'.`);
+        return branchName;
+    }))];
     let anyMerged = false;
     for (const branch of branches) {
         const prNum = findOpenPRNumber(branch, baseBranch);
@@ -1477,8 +1496,9 @@ function mergeOpenPRsAndPull(taskIds: string[]): boolean {
             // auto-recovers when the PR is confirmed merged with matching
             // head SHA.
             for (const taskId of taskIds) {
-                if (resolveTaskBranchName(taskId) === branch) {
-                    assertOriginTaskBranchAbsent(taskId);
+                const branchName = branchByTaskId.get(taskId);
+                if (branchName === branch) {
+                    assertOriginTaskBranchAbsent(branchName, baseBranch);
                 }
             }
         } else {
@@ -1626,17 +1646,35 @@ function shipTasks(taskIds: string[]): void {
         assertTaskBranchPushed(taskId);
     }
 
-    // Worktree-mode tasks: discard REPO_ROOT's dirty mirror of PIPELINE_SHARED_DOCS
-    // so the subsequent `git pull` (in mergeOpenPRsAndPull) doesn't trip on a working
-    // tree that diverges from the about-to-merge content. The task branch already
-    // carries the canonical post-pipeline state of these docs (via commitHumanReviewFiles
-    // at --pr time, which mirrors REPO_ROOT's dirty mirror back into the worktree and
-    // commits it); the squash merge brings them to base atomically with the rest of the
-    // task content. The previous flushWorktreeTelemetry call here committed the dirty
-    // mirror to base directly, creating a duplicate commit on base that diverged from the
-    // task branch's evolved versions and produced merge conflicts on `docs/task-quality-log.md`
-    // and `docs/lessons-learned.md` at PR-merge time. Diagnosed during PR #95's ship cycle.
-    if (taskIds.some(id => splitState.readStatus(id).worktree === true)) {
+    // Snapshot only the values that are stable across the upcoming branch
+    // switch + merge: `branch` is set at task creation, `worktree` likewise.
+    // We deliberately do NOT capture the full `status` object — using a
+    // pre-switch snapshot for the archive-loop write would overwrite fields
+    // that landed via the squash merge if local was behind origin (Codex P2
+    // on PR #103). The archive loop reads status fresh post-merge instead.
+    type ShipTaskSnapshot = { branch: string; worktree: boolean };
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const taskSnapshots = new Map<string, ShipTaskSnapshot>();
+    const branchByTaskId = new Map<string, string>();
+    for (const taskId of taskIds) {
+        const status = splitState.readStatus(taskId);
+        const branch = resolveTaskBranchName(taskId);
+        taskSnapshots.set(taskId, {
+            branch,
+            worktree: status.worktree === true,
+        });
+        branchByTaskId.set(taskId, branch);
+    }
+    const taskSnapshot = (taskId: string): ShipTaskSnapshot => {
+        const snapshot = taskSnapshots.get(taskId);
+        if (!snapshot) splitCli.die(`Missing pre-switch ship snapshot for task '${taskId}'.`);
+        return snapshot;
+    };
+
+    // Worktree-mode tasks should leave no REPO_ROOT task-state mirror dirty under
+    // the worktree-canonical model. Keep this as a legacy/backstop cleanup for
+    // stale supervising-checkout shared-doc dirt before the merge pull.
+    if (taskIds.some(id => taskSnapshot(id).worktree)) {
         const presentSharedDocs = splitWorktree.PIPELINE_SHARED_DOCS
             .filter(relPath => fs.existsSync(path.join(REPO_ROOT, relPath)));
         if (presentSharedDocs.length > 0) {
@@ -1647,7 +1685,7 @@ function shipTasks(taskIds: string[]): void {
     splitGit.ensureCheckedOutBaseBranch(taskIds);
 
     // Merge open PRs and pull; if none found, assert the base is already in sync.
-    const merged = mergeOpenPRsAndPull(taskIds);
+    const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
     if (!merged) {
         // No PR was merged this run. That can mean either (a) PR was merged earlier
         // and the remote branch was already cleaned up by `--delete-branch` on the
@@ -1658,8 +1696,8 @@ function shipTasks(taskIds: string[]): void {
         // its work is unmerged — destroying any local artifact path back to those
         // commits and leaving the base branch missing the task's content.
         // Independent verification here prevents that class of silent failure.
-        assertLocalBaseInSyncWithOrigin(taskIds);
-        for (const taskId of taskIds) assertNoOpenPRForTask(taskId);
+        assertLocalBaseInSyncWithOrigin(baseBranch);
+        for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch);
         // After mergeOpenPRsAndPull(), a successful merge would have invoked
         // --delete-branch and removed origin/task/<id>. If that branch still exists
         // here, no merge ever happened for it — abort. The earlier
@@ -1667,22 +1705,36 @@ function shipTasks(taskIds: string[]): void {
         // this case because origin can be AHEAD of local and have unmerged commits
         // that are only on the remote, never in the base. Caught via codex review
         // of fb76257.
-        for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskId);
+        for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskSnapshot(taskId).branch, baseBranch);
     }
 
     // Post-merge: project-specific hook (default no-op; edit runPostMergeHook).
     runPostMergeHook();
 
-    const baseBranch = splitGit.getBaseBranch(taskIds);
     const archiveDir = path.join(TASKS_DIR, '_archive');
     if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
 
     const localBranchesToDelete: string[] = [];
 
     for (const taskId of taskIds) {
-        // Read from worktree (canonical during pipeline) before tearing it down.
+        const { worktree: hasWorktree } = taskSnapshot(taskId);
+
+        // Re-read status fresh post-merge instead of using the pre-switch
+        // captured snapshot. The captured snapshot is stable for `branch` and
+        // `worktree` (set at task creation, doesn't change), but the full
+        // `status` can be stale if the local task branch was behind origin
+        // before `--ship` ran. `assertTaskBranchPushed` only blocks
+        // local-AHEAD divergence; a behind-local checkout passes through, and
+        // `mergeOpenPRsAndPull` then brings origin's tip into base. Writing
+        // the pre-switch snapshot back here would overwrite fields that
+        // landed via the merge (Codex P2 on PR #103).
+        //
+        // By this point in `shipTasks`, `mergeOpenPRsAndPull` has succeeded
+        // so the task's `status.json` exists either in the worktree (not yet
+        // torn down) or in REPO_ROOT (squashed-in on base) — both routes that
+        // `resolveTaskCwd` already handles. The original ENOENT this PR
+        // exists to fix is bypassed because the merge has completed.
         const status = splitState.readStatus(taskId);
-        const hasWorktree = status.worktree === true;
 
         // Teardown before the final write so the worktree can disappear cleanly.
         if (hasWorktree) splitWorktree.teardownWorktree(taskId);
@@ -1693,13 +1745,13 @@ function shipTasks(taskIds: string[]): void {
         // Write directly to the supervising checkout now that the worktree is gone.
         splitState.writeStatusToFile(path.join(REPO_ROOT, 'tasks', taskId, 'status.json'), status);
 
-        const src = taskDirFor(taskId);
+        const src = taskDirForRepoRoot(taskId);
         const dest = path.join(archiveDir, taskId);
         fs.renameSync(src, dest);
         info(`📦 ${taskId} → tasks/_archive/${taskId}`);
 
         // Queue local branch for deletion after worktree is gone.
-        const branchName = resolveTaskBranchName(taskId);
+        const branchName = taskSnapshot(taskId).branch;
         if (splitGit.branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
     }
 
@@ -1806,13 +1858,20 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             codeReview.status = 'pending';
             codeReview.verdict = '';
             // Reset the loop counter so the next review pass starts fresh.
-            // Preserve iterations_total / changes_requested_total / auto_block_count
-            // — those are monotonic across reroutes. Writes both the new field and
-            // the legacy `iterations` alias for back-compat readers. Caught
-            // post-implementation: forgotten consumer from the counter-schema-migration
-            // grep audit.
+            // Preserve iterations_total / changes_requested_total /
+            // preflight_rejections_total / auto_block_count — those are
+            // monotonic across reroutes. Writes both the new field and the
+            // legacy `iterations` alias for back-compat readers. Caught
+            // post-implementation: forgotten consumer from the
+            // counter-schema-migration grep audit.
             codeReview.iterations_current_loop = 0;
             codeReview.iterations = 0;
+            // Clear the per-loop pre-flight counter too — runCodeReviewPhase
+            // auto-blocks on iterations_current_loop + preflight_rejections_current_loop;
+            // forgetting this resets stale pre-flight counts from the prior
+            // review cycle into the next reroute's loop and can trip the cap
+            // before the new Claude session runs.
+            codeReview.preflight_rejections_current_loop = 0;
         }
         const qa = status.phases.qa;
         if (qa) qa.status = 'pending';
@@ -1830,9 +1889,9 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     if (clearedFullSend) {
         splitCli.info('⚠ full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with \'canon run --full-send <id>\' if you\'re confident.');
     }
-    splitCli.info('⚠  Before invoking the pipeline: ensure tasks/<id>/spec.md (in the MAIN repo, not the worktree) has an');
-    splitCli.info('   Amendment section with the new requirements. review.md alone is not sufficient — Codex reads spec.md');
-    splitCli.info('   as the contract. The main-repo spec is synced into the worktree at the start of implement.');
+    splitCli.info('⚠  Before invoking the pipeline: ensure tasks/<id>/spec.md in the active task directory has an');
+    splitCli.info('   Amendment section with the new requirements. For worktree-backed tasks, edit the worktree copy;');
+    splitCli.info('   edit REPO_ROOT only before a worktree exists. review.md alone is not sufficient — Codex reads spec.md as the contract.');
 }
 
 function clearImplementOperatorAcceptance(implement: PhaseEntry | undefined): void {
@@ -2441,17 +2500,6 @@ export async function main(): Promise<void> {
         lastClaudeSessionId = phaseResult?.agent === 'claude' ? phaseResult.sessionId : null;
         lastCodexSessionId = phaseResult?.agent === 'codex' ? phaseResult.sessionId : null;
         lastCodexExitStatus = phaseResult?.agent === 'codex' ? (phaseResult.exitCode ?? 0) : 0;
-
-        // In worktree mode, sync task artifacts from worktree → main repo so the
-        // pipeline can read them via taskDirFor() (which always returns REPO_ROOT paths).
-        // status.json is kept in sync separately via phaseCommands' `cd REPO_ROOT` wrapper.
-        // Telemetry files (task-quality-log, lessons-learned, etc.) get mirrored to
-        // REPO_ROOT and reverted in the worktree so the eventual flushWorktreeTelemetry
-        // commit-on-main path actually sees them.
-        if (splitWorktree.isWorktreeEnabled(taskIds)) {
-            splitWorktree.syncWorktreeArtifacts(taskIds);
-            splitWorktree.syncWorktreeTelemetry(taskIds);
-        }
 
         // Store session IDs after each agent phase for resumption.
         // Sessions are stored per-cluster, not per-phase:

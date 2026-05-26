@@ -1,6 +1,6 @@
 {
   "name": "canon-ai",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "type": "module",
   "description": "A spec-first, multi-agent coding pipeline you drop into any repo. The law your agents work under.",
   "engines": {
@@ -18,7 +18,10 @@
   "scripts": {
     "build": "tsup",
     "postbuild": "node scripts/normalize-dist-paths.mjs",
+    "postinstall": "node scripts/install-git-hooks.mjs",
     "test": "node --test --import ./tests/md-loader-register.mjs --import tsx tests/*.test.ts",
+    "sync-templates": "tsx scripts/sync-canon-templates.mjs",
+    "sync-templates:check": "tsx scripts/sync-canon-templates.mjs --check",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint scripts/ tests/ src/",
     "docs-refs-check": "node scripts/docs-refs-check.mjs"
@@ -28,9 +31,13 @@
     "@types/node": "^22.0.0",
     "eslint": "^10.3.0",
     "mustache": "^4.2.0",
+    "simple-git-hooks": "^2.13.1",
     "tsup": "^8.5.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.2"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npm run sync-templates -- --stage"
   }
 }

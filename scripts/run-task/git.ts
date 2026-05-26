@@ -3,8 +3,8 @@ import path from 'node:path';
 
 import { REPO_ROOT } from './env.js';
 import { die, info, warn } from './cli.js';
-import { readStatus, taskDirFor, writeStatus } from './state.js';
-import { ensureWorktree } from './worktree.js';
+import { readStatus, taskDirForRepoRoot, writeStatus } from './state.js';
+import { ensureWorktree, PIPELINE_TELEMETRY_FILES } from './worktree.js';
 import type { CommandResult } from './types.js';
 
 export function runCommand(command: string, args: string[]): CommandResult {
@@ -83,12 +83,30 @@ export function filterGitIgnoredPaths(paths: readonly string[], cwd: string): Se
 export function commitTaskArtifactsToBase(taskIds: string[], _artifactFiles: ReadonlySet<string>): void {
     void _artifactFiles;
     for (const taskId of taskIds) {
-        const taskDir = path.relative(REPO_ROOT, taskDirFor(taskId));
+        const taskDir = path.relative(REPO_ROOT, taskDirForRepoRoot(taskId));
         const status = gitSafe('status', '--porcelain', '--', taskDir);
         if (!status.ok || status.stdout.trim().length === 0) continue;
         git('add', '--', taskDir);
-        git('commit', '-m', `task(${taskId}): commit artifacts pre-pipeline`);
+        git('commit', '-m', `task(${taskId}): commit artifacts pre-pipeline`, '--only', '--', taskDir);
         info(`Committed task artifacts for ${taskId} to base branch.`);
+    }
+
+    const dirtyTelemetry: string[] = [];
+    for (const relPath of PIPELINE_TELEMETRY_FILES) {
+        const status = gitSafe('status', '--porcelain', '--', relPath);
+        if (status.ok && status.stdout.trim().length > 0) dirtyTelemetry.push(relPath);
+    }
+    if (dirtyTelemetry.length > 0) {
+        for (const relPath of dirtyTelemetry) git('add', '--', relPath);
+        git(
+            'commit',
+            '-m',
+            `chore: absorb pre-implement telemetry into scaffold for ${taskIds.join(', ')}`,
+            '--only',
+            '--',
+            ...dirtyTelemetry,
+        );
+        info(`Absorbed pre-implement telemetry into scaffold for ${taskIds.join(', ')}.`);
     }
 }
 

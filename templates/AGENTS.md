@@ -181,7 +181,7 @@ The code is the source of truth for anything derivable from code: numbers, thres
 
 - ✗ "The retry timeout is 5000ms."
   ↳ The `5000` will drift the moment the constant changes.
-- ✓ "The retry timeout is `RETRY_TIMEOUT_MS` in `src/example/retry.ts`."
+- ✓ "The docs gate is `VALID_DIRS` in `scripts/docs-refs-check.mjs`."
   ↳ The invariant stays in the doc. The value is delegated to the symbol.
 
 **When docs ARE the source of truth** (state directly):
@@ -235,12 +235,11 @@ If Claude and Codex disagree on approach, escalate to the human with a clear sum
 - Push only when the user asked for it.
 - If you use an external package API in changed code, treat it as an external API touch and provide citations (when external API tracking is wired in this project).
 - For data-affecting behavior, ship the safer guarded version first.
-
 ## Implementation Rules
 
 **Project-specific implementation rules live in [`docs/patterns.md`](docs/patterns.md).** Patterns + Known Pitfalls describe how state, styling, testing, performance, gating, assets, analytics, and any other project-specific concerns are handled. Agents read that file at session start; the orchestrator pre-injects task-relevant pitfalls into Codex's implement prompt.
 
-The rules below are canon-supplied universals — they apply to every project canon-ai is dropped into.
+The rules below are canon-supplied universals — they apply to every project canon is dropped into.
 
 ### Safe-First Rules
 
@@ -272,6 +271,7 @@ The matrix below is the canon-supplied **structural** matrix — it tells agents
 | Change Type | Required Check Categories |
 |---|---|
 | Most changes | Linting, type checking, unit tests |
+| Docs references | Docs references |
 | Routes / config / build | Full build |
 | UI / interaction changes | End-to-end tests |
 | Content / SEO / metadata | Prerender / sitemap / feed regeneration |

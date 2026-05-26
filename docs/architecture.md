@@ -29,7 +29,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push and PR to `main` and `dev`, runs on Node 24.x with `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm test`, and `npm run build`.
+- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push and PR to `main` and `dev`, runs on Node 24.x with `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm test`, and `npm run build`.
 
 ## High-Level Architecture
 
@@ -125,6 +125,8 @@ The orchestrator drives agent CLIs as subprocesses (`claude` and `codex`). It do
 
 When `worktree: true`, the orchestrator creates a git worktree for the task. The supervising `run-task.ts` process runs from the main checkout; agent CLIs (especially `codex` during implement) run with CWD set to the worktree. Edits land in the worktree until merge. The supervisor's view of `scripts/`, `AGENTS.md`, etc. is shielded — this is what makes canon-on-canon work safely.
 
+Task-scoped state is worktree-canonical once a task reaches implement: `tasks/<id>/` artifacts and per-task telemetry rows are read from and written to the worktree while the pipeline is active. REPO_ROOT remains canonical for project-level resources such as managed docs, `scripts/`, `src/`, root agent files, and for pre-implement task state before the worktree exists.
+
 ## Validation
 
 `AGENTS.md` §"Validation Matrix" defines the canon-supplied **categories** of check that apply to different change types. The bindings below say what each category means concretely for canon-ai.
@@ -136,6 +138,7 @@ When `worktree: true`, the orchestrator creates a git worktree for the task. The
 | Unit tests | `npm test` (= `node --test --import tsx tests/*.test.ts`) |
 | Full build | `npm run build` (= `tsup` + `scripts/normalize-dist-paths.mjs` postbuild). Emits the published `canon-ai` CLI bundle from two entry points: `src/cli/index.ts` and `scripts/run-task.ts`. **Required for any change that affects `dist/` output** — i.e., changes to `src/**`, `scripts/run-task.ts`, `scripts/run-task/**`, `scripts/pipeline-policy.ts`, or anything they transitively import. **Committed `dist/` must match a fresh build** — CI runs `npm run build && git diff --exit-code -- dist/` (`.github/workflows/ci.yml`) and fails if the committed `dist/` is stale. When in doubt: run `npm run build` and commit any `dist/` deltas alongside source changes. |
 | Docs references | `npm run docs-refs-check` (= `node scripts/docs-refs-check.mjs`). Validates broken refs in markdown docs (file paths, symbols, sections, anchors). Required for any change touching `docs/`, `tasks/`, `templates/`, or root-level agent files; also required when source files referenced from docs are renamed or moved. |
+| Canon-managed template sync | `npm run sync-templates:check` (= `tsx scripts/sync-canon-templates.mjs --check`). Required for any change touching canon-managed root/template pairs so the `templates/` mirror stays aligned before docs refs validation runs. |
 | End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `scripts/run-task/git.ts` and `scripts/run-task/validation.ts`. |
 | Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
 | Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `.canon/templates/status.json`, update parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
@@ -147,11 +150,11 @@ When `worktree: true`, the orchestrator creates a git worktree for the task. The
 
 CI is configured via `.github/workflows/ci.yml`.
 
-**Triggers**: push to `main` or `dev`, and pull requests targeting `main` or `dev`. Doc-only commits (`docs/**`, `tasks/**`, `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `scripts/task.sh`, `.agent/**`, `.github/**/*.md`) are skipped via `paths-ignore`.
+**Triggers**: push to `main` or `dev`, and pull requests targeting `main` or `dev`. The path filters opt out of doc/task paths, then re-include the canon-managed root files that need `sync-templates:check` and docs refs validation (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `docs/pipeline-orchestrator.md`).
 
 **Matrix**: Node 24.x only.
 
-**Each job runs in order**: `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm test` → `npm run build`.
+**Each job runs in order**: `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm run sync-templates:check` → `npm run docs-refs-check` → `npm run build` → `npm test`.
 
 Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-check` to their own GitHub Actions workflow file. canon does not ship `.github/workflows/` files to adopter repos, but `canon upgrade` does ship `scripts/docs-refs-check.mjs` and the npm script entry that invokes it.
 

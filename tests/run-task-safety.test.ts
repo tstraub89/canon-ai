@@ -19,7 +19,8 @@ import { ensureBranch, ensureCheckedOutBaseBranch } from '../scripts/run-task/gi
 import { commitArchiveChanges } from '../scripts/run-task/main.js';
 import { resolveTaskCwd } from '../scripts/run-task/state.js';
 
-const TSX_LOADER = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+const WORKTREE_ROOT = process.cwd();
+const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
 
 function withTempDir(prefix: string, fn: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -207,6 +208,14 @@ function setupFakeCliTools(scriptDir: string): void {
         '  printf "%s\\n" "$url"',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then',
+        '  read_pr_state',
+        '  branch="${FAKE_GH_STATE_HEAD:-}"',
+        '  if [ -z "$branch" ]; then branch="${FAKE_GH_PR_HEAD:-}"; fi',
+        '  if [ -n "$branch" ]; then git push origin --delete "$branch" >/dev/null 2>&1 || true; fi',
+        '  if [ -n "$state_file" ]; then printf "\\n" > "$state_file"; fi',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then',
         '  pr_num="${3:-}"',
         '  read_pr_state',
@@ -250,7 +259,7 @@ function runNodeInline(
     const telemetryFile = path.join(telemetryDir, 'pipeline-invocations.md');
     const result = spawnSync(process.execPath, [
         '--import',
-        path.join(REPO_ROOT, 'tests', 'md-loader-register.mjs'),
+        path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs'),
         '--import',
         TSX_LOADER,
         '-e',
@@ -269,6 +278,12 @@ function runNodeInline(
         stderr: result.stderr ?? '',
         stdout: result.stdout ?? '',
     };
+}
+
+function childEnvWithoutTasksOverride(updates: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, ...updates };
+    delete env.CANON_TASKS_DIR_OVERRIDE;
+    return env;
 }
 
 function gitIn(cwd: string, ...args: string[]): void {
@@ -325,6 +340,49 @@ function writeAffectedFilesSpec(tasksRoot: string, taskId: string, fileCells: re
         ...fileCells.map(cell => `| ${cell} | fixture change |`),
         '',
     ].join('\n'), 'utf8');
+}
+
+function writeShipTaskArtifacts(repoDir: string, taskId: string, branch: string, worktree: boolean): void {
+    const tasksRoot = path.join(repoDir, 'tasks');
+    const status = makeCompleteStatus(taskId, branch);
+    status.worktree = worktree;
+    writeTaskStatus(tasksRoot, taskId, status);
+    writeAffectedFilesSpec(tasksRoot, taskId, ['`src/example.ts`']);
+}
+
+function simulateShipMergeOnOrigin(dir: string, originDir: string, taskId: string, branch: string, worktree: boolean): void {
+    const thirdPartyDir = path.join(dir, `third-party-${taskId}`);
+    execFileSync('git', ['clone', originDir, thirdPartyDir], { stdio: 'ignore' });
+    gitIn(thirdPartyDir, 'config', 'user.email', 'test@example.com');
+    gitIn(thirdPartyDir, 'config', 'user.name', 'Test User');
+    gitIn(thirdPartyDir, 'checkout', 'main');
+    writeShipTaskArtifacts(thirdPartyDir, taskId, branch, worktree);
+    gitIn(thirdPartyDir, 'add', 'tasks');
+    gitIn(thirdPartyDir, 'commit', '-m', `simulate squash merge for ${taskId}`);
+    gitIn(thirdPartyDir, 'push', 'origin', 'main');
+}
+
+function runShipTask(
+    taskId: string,
+    fakeBins: string,
+    cwd: string,
+    env: Record<string, string>,
+): { status: number | null; stderr: string; stdout: string } {
+    const mainHref = pathToFileURL(path.join(process.cwd(), 'scripts/run-task/main.ts')).href;
+    const childEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        ...env,
+    };
+    delete childEnv.CANON_TASKS_DIR_OVERRIDE;
+    return runNodeInline([
+        `import(${JSON.stringify(mainHref)})`,
+        `.then(m => {`,
+        `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--ship'];`,
+        `  return m.main();`,
+        `})`,
+        `.catch(err => { console.error(err); process.exit(1); });`,
+    ].join('\n'), childEnv, cwd);
 }
 
 type HumanReviewHarness = {
@@ -733,178 +791,202 @@ void test('buildHumanReviewStagePaths includes only task artifacts, telemetry, a
     ]);
 });
 
-void test('syncWorktreeTelemetry skips a telemetry file when destination has file-specific commits source lacks', () => {
-    withTempDir('run-task-sync-regression-', dir => {
-        const repoDir = path.join(dir, 'repo');
-        const worktreesRoot = path.join(dir, 'dev-worktrees');
-        const worktreeDir = path.join(worktreesRoot, 'task-a');
-        fs.mkdirSync(repoDir, { recursive: true });
-        fs.mkdirSync(worktreesRoot, { recursive: true });
+void test('taskDirFor returns REPO_ROOT task dir before a worktree branch is recorded', () => {
+    withTempDir('run-task-state-pre-impl-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'state-pre';
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, {
+            ...makeCompleteStatus(taskId, ''),
+            branch: '',
+            worktree: true,
+        });
 
-        const runGit = (args: string[], cwd = repoDir): string => {
-            const result = spawnSync('git', args, {
-                cwd,
-                encoding: 'utf8',
-            });
-            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
-            return result.stdout.trim();
-        };
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/state.ts')).href)})`,
+            `.then(m => { console.log(m.taskDirFor(${JSON.stringify(taskId)})); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join(''), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: path.join(dir, 'worktrees'),
+        }), localDir);
 
-        runGit(['init', '-b', 'main']);
-        runGit(['config', 'user.email', 'canon@example.com']);
-        runGit(['config', 'user.name', 'Canon Bot']);
-        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
-        fs.writeFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'repo v1\n', 'utf8');
-        fs.writeFileSync(path.join(repoDir, 'docs', 'lessons-learned.md'), 'lessons v1\n', 'utf8');
-        runGit(['add', 'docs/task-quality-log.md', 'docs/lessons-learned.md']);
-        runGit(['commit', '-m', 'initial']);
-
-        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
-        // worktree updates both files
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'task-quality-log.md'), 'worktree v2\n', 'utf8');
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'lessons-learned.md'), 'lessons v2\n', 'utf8');
-
-        // repo advances only task-quality-log.md — lessons-learned.md has no new commits
-        fs.writeFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'repo v2\n', 'utf8');
-        runGit(['add', 'docs/task-quality-log.md']);
-        runGit(['commit', '-m', 'repo diverges on task-quality-log.md only']);
-
-        try {
-            const syncScript = [
-                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
-                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
-                '.catch(err => { console.error(err); process.exit(1); });',
-            ].join('');
-            const result = runNodeInline(syncScript, {
-                ...process.env,
-                CANON_WORKTREES_ROOT: worktreesRoot,
-            }, repoDir);
-
-            assert.equal(result.status, 0, result.stderr);
-            // task-quality-log.md skipped — destination has a commit source lacks
-            assert.match(result.stderr, /Skipping shared-doc sync for task-a \(docs\/task-quality-log\.md\)/);
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'utf8'), 'repo v2\n');
-            // lessons-learned.md synced — no file-specific divergence
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'lessons-learned.md'), 'utf8'), 'lessons v2\n');
-        } finally {
-            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
-                cwd: repoDir,
-                encoding: 'utf8',
-            });
-        }
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout.trim(), path.join(fs.realpathSync(localDir), 'tasks', taskId));
     });
 });
 
-void test('syncWorktreeTelemetry copies telemetry docs even when the new content is the same length', () => {
-    withTempDir('run-task-sync-same-length-', dir => {
-        const repoDir = path.join(dir, 'repo');
-        const worktreesRoot = path.join(dir, 'dev-worktrees');
-        const worktreeDir = path.join(worktreesRoot, 'task-a');
-        fs.mkdirSync(repoDir, { recursive: true });
-        fs.mkdirSync(worktreesRoot, { recursive: true });
-
-        const runGit = (args: string[], cwd = repoDir): string => {
-            const result = spawnSync('git', args, {
-                cwd,
-                encoding: 'utf8',
-            });
-            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
-            return result.stdout.trim();
+void test('taskDirFor returns the task worktree dir after worktree status exists', () => {
+    withTempDir('run-task-state-post-impl-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'state-post';
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const status = {
+            ...makeCompleteStatus(taskId, `task/${taskId}`),
+            branch: `task/${taskId}`,
+            worktree: true,
         };
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
 
-        runGit(['init', '-b', 'main']);
-        runGit(['config', 'user.email', 'canon@example.com']);
-        runGit(['config', 'user.name', 'Canon Bot']);
-        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
-        fs.writeFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'alpha beta\n', 'utf8');
-        runGit(['add', 'docs/task-quality-log.md']);
-        runGit(['commit', '-m', 'initial']);
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/state.ts')).href)})`,
+            `.then(m => { console.log(m.taskDirFor(${JSON.stringify(taskId)})); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join(''), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }), localDir);
 
-        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'task-quality-log.md'), 'omega zeta\n', 'utf8');
-
-        try {
-            const syncScript = [
-                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
-                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
-                '.catch(err => { console.error(err); process.exit(1); });',
-            ].join('');
-            const result = runNodeInline(syncScript, {
-                ...process.env,
-                CANON_WORKTREES_ROOT: worktreesRoot,
-            }, repoDir);
-
-            assert.equal(result.status, 0, result.stderr);
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'task-quality-log.md'), 'utf8'), 'omega zeta\n');
-            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'task-quality-log.md'), 'utf8'), 'alpha beta\n');
-        } finally {
-            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
-                cwd: repoDir,
-                encoding: 'utf8',
-            });
-        }
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout.trim(), path.join(worktreeDir, 'tasks', taskId), result.stderr);
     });
 });
 
-void test('syncWorktreeTelemetry preserves external dirty edits to managed docs in supervising', () => {
-    // P2 guard: when supervising's managed-doc copy is dirty AND the content
-    // diverges from the worktree, that dirty state is NOT our mirror — it's
-    // someone else's edit (human manual change, another tool, etc.). Skip
-    // the sync for that file so we don't silently overwrite external work.
-    // Matching dirty content (our own mirror from prior rounds) still flows
-    // through and gets refreshed; only diverging content is preserved.
-    withTempDir('run-task-sync-managed-divergent-', dir => {
-        const repoDir = path.join(dir, 'repo');
-        const worktreesRoot = path.join(dir, 'dev-worktrees');
-        const worktreeDir = path.join(worktreesRoot, 'task-a');
-        fs.mkdirSync(repoDir, { recursive: true });
-        fs.mkdirSync(worktreesRoot, { recursive: true });
-
-        const runGit = (args: string[], cwd = repoDir): string => {
-            const result = spawnSync('git', args, {
-                cwd,
-                encoding: 'utf8',
-            });
-            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
-            return result.stdout.trim();
+void test('parseAffectedFilesFromSpec reads the worktree spec when one exists', () => {
+    withTempDir('run-task-parser-worktree-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'parser-worktree';
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const status = {
+            ...makeCompleteStatus(taskId, `task/${taskId}`),
+            branch: `task/${taskId}`,
+            worktree: true,
         };
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(localDir, 'tasks'), taskId, ['`docs/decisions.md`']);
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`docs/codebase-map.md`']);
 
-        runGit(['init', '-b', 'main']);
-        runGit(['config', 'user.email', 'canon@example.com']);
-        runGit(['config', 'user.name', 'Canon Bot']);
-        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
-        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'arch baseline\n', 'utf8');
-        runGit(['add', 'docs/architecture.md']);
-        runGit(['commit', '-m', 'initial']);
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/validation.ts')).href)})`,
+            `.then(m => { console.log(JSON.stringify(m.parseAffectedFilesFromSpec(${JSON.stringify(taskId)}))); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join(''), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }), localDir);
 
-        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
-        // Worktree (task) edits the managed doc one way.
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'arch edited by task\n', 'utf8');
-        // Supervising checkout simulates an EXTERNAL manual edit on the same path
-        // (different content from the worktree's edit).
-        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'arch edited externally by human\n', 'utf8');
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(result.stdout) as { files: string[]; malformed: unknown[] }, {
+            files: ['docs/codebase-map.md'],
+            malformed: [],
+        });
+    });
+});
 
-        try {
-            const syncScript = [
-                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
-                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
+void test('commitTaskArtifactsToBase absorbs dirty pre-implement telemetry in a separate commit', () => {
+    withTempDir('run-task-telemetry-absorb-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'telemetry-absorb';
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, makeCompleteStatus(taskId, ''));
+        fs.mkdirSync(path.join(localDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'pre-implement row\n', 'utf8');
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/git.ts')).href)})`,
+            `.then(m => { m.commitTaskArtifactsToBase([${JSON.stringify(taskId)}], new Set()); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join(''), childEnvWithoutTasksOverride(), localDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const status = spawnSync('git', ['status', '--porcelain', '--', 'docs/pipeline-invocations.md'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.equal(status.stdout.trim(), '');
+        const log = spawnSync('git', ['log', '--format=%s', '-2'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.match(log.stdout, /chore: absorb pre-implement telemetry into scaffold for telemetry-absorb/);
+        assert.match(log.stdout, /task\(telemetry-absorb\): commit artifacts pre-pipeline/);
+    });
+});
+
+void test('runImplementPhase writes metrics and task artifacts only in the worktree after scaffold commit', () => {
+    withTempDir('run-task-implement-worktree-ssot-', dir => {
+        const taskId = 'implement-ssot';
+        const { localDir } = makeGitFixture(dir);
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        writeExecutable(fakeBins, 'codex', [
+            'if [ "${1:-}" = "exec" ]; then',
+            `  mkdir -p tasks/${taskId}`,
+            `  printf "%s\\n" "worktree handoff" > tasks/${taskId}/handoff.md`,
+            'fi',
+            'exit 0',
+        ]);
+        fs.mkdirSync(path.join(localDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'baseline telemetry\n', 'utf8');
+        gitIn(localDir, 'add', 'docs/pipeline-invocations.md');
+        gitIn(localDir, 'commit', '-m', 'add telemetry baseline');
+
+        const status = {
+            ...makeCompleteStatus(taskId, ''),
+            branch: '',
+            base_branch: 'main',
+            worktree: true,
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        };
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'spec.md'), '# Spec\n\n## Acceptance Criteria\n\n- [ ] AC-1: Fixture\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'plan.md'), '# Plan\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), 'root scaffold\n', 'utf8');
+
+        const childEnv = childEnvWithoutTasksOverride({
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            CANON_METRICS_FILE_OVERRIDE: '',
+        });
+        const result = spawnSync(process.execPath, [
+            '--import',
+            path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs'),
+            '--import',
+            TSX_LOADER,
+            '-e',
+            [
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/phases/implement.ts')).href)})`,
+                '.then(async m => {',
+                '  const fs = await import("node:fs");',
+                `  const status = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(localDir, 'tasks', taskId, 'status.json'))}, 'utf8'));`,
+                '  await m.runImplementPhase({',
+                `    tasks: [{ taskId: ${JSON.stringify(taskId)}, title: ${JSON.stringify(taskId)}, specReviewVerdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 0, rerouteCount: 0, status }],`,
+                "    tier: 'full',",
+                '    isBundle: false,',
+                '  }, false, null);',
+                '})',
                 '.catch(err => { console.error(err); process.exit(1); });',
-            ].join('');
-            const result = runNodeInline(syncScript, {
-                ...process.env,
-                CANON_WORKTREES_ROOT: worktreesRoot,
-            }, repoDir);
+            ].join('\n'),
+        ], {
+            cwd: localDir,
+            encoding: 'utf8',
+            env: childEnv,
+        });
 
-            assert.equal(result.status, 0, result.stderr);
-            // Sync warned about the divergent dirty state.
-            assert.match(result.stderr, /Skipping managed-doc sync for task-a \(docs\/architecture\.md\): destination has uncommitted changes that diverge/);
-            // Supervising's external edit is PRESERVED — we didn't clobber it.
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited externally by human\n');
-            // Worktree's edit also survives — autoCommit will absorb it.
-            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited by task\n');
-        } finally {
+        assert.equal(result.status, 0, result.stderr);
+        const rootTaskStatus = spawnSync('git', ['status', '--porcelain', '--', `tasks/${taskId}`], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.equal(rootTaskStatus.stdout.trim(), '');
+        assert.equal(fs.readFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'utf8'), 'baseline telemetry\n');
+        assert.match(fs.readFileSync(path.join(worktreeDir, 'docs', 'pipeline-invocations.md'), 'utf8'), /implement-ssot/);
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), 'utf8'), 'root scaffold\n');
+        assert.equal(fs.readFileSync(path.join(worktreeDir, 'tasks', taskId, 'handoff.md'), 'utf8'), 'worktree handoff\n');
+
+        if (fs.existsSync(worktreeDir)) {
             spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
-                cwd: repoDir,
+                cwd: localDir,
                 encoding: 'utf8',
             });
         }
@@ -1343,6 +1425,8 @@ void test('main --pr on complete still rejects dirty files outside the human_rev
     });
 });
 
+// Fake git: checkout only changes the current-branch marker, so tasks/<id>/ stays on disk.
+// This covers complete-state archiving; the real-git tests below cover the non-worktree ENOENT path.
 void test('main --ship still works when the task is already complete', () => {
     withTempDir('run-task-complete-ship-', dir => {
         const taskId = 'ship-smoke';
@@ -1384,6 +1468,82 @@ void test('main --ship still works when the task is already complete', () => {
         } finally {
             fs.rmSync(taskDir, { recursive: true, force: true });
             fs.rmSync(archiveDir, { recursive: true, force: true });
+        }
+    });
+});
+
+void test('main --ship handles a task with worktree: false when base lacks status.json', () => {
+    withTempDir('run-task-ship-non-worktree-', dir => {
+        const taskId = 'ship-nw';
+        const branch = `task/${taskId}`;
+        const { localDir, originDir } = makeGitFixture(dir);
+        const fakeBins = path.join(dir, 'fake-bins');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+
+        gitIn(localDir, 'checkout', '-b', branch);
+        writeShipTaskArtifacts(localDir, taskId, branch, false);
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', `add ${taskId}`);
+        gitIn(localDir, 'push', '-u', 'origin', branch);
+
+        simulateShipMergeOnOrigin(dir, originDir, taskId, branch, false);
+
+        const result = runShipTask(taskId, fakeBins, localDir, {
+            FAKE_GH_PR_NUMBER: '42',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Shipped 1 task to _archive\/\./);
+        assert.ok(fs.existsSync(path.join(localDir, 'tasks', '_archive', taskId)));
+    });
+});
+
+void test('main --ship handles a task with worktree: true and tears down the worktree', () => {
+    withTempDir('run-task-ship-worktree-', dir => {
+        const taskId = 'ship-wt';
+        const branch = `task/${taskId}`;
+        const { localDir, originDir } = makeGitFixture(dir);
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+
+        gitIn(localDir, 'checkout', '-b', branch);
+        writeShipTaskArtifacts(localDir, taskId, branch, true);
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', `add ${taskId}`);
+        gitIn(localDir, 'push', '-u', 'origin', branch);
+
+        gitIn(localDir, 'checkout', 'main');
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        gitIn(localDir, 'worktree', 'add', worktreeDir, branch);
+        simulateShipMergeOnOrigin(dir, originDir, taskId, branch, true);
+
+        try {
+            const result = runShipTask(taskId, fakeBins, localDir, {
+                FAKE_GH_PR_NUMBER: '43',
+                FAKE_GH_PR_HEAD: branch,
+                FAKE_GH_PR_BASE: 'main',
+                CANON_WORKTREES_ROOT: worktreesRoot,
+            });
+
+            assert.equal(result.status, 0, result.stderr);
+            assert.match(result.stdout, /Shipped 1 task to _archive\/\./);
+            assert.ok(fs.existsSync(path.join(localDir, 'tasks', '_archive', taskId)));
+            assert.ok(!fs.existsSync(worktreeDir));
+        } finally {
+            if (fs.existsSync(worktreeDir)) {
+                spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+                    cwd: localDir,
+                    encoding: 'utf8',
+                });
+            }
         }
     });
 });
@@ -1956,6 +2116,14 @@ void test('main --full-send on a delicate task without --force dies before phase
 void test('commitHumanReviewFiles dies on out-of-scope managed docs with actionable allowlist guidance', () => {
     withTempDir('run-task-human-review-managed-out-', dir => {
         const harness = setupHumanReviewHarness(dir, ['task-a']);
+        // Override the harness's qa.status = 'done' (which would auto-allowlist
+        // PIPELINE_MANAGED_DOCS per the QA Docs Freshness sweep): the rejection
+        // path under test is for managed-doc edits that landed BEFORE qa ran.
+        const taskStatus = makeCompleteStatus('task-a', 'task/task-a');
+        const phases = taskStatus.phases as Record<string, { status: string }>;
+        phases.qa = { ...phases.qa, status: 'in_progress' };
+        phases.human_review = { ...phases.human_review, status: 'pending' };
+        writeTaskStatus(harness.tasksRoot, 'task-a', taskStatus);
 
         const result = runHumanReviewCommit(harness, ['task-a'], {
             FAKE_GIT_STATUS_OUTPUT: ' M docs/codebase-map.md',
@@ -1986,6 +2154,41 @@ void test('commitHumanReviewFiles commits in-scope managed docs and emits one ad
         assert.equal((output.match(/WARNING: docs\/codebase-map\.md/g) ?? []).length, 1);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
         assert.match(gitLog, /^add -A -- docs\/codebase-map\.md$/m);
+        assert.match(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles auto-allowlists PIPELINE_MANAGED_DOCS once qa.status is done', () => {
+    withTempDir('run-task-human-review-qa-done-allowlist-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        // Spec lists no managed docs; harness's makeCompleteStatus already has
+        // qa.status = 'done', so the auto-allowlist kicks in.
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M docs/patterns.md',
+            FAKE_GIT_DIFF_OUTPUT: 'docs/patterns.md',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- docs\/patterns\.md$/m);
+        assert.match(gitLog, /^commit /m);
+    });
+});
+
+void test('commitHumanReviewFiles accepts directory-form Affected Files entries in the dirty tree', () => {
+    withTempDir('run-task-human-review-dirform-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`dist/`']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M dist/cli/index.js',
+            FAKE_GIT_DIFF_OUTPUT: 'dist/cli/index.js',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        // git add -A -- dist/ stages everything dirty under the prefix.
+        assert.match(gitLog, /^add -A -- dist\/$/m);
         assert.match(gitLog, /^commit /m);
     });
 });
@@ -2030,15 +2233,18 @@ void test('commitHumanReviewFiles base-drift gate dies on drift outside the allo
         const harness = setupHumanReviewHarness(dir, ['task-a']);
         writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
 
+        // Use a non-managed-doc drift file: PIPELINE_MANAGED_DOCS like
+        // docs/decisions.md are auto-allowlisted once qa.status === 'done'
+        // (BACKLOG #994), which the harness's makeCompleteStatus already sets.
         const result = runHumanReviewCommit(harness, ['task-a'], {
-            FAKE_GIT_DRIFT_FILES: 'docs/decisions.md',
+            FAKE_GIT_DRIFT_FILES: 'docs/BACKLOG.md',
             FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
             FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
         });
 
         assert.notEqual(result.status, 0);
         const output = combinedOutput(result);
-        assert.match(output, /docs\/decisions\.md/);
+        assert.match(output, /docs\/BACKLOG\.md/);
         assert.match(output, /--force/);
         assert.match(output, /PIPELINE_TELEMETRY_FILES/);
         assert.match(output, /Affected Files/);
@@ -2069,7 +2275,7 @@ void test('commitHumanReviewFiles base-drift gate warns and proceeds with --forc
             FAKE_GIT_REMOTE_EXISTS: '1',
             FAKE_GIT_BASE_BRANCH: 'main',
             FAKE_GIT_TASK_BRANCH: 'task/task-a',
-            FAKE_GIT_DRIFT_FILES: 'docs/decisions.md',
+            FAKE_GIT_DRIFT_FILES: 'docs/BACKLOG.md',
             FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
             FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
         });
@@ -2077,7 +2283,7 @@ void test('commitHumanReviewFiles base-drift gate warns and proceeds with --forc
         assert.equal(result.status, 0, result.stderr);
         const output = combinedOutput(result);
         assert.match(output, /--force override: base-drift detected/);
-        assert.match(output, /docs\/decisions\.md/);
+        assert.match(output, /docs\/BACKLOG\.md/);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
         assert.match(gitLog, /^commit /m);
         assert.match(gitLog, /^push origin task\/task-a$/m);
@@ -2123,10 +2329,12 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
         gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
         gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
-        const baseAdvanceFile = path.join(thirdPartyDir, 'docs', 'decisions.md');
+        // Use docs/BACKLOG.md (not in PIPELINE_MANAGED_DOCS) so the gate fires —
+        // managed-doc paths are auto-allowlisted at qa.status === 'done'.
+        const baseAdvanceFile = path.join(thirdPartyDir, 'docs', 'BACKLOG.md');
         fs.mkdirSync(path.dirname(baseAdvanceFile), { recursive: true });
         fs.writeFileSync(baseAdvanceFile, 'third-party content\n', 'utf8');
-        gitIn(thirdPartyDir, 'add', 'docs/decisions.md');
+        gitIn(thirdPartyDir, 'add', 'docs/BACKLOG.md');
         gitIn(thirdPartyDir, 'commit', '-m', 'third-party base advance');
         gitIn(thirdPartyDir, 'push', 'origin', 'main');
 
@@ -2141,7 +2349,7 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         assert.notEqual(result.status, 0);
         const output = combinedOutput(result);
         assert.match(output, /base-drift detected/);
-        assert.match(output, /docs\/decisions\.md/);
+        assert.match(output, /docs\/BACKLOG\.md/);
         assert.doesNotMatch(output, /scripts\/run-task\/main\.ts\s*$/m);
     });
 });
@@ -2467,8 +2675,9 @@ void test('main --reroute clears full_send', () => {
         writeTaskStatus(tasksRoot, 'task-a', status);
         const worktreesRoot = path.join(dir, 'worktrees');
         writeTaskStatus(path.join(worktreesRoot, 'task-a', 'tasks'), 'task-a', status);
-        // Pre-flight reads the main-repo spec.md (via taskDirFor → CANON_TASKS_DIR_OVERRIDE)
-        // per the documented "operator amends main-repo spec" convention.
+        // This fixture sets CANON_TASKS_DIR_OVERRIDE, so taskDirFor intentionally
+        // reads the override root; production worktree-mode reroute reads the
+        // active worktree's spec.
         const amendmentSpec = [
             '# Spec',
             '',
@@ -2534,89 +2743,5 @@ void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
         assert.equal(fs.existsSync(telemetryFile), true);
         const contents = fs.readFileSync(telemetryFile, 'utf8');
         assert.match(contents, /metrics-override/);
-    });
-});
-
-void test('syncWorktreeTelemetry mirrors managed docs to supervising and keeps worktree edits for autoCommit (no sync-time commit)', () => {
-    // Regression test for the worktree-sync bug hit during the
-    // canon-self-contained task. The prior sync+reset stranded managed-doc
-    // edits in supervising's dirty state and skipped autoCommit. The fix:
-    // copy worktree → supervising (so buildKnownPitfalls() in context.ts
-    // reads fresh content on subsequent rounds) but DO NOT reset the
-    // worktree — autoCommit on the implement phase absorbs those dirty edits
-    // into the task branch's commit atomically with the rest of the round's
-    // changes. We deliberately do NOT commit from inside sync: a sync-time
-    // commit would survive an autoCommit abort and corrupt rerun semantics.
-    withTempDir('run-task-sync-managed-docs-', dir => {
-        const repoDir = path.join(dir, 'repo');
-        const worktreesRoot = path.join(dir, 'dev-worktrees');
-        const worktreeDir = path.join(worktreesRoot, 'task-a');
-        fs.mkdirSync(repoDir, { recursive: true });
-        fs.mkdirSync(worktreesRoot, { recursive: true });
-
-        const runGit = (args: string[], cwd = repoDir): string => {
-            const result = spawnSync('git', args, {
-                cwd,
-                encoding: 'utf8',
-            });
-            assert.equal(result.status, 0, result.stderr ?? result.stdout ?? `git ${args.join(' ')} failed`);
-            return result.stdout.trim();
-        };
-
-        runGit(['init', '-b', 'main']);
-        runGit(['config', 'user.email', 'canon@example.com']);
-        runGit(['config', 'user.name', 'Canon Bot']);
-        fs.mkdirSync(path.join(repoDir, 'docs'), { recursive: true });
-        fs.writeFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'arch baseline\n', 'utf8');
-        fs.writeFileSync(path.join(repoDir, 'docs', 'codebase-map.md'), 'map baseline\n', 'utf8');
-        fs.writeFileSync(path.join(repoDir, 'docs', 'patterns.md'), 'patterns baseline\n', 'utf8');
-        runGit(['add', 'docs/architecture.md', 'docs/codebase-map.md', 'docs/patterns.md']);
-        runGit(['commit', '-m', 'initial']);
-        const baselineHead = runGit(['rev-parse', 'HEAD']);
-
-        runGit(['worktree', 'add', '-b', 'task/task-a', worktreeDir, 'HEAD']);
-        // Codex-style edits to managed docs in the worktree
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'arch edited by task\n', 'utf8');
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'codebase-map.md'), 'map edited by task\n', 'utf8');
-        fs.writeFileSync(path.join(worktreeDir, 'docs', 'patterns.md'), 'patterns edited by task\n', 'utf8');
-
-        try {
-            const syncScript = [
-                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
-                '.then(m => { m.syncWorktreeTelemetry([\'task-a\']); })',
-                '.catch(err => { console.error(err); process.exit(1); });',
-            ].join('');
-            const result = runNodeInline(syncScript, {
-                ...process.env,
-                CANON_WORKTREES_ROOT: worktreesRoot,
-            }, repoDir);
-
-            assert.equal(result.status, 0, result.stderr);
-            // Worktree's files retain the edits.
-            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited by task\n');
-            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'codebase-map.md'), 'utf8'), 'map edited by task\n');
-            assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'patterns.md'), 'utf8'), 'patterns edited by task\n');
-            // Worktree stays DIRTY for autoCommit to absorb.
-            const wtStatus = spawnSync('git', ['status', '--porcelain=v1', '--', 'docs/'], {
-                cwd: worktreeDir, encoding: 'utf8',
-            });
-            const dirtyDocs = wtStatus.stdout
-                .split('\n')
-                .map(l => l.slice(3).trim())
-                .filter(p => p === 'docs/architecture.md' || p === 'docs/codebase-map.md' || p === 'docs/patterns.md');
-            assert.equal(dirtyDocs.length, 3, `worktree should be dirty on all 3 managed docs, got: ${wtStatus.stdout}`);
-            // No sync-time commit landed on the task branch (atomicity guarantee).
-            const wtHead = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: worktreeDir, encoding: 'utf8' });
-            assert.equal(wtHead.stdout.trim(), baselineHead, 'sync must not commit on the task branch — autoCommit handles that');
-            // Supervising checkout's working tree mirrors the worktree — keeps buildKnownPitfalls fresh.
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'architecture.md'), 'utf8'), 'arch edited by task\n');
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'codebase-map.md'), 'utf8'), 'map edited by task\n');
-            assert.equal(fs.readFileSync(path.join(repoDir, 'docs', 'patterns.md'), 'utf8'), 'patterns edited by task\n');
-        } finally {
-            spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
-                cwd: repoDir,
-                encoding: 'utf8',
-            });
-        }
     });
 });

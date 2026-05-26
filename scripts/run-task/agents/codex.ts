@@ -12,7 +12,7 @@ export async function runCodex(
     resumeId: string | null,
     model: string,
     effort: string,
-    metricsContext?: { taskId: string; phase: string; iteration?: number },
+    metricsContext?: { taskId: string; phase: string; iteration?: number; activeCwd?: string },
     cwd = REPO_ROOT,
     wrapForResume = true, // set false when the prompt is already purpose-built for a resumed session
 ): Promise<CodexRunResult> {

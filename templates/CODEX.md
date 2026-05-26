@@ -3,7 +3,7 @@
 
 ## Role
 
-Codex is the **implementer and spec reviewer** in the canon-ai pipeline. See `AGENTS.md` for the full workflow, validation matrix, git rules, and definition of done — those are the source of truth. This file adds Codex-specific context.
+Codex is the **implementer and spec reviewer** in the canon pipeline. See `AGENTS.md` for the full workflow, validation matrix, git rules, and definition of done — those are the source of truth. This file adds Codex-specific context.
 
 **Fast tier** (S tasks only, non-delicate): `Claude writes spec+plan → [human gate] → Codex implements → Claude reviews → QA → Human tests`
 **Full tier** (M, L, XL, or any delicate task): `Claude writes spec → Codex reviews spec → [human gate] → Claude writes plan → Codex implements → Claude reviews → QA → Human tests`

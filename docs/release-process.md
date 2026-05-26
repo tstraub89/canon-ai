@@ -44,6 +44,16 @@ npm install --package-lock-only
 # Sync .canon/version. The auto-release workflow asserts package.json's
 # version equals .canon/version and dies if they diverge.
 echo "1.4.0" > .canon/version
+
+# Rebuild dist/. The version string is baked into dist/cli/index.js at
+# four call sites (doctor's checkCanonVersion, init's writeCanonVersion,
+# runUpgrade, printVersion). CI runs `git diff --exit-code -- dist/` on
+# every PR onto the release branch and fails until dist matches the new
+# version — so rebuild AS PART OF the version-bump commit, atomic with
+# package.json. Don't skip this even if dist looks clean locally: a
+# fresh `tsup` run may reorder output non-deterministically and a later
+# task PR will produce the spurious dist diff anyway.
+npm run build
 ```
 
 Add the CHANGELOG block manually — the existing format is `## [<version>] — <date|unreleased>`:
@@ -57,7 +67,7 @@ Add the CHANGELOG block manually — the existing format is `## [<version>] — 
 Commit and push:
 
 ```bash
-git add package.json package-lock.json .canon/version CHANGELOG.md
+git add package.json package-lock.json .canon/version dist/ CHANGELOG.md
 git commit -m "chore: initialize release/v1.4 (version 1.4.0)"
 git push -u origin release/v1.4
 ```
@@ -74,7 +84,7 @@ git checkout main && git pull origin main
 git checkout -b release/v1.4 main
 ```
 
-Bump to the patch version (`1.4.1`), add a new `## [1.4.1] — unreleased` block at the top of CHANGELOG, commit, push, accumulate fixes.
+Bump to the patch version (`1.4.1`), `npm run build` (same reason as the minor/major flow above — the bumped version string lives in `dist/cli/index.js`), add a new `## [1.4.1] — unreleased` block at the top of CHANGELOG, commit (`package.json package-lock.json .canon/version dist/ CHANGELOG.md`), push, accumulate fixes.
 
 ## Accumulating task work on the release branch
 

@@ -66,8 +66,18 @@ const handoffTemplate = [
     '',
 ].join('\n');
 
+// Must include a `## Stage 1` heading so promptCodeReview's
+// `bundleHasRealPriorReview` defense-in-depth check treats this fixture as a
+// real prior review and selects the Round-N prompt for codeReviewRoundNState.
+// Without the heading the check would force Round-1 (the defensive path that
+// guards against pre-flight-rejection state) and the round-N golden test
+// would no longer exercise the round-N template.
 const reviewTemplate = [
     '# Review',
+    '',
+    '## Stage 1 — Spec Compliance (gate)',
+    '',
+    '- [x] AC-1: ...',
     '',
     '## Round 1',
     '',
@@ -308,6 +318,44 @@ void test('promptCodeReview_round1', () => {
 void test('promptCodeReview_roundN', () => {
     const actual = normalize(promptCodeReview(codeReviewRoundNState));
     recordOrAssert('promptCodeReview_roundN', actual);
+});
+
+// Defense in depth against the historical pre-flight-rejection-counts-as-round
+// bug. Even with iteration counters > 0, if review.md lacks a `## Stage 1`
+// heading (because the prior "round" was a pre-flight rejection, not a real
+// Claude review), the orchestrator MUST select the Round-1 prompt so Claude
+// fills the AC table from scratch. This test temporarily stomps the review.md
+// fixture with a BLOCKED-only stub and confirms the prompt switches to Round-1.
+void test('promptCodeReview forces Round-1 when review.md lacks a Stage 1 heading even if iterations > 0', () => {
+    const reviewPath = path.join(tmpRoot, TASK_ID, 'review.md');
+    const original = fs.readFileSync(reviewPath, 'utf8');
+    try {
+        // BLOCKED-only stub — no `## Stage 1` heading. This is exactly the
+        // shape the orchestrator's pre-flight rejection writes.
+        fs.writeFileSync(reviewPath, [
+            '# Code Review: test-pf-001',
+            '',
+            '## Validation Gate',
+            '',
+            '**BLOCKED — pre-flight rejected handoff before full review:**',
+            '',
+            '- some handoff issue',
+            '',
+            '## Verdict',
+            '',
+            '- [x] **Changes requested** — fix the above and resubmit handoff.',
+            '',
+        ].join('\n'));
+
+        const output = promptCodeReview(codeReviewRoundNState);
+
+        // Round-N prompt would include this string verbatim. Round-1 does not.
+        assert.doesNotMatch(output, /REVIEW ROUND \d+ — verifying iteration/);
+        // Round-1 prompt asks for AC cross-reference against spec.md.
+        assert.match(output, /cross-reference tasks\/.+\/spec\.md ACs/);
+    } finally {
+        fs.writeFileSync(reviewPath, original);
+    }
 });
 
 void test('promptQa', () => {

@@ -2,7 +2,7 @@
 
 Reference for driving canon's pipeline: CLI surface, flags, task-management subcommands, pipeline tiers, the model/effort matrix, environment variables, worktree mechanics, session resumption, auto-block thresholds, and recovery patterns. Read on demand when you need to know which flag to use, why canon picked a particular model, or how to recover from a stuck phase.
 
-For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`).
+For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`). For **adversarial pre-pipeline spec review** on M/L/XL or delicate tasks, see `/canon-review`.
 
 `AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *how to operate the pipeline*.
 
@@ -108,6 +108,7 @@ Claude writes QA summary → Human tests
 - Spec and plan are written in separate Claude sessions.
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe.
 - Codex model/effort scales with effective size (matrix below).
+- **Optional pre-pipeline self-review**: before invoking `canon run`, the operator can run `/canon-review <task-id>` to dispatch three parallel sub-agents (structural / factual / spec-quality) at the spec and surface BLOCKING / STRONG / NIT findings inline. Catches the class of issues Codex's spec_review would surface across 2-3 iterations in one ~15-min pass. Opt-in; most valuable when iteration cost is real.
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
@@ -165,7 +166,8 @@ Claude is tuned for correctness — Opus on phases where false negatives cascade
 |---|---|---|
 | `CLAUDE_MODEL_SPEC` | `opus` | Spec phase (foundational; cascades into every downstream phase). |
 | `CLAUDE_MODEL_PLAN` | `sonnet` | Plan phase (structured translation of spec → steps). |
-| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review. |
+| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for S/M (checklist-shaped AC verification). |
+| `CLAUDE_MODEL_REVIEW_LARGE` | `opus` | Code review for L/XL/delicate (lifecycle/state-machine reasoning where Sonnet was missing bugs Codex caught post-PR). |
 | `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
 | `CLAUDE_BUDGET` | `5.00` | Max spend per Claude phase (USD). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
@@ -178,9 +180,12 @@ Codex model overrides:
 | `CODEX_MODEL_FULL` | `gpt-5.5` | Codex model for XL or delicate phases. |
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
 
-These Codex defaults are the repo-tested assumptions for canon-ai. If your local
-`codex` CLI exposes different model identifiers, set `CODEX_MODEL_MINI` and
-`CODEX_MODEL_FULL` explicitly rather than changing the orchestrator contract.
+These are canon's shipped defaults at the time of release and may lag
+behind what your local `codex` CLI accepts. **Verify they resolve on your
+install before relying on the pipeline** — a stale identifier produces a
+hard failure on the first phase that needs Codex. If they don't resolve,
+set `CODEX_MODEL_MINI` and `CODEX_MODEL_FULL` explicitly to identifiers
+your CLI exposes rather than changing the orchestrator contract.
 
 ## Worktree Isolation
 
@@ -190,9 +195,9 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 **Main repo stays on its base**: In worktree mode, the orchestrator creates the `task/<id>` branch directly in the worktree. The main repo never checks out the task branch.
 
-**Artifact sync**: After each agent phase, task artifact files (`spec.md`, `spec-review.md`, `plan.md`, `handoff.md`, `review.md`, `done.md`) are synced from the worktree back to the main repo's `tasks/<id>/` so the pipeline can read them. The sync is delete-aware.
+**Task-state source of truth**: From implement onward, the worktree is canonical for task artifacts (`tasks/<id>/`) and per-task telemetry rows. The main repo keeps the pre-implement scaffold; runtime task-state reads resolve to the worktree when it exists.
 
-**Telemetry flush**: Telemetry files (`docs/pipeline-invocations.md`, `docs/task-quality-log.md`, `docs/lessons-learned.md`) accumulate via two paths in worktree mode and get flushed to main at `--push`, `--pr`, and `--ship`.
+**Project-level resources**: REPO_ROOT remains canonical for managed docs, `scripts/`, `src/`, root agent files, and other project-level files. Their cross-worktree coordination is separate from task-state resolution.
 
 **Teardown**: `--ship` calls `git worktree remove --force` after archiving the task directory.
 
@@ -313,7 +318,7 @@ The Stage 1 AC table is **not** redone on round 2+ — that gate already passed 
 
 If the human rejects at `human_review`, use `--reroute` to atomically reset `implement`, `code_review`, and `qa` back to pending and resume the pipeline. Reroute sets `phases.implement.rerouted = true` so the next `implement` phase sends Codex an **amended-spec** prompt (read `spec.md` for new Amendment sections, compare against `handoff.md`, update the delta).
 
-Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the main repo** (not the worktree) as an Amendment section. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract. The main-repo spec is synced into the worktree at the start of implement, so any amendment written to the worktree path will be overwritten.
+Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the active task directory** as an Amendment section. If a worktree exists for the task, edit the worktree copy; edit REPO_ROOT only before the task has a worktree. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract.
 
 The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation.
 
@@ -340,3 +345,5 @@ Task templates are managed by canon — `canon upgrade` overwrites `.canon/templ
 - `CODEX.md` — Codex phase-specific guidance (implementation, handoff, spec review).
 - `docs/patterns.md` — implementation patterns and Known Pitfalls.
 - `docs/decisions.md` — settled architectural decisions.
+- `/canon-pipeline` — command patterns and snag-recovery flows for operating the pipeline.
+- `/canon-review` — adversarial pre-pipeline spec review (multi-agent fan-out) for M/L/XL or delicate tasks.

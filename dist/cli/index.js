@@ -108,7 +108,9 @@ var RECOMMENDED_ALLOW = [
   "Skill(canon-status)",
   "Skill(canon-status:*)",
   "Skill(canon-changelog)",
-  "Skill(canon-changelog:*)"
+  "Skill(canon-changelog:*)",
+  "Skill(canon-review)",
+  "Skill(canon-review:*)"
 ];
 var MIN_CLAUDE_VERSION = { major: 2, minor: 1, patch: 72 };
 function parseClaudeVersion(raw) {
@@ -209,7 +211,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.4.0";
+  const installedVersion = "1.5.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -232,7 +234,7 @@ function checkSkills(cwd) {
       detail: "canon-init skill missing \u2014 run `canon init` or `canon upgrade`"
     };
   }
-  const skillNames = ["canon-spec", "canon-pipeline", "canon-status", "canon-changelog"];
+  const skillNames = ["canon-spec", "canon-pipeline", "canon-status", "canon-changelog", "canon-review"];
   const missing = skillNames.filter((s) => !existsSync(join(cwd, ".claude", "skills", s, "SKILL.md")));
   if (missing.length > 0) {
     return {
@@ -558,7 +560,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.4.0";
+  const version = "1.5.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -650,6 +652,7 @@ var config = {
   claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
   claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.4-mini",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.5",
@@ -698,16 +701,37 @@ function findExistingWorktreeForBranch(branch) {
   }
   return null;
 }
+function taskDirForRepoRoot(taskId) {
+  return path2.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
+}
 function taskDirFor(taskId) {
-  const tasksDir = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR;
-  return path2.join(tasksDir, taskId);
+  if (process.env.CANON_TASKS_DIR_OVERRIDE) {
+    return path2.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
+  }
+  return path2.join(resolveTaskCwd(taskId), "tasks", taskId);
+}
+function isOrphanedWorktreeState(taskId) {
+  const worktreesRoot = effectiveWorktreesRoot();
+  const directWorktree = path2.join(worktreesRoot, taskId);
+  const directStatus = path2.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs2.existsSync(directStatus)) return false;
+  const statusPath = path2.join(taskDirForRepoRoot(taskId), "status.json");
+  try {
+    const parsed = JSON.parse(fs2.readFileSync(statusPath, "utf8"));
+    if (parsed.worktree !== true) return false;
+    const branch = parsed.branch?.trim() ?? "";
+    if (!branch) return false;
+    return findExistingWorktreeForBranch(branch) === null;
+  } catch {
+    return false;
+  }
 }
 function resolveTaskCwd(taskId) {
   const worktreesRoot = effectiveWorktreesRoot();
   const directWorktree = path2.join(worktreesRoot, taskId);
   const directStatus = path2.join(directWorktree, "tasks", taskId, "status.json");
   if (fs2.existsSync(directStatus)) return directWorktree;
-  const statusPath = path2.join(taskDirFor(taskId), "status.json");
+  const statusPath = path2.join(taskDirForRepoRoot(taskId), "status.json");
   try {
     const parsed = JSON.parse(fs2.readFileSync(statusPath, "utf8"));
     if (parsed.worktree === true) {
@@ -1252,7 +1276,7 @@ function validateExtractedPath(extracted) {
   }
   return { kind: "ok", path: extracted };
 }
-var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
+var HANDOFF_DIFF_EXEMPT_PATHS = new Set(PIPELINE_TELEMETRY_FILES);
 function isPipelineOwnedTaskArtifact(filePath, taskIds) {
   return taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`));
 }
@@ -1348,9 +1372,12 @@ function tasksRoot() {
 function taskDirFromRoot(taskId) {
   return path7.join(tasksRoot(), taskId);
 }
-function taskDirForCwd(cwd, taskId) {
+function taskDirForCwd(_cwd, taskId) {
   const root = tasksRoot();
-  return path7.isAbsolute(root) ? path7.join(root, taskId) : path7.join(cwd, root, taskId);
+  if (path7.isAbsolute(root)) {
+    return path7.join(root, taskId);
+  }
+  return path7.join(resolveTaskCwd(taskId), root, taskId);
 }
 function taskStatusFileForCwd(cwd, taskId) {
   return path7.join(taskDirForCwd(cwd, taskId), "status.json");
@@ -1510,7 +1537,22 @@ function taskList() {
   let invalidCount = 0;
   for (const entry of fs6.readdirSync(root).sort()) {
     if (entry === "_archive") continue;
-    const statusPath = path7.join(root, entry, "status.json");
+    if (isOrphanedWorktreeState(entry)) {
+      invalidCount += 1;
+      let title = "(untitled)";
+      try {
+        const frozen = readJsonFile(path7.join(taskDirForRepoRoot(entry), "status.json"));
+        title = frozen.title ?? title;
+      } catch {
+      }
+      rows.push({
+        id: entry,
+        title,
+        phase: `INVALID: worktree missing \u2014 restore dev-worktrees/${entry} or archive the task`
+      });
+      continue;
+    }
+    const statusPath = path7.join(taskDirForCwd(process.cwd(), entry), "status.json");
     if (!fs6.existsSync(statusPath)) continue;
     try {
       const status = readJsonFile(statusPath);
@@ -1599,6 +1641,7 @@ function updateReviewCounters(entry, verdict) {
     entry.iterations_total += 1;
     entry.iterations_current_loop = 0;
     entry.iterations = 0;
+    entry.preflight_rejections_current_loop = 0;
   }
 }
 function taskPhase(id, phaseArg, statusArg, verdictArg) {
@@ -2108,14 +2151,19 @@ function updatePackageVersion(filePath, version, updateLockRoot = false) {
 function insertChangelogBlock(filePath, version) {
   const content = fs6.readFileSync(filePath, "utf8");
   const lines = content.split("\n");
-  const first = lines.shift() ?? "";
+  let insertAt = lines.findIndex((line) => /^## \[/.test(line));
+  if (insertAt === -1) insertAt = lines.length;
+  const before = lines.slice(0, insertAt);
+  const after = lines.slice(insertAt);
+  while (before.length > 0 && before[before.length - 1] === "") before.pop();
   const block = [
-    first,
+    ...before,
     "",
     `## [${version}] \u2014 unreleased`,
     "",
     `<!-- Bullets land here as tasks for ${version} ship. The single squash-merge of release/v${version.replace(/\.0$/, "")} \u2192 main carries this entry to production. -->`,
-    ...lines
+    "",
+    ...after
   ];
   fs6.writeFileSync(filePath, block.join("\n"), "utf8");
 }
@@ -2298,10 +2346,8 @@ import { existsSync as existsSync4, readFileSync as readFileSync2, writeFileSync
 import { fileURLToPath as fileURLToPath5 } from "url";
 import { dirname as dirname4, join as join5 } from "path";
 import { spawnSync as spawnSync8 } from "child_process";
-var packageDir4 = join5(dirname4(fileURLToPath5(import.meta.url)), "../..");
-var CANON_END2 = "<!-- canon:end -->";
-var CANON_START_RE2 = /<!-- canon:start[^>]* -->/;
-var DELIMITED = ["AGENTS.md", "CLAUDE.md", "CODEX.md"];
+
+// src/lib/canon-owned.ts
 var CANON_OWNED = [
   ".canon/README.md",
   ".claude/skills/canon-init/SKILL.md",
@@ -2309,6 +2355,7 @@ var CANON_OWNED = [
   ".claude/skills/canon-pipeline/SKILL.md",
   ".claude/skills/canon-status/SKILL.md",
   ".claude/skills/canon-changelog/SKILL.md",
+  ".claude/skills/canon-review/SKILL.md",
   ".canon/templates/status.json",
   ".canon/templates/spec.md",
   ".canon/templates/plan.md",
@@ -2317,15 +2364,16 @@ var CANON_OWNED = [
   ".canon/templates/review.md",
   ".canon/templates/done.md",
   ".canon/templates/notes.md",
-  // Pure canon documentation — adopters don't customize. Listed here so future
-  // canon releases (post-1.1.x reframes etc.) flow through `canon upgrade`
-  // instead of going stale in every existing install. See 1.1.2 CHANGELOG.
   "docs/pipeline-orchestrator.md",
-  // First canon-managed file outside .canon/, .claude/, and
-  // docs/pipeline-orchestrator.md. Future canon-shipped utility scripts
-  // follow the same pattern.
-  "scripts/docs-refs-check.mjs"
+  "scripts/docs-refs-check.mjs",
+  "scripts/docs-refs-check.mjs.d.ts"
 ];
+var DELIMITED = ["AGENTS.md", "CLAUDE.md", "CODEX.md"];
+
+// src/cli/commands/upgrade.ts
+var packageDir4 = join5(dirname4(fileURLToPath5(import.meta.url)), "../..");
+var CANON_END2 = "<!-- canon:end -->";
+var CANON_START_RE2 = /<!-- canon:start[^>]* -->/;
 var HEADER_ONLY_SYNC = [
   "docs/pipeline-invocations.md"
 ];
@@ -2432,7 +2480,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.4.0";
+  const newVersion = "1.5.0";
   const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -2626,7 +2674,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.4.0");
+  console.log("1.5.0");
 }
 switch (command) {
   case "doctor":

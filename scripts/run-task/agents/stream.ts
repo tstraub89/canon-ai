@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 
 import { STALL_KILL_GRACE_MS, STALL_TIMEOUT_MS } from '../env.js';
+import { killChildGroup, registerActiveChild } from '../signals.js';
 import type { StreamResult } from '../types.js';
 import { warn } from '../cli.js';
 
@@ -16,6 +17,11 @@ export function streamProcess(
         onLine: (line: string) => void;
         onStderrChunk?: (chunk: string) => void;
         stallTimeoutMs?: number;
+        // Fires immediately after spawn with the live ChildProcess handle.
+        // Test seam — production callers don't need this. Lets tests learn
+        // the child PID without shelling out to `ps` (which is blocked in
+        // sandboxed CI runners).
+        onSpawn?: (child: ChildProcess) => void;
     },
 ): Promise<StreamResult> {
     return new Promise((resolve) => {
@@ -27,21 +33,42 @@ export function streamProcess(
         const capturedStdout: string[] = [];
         const capturedStderr: string[] = [];
 
+        // detached: true → setsid() on the child, placing it in a new session
+        // and process group. Process-group SIGHUP from the supervising shell
+        // stops at this boundary, so Codex/Claude survive shell-exit just like
+        // the orchestrator does (see run-task/signals.ts). We deliberately do
+        // NOT call child.unref() — the orchestrator must continue to wait for
+        // the agent to finish; detaching is purely for signal isolation.
+        //
+        // registerActiveChild() bridges back the shutdown propagation we lose
+        // by detaching: signals.ts's SIGINT/SIGTERM handlers forward the
+        // terminating signal to every registered child before exiting, so
+        // Ctrl-C and `kill` still take the children down with the parent.
         const child = spawn(command, args, {
             cwd: options.cwd,
-            stdio: ['inherit', 'pipe', 'pipe'],
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: true,
         });
+        registerActiveChild(child);
+        options.onSpawn?.(child);
 
         const resetStallTimer = (): void => {
             if (stallTimer) clearTimeout(stallTimer);
             stallTimer = setTimeout(() => {
                 stalled = true;
                 warn(`${options.label} stalled — no output for ${Math.round(stallMs / 1000)}s. Sending SIGTERM.`);
-                try { child.kill('SIGTERM'); } catch { /* already dead */ }
+                // Group-kill: detached:true above puts the child + any helper
+                // subprocesses it spawned in their own process group. A
+                // leader-only child.kill would leave the descendants alive,
+                // and they'd keep the stdout/stderr pipes open — the 'close'
+                // event would never fire and the orchestrator would hang on
+                // exactly the stall path that's supposed to recover from
+                // hung agents. killChildGroup targets the whole subtree.
+                killChildGroup(child, 'SIGTERM');
                 killTimer = setTimeout(() => {
                     if (!closed) {
                         warn(`${options.label} did not exit after SIGTERM — sending SIGKILL.`);
-                        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+                        killChildGroup(child, 'SIGKILL');
                     }
                 }, STALL_KILL_GRACE_MS);
             }, stallMs);

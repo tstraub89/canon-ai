@@ -5,6 +5,7 @@ import { REPO_ROOT, config } from './env.js';
 import { getEffectiveSize, getNominalSize } from './policy.js';
 import { taskDirFor } from './state.js';
 import type { ImplementMode, PipelineState } from './types.js';
+import { getActiveCwd } from './worktree.js';
 
 export function extractAffectedFiles(taskId: string): string[] {
     const specPath = path.join(taskDirFor(taskId), 'spec.md');
@@ -68,8 +69,8 @@ export function buildContextBlock(taskIds: string[]): string {
     return block;
 }
 
-export function buildKnownPitfalls(): string {
-    const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path.join(REPO_ROOT, 'docs/patterns.md');
+export function buildKnownPitfalls(taskIds: string[]): string {
+    const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path.join(getActiveCwd(taskIds), 'docs/patterns.md');
     try {
         const content = fs.readFileSync(patternsPath, 'utf8');
         const match = content.match(/## Known Pitfalls\n\n([\s\S]*?)(?:\n## |\n---|\n# |$)/);

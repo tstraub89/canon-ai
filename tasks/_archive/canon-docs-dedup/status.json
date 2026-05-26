@@ -1,0 +1,75 @@
+{
+  "id": "canon-docs-dedup",
+  "title": "Eliminate templates/-root drift via sync script + pre-commit/CI gate",
+  "status": "complete",
+  "created": "2026-05-24",
+  "updated": "2026-05-24",
+  "branch": "task/canon-docs-dedup",
+  "base_branch": "release/v1.5",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "95f4b09b515d017a237ec78e9ffb7a63ab76fd6d",
+    "orchestrator_commit": "95f4b09b515d017a237ec78e9ffb7a63ab76fd6d",
+    "codex_cli": "codex-cli 0.133.0",
+    "claude_code": "2.1.150 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 4,
+      "changes_requested_total": 2,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019e5b24-2dad-7731-a81b-0e513784ca63",
+    "claude_spec": "5611a8e2-be7d-49e0-9cce-71bb693fda1a",
+    "codex": "019e5b36-7949-7d60-9bba-75a6042e0dfa",
+    "claude_review": "064f74e5-f441-4a10-b0a9-62ba96efa154"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

@@ -8,6 +8,7 @@ import { autoBlockPhase, resolveTaskCwd, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
 import { isTemplateUnfilled } from '../validation.js';
+import { getActiveCwd } from '../worktree.js';
 import { taskPhase } from '../../../src/task/index.js';
 
 export function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
@@ -91,10 +92,12 @@ export async function runSpecReviewPhase(
         ? `The spec${state.isBundle ? 's have' : ' has'} been revised since your last review. Re-read the current spec.md ${state.isBundle ? 'files' : 'file'} from disk and produce a completely fresh review — do not replay or summarise your previous output.\n\n${promptSpecReview(state)}`
         : promptSpecReview(state);
     const cfg = getCodexConfig('spec_review', tasks);
+    const activeCwd = getActiveCwd(taskIds);
     const result = await runCodex(specReviewPrompt, interactive, resumeId, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'spec_review',
         iteration: maxSpecIter,
+        activeCwd,
     });
 
     // Mirror the post-run template check that code-review.ts and plan.ts

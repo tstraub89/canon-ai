@@ -31,9 +31,53 @@ function findExistingWorktreeForBranch(branch: string): string | null {
     return null;
 }
 
+// REPO_ROOT-only resolver. Reserved for callers that intentionally need REPO_ROOT semantics regardless of worktree state — currently resolveTaskCwd (breaks the self-reference cycle), commitTaskArtifactsToBase (scaffold-to-base commit), and the post-teardownWorktree archive-move in shipTasks. Do not use for general task-state reads; use taskDirFor() instead.
+export function taskDirForRepoRoot(taskId: string): string {
+    return path.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
+}
+
 export function taskDirFor(taskId: string): string {
-    const tasksDir = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR;
-    return path.join(tasksDir, taskId);
+    // CANON_TASKS_DIR_OVERRIDE is the test-harness escape hatch — when set,
+    // it MUST win over worktree resolution. Tests set this to a temp directory
+    // and expect both reads and writes to land there regardless of any
+    // `dev-worktrees/<id>/` directory that happens to exist (test setup may
+    // construct fake worktree dirs to exercise resolveTaskCwd elsewhere).
+    // Without this fast-path, the rewire would route to the worktree and
+    // ignore the override, breaking AC-15's CANON_TASKS_DIR_OVERRIDE guarantee.
+    if (process.env.CANON_TASKS_DIR_OVERRIDE) {
+        return path.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
+    }
+    return path.join(resolveTaskCwd(taskId), 'tasks', taskId);
+}
+
+/**
+ * True when `tasks/<taskId>/status.json` claims `worktree: true` with a branch
+ * but no usable worktree exists on disk — either the conventional path is
+ * missing entirely, OR the directory is present but stale (no `tasks/<id>/
+ * status.json` inside, as happens after a half-completed `git worktree remove`
+ * or a manual `rm` that left the dir behind) — AND no other checkout for the
+ * branch exists. Mirrors `resolveTaskCwd`'s own usability test (it returns
+ * the worktree only when the nested `status.json` is present), so this gate
+ * fires whenever `resolveTaskCwd` would fall through to its `die()` path.
+ * Used by callers that must degrade gracefully (e.g., `canon task list` per
+ * the issue #83 contract) instead of crashing. Returns false on any
+ * read/parse error — leave the "real" failure to the caller's normal path.
+ */
+export function isOrphanedWorktreeState(taskId: string): boolean {
+    const worktreesRoot = effectiveWorktreesRoot();
+    const directWorktree = path.join(worktreesRoot, taskId);
+    const directStatus = path.join(directWorktree, 'tasks', taskId, 'status.json');
+    if (fs.existsSync(directStatus)) return false;
+    const statusPath = path.join(taskDirForRepoRoot(taskId), 'status.json');
+    try {
+        const parsed = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Pick<StatusJson, 'worktree' | 'branch'>;
+        if (parsed.worktree !== true) return false;
+        const branch = parsed.branch?.trim() ?? '';
+        if (!branch) return false;
+        return findExistingWorktreeForBranch(branch) === null;
+    } catch {
+        return false;
+    }
 }
 
 export function resolveTaskCwd(taskId: string): string {
@@ -42,7 +86,7 @@ export function resolveTaskCwd(taskId: string): string {
     const directStatus = path.join(directWorktree, 'tasks', taskId, 'status.json');
     if (fs.existsSync(directStatus)) return directWorktree;
 
-    const statusPath = path.join(taskDirFor(taskId), 'status.json');
+    const statusPath = path.join(taskDirForRepoRoot(taskId), 'status.json');
     try {
         const parsed = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Pick<StatusJson, 'worktree' | 'branch'>;
         if (parsed.worktree === true) {
@@ -99,7 +143,7 @@ function validateStatus(taskId: string, parsed: StatusJson): void {
     const phases = parsed.phases ?? {};
     for (const [phaseName, entry] of Object.entries(phases)) {
         if (!entry) continue;
-        for (const field of ['iterations', 'iterations_current_loop', 'iterations_total', 'changes_requested_total', 'auto_block_count', 'reroute_count'] as const) {
+        for (const field of ['iterations', 'iterations_current_loop', 'iterations_total', 'changes_requested_total', 'preflight_rejections_current_loop', 'preflight_rejections_total', 'auto_block_count', 'reroute_count'] as const) {
             validateNonNegativeInt(entry[field], taskId, `phases.${phaseName}.${field}`);
         }
     }

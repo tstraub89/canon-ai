@@ -154,7 +154,9 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short sh
       "Skill(canon-status)",
       "Skill(canon-status:*)",
       "Skill(canon-changelog)",
-      "Skill(canon-changelog:*)"
+      "Skill(canon-changelog:*)",
+      "Skill(canon-review)",
+      "Skill(canon-review:*)"
     ]
   }
 }

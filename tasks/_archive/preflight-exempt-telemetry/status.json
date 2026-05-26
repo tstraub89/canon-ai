@@ -1,0 +1,71 @@
+{
+  "id": "preflight-exempt-telemetry",
+  "title": "Code-review pre-flight exempts pipeline telemetry files from diff coverage check",
+  "status": "complete",
+  "created": "2026-05-26",
+  "updated": "2026-05-26",
+  "branch": "task/preflight-exempt-telemetry",
+  "base_branch": "release/v1.5",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "bf6dff0e9ac965bc102875a791d86b7555491ba5",
+    "orchestrator_commit": "bf6dff0e9ac965bc102875a791d86b7555491ba5",
+    "codex_cli": "codex-cli 0.133.0",
+    "claude_code": "2.1.150 (Claude Code)"
+  },
+  "task_size": "S",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex": "019e6267-25df-73a0-8d5c-c341fcea1256",
+    "claude_review": "add3ab59-826a-4a4c-a65c-12da540bfe7a"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

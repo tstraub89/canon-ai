@@ -1,13 +1,53 @@
 #!/usr/bin/env node
 
+// scripts/run-task/signals.ts
+var activeChildren = /* @__PURE__ */ new Set();
+function registerActiveChild(child) {
+  activeChildren.add(child);
+  const drop = () => {
+    activeChildren.delete(child);
+  };
+  child.once("close", drop);
+  child.once("error", drop);
+}
+function killChildGroup(child, sig) {
+  if (child.pid == null) return false;
+  try {
+    process.kill(-child.pid, sig);
+    return true;
+  } catch {
+    try {
+      child.kill(sig);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+process.on("SIGHUP", () => {
+  process.stderr.write("WARN: SIGHUP received; ignoring (orchestrator survives supervising-shell exit).\n");
+});
+function forwardAndExit(sig) {
+  for (const child of activeChildren) {
+    killChildGroup(child, sig);
+  }
+  process.removeAllListeners(sig);
+  process.kill(process.pid, sig);
+}
+process.on("SIGINT", () => forwardAndExit("SIGINT"));
+process.on("SIGTERM", () => forwardAndExit("SIGTERM"));
+
+// scripts/run-task.ts
+import { pathToFileURL } from "url";
+
 // scripts/run-task/main.ts
 import { spawnSync as spawnSync6 } from "child_process";
 import fs14 from "fs";
 import path15 from "path";
 
 // scripts/run-task/phases/code-review.ts
-import fs9 from "fs";
-import path10 from "path";
+import fs10 from "fs";
+import path11 from "path";
 
 // scripts/run-task/cli.ts
 function die(message) {
@@ -231,6 +271,7 @@ var config = {
   claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
   claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.4-mini",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.5",
@@ -277,16 +318,21 @@ function findExistingWorktreeForBranch(branch) {
   }
   return null;
 }
+function taskDirForRepoRoot(taskId) {
+  return path2.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
+}
 function taskDirFor(taskId) {
-  const tasksDir = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR;
-  return path2.join(tasksDir, taskId);
+  if (process.env.CANON_TASKS_DIR_OVERRIDE) {
+    return path2.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
+  }
+  return path2.join(resolveTaskCwd(taskId), "tasks", taskId);
 }
 function resolveTaskCwd(taskId) {
   const worktreesRoot = effectiveWorktreesRoot();
   const directWorktree = path2.join(worktreesRoot, taskId);
   const directStatus = path2.join(directWorktree, "tasks", taskId, "status.json");
   if (fs2.existsSync(directStatus)) return directWorktree;
-  const statusPath = path2.join(taskDirFor(taskId), "status.json");
+  const statusPath = path2.join(taskDirForRepoRoot(taskId), "status.json");
   try {
     const parsed = JSON.parse(fs2.readFileSync(statusPath, "utf8"));
     if (parsed.worktree === true) {
@@ -337,7 +383,7 @@ function validateStatus(taskId, parsed) {
   const phases = parsed.phases ?? {};
   for (const [phaseName, entry] of Object.entries(phases)) {
     if (!entry) continue;
-    for (const field of ["iterations", "iterations_current_loop", "iterations_total", "changes_requested_total", "auto_block_count", "reroute_count"]) {
+    for (const field of ["iterations", "iterations_current_loop", "iterations_total", "changes_requested_total", "preflight_rejections_current_loop", "preflight_rejections_total", "auto_block_count", "reroute_count"]) {
       validateNonNegativeInt(entry[field], taskId, `phases.${phaseName}.${field}`);
     }
   }
@@ -521,98 +567,6 @@ function teardownWorktree(taskId) {
   if (!result.ok) warn(`Could not remove worktree: ${result.stderr}`);
   else info("Worktree removed.");
 }
-function syncWorktreeArtifacts(taskIds) {
-  for (const taskId of taskIds) {
-    const wt = worktreePath(taskId);
-    const wtDir = path3.join(wt, "tasks", taskId);
-    const mainDir = path3.join(REPO_ROOT, "tasks", taskId);
-    if (!fs3.existsSync(wtDir)) continue;
-    const wtFiles = new Set(
-      fs3.readdirSync(wtDir).filter((f) => {
-        try {
-          const st = fs3.lstatSync(path3.join(wtDir, f));
-          return st.isFile() && !st.isSymbolicLink();
-        } catch {
-          return false;
-        }
-      })
-    );
-    for (const name of TASK_ARTIFACT_FILES) {
-      const src = path3.join(wtDir, name);
-      const dest = path3.join(mainDir, name);
-      try {
-        if (wtFiles.has(name)) {
-          fs3.copyFileSync(src, dest);
-        } else if (fs3.existsSync(dest)) {
-          fs3.unlinkSync(dest);
-        }
-      } catch {
-      }
-    }
-  }
-}
-function syncWorktreeTelemetry(taskIds) {
-  for (const taskId of taskIds) {
-    const wt = worktreePath(taskId);
-    if (!fs3.existsSync(wt)) continue;
-    const sourceHead = gitSafeAtRaw(wt, "rev-parse", "HEAD");
-    const destHead = gitSafeAtRaw(REPO_ROOT, "rev-parse", "HEAD");
-    if (!sourceHead.ok || !destHead.ok) {
-      warn(`Skipping shared-doc sync for ${taskId}: could not resolve HEAD SHAs`);
-      continue;
-    }
-    const sourceSHA = sourceHead.stdout.trim();
-    const destSHA = destHead.stdout.trim();
-    for (const relPath of PIPELINE_SHARED_DOCS) {
-      if (relPath === "docs/pipeline-invocations.md") continue;
-      const isManagedDoc = PIPELINE_MANAGED_DOCS.includes(relPath);
-      const src = path3.join(wt, relPath);
-      const dest = path3.join(REPO_ROOT, relPath);
-      if (!fs3.existsSync(src)) continue;
-      try {
-        if (fs3.lstatSync(src).isSymbolicLink()) continue;
-        const dirty = gitSafeAtRaw(REPO_ROOT, "status", "--porcelain=v1", "-uall", "--", relPath);
-        if (dirty.ok && dirty.stdout.trim()) {
-          if (!isManagedDoc) {
-            warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has uncommitted changes`);
-            continue;
-          }
-          try {
-            const sourceContent = fs3.readFileSync(src, "utf8");
-            const destContent = fs3.readFileSync(dest, "utf8");
-            if (sourceContent !== destContent) {
-              warn(`Skipping managed-doc sync for ${taskId} (${relPath}): destination has uncommitted changes that diverge from the worktree (preserving external edits)`);
-              continue;
-            }
-          } catch {
-            warn(`Skipping managed-doc sync for ${taskId} (${relPath}): could not compare destination to worktree`);
-            continue;
-          }
-        }
-        if (sourceSHA !== destSHA) {
-          const destAhead = gitSafeAtRaw(wt, "log", "--oneline", `${sourceSHA}..${destSHA}`, "--", relPath);
-          if (destAhead.ok && destAhead.stdout.trim()) {
-            warn(`Skipping shared-doc sync for ${taskId} (${relPath}): destination has commits source lacks`);
-            continue;
-          }
-        }
-        let needsCopy = !fs3.existsSync(dest);
-        if (!needsCopy) {
-          const sourceContent = fs3.readFileSync(src, "utf8");
-          const destinationContent = fs3.readFileSync(dest, "utf8");
-          needsCopy = sourceContent !== destinationContent;
-        }
-        if (needsCopy) {
-          fs3.copyFileSync(src, dest);
-        }
-        if (!isManagedDoc) {
-          gitSafeAt(wt, "checkout", "HEAD", "--", relPath);
-        }
-      } catch {
-      }
-    }
-  }
-}
 
 // scripts/run-task/git.ts
 function runCommand(command, args) {
@@ -672,12 +626,29 @@ function filterGitIgnoredPaths(paths, cwd) {
 function commitTaskArtifactsToBase(taskIds, _artifactFiles) {
   void _artifactFiles;
   for (const taskId of taskIds) {
-    const taskDir = path4.relative(REPO_ROOT, taskDirFor(taskId));
+    const taskDir = path4.relative(REPO_ROOT, taskDirForRepoRoot(taskId));
     const status = gitSafe("status", "--porcelain", "--", taskDir);
     if (!status.ok || status.stdout.trim().length === 0) continue;
     git("add", "--", taskDir);
-    git("commit", "-m", `task(${taskId}): commit artifacts pre-pipeline`);
+    git("commit", "-m", `task(${taskId}): commit artifacts pre-pipeline`, "--only", "--", taskDir);
     info(`Committed task artifacts for ${taskId} to base branch.`);
+  }
+  const dirtyTelemetry = [];
+  for (const relPath of PIPELINE_TELEMETRY_FILES) {
+    const status = gitSafe("status", "--porcelain", "--", relPath);
+    if (status.ok && status.stdout.trim().length > 0) dirtyTelemetry.push(relPath);
+  }
+  if (dirtyTelemetry.length > 0) {
+    for (const relPath of dirtyTelemetry) git("add", "--", relPath);
+    git(
+      "commit",
+      "-m",
+      `chore: absorb pre-implement telemetry into scaffold for ${taskIds.join(", ")}`,
+      "--only",
+      "--",
+      ...dirtyTelemetry
+    );
+    info(`Absorbed pre-implement telemetry into scaffold for ${taskIds.join(", ")}.`);
   }
 }
 function getCurrentBranch() {
@@ -917,12 +888,12 @@ function claudeModelFor(config3, phase) {
       return config3.claudeModelSpec;
     case "plan":
       return config3.claudeModelPlan;
-    case "code_review":
-      return config3.claudeModelReview;
     case "qa":
       return config3.claudeModelQa;
-    // spec_review, implement, human_review aren't Claude phases; fall back
-    // to the spec model so resumed Claude sessions survive accidental use.
+    // code_review is size-keyed (see codeReviewMatrix in claudeMatrix); not
+    // resolved through this helper. spec_review, implement, human_review
+    // aren't Claude phases; fall back to the spec model so resumed Claude
+    // sessions survive accidental use.
     default:
       return config3.claudeModelSpec;
   }
@@ -946,11 +917,17 @@ function claudeMatrix(config3) {
       XL: { model, effort: "high" }
     };
   };
+  const codeReviewMatrix = () => ({
+    S: { model: config3.claudeModelReview, effort: "medium" },
+    M: { model: config3.claudeModelReview, effort: "high" },
+    L: { model: config3.claudeModelReviewLarge, effort: "high" },
+    XL: { model: config3.claudeModelReviewLarge, effort: "xhigh" }
+  });
   return {
     spec: buildHigh("spec"),
     plan: buildHigh("plan", "high"),
     // sonnet doesn't support xhigh
-    code_review: buildHigh("code_review"),
+    code_review: codeReviewMatrix(),
     qa: buildMedium("qa")
   };
 }
@@ -977,6 +954,7 @@ var config2 = {
   claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
   claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.4-mini",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.5",
@@ -987,6 +965,7 @@ function policyConfig() {
     claudeModelSpec: config2.claudeModelSpec,
     claudeModelPlan: config2.claudeModelPlan,
     claudeModelReview: config2.claudeModelReview,
+    claudeModelReviewLarge: config2.claudeModelReviewLarge,
     claudeModelQa: config2.claudeModelQa,
     codexModelMini: config2.codexModelMini,
     codexModelFull: config2.codexModelFull,
@@ -1024,11 +1003,11 @@ import { spawn as spawn2 } from "child_process";
 // scripts/run-task/metrics.ts
 import fs4 from "fs";
 import path5 from "path";
-function getMetricsFile() {
-  return process.env.CANON_METRICS_FILE_OVERRIDE ? path5.resolve(process.env.CANON_METRICS_FILE_OVERRIDE) : path5.join(REPO_ROOT, "docs/pipeline-invocations.md");
+function getMetricsFile(activeCwd) {
+  return process.env.CANON_METRICS_FILE_OVERRIDE ? path5.resolve(process.env.CANON_METRICS_FILE_OVERRIDE) : path5.join(activeCwd ?? REPO_ROOT, "docs/pipeline-invocations.md");
 }
 function recordMetric(entry) {
-  const metricsFile = getMetricsFile();
+  const metricsFile = getMetricsFile(entry.activeCwd);
   if (!fs4.existsSync(metricsFile)) {
     fs4.writeFileSync(metricsFile, [
       "# Workflow Metrics",
@@ -1092,24 +1071,21 @@ function streamProcess(command, args, options) {
     const capturedStderr = [];
     const child = spawn(command, args, {
       cwd: options.cwd,
-      stdio: ["inherit", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true
     });
+    registerActiveChild(child);
+    options.onSpawn?.(child);
     const resetStallTimer = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
         stalled = true;
         warn(`${options.label} stalled \u2014 no output for ${Math.round(stallMs / 1e3)}s. Sending SIGTERM.`);
-        try {
-          child.kill("SIGTERM");
-        } catch {
-        }
+        killChildGroup(child, "SIGTERM");
         killTimer = setTimeout(() => {
           if (!closed) {
             warn(`${options.label} did not exit after SIGTERM \u2014 sending SIGKILL.`);
-            try {
-              child.kill("SIGKILL");
-            } catch {
-            }
+            killChildGroup(child, "SIGKILL");
           }
         }, STALL_KILL_GRACE_MS);
       }, stallMs);
@@ -2060,7 +2036,7 @@ function validateExtractedPath(extracted) {
   }
   return { kind: "ok", path: extracted };
 }
-var HANDOFF_DIFF_EXEMPT_PATHS = /* @__PURE__ */ new Set([]);
+var HANDOFF_DIFF_EXEMPT_PATHS = new Set(PIPELINE_TELEMETRY_FILES);
 function isPipelineOwnedTaskArtifact(filePath, taskIds) {
   return taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`));
 }
@@ -2103,10 +2079,11 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   }
   return issues;
 }
-function verifyBaseDriftFromData(diffFiles, allowedPaths, taskIds) {
+function verifyBaseDriftFromData(diffFiles, allowedPaths, taskIds, allowedPrefixes = []) {
   const drift = [];
   for (const filePath of diffFiles) {
     if (allowedPaths.has(filePath)) continue;
+    if (allowedPrefixes.some((prefix) => filePath.startsWith(prefix))) continue;
     if (taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`))) continue;
     drift.push(filePath);
   }
@@ -2159,21 +2136,38 @@ function verifyBaseDrift(taskIds, baseBranch, cwd) {
     return { drift: [], fetchFailed: false, diffFailed: true, diffError: driftResult.stderr };
   }
   const allowedPaths = new Set(PIPELINE_TELEMETRY_FILES);
+  const allowedPrefixes = [];
   for (const taskId of taskIds) {
     const parsed = parseAffectedFilesFromSpec(taskId);
     for (const filePath of parsed.files) {
-      allowedPaths.add(filePath);
+      if (filePath.endsWith("/")) {
+        allowedPrefixes.push(filePath);
+      } else {
+        allowedPaths.add(filePath);
+      }
     }
     for (const malformed of parsed.malformed) {
       warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
     }
+    try {
+      if (readStatus(taskId).phases.qa?.status === "done") {
+        for (const doc of PIPELINE_MANAGED_DOCS) {
+          allowedPaths.add(doc);
+        }
+      }
+    } catch {
+    }
   }
   return {
-    drift: verifyBaseDriftFromData(driftResult.files, allowedPaths, taskIds),
+    drift: verifyBaseDriftFromData(driftResult.files, allowedPaths, taskIds, allowedPrefixes),
     fetchFailed: false,
     diffFailed: false
   };
 }
+
+// scripts/run-task/prompts/index.ts
+import fs7 from "fs";
+import path8 from "path";
 
 // scripts/run-task/context.ts
 import fs6 from "fs";
@@ -2236,8 +2230,8 @@ ${content}
   }
   return block;
 }
-function buildKnownPitfalls() {
-  const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path7.join(REPO_ROOT, "docs/patterns.md");
+function buildKnownPitfalls(taskIds) {
+  const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path7.join(getActiveCwd(taskIds), "docs/patterns.md");
   try {
     const content = fs6.readFileSync(patternsPath, "utf8");
     const match = content.match(/## Known Pitfalls\n\n([\s\S]*?)(?:\n## |\n---|\n# |$)/);
@@ -2874,16 +2868,16 @@ function renderTemplate(template, view) {
 var code_review_round_1_default = "You are reviewing implementation for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks to review:\n{{{taskLines}}}\n\nGrounding rule: inspect the current diff and changed files before you trust any statement in handoff.md. If a claim is not visible in the current artifact, treat it as unverified.\n\n**Read in this order: spec.md \u2192 handoff.md \u2192 diff.** Do not read handoff.md first \u2014 Codex's explanation of what it did will anchor your review before you've formed an independent read of the requirements. Let the spec set the frame, then check whether the handoff and diff match it.\n\n{{#hasDiff}}\n**Task diff against {{{baseBranch}}}**\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes \u2014 read changed files listed in handoff.md Changes table directly for the remainder.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRead the actual diff: `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n{{#isBundle}}\nAlso check for cross-task interactions \u2014 unintended coupling or conflicts between tasks.{{/isBundle}}\n\n**Validation gate**: verify each handoff.md Validation Outcomes table has no Fail results and all applicable checks were run.\n`Fail \u2013 unrelated` rows are permitted only when the Notes column names the specific failing test/file \u2014 assess whether the explanation is credible and the failure is genuinely outside the task's Affected Files.\nTreat a required check marked N/A as a failure of the handoff.\n\n**On plan deviations**: Codex may deviate from plan.md if the deviation is documented with justification in handoff.md. Treat documented deviations as design decisions to evaluate \u2014 not automatic violations. Ask: is the AC still met? Is the approach sound?\n\n**Always flag**: dropped or partially-met ACs, undocumented behavior changes, skipped or failed validation checks.\n\nFor each task, write tasks/<id>/review.md. Label every finding: `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap` (something ambiguous or missing in the spec that caused Codex to guess \u2014 flag it so the spec template can improve). On re-review (round 2+), append a `## Round N` section rather than rewriting \u2014 the template's \"On re-review\" comment shows the shape.\n\nSet verdict per task: approved, approved_with_nits, changes_requested, or needs_re_review.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/code-review-round-n.md
-var code_review_round_n_default = "[REVIEW ROUND {{roundN}} \u2014 verifying iteration {{priorIteration}}'s response to round {{maxIter}} findings]\n\nCodex appended `## Iteration {{priorIteration}}` to `handoff.md` addressing your prior round's findings. If you're resuming the prior review session, the full task framing (spec, prior review history, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and the earlier `## Round` sections of `tasks/<id>/review.md` before verifying the new iteration.\n\nTasks to re-review:\n{{{taskLines}}}\n{{{tightenLine}}}\n{{#hasDiff}}\n**Task diff against {{{baseBranch}}}**\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes \u2014 read changed files listed in handoff.md Changes table directly for the remainder.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRead the actual code diff since your prior review: `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>`.\n{{/hasDiff}}\n\nFor each task:\n1. Read the `## Iteration {{priorIteration}}` section of `tasks/<id>/handoff.md` \u2014 that's the diff under review this round.\n{{#hasDiff}}\n2. Read the pre-computed code diff above. Do not trust handoff claims that are not visible in the diff.\n{{/hasDiff}}\n{{^hasDiff}}\n2. Read the actual code diff since your prior review using `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>` when the diff was not precomputed. Do not trust handoff claims that are not visible in the diff.\n{{/hasDiff}}\n3. For each finding in your prior `## Round {{maxIter}}` section of `review.md`, verify whether iteration {{priorIteration}} addressed it. **Do NOT redo the Stage 1 AC table** \u2014 that gate already passed in round 1.\n4. **APPEND** `## Round {{roundN}} \u2014 verifying iteration {{priorIteration}}'s response to round {{maxIter}}` to `review.md` (the template's \"On re-review\" comment shows the shape). Do not rewrite earlier rounds. Include only:\n   - Per-finding verification (addressed / still open / no longer relevant)\n   - NEW findings introduced by iteration {{priorIteration}}'s changes \u2014 don't re-litigate decisions from earlier rounds\n   - Verdict for this round\n\nSet verdict per task: `approved`, `approved_with_nits`, `changes_requested`, or `needs_re_review`.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
+var code_review_round_n_default = "[REVIEW ROUND {{roundN}} \u2014 verifying iteration {{priorIteration}}'s response to round {{maxIter}} findings]\n\nCodex appended `## Iteration {{priorIteration}}` to `handoff.md` addressing your prior round's findings. If you're resuming the prior review session, the full task framing (spec, prior review history, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and the earlier `## Round` sections of `tasks/<id>/review.md` before verifying the new iteration.\n\nTasks to re-review:\n{{{taskLines}}}\n{{{tightenLine}}}\n{{#hasDiff}}\n**Task diff against {{{baseBranch}}}**\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes \u2014 read changed files listed in handoff.md Changes table directly for the remainder.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRead the actual code diff since your prior review: `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>`.\n{{/hasDiff}}\n\nFor each task:\n1. Read the `## Iteration {{priorIteration}}` section of `tasks/<id>/handoff.md` \u2014 that's the diff under review this round.\n{{#hasDiff}}\n2. Read the pre-computed code diff above. Do not trust handoff claims that are not visible in the diff.\n{{/hasDiff}}\n{{^hasDiff}}\n2. Read the actual code diff since your prior review using `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>` when the diff was not precomputed. Do not trust handoff claims that are not visible in the diff.\n{{/hasDiff}}\n3. **Re-fill the Stage 1 AC table.** Every AC from `tasks/<id>/spec.md` gets a row with current Met / Partial / Not Met status against the latest code. This is NOT optional \u2014 earlier rounds' AC tables were snapshots of THOSE iterations' code, and iteration {{priorIteration}}'s changes can have broken previously-Met ACs or fixed previously-failing ones. Only a fresh table catches both directions. ACs that were Not Met or Partial in `## Round {{maxIter}}` are this round's load-bearing focus: confirm whether iteration {{priorIteration}} resolved them. For ACs that were Met in round {{maxIter}} AND whose code paths iteration {{priorIteration}} didn't touch, you may mark them `Met (unchanged from round {{maxIter}})` with a one-line evidence pointer \u2014 no need to re-derive full evidence \u2014 but every AC must still appear in the table.\n4. For each finding in your prior `## Round {{maxIter}}` section of `review.md`, verify whether iteration {{priorIteration}} addressed it. The Stage 1 re-table from step 3 feeds this directly: an AC that was Not Met in round {{maxIter}} and is now Met means the corresponding finding is resolved.\n5. **APPEND** `## Round {{roundN}} \u2014 verifying iteration {{priorIteration}}'s response to round {{maxIter}}` to `review.md` (the template's \"On re-review\" comment shows the shape). Do not rewrite earlier rounds. Include:\n   - **Stage 1 AC re-table** (every AC; current status against current code)\n   - Per-finding verification (addressed / still open / no longer relevant) \u2014 cross-referenced to the AC re-table where applicable\n   - NEW findings introduced by iteration {{priorIteration}}'s changes \u2014 **including any AC that regressed from Met to Not Met since round {{maxIter}}** (regressions in previously-passing ACs are correctness bugs even when no explicit finding called them out)\n   - Verdict for this round\n\nSet verdict per task: `approved`, `approved_with_nits`, `changes_requested`, or `needs_re_review`.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement.md
 var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md and the matrix in AGENTS.md. Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
 // scripts/run-task/prompts/templates/implement-reroute.md
-var implement_reroute_default = "You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n1. For each task above, locate the exact heading named in its entry \u2014 `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.\n2. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n3. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n4. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n5. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec's Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n6. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. The reviewer reads handoff.md as the single source of truth, not your prior session's context.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
+var implement_reroute_default = "You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n1. For each task above, read `tasks/<id>/spec.md` from your current working directory (the worktree). REPO_ROOT's copy is the pre-implement scaffold and does NOT contain operator amendments. Locate the exact heading named in its entry \u2014 `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.\n2. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n3. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n4. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n5. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec's Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n6. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. The reviewer reads handoff.md as the single source of truth, not your prior session's context.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement-revisions.md
-var implement_revisions_default = "{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you're resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n{{/hasReviewFindings}}\n{{#hasReviewFindings}}\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template's \"On revision rounds\" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
+var implement_revisions_default = "{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you're resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template's \"On revision rounds\" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n{{#hasPreflightFindings}}\nYour prior iteration's handoff was rejected by the orchestrator's pre-flight gate **before any Claude review ran**. The rejection details are recorded in `review.md` under `## Validation Gate` / `## Pre-Flight Rejection`. This is an input-validation failure (typically a malformed Validation Outcomes table, missing AC Coverage rows, or a diff/handoff mismatch), not a code-quality finding.\n\nTasks with pre-flight rejection feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read every BLOCKED bullet under `## Validation Gate` (and `## Pre-Flight Rejection` if appended after a prior round) in `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Fix the handoff itself \u2014 usually `handoff.md`'s Validation Outcomes rows (use backticked command keys, not prose labels), AC Coverage table (fill in concrete statuses, no placeholders), or the Changes table (every path in `git diff <base>...HEAD` must have a row).\n3. Source-code changes are usually unnecessary for pre-flight fixes. Only touch source if the rejection lists a concrete bug (e.g., a Fail validation result on a real test).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}`. Include the delta: which BLOCKED items you addressed and how.\n{{/hasPreflightFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/plan.md
 var plan_default = "You are writing implementation plans for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n{{{verdictLines}}}\n\nFor each task, read tasks/<id>/spec.md and tasks/<id>/spec-review.md. Address any `changes_requested` items before writing the plan. If the verdict is `approved_with_nits`, incorporate the nits into the plan \u2014 they don't require spec changes but should inform implementation decisions.\n\nWrite tasks/<id>/plan.md for each task with ordered implementation steps. Reference specific files, existing patterns, and code examples from the codebase. Codex implements directly from this plan.\n\nIf you encounter spec gaps, append to tasks/<id>/notes.md (prefix: [plan]).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
@@ -3057,7 +3051,7 @@ function promptImplement(state, mode = "fresh", affectedFiles, baseBranch) {
     stateHeader: buildImplementStateHeader(state, mode),
     startup: CODEX_STARTUP,
     risksBlock: buildKnownRisks(taskIds),
-    pitfallsBlock: buildKnownPitfalls(),
+    pitfallsBlock: buildKnownPitfalls(taskIds),
     contextBlock: buildContextBlock(taskIds),
     affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
     taskLines,
@@ -3082,13 +3076,20 @@ function promptImplementRevisions(state, affectedFiles, baseBranch) {
   const { tasks } = state;
   const stateHeader = buildImplementStateHeader(state, "revision");
   const maxCodeReviewIter = tasks.reduce((m, t) => Math.max(m, t.iterations), 0);
-  const hasReviewFindings = maxCodeReviewIter > 0;
+  const maxPreflightRejections = tasks.reduce(
+    (m, t) => Math.max(m, t.status.phases.code_review?.preflight_rejections_current_loop ?? 0),
+    0
+  );
+  const hasPreflightFindings = maxPreflightRejections > 0;
+  const hasReviewFindings = maxCodeReviewIter > 0 && !hasPreflightFindings;
   const iterationN = maxCodeReviewIter + 1;
   const priorRound = maxCodeReviewIter;
-  const iterBanner = `[ITERATION ${iterationN} \u2014 addressing code review round ${priorRound}]`;
-  const handoffAppend = `## Iteration ${iterationN} \u2014 addressing review round ${priorRound}`;
+  const iterBanner = hasPreflightFindings ? `[ITERATION ${iterationN} \u2014 addressing pre-flight handoff rejection (no Claude review yet)]` : `[ITERATION ${iterationN} \u2014 addressing code review round ${priorRound}]`;
+  const handoffAppend = hasPreflightFindings ? `## Iteration ${iterationN} \u2014 addressing pre-flight handoff rejection` : `## Iteration ${iterationN} \u2014 addressing review round ${priorRound}`;
   const reviewLines = hasReviewFindings ? tasks.map(
     (t) => `- \`${t.taskId}\` \u2192 read \`tasks/${t.taskId}/review.md\` (most recent \`## Round ${priorRound}\` section only \u2014 earlier rounds are already addressed)`
+  ).join("\n") : hasPreflightFindings ? tasks.map(
+    (t) => `- \`${t.taskId}\` \u2192 read \`tasks/${t.taskId}/review.md\` (\`## Pre-Flight Rejection\` block lists handoff-format issues; no Claude review ran). Address every listed item \u2014 usually a malformed Validation Outcomes table or missing AC Coverage rows.`
   ).join("\n") : "";
   return render3("implement-revisions.md", {
     projectName: config.projectName,
@@ -3099,6 +3100,7 @@ function promptImplementRevisions(state, affectedFiles, baseBranch) {
     iterBanner,
     handoffAppend,
     hasReviewFindings,
+    hasPreflightFindings,
     iterationN,
     priorRound,
     reviewLines,
@@ -3138,16 +3140,28 @@ function promptImplementReroute(state, isResumedSession = false, affectedFiles, 
     preamble,
     groundingRule,
     risksBlock: buildKnownRisks(taskIds),
-    pitfallsBlock: buildKnownPitfalls(),
+    pitfallsBlock: buildKnownPitfalls(taskIds),
     contextBlock: buildContextBlock(taskIds),
     affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
     taskLines,
     phaseCommands: phaseCommands(taskIds, "implement", "done")
   });
 }
+function bundleHasRealPriorReview(taskIds) {
+  return taskIds.every((taskId) => {
+    const reviewPath = path8.join(taskDirFor(taskId), "review.md");
+    try {
+      const content = fs7.readFileSync(reviewPath, "utf8");
+      return /^## Stage 1\b/m.test(content) && !content.includes("[TASK-ID]");
+    } catch {
+      return false;
+    }
+  });
+}
 function promptCodeReview(state, baseBranch, scopedDiff = null) {
   const { tasks } = state;
-  const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
+  const rawMaxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
+  const maxIter = bundleHasRealPriorReview(tasks.map((t) => t.taskId)) ? rawMaxIter : 0;
   const resolvedBaseBranch = baseBranch ?? getBaseBranch(tasks.map((t) => t.taskId));
   const hasDiff = scopedDiff !== null;
   if (maxIter > 0) {
@@ -3222,13 +3236,13 @@ function promptQa(state) {
 
 // src/task/index.ts
 import { spawnSync as spawnSync5 } from "child_process";
-import fs8 from "fs";
-import path9 from "path";
+import fs9 from "fs";
+import path10 from "path";
 
 // scripts/run-task/canon-snapshot.ts
 import { spawnSync as spawnSync4 } from "child_process";
-import fs7 from "fs";
-import path8 from "path";
+import fs8 from "fs";
+import path9 from "path";
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
 function defaultRunCommand(command, args) {
   const result = spawnSync4(command, args, {
@@ -3260,7 +3274,7 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const runCommand3 = options.runCommand ?? defaultRunCommand;
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const upstreamCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path8.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : upstreamCommit;
+  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path9.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : upstreamCommit;
   return {
     upstream_repo: CANON_UPSTREAM_REPO,
     upstream_commit: upstreamCommit,
@@ -3279,14 +3293,14 @@ function applyCanonSnapshot(status, canon) {
   return next;
 }
 function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
-  const status = JSON.parse(fs7.readFileSync(statusFilePath, "utf8"));
+  const status = JSON.parse(fs8.readFileSync(statusFilePath, "utf8"));
   const canon = captureCanonSnapshot(REPO_ROOT, options);
   const next = applyCanonSnapshot(status, canon);
   const serialized = `${JSON.stringify(next, null, 2)}
 `;
-  const current = fs7.readFileSync(statusFilePath, "utf8");
+  const current = fs8.readFileSync(statusFilePath, "utf8");
   if (current !== serialized) {
-    fs7.writeFileSync(statusFilePath, serialized, "utf8");
+    fs8.writeFileSync(statusFilePath, serialized, "utf8");
   }
   return canon;
 }
@@ -3313,20 +3327,23 @@ function validateTaskId2(id) {
 function tasksRoot() {
   return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
 }
-function taskDirForCwd(cwd, taskId) {
+function taskDirForCwd(_cwd, taskId) {
   const root = tasksRoot();
-  return path9.isAbsolute(root) ? path9.join(root, taskId) : path9.join(cwd, root, taskId);
+  if (path10.isAbsolute(root)) {
+    return path10.join(root, taskId);
+  }
+  return path10.join(resolveTaskCwd(taskId), root, taskId);
 }
 function taskStatusFileForCwd(cwd, taskId) {
-  return path9.join(taskDirForCwd(cwd, taskId), "status.json");
+  return path10.join(taskDirForCwd(cwd, taskId), "status.json");
 }
 function taskRootForGate(cwd) {
   const root = tasksRoot();
-  return path9.isAbsolute(root) ? root : path9.join(cwd, root);
+  return path10.isAbsolute(root) ? root : path10.join(cwd, root);
 }
 function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs8.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs9.readFileSync(filePath, "utf8"));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Error: failed to read ${filePath}: ${message}`);
@@ -3334,9 +3351,9 @@ function readJsonFile(filePath) {
 }
 function writeJsonAtomic(filePath, data) {
   const tmpFile = `${filePath}.tmp`;
-  fs8.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
+  fs9.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
 `, "utf8");
-  fs8.renameSync(tmpFile, filePath);
+  fs9.renameSync(tmpFile, filePath);
 }
 function writeStatusAtomic(filePath, status) {
   status.status = deriveTopLevelStatus(status);
@@ -3387,6 +3404,7 @@ function updateReviewCounters(entry, verdict) {
     entry.iterations_total += 1;
     entry.iterations_current_loop = 0;
     entry.iterations = 0;
+    entry.preflight_rejections_current_loop = 0;
   }
 }
 function taskPhase(id, phaseArg, statusArg, verdictArg) {
@@ -3399,7 +3417,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   assertValidVerdict(phaseArg, verdictArg);
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs8.existsSync(statusPath)) {
+  if (!fs9.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
   }
   const status = readJsonFile(statusPath);
@@ -3440,6 +3458,37 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     console.log(`Updated ${id}: ${phaseArg} \u2192 ${statusArg}`);
   }
 }
+function taskPhasePreflightRejected(id, phaseArg) {
+  if (!id) throw new Error("Task ID required");
+  if (!phaseArg) throw new Error("Phase required");
+  validateTaskId2(id);
+  assertValidPhase(phaseArg);
+  if (!REVIEW_PHASES.has(phaseArg)) {
+    throw new Error(`taskPhasePreflightRejected: phase '${phaseArg}' is not a review phase; only ${[...REVIEW_PHASES].join(", ")} support pre-flight rejection.`);
+  }
+  const taskCwd = resolveTaskCwd(id);
+  const statusPath = taskStatusFileForCwd(taskCwd, id);
+  if (!fs9.existsSync(statusPath)) {
+    throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
+  }
+  const status = readJsonFile(statusPath);
+  const entry = ensurePhaseEntry(status, phaseArg);
+  entry.status = "done";
+  entry.verdict = "changes_requested";
+  entry.iterations_current_loop ??= entry.iterations ?? 0;
+  entry.iterations_total ??= entry.iterations ?? 0;
+  entry.changes_requested_total ??= 0;
+  entry.preflight_rejections_current_loop ??= 0;
+  entry.preflight_rejections_total ??= 0;
+  entry.auto_block_count ??= 0;
+  entry.changes_requested_total += 1;
+  entry.preflight_rejections_current_loop += 1;
+  entry.preflight_rejections_total += 1;
+  status.updated = today();
+  status.status = deriveTopLevelStatus(status);
+  writeStatusAtomic(statusPath, status);
+  console.log(`Updated ${id}: ${phaseArg} \u2192 done (verdict: changes_requested, pre-flight; iteration counters preserved)`);
+}
 
 // scripts/run-task/phases/code-review.ts
 async function runCodeReviewPhase(state, interactive, resumeId) {
@@ -3449,11 +3498,21 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
   const baseBranch = getBaseBranch(taskIds);
   const activeCwd = getActiveCwd(taskIds);
   const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
+  const perTaskCombined = tasks.map((t) => {
+    const preflight = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
+    return {
+      taskId: t.taskId,
+      real: t.iterations_current_loop,
+      preflight,
+      combined: t.iterations_current_loop + preflight
+    };
+  });
+  const worstTask = perTaskCombined.reduce((worst, curr) => curr.combined > worst.combined ? curr : worst, perTaskCombined[0]);
   const codeReviewLoopCap = getMaxReviewLoops(tasks);
-  if (maxIter >= codeReviewLoopCap) {
-    const reason = `Code review hit ${maxIter} changes_requested iterations in a row (limit: ${codeReviewLoopCap}). Pipeline auto-blocked. Read tasks/<id>/review.md \u2014 if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. To resume after fixing: set phases.code_review.status = "pending" and phases.code_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
+  if (worstTask.combined >= codeReviewLoopCap) {
+    const reason = `Code review hit ${worstTask.combined} attempts in a row for task ${worstTask.taskId} (${worstTask.real} reviewer rounds + ${worstTask.preflight} pre-flight rejections; limit: ${codeReviewLoopCap}). Pipeline auto-blocked. Read tasks/<id>/review.md \u2014 if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To resume after fixing: set phases.code_review.status = "pending", phases.code_review.iterations_current_loop = 0, and phases.code_review.preflight_rejections_current_loop = 0 in status.json, then re-run the pipeline.`;
     warn(reason);
-    autoBlockPhase(taskIds, "code_review", maxIter, reason);
+    autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
     process.exit(2);
   }
   const preflightFailed = [];
@@ -3486,9 +3545,7 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
 
 ${taskBundleIssues.map((i) => `- ${i}`).join("\n")}
 ` : "";
-      const reviewContent = `# Code Review: ${taskId}
-
-## Validation Gate
+      const blockedBlock = `## Validation Gate
 
 **BLOCKED \u2014 pre-flight rejected handoff before full review:**
 
@@ -3497,45 +3554,43 @@ ${taskBundleIssues.map((i) => `- ${i}`).join("\n")}
 
 - [x] **Changes requested** \u2014 fix the above and resubmit handoff.
 `;
-      fs9.writeFileSync(path10.join(resolveTaskCwd(taskId), "tasks", taskId, "review.md"), reviewContent);
-      taskPhase(taskId, "code_review", "done", "changes_requested");
+      const reviewPath = path11.join(taskDirFor(taskId), "review.md");
+      let existing = "";
+      try {
+        existing = fs10.readFileSync(reviewPath, "utf8");
+      } catch {
+      }
+      const hasPriorRealReview = existing.length > 0 && !isTemplateUnfilled(existing) && /^## Stage 1\b/m.test(existing);
+      const reviewContent = hasPriorRealReview ? `${existing.replace(/\s*$/, "")}
+
+---
+
+## Pre-Flight Rejection \u2014 handoff rejected before review (no Claude session ran)
+
+${blockedBlock}` : `# Code Review: ${taskId}
+
+${blockedBlock}`;
+      fs10.writeFileSync(reviewPath, reviewContent);
+      taskPhasePreflightRejected(taskId, "code_review");
     }
     return { agent: "claude", sessionId: null, exitCode: 0 };
   }
   info(`Phase: code_review (Claude${state.isBundle ? " bundle" : ""}, iteration ${maxIter + 1})`);
   for (const t of tasks) taskPhase(t.taskId, "code_review", "in_progress");
-  if (isWorktreeEnabled(taskIds)) {
-    const artifacts = ["spec.md", "spec-review.md", "plan.md", "notes.md"];
-    for (const taskId of taskIds) {
-      const srcDir = taskDirFor(taskId);
-      const dstDir = path10.join(activeCwd, "tasks", taskId);
-      fs9.mkdirSync(dstDir, { recursive: true });
-      for (const file of artifacts) {
-        const src = path10.join(srcDir, file);
-        const dst = path10.join(dstDir, file);
-        if (fs9.existsSync(src)) {
-          try {
-            fs9.copyFileSync(src, dst);
-          } catch {
-          }
-        }
-      }
-    }
-    info("Synced task artifacts from main worktree into task worktree for review.");
-  }
   const cfg = getClaudeConfig("code_review", tasks);
   const reviewResumeId = maxIter > 0 ? resumeId : null;
   const scopedDiff = getScopedDiff(baseBranch, activeCwd);
   const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, {
     taskId: taskIds.join("+"),
     phase: "code_review",
-    iteration: maxIter
+    iteration: maxIter,
+    activeCwd
   }, activeCwd);
   for (const t of tasks) {
-    const reviewPath = path10.join(resolveTaskCwd(t.taskId), "tasks", t.taskId, "review.md");
+    const reviewPath = path11.join(taskDirFor(t.taskId), "review.md");
     let reviewContent = null;
     try {
-      reviewContent = fs9.readFileSync(reviewPath, "utf8");
+      reviewContent = fs10.readFileSync(reviewPath, "utf8");
     } catch {
     }
     if (isTemplateUnfilled(reviewContent)) {
@@ -3545,10 +3600,6 @@ ${taskBundleIssues.map((i) => `- ${i}`).join("\n")}
   }
   return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
 }
-
-// scripts/run-task/phases/implement.ts
-import fs10 from "fs";
-import path11 from "path";
 
 // scripts/run-task/agents/codex.ts
 async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
@@ -3641,7 +3692,10 @@ async function runCodex(prompt, interactive, resumeId, model, effort, metricsCon
 
 // scripts/run-task/phases/implement.ts
 function shouldUseImplementRevision(tasks) {
-  return tasks.some((t) => t.iterations_current_loop > 0);
+  return tasks.some((t) => {
+    const preflightCount = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
+    return t.iterations_current_loop > 0 || preflightCount > 0;
+  });
 }
 async function runImplementPhase(state, interactive, resumeId) {
   const { tasks } = state;
@@ -3652,26 +3706,6 @@ async function runImplementPhase(state, interactive, resumeId) {
     commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
   }
   ensureBranch(taskIds);
-  if (isWorktreeEnabled(taskIds)) {
-    const wt = getActiveCwd(taskIds);
-    const artifacts = ["spec.md", "spec-review.md", "plan.md", "notes.md"];
-    for (const taskId of taskIds) {
-      const srcDir = taskDirFor(taskId);
-      const dstDir = path11.join(wt, "tasks", taskId);
-      fs10.mkdirSync(dstDir, { recursive: true });
-      for (const file of artifacts) {
-        const src = path11.join(srcDir, file);
-        const dst = path11.join(dstDir, file);
-        if (fs10.existsSync(src)) {
-          try {
-            fs10.copyFileSync(src, dst);
-          } catch {
-          }
-        }
-      }
-    }
-    info("Synced task artifacts from main worktree into task worktree for implement.");
-  }
   const activeCwd = getActiveCwd(taskIds);
   const baseBranch = getBaseBranch(taskIds);
   const affectedFiles = getAffectedFiles(baseBranch, activeCwd);
@@ -3694,7 +3728,8 @@ async function runImplementPhase(state, interactive, resumeId) {
     {
       taskId: taskIds.join("+"),
       phase: "implement",
-      iteration: tasks[0].iterations_current_loop
+      iteration: tasks[0].iterations_current_loop,
+      activeCwd
     },
     activeCwd,
     /* wrapForResume */
@@ -3743,10 +3778,12 @@ async function runPlanPhase(state, interactive) {
   info(`Phase: plan (Claude writes plan${state.isBundle ? "s" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "plan", "in_progress");
   const cfg = getClaudeConfig("plan", tasks);
+  const activeCwd = getActiveCwd(taskIds);
   const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, {
     taskId: taskIds.join("+"),
     phase: "plan",
-    iteration: tasks[0].status.phases.plan?.iterations_current_loop ?? tasks[0].status.phases.plan?.iterations ?? 0
+    iteration: tasks[0].status.phases.plan?.iterations_current_loop ?? tasks[0].status.phases.plan?.iterations ?? 0,
+    activeCwd
   });
   for (const t of tasks) {
     const planPath = path12.join(taskDirFor(t.taskId), "plan.md");
@@ -3773,14 +3810,16 @@ async function runQaPhase(state, interactive) {
   info(`Phase: qa (Claude writes QA${state.isBundle ? " for bundle" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "qa", "in_progress");
   const cfg = getClaudeConfig("qa", tasks);
+  const activeCwd = getActiveCwd(taskIds);
   const result = await runClaude(promptQa(state), interactive, null, cfg.model, cfg.effort, {
     taskId: taskIds.join("+"),
     phase: "qa",
-    iteration: tasks[0].status.phases.qa?.iterations_current_loop ?? tasks[0].status.phases.qa?.iterations ?? 0
-  }, getActiveCwd(taskIds));
+    iteration: tasks[0].status.phases.qa?.iterations_current_loop ?? tasks[0].status.phases.qa?.iterations ?? 0,
+    activeCwd
+  }, activeCwd);
   if (!state.isBundle && result.capturedStdout) {
     const taskId = taskIds[0];
-    const donePath = path13.join(getActiveCwd(taskIds), "tasks", taskId, "done.md");
+    const donePath = path13.join(activeCwd, "tasks", taskId, "done.md");
     if (isDoneMdTemplate(donePath)) {
       const salvaged = extractDoneMdFromStdout(result.capturedStdout);
       if (salvaged) {
@@ -3806,10 +3845,12 @@ async function runSpecPhase(state, interactive, resumeId) {
     info("Phase: spec (Claude revises specs after review feedback)");
     for (const t of tasks) taskPhase(t.taskId, "spec", "in_progress");
     const cfg2 = getClaudeConfig("spec", tasks);
+    const activeCwd2 = getActiveCwd(taskIds);
     const result2 = await runClaude(promptSpecRevision(state), interactive, resumeId, cfg2.model, cfg2.effort, {
       taskId: taskIds.join("+"),
       phase: "spec",
-      iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0
+      iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0,
+      activeCwd: activeCwd2
     });
     return { agent: "claude", sessionId: result2.sessionId, exitCode: result2.exitCode };
   }
@@ -3817,10 +3858,12 @@ async function runSpecPhase(state, interactive, resumeId) {
   info(`Phase: spec (Claude writes ${label}${state.isBundle ? " for bundle" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "spec", "in_progress");
   const cfg = getClaudeConfig("spec", tasks);
+  const activeCwd = getActiveCwd(taskIds);
   const result = await runClaude(promptSpec(state), interactive, null, cfg.model, cfg.effort, {
     taskId: taskIds.join("+"),
     phase: "spec",
-    iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0
+    iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0,
+    activeCwd
   });
   return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
 }
@@ -3890,10 +3933,12 @@ async function runSpecReviewPhase(state, interactive, resumeId) {
 
 ${promptSpecReview(state)}` : promptSpecReview(state);
   const cfg = getCodexConfig("spec_review", tasks);
+  const activeCwd = getActiveCwd(taskIds);
   const result = await runCodex(specReviewPrompt, interactive, resumeId, cfg.model, cfg.effort, {
     taskId: taskIds.join("+"),
     phase: "spec_review",
-    iteration: maxSpecIter
+    iteration: maxSpecIter,
+    activeCwd
   });
   for (const t of tasks) {
     const reviewPath = path14.join(resolveTaskCwd(t.taskId), "tasks", t.taskId, "spec-review.md");
@@ -3937,6 +3982,7 @@ var die2 = die;
 var info2 = info;
 var warn2 = warn;
 var taskDirFor2 = taskDirFor;
+var taskDirForRepoRoot2 = taskDirForRepoRoot;
 var readStatus2 = readStatus;
 var deriveTopLevelStatus2 = deriveTopLevelStatus;
 var runCommand2 = runCommand;
@@ -4319,25 +4365,10 @@ ${stagedAfterUnexpected.map((f) => `    ${f}`).join("\n")}
   const stagedCount = stagedAfter.stdout.trim().split("\n").filter(Boolean).length;
   info2(`Auto-committed ${stagedCount} file(s): ${message}`);
 }
-function humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath) {
-  return taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) || PIPELINE_TELEMETRY_FILES.includes(filePath) || affectedManagedDocs.has(filePath);
+function humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes = /* @__PURE__ */ new Set()) {
+  return taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) || PIPELINE_TELEMETRY_FILES.includes(filePath) || affectedManagedDocs.has(filePath) || [...affectedPrefixes].some((prefix) => filePath.startsWith(prefix));
 }
-function mirrorHumanReviewDocsToCwd(cwd) {
-  if (cwd === REPO_ROOT2) return;
-  for (const relPath of PIPELINE_SHARED_DOCS) {
-    const src = path15.join(REPO_ROOT2, relPath);
-    const dest = path15.join(cwd, relPath);
-    if (!fs14.existsSync(src)) continue;
-    const dirty = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "--", relPath);
-    if (dirty.ok && dirty.stdout.trim()) continue;
-    try {
-      fs14.mkdirSync(path15.dirname(dest), { recursive: true });
-      fs14.copyFileSync(src, dest);
-    } catch {
-    }
-  }
-}
-function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries) {
+function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, affectedPrefixes = /* @__PURE__ */ new Set()) {
   const stagePaths = /* @__PURE__ */ new Set();
   for (const taskId of taskIds) {
     if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
@@ -4352,6 +4383,11 @@ function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries) 
   for (const relPath of affectedManagedDocs) {
     if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === relPath))) {
       stagePaths.add(relPath);
+    }
+  }
+  for (const prefix of affectedPrefixes) {
+    if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName.startsWith(prefix)))) {
+      stagePaths.add(prefix);
     }
   }
   return [...stagePaths];
@@ -4504,7 +4540,6 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
   if (createPR) {
     ghAvailable = isCommandAvailable("gh");
   }
-  mirrorHumanReviewDocsToCwd(cwd);
   const baseBranch = getBaseBranch(taskIds);
   const baseDriftResult = verifyBaseDrift(taskIds, baseBranch, cwd);
   if (baseDriftResult.fetchFailed) {
@@ -4520,8 +4555,9 @@ This failure cannot be bypassed with --force.`
         `--pr aborted: base-drift detected. Files in the tree diff between origin/${baseBranch}
 and HEAD that are not in the spec's Affected Files (and not task-dir/telemetry):
 ${baseDriftResult.drift.map((filePath) => `  ${filePath}`).join("\n")}
-The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and files listed in
-your spec's '### Affected Files' table.
+The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, files listed in
+your spec's '### Affected Files' table (directory-form entries like 'dist/' match
+subpaths), and PIPELINE_MANAGED_DOCS (auto-allowlisted once qa.status = done).
 If this is a legitimate task change, add the path to spec.md '### Affected Files'
 and rerun. For a rename, list BOTH the old and new paths. If the drift is
 unexpected (likely cross-pipeline contamination from a sibling worktree's
@@ -4543,15 +4579,26 @@ Bypass with --force if you've verified the drift is intentional.`
     );
   }
   const affectedManagedDocs = /* @__PURE__ */ new Set();
+  const affectedPrefixes = /* @__PURE__ */ new Set();
   for (const taskId of taskIds) {
     const parsed = parseAffectedFilesFromSpec(taskId);
     for (const filePath of parsed.files) {
-      if (PIPELINE_MANAGED_DOCS.includes(filePath)) {
+      if (filePath.endsWith("/")) {
+        affectedPrefixes.add(filePath);
+      } else if (PIPELINE_MANAGED_DOCS.includes(filePath)) {
         affectedManagedDocs.add(filePath);
       }
     }
     for (const malformed of parsed.malformed) {
       warn2(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
+    }
+    try {
+      if (readStatus(taskId).phases.qa?.status === "done") {
+        for (const doc of PIPELINE_MANAGED_DOCS) {
+          affectedManagedDocs.add(doc);
+        }
+      }
+    } catch {
     }
   }
   const dirtyResult = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall");
@@ -4575,17 +4622,19 @@ Bypass with --force if you've verified the drift is intentional.`
   if (dirtyEntries.length === 0) {
     die2("Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.");
   }
-  const unexpected = dirtyEntries.filter((entry) => !entry.paths.every((pathName) => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName)));
+  const unexpected = dirtyEntries.filter((entry) => !entry.paths.every((pathName) => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName, affectedPrefixes)));
   if (unexpected.length > 0) {
     die2(
       `Human review commit aborted: working tree has dirty files outside the human_review allowlist.
 ` + unexpected.map((entry) => `  ${entry.raw}`).join("\n") + `
-The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and PIPELINE_MANAGED_DOCS entries listed in your spec's '### Affected Files' table.
-If this is a managed doc this task legitimately edits, add it to spec.md '### Affected Files' and rerun.
+The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, PIPELINE_MANAGED_DOCS entries listed
+in your spec's '### Affected Files' table (directory-form entries like 'dist/' match subpaths),
+and all PIPELINE_MANAGED_DOCS once qa.status = done (QA's Docs Freshness auto-allowlist).
+If this is a managed doc this task legitimately edits before QA, add it to spec.md '### Affected Files' and rerun.
 If this is a source or test file, it should have been committed during the implement phase \u2014 investigate why it is dirty now (unexpected late edits or base-drift/branch contamination are possible causes) and revert with: git checkout HEAD -- <path>`
     );
   }
-  const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries));
+  const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, affectedPrefixes));
   for (const relPath of stagePaths) {
     if (affectedManagedDocs.has(relPath)) {
       warn2(
@@ -4600,7 +4649,7 @@ If this is a source or test file, it should have been committed during the imple
   if (!stagedBefore.ok) {
     die2(`Human review commit aborted: could not inspect staged files: ${stagedBefore.stderr || "unknown error"}`);
   }
-  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
   if (stagedBeforeUnexpected.length > 0) {
     die2(
       `Human review commit aborted: staged files are not covered by the human_review allowlist.
@@ -4622,7 +4671,7 @@ If this is a source or test file, it should have been committed during the imple
   if (stagedNames.length === 0) {
     die2("Human review commit aborted: staging produced no commit-ready files.");
   }
-  const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+  const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
   if (stagedUnexpected.length > 0) {
     die2(
       `Human review commit aborted: staged files escaped the allowlist.
@@ -4674,8 +4723,7 @@ function printDryRunPlan(state) {
   }
   console.log("  - human_review: no LLM");
 }
-function assertLocalBaseInSyncWithOrigin(taskIds) {
-  const baseBranch = getBaseBranch2(taskIds);
+function assertLocalBaseInSyncWithOrigin(baseBranch) {
   const fetchResult = gitSafe2("fetch", "origin", baseBranch);
   if (!fetchResult.ok) {
     warn2(
@@ -4731,9 +4779,7 @@ function assertTaskBranchPushed(taskId) {
   Then re-run --ship.`
   );
 }
-function assertOriginTaskBranchAbsent(taskId) {
-  const branchName = resolveTaskBranchName(taskId);
-  const baseBranch = getBaseBranch([taskId]);
+function assertOriginTaskBranchAbsent(branchName, baseBranch) {
   const lsRemote = gitSafe("ls-remote", "--heads", "origin", `refs/heads/${branchName}`);
   if (!lsRemote.ok) {
     warn2(
@@ -4785,9 +4831,7 @@ function getMergedPRHeadSha(prNum) {
   if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null;
   return sha;
 }
-function assertNoOpenPRForTask(taskId) {
-  const branchName = resolveTaskBranchName(taskId);
-  const baseBranch = getBaseBranch([taskId]);
+function assertNoOpenPRForTask(branchName, baseBranch) {
   const prNum = findOpenPRNumber(branchName, baseBranch);
   if (prNum !== null) {
     die(
@@ -4823,9 +4867,12 @@ function findPRNumberExact(branch, baseBranch, state) {
   }
   return null;
 }
-function mergeOpenPRsAndPull(taskIds) {
-  const baseBranch = getBaseBranch(taskIds);
-  const branches = [...new Set(taskIds.map((id) => resolveTaskBranchName(id)))];
+function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
+  const branches = [...new Set(taskIds.map((id) => {
+    const branchName = branchByTaskId.get(id);
+    if (!branchName) die(`Missing pre-switch branch snapshot for task '${id}'.`);
+    return branchName;
+  }))];
   let anyMerged = false;
   for (const branch of branches) {
     const prNum = findOpenPRNumber(branch, baseBranch);
@@ -4839,8 +4886,9 @@ function mergeOpenPRsAndPull(taskIds) {
     if (localDeleteFailed) {
       info(`PR #${prNum} merged; local branch delete deferred until worktree teardown.`);
       for (const taskId of taskIds) {
-        if (resolveTaskBranchName(taskId) === branch) {
-          assertOriginTaskBranchAbsent(taskId);
+        const branchName = branchByTaskId.get(taskId);
+        if (branchName === branch) {
+          assertOriginTaskBranchAbsent(branchName, baseBranch);
         }
       }
     } else {
@@ -4924,37 +4972,53 @@ function shipTasks(taskIds) {
   for (const taskId of taskIds) {
     assertTaskBranchPushed(taskId);
   }
-  if (taskIds.some((id) => readStatus(id).worktree === true)) {
+  const baseBranch = getBaseBranch(taskIds);
+  const taskSnapshots = /* @__PURE__ */ new Map();
+  const branchByTaskId = /* @__PURE__ */ new Map();
+  for (const taskId of taskIds) {
+    const status = readStatus(taskId);
+    const branch = resolveTaskBranchName(taskId);
+    taskSnapshots.set(taskId, {
+      branch,
+      worktree: status.worktree === true
+    });
+    branchByTaskId.set(taskId, branch);
+  }
+  const taskSnapshot = (taskId) => {
+    const snapshot = taskSnapshots.get(taskId);
+    if (!snapshot) die(`Missing pre-switch ship snapshot for task '${taskId}'.`);
+    return snapshot;
+  };
+  if (taskIds.some((id) => taskSnapshot(id).worktree)) {
     const presentSharedDocs = PIPELINE_SHARED_DOCS.filter((relPath) => fs14.existsSync(path15.join(REPO_ROOT2, relPath)));
     if (presentSharedDocs.length > 0) {
       gitSafe("checkout", "HEAD", "--", ...presentSharedDocs);
     }
   }
   ensureCheckedOutBaseBranch(taskIds);
-  const merged = mergeOpenPRsAndPull(taskIds);
+  const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
   if (!merged) {
-    assertLocalBaseInSyncWithOrigin(taskIds);
-    for (const taskId of taskIds) assertNoOpenPRForTask(taskId);
-    for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskId);
+    assertLocalBaseInSyncWithOrigin(baseBranch);
+    for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch);
+    for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskSnapshot(taskId).branch, baseBranch);
   }
   runPostMergeHook();
-  const baseBranch = getBaseBranch(taskIds);
   const archiveDir = path15.join(TASKS_DIR2, "_archive");
   if (!fs14.existsSync(archiveDir)) fs14.mkdirSync(archiveDir, { recursive: true });
   const localBranchesToDelete = [];
   for (const taskId of taskIds) {
+    const { worktree: hasWorktree } = taskSnapshot(taskId);
     const status = readStatus(taskId);
-    const hasWorktree = status.worktree === true;
     if (hasWorktree) teardownWorktree(taskId);
     status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const humanReview = status.phases.human_review;
     if (humanReview) humanReview.status = "done";
     writeStatusToFile(path15.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
-    const src = taskDirFor2(taskId);
+    const src = taskDirForRepoRoot2(taskId);
     const dest = path15.join(archiveDir, taskId);
     fs14.renameSync(src, dest);
     info2(`\u{1F4E6} ${taskId} \u2192 tasks/_archive/${taskId}`);
-    const branchName = resolveTaskBranchName(taskId);
+    const branchName = taskSnapshot(taskId).branch;
     if (branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
   }
   rewriteArchivedTaskRefs(taskIds);
@@ -5040,6 +5104,7 @@ function rerouteFromHumanReview(taskIds) {
       codeReview.verdict = "";
       codeReview.iterations_current_loop = 0;
       codeReview.iterations = 0;
+      codeReview.preflight_rejections_current_loop = 0;
     }
     const qa = status.phases.qa;
     if (qa) qa.status = "pending";
@@ -5057,9 +5122,9 @@ function rerouteFromHumanReview(taskIds) {
   if (clearedFullSend) {
     info("\u26A0 full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with 'canon run --full-send <id>' if you're confident.");
   }
-  info("\u26A0  Before invoking the pipeline: ensure tasks/<id>/spec.md (in the MAIN repo, not the worktree) has an");
-  info("   Amendment section with the new requirements. review.md alone is not sufficient \u2014 Codex reads spec.md");
-  info("   as the contract. The main-repo spec is synced into the worktree at the start of implement.");
+  info("\u26A0  Before invoking the pipeline: ensure tasks/<id>/spec.md in the active task directory has an");
+  info("   Amendment section with the new requirements. For worktree-backed tasks, edit the worktree copy;");
+  info("   edit REPO_ROOT only before a worktree exists. review.md alone is not sufficient \u2014 Codex reads spec.md as the contract.");
 }
 function clearImplementOperatorAcceptance(implement) {
   if (!implement) return;
@@ -5496,10 +5561,6 @@ async function main() {
     lastClaudeSessionId = phaseResult?.agent === "claude" ? phaseResult.sessionId : null;
     lastCodexSessionId = phaseResult?.agent === "codex" ? phaseResult.sessionId : null;
     lastCodexExitStatus = phaseResult?.agent === "codex" ? phaseResult.exitCode ?? 0 : 0;
-    if (isWorktreeEnabled(taskIds)) {
-      syncWorktreeArtifacts(taskIds);
-      syncWorktreeTelemetry(taskIds);
-    }
     if (currentPhase !== "complete" && currentPhase !== "human_review") {
       const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
       if (agentForPhase === "claude") {
@@ -5530,10 +5591,12 @@ async function main() {
 }
 
 // scripts/run-task.ts
-void main().catch((err) => {
-  console.error(err instanceof Error ? err.stack ?? err.message : err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main().catch((err) => {
+    console.error(err instanceof Error ? err.stack ?? err.message : err);
+    process.exit(1);
+  });
+}
 /*! Bundled license information:
 
 mustache/mustache.mjs:

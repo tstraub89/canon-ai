@@ -1,0 +1,42 @@
+# Notes
+
+Raw observations from any phase. Prefix with phase name. Distilled into `docs/lessons-learned.md` during QA.
+
+<!-- Append below this line -->
+
+[spec_review] `src/task/index.ts` `taskList()` reads `tasksRoot()` directly and does not call `taskDirForCwd`; CLI worktree-awareness needs a separate list implementation path.
+[spec_review] Metrics activeCwd cannot be fixed by `getMetricsFile` alone because `recordMetric()` owns the `getMetricsFile()` call; the interface must carry cwd into `recordMetric`.
+[spec revision 2026-05-25] Addressed Codex spec_review iter 1:
+  - Shape Check (telemetry gate would block common path): Change 5 and AC-22d/g rewritten to discriminate current-task rows from foreign-task rows. Common path (spec_review/plan telemetry for current task) absorbs silently; only foreign task IDs trigger the abort/--force. Parses `git diff --unified=0` added lines and reads the Task column.
+  - `canon task list` correctness: AC-21d gains explicit `taskList()` rewrite — `path.join(root, entry, 'status.json')` becomes `path.join(taskDirForCwd(process.cwd(), entry), 'status.json')`. Affected Files row updated.
+  - Known Risks contradiction: "CLI commands stay REPO_ROOT-anchored" rewritten to describe the new symmetry (CLI + pipeline both worktree-aware past plan).
+  - `CANON_TASKS_DIR_OVERRIDE` precedence: AC-2's `taskDirFor` body gains an override fast-path BEFORE `resolveTaskCwd`. AC-15's note rewritten.
+  - Metrics threading: AC-22b rewritten to add `activeCwd?: string` to `MetricEntry`, extend `metricsContext` types in agents, and change `recordMetric` to call `getMetricsFile(entry.activeCwd)`. Phase modules supply `activeCwd: getActiveCwd(taskIds)`. Affected Files rows added for `types.ts`, both agent files, and all six phase modules.
+  - `cliArgs.force` not in scope in `implement.ts`: AC-22g rewritten — thread `force` through `runImplementPhase` signature (new fourth parameter); `main.ts:1944` call site passes `cliArgs.force`. No `cliArgs` import in `implement.ts` or `git.ts`.
+[spec revision 2026-05-25 #2] Addressed Codex spec_review iter 2:
+  - Bundle telemetry labels: phase modules write `metricsContext.taskId = taskIds.join('+')` (verified at `phases/spec.ts:22`, `spec-review.ts:95`, `plan.ts:24`, `implement.ts:97`, `code-review.ts:113`, `qa.ts:27`). AC-22g parser now splits the Task column value on `+` before set-membership testing — bundle `['a', 'b']` correctly matches a row labeled `a+b`. Tests cover the bundle case explicitly.
+  - `docs/lessons-learned.md` parser: file is prose, not a table — table-row parser would silently absorb foreign prose. AC-22g now defines per-file parsers: pipeline-invocations.md (table, Task col index 2), task-quality-log.md (table, Task col index 1 — different position), lessons-learned.md (prose, regex `*(date, source: TASK-ID)*`). Lessons-learned added prose with no source marker = fail-closed (unattributable-content die path). Distinct die message and a separate `--force` row in the decision matrix.
+[spec revision 2026-05-25 #3] Addressed Codex spec_review iter 3:
+  - Staged-only telemetry was invisible to AC-22g (it used `git diff --unified=0` which shows unstaged only). Now inspects BOTH `git diff --unified=0` (unstaged) AND `git diff --cached --unified=0` (staged) per file.
+  - Bare `git commit -m '...'` at `git.ts:90` sweeps pre-staged content. AC-22d now requires `git commit -m '...' --only -- <pathspec>` for both per-task scaffold commits AND the telemetry-absorption commit, so each commit contains only its intended paths.
+  - `commitTaskArtifactsToBase` now has a strict three-phase shape: gate first (catches staged + unstaged foreign/unattributable content), per-task scaffold commits with `--only`, telemetry-absorption commit with `--only`. Gate runs BEFORE any commit work; previous wording placed it before the telemetry loop but after per-task commits.
+  - Two new integration tests: staged-foreign-telemetry (verifies `git diff --cached` inspection); per-task-commit-isolation (verifies `git show --stat <scaffold-sha>` contains only `tasks/<id>/...` paths even when telemetry is pre-staged).
+[spec revision 2026-05-25 #4] Addressed Codex spec_review iter 4:
+  - `docs/task-quality-log.md` actual header is `| Date | Task | Size | ... |` (Date is the leading data column), so Task column is at index 2 (after the leading empty cell from `|`-prefix and the Date cell), not index 1 as previously spec'd. Corrected in AC-22g, Change 5 narrative, and added an integration test that verifies the date string is not confused for a task ID.
+  - `docs/lessons-learned.md` entry format puts blank lines between heading, source marker, and prose. Blank-line block model would split a legitimate entry and falsely abort. Rewrote AC-22g's lessons-learned parser to walk **heading-bounded entries**: from `### ` to next `### ` / `---` / EOF; for each entry, intersect diff added-line line numbers (parsed from `@@` hunk headers) with the entry's line range; look for source marker anywhere within the entry's bounds (not only added lines); preamble lines (before first heading) are ignored. Added three integration tests: properly-attributed entry (pass), unattributed entry (die), preamble edit (pass).
+  - `CLAUDE.md` quick-ref note had been written for the PRE-fix behavior ("REPO_ROOT reads REPO_ROOT state; cd into worktree for live"). Inverted to describe the new behavior: `canon task status/list/accept/phase` from REPO_ROOT now read worktree state past plan. Explicit "do NOT ship the inverse guidance" warning added.
+[spec revision 2026-05-25 #5] Addressed Codex spec_review iter 5:
+  - Gate only checked added lines, but absorption phase commits whole dirty file via `git add -- <file>`. Deletions, header edits, modifications to existing entries, and preamble edits would all slip into the absorption commit. AC-22g now requires append-only discipline: every dirty change must be a current-task append. Validates the ENTIRE diff (added AND removed lines), with per-file rules for what counts as an append.
+  - For tables: header/separator edits → fail-closed. Non-pipe lines (other than trailing blank) → fail-closed. Removed lines → fail-closed (global rule).
+  - For lessons-learned: a touched entry is attributable only if its `### Title` line is in the added-line set (brand-new entry). In-place edits to pre-existing entries → fail-closed. Preamble edits → fail-closed (REVERSES the iter-4 rule that ignored preamble; absorbing preamble edits into a task's scaffold misattributes doc work).
+  - Three new tests: deletion-only edit to pipeline-invocations.md → dies; header-row rename in task-quality-log.md → dies; in-place modification of an existing lessons-learned entry → dies. Existing preamble-edit test inverted: now dies (with `--force`, warns + absorbs).
+  - Justification for append-only: telemetry files are written exclusively via `fs.appendFileSync` (verified `scripts/run-task/metrics.ts:30`); there's no legitimate code path that produces non-append diffs.
+[spec_review] Bundle metrics use `taskIds.join('+')` as the Task column, so telemetry attribution gates must match the invocation label or split bundle labels.
+[spec_review] `docs/lessons-learned.md` is in `PIPELINE_TELEMETRY_FILES` but is not a table; table-row Task-column parsers cannot attribute its dirty lines.
+[spec_review] `commitTaskArtifactsToBase()` uses plain `git commit` after adding task dirs; any telemetry staged before the function starts can be swept into the per-task scaffold commit unless the gate runs before that loop and checks `--cached`.
+[spec_review] `docs/task-quality-log.md` has a leading `Date` column before `Task`; task-quality telemetry parsers must read the Task cell from the live header, not assume Task is first.
+[spec_review] `docs/lessons-learned.md` entries separate the `source:` marker from prose with a blank line; blank-delimited attribution blocks make normal lessons look unattributable.
+[spec_review] Telemetry absorption commits whole dirty files, so a gate that only inspects added lines silently absorbs deletion-only changes and ignored preamble edits.
+[spec_review] `getActiveCwd()` only selects an existing worktree or dies; first-implement worktree creation happens in `ensureBranch()` via `ensureWorktree()`.
+[implement] Subprocess tests in a linked worktree must import source files from `process.cwd()` / the active worktree, not `REPO_ROOT`; `REPO_ROOT` intentionally resolves to the supervising checkout and can load stale code.
+

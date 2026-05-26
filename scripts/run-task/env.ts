@@ -13,9 +13,8 @@ function resolveRepoRoot(): string {
         // orchestrator (or a unit test) is invoked from inside a linked
         // worktree. `--show-toplevel` returns the active worktree path, which
         // makes `WORKTREES_ROOT = REPO_ROOT/../dev-worktrees` resolve to the
-        // wrong sibling tree, breaks the TASKS_DIR/PIPELINE_TELEMETRY_FILES
-        // sync target, and otherwise inverts the supervisor-vs-worktree
-        // contract. Worktree-aware reads/writes go through
+        // wrong sibling tree and otherwise inverts the supervisor-vs-worktree
+        // contract. Worktree-aware task-state reads/writes go through
         // `resolveTaskCwd(taskId)` (state.ts) — that's the canonical seam for
         // "where does the task's code currently live"; REPO_ROOT is for
         // "where does the supervising orchestrator pipe its files." Codex
@@ -126,6 +125,7 @@ export const config = {
     claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? 'opus',
     claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? 'sonnet',
     claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? 'sonnet',
+    claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? 'opus',
     claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? 'sonnet',
     codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? 'gpt-5.4-mini',
     codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? 'gpt-5.5',

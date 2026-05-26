@@ -13,7 +13,11 @@ on:
       - '!AGENTS.md'
       - '!CLAUDE.md'
       - '!CODEX.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'CODEX.md'
       - '!docs/**'
+      - 'docs/pipeline-orchestrator.md'
       - '!tasks/**'
       - 'tasks/_templates/**'
       - '!.agent/**'
@@ -27,7 +31,11 @@ on:
       - '!AGENTS.md'
       - '!CLAUDE.md'
       - '!CODEX.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - 'CODEX.md'
       - '!docs/**'
+      - 'docs/pipeline-orchestrator.md'
       - '!tasks/**'
       - 'tasks/_templates/**'
       - '!.agent/**'
@@ -57,6 +65,7 @@ jobs:
       - run: npm audit --omit=dev
       - run: npm run lint
       - run: npm run type-check
+      - run: npm run sync-templates:check
       - run: npm run docs-refs-check
       - run: npm run build
       - run: npm test

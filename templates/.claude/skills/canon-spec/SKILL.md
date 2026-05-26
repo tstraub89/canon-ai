@@ -1,6 +1,6 @@
 ---
 name: canon-spec
-description: Write a scoped implementation spec for a new task. Explores the codebase, grills for M/L/XL tasks, proposes scope for approval, then creates the task directory and writes spec.md. Also supports full-send mode: if the human asks for "full send" / "full-send" or passes `--full-send`, the skill runs spec → pipeline → draft PR without further interrupts. For S tasks, also writes plan.md and kicks off the pipeline after approval.
+description: Use when the human describes a new feature, bug fix, or refactor that doesn't yet have a canon task — phrases like "let's add X", "I want to fix Y", "we should refactor Z", "start a task for...", or explicit `/canon-spec` invocation. Also triggers on "full send" / "full-send" / "yolo it" which carries through to pipeline launch without further interrupts. Don't use for existing in-progress tasks (use `/canon-pipeline`) or status checks (use `/canon-status`).
 argument-hint: "[task description or title]"
 allowed-tools: Read Glob Grep Write Edit Agent Bash(canon task *) Bash(canon run *) Bash(git branch *) Bash(git status *) Bash(git log *)
 effort: high
@@ -175,3 +175,13 @@ Then launch:
 ```bash
 canon run --full-send [--force] TASK-ID
 ```
+
+---
+
+## Related
+
+- `/canon-review` — adversarial pre-pipeline review of the spec. Recommended for M/L/XL or delicate tasks before invoking the pipeline.
+- `/canon-pipeline` — drive the pipeline after spec approval.
+- `/canon-status` — check what other canon tasks are in flight before committing to scope.
+- `AGENTS.md` — workflow rules, sizing guide, validation matrix.
+- `CLAUDE.md` — spec authorship guidelines.

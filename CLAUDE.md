@@ -3,7 +3,7 @@
 
 ## Role
 
-Claude is the **architect, code reviewer, and QA gatekeeper** in the canon-ai pipeline. See `AGENTS.md` for the full workflow, validation matrix, git rules, and definition of done — those are the source of truth. This file adds Claude-specific context.
+Claude is the **architect, code reviewer, and QA gatekeeper** in the canon pipeline. See `AGENTS.md` for the full workflow, validation matrix, git rules, and definition of done — those are the source of truth. This file adds Claude-specific context.
 
 Claude operates in two distinct modes:
 
@@ -59,7 +59,7 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 - Set `task_size` (S/M/L/XL) and `delicate` (true/false) in `status.json` at task creation. `delicate: true` forces the XL bucket regardless of nominal size. **`delicate` is for genuinely sensitive surfaces** — anything where a regression has unbounded blast radius. The bar is "an undetected bug here is materially harder to recover from than a normal bug" — not "this is hard to test" or "the UI is fiddly" (those go in *Known Risks* or *Human Test Plan*, not `delicate`). **Project-specific delicate-flag domain examples** (auth, payments, persistent storage, PHI handling, security-relevant cryptography, orchestrator routing logic, etc.) live in [`docs/product-context.md`](docs/product-context.md) — adopters list theirs there.
 - **One pipeline per worktree.** Multiple `canon run` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
 - **Prefer `canon task` helpers over hand-editing `status.json`.** `canon task phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
-- **`canon task` key ops**: `canon task new <id> "Title"` — scaffold a task; `canon task list` — show all tasks; `canon task phase <id> <phase> <status>` — advance a phase; `canon task post-merge-sync` — reconcile after squash-merge. Full subcommand list in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md#task-management-canon-task).
+- **`canon task` key ops**: `canon task new <id> "Title"` — scaffold a task; `canon task list` — show all tasks; `canon task phase <id> <phase> <status>` — advance a phase; `canon task post-merge-sync` — reconcile after squash-merge. `canon task status/list/accept/phase` run from REPO_ROOT read or write the worktree's `status.json` when one exists past plan, so mid-pipeline status reads show live worktree state. Full subcommand list in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md#task-management-canon-task).
 
 ### Writing a Spec (conversational — all tiers)
 
@@ -124,8 +124,6 @@ Then:
 9. Update `status.json`.
 10. If changes requested → Codex iterates → re-review **runs both stages from scratch** (re-implementation may invalidate prior Stage 2 conclusions even when the original failure was Stage 1).
 
-The Trivial Fix Exception below applies to **Stage 2 findings only** — a Stage 1 failure (missing AC, failed validation, dropped section) is never trivial and always requires a Codex iteration.
-
 ### Writing QA Summary
 
 After code review passes:
@@ -168,6 +166,8 @@ When writing specs:
 - **Strong-semantic mode names need product-owner sign-off on full scope before narrow scoping**: When a mode or toggle uses a term that naturally implies full constraint ("locked", "linked", "synced", "frozen", "fixed"), the human will read the strong meaning by default. Spec'ing it narrowly creates a hidden mismatch that surfaces in human testing as a code-review reroute. Verify what the name means *in full*, or pick a less load-bearing name.
 - **Verify that symbols named in spec ACs actually exist in the codebase AND that their return shape matches the spec's assumed data contract**: Before marking spec done, grep for every function or symbol referenced by name in an AC — then read its return type. A symbol that exists but returns `void` or a different type than the spec assumes makes the AC unimplementable and causes an auto-block when Codex discovers the mismatch during implementation. The name check and the return-type check are both cheap; do both.
 - **For large-removal tasks with structural grep ACs, generate the allow-list from `git grep`, not the Affected Files table**: When a spec includes an AC of the form "this string must not appear outside these paths," the spec author's allow-list is written from their mental model. The Affected Files table only lists files the author expects to *touch* — it misses historical telemetry docs, archived `status.json` snapshots, template mirrors, and other files that legitimately contain the retiring symbol but weren't in the author's mental model. During spec_review, the Codex reviewer should run the grep against the *current* tree to discover the full allow-list and flag additions before implementation begins. A missed allow-list entry forces a spec revision mid-review and burns an iteration.
+- **"No change needed because X is project-level" requires both cross-task AND within-task audit**: When a spec asserts that a managed doc or shared resolver "doesn't need rewiring because it's project-level," verify the claim twice — once *across* parallel worktrees (the usual question) and once *within* a single task across resumed phases. The answers often differ: managed docs typically should NOT sync between parallel tasks (they describe the project), but the task's own mid-flight edits MUST reach its own subsequent phases. A doc that's stable across parallel work can still be mutated mid-task by an earlier phase — e.g., QA appending a pitfall to `docs/patterns.md` — and later phases that re-read the file from a stale location will silently get pre-edit content. For every "project-level, no change needed" claim, name both audits explicitly in the spec.
+- **Build-generated artifacts go in Affected Files alongside their sources**: If a source change triggers a regeneration of a committed artifact (a bundled `dist/`, a generated `sitemap.xml`, compiled WASM, generated GraphQL types, etc.), list BOTH the source path and the artifact path in the spec's Affected Files table. The `--pr` base-drift gate diffs the worktree against `origin/<base>` and rejects any file not in the allow-list (task-dir + telemetry + spec's Affected Files); an undeclared artifact fails the gate even when the regeneration is correct, forcing a spec amendment + re-push at ship time. The project-specific binding lives in the validation matrix (`docs/architecture.md`). When spec-authoring, ask "does my source touch anything the build emits?" and declare both sides.
 
 ### Code-review rules of thumb
 
@@ -175,6 +175,7 @@ When writing specs:
 - **Verify handoff claims by running `git diff HEAD -- <file>`**: The pipeline's auto-commit step can silently drop edits to files not listed in the handoff's Changes table. Don't trust the handoff — diff the actual working tree to confirm claimed fixes landed.
 - **Commit manual changes before invoking `canon run`**: When making manual code changes in the same session that spawns the pipeline, always commit before kicking off `canon run`. The orchestrator spawns fresh agent sessions that read the working tree — uncommitted changes create a mismatch.
 - **Delicate-task review must audit cross-cutting guards at every mutation entry point**: When a `delicate: true` task refactors a state/data layer, explicitly verify that auth, gating, and payment guards still hold at *every* mutation chokepoint after the refactor — not just at the call sites the spec called out.
+- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: When operating across REPO_ROOT and a task worktree in the same session, `cd` can silently revert between tool calls (subprocess scope, hook re-execution, background tasks). A sequence that starts with `cd dev-worktrees/<id>` may end up running against REPO_ROOT on a later call. Any pre-commit hook that touches the working tree (linters, formatters, generated-file syncers) will then stage REPO_ROOT files and produce a commit on REPO_ROOT's branch under a message intended for the task branch — a misleading commit on the wrong branch with the wrong content. Default to `git -C /absolute/path/to/worktree <cmd>` for every git invocation regardless of perceived cwd; same for build commands and any other command that emits artifacts into a specific checkout.
 
 ## Review Responsibilities
 
@@ -184,15 +185,7 @@ When writing specs:
 - Focus on what Codex cannot self-verify: correctness bugs, edge cases, type safety, UX implications, architectural drift.
 - Do not re-verify lint/type-check/test/build status that Codex already reported passing.
 
-**Feedback format**: Label every comment as `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap`. Be specific, actionable, and reference the relevant convention or code path.
-
-**Trivial fix exception**: The reviewer may fix a bug directly (instead of sending back to Codex) ONLY if ALL of these are true:
-1. It is a typo, rename, or class-name mismatch — no logic or behavior change
-2. The fix is ≤ 3 lines changed
-3. The fix is documented in `review.md` with the label "FIXED INLINE"
-4. No other findings require a Codex iteration
-
-If any condition is not met, write the finding in `review.md` and send it back. When in doubt, send it back.
+**Feedback format**: Label every comment as `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap`. Be specific, actionable, and reference the relevant convention or code path. Any finding that warrants a change goes back to Codex — the reviewer does not edit the diff. Nits the human may choose to skip ride along with the `Approved with nits` verdict and surface at QA.
 
 ## Codebase Navigation
 
@@ -210,7 +203,7 @@ Project commands (lint, type-check, test, build, dev server, etc.) live in [`doc
 
 **AGENTS.md is the source of truth for PR rules.** Common failure point — read it before opening a PR. Key requirements:
 
-- PR body must start from the repository's configured pull request template, if one exists
+- PR body must start from `.github/pull_request_template.md` if your project has one
 - Check remote branch state before creating branches or resetting (`git log origin/main..main`)
 - Never force-push main
 
@@ -220,3 +213,7 @@ Project CI configuration lives in [`docs/architecture.md`](docs/architecture.md)
 <!-- canon:end -->
 
 <!-- Your project additions below — `canon upgrade` will not touch this section -->
+
+### Canon-managed file convention
+
+Root canon-managed files are authoritative; `templates/` is a derived mirror. Edit the root copy, let `npm run sync-templates` refresh and stage `templates/`, and use `npm run sync-templates:check` in CI as the backstop. Templates-side edits to canon-managed regions are overwritten on the next sync. The pre-commit hook auto-syncs and re-stages `templates/` on every `git commit` via `simple-git-hooks`, and `npm run sync-templates` remains available for rebases, manual resyncs, and troubleshooting. Add new wholesale-owned files to `CANON_OWNED` in `src/lib/canon-owned.ts`; add delimiter-preserved files like `AGENTS.md`, `CLAUDE.md`, and `CODEX.md` to `DELIMITED` in the same module. This note lives outside the canon-delimited region so it does not ship to adopters through `canon upgrade`.

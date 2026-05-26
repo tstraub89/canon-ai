@@ -1,0 +1,80 @@
+{
+  "id": "docs-refs-adopter-skip-and-ellipsis",
+  "title": "docs-refs-check: adopter skip paths + ellipsis placeholder",
+  "status": "complete",
+  "created": "2026-05-24",
+  "updated": "2026-05-24",
+  "branch": "task/docs-refs-adopter-skip-and-ellipsis",
+  "base_branch": "release/v1.5",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "8725d17144e0116d847e77639a054b7f4e34efd9",
+    "orchestrator_commit": "8725d17144e0116d847e77639a054b7f4e34efd9",
+    "codex_cli": "codex-cli 0.133.0",
+    "claude_code": "2.1.150 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 7,
+      "changes_requested_total": 5,
+      "auto_block_count": 1
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-05-24",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    }
+  ],
+  "sessions": {
+    "codex_spec_review": "019e5a84-38d0-7c53-9d8a-7d466e7f67ba",
+    "claude_spec": "7b406ea2-d48a-4fa7-924c-f9f024f62bcb",
+    "codex": "019e5aba-fa51-7a23-aa1d-a5e8d51a5841",
+    "claude_review": "4b23a308-4bc3-46e0-bfb6-7da5f0a4f3ce"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

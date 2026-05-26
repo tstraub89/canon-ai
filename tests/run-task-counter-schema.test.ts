@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { autoBlockPhase, readStatus } from '../scripts/run-task/state.js';
 import { autoBlockSpecReview } from '../scripts/run-task/phases/spec-review.js';
-import { taskPhase, taskResetSpecReview } from '../src/task/index.js';
+import { taskPhase, taskPhasePreflightRejected, taskResetSpecReview } from '../src/task/index.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
 
 function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): StatusJson {
@@ -127,6 +127,120 @@ void test('taskPhase increments all counters on changes_requested and keeps the 
         assert.equal(updated.phases.spec_review?.changes_requested_total, 1);
         assert.equal(updated.phases.spec_review?.auto_block_count, 0);
         assert.equal(updated.phases.spec_review?.iterations, 1);
+    });
+});
+
+void test('taskPhasePreflightRejected bumps preflight_rejections counters for auto-block visibility', () => {
+    // The auto-block check in scripts/run-task/phases/code-review.ts sums
+    // iterations_current_loop + preflight_rejections_current_loop against
+    // MAX_REVIEW_LOOPS. Without bumping preflight_rejections_current_loop,
+    // persistent pre-flight failures (e.g., malformed Validation Outcomes
+    // rows that Codex keeps generating) would bounce implement→pre-flight
+    // forever without tripping the cap. (Codex P2 finding.)
+    withTempTasks(root => {
+        const taskId = 'preflight-counter';
+        writeTask(root, taskId, makeStatus(taskId));
+
+        taskPhasePreflightRejected(taskId, 'code_review');
+        taskPhasePreflightRejected(taskId, 'code_review');
+        taskPhasePreflightRejected(taskId, 'code_review');
+
+        const phase = readTaskStatus(root, taskId).phases.code_review;
+        assert.equal(phase?.preflight_rejections_current_loop, 3);
+        assert.equal(phase?.preflight_rejections_total, 3);
+        // Real review counters still untouched:
+        assert.equal(phase?.iterations_current_loop ?? 0, 0);
+        assert.equal(phase?.iterations_total ?? 0, 0);
+    });
+});
+
+void test('approved real review resets preflight_rejections_current_loop alongside iterations', () => {
+    // When a real reviewer round finally approves after a streak of pre-flight
+    // rejections, the per-loop pre-flight counter must reset so the next
+    // distinct review loop starts fresh against the auto-block cap.
+    withTempTasks(root => {
+        const taskId = 'preflight-then-approved';
+        const base = makeStatus(taskId);
+        base.phases.spec_review = { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0 };
+        writeTask(root, taskId, base);
+
+        taskPhasePreflightRejected(taskId, 'code_review');
+        taskPhasePreflightRejected(taskId, 'code_review');
+        withSkippedPhaseGate(() => taskPhase(taskId, 'code_review', 'done', 'approved'));
+
+        const phase = readTaskStatus(root, taskId).phases.code_review;
+        // Per-loop counters cleared:
+        assert.equal(phase?.preflight_rejections_current_loop, 0);
+        assert.equal(phase?.iterations_current_loop, 0);
+        // Cumulative totals preserved:
+        assert.equal(phase?.preflight_rejections_total, 2);
+        assert.equal(phase?.changes_requested_total, 2);
+    });
+});
+
+void test('taskPhasePreflightRejected sets verdict but does NOT bump iteration counters', () => {
+    // The bug this fixes: pre-flight rejection was previously calling
+    // taskPhase(..., 'changes_requested'), which bumped iterations_current_loop.
+    // The next code_review run then saw maxIter > 0 and was issued the round-N
+    // prompt, which says "Stage 1 already passed in round 1, do not redo it." But
+    // round 1 was just the orchestrator gate — Stage 1 had never run. Tasks that
+    // hit a pre-flight rejection then shipped without a real Claude review.
+    withTempTasks(root => {
+        const taskId = 'preflight-rejection';
+        writeTask(root, taskId, makeStatus(taskId));
+
+        taskPhasePreflightRejected(taskId, 'code_review');
+
+        const updated = readTaskStatus(root, taskId);
+        const phase = updated.phases.code_review;
+        assert.equal(phase?.status, 'done');
+        assert.equal(phase?.verdict, 'changes_requested');
+        // Telemetry signal preserved:
+        assert.equal(phase?.changes_requested_total, 1);
+        // Iteration counters MUST stay at 0 so the next reviewer run gets the
+        // round-1 prompt with full Stage 1 + Stage 2 framing:
+        assert.equal(phase?.iterations_current_loop ?? 0, 0);
+        assert.equal(phase?.iterations_total ?? 0, 0);
+        assert.equal(phase?.iterations ?? 0, 0);
+    });
+});
+
+void test('taskPhasePreflightRejected followed by a real changes_requested round counts only the real round', () => {
+    // After a pre-flight rejection, the next reviewer invocation should see
+    // iterations_current_loop = 0 and get the round-1 prompt. If the reviewer
+    // returns changes_requested for real, only then does the iteration counter
+    // advance to 1. This sequence catches a regression where the pre-flight
+    // path resumed counting iterations.
+    withTempTasks(root => {
+        const taskId = 'preflight-then-real';
+        // code_review requires all prior phases done — set spec_review done
+        // (already approved) so the taskPhase call below isn't blocked.
+        const base = makeStatus(taskId);
+        base.phases.spec_review = { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0 };
+        writeTask(root, taskId, base);
+
+        taskPhasePreflightRejected(taskId, 'code_review');
+        withSkippedPhaseGate(() => taskPhase(taskId, 'code_review', 'done', 'changes_requested'));
+
+        const updated = readTaskStatus(root, taskId);
+        const phase = updated.phases.code_review;
+        // Real round counted as round 1:
+        assert.equal(phase?.iterations_current_loop, 1);
+        assert.equal(phase?.iterations_total, 1);
+        // Both rejections (preflight + real) tracked in changes_requested_total:
+        assert.equal(phase?.changes_requested_total, 2);
+    });
+});
+
+void test('taskPhasePreflightRejected rejects non-review phases', () => {
+    withTempTasks(root => {
+        const taskId = 'preflight-wrong-phase';
+        writeTask(root, taskId, makeStatus(taskId));
+
+        assert.throws(
+            () => taskPhasePreflightRejected(taskId, 'implement'),
+            /not a review phase/,
+        );
     });
 });
 

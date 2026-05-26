@@ -272,9 +272,9 @@ void test('checkTemplates: some templates missing → warn with file list', () =
 
 // ── checkSkills ──────────────────────────────────────────────────────────────
 
-void test('checkSkills: all five skills present → pass', () => {
+void test('checkSkills: all six skills present → pass', () => {
     withTempDir(dir => {
-        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog']) {
+        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-review']) {
             const skillDir = path.join(dir, '.claude', 'skills', skill);
             fs.mkdirSync(skillDir, { recursive: true });
             fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '');

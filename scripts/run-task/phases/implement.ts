@@ -1,20 +1,27 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { info, warn } from '../cli.js';
 import { getCodexConfig } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
 import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
 import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, parsePorcelain, ensureBranch } from '../git.js';
-import { getActiveCwd, isWorktreeEnabled, TASK_ARTIFACT_FILES } from '../worktree.js';
-import { autoBlockPhase, readStatus, taskDirFor, writeStatus } from '../state.js';
+import { getActiveCwd, TASK_ARTIFACT_FILES } from '../worktree.js';
+import { autoBlockPhase, readStatus, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { taskPhase } from '../../../src/task/index.js';
 
 export function shouldUseImplementRevision(
-    tasks: readonly Pick<TaskContext, 'iterations_current_loop'>[],
+    tasks: readonly Pick<TaskContext, 'iterations_current_loop' | 'status'>[],
 ): boolean {
-    return tasks.some(t => t.iterations_current_loop > 0);
+    // Pre-flight rejection routes back to implement but leaves
+    // `iterations_current_loop` at 0 (the pre-flight isn't a Claude review
+    // round — see taskPhasePreflightRejected). Without also checking the
+    // pre-flight counter here, the next implement pass would receive the
+    // initial-pass prompt instead of the revision prompt, and Codex would
+    // not be told to read the rejected review.md / address its findings
+    // (Codex P1 on the prior iteration of the pre-flight-rejection fix).
+    return tasks.some(t => {
+        const preflightCount = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
+        return t.iterations_current_loop > 0 || preflightCount > 0;
+    });
 }
 
 export async function runImplementPhase(
@@ -26,42 +33,19 @@ export async function runImplementPhase(
     const taskIds = tasks.map(t => t.taskId);
     // Only commit task artifacts to base on the FIRST implement-phase call.
     // On the first call the worktree doesn't exist yet, and the commit puts
-    // the scaffold (status.json, done.md, handoff.md, review.md — files the
-    // explicit copy loop below doesn't cover) onto base so the new worktree
-    // inherits them via branch creation in `ensureBranch`. On subsequent
-    // calls (reroutes, code-review-driven iteration cycles) the worktree
-    // already exists, and re-committing the latest REPO_ROOT snapshot to
-    // base creates divergent commits that fight with the task branch's
-    // evolved state at PR-merge time — causing the recurring `task(<id>):
-    // commit artifacts pre-pipeline` conflict class diagnosed during
-    // canon-ai-dev's PR #95 ship on 2026-05-21. Worktree-mode tasks with a
-    // recorded branch are post-first-implement; skip the commit. Legacy
-    // worktree:false tasks always run it (there's no other place for the
-    // scaffold to live).
+    // the scaffold onto base so the new worktree inherits it via branch
+    // creation in `ensureBranch`. On subsequent calls (reroutes,
+    // code-review-driven iteration cycles) the worktree already exists, and
+    // re-committing the latest REPO_ROOT snapshot to base creates divergent
+    // commits that fight with the task branch's evolved state at PR-merge
+    // time. Worktree-mode tasks with a recorded branch are post-first-implement;
+    // skip the commit. Legacy worktree:false tasks always run it.
     const primaryStatus = readStatus(taskIds[0]);
     const worktreeAlreadyCreated = primaryStatus.worktree === true && Boolean(primaryStatus.branch);
     if (!worktreeAlreadyCreated) {
         commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
     }
     ensureBranch(taskIds);
-
-    if (isWorktreeEnabled(taskIds)) {
-        const wt = getActiveCwd(taskIds);
-        const artifacts = ['spec.md', 'spec-review.md', 'plan.md', 'notes.md'];
-        for (const taskId of taskIds) {
-            const srcDir = taskDirFor(taskId);
-            const dstDir = path.join(wt, 'tasks', taskId);
-            fs.mkdirSync(dstDir, { recursive: true });
-            for (const file of artifacts) {
-                const src = path.join(srcDir, file);
-                const dst = path.join(dstDir, file);
-                if (fs.existsSync(src)) {
-                    try { fs.copyFileSync(src, dst); } catch { /* best-effort */ }
-                }
-            }
-        }
-        info('Synced task artifacts from main worktree into task worktree for implement.');
-    }
 
     const activeCwd = getActiveCwd(taskIds);
     const baseBranch = getBaseBranch(taskIds);
@@ -97,6 +81,7 @@ export async function runImplementPhase(
             taskId: taskIds.join('+'),
             phase: 'implement',
             iteration: tasks[0].iterations_current_loop,
+            activeCwd,
         },
         activeCwd,
         /* wrapForResume */ !isRerouted,

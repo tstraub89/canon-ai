@@ -10,7 +10,7 @@ import {
     verifyHandoffAgainstDiffFromData,
 } from '../../scripts/run-task/validation.js';
 import { filterGitIgnoredPaths } from '../../scripts/run-task/git.js';
-import { deriveTopLevelStatus, resolveTaskCwd } from '../../scripts/run-task/state.js';
+import { deriveTopLevelStatus, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot } from '../../scripts/run-task/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../../scripts/run-task/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../../scripts/run-task/types.js';
 
@@ -62,11 +62,12 @@ function taskDirFromRoot(taskId: string): string {
     return path.join(tasksRoot(), taskId);
 }
 
-function taskDirForCwd(cwd: string, taskId: string): string {
+function taskDirForCwd(_cwd: string, taskId: string): string {
     const root = tasksRoot();
-    return path.isAbsolute(root)
-        ? path.join(root, taskId)
-        : path.join(cwd, root, taskId);
+    if (path.isAbsolute(root)) {
+        return path.join(root, taskId);
+    }
+    return path.join(resolveTaskCwd(taskId), root, taskId);
 }
 
 function taskStatusFileForCwd(cwd: string, taskId: string): string {
@@ -257,7 +258,26 @@ export function taskList(): void {
     let invalidCount = 0;
     for (const entry of fs.readdirSync(root).sort()) {
         if (entry === '_archive') continue;
-        const statusPath = path.join(root, entry, 'status.json');
+        // Detect orphan-worktree state BEFORE taskDirForCwd → resolveTaskCwd,
+        // which die()s on this state and aborts the entire listing —
+        // regressing the issue #83 graceful-degradation contract.
+        if (isOrphanedWorktreeState(entry)) {
+            invalidCount += 1;
+            let title = '(untitled)';
+            try {
+                const frozen = readJsonFile<StatusJson>(path.join(taskDirForRepoRoot(entry), 'status.json'));
+                title = frozen.title ?? title;
+            } catch {
+                // fall through — render the row with the default title
+            }
+            rows.push({
+                id: entry,
+                title,
+                phase: `INVALID: worktree missing — restore dev-worktrees/${entry} or archive the task`,
+            });
+            continue;
+        }
+        const statusPath = path.join(taskDirForCwd(process.cwd(), entry), 'status.json');
         if (!fs.existsSync(statusPath)) continue;
         try {
             const status = readJsonFile<StatusJson>(statusPath);
@@ -359,6 +379,9 @@ function updateReviewCounters(entry: PhaseEntry, verdict: Verdict | undefined): 
         entry.iterations_total += 1;
         entry.iterations_current_loop = 0;
         entry.iterations = 0;
+        // A real review approval ends the current pre-flight streak — the
+        // handoff was good enough to actually be reviewed.
+        entry.preflight_rejections_current_loop = 0;
     }
 }
 
@@ -422,6 +445,76 @@ export function taskPhase(id: string, phaseArg: string, statusArg: string, verdi
     } else {
         console.log(`Updated ${id}: ${phaseArg} → ${statusArg}`);
     }
+}
+
+/**
+ * Marks a review phase done with verdict `changes_requested` due to an
+ * orchestrator-side pre-flight rejection — NOT a real reviewer round.
+ *
+ * Pre-flight rejection happens before the reviewer agent is invoked (e.g.,
+ * code_review rejects a handoff with malformed Validation Outcomes rows).
+ * Counting it as a Claude review round caused a silent-skip bug: the next
+ * code_review run saw `iterations_current_loop > 0` and was issued the
+ * round-N prompt, which explicitly says "Stage 1 AC table already passed in
+ * round 1, do not redo it." But round 1 was just the orchestrator gate — the
+ * AC table had never been filled. Result: tasks that hit a pre-flight
+ * rejection shipped without a proper Claude Stage 1 + Stage 2 review of the
+ * source diff.
+ *
+ * Fix: this function bumps `changes_requested_total` (so the rejection is
+ * still visible in telemetry) but leaves `iterations_current_loop`,
+ * `iterations_total`, and the `iterations` alias untouched. The next
+ * reviewer invocation sees the loop counter at 0 and gets the Round-1
+ * prompt with full Stage 1 + Stage 2 framing.
+ */
+export function taskPhasePreflightRejected(id: string, phaseArg: string): void {
+    if (!id) throw new Error('Task ID required');
+    if (!phaseArg) throw new Error('Phase required');
+    validateTaskId(id);
+    assertValidPhase(phaseArg);
+    if (!REVIEW_PHASES.has(phaseArg)) {
+        throw new Error(`taskPhasePreflightRejected: phase '${phaseArg}' is not a review phase; only ${[...REVIEW_PHASES].join(', ')} support pre-flight rejection.`);
+    }
+
+    const taskCwd = resolveTaskCwd(id);
+    const statusPath = taskStatusFileForCwd(taskCwd, id);
+    if (!fs.existsSync(statusPath)) {
+        throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
+    }
+
+    const status = readJsonFile<StatusJson>(statusPath);
+    const entry = ensurePhaseEntry(status, phaseArg);
+    entry.status = 'done';
+    entry.verdict = 'changes_requested';
+
+    // Seed the cumulative counter shape from the legacy `iterations` alias
+    // before mutating anything. Mirrors `updateReviewCounters` to keep schema
+    // consistent across paths. Without this, legacy status files where only
+    // `iterations` is populated would have `iterations_current_loop` left
+    // undefined, and `buildPipelineState`'s fallback chain (iterations_current_loop
+    // → iterations → 0) would still see the legacy value as the canonical
+    // counter — recreating the round-N prompt bug we're trying to prevent.
+    // (Codex P2 finding on the initial fix.)
+    entry.iterations_current_loop ??= entry.iterations ?? 0;
+    entry.iterations_total ??= entry.iterations ?? 0;
+    entry.changes_requested_total ??= 0;
+    entry.preflight_rejections_current_loop ??= 0;
+    entry.preflight_rejections_total ??= 0;
+    entry.auto_block_count ??= 0;
+
+    // Bump changes_requested_total (cumulative signal) and the per-loop
+    // pre-flight counter (watched by the review-loop auto-block). Do NOT
+    // touch iterations_current_loop / iterations_total / iterations — those
+    // track real reviewer rounds and drive round-N prompt selection.
+    entry.changes_requested_total += 1;
+    entry.preflight_rejections_current_loop += 1;
+    entry.preflight_rejections_total += 1;
+
+    status.updated = today();
+    status.status = deriveTopLevelStatus(status);
+    writeStatusAtomic(statusPath, status);
+
+    console.log(`Updated ${id}: ${phaseArg} → done (verdict: changes_requested, pre-flight; iteration counters preserved)`);
 }
 
 /**
@@ -1106,16 +1199,33 @@ function insertChangelogBlock(filePath: string, version: string): void {
     // (`## v1.6 - unreleased`) drifted from both — the workflow couldn't find
     // the block and the entries it produced disagreed with the conventions in
     // the file it was modifying.
+    //
+    // Insertion point: immediately before the first existing `## [X.Y.Z]`
+    // version block, not directly after the H1. A CHANGELOG with an
+    // intro blockquote ("> Format follows Keep a Changelog...") would
+    // otherwise have the blockquote pushed below the new version block —
+    // the comment is file-level meta, it belongs between the H1 and the
+    // first version entry. Anchor explicitly on the `## [` bracketed-
+    // version format (canon's canonical shape) rather than any `## `, so
+    // future non-version H2 sections in the meta region (e.g. an intro
+    // "## About this file" paragraph) stay above the new block too. If
+    // there's no prior version block (initial scaffold), the new block
+    // is appended at the end, preserving any leading material.
     const content = fs.readFileSync(filePath, 'utf8');
     const lines = content.split('\n');
-    const first = lines.shift() ?? '';
+    let insertAt = lines.findIndex(line => /^## \[/.test(line));
+    if (insertAt === -1) insertAt = lines.length;
+    const before = lines.slice(0, insertAt);
+    const after = lines.slice(insertAt);
+    while (before.length > 0 && before[before.length - 1] === '') before.pop();
     const block = [
-        first,
+        ...before,
         '',
         `## [${version}] — unreleased`,
         '',
         `<!-- Bullets land here as tasks for ${version} ship. The single squash-merge of release/v${version.replace(/\.0$/, '')} → main carries this entry to production. -->`,
-        ...lines,
+        '',
+        ...after,
     ];
     fs.writeFileSync(filePath, block.join('\n'), 'utf8');
 }
