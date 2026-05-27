@@ -80,7 +80,15 @@ Codex-specific notes that don't belong in AGENTS.md or patterns.md:
 
 Project-specific validation commands live in [`docs/architecture.md`](docs/architecture.md) under the "Validation" section, where each category from `AGENTS.md` §"Validation Matrix" is bound to an actual command.
 
-Before writing `handoff.md`, run every check listed in the spec's *Validation Required* section AND every applicable check from `docs/architecture.md` based on the change type. Record each as Pass / Fail / N/A in the Validation Outcomes table. Required checks must be Pass or Fail — do not mark them N/A.
+Before writing `handoff.md`, run every check listed in the spec's *Validation Required* section AND every applicable check from `docs/architecture.md` based on the change type. Record each check in the Validation Outcomes table using the result enum from `.canon/templates/handoff.md`.
+
+Required checks must be one of:
+- `Pass` when the agent ran the check and it passed.
+- `Fail` when the agent ran the check and it failed; fix failures before submitting unless the result is `Fail – unrelated` with a specific test/file reference in Notes.
+- `human_pending` when only a human can run the check, such as OAuth, billing, deployed-only smoke, or cross-browser verification.
+- `deferred_by_spec` only when the spec explicitly defers that check; Notes must cite the spec section.
+
+Do not mark required checks `N/A` or `not_configured`. `blocked` means infrastructure prevented execution and must be triaged before handoff.
 
 **Unit tests specifically**: if a unit test suite exists (`npm test` or equivalent), run it — always, regardless of whether the spec adds new test cases. "No new unit tests required" means no new cases are being authored, not that the existing suite can be skipped. A spec note saying tests are deferred is never license to skip running the suite.
 

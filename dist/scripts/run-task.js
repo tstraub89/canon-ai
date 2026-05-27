@@ -85,7 +85,10 @@ function printUsage() {
   console.log("                      allow-list as --pr. Aborts if HEAD's tree differs from origin/<base>");
   console.log("                      on files not in spec's Affected Files (bypass with --force).");
   console.log("  --full-send         Skip the spec gate and auto-open a draft PR after clean QA");
-  console.log("  --force             Acknowledge high-commitment combinations (currently: --full-send on a delicate task)");
+  console.log("  --force             Acknowledge high-commitment combinations and bypass");
+  console.log("                      explicit safety gates where documented (currently:");
+  console.log("                      --full-send on delicate tasks, reroute amendment gate,");
+  console.log("                      base-drift gate, and dirty REPO_ROOT worktree-start gate).");
   console.log("  --ship              Merge the open PR (calls gh pr merge --squash --delete-branch), tear");
   console.log("                      down the worktree, archive the task dir, and pull the base branch. Run");
   console.log("                      after the PR is approved \u2014 do NOT merge the PR manually first. If you");
@@ -702,7 +705,35 @@ function isCommandAvailable(command) {
   const result = spawnSync3("which", [command], { stdio: "ignore" });
   return !result.error && result.status === 0;
 }
-function ensureBranch(taskIds) {
+function isPipelineOwnedDirtyPath(filePath) {
+  if (filePath.startsWith("tasks/")) return true;
+  return PIPELINE_TELEMETRY_FILES.includes(filePath);
+}
+function findDirtyRepoRootSourcePaths(statusOutput) {
+  return parsePorcelainEntries(statusOutput).flatMap((entry) => entry.paths).filter((filePath) => !isPipelineOwnedDirtyPath(filePath));
+}
+function assertRepoRootCleanBeforeFirstWorktree(force) {
+  const status = gitSafeAtRaw(REPO_ROOT, "status", "--porcelain=v1", "-uall");
+  if (!status.ok) {
+    die(`Could not inspect REPO_ROOT dirty state before creating a task worktree: ${status.stderr || "unknown git status error"}`);
+  }
+  const dirtySourcePaths = findDirtyRepoRootSourcePaths(status.stdout);
+  if (dirtySourcePaths.length === 0) return;
+  const list = dirtySourcePaths.map((filePath) => `  - ${filePath}`).join("\n");
+  if (!force) {
+    die(
+      `Worktree creation aborted: REPO_ROOT has uncommitted source edits that would not be present in the new task worktree.
+${list}
+
+Commit or stash intentional edits before creating the worktree, or rerun with --force if this task should intentionally start from base without those edits.`
+    );
+  }
+  warn(
+    `--force override: creating task worktree from base despite uncommitted REPO_ROOT source edits:
+${list}`
+  );
+}
+function ensureBranch(taskIds, options = {}) {
   const primaryStatus = readStatus(taskIds[0]);
   const useWorktree = primaryStatus.worktree === true;
   if (taskIds.length > 1) {
@@ -727,6 +758,7 @@ function ensureBranch(taskIds) {
   const branchName = `task/${taskIds[0]}`;
   const baseBranch = getBaseBranch(taskIds);
   if (useWorktree) {
+    assertRepoRootCleanBeforeFirstWorktree(options.force === true);
     ensureWorktree(taskIds[0], branchName, baseBranch);
     for (const taskId of taskIds) {
       const s = readStatus(taskId);
@@ -2883,33 +2915,7 @@ var implement_revisions_default = "{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{sta
 var plan_default = "You are writing implementation plans for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n{{{verdictLines}}}\n\nFor each task, read tasks/<id>/spec.md and tasks/<id>/spec-review.md. Address any `changes_requested` items before writing the plan. If the verdict is `approved_with_nits`, incorporate the nits into the plan \u2014 they don't require spec changes but should inform implementation decisions.\n\nWrite tasks/<id>/plan.md for each task with ordered implementation steps. Reference specific files, existing patterns, and code examples from the codebase. Codex implements directly from this plan.\n\nIf you encounter spec gaps, append to tasks/<id>/notes.md (prefix: [plan]).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/qa.md
-var qa_default = `You are writing QA summaries for {{taskScope}} for {{projectName}}.
-
-{{{startup}}}
-
-Tasks:
-{{{taskLines}}}
-
-For each task:
-1. **Use the Write tool** to create tasks/<id>/done.md \u2014 plain-English summary for the human. Include: what changed, files changed, how to test, test results, decisions made, open questions.
-   \u26A0\uFE0F CRITICAL: Use the \`Write\` tool \u2014 do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.
-2. Include a **Proposed Changelog** section in done.md:
-   - Read AGENTS.md \xA7"Release Rules" for the project's changelog audience and SemVer interpretation before writing. Apply the project's defined scope.
-   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.
-   - Apply the "would a user notice" test to every candidate bullet (or the project's equivalent scope test): if a candidate falls outside the project's defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change \u2014 omit from changelog") rather than inventing a bullet.
-   - Implementation mechanics belong in the "What Changed" section above \u2014 not in the proposed changelog.
-   - Proposed version bump per the project's SemVer interpretation, with brief rationale.
-   The human finalizes both.
-
-After writing all done.md files:
-- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" Only write to docs/lessons-learned.md if yes. Task-specific details stay in notes.md only.
-- Append one row per task to docs/task-quality-log.md (see that file for column definitions).
-- **Docs freshness**: scan the protected docs in AGENTS.md (architecture.md, codebase-map.md, patterns.md, product-context.md, decisions.md) for anything contradicted by {{docsScope}}. Update stale references if found.
-- **Lessons sweep** (periodic \u2014 not every task): scan docs/lessons-learned.md. For each entry: promote durable truths to the right permanent doc (patterns.md / decisions.md / AGENTS.md), OR prune entries that turned out to be task-specific after all (just delete them \u2014 the detail lives in the task's notes.md). Leave a tombstone only for promoted entries. Do this when lessons-learned exceeds ~15 entries or at the end of a release milestone.
-
-When done, run (use the Bash tool \u2014 do not just output the command as text):
-{{{phaseCommands}}}
-`;
+var qa_default = 'You are writing QA summaries for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks:\n{{{taskLines}}}\n\nFor each task:\n1. **Use the Write tool** to create tasks/<id>/done.md \u2014 plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, decisions made, open questions.\n   \u26A0\uFE0F CRITICAL: Use the `Write` tool \u2014 do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.\n2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check\'s latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.\n   - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.\n   - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.\n3. Include a **Proposed Changelog** section in done.md:\n   - Read AGENTS.md \xA7"Release Rules" for the project\'s changelog audience and SemVer interpretation before writing. Apply the project\'s defined scope.\n   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.\n   - Apply the "would a user notice" test to every candidate bullet (or the project\'s equivalent scope test): if a candidate falls outside the project\'s defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change \u2014 omit from changelog") rather than inventing a bullet.\n   - Implementation mechanics belong in the "What Changed" section above \u2014 not in the proposed changelog.\n   - Proposed version bump per the project\'s SemVer interpretation, with brief rationale.\n   The human finalizes both.\n\nAfter writing all done.md files:\n- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" Only write to docs/lessons-learned.md if yes. Task-specific details stay in notes.md only.\n- Append one row per task to docs/task-quality-log.md (see that file for column definitions).\n- **Docs freshness**: scan the protected docs in AGENTS.md (architecture.md, codebase-map.md, patterns.md, product-context.md, decisions.md) for anything contradicted by {{docsScope}}. Update stale references if found.\n- **Lessons sweep** (periodic \u2014 not every task): scan docs/lessons-learned.md. For each entry: promote durable truths to the right permanent doc (patterns.md / decisions.md / AGENTS.md), OR prune entries that turned out to be task-specific after all (just delete them \u2014 the detail lives in the task\'s notes.md). Leave a tombstone only for promoted entries. Do this when lessons-learned exceeds ~15 entries or at the end of a release milestone.\n\nWhen done, run (use the Bash tool \u2014 do not just output the command as text):\n{{{phaseCommands}}}\n';
 
 // scripts/run-task/prompts/templates/spec.md
 var spec_default = "{{{header}}}\n\n{{{startup}}}\n\n{{{instructions}}}\n{{{bundleNote}}}\n{{#doneNote}}\nNote: {{{doneNote}}}{{/doneNote}}\n\n{{{selfCheck}}}\n\nWhen done, run (one per task):\n{{{phaseCommands}}}\n";
@@ -3697,7 +3703,7 @@ function shouldUseImplementRevision(tasks) {
     return t.iterations_current_loop > 0 || preflightCount > 0;
   });
 }
-async function runImplementPhase(state, interactive, resumeId) {
+async function runImplementPhase(state, interactive, resumeId, force = false) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
   const primaryStatus = readStatus(taskIds[0]);
@@ -3705,7 +3711,7 @@ async function runImplementPhase(state, interactive, resumeId) {
   if (!worktreeAlreadyCreated) {
     commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
   }
-  ensureBranch(taskIds);
+  ensureBranch(taskIds, { force });
   const activeCwd = getActiveCwd(taskIds);
   const baseBranch = getBaseBranch(taskIds);
   const affectedFiles = getAffectedFiles(baseBranch, activeCwd);
@@ -5163,7 +5169,7 @@ async function runPhase(phase, state) {
     return runPlanPhase(state, cliArgs.interactive);
   }
   if (phase === "implement") {
-    return runImplementPhase(state, cliArgs.interactive, codexSession);
+    return runImplementPhase(state, cliArgs.interactive, codexSession, cliArgs.force);
   }
   if (phase === "code_review") {
     return runCodeReviewPhase(state, cliArgs.interactive, reviewClaudeSession);

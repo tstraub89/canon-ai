@@ -195,6 +195,8 @@ Set `"worktree": true` in `status.json` to run Codex's implement, code_review, a
 
 **Main repo stays on its base**: In worktree mode, the orchestrator creates the `task/<id>` branch directly in the worktree. The main repo never checks out the task branch.
 
+**Dirty source guard before first worktree**: Before the first worktree is created, the orchestrator inspects `REPO_ROOT` with `git status --porcelain=v1 -uall`. Dirtiness under `tasks/` and `PIPELINE_TELEMETRY_FILES` is allowed because canon owns those scaffold/telemetry paths. Any tracked or untracked source path outside that allow-list aborts worktree creation: commit or stash intentional edits before starting, or rerun with `--force` if the new task should intentionally start from `base_branch` without those local edits.
+
 **Task-state source of truth**: From implement onward, the worktree is canonical for task artifacts (`tasks/<id>/`) and per-task telemetry rows. The main repo keeps the pre-implement scaffold; runtime task-state reads resolve to the worktree when it exists.
 
 **Project-level resources**: REPO_ROOT remains canonical for managed docs, `scripts/`, `src/`, root agent files, and other project-level files. Their cross-worktree coordination is separate from task-state resolution.
@@ -300,11 +302,12 @@ Tasks to re-review: <one-line per task pointing at the specific section>
 For each task:
 1. Read `## Iteration N-1` of handoff.md
 2. Read git diff since prior review
-3. Verify each prior finding addressed; flag NEW issues only
-4. APPEND `## Round N` to review.md
+3. Re-fill the Stage 1 AC table with every AC from spec.md against the latest code
+4. Verify each prior finding addressed, cross-referencing the refreshed AC table; flag NEW issues
+5. APPEND `## Round N` to review.md
 ```
 
-The Stage 1 AC table is **not** redone on round 2+ — that gate already passed in round 1. Implement-revision prompts are composable: code-review reroutes point at the new `## Round N-1` of `review.md`.
+The Stage 1 AC table is redone on round 2+. Earlier AC tables were snapshots of earlier code states; a revision can fix a cited finding while regressing an unrelated AC. Every AC appears every round. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer rather than re-derived evidence. Implement-revision prompts are composable: code-review reroutes point at the new `## Round N-1` of `review.md`.
 
 **Round-3+ tightening.** When the round number reaches 3, the prompt adds a discipline rule: findings must be `correctness bug` or `spec gap` only. No `optional cleanup/nit` and no wording-only changes. Encoded as: "we are tightening, not exploring." Without this, round-by-round wording-quibble creep eats the loop budget.
 

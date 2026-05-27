@@ -38,7 +38,10 @@ export function printUsage(): void {
     console.log('                      allow-list as --pr. Aborts if HEAD\'s tree differs from origin/<base>');
     console.log('                      on files not in spec\'s Affected Files (bypass with --force).');
     console.log('  --full-send         Skip the spec gate and auto-open a draft PR after clean QA');
-    console.log('  --force             Acknowledge high-commitment combinations (currently: --full-send on a delicate task)');
+    console.log('  --force             Acknowledge high-commitment combinations and bypass');
+    console.log('                      explicit safety gates where documented (currently:');
+    console.log('                      --full-send on delicate tasks, reroute amendment gate,');
+    console.log('                      base-drift gate, and dirty REPO_ROOT worktree-start gate).');
     console.log('  --ship              Merge the open PR (calls gh pr merge --squash --delete-branch), tear');
     console.log('                      down the worktree, archive the task dir, and pull the base branch. Run');
     console.log('                      after the PR is approved — do NOT merge the PR manually first. If you');

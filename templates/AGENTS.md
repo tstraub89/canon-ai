@@ -108,7 +108,7 @@ Templates live in `.canon/templates/` (managed by canon — do not edit directly
 **Per-iteration artifact convention.** `handoff.md` and `review.md` are **cumulative across review rounds, not rewritten**. Round 1 fills the existing template structure. On every subsequent revision:
 
 - **Codex appends** a new `## Iteration N — addressing review round N-1` section to `handoff.md` near the bottom (above any final checklist). Earlier iterations stay untouched as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation outcomes.
-- **Claude appends** a new `## Round N — verifying iteration N-1's response to round N-1` section to `review.md`. Do not redo the Stage 1 AC table — that gate already passed in round 1. Include per-finding verification (addressed / still open / no longer relevant) and any NEW issues introduced by the iteration.
+- **Claude appends** a new `## Round N — verifying iteration N-1's response to round N-1` section to `review.md`. Re-fill the Stage 1 AC table every round: every AC from `spec.md` appears with current Met / Partial / Not Met status against the latest code. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer. Cross-reference prior findings to the refreshed AC table and include any NEW issues introduced by the iteration.
 
 The orchestrator's slim resumed-session prompts on round 2+ depend on this convention: they point the agent at the latest section as the scope of the current iteration, rather than re-injecting the full task framing. If an agent rewrites instead of appending, the cumulative record is lost and the slim-prompt mechanism degrades to a fresh full re-prompt.
 

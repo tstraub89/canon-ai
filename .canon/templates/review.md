@@ -82,11 +82,20 @@ One paragraph: overall code quality of the implementation.
 <!--
 On re-review, append below this line:
 
-## Round N — verifying iteration N's response to round N-1
+## Round N — verifying iteration N-1's response to round N-1
+
+### Stage 1 — Acceptance Criteria Re-Check
+
+Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
+
+| AC | Status | Notes |
+|---|---|---|
+| AC-1: ... | Met / Partial / Not Met | ... |
+| AC-2: ... | Met / Partial / Not Met | ... |
 
 ### Verifying Round N-1 findings
 
-- _correctness bug:_ "<one-line summary>" → addressed (file:line) ✓ / still open / no longer relevant
+- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
 - _risk/guardrail:_ ... → ...
 
 ### New findings (only NEW issues introduced by Iteration N's changes)

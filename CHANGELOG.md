@@ -2,6 +2,14 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.5.1] — 2026-05-27
+
+### Fixed
+
+- **Round-N code-review docs/templates now match the v1.5 executable prompt.** Adopter-facing `AGENTS.md`, `docs/pipeline-orchestrator.md`, and the review template now all require re-filling the Stage 1 AC table every review round, with the same `Met (unchanged from round N-1)` shortcut as the prompt. Fixes #108.
+- **Validation enum guidance now surfaces human-only checks.** `CODEX.md`, the QA prompt, and the done template now document `human_pending`, `deferred_by_spec`, and the `Acknowledged:` waiver convention so unresolved human checks are visible in `done.md` instead of hidden in generic test results. Fixes #109.
+- **First worktree creation refuses dirty source edits in `REPO_ROOT`.** Before creating the first task worktree from `base_branch`, canon now allows only task artifacts and pipeline telemetry dirtiness in the supervising checkout. Dirty source files abort with remediation guidance unless `--force` is supplied. Fixes #110.
+
 ## [1.5.0] — 2026-05-26
 
 ### Changed

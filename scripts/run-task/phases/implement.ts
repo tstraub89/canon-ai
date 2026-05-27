@@ -28,6 +28,7 @@ export async function runImplementPhase(
     state: PipelineState,
     interactive: boolean,
     resumeId: string | null,
+    force = false,
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
@@ -45,7 +46,7 @@ export async function runImplementPhase(
     if (!worktreeAlreadyCreated) {
         commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
     }
-    ensureBranch(taskIds);
+    ensureBranch(taskIds, { force });
 
     const activeCwd = getActiveCwd(taskIds);
     const baseBranch = getBaseBranch(taskIds);

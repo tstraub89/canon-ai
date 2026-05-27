@@ -188,7 +188,43 @@ export function isCommandAvailable(command: string): boolean {
     return !result.error && result.status === 0;
 }
 
-export function ensureBranch(taskIds: string[]): void {
+export type EnsureBranchOptions = {
+    force?: boolean;
+};
+
+function isPipelineOwnedDirtyPath(filePath: string): boolean {
+    if (filePath.startsWith('tasks/')) return true;
+    return (PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath);
+}
+
+export function findDirtyRepoRootSourcePaths(statusOutput: string): string[] {
+    return parsePorcelainEntries(statusOutput)
+        .flatMap(entry => entry.paths)
+        .filter(filePath => !isPipelineOwnedDirtyPath(filePath));
+}
+
+function assertRepoRootCleanBeforeFirstWorktree(force: boolean): void {
+    const status = gitSafeAtRaw(REPO_ROOT, 'status', '--porcelain=v1', '-uall');
+    if (!status.ok) {
+        die(`Could not inspect REPO_ROOT dirty state before creating a task worktree: ${status.stderr || 'unknown git status error'}`);
+    }
+    const dirtySourcePaths = findDirtyRepoRootSourcePaths(status.stdout);
+    if (dirtySourcePaths.length === 0) return;
+
+    const list = dirtySourcePaths.map(filePath => `  - ${filePath}`).join('\n');
+    if (!force) {
+        die(
+            `Worktree creation aborted: REPO_ROOT has uncommitted source edits that would not be present in the new task worktree.\n` +
+            `${list}\n\n` +
+            `Commit or stash intentional edits before creating the worktree, or rerun with --force if this task should intentionally start from base without those edits.`
+        );
+    }
+    warn(
+        `--force override: creating task worktree from base despite uncommitted REPO_ROOT source edits:\n${list}`
+    );
+}
+
+export function ensureBranch(taskIds: string[], options: EnsureBranchOptions = {}): void {
     const primaryStatus = readStatus(taskIds[0]);
     const useWorktree = primaryStatus.worktree === true;
 
@@ -222,6 +258,7 @@ export function ensureBranch(taskIds: string[]): void {
         // that would violate the documented isolation model where the main
         // checkout stays on the base branch while implementation, review, and
         // qa run in ../dev-worktrees/<id>/.
+        assertRepoRootCleanBeforeFirstWorktree(options.force === true);
         ensureWorktree(taskIds[0], branchName, baseBranch);
         for (const taskId of taskIds) {
             const s = readStatus(taskId);

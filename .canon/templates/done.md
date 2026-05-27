@@ -27,6 +27,13 @@ One paragraph, plain English. No code jargon.
 | E2E tests | Pass / Skipped |
 | Build | Pass |
 
+## Human Verification Required
+
+List any unresolved `human_pending` validation checks from handoff.md. If none remain, write "None." If the human intentionally defers a pending check, add a waiver line beginning exactly with `Acknowledged:` and state the rationale.
+
+- (none / `Check name` — why it requires human verification)
+- Acknowledged: (only if waiving or deferring a pending human check)
+
 ## Decisions Made
 
 Any choices that were made during implementation that you should be aware of.

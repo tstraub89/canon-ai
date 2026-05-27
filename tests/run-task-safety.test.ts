@@ -15,7 +15,7 @@ import {
     formatExistingPRMessage,
     resolveCanonPrBody,
 } from '../scripts/run-task/main.js';
-import { ensureBranch, ensureCheckedOutBaseBranch } from '../scripts/run-task/git.js';
+import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
 import { commitArchiveChanges } from '../scripts/run-task/main.js';
 import { resolveTaskCwd } from '../scripts/run-task/state.js';
 
@@ -132,6 +132,14 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--porcelain" ]; then',
         '  if [ -n "${FAKE_GIT_WORKTREE_LIST_FILE:-}" ] && [ -f "$FAKE_GIT_WORKTREE_LIST_FILE" ]; then',
         '    cat "$FAKE_GIT_WORKTREE_LIST_FILE"',
+        '  fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "add" ]; then',
+        '  if [ "${3:-}" = "-b" ]; then',
+        '    mkdir -p "$5"',
+        '  else',
+        '    mkdir -p "$3"',
         '  fi',
         '  exit 0',
         'fi',
@@ -506,6 +514,199 @@ void test('ensureBranch creates a task branch from the declared release base, no
 
         const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as { branch?: string };
         assert.equal(updated.branch, taskBranch);
+    });
+});
+
+void test('findDirtyRepoRootSourcePaths allows task artifacts and telemetry only', () => {
+    const dirty = findDirtyRepoRootSourcePaths([
+        ' M tasks/example/spec.md',
+        '?? tasks/example/handoff.md',
+        ' M docs/pipeline-invocations.md',
+        ' M docs/task-quality-log.md',
+        ' M docs/lessons-learned.md',
+        ' M src/feature.ts',
+        '?? scripts/local-check.ts',
+        '',
+    ].join('\n'));
+
+    assert.deepEqual(dirty, ['src/feature.ts', 'scripts/local-check.ts']);
+});
+
+void test('ensureBranch rejects first worktree creation when REPO_ROOT has dirty source files', () => {
+    withTempDir('run-task-safety-worktree-dirty-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        const logPath = path.join(dir, 'git.log');
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'release/v1\n');
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'dirty-worktree-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'release/v1',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: logPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'release/v1',
+            FAKE_GIT_TASK_BRANCH: `task/${taskId}`,
+            FAKE_GIT_STATUS_OUTPUT: ' M src/dirty.ts',
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline([
+            "import { ensureBranch } from './scripts/run-task/git.js';",
+            `ensureBranch(${JSON.stringify([taskId])});`,
+        ].join('\n'), env));
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Worktree creation aborted/);
+        assert.match(result.stderr, /src\/dirty\.ts/);
+
+        const log = fs.readFileSync(logPath, 'utf8');
+        assert.doesNotMatch(log, /worktree add/);
+    });
+});
+
+void test('ensureBranch allows first worktree creation when only task artifacts and telemetry are dirty', () => {
+    withTempDir('run-task-safety-worktree-allowed-dirty-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        const logPath = path.join(dir, 'git.log');
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'release/v1\n');
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'allowed-dirty-worktree';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'release/v1',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: logPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'release/v1',
+            FAKE_GIT_TASK_BRANCH: `task/${taskId}`,
+            FAKE_GIT_STATUS_OUTPUT: [
+                ' M tasks/allowed-dirty-worktree/spec.md',
+                ' M docs/pipeline-invocations.md',
+            ].join('\n'),
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline([
+            "import { ensureBranch } from './scripts/run-task/git.js';",
+            `ensureBranch(${JSON.stringify([taskId])});`,
+        ].join('\n'), env));
+
+        assert.equal(result.status, 0, result.stderr);
+        const log = fs.readFileSync(logPath, 'utf8');
+        assert.ok(log.includes(`worktree add -b task/${taskId} ${path.join(worktreesRoot, taskId)} release/v1`));
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as { branch?: string };
+        assert.equal(updated.branch, `task/${taskId}`);
+    });
+});
+
+void test('ensureBranch force-bypasses dirty source guard for first worktree creation', () => {
+    withTempDir('run-task-safety-worktree-dirty-force-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        const logPath = path.join(dir, 'git.log');
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'release/v1\n');
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'force-dirty-worktree';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'release/v1',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: logPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'release/v1',
+            FAKE_GIT_TASK_BRANCH: `task/${taskId}`,
+            FAKE_GIT_STATUS_OUTPUT: ' M src/dirty.ts',
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline([
+            "import { ensureBranch } from './scripts/run-task/git.js';",
+            `ensureBranch(${JSON.stringify([taskId])}, { force: true });`,
+        ].join('\n'), env));
+
+        assert.equal(result.status, 0, result.stderr);
+        const log = fs.readFileSync(logPath, 'utf8');
+        assert.ok(log.includes(`worktree add -b task/${taskId} ${path.join(worktreesRoot, taskId)} release/v1`));
+    });
+});
+
+void test('ensureBranch bypasses dirty source guard when worktree branch is already recorded', () => {
+    withTempDir('run-task-safety-worktree-existing-dirty-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        const logPath = path.join(dir, 'git.log');
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'release/v1\n');
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'existing-dirty-worktree';
+        const taskBranch = `task/${taskId}`;
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'release/v1',
+            branch: taskBranch,
+            worktree: true,
+            phases: {},
+        });
+
+        const worktreeListFile = path.join(dir, 'worktree-list.txt');
+        fs.writeFileSync(worktreeListFile, [
+            `worktree ${path.join(worktreesRoot, taskId)}`,
+            'HEAD abc123',
+            `branch refs/heads/${taskBranch}`,
+            '',
+        ].join('\n'), 'utf8');
+
+        withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: logPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'release/v1',
+            FAKE_GIT_TASK_BRANCH: taskBranch,
+            FAKE_GIT_STATUS_OUTPUT: ' M src/dirty.ts',
+            FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, () => {
+            ensureBranch([taskId]);
+        });
+
+        const log = fs.readFileSync(logPath, 'utf8');
+        assert.doesNotMatch(log, /status --porcelain=v1 -uall/);
+        assert.doesNotMatch(log, /worktree add/);
+        assert.match(log, /worktree list --porcelain/);
     });
 });
 

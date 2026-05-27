@@ -1959,7 +1959,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
         return runPlanPhase(state, cliArgs.interactive);
     }
     if ((phase as Phase) === 'implement') {
-        return runImplementPhase(state, cliArgs.interactive, codexSession);
+        return runImplementPhase(state, cliArgs.interactive, codexSession, cliArgs.force);
     }
     if ((phase as Phase) === 'code_review') {
         return runCodeReviewPhase(state, cliArgs.interactive, reviewClaudeSession);
