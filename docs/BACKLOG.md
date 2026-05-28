@@ -1080,3 +1080,33 @@
     2. **(S) Document file-form-only in the spec-writing rules and error out on trailing-slash entries**: stricter — spec.md must enumerate exact paths. The gate emits "directory-form entry `dist/` not supported; list `dist/cli/index.js` and `dist/scripts/run-task.js` explicitly" so the operator gets a clear remediation. Higher friction but keeps the gate's contract crisp.
   - **Recommended**: option 1 (the directory-prefix interpretation is what spec authors mean by `dist/` and is cheap to implement). Document the convention in spec-writing rules either way.
   - **Effort**: `S`.
+
+- [ ] **Base-drift gate: `parseAffectedFilesFromSpec` ignores `## Amendment` sections, forcing operators to duplicate rows into the main Affected Files table** *(reported 2026-05-28 by GP using canon — a file declared in an Amendment's `### Affected Files` table failed the `--pr` base-drift gate; workaround was adding a row to the main `## Design → ### Affected Files` table referencing the amendment)*
+  - **Symptom**: A file legitimately added by a reroute amendment lives in the amendment's own `### Affected Files` subsection (under `## Amendment` for round 1 or `## Amendment Round N` for round 2+). The `--pr` base-drift gate rejects the file as out-of-scope. Operator workaround: copy the row into the main `## Design → ### Affected Files` table, producing two sources of truth for the same file.
+  - **Root cause**: [`parseAffectedFilesFromSpec` at scripts/run-task/validation.ts:742](../scripts/run-task/validation.ts:742) walks only `## Design` H2 bodies via `extractSectionBodies(content, /^## Design\b/)`, then pulls `### Affected Files` H3 tables from each. Amendment sections — which are first-class spec surfaces and the canonical place Codex declares files added during a reroute — are invisible to the allow-list builder. The asymmetry is internal-only: the reroute gate at `validation.ts:184` already understands both `## Amendment` and `## Amendment Round N`; the Affected Files parser was authored before amendments were a spec surface and never extended.
+  - **Concrete reproduction**: any task that hits a reroute, where Codex's amendment legitimately introduces a new file that wasn't in the original Design's Affected Files table. The amendment authoring is correct per canon's reroute convention; the gate just doesn't read it.
+  - **Fix shape — one-line section-selector extension**: change `parseAffectedFilesFromSpec` to walk both Design and Amendment bodies:
+    ```ts
+    const sectionBodies = [
+      ...extractSectionBodies(content, /^## Design\b/),
+      ...extractSectionBodies(content, /^## Amendment\b/),  // matches round-1 bare + round-N `Amendment Round N`
+    ];
+    if (sectionBodies.length === 0) return { files: [], malformed: [] };
+    for (const body of sectionBodies) {
+      const rows = parseTableH3(body, 'Affected Files');
+      // ...existing dedupe-into-Set logic
+    }
+    ```
+    The `\b` word boundary naturally covers both `## Amendment` and `## Amendment Round N` for the same reason the reroute gate's regex does.
+  - **Spec-time open questions**:
+    1. **Allow-list scope**: include Amendment files unconditionally, or only when `status.json.rerouteCount > 0`? *Lean: unconditional.* The gate is additive — an amendment that never fired adds nothing to the allow-list because no files get touched. Stateless parser, no status.json read in the hot path.
+    2. **Deviation reporting on round mismatch**: should the error message hint when a rejected file IS declared in an amendment under a non-matching round heading (e.g., declared in `## Amendment Round 1` but we're on round 2)? *Lean: no.* Keeps the parser stateless; "not in allow-list" is sufficient and the operator can grep the spec.
+  - **Tests to add** in [tests/run-task-validation.test.ts](../tests/run-task-validation.test.ts) (currently no amendment-in-Affected-Files coverage, lines 551–670):
+    - Round-1 bare `## Amendment` with an Affected Files table → files included.
+    - Round-2+ `## Amendment Round 2` with an Affected Files table → files included.
+    - Dedupe across Design and Amendment sections (same path in both → one entry).
+    - Malformed rows in amendments surface the same way as Design malformed rows.
+    - Multi-amendment spec (round 1 + round 2 both have Affected Files) → union of both.
+  - **Affected files**: `scripts/run-task/validation.ts` (the parser), `tests/run-task-validation.test.ts` (coverage). No call-site changes — every consumer of `parseAffectedFilesFromSpec` automatically benefits.
+  - **Sequencing**: independent. S-sized parser fix, behavior change in the orchestrator's PR gate → goes through canon per CLAUDE.md (non-trivial harness change). Doc tweak: AGENTS.md / spec-authoring rules may want a sentence noting that amendments may add to Affected Files.
+  - **Effort**: `S`.
