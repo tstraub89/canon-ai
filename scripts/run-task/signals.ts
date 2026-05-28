@@ -31,6 +31,21 @@ import type { ChildProcess } from 'node:child_process';
 
 const activeChildren = new Set<ChildProcess>();
 
+// Shutdown-hook registry. Modules with cleanup work (heartbeat file removal,
+// PID-file cleanup for future detach mode, etc.) register a callback that
+// fires before the signal forwarder re-raises. Registry-style keeps signals.ts
+// leaf-pure — the structural test in tests/run-task-signals.test.ts forbids
+// project imports here so the SIGHUP handler installs before the heavier
+// transitive graph evaluates. Callers do `import { registerShutdownHook }
+// from './signals.js'` from inside the project tree; signals.ts itself stays
+// dependency-free.
+type ShutdownHook = () => void;
+const shutdownHooks: ShutdownHook[] = [];
+
+export function registerShutdownHook(hook: ShutdownHook): void {
+    shutdownHooks.push(hook);
+}
+
 export function registerActiveChild(child: ChildProcess): void {
     activeChildren.add(child);
     const drop = (): void => {
@@ -77,6 +92,13 @@ process.on('SIGHUP', () => {
 function forwardAndExit(sig: 'SIGINT' | 'SIGTERM'): void {
     for (const child of activeChildren) {
         killChildGroup(child, sig);
+    }
+    // Run registered shutdown hooks before re-raising. Heartbeat-file cleanup
+    // and (future) detach PID-file removal live here so a clean Ctrl-C / SIGTERM
+    // doesn't leave runtime files looking stale. Hooks run best-effort — a
+    // throw from one hook must not block the others or the re-raise.
+    for (const hook of shutdownHooks) {
+        try { hook(); } catch { /* best-effort; never block shutdown */ }
     }
     // Restore Node's default handling for this signal, then re-raise it
     // against ourselves. This preserves native signal-termination semantics

@@ -135,7 +135,9 @@ The pipeline produces three categories of changes. Each has a clear owner:
 
 1. **Code changes**: Codex writes the files during implement. The orchestrator commits them after implement passes Codex-reported static validation and before code_review. Commit message: `<task title> [<TASK-ID>]`.
 
-2. **Task artifacts** (`tasks/TASK-ID/`): Committed once at the end, after human_review approves. A single commit bundles spec, plan, reviews, handoff, done, and notes. Commit message: `chore: add task artifacts for <TASK-ID>`.
+2. **Task artifacts** (`tasks/TASK-ID/`): The orchestrator commits these in two automatic stages, not one — see [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md) §Worktree Isolation and §Auto-Branch + Auto-Commit for the mechanics.
+   - **Pre-implement → base branch**: Before the first `implement` phase runs, the orchestrator commits the task scaffold (`spec.md`, `plan.md`, `status.json`, and the empty `handoff.md` / `review.md` / `done.md` / `notes.md` templates) to the base branch with message `task(<TASK-ID>): commit artifacts pre-pipeline`. If `PIPELINE_TELEMETRY_FILES` are dirty at that point, a sibling commit follows: `chore: absorb pre-implement telemetry into scaffold for <TASK-ID>`. In worktree mode (the default), this is what lets the new worktree inherit the scaffold via its initial branch checkout — without it, the worktree boots from a base branch that has no `tasks/<id>/` and the pipeline has nothing to read. On re-runs of `implement` (reroutes, review iterations) the worktree already exists and this commit is skipped.
+   - **At `--push` / `--pr` → task branch**: When the operator runs `canon run <id> --push` or `--pr` at `human_review`, the orchestrator auto-commits the evolved artifacts (`handoff.md`, `review.md`, `done.md`, final `status.json`, `notes.md`), telemetry rows, and managed docs (any `PIPELINE_MANAGED_DOCS` entry the spec's `### Affected Files` lists — and, once `qa.status === 'done'`, any `PIPELINE_MANAGED_DOCS` entry regardless of Affected Files, since QA's Docs Freshness sweep can promote lessons into protected docs the spec author didn't predict). Full allow-list in `docs/pipeline-orchestrator.md` §Auto-Branch + Auto-Commit. These return to the base branch via `--ship`'s squash-merge.
 
 3. **Changelog + version bump**: A separate release step after human_review, done collaboratively by the human and Claude. Not automated by the pipeline. See Release Rules below.
 
@@ -143,8 +145,10 @@ The pipeline produces three categories of changes. Each has a clear owner:
 
 | When | What | Who |
 |---|---|---|
-| After implement passes static validation | Code changes | Orchestrator (auto) |
-| After human_review approves | Task artifacts | Orchestrator or human |
+| Before first `implement` phase | Task scaffold (`tasks/<id>/` + dirty telemetry) → base branch | Orchestrator (auto) |
+| After implement passes static validation | Code changes → task branch | Orchestrator (auto) |
+| At `--push` / `--pr` (human_review) | Final task artifacts + telemetry + managed docs (per rule 2 allow-list) → task branch | Orchestrator (auto) |
+| At `--ship` | Squash-merge task branch → base | Orchestrator (auto, via `gh pr merge`) |
 | Before PR / merge | Changelog + version bump | Human + Claude |
 
 ### Spec Lifecycle

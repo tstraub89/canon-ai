@@ -6,9 +6,9 @@ This document covers the **mechanics** of cutting a canon-ai release. For the **
 
 canon-ai uses **release-branch-per-version**:
 
-- **Task branches** → PR to the active `release/vMAJ.MIN` branch.
-- **`release/vMAJ.MIN`** is temporary. One per minor or major version (`release/v1.3`, `release/v1.4`, `release/v2.0`). Patch releases reuse the same minor branch (1.4.0, 1.4.1, 1.4.2 all on `release/v1.4`). Major bumps get a new branch.
-- **`release/vMAJ.MIN` → `main` PR** is the release boundary. The version bump and CHANGELOG date land in this PR. The squash-merge to `main` triggers auto-release.
+- **Task branches** → PR to the active `release/v<version>` branch.
+- **`release/v<version>`** is temporary. One per release (`release/v1.4`, `release/v1.5`, `release/v1.5.1`, `release/v1.5.2`, `release/v2.0`). The branch is named for the specific version it ships — minor releases drop the patch suffix (`release/v1.5` ships 1.5.0), patch releases use the full version (`release/v1.5.2` ships 1.5.2). Major bumps follow the minor naming (`release/v2.0` ships 2.0.0).
+- **`release/v<version>` → `main` PR** is the release boundary. The version bump and CHANGELOG date land in this PR. The squash-merge to `main` triggers auto-release.
 - **`main`** is the published state. Tags and GitHub releases live on `main`.
 - **Release branches are deleted on merge** (the repo's PR settings + canon's `--ship` flow handle this automatically). No persistent integration branch to keep in sync.
 
@@ -25,15 +25,17 @@ The product owner says something like "ship v1.4.0" or "let's do a patch":
 3. **Accumulate task work** on the release branch until the scope is complete.
 4. **Ship** by opening `release/vMAJ.MIN` → `main` PR and squash-merging.
 
-## Creating a new release branch (minor or major bump)
+## Creating a new release branch
 
-When starting work on a new minor or major version:
+When starting work on a new release of any tier:
 
 ```bash
 # Make sure local main matches origin.
 git checkout main && git pull origin main && git status --porcelain
 
-# Create the release branch off main.
+# Create the release branch off main. Branch name follows the version:
+#   - Minor or major:  release/v1.4   (ships 1.4.0)
+#   - Patch:           release/v1.5.2 (ships 1.5.2)
 git checkout -b release/v1.4 main
 
 # Bump versions atomically. Use npm version + the lockfile refresh, never sed
@@ -76,23 +78,23 @@ git push -u origin release/v1.4
 
 ## Patch release on an existing minor
 
-For a patch release on a minor that already shipped (e.g., 1.4.1 after 1.4.0 has been published and `release/v1.4` was deleted on merge):
+For a patch release on a minor that already shipped (e.g., 1.5.2 after 1.5.1 has been published and `release/v1.5.1` was deleted on merge), branch off main and name the branch for the specific patch version:
 
 ```bash
-# Start fresh off the current main (which has the 1.4.0 squash).
+# Start fresh off the current main (which has the 1.5.1 squash).
 git checkout main && git pull origin main
-git checkout -b release/v1.4 main
+git checkout -b release/v1.5.2 main
 ```
 
-Bump to the patch version (`1.4.1`), `npm run build` (same reason as the minor/major flow above — the bumped version string lives in `dist/cli/index.js`), add a new `## [1.4.1] — unreleased` block at the top of CHANGELOG, commit (`package.json package-lock.json .canon/version dist/ CHANGELOG.md`), push, accumulate fixes.
+Bump to the patch version (`1.5.2`), `npm run build` (same reason as the minor/major flow above — the bumped version string lives in `dist/cli/index.js`), add a new `## [1.5.2] — unreleased` block at the top of CHANGELOG, commit (`package.json package-lock.json .canon/version dist/ CHANGELOG.md`), push, accumulate fixes.
 
 ## Accumulating task work on the release branch
 
-Tasks branch off the active `release/vMAJ.MIN` and PR back to it. Use `canon run` for the full pipeline; the orchestrator picks up `base_branch` from `status.json` (`canon task new` auto-detects this from the current checkout, so being on the release branch when creating tasks is enough).
+Tasks branch off the active `release/v<version>` and PR back to it. Use `canon run` for the full pipeline; the orchestrator picks up `base_branch` from `status.json` (`canon task new` auto-detects this from the current checkout, so being on the release branch when creating tasks is enough).
 
 As each task ships, append a bullet to the active `## [<version>] — unreleased` block in `CHANGELOG.md`.
 
-## Shipping `release/vMAJ.MIN` → `main`
+## Shipping `release/v<version>` → `main`
 
 When the release scope is complete:
 
@@ -121,7 +123,7 @@ Implemented in `.github/workflows/auto-release.yml`. Triggered on push to `main`
 3. Verifies lockfile integrity (regenerates `package-lock.json` via `npm install --package-lock-only` and diffs against the checked-in file). Catches stale lockfiles + the 1.1.3 picocolors-style transitive corruption.
 4. Identifies the version-bump commit by blaming `package.json`'s `version` line. This SHA — not the SHA of whatever push triggered the run — is what gets tagged. Self-heal retry on a later push still tags the correct commit.
 5. Checks whether the GitHub release for `v<version>` already exists — exits silently if so. Gating on the release object (not the tag) lets a prior run that created the tag but failed before publishing the release self-heal on the next push.
-6. Extracts the `## [<version>] — <date>` CHANGELOG block **from the bump SHA's tree** (not the workflow's checkout). Fails if the block is missing or still has the `unreleased` placeholder.
+6. Extracts the `## [<version>] — <date>` CHANGELOG block **from the bump SHA's tree** (not the workflow's checkout) — when scope lands after the bump commit, the workflow's HEAD describes a different tree than the SHA being tagged, and reading from HEAD produces release notes that advertise fixes not in the tagged code (this was the 1.3.0 mismatch). Fails if the block is missing or still has the `unreleased` placeholder.
 7. Creates the tag + GitHub release with the extracted body, targeting the version-bump commit.
 8. **Post-publish verification**: re-extracts the CHANGELOG block from the published tag and diffs it byte-for-byte against the uploaded release notes. Fails if they disagree (regression guard for the 1.3.0 tag/notes mismatch).
 
@@ -148,4 +150,4 @@ gh release create v<new-version> --target "$BUMP_SHA" \
 
 - [`decisions.md`](decisions.md) §"Versioning and release policy" — what counts as patch / minor / major, who authorizes, changelog scope.
 - [`pipeline-orchestrator.md`](pipeline-orchestrator.md) §"Task management (canon task)" — `canon task release-init` helper (with known-bug notes; see BACKLOG).
-- [`lessons-learned.md`](lessons-learned.md) — historical release incidents (1.1.2 lockfile sync, 1.1.3 picocolors lockfile, 1.3.0 tag/notes mismatch, 1.3.2 squash-merge cleanup).
+- [`../CHANGELOG.md`](../CHANGELOG.md) — historical release incidents (1.1.2 lockfile sync, 1.1.3 picocolors lockfile, 1.3.0/1.3.1 tag/notes mismatch recovery, 1.3.2 cleanup).

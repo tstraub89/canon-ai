@@ -1,7 +1,10 @@
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
-import { join, sep as pathSep } from 'path';
+import { dirname, join, sep as pathSep } from 'path';
+import { HEARTBEAT_STALE_AFTER_MS, readHeartbeat, isHeartbeatStale } from '../../../scripts/run-task/heartbeat.js';
+import { isOrphanedWorktreeState, statusFileFor, taskDirForRepoRoot } from '../../../scripts/run-task/state.js';
+import type { StatusJson } from '../../../scripts/run-task/types.js';
 import { isAvailable } from '../deps.js';
 
 interface Check {
@@ -495,6 +498,113 @@ export function checkLocalSettingsGitignored(cwd: string): Check {
     };
 }
 
+// --- active-orchestrator detection ---
+
+/**
+ * Format a millisecond age as a short human-readable string ("47s", "12m 3s",
+ * "2h 14m"). Used to give doctor's stale-orchestrator warnings concrete
+ * duration context without pulling in a date-formatting dep.
+ */
+export function formatAge(ms: number): string {
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remSec = seconds % 60;
+    if (minutes < 60) return remSec > 0 ? `${minutes}m ${remSec}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const remMin = minutes % 60;
+    return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`;
+}
+
+function readStatusForCheck(taskId: string): StatusJson | null {
+    // Match `canon task list`'s graceful-degradation contract (issue #83):
+    // don't crash doctor on orphan worktree state. Fall back to the REPO_ROOT
+    // snapshot of status.json when the worktree is gone but the task entry
+    // still claims one.
+    try {
+        const statusPath = isOrphanedWorktreeState(taskId)
+            ? join(taskDirForRepoRoot(taskId), 'status.json')
+            : statusFileFor(taskId);
+        if (!existsSync(statusPath)) return null;
+        return JSON.parse(readFileSync(statusPath, 'utf8')) as StatusJson;
+    } catch {
+        return null;
+    }
+}
+
+function resolveHeartbeatDir(taskId: string): string | null {
+    // Heartbeat lives next to the worktree's status.json. For orphan-worktree
+    // tasks the heartbeat is effectively unreachable — we still report
+    // "no live orchestrator" which is the right answer regardless.
+    try {
+        if (isOrphanedWorktreeState(taskId)) {
+            return taskDirForRepoRoot(taskId);
+        }
+        return dirname(statusFileFor(taskId));
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Inspect every non-archived task and report orchestrator liveness for those
+ * whose status.json says `in_progress`. Returns `Check`s in this shape:
+ *   - status `pass`: heartbeat is fresh (< 60s old)
+ *   - status `warn`: status says in_progress but heartbeat is stale or missing
+ *     → the orchestrator was likely killed; operator should `canon run <id>`
+ *
+ * Returns an empty array when no task is in_progress — doctor then omits the
+ * section. Errors on a single task are absorbed (skip the row); only the
+ * tasks we can read are reported.
+ */
+export function checkActiveOrchestrators(cwd: string, now: number = Date.now()): Check[] {
+    const tasksDir = join(cwd, 'tasks');
+    if (!existsSync(tasksDir)) return [];
+    const checks: Check[] = [];
+    let entries: string[];
+    try {
+        entries = readdirSync(tasksDir).sort();
+    } catch {
+        return [];
+    }
+    for (const id of entries) {
+        if (id === '_archive') continue;
+        const status = readStatusForCheck(id);
+        if (!status) continue;
+        // Top-level `status.status` is the *current phase name* (e.g.,
+        // "implement", "code_review", "complete") — NOT a phase-status value.
+        // The signal that an orchestrator should be running is whether any
+        // phase entry has `status: "in_progress"`. The phase handlers flip
+        // their own status to in_progress at start and to done/blocked/
+        // changes_requested at end; a stuck in_progress phase is exactly the
+        // post-kill state we want to detect. See PHASE_STATUS_VALUES in
+        // scripts/run-task/types.ts for the set; "phase X started in_progress"
+        // is set in scripts/run-task/phases/<phase>.ts at phase entry.
+        const phases = status.phases ?? {};
+        const hasInProgressPhase = Object.values(phases).some(
+            (entry) => entry?.status === 'in_progress',
+        );
+        if (!hasInProgressPhase) continue;
+
+        const taskDir = resolveHeartbeatDir(id);
+        const record = taskDir ? readHeartbeat(taskDir) : null;
+        const label = `orchestrator ${id}`;
+        if (isHeartbeatStale(record, now)) {
+            const detail = record === null
+                ? `status.json shows in_progress but no .heartbeat.json — orchestrator was killed or never wrote one. Run \`canon run ${id}\` to resume.`
+                : `status.json shows in_progress but last heartbeat was ${formatAge(now - record.last_update_ms)} ago (>${HEARTBEAT_STALE_AFTER_MS / 1000}s) — orchestrator likely killed. Run \`canon run ${id}\` to resume.`;
+            checks.push({ label, status: 'warn', detail });
+        } else if (record) {
+            checks.push({
+                label,
+                status: 'pass',
+                detail: `alive (pid ${record.pid}, heartbeat ${formatAge(now - record.last_update_ms)} ago)`,
+            });
+        }
+    }
+    return checks;
+}
+
 // --- runner ---
 
 function printSection(title: string): void {
@@ -537,6 +647,14 @@ export function doctorCmd(_args: string[]): void {
         checkLocalSettingsGitignored(cwd),
     ];
 
+    // Active-orchestrator section is conditional — only shows when at least
+    // one task is in_progress. Surfaces "task claims in_progress but no live
+    // heartbeat" within ~60s of an orchestrator death (harness pgroup kill,
+    // OOM, SIGKILL) so the operator can re-resume rather than wait hours
+    // before noticing. See docs/BACKLOG.md "Orchestrator dies silently in
+    // background mode" for the full failure-mode story.
+    const orchestratorChecks = checkActiveOrchestrators(cwd);
+
     console.log('\ncanon doctor\n');
 
     printSection('Environment');
@@ -548,7 +666,12 @@ export function doctorCmd(_args: string[]): void {
     printSection('Config');
     for (const c of configChecks) printCheck(c);
 
-    const all = [...envChecks, ...canonChecks, ...configChecks];
+    if (orchestratorChecks.length > 0) {
+        printSection('Active orchestrators');
+        for (const c of orchestratorChecks) printCheck(c);
+    }
+
+    const all = [...envChecks, ...canonChecks, ...configChecks, ...orchestratorChecks];
     const failures = all.filter(c => c.status === 'fail');
     const warnings = all.filter(c => c.status === 'warn');
 

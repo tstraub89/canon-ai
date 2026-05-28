@@ -2,9 +2,203 @@
 
 // src/cli/commands/doctor.ts
 import { execSync as execSync2 } from "child_process";
-import { existsSync, readFileSync, realpathSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
-import { join, sep as pathSep } from "path";
+import { dirname, join, sep as pathSep } from "path";
+
+// scripts/run-task/heartbeat.ts
+import fs from "fs";
+import path from "path";
+var HEARTBEAT_FILENAME = ".heartbeat.json";
+var HEARTBEAT_INTERVAL_MS = 3e4;
+var HEARTBEAT_STALE_AFTER_MS = HEARTBEAT_INTERVAL_MS * 2;
+function removeHeartbeat(taskDir) {
+  try {
+    fs.unlinkSync(path.join(taskDir, ".heartbeat.json"));
+  } catch {
+  }
+}
+function readHeartbeatStatus(taskDir) {
+  const file = path.join(taskDir, HEARTBEAT_FILENAME);
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    const err = error;
+    if (err.code === "ENOENT") return { kind: "missing" };
+    return { kind: "unreadable", reason: err.message ?? String(error) };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { kind: "corrupt", reason: `invalid JSON: ${message}` };
+  }
+  if (parsed === null || typeof parsed !== "object" || typeof parsed.pid !== "number" || typeof parsed.started_at_ms !== "number" || typeof parsed.last_update_ms !== "number" || !Array.isArray(parsed.task_ids)) {
+    return { kind: "corrupt", reason: "wrong shape \u2014 missing or mistyped required fields" };
+  }
+  return { kind: "found", record: parsed };
+}
+function readHeartbeat(taskDir) {
+  const result = readHeartbeatStatus(taskDir);
+  return result.kind === "found" ? result.record : null;
+}
+function isHeartbeatStale(record, now = Date.now()) {
+  if (!record) return true;
+  return now - record.last_update_ms > HEARTBEAT_STALE_AFTER_MS;
+}
+
+// scripts/run-task/state.ts
+import fs3 from "fs";
+import { spawnSync as spawnSync2 } from "child_process";
+import path3 from "path";
+
+// scripts/run-task/cli.ts
+function die(message) {
+  console.error(`\u274C ${message}`);
+  process.exit(1);
+}
+
+// scripts/run-task/env.ts
+import { spawnSync } from "child_process";
+import fs2 from "fs";
+import path2 from "path";
+import { fileURLToPath } from "url";
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = path2.dirname(__filename);
+function resolveRepoRoot() {
+  try {
+    const result = spawnSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    if (result.error || result.status !== 0) {
+      throw result.error ?? new Error(result.stderr || "git rev-parse --git-common-dir failed");
+    }
+    const gitCommonDir = result.stdout.trim();
+    if (!gitCommonDir) throw new Error("git rev-parse --git-common-dir returned no path");
+    const resolvedGitCommonDir = path2.isAbsolute(gitCommonDir) ? gitCommonDir : path2.resolve(process.cwd(), gitCommonDir);
+    return path2.dirname(resolvedGitCommonDir);
+  } catch {
+    return path2.resolve(__dirname, "../..");
+  }
+}
+var REPO_ROOT = resolveRepoRoot();
+var TASKS_DIR = path2.join(REPO_ROOT, "tasks");
+var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path2.resolve(process.env.CANON_WORKTREES_ROOT) : path2.resolve(REPO_ROOT, "../dev-worktrees");
+var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
+function resolveProjectName() {
+  if (process.env.CANON_PROJECT_NAME) return process.env.CANON_PROJECT_NAME;
+  try {
+    const pkgPath = path2.join(REPO_ROOT, "package.json");
+    if (fs2.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs2.readFileSync(pkgPath, "utf8"));
+      if (pkg.name) return pkg.name;
+    }
+  } catch {
+  }
+  return "your project";
+}
+var config = {
+  projectName: resolveProjectName(),
+  claudeBudget: process.env.CLAUDE_BUDGET ?? "5.00",
+  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
+  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
+  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.4-mini",
+  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.5",
+  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+  maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
+};
+
+// scripts/run-task/types.ts
+var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
+
+// scripts/run-task/state.ts
+function effectiveWorktreesRoot() {
+  return process.env.CANON_WORKTREES_ROOT ? path3.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+}
+function findExistingWorktreeForBranch(branch) {
+  const result = spawnSync2("git", ["worktree", "list", "--porcelain"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0) return null;
+  const lines = (result.stdout ?? "").split("\n");
+  let currentPath = null;
+  for (const line of lines) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length).trim();
+    } else if (line.startsWith("branch refs/heads/") && currentPath && currentPath !== REPO_ROOT) {
+      const lineBranch = line.slice("branch refs/heads/".length).trim();
+      if (lineBranch === branch) return currentPath;
+    }
+  }
+  return null;
+}
+function taskDirForRepoRoot(taskId) {
+  return path3.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
+}
+function taskDirFor(taskId) {
+  if (process.env.CANON_TASKS_DIR_OVERRIDE) {
+    return path3.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
+  }
+  return path3.join(resolveTaskCwd(taskId), "tasks", taskId);
+}
+function isOrphanedWorktreeState(taskId) {
+  const worktreesRoot = effectiveWorktreesRoot();
+  const directWorktree = path3.join(worktreesRoot, taskId);
+  const directStatus = path3.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs3.existsSync(directStatus)) return false;
+  const statusPath = path3.join(taskDirForRepoRoot(taskId), "status.json");
+  try {
+    const parsed = JSON.parse(fs3.readFileSync(statusPath, "utf8"));
+    if (parsed.worktree !== true) return false;
+    const branch = parsed.branch?.trim() ?? "";
+    if (!branch) return false;
+    return findExistingWorktreeForBranch(branch) === null;
+  } catch {
+    return false;
+  }
+}
+function resolveTaskCwd(taskId) {
+  const worktreesRoot = effectiveWorktreesRoot();
+  const directWorktree = path3.join(worktreesRoot, taskId);
+  const directStatus = path3.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs3.existsSync(directStatus)) return directWorktree;
+  const statusPath = path3.join(taskDirForRepoRoot(taskId), "status.json");
+  try {
+    const parsed = JSON.parse(fs3.readFileSync(statusPath, "utf8"));
+    if (parsed.worktree === true) {
+      const branch = parsed.branch?.trim() ?? "";
+      if (branch) {
+        const existing = findExistingWorktreeForBranch(branch);
+        if (existing) return existing;
+        die(
+          `Worktree for task '${taskId}' is expected but missing.
+  Looked for ${directWorktree} and a worktree for branch '${branch}'.
+  Restore or recreate the worktree before continuing.`
+        );
+      }
+    }
+  } catch {
+  }
+  return REPO_ROOT;
+}
+function statusFileFor(taskId) {
+  if (process.env.CANON_TASKS_DIR_OVERRIDE) {
+    return path3.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, "status.json");
+  }
+  return path3.join(resolveTaskCwd(taskId), "tasks", taskId, "status.json");
+}
+function deriveTopLevelStatus(status) {
+  for (const phase of PHASE_ORDER) {
+    const phaseStatus = status.phases[phase]?.status ?? "pending";
+    if (phaseStatus !== "done") return phase;
+  }
+  return "complete";
+}
 
 // src/cli/deps.ts
 import { execSync } from "child_process";
@@ -184,11 +378,11 @@ function checkClaudeVersion(runner = defaultClaudeVersionRunner) {
   return { label, status: "pass" };
 }
 function checkAgentFile(cwd, filename) {
-  const path8 = join(cwd, filename);
-  if (!existsSync(path8)) {
+  const path10 = join(cwd, filename);
+  if (!existsSync(path10)) {
     return { label: filename, status: "fail", detail: "missing \u2014 run `canon init`" };
   }
-  const content = readFileSync(path8, "utf8");
+  const content = readFileSync(path10, "utf8");
   if (!CANON_START_RE.test(content) || !content.includes(CANON_END)) {
     return { label: filename, status: "warn", detail: "no canon delimiters \u2014 run `canon init` to add them" };
   }
@@ -211,7 +405,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.5.1";
+  const installedVersion = "1.6.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -246,8 +440,8 @@ function checkSkills(cwd) {
   return { label: ".claude/skills/", status: "pass" };
 }
 function checkCodexConfig(cwd) {
-  const path8 = join(cwd, ".codex", "config.toml");
-  if (existsSync(path8)) return { label: ".codex/config.toml", status: "pass" };
+  const path10 = join(cwd, ".codex", "config.toml");
+  if (existsSync(path10)) return { label: ".codex/config.toml", status: "pass" };
   return { label: ".codex/config.toml", status: "warn", detail: "missing \u2014 Codex will use defaults" };
 }
 function parseCodexProjectTrust(tomlContent) {
@@ -355,10 +549,10 @@ function checkCodexProjectTrust(cwd) {
         trust_level = "trusted"`
   };
 }
-function readAllowFromSettings(path8) {
-  if (!existsSync(path8)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
+function readAllowFromSettings(path10) {
+  if (!existsSync(path10)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync(path8, "utf8"));
+    const parsed = JSON.parse(readFileSync(path10, "utf8"));
     const raw = parsed?.permissions?.allow;
     const allow = new Set(
       Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : []
@@ -432,6 +626,70 @@ function checkLocalSettingsGitignored(cwd) {
     detail: "present but not in .gitignore \u2014 add `.claude/settings.local.json` to avoid leaking local settings"
   };
 }
+function formatAge(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1e3));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remSec = seconds % 60;
+  if (minutes < 60) return remSec > 0 ? `${minutes}m ${remSec}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMin = minutes % 60;
+  return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`;
+}
+function readStatusForCheck(taskId) {
+  try {
+    const statusPath = isOrphanedWorktreeState(taskId) ? join(taskDirForRepoRoot(taskId), "status.json") : statusFileFor(taskId);
+    if (!existsSync(statusPath)) return null;
+    return JSON.parse(readFileSync(statusPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function resolveHeartbeatDir(taskId) {
+  try {
+    if (isOrphanedWorktreeState(taskId)) {
+      return taskDirForRepoRoot(taskId);
+    }
+    return dirname(statusFileFor(taskId));
+  } catch {
+    return null;
+  }
+}
+function checkActiveOrchestrators(cwd, now = Date.now()) {
+  const tasksDir = join(cwd, "tasks");
+  if (!existsSync(tasksDir)) return [];
+  const checks = [];
+  let entries;
+  try {
+    entries = readdirSync(tasksDir).sort();
+  } catch {
+    return [];
+  }
+  for (const id of entries) {
+    if (id === "_archive") continue;
+    const status = readStatusForCheck(id);
+    if (!status) continue;
+    const phases = status.phases ?? {};
+    const hasInProgressPhase = Object.values(phases).some(
+      (entry) => entry?.status === "in_progress"
+    );
+    if (!hasInProgressPhase) continue;
+    const taskDir = resolveHeartbeatDir(id);
+    const record = taskDir ? readHeartbeat(taskDir) : null;
+    const label = `orchestrator ${id}`;
+    if (isHeartbeatStale(record, now)) {
+      const detail = record === null ? `status.json shows in_progress but no .heartbeat.json \u2014 orchestrator was killed or never wrote one. Run \`canon run ${id}\` to resume.` : `status.json shows in_progress but last heartbeat was ${formatAge(now - record.last_update_ms)} ago (>${HEARTBEAT_STALE_AFTER_MS / 1e3}s) \u2014 orchestrator likely killed. Run \`canon run ${id}\` to resume.`;
+      checks.push({ label, status: "warn", detail });
+    } else if (record) {
+      checks.push({
+        label,
+        status: "pass",
+        detail: `alive (pid ${record.pid}, heartbeat ${formatAge(now - record.last_update_ms)} ago)`
+      });
+    }
+  }
+  return checks;
+}
 function printSection(title) {
   console.log(`
 ${title}`);
@@ -467,6 +725,7 @@ function doctorCmd(_args) {
     checkRecommendedPermissions(cwd),
     checkLocalSettingsGitignored(cwd)
   ];
+  const orchestratorChecks = checkActiveOrchestrators(cwd);
   console.log("\ncanon doctor\n");
   printSection("Environment");
   for (const c of envChecks) printCheck(c);
@@ -474,7 +733,11 @@ function doctorCmd(_args) {
   for (const c of canonChecks) printCheck(c);
   printSection("Config");
   for (const c of configChecks) printCheck(c);
-  const all = [...envChecks, ...canonChecks, ...configChecks];
+  if (orchestratorChecks.length > 0) {
+    printSection("Active orchestrators");
+    for (const c of orchestratorChecks) printCheck(c);
+  }
+  const all = [...envChecks, ...canonChecks, ...configChecks, ...orchestratorChecks];
   const failures = all.filter((c) => c.status === "fail");
   const warnings = all.filter((c) => c.status === "warn");
   console.log("");
@@ -496,18 +759,18 @@ import {
   copyFileSync,
   existsSync as existsSync2,
   mkdirSync,
-  readdirSync,
+  readdirSync as readdirSync2,
   statSync,
   writeFileSync
 } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join as join2, relative } from "path";
-var packageDir = join2(dirname(fileURLToPath(import.meta.url)), "../..");
+import { fileURLToPath as fileURLToPath2 } from "url";
+import { dirname as dirname2, join as join2, relative } from "path";
+var packageDir = join2(dirname2(fileURLToPath2(import.meta.url)), "../..");
 var templatesDir = join2(packageDir, "templates");
 var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md", "CODEX.md"]);
 function walkDir(dir, base = dir) {
   const results = [];
-  for (const entry of readdirSync(dir)) {
+  for (const entry of readdirSync2(dir)) {
     const full = join2(dir, entry);
     if (statSync(full).isDirectory()) {
       results.push(...walkDir(full, base));
@@ -527,7 +790,7 @@ function scaffoldTemplates(cwd, srcTemplatesDir) {
       skipped.push(rel);
       continue;
     }
-    mkdirSync(dirname(dest), { recursive: true });
+    mkdirSync(dirname2(dest), { recursive: true });
     copyFileSync(join2(srcTemplatesDir, rel), dest);
     scaffolded.push(rel);
   }
@@ -560,8 +823,8 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.5.1";
-  mkdirSync(dirname(versionPath), { recursive: true });
+  const version = "1.6.0";
+  mkdirSync(dirname2(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
 function launchGrill(cwd, hasExistingAgentFiles) {
@@ -583,184 +846,361 @@ function launchGrill(cwd, hasExistingAgentFiles) {
 }
 
 // src/cli/commands/run-task.ts
-import { spawnSync } from "child_process";
-import { fileURLToPath as fileURLToPath2 } from "url";
-import { dirname as dirname2, join as join3 } from "path";
-var packageDir2 = join3(dirname2(fileURLToPath2(import.meta.url)), "../..");
+import { spawnSync as spawnSync3 } from "child_process";
+import { fileURLToPath as fileURLToPath3 } from "url";
+import { dirname as dirname3, join as join3 } from "path";
+var packageDir2 = join3(dirname3(fileURLToPath3(import.meta.url)), "../..");
 var runTaskScript = join3(packageDir2, "dist/scripts/run-task.js");
 function runCmd(args2) {
   for (const arg of args2) {
     checkDepForFlag(arg);
   }
-  const result = spawnSync(process.execPath, [runTaskScript, ...args2], {
+  const result = spawnSync3(process.execPath, [runTaskScript, ...args2], {
     stdio: "inherit",
     cwd: process.cwd()
   });
   process.exit(result.status ?? 1);
 }
 
+// src/cli/commands/stop.ts
+import { existsSync as existsSync3 } from "fs";
+import { dirname as dirname4 } from "path";
+
+// scripts/run-task/detach.ts
+import { spawn } from "child_process";
+import fs4 from "fs";
+import path4 from "path";
+var PID_FILENAME = ".canon-pid";
+var LOG_FILENAME = ".canon-run.log";
+function readCanonPid(taskDir) {
+  const file = path4.join(taskDir, PID_FILENAME);
+  try {
+    const raw = fs4.readFileSync(file, "utf8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+function removeCanonPid(taskDir) {
+  try {
+    fs4.unlinkSync(path4.join(taskDir, PID_FILENAME));
+  } catch {
+  }
+}
+function runLogPathFor(taskDir) {
+  return path4.join(taskDir, LOG_FILENAME);
+}
+
+// src/cli/commands/stop.ts
+var SIGTERM_GRACE_MS = 1e4;
+var SIGTERM_POLL_INTERVAL_MS = 200;
+var STOP_WAIT_DEFAULT_MS = 3e4;
+var STOP_WAIT_POLL_INTERVAL_MS = 250;
+function waitForHeartbeat(dir, opts) {
+  const read = opts.readImpl ?? readHeartbeatStatus;
+  const sleep = opts.sleepImpl ?? sleepSync;
+  const now = opts.nowImpl ?? Date.now;
+  const interval = opts.pollIntervalMs ?? STOP_WAIT_POLL_INTERVAL_MS;
+  const deadline = now() + opts.timeoutMs;
+  let onWaitStartInvoked = false;
+  const announce = () => {
+    if (onWaitStartInvoked) return;
+    onWaitStartInvoked = true;
+    if (opts.onWaitStart) opts.onWaitStart();
+  };
+  while (now() < deadline) {
+    const result = read(dir);
+    if (result.kind === "found") return { kind: "found", record: result.record };
+    if (result.kind === "corrupt") return { kind: "corrupt", reason: result.reason };
+    if (result.kind === "unreadable") return { kind: "unreadable", reason: result.reason };
+    if (opts.isStillAlive && !opts.isStillAlive()) return { kind: "pid-died" };
+    announce();
+    sleep(interval);
+  }
+  const final = read(dir);
+  if (final.kind === "found") return { kind: "found", record: final.record };
+  if (final.kind === "corrupt") return { kind: "corrupt", reason: final.reason };
+  if (final.kind === "unreadable") return { kind: "unreadable", reason: final.reason };
+  return { kind: "timeout" };
+}
+function decideStopAction(inputs) {
+  const { taskId, canonPid, heartbeat, probeAlive } = inputs;
+  const now = inputs.now ?? Date.now();
+  const heartbeatFresh = heartbeat != null && !isHeartbeatStale(heartbeat, now);
+  const heartbeatStale = heartbeat != null && isHeartbeatStale(heartbeat, now);
+  if (canonPid == null && heartbeat == null) {
+    return {
+      kind: "noop",
+      message: `canon stop: task '${taskId}' is not running detached (no .canon-pid or .heartbeat.json found, or already stopped).`
+    };
+  }
+  if (canonPid != null && heartbeat == null) {
+    if (!probeAlive(canonPid)) {
+      return {
+        kind: "cleanup-stale-pid",
+        pid: canonPid,
+        cleanCanonPid: true,
+        cleanHeartbeat: false,
+        message: `canon stop: PID ${canonPid} for task '${taskId}' is not alive. Cleaning up stale .canon-pid.`
+      };
+    }
+    return {
+      kind: "refuse",
+      pid: canonPid,
+      message: `canon stop: .canon-pid says pid=${canonPid} but no .heartbeat.json appeared. The orchestrator either crashed before its first heartbeat tick or the system is too slow. Signaling would risk hitting an unrelated process if the OS recycled the PID. Check the run log for boot output, then: rm tasks/${taskId}/.canon-pid before retrying.`
+    };
+  }
+  if (canonPid == null && heartbeat != null) {
+    const heartbeatPidAlive2 = probeAlive(heartbeat.pid);
+    if (!heartbeatPidAlive2) {
+      return {
+        kind: "cleanup-stale-pid",
+        pid: heartbeat.pid,
+        cleanCanonPid: false,
+        cleanHeartbeat: true,
+        message: `canon stop: heartbeat PID ${heartbeat.pid} for task '${taskId}' is not alive. Cleaning up stale .heartbeat.json.`
+      };
+    }
+    if (heartbeatStale) {
+      const age = formatAge(now - heartbeat.last_update_ms);
+      return {
+        kind: "refuse",
+        pid: heartbeat.pid,
+        message: `canon stop: heartbeat is stale (${age} ago) and there is no .canon-pid, but PID ${heartbeat.pid} is alive. Cannot determine if it's our canon orchestrator or a recycled PID. Refusing to signal. If you're sure: rm tasks/${taskId}/.heartbeat.json`
+      };
+    }
+    return {
+      kind: "signal",
+      pid: heartbeat.pid,
+      source: ".heartbeat.json",
+      message: `canon stop: sending SIGTERM to canon orchestrator (pid=${heartbeat.pid}, task='${taskId}', source=.heartbeat.json)`
+    };
+  }
+  if (canonPid == null || heartbeat == null) {
+    return {
+      kind: "noop",
+      message: `canon stop: task '${taskId}' is not running detached (state classification bug).`
+    };
+  }
+  const canonAlive = probeAlive(canonPid);
+  if (canonPid === heartbeat.pid) {
+    if (!canonAlive) {
+      return {
+        kind: "cleanup-stale-pid",
+        pid: canonPid,
+        cleanCanonPid: true,
+        cleanHeartbeat: true,
+        message: `canon stop: PID ${canonPid} for task '${taskId}' is not alive. Cleaning up both .canon-pid and .heartbeat.json.`
+      };
+    }
+    if (heartbeatStale) {
+      const age = formatAge(now - heartbeat.last_update_ms);
+      return {
+        kind: "refuse",
+        pid: canonPid,
+        message: `canon stop: heartbeat is stale (${age} ago) for task '${taskId}'. Orchestrator may already be dead and PID ${canonPid} may have been recycled. Refusing to signal. If you're sure: rm tasks/${taskId}/.canon-pid tasks/${taskId}/.heartbeat.json`
+      };
+    }
+    return {
+      kind: "signal",
+      pid: canonPid,
+      source: ".canon-pid",
+      message: `canon stop: sending SIGTERM to canon orchestrator (pid=${canonPid}, task='${taskId}', source=.canon-pid)`
+    };
+  }
+  const heartbeatPidAlive = probeAlive(heartbeat.pid);
+  if (!canonAlive && heartbeatPidAlive && heartbeatFresh) {
+    return {
+      kind: "signal",
+      pid: heartbeat.pid,
+      source: ".heartbeat.json",
+      message: `canon stop: .canon-pid (${canonPid}) is stale; signaling live heartbeat PID ${heartbeat.pid} (task='${taskId}', source=.heartbeat.json)`
+    };
+  }
+  if (canonAlive && heartbeatPidAlive && heartbeatFresh) {
+    return {
+      kind: "refuse",
+      pid: canonPid,
+      message: `canon stop: .canon-pid (${canonPid}) and heartbeat pid (${heartbeat.pid}) are both alive but disagree. This is the signature of PID reuse or a stale state. Refusing to signal. Investigate manually.`
+    };
+  }
+  if (!canonAlive && !heartbeatPidAlive) {
+    return {
+      kind: "cleanup-stale-pid",
+      pid: canonPid,
+      cleanCanonPid: true,
+      cleanHeartbeat: true,
+      message: `canon stop: both .canon-pid (${canonPid}) and heartbeat pid (${heartbeat.pid}) are dead for task '${taskId}'. Cleaning up stale runtime state.`
+    };
+  }
+  return {
+    kind: "refuse",
+    pid: canonPid,
+    message: `canon stop: ambiguous state for task '${taskId}' \u2014 .canon-pid=${canonPid} (alive=${canonAlive}), heartbeat.pid=${heartbeat.pid} (alive=${heartbeatPidAlive}, fresh=${heartbeatFresh}). Refusing to signal. Investigate; if needed: rm tasks/${taskId}/.canon-pid tasks/${taskId}/.heartbeat.json`
+  };
+}
+function taskDirFor2(taskId) {
+  if (isOrphanedWorktreeState(taskId)) {
+    return taskDirForRepoRoot(taskId);
+  }
+  return dirname4(statusFileFor(taskId));
+}
+function sleepSync(ms) {
+  const buf = new SharedArrayBuffer(4);
+  const view = new Int32Array(buf);
+  Atomics.wait(view, 0, 0, ms);
+}
+function readWaitTimeoutMs(deps) {
+  if (typeof deps.waitTimeoutMs === "number" && deps.waitTimeoutMs >= 0) {
+    return deps.waitTimeoutMs;
+  }
+  const raw = process.env.CANON_STOP_WAIT_MS;
+  if (raw != null) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return STOP_WAIT_DEFAULT_MS;
+}
+function stopCmd(args2, deps = {}) {
+  const kill = deps.kill ?? ((pid2, sig) => {
+    process.kill(pid2, sig);
+  });
+  const exit = deps.exit ?? ((code) => process.exit(code));
+  const stdout = deps.stdout ?? ((s) => {
+    console.log(s);
+  });
+  const stderr = deps.stderr ?? ((s) => {
+    console.error(s);
+  });
+  const sleep = deps.sleepImpl ?? sleepSync;
+  const now = deps.nowImpl ?? Date.now;
+  const readCanonPidFn = deps.readCanonPidImpl ?? readCanonPid;
+  const readHeartbeatStatusFn = deps.readHeartbeatStatusImpl ?? readHeartbeatStatus;
+  const waitTimeoutMs = readWaitTimeoutMs(deps);
+  const probeAlive = (pid2) => {
+    try {
+      kill(pid2, 0);
+      return true;
+    } catch (error) {
+      const code = error.code;
+      return code === "EPERM";
+    }
+  };
+  const taskId = args2[0];
+  if (!taskId) {
+    stderr("Usage: canon stop <task-id>");
+    return exit(1);
+  }
+  const dir = deps.dirOverride ?? taskDirFor2(taskId);
+  if (!deps.dirOverride && !existsSync3(dir)) {
+    stderr(`canon stop: task '${taskId}' not found (looked in ${dir})`);
+    return exit(1);
+  }
+  let canonPid = readCanonPidFn(dir);
+  let heartbeatStatus = readHeartbeatStatusFn(dir);
+  let heartbeat = heartbeatStatus.kind === "found" ? heartbeatStatus.record : null;
+  if (canonPid != null && heartbeat == null && heartbeatStatus.kind === "missing" && probeAlive(canonPid)) {
+    const pidBeforeWait = canonPid;
+    const waitResult = waitForHeartbeat(dir, {
+      timeoutMs: waitTimeoutMs,
+      readImpl: readHeartbeatStatusFn,
+      sleepImpl: sleep,
+      nowImpl: now,
+      isStillAlive: () => probeAlive(pidBeforeWait),
+      onWaitStart: () => {
+        stdout(`canon stop: waiting for orchestrator's first heartbeat tick (up to ${waitTimeoutMs / 1e3}s)...`);
+      }
+    });
+    if (waitResult.kind === "corrupt" || waitResult.kind === "unreadable") {
+      stderr(
+        `canon stop: .heartbeat.json is ${waitResult.kind} (${waitResult.reason}) for task '${taskId}'. Refusing to signal pid ${canonPid} without proof of life. Check ${runLogPathFor(dir)} for boot output; if you're sure: rm tasks/${taskId}/.canon-pid tasks/${taskId}/.heartbeat.json`
+      );
+      return exit(1);
+    }
+    canonPid = readCanonPidFn(dir);
+    heartbeatStatus = readHeartbeatStatusFn(dir);
+    heartbeat = heartbeatStatus.kind === "found" ? heartbeatStatus.record : null;
+  }
+  const decision = decideStopAction({
+    taskId,
+    canonPid,
+    heartbeat,
+    probeAlive,
+    now: now()
+  });
+  if (decision.kind === "noop") {
+    stdout(decision.message);
+    return exit(0);
+  }
+  if (decision.kind === "cleanup-stale-pid") {
+    stdout(decision.message);
+    if (!deps.skipFsCleanup) {
+      if (decision.cleanCanonPid) removeCanonPid(dir);
+      if (decision.cleanHeartbeat) removeHeartbeat(dir);
+    }
+    return exit(0);
+  }
+  if (decision.kind === "refuse") {
+    stderr(decision.message);
+    return exit(1);
+  }
+  const pid = decision.pid;
+  stdout(decision.message);
+  try {
+    kill(-pid, "SIGTERM");
+  } catch {
+    try {
+      kill(pid, "SIGTERM");
+    } catch {
+    }
+  }
+  const sigtermDeadline = now() + SIGTERM_GRACE_MS;
+  while (now() < sigtermDeadline) {
+    if (!probeAlive(pid)) {
+      stdout(`canon stop: task '${taskId}' stopped cleanly.`);
+      if (!deps.skipFsCleanup) removeCanonPid(dir);
+      return exit(0);
+    }
+    sleep(SIGTERM_POLL_INTERVAL_MS);
+  }
+  stdout(`canon stop: SIGTERM didn't take after ${SIGTERM_GRACE_MS / 1e3}s \u2014 escalating to SIGKILL.`);
+  try {
+    kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      kill(pid, "SIGKILL");
+    } catch {
+    }
+  }
+  sleep(500);
+  if (probeAlive(pid)) {
+    stderr(`canon stop: pid ${pid} survived SIGKILL \u2014 investigate manually.`);
+    stderr(`  Log: ${runLogPathFor(dir)}`);
+    return exit(1);
+  }
+  stdout(`canon stop: task '${taskId}' stopped (SIGKILL).`);
+  if (!deps.skipFsCleanup) removeCanonPid(dir);
+  return exit(0);
+}
+
 // src/task/index.ts
 import { spawnSync as spawnSync6 } from "child_process";
-import fs6 from "fs";
-import path7 from "path";
+import fs8 from "fs";
+import path9 from "path";
 
 // scripts/run-task/canon-snapshot.ts
 import { spawnSync as spawnSync5 } from "child_process";
-import fs4 from "fs";
-import path5 from "path";
-
-// scripts/run-task/env.ts
-import { spawnSync as spawnSync2 } from "child_process";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath as fileURLToPath3 } from "url";
-var __filename = fileURLToPath3(import.meta.url);
-var __dirname = path.dirname(__filename);
-function resolveRepoRoot() {
-  try {
-    const result = spawnSync2("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
-    if (result.error || result.status !== 0) {
-      throw result.error ?? new Error(result.stderr || "git rev-parse --git-common-dir failed");
-    }
-    const gitCommonDir = result.stdout.trim();
-    if (!gitCommonDir) throw new Error("git rev-parse --git-common-dir returned no path");
-    const resolvedGitCommonDir = path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(process.cwd(), gitCommonDir);
-    return path.dirname(resolvedGitCommonDir);
-  } catch {
-    return path.resolve(__dirname, "../..");
-  }
-}
-var REPO_ROOT = resolveRepoRoot();
-var TASKS_DIR = path.join(REPO_ROOT, "tasks");
-var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path.resolve(process.env.CANON_WORKTREES_ROOT) : path.resolve(REPO_ROOT, "../dev-worktrees");
-var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
-function resolveProjectName() {
-  if (process.env.CANON_PROJECT_NAME) return process.env.CANON_PROJECT_NAME;
-  try {
-    const pkgPath = path.join(REPO_ROOT, "package.json");
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-      if (pkg.name) return pkg.name;
-    }
-  } catch {
-  }
-  return "your project";
-}
-var config = {
-  projectName: resolveProjectName(),
-  claudeBudget: process.env.CLAUDE_BUDGET ?? "5.00",
-  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.4-mini",
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.5",
-  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
-  maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
-};
+import fs6 from "fs";
+import path7 from "path";
 
 // scripts/run-task/git.ts
 import { spawnSync as spawnSync4 } from "child_process";
-import path4 from "path";
-
-// scripts/run-task/cli.ts
-function die(message) {
-  console.error(`\u274C ${message}`);
-  process.exit(1);
-}
-
-// scripts/run-task/state.ts
-import fs2 from "fs";
-import { spawnSync as spawnSync3 } from "child_process";
-import path2 from "path";
-
-// scripts/run-task/types.ts
-var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
-
-// scripts/run-task/state.ts
-function effectiveWorktreesRoot() {
-  return process.env.CANON_WORKTREES_ROOT ? path2.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
-}
-function findExistingWorktreeForBranch(branch) {
-  const result = spawnSync3("git", ["worktree", "list", "--porcelain"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (result.error || result.status !== 0) return null;
-  const lines = (result.stdout ?? "").split("\n");
-  let currentPath = null;
-  for (const line of lines) {
-    if (line.startsWith("worktree ")) {
-      currentPath = line.slice("worktree ".length).trim();
-    } else if (line.startsWith("branch refs/heads/") && currentPath && currentPath !== REPO_ROOT) {
-      const lineBranch = line.slice("branch refs/heads/".length).trim();
-      if (lineBranch === branch) return currentPath;
-    }
-  }
-  return null;
-}
-function taskDirForRepoRoot(taskId) {
-  return path2.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
-}
-function taskDirFor(taskId) {
-  if (process.env.CANON_TASKS_DIR_OVERRIDE) {
-    return path2.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
-  }
-  return path2.join(resolveTaskCwd(taskId), "tasks", taskId);
-}
-function isOrphanedWorktreeState(taskId) {
-  const worktreesRoot = effectiveWorktreesRoot();
-  const directWorktree = path2.join(worktreesRoot, taskId);
-  const directStatus = path2.join(directWorktree, "tasks", taskId, "status.json");
-  if (fs2.existsSync(directStatus)) return false;
-  const statusPath = path2.join(taskDirForRepoRoot(taskId), "status.json");
-  try {
-    const parsed = JSON.parse(fs2.readFileSync(statusPath, "utf8"));
-    if (parsed.worktree !== true) return false;
-    const branch = parsed.branch?.trim() ?? "";
-    if (!branch) return false;
-    return findExistingWorktreeForBranch(branch) === null;
-  } catch {
-    return false;
-  }
-}
-function resolveTaskCwd(taskId) {
-  const worktreesRoot = effectiveWorktreesRoot();
-  const directWorktree = path2.join(worktreesRoot, taskId);
-  const directStatus = path2.join(directWorktree, "tasks", taskId, "status.json");
-  if (fs2.existsSync(directStatus)) return directWorktree;
-  const statusPath = path2.join(taskDirForRepoRoot(taskId), "status.json");
-  try {
-    const parsed = JSON.parse(fs2.readFileSync(statusPath, "utf8"));
-    if (parsed.worktree === true) {
-      const branch = parsed.branch?.trim() ?? "";
-      if (branch) {
-        const existing = findExistingWorktreeForBranch(branch);
-        if (existing) return existing;
-        die(
-          `Worktree for task '${taskId}' is expected but missing.
-  Looked for ${directWorktree} and a worktree for branch '${branch}'.
-  Restore or recreate the worktree before continuing.`
-        );
-      }
-    }
-  } catch {
-  }
-  return REPO_ROOT;
-}
-function deriveTopLevelStatus(status) {
-  for (const phase of PHASE_ORDER) {
-    const phaseStatus = status.phases[phase]?.status ?? "pending";
-    if (phaseStatus !== "done") return phase;
-  }
-  return "complete";
-}
+import path6 from "path";
 
 // scripts/run-task/worktree.ts
-import fs3 from "fs";
-import path3 from "path";
+import fs5 from "fs";
+import path5 from "path";
 var PIPELINE_TELEMETRY_FILES = [
   "docs/pipeline-invocations.md",
   "docs/task-quality-log.md",
@@ -829,7 +1269,7 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const upstreamCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path5.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : upstreamCommit;
+  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path7.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : upstreamCommit;
   return {
     upstream_repo: CANON_UPSTREAM_REPO,
     upstream_commit: upstreamCommit,
@@ -848,21 +1288,21 @@ function applyCanonSnapshot(status, canon) {
   return next;
 }
 function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
-  const status = JSON.parse(fs4.readFileSync(statusFilePath, "utf8"));
+  const status = JSON.parse(fs6.readFileSync(statusFilePath, "utf8"));
   const canon = captureCanonSnapshot(REPO_ROOT, options);
   const next = applyCanonSnapshot(status, canon);
   const serialized = `${JSON.stringify(next, null, 2)}
 `;
-  const current = fs4.readFileSync(statusFilePath, "utf8");
+  const current = fs6.readFileSync(statusFilePath, "utf8");
   if (current !== serialized) {
-    fs4.writeFileSync(statusFilePath, serialized, "utf8");
+    fs6.writeFileSync(statusFilePath, serialized, "utf8");
   }
   return canon;
 }
 
 // scripts/run-task/validation.ts
-import fs5 from "fs";
-import path6 from "path";
+import fs7 from "fs";
+import path8 from "path";
 
 // scripts/run-task/markdown-table.ts
 function splitTableLine(line) {
@@ -1088,7 +1528,7 @@ function isTemplateUnfilled(content) {
 function isDoneMdTemplate(donePath) {
   let content;
   try {
-    content = fs5.readFileSync(donePath, "utf8");
+    content = fs7.readFileSync(donePath, "utf8");
   } catch {
     return true;
   }
@@ -1117,16 +1557,16 @@ var PHASE_GATE_CONFIG = {
   human_review: {}
 };
 function resolveTaskDirForValidation(taskId, taskDirOverride) {
-  return taskDirOverride ? path6.join(taskDirOverride, taskId) : taskDirFor(taskId);
+  return taskDirOverride ? path8.join(taskDirOverride, taskId) : taskDirFor(taskId);
 }
 function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
   const config2 = PHASE_GATE_CONFIG[phase];
   const taskDir = resolveTaskDirForValidation(taskId, taskDirOverride);
   if (config2.artifactName) {
-    const artifactPath = path6.join(taskDir, config2.artifactName);
+    const artifactPath = path8.join(taskDir, config2.artifactName);
     let content;
     try {
-      content = fs5.readFileSync(artifactPath, "utf8");
+      content = fs7.readFileSync(artifactPath, "utf8");
     } catch {
       return { ok: false, reason: `${config2.artifactName} is missing for phase '${phase}'` };
     }
@@ -1153,19 +1593,19 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     }
   }
   if (phase === "human_review") {
-    const handoffPath = path6.join(taskDir, "handoff.md");
+    const handoffPath = path8.join(taskDir, "handoff.md");
     let handoffContent;
     try {
-      handoffContent = fs5.readFileSync(handoffPath, "utf8");
+      handoffContent = fs7.readFileSync(handoffPath, "utf8");
     } catch {
       return { ok: false, reason: `closing human_review requires a handoff.md \u2014 none found in ${taskDir}` };
     }
     const pending = countHumanPendingChecks(handoffContent);
     if (pending.length === 0) return { ok: true };
-    const donePath = path6.join(taskDir, "done.md");
+    const donePath = path8.join(taskDir, "done.md");
     let doneContent = "";
     try {
-      doneContent = fs5.readFileSync(donePath, "utf8");
+      doneContent = fs7.readFileSync(donePath, "utf8");
     } catch {
     }
     if (hasHumanPendingWaiver(doneContent)) return { ok: true };
@@ -1180,10 +1620,10 @@ ${list}
   return { ok: true };
 }
 function parseHandoffChangesRows(taskId) {
-  const handoffPath = path6.join(taskDirFor(taskId), "handoff.md");
+  const handoffPath = path8.join(taskDirFor(taskId), "handoff.md");
   let content;
   try {
-    content = fs5.readFileSync(handoffPath, "utf8");
+    content = fs7.readFileSync(handoffPath, "utf8");
   } catch {
     return { files: [], malformed: [] };
   }
@@ -1370,31 +1810,31 @@ function tasksRoot() {
   return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
 }
 function taskDirFromRoot(taskId) {
-  return path7.join(tasksRoot(), taskId);
+  return path9.join(tasksRoot(), taskId);
 }
 function taskDirForCwd(_cwd, taskId) {
   const root = tasksRoot();
-  if (path7.isAbsolute(root)) {
-    return path7.join(root, taskId);
+  if (path9.isAbsolute(root)) {
+    return path9.join(root, taskId);
   }
-  return path7.join(resolveTaskCwd(taskId), root, taskId);
+  return path9.join(resolveTaskCwd(taskId), root, taskId);
 }
 function taskStatusFileForCwd(cwd, taskId) {
-  return path7.join(taskDirForCwd(cwd, taskId), "status.json");
+  return path9.join(taskDirForCwd(cwd, taskId), "status.json");
 }
 function taskRootForGate(cwd) {
   const root = tasksRoot();
-  return path7.isAbsolute(root) ? root : path7.join(cwd, root);
+  return path9.isAbsolute(root) ? root : path9.join(cwd, root);
 }
 function templatesRoot() {
-  return path7.join(process.cwd(), ".canon", "templates");
+  return path9.join(process.cwd(), ".canon", "templates");
 }
 function taskTemplateOverrideRoot() {
-  return path7.join(tasksRoot(), "_templates");
+  return path9.join(tasksRoot(), "_templates");
 }
 function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs6.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs8.readFileSync(filePath, "utf8"));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Error: failed to read ${filePath}: ${message}`);
@@ -1402,9 +1842,9 @@ function readJsonFile(filePath) {
 }
 function writeJsonAtomic(filePath, data) {
   const tmpFile = `${filePath}.tmp`;
-  fs6.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
+  fs8.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
 `, "utf8");
-  fs6.renameSync(tmpFile, filePath);
+  fs8.renameSync(tmpFile, filePath);
 }
 function writeStatusAtomic(filePath, status) {
   status.status = deriveTopLevelStatus(status);
@@ -1444,20 +1884,20 @@ function currentBranchOrEmpty() {
   return (result.stdout ?? "").trim();
 }
 function copyTemplateFile(source, destination, taskId, title) {
-  const content = fs6.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
-  fs6.writeFileSync(destination, content, "utf8");
+  const content = fs8.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
+  fs8.writeFileSync(destination, content, "utf8");
 }
 function listTemplateFiles() {
   const root = templatesRoot();
-  if (!fs6.existsSync(root)) {
+  if (!fs8.existsSync(root)) {
     throw new Error(`Error: templates directory not found at ${root}`);
   }
-  return fs6.readdirSync(root).filter((name) => name.endsWith(".md") || name.endsWith(".json")).sort();
+  return fs8.readdirSync(root).filter((name) => name.endsWith(".md") || name.endsWith(".json")).sort();
 }
 function printCreatedTask(taskDir, baseBranch) {
   console.log(`Created task: ${taskDir}`);
   console.log("Files:");
-  for (const file of fs6.readdirSync(taskDir).sort()) {
+  for (const file of fs8.readdirSync(taskDir).sort()) {
     console.log(file);
   }
   console.log("");
@@ -1495,20 +1935,20 @@ function taskNew(args2) {
     throw new Error("Error: title must be single-line (no embedded newlines).");
   }
   const taskDir = taskDirFromRoot(id);
-  if (fs6.existsSync(taskDir)) {
+  if (fs8.existsSync(taskDir)) {
     throw new Error(`Error: Task directory ${taskDir} already exists.`);
   }
   if (!baseBranch) {
     baseBranch = currentBranchOrEmpty() || "main";
   }
-  fs6.mkdirSync(taskDir, { recursive: true });
+  fs8.mkdirSync(taskDir, { recursive: true });
   const overrideRoot = taskTemplateOverrideRoot();
   for (const basename of listTemplateFiles()) {
-    const override = path7.join(overrideRoot, basename);
-    const source = fs6.existsSync(override) ? override : path7.join(templatesRoot(), basename);
-    copyTemplateFile(source, path7.join(taskDir, basename), id, title);
+    const override = path9.join(overrideRoot, basename);
+    const source = fs8.existsSync(override) ? override : path9.join(templatesRoot(), basename);
+    copyTemplateFile(source, path9.join(taskDir, basename), id, title);
   }
-  const statusPath = path7.join(taskDir, "status.json");
+  const statusPath = path9.join(taskDir, "status.json");
   const status = readJsonFile(statusPath);
   status.id = id;
   status.title = title;
@@ -1529,19 +1969,19 @@ function derivePhase(status) {
 }
 function taskList() {
   const root = tasksRoot();
-  if (!fs6.existsSync(root)) {
+  if (!fs8.existsSync(root)) {
     console.log("No tasks found.");
     return;
   }
   const rows = [];
   let invalidCount = 0;
-  for (const entry of fs6.readdirSync(root).sort()) {
+  for (const entry of fs8.readdirSync(root).sort()) {
     if (entry === "_archive") continue;
     if (isOrphanedWorktreeState(entry)) {
       invalidCount += 1;
       let title = "(untitled)";
       try {
-        const frozen = readJsonFile(path7.join(taskDirForRepoRoot(entry), "status.json"));
+        const frozen = readJsonFile(path9.join(taskDirForRepoRoot(entry), "status.json"));
         title = frozen.title ?? title;
       } catch {
       }
@@ -1552,8 +1992,8 @@ function taskList() {
       });
       continue;
     }
-    const statusPath = path7.join(taskDirForCwd(process.cwd(), entry), "status.json");
-    if (!fs6.existsSync(statusPath)) continue;
+    const statusPath = path9.join(taskDirForCwd(process.cwd(), entry), "status.json");
+    if (!fs8.existsSync(statusPath)) continue;
     try {
       const status = readJsonFile(statusPath);
       const phase = derivePhase(status);
@@ -1590,7 +2030,7 @@ function taskStatus(id) {
   validateTaskId(id);
   const cwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(cwd, id);
-  if (!fs6.existsSync(statusPath)) {
+  if (!fs8.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id}`);
   }
   const status = readJsonFile(statusPath);
@@ -1654,7 +2094,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   assertValidVerdict(phaseArg, verdictArg);
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs6.existsSync(statusPath)) {
+  if (!fs8.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
   }
   const status = readJsonFile(statusPath);
@@ -1709,7 +2149,7 @@ function taskAccept(ids, phaseArg, options = {}) {
   for (const id of ids) {
     const taskCwd = resolveTaskCwd(id);
     const statusPath = taskStatusFileForCwd(taskCwd, id);
-    if (!fs6.existsSync(statusPath)) {
+    if (!fs8.existsSync(statusPath)) {
       throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
     }
     const status = readJsonFile(statusPath);
@@ -1852,7 +2292,7 @@ function taskAccept(ids, phaseArg, options = {}) {
   const originalSnapshots = /* @__PURE__ */ new Map();
   for (const ctx of ctxByTask.values()) {
     try {
-      originalSnapshots.set(ctx.statusPath, fs6.readFileSync(ctx.statusPath, "utf8"));
+      originalSnapshots.set(ctx.statusPath, fs8.readFileSync(ctx.statusPath, "utf8"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
@@ -1877,8 +2317,8 @@ function taskAccept(ids, phaseArg, options = {}) {
       if (original === void 0) continue;
       try {
         const tmpFile = `${filePath}.rollback.tmp`;
-        fs6.writeFileSync(tmpFile, original, "utf8");
-        fs6.renameSync(tmpFile, filePath);
+        fs8.writeFileSync(tmpFile, original, "utf8");
+        fs8.renameSync(tmpFile, filePath);
       } catch (rollbackErr) {
         const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         rollbackErrors.push(`    ${filePath}: ${message}`);
@@ -1897,15 +2337,15 @@ function taskAccept(ids, phaseArg, options = {}) {
     throw new Error(`Error: bundled accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
   }
   for (const ctx of ctxByTask.values()) {
-    const notesPath = path7.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+    const notesPath = path9.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
     const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` \u2014 auto-commit will be skipped.${options.force ? " (--force)" : ""}`;
     try {
-      if (fs6.existsSync(notesPath)) {
-        fs6.appendFileSync(notesPath, `
+      if (fs8.existsSync(notesPath)) {
+        fs8.appendFileSync(notesPath, `
 ${noteLine}
 `, "utf8");
       } else {
-        fs6.writeFileSync(notesPath, `${noteLine}
+        fs8.writeFileSync(notesPath, `${noteLine}
 `, "utf8");
       }
     } catch (error) {
@@ -1924,15 +2364,15 @@ function taskResetSpecReview(id) {
   validateTaskId(id);
   const taskCwd = resolveTaskCwd(id);
   const taskDir = taskDirForCwd(taskCwd, id);
-  const statusPath = path7.join(taskDir, "status.json");
-  if (!fs6.existsSync(statusPath)) {
+  const statusPath = path9.join(taskDir, "status.json");
+  if (!fs8.existsSync(statusPath)) {
     throw new Error(`Error: no status.json at ${statusPath}`);
   }
-  const reviewPath = path7.join(taskDir, "spec-review.md");
-  if (fs6.existsSync(reviewPath)) {
+  const reviewPath = path9.join(taskDir, "spec-review.md");
+  if (fs8.existsSync(reviewPath)) {
     let n = 1;
-    while (fs6.existsSync(path7.join(taskDir, `spec-review-prior-${n}.md`))) n += 1;
-    fs6.renameSync(reviewPath, path7.join(taskDir, `spec-review-prior-${n}.md`));
+    while (fs8.existsSync(path9.join(taskDir, `spec-review-prior-${n}.md`))) n += 1;
+    fs8.renameSync(reviewPath, path9.join(taskDir, `spec-review-prior-${n}.md`));
     console.log(`Archived prior spec-review.md \u2192 spec-review-prior-${n}.md`);
   }
   const status = readJsonFile(statusPath);
@@ -1966,16 +2406,16 @@ function parsePorcelainPath(line) {
 }
 function isPipelineOwnedAcceptPath(filePath, taskId, gitCwd) {
   const repoRootForPaths = resolveRepoRootForAccept(gitCwd);
-  const dirtyAbsolute = path7.isAbsolute(filePath) ? filePath : path7.resolve(repoRootForPaths, filePath);
+  const dirtyAbsolute = path9.isAbsolute(filePath) ? filePath : path9.resolve(repoRootForPaths, filePath);
   const canonicalDirty = safeRealpath(dirtyAbsolute);
   const root = tasksRoot();
-  const rootAbsolute = path7.isAbsolute(root) ? root : path7.resolve(repoRootForPaths, root);
+  const rootAbsolute = path9.isAbsolute(root) ? root : path9.resolve(repoRootForPaths, root);
   const canonicalRoot = safeRealpath(rootAbsolute);
-  const taskCanonical = path7.join(canonicalRoot, taskId);
+  const taskCanonical = path9.join(canonicalRoot, taskId);
   if (canonicalDirty === taskCanonical) return true;
-  if (canonicalDirty.startsWith(`${taskCanonical}${path7.sep}`)) return true;
+  if (canonicalDirty.startsWith(`${taskCanonical}${path9.sep}`)) return true;
   for (const telemetry of PIPELINE_TELEMETRY_FILES) {
-    const telemetryAbsolute = path7.resolve(repoRootForPaths, telemetry);
+    const telemetryAbsolute = path9.resolve(repoRootForPaths, telemetry);
     if (safeRealpath(telemetryAbsolute) === canonicalDirty) return true;
   }
   return false;
@@ -1990,16 +2430,16 @@ function resolveMainCheckoutRoot() {
   if (out.error || out.status !== 0) return process.cwd();
   const gitCommonDir = (out.stdout ?? "").trim();
   if (!gitCommonDir) return process.cwd();
-  return path7.dirname(gitCommonDir);
+  return path9.dirname(gitCommonDir);
 }
 function safeRealpath(target) {
   try {
-    return fs6.realpathSync(target);
+    return fs8.realpathSync(target);
   } catch {
-    const parent = path7.dirname(target);
+    const parent = path9.dirname(target);
     if (parent === target) return target;
     try {
-      return path7.join(fs6.realpathSync(parent), path7.basename(target));
+      return path9.join(fs8.realpathSync(parent), path9.basename(target));
     } catch {
       return target;
     }
@@ -2107,12 +2547,12 @@ function taskPostMergeSync(branchArg) {
 }
 function nudgeShippableTasks() {
   const root = tasksRoot();
-  if (!fs6.existsSync(root)) return;
+  if (!fs8.existsSync(root)) return;
   const shippable = [];
-  for (const entry of fs6.readdirSync(root).sort()) {
+  for (const entry of fs8.readdirSync(root).sort()) {
     if (entry === "_archive" || entry.startsWith("_")) continue;
-    const statusPath = path7.join(root, entry, "status.json");
-    if (!fs6.existsSync(statusPath)) continue;
+    const statusPath = path9.join(root, entry, "status.json");
+    if (!fs8.existsSync(statusPath)) continue;
     let status;
     try {
       status = readJsonFile(statusPath);
@@ -2149,7 +2589,7 @@ function updatePackageVersion(filePath, version, updateLockRoot = false) {
   writeJsonAtomic(filePath, parsed);
 }
 function insertChangelogBlock(filePath, version) {
-  const content = fs6.readFileSync(filePath, "utf8");
+  const content = fs8.readFileSync(filePath, "utf8");
   const lines = content.split("\n");
   let insertAt = lines.findIndex((line) => /^## \[/.test(line));
   if (insertAt === -1) insertAt = lines.length;
@@ -2165,7 +2605,7 @@ function insertChangelogBlock(filePath, version) {
     "",
     ...after
   ];
-  fs6.writeFileSync(filePath, block.join("\n"), "utf8");
+  fs8.writeFileSync(filePath, block.join("\n"), "utf8");
 }
 function defaultPush(branch) {
   const result = runGit(["push", "-u", "origin", branch], { stdio: "inherit" });
@@ -2207,24 +2647,24 @@ function taskReleaseInit(version, options = {}) {
   console.log(`\u2192 Creating ${branch} off main...`);
   git2(["checkout", "-b", branch, "main"]);
   const filesToAdd = [];
-  if (fs6.existsSync("package.json")) {
+  if (fs8.existsSync("package.json")) {
     console.log(`\u2192 Bumping package.json version to ${version}...`);
     updatePackageVersion("package.json", version);
     filesToAdd.push("package.json");
-    if (fs6.existsSync("package-lock.json")) {
+    if (fs8.existsSync("package-lock.json")) {
       console.log("\u2192 Bumping package-lock.json...");
       updatePackageVersion("package-lock.json", version, true);
       filesToAdd.push("package-lock.json");
     }
   }
-  if (fs6.existsSync("CHANGELOG.md")) {
+  if (fs8.existsSync("CHANGELOG.md")) {
     console.log(`\u2192 Inserting empty changelog block for ${version}...`);
     insertChangelogBlock("CHANGELOG.md", version);
     filesToAdd.push("CHANGELOG.md");
   }
-  if (fs6.existsSync(".canon/version")) {
+  if (fs8.existsSync(".canon/version")) {
     console.log(`\u2192 Updating .canon/version to ${version}...`);
-    fs6.writeFileSync(".canon/version", `${version}
+    fs8.writeFileSync(".canon/version", `${version}
 `, "utf8");
     filesToAdd.push(".canon/version");
   }
@@ -2300,18 +2740,18 @@ function taskCmd2(args2) {
 }
 
 // src/cli/commands/update.ts
-import { existsSync as existsSync3 } from "fs";
+import { existsSync as existsSync4 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
-import { dirname as dirname3, join as join4 } from "path";
+import { dirname as dirname5, join as join4 } from "path";
 import { spawnSync as spawnSync7 } from "child_process";
-var packageDir3 = join4(dirname3(fileURLToPath4(import.meta.url)), "../..");
+var packageDir3 = join4(dirname5(fileURLToPath4(import.meta.url)), "../..");
 function detectInstallType(pkgDirOverride) {
   const dir = pkgDirOverride ?? packageDir3;
   if (dir.includes("/_npx/") || dir.includes("\\_npx\\")) return "npx";
   const nodeModulesIdx = dir.lastIndexOf("/node_modules/");
   if (nodeModulesIdx !== -1) {
     const projectRoot = dir.slice(0, nodeModulesIdx);
-    if (existsSync3(join4(projectRoot, "package.json"))) return "local";
+    if (existsSync4(join4(projectRoot, "package.json"))) return "local";
   }
   return "global";
 }
@@ -2342,9 +2782,9 @@ function updateCmd(_args) {
 }
 
 // src/cli/commands/upgrade.ts
-import { existsSync as existsSync4, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
 import { fileURLToPath as fileURLToPath5 } from "url";
-import { dirname as dirname4, join as join5 } from "path";
+import { dirname as dirname6, join as join5 } from "path";
 import { spawnSync as spawnSync8 } from "child_process";
 
 // src/lib/canon-owned.ts
@@ -2371,7 +2811,7 @@ var CANON_OWNED = [
 var DELIMITED = ["AGENTS.md", "CLAUDE.md", "CODEX.md"];
 
 // src/cli/commands/upgrade.ts
-var packageDir4 = join5(dirname4(fileURLToPath5(import.meta.url)), "../..");
+var packageDir4 = join5(dirname6(fileURLToPath5(import.meta.url)), "../..");
 var CANON_END2 = "<!-- canon:end -->";
 var CANON_START_RE2 = /<!-- canon:start[^>]* -->/;
 var HEADER_ONLY_SYNC = [
@@ -2421,7 +2861,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   for (const rel of DELIMITED) {
     const projectPath = join5(cwd, rel);
     const templatePath = join5(pkgDir, "templates", rel);
-    if (!existsSync4(projectPath) || !existsSync4(templatePath)) {
+    if (!existsSync5(projectPath) || !existsSync5(templatePath)) {
       skipped.push(rel);
       continue;
     }
@@ -2441,12 +2881,12 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   for (const rel of HEADER_ONLY_SYNC) {
     const projectPath = join5(cwd, rel);
     const templatePath = join5(pkgDir, "templates", rel);
-    if (!existsSync4(templatePath)) {
+    if (!existsSync5(templatePath)) {
       skipped.push(rel);
       continue;
     }
     const templateContent = readFileSync2(templatePath, "utf8");
-    if (!existsSync4(projectPath)) {
+    if (!existsSync5(projectPath)) {
       pending.push({ rel, projectPath, content: templateContent });
       continue;
     }
@@ -2465,12 +2905,12 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   for (const rel of CANON_OWNED) {
     const projectPath = join5(cwd, rel);
     const templatePath = join5(pkgDir, "templates", rel);
-    if (!existsSync4(templatePath)) {
+    if (!existsSync5(templatePath)) {
       skipped.push(rel);
       continue;
     }
     const templateContent = readFileSync2(templatePath, "utf8");
-    if (existsSync4(projectPath)) {
+    if (existsSync5(projectPath)) {
       const projectContent = readFileSync2(projectPath, "utf8");
       if (projectContent === templateContent) {
         unchanged.push(rel);
@@ -2480,8 +2920,8 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.5.1";
-  const currentVersion = existsSync4(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
+  const newVersion = "1.6.0";
+  const currentVersion = existsSync5(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
   }
@@ -2502,7 +2942,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   }
   const toWrite = options.force ? pending : clean;
   for (const op of toWrite) {
-    mkdirSync2(dirname4(op.projectPath), { recursive: true });
+    mkdirSync2(dirname6(op.projectPath), { recursive: true });
     writeFileSync2(op.projectPath, op.content);
     upgraded.push(op.rel);
   }
@@ -2605,6 +3045,10 @@ Usage:
   canon doctor                Verify environment and canon setup
   canon task <sub> [args]     Create tasks and track pipeline phases
   canon run <id> [opts]       Run the pipeline for a task
+  canon stop <id>             Stop a detached canon run (SIGTERM \u2192 SIGKILL after 10s).
+                                During the launch window before the child writes its first
+                                heartbeat, waits up to CANON_STOP_WAIT_MS for proof of life
+                                (default 30000) before deciding whether to signal.
   canon update                Update the canon-ai package itself
   canon upgrade               Sync vendored files to match the installed version
 
@@ -2674,7 +3118,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.5.1");
+  console.log("1.6.0");
 }
 switch (command) {
   case "doctor":
@@ -2685,6 +3129,9 @@ switch (command) {
     break;
   case "run":
     runCmd(args);
+    break;
+  case "stop":
+    stopCmd(args);
     break;
   case "task":
     taskCmd2(args);

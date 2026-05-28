@@ -9,6 +9,7 @@ import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, runUpgrade } from '.
 import { detectInstallType } from '../src/cli/commands/update.js';
 import { scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
+    checkActiveOrchestrators,
     checkNodeVersion,
     checkAgentFile,
     checkTemplates,
@@ -17,11 +18,13 @@ import {
     checkLocalSettingsGitignored,
     checkRecommendedPermissions,
     checkClaudeVersion,
+    formatAge,
     parseClaudeVersion,
     parseCodexProjectTrust,
     MIN_CLAUDE_VERSION,
     RECOMMENDED_ALLOW,
 } from '../src/cli/commands/doctor.js';
+import { HEARTBEAT_STALE_AFTER_MS } from '../scripts/run-task/heartbeat.js';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 
 function withTempDir(fn: (dir: string) => void): void {
@@ -1469,4 +1472,200 @@ void test('adopter-shipped content does not leak canon-development tokens', () =
         [],
         'adopter-shipped files leak canon-development tokens — see tests/fixtures/canon-dev-tokens.json',
     );
+});
+
+// ── checkActiveOrchestrators ─────────────────────────────────────────────────
+//
+// Background: docs/BACKLOG.md "Orchestrator dies silently in background mode."
+// Operator-session resume kills the Bash-tool pgroup, which kills the bash
+// hosting `npx canon | tee`, which kills the orchestrator. The orchestrator's
+// SIGHUP handler (#105) doesn't help because the signal isn't SIGHUP — it's
+// a pgroup-level kill that no in-process handler can catch.
+//
+// `checkActiveOrchestrators` reads status.json + .heartbeat.json for every
+// non-archived task and flags any task whose status.json says in_progress but
+// whose heartbeat is missing or stale. Output drives the doctor's "Active
+// orchestrators" section so operators see "your task is dead, run canon run
+// <id>" instead of hours of silence.
+
+function makeTaskDir(cwd: string, id: string, status: object, heartbeat: object | null): void {
+    const dir = path.join(cwd, 'tasks', id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify(status), 'utf8');
+    if (heartbeat !== null) {
+        fs.writeFileSync(path.join(dir, '.heartbeat.json'), JSON.stringify(heartbeat), 'utf8');
+    }
+}
+
+const MIN_VALID_STATUS = {
+    title: 'fake',
+    worktree: false,
+    branch: '',
+    phases: {},
+};
+
+// Helper: build a status shape where one phase is in_progress. Real status.json
+// files set phase-level status to 'in_progress' at phase entry (see
+// scripts/run-task/phases/*.ts); doctor's stale-orchestrator check keys off
+// this, not a top-level "in_progress" string.
+function statusWithInProgressPhase(): object {
+    return {
+        ...MIN_VALID_STATUS,
+        status: 'implement',
+        phases: { implement: { status: 'in_progress', agent: 'codex' } },
+    };
+}
+
+void test('checkActiveOrchestrators: empty when tasks/ does not exist', () => {
+    withTempDir((dir) => {
+        const result = checkActiveOrchestrators(dir);
+        assert.deepEqual(result, []);
+    });
+});
+
+void test('checkActiveOrchestrators: empty when no phase is in_progress', () => {
+    withTempDir((dir) => {
+        // 'complete' top-level + no in_progress phase → task is done.
+        makeTaskDir(dir, 'done-task', {
+            ...MIN_VALID_STATUS,
+            status: 'complete',
+            phases: { spec: { status: 'done' } },
+        }, null);
+        // Pending phase (never started) → no orchestrator was ever supposed
+        // to be running.
+        makeTaskDir(dir, 'pending-task', { ...MIN_VALID_STATUS, status: 'spec' }, null);
+        const prev = process.cwd();
+        try {
+            process.chdir(dir);
+            process.env.CANON_TASKS_DIR_OVERRIDE = path.join(dir, 'tasks');
+            const result = checkActiveOrchestrators(dir);
+            assert.deepEqual(result, []);
+        } finally {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+            process.chdir(prev);
+        }
+    });
+});
+
+void test('checkActiveOrchestrators: pass when heartbeat is fresh', () => {
+    withTempDir((dir) => {
+        const now = 1_700_000_000_000;
+        makeTaskDir(dir, 'live-task',
+            statusWithInProgressPhase(),
+            { pid: 99999, started_at_ms: now - 5000, last_update_ms: now - 5000, task_ids: ['live-task'] },
+        );
+        const prev = process.cwd();
+        try {
+            process.chdir(dir);
+            process.env.CANON_TASKS_DIR_OVERRIDE = path.join(dir, 'tasks');
+            const result = checkActiveOrchestrators(dir, now);
+            assert.equal(result.length, 1);
+            assert.equal(result[0].status, 'pass');
+            assert.match(result[0].label, /orchestrator live-task/);
+            assert.match(result[0].detail ?? '', /pid 99999/);
+            assert.match(result[0].detail ?? '', /5s ago/);
+        } finally {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+            process.chdir(prev);
+        }
+    });
+});
+
+void test('checkActiveOrchestrators: warn when heartbeat is stale', () => {
+    withTempDir((dir) => {
+        const now = 1_700_000_000_000;
+        const stale = now - HEARTBEAT_STALE_AFTER_MS - 5_000; // safely past threshold
+        makeTaskDir(dir, 'dead-task',
+            statusWithInProgressPhase(),
+            { pid: 1, started_at_ms: stale - 1000, last_update_ms: stale, task_ids: ['dead-task'] },
+        );
+        const prev = process.cwd();
+        try {
+            process.chdir(dir);
+            process.env.CANON_TASKS_DIR_OVERRIDE = path.join(dir, 'tasks');
+            const result = checkActiveOrchestrators(dir, now);
+            assert.equal(result.length, 1);
+            assert.equal(result[0].status, 'warn');
+            assert.match(result[0].detail ?? '', /canon run dead-task/);
+            assert.match(result[0].detail ?? '', /last heartbeat/);
+        } finally {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+            process.chdir(prev);
+        }
+    });
+});
+
+void test('checkActiveOrchestrators: warn with explicit "no .heartbeat.json" detail when missing', () => {
+    withTempDir((dir) => {
+        const now = 1_700_000_000_000;
+        makeTaskDir(dir, 'killed-task',
+            statusWithInProgressPhase(),
+            null, // no heartbeat at all — exactly what SIGKILL produces
+        );
+        const prev = process.cwd();
+        try {
+            process.chdir(dir);
+            process.env.CANON_TASKS_DIR_OVERRIDE = path.join(dir, 'tasks');
+            const result = checkActiveOrchestrators(dir, now);
+            assert.equal(result.length, 1);
+            assert.equal(result[0].status, 'warn');
+            assert.match(result[0].detail ?? '', /no \.heartbeat\.json/);
+            assert.match(result[0].detail ?? '', /canon run killed-task/);
+        } finally {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+            process.chdir(prev);
+        }
+    });
+});
+
+void test('checkActiveOrchestrators: skips _archive entries', () => {
+    withTempDir((dir) => {
+        const tasks = path.join(dir, 'tasks');
+        fs.mkdirSync(path.join(tasks, '_archive'), { recursive: true });
+        const result = checkActiveOrchestrators(dir);
+        assert.deepEqual(result, []);
+    });
+});
+
+void test('checkActiveOrchestrators: tolerates malformed status.json', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 'tasks', 'broken');
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, 'status.json'), '{not json', 'utf8');
+        const prev = process.cwd();
+        try {
+            process.chdir(dir);
+            process.env.CANON_TASKS_DIR_OVERRIDE = path.join(dir, 'tasks');
+            const result = checkActiveOrchestrators(dir);
+            // Doctor must not crash on a single broken status.json — task-list
+            // contract from issue #83 applies here too.
+            assert.deepEqual(result, []);
+        } finally {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+            process.chdir(prev);
+        }
+    });
+});
+
+void test('formatAge: seconds-only for < 60s', () => {
+    assert.equal(formatAge(0), '0s');
+    assert.equal(formatAge(999), '0s');
+    assert.equal(formatAge(1_000), '1s');
+    assert.equal(formatAge(59_000), '59s');
+});
+
+void test('formatAge: minutes + remainder for < 1h', () => {
+    assert.equal(formatAge(60_000), '1m');
+    assert.equal(formatAge(125_000), '2m 5s');
+    assert.equal(formatAge(3_599_000), '59m 59s');
+});
+
+void test('formatAge: hours + remainder for >= 1h', () => {
+    assert.equal(formatAge(3_600_000), '1h');
+    assert.equal(formatAge(3_660_000), '1h 1m');
+    assert.equal(formatAge(7_320_000), '2h 2m');
+});
+
+void test('formatAge: never returns negative', () => {
+    assert.equal(formatAge(-1000), '0s');
 });

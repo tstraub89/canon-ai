@@ -19,6 +19,9 @@ import * as splitValidation from './validation.js';
 import * as splitClaude from './agents/claude.js';
 import * as splitCodex from './agents/codex.js';
 import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
+import { detachAndExit, removeCanonPid, shouldAutoDetach } from './detach.js';
+import { startHeartbeat, stopAllHeartbeats } from './heartbeat.js';
+import { registerShutdownHook } from './signals.js';
 import { taskPhase } from '../../src/task/index.js';
 
 const REPO_ROOT = splitEnv.REPO_ROOT;
@@ -2432,6 +2435,39 @@ function checkDeps(taskIds: string[], skipAgentDeps = false): void {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+/**
+ * Register all heartbeat-shutdown + `.canon-pid` cleanup hooks BEFORE writing
+ * the first heartbeat. `startHeartbeat` writes synchronously on its first
+ * call ([scripts/run-task/heartbeat.ts](./heartbeat.ts)) — if a signal lands
+ * between that write and a later hook registration, the file leaks. Bundling
+ * both steps into one helper enforces the right ordering by construction
+ * and gives every call site (early child path, original post-validation
+ * path) the same guarantees.
+ */
+function bootHeartbeatWithHooks(
+    taskIds: string[],
+    resolveTaskDir: (id: string) => string,
+): void {
+    // 1. Hooks first — register everything that needs to fire on shutdown
+    //    or signal so a SIGINT/SIGTERM arriving mid-write still cleans up.
+    process.on('exit', () => stopAllHeartbeats());
+    registerShutdownHook(stopAllHeartbeats);
+
+    const cleanupCanonPids = (): void => {
+        for (const id of taskIds) {
+            try { removeCanonPid(resolveTaskDir(id)); }
+            catch { /* best-effort */ }
+        }
+    };
+    process.on('exit', cleanupCanonPids);
+    registerShutdownHook(cleanupCanonPids);
+
+    // 2. Heartbeat starts — writeOnce() inside startHeartbeat fires
+    //    synchronously here. Any signal that arrives now has the hooks in
+    //    place and a SIGTERM forwarder that knows to sweep both files.
+    startHeartbeat(taskIds, resolveTaskDir);
+}
+
 export async function main(): Promise<void> {
     // Mark all child processes as orchestrator-driven so .githooks/pre-commit
     // and .githooks/pre-push know to skip — the orchestrator already runs
@@ -2442,6 +2478,33 @@ export async function main(): Promise<void> {
     splitEnv.warnWorktreesRootMismatch();
     const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
     checkDeps(cliArgs.taskIds, skipAgentDeps);
+
+    // Early-start the heartbeat for detached children. By the time we reach
+    // this point:
+    //   - validateTaskId (inside parseArgs, scripts/run-task/cli.ts:133)
+    //     has rejected malformed IDs
+    //   - checkDeps has rejected missing claude/codex/gh
+    // So writing a heartbeat here represents a real, going-to-run
+    // orchestrator. Earlier (right after parseArgs, before checkDeps) would
+    // leak heartbeat files for runs that were about to fail dep checks.
+    //
+    // This shrinks the launch window from "Node boot + module load +
+    // parseArgs + checkDeps + ship/reroute/fullSend + delicate check +
+    // refreshCanonSnapshotsAtPaths + buildPipelineState" down to just the
+    // first three — meaningful on slow filesystems where the snapshot
+    // refresh and state-validation reads dominate.
+    //
+    // CANON_DETACHED=1 is set by detachAndExit on the child's spawn env;
+    // the parent (which is about to detach and exit) intentionally skips
+    // this so we don't briefly have a heartbeat-with-parent-pid that gets
+    // immediately cleaned up.
+    const earlyHeartbeatTaskIds = cliArgs.taskIds;
+    let heartbeatStarted = false;
+    const earlyHeartbeatResolver = (id: string): string => path.dirname(splitState.statusFileFor(id));
+    if (process.env.CANON_DETACHED === '1' && earlyHeartbeatTaskIds.length > 0) {
+        bootHeartbeatWithHooks(earlyHeartbeatTaskIds, earlyHeartbeatResolver);
+        heartbeatStarted = true;
+    }
 
     if (cliArgs.dryRun) {
         const state = buildPipelineState(cliArgs.taskIds);
@@ -2473,6 +2536,64 @@ export async function main(): Promise<void> {
     }
     refreshCanonSnapshotsAtPaths(taskIds.map(splitState.statusFileFor));
     const initialState = buildPipelineState(taskIds);
+
+    const heartbeatDirResolver = (id: string): string => path.dirname(splitState.statusFileFor(id));
+
+    // Detach AFTER all validation has surfaced any errors to the operator.
+    // Once we detach, the parent exits and any later die() in the child only
+    // hits the log file — operators wouldn't see it inline. shouldAutoDetach()
+    // returns true when stdout is not a TTY AND CANON_NO_DETACH is not set
+    // AND we aren't already the detached child. The detached child runs
+    // setsid()'d into its own session so harness pgroup-kill (Claude Code
+    // operator-session resume, SSH disconnect, etc.) cannot reach it.
+    //
+    // Only detach when entering the long-running phase loop. Synchronous
+    // control modes stay foreground so the operator gets the exit status
+    // they're waiting on:
+    //   - --pr / --push / --reroute / --ship — one-shot operations,
+    //     complete in seconds, operator wants the result inline.
+    //   - --step — runs one phase then exits with a status that signals
+    //     "phase advanced" (0) or "phase didn't advance / sub-agent
+    //     failed" (1). Backgrounding would make scripts/operators see
+    //     exit 0 from the parent before the phase actually ran, hiding
+    //     the real result.
+    //   - --expect <phase> — fail-fast guard that dies if current phase
+    //     doesn't match. Detaching turns "fail fast" into "fail silently
+    //     in the log," which is exactly the misuse this flag exists to
+    //     prevent. (Codex PR #112 P2 finding.)
+    //   - --dry-run — exits even earlier (line ~2451) so this branch is
+    //     unreachable for it; kept in the predicate defensively.
+    //
+    // See scripts/run-task/detach.ts and docs/BACKLOG.md "Orchestrator dies
+    // silently in background mode" for the failure-mode story.
+    const isSynchronousMode =
+        cliArgs.pr ||
+        cliArgs.push ||
+        cliArgs.reroute ||
+        cliArgs.ship ||
+        cliArgs.step ||
+        cliArgs.expectPhase != null;
+    if (!isSynchronousMode && shouldAutoDetach()) {
+        detachAndExit({
+            taskIds,
+            resolveTaskDir: heartbeatDirResolver,
+            argv: process.argv,
+        });
+    }
+
+    // Start the heartbeat ticker. Every 30s the orchestrator writes
+    // `<taskDir>/.heartbeat.json` so detectors (canon doctor, status-line
+    // plugins) can distinguish "alive and working" from "killed by harness
+    // session-resume / OOM / SIGKILL" within ~60–90s. The same hook setup
+    // also handles `.canon-pid` cleanup on clean shutdown so a re-resume
+    // doesn't see a stale pid pointing at a dead process. See
+    // bootHeartbeatWithHooks above for the hooks-before-write ordering
+    // invariant. Skipped if the detached-child early-start path above
+    // already booted the heartbeat (we don't want to double-start).
+    if (!heartbeatStarted) {
+        bootHeartbeatWithHooks(taskIds, heartbeatDirResolver);
+        heartbeatStarted = true;
+    }
 
     info(initialState.isBundle
         ? `Pipeline (bundle, ${initialState.tier} tier): ${taskIds.join(', ')}`

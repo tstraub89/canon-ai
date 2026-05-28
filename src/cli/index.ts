@@ -1,6 +1,7 @@
 import { doctorCmd } from './commands/doctor.js';
 import { initCmd } from './commands/init.js';
 import { runCmd } from './commands/run-task.js';
+import { stopCmd } from './commands/stop.js';
 import { taskCmd } from './commands/task.js';
 import { updateCmd } from './commands/update.js';
 import { upgradeCmd } from './commands/upgrade.js';
@@ -16,6 +17,10 @@ Usage:
   canon doctor                Verify environment and canon setup
   canon task <sub> [args]     Create tasks and track pipeline phases
   canon run <id> [opts]       Run the pipeline for a task
+  canon stop <id>             Stop a detached canon run (SIGTERM → SIGKILL after 10s).
+                                During the launch window before the child writes its first
+                                heartbeat, waits up to CANON_STOP_WAIT_MS for proof of life
+                                (default 30000) before deciding whether to signal.
   canon update                Update the canon-ai package itself
   canon upgrade               Sync vendored files to match the installed version
 
@@ -99,6 +104,9 @@ switch (command) {
         break;
     case 'run':
         runCmd(args);
+        break;
+    case 'stop':
+        stopCmd(args);
         break;
     case 'task':
         taskCmd(args);

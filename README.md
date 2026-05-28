@@ -52,15 +52,17 @@ A **human** is the product owner: approves specs, runs final behavioral tests, s
 The orchestrator drives this. For each task:
 
 ```
-spec → spec_review → human gate → plan → implement → code_review → qa → human_review
+spec → spec_review → plan → implement → code_review → qa → human_review
 ```
 
-…with automatic loops on `changes_requested` verdicts, model/effort scaling by task size, optional git-worktree isolation, session resumption across phases, and auto-block on runaway loops. See `docs/pipeline-orchestrator.md` for the full mechanics.
+The human gates between `spec_review` and `plan` — they approve the spec before the pipeline advances to implementation. Within the chain: automatic loops on `changes_requested` verdicts, model/effort scaling by task size, optional git-worktree isolation, session resumption across phases, and auto-block on runaway loops. See `docs/pipeline-orchestrator.md` for the full mechanics.
 
 The pipeline supports two tiers:
 
 - **Fast tier** (small tasks): spec + plan in one Claude session, skip Codex spec review, human gate replaces it.
 - **Full tier** (medium / large / delicate tasks): every phase runs separately, Codex reviews specs before they reach the human.
+
+`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the orchestrator's model and effort across every phase. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
 
 A single command runs a task end-to-end:
 
@@ -68,7 +70,9 @@ A single command runs a task end-to-end:
 canon run <task-id>
 ```
 
-`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` archives a finished task. Multiple task IDs in one invocation = bundle mode.
+`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` runs *after* PR approval — it squash-merges the PR, deletes the branch, tears down the worktree, archives the task, and pulls the base branch (don't merge the PR manually first). `--reroute` resets a task from `human_review` back to `implement` after human feedback on the diff. `--full-send` skips the spec gate and auto-opens a draft PR on clean QA. `--dry-run` prints planned phases without spawning agents.
+
+Multiple task IDs in one invocation activates **bundle mode** — `canon run id1 id2 id3` runs all tasks together per phase under a single review loop with one commit history and one PR. Any full-tier task in the bundle promotes the entire bundle to full tier.
 
 ## Getting started
 
@@ -99,7 +103,17 @@ cd your-project
 canon init
 ```
 
-`canon init` installs a Claude Code skill (`/canon-init`) in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the `docs/` knowledge corpus tailored to your project.
+`canon init` installs a set of Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the `docs/` knowledge corpus tailored to your project.
+
+The other installed skills (auto-trigger on natural-language phrases — see each skill's frontmatter for the trigger set):
+
+| Skill | When it fires |
+|---|---|
+| `/canon-spec` | Authoring a new task — "let's add X", "start a task for…" |
+| `/canon-review` | Pre-flighting a spec before invoking the pipeline |
+| `/canon-pipeline` | Driving an existing task forward (`canon run`, `--pr`, `--ship`, recovery) |
+| `/canon-status` | "Where are we?" — surfaces phases and blockers across in-flight tasks |
+| `/canon-changelog` | Drafting release notes (projects that version their releases) |
 
 After setup:
 
@@ -110,6 +124,8 @@ canon task new my-first-feature "Short description"
 # Run the pipeline
 canon run my-first-feature
 ```
+
+Run `canon doctor` after install to verify your environment — it checks Node/git/Claude Code/Codex versions, codex project trust, allowlist coverage, and that any local Claude settings file is gitignored.
 
 ### Skip the permission prompts (optional)
 
@@ -171,13 +187,21 @@ Claude Code creates `settings.json` on first use — check what's already there 
 | Command | What it does |
 |---|---|
 | `canon init` | Install canon into the current repo |
-| `canon doctor` | Verify environment and canon setup |
+| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72) and Codex CLI presence, codex project trust, recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
 | `canon task phase <id> <phase> <status>` | Advance a task phase manually |
-| `canon run <id>` | Run the full pipeline for a task |
-| `canon run <id> --step` | Run one phase then stop |
-| `canon run <id> --pr` | Push branch and open a draft PR |
+| `canon task accept <id...> implement [--force]` | Accept a manually-committed `implement` phase outside the pipeline (e.g. after a manual recovery commit). `implement` is the only supported phase today — for other phases use `canon task phase`. |
+| `canon task release-init <version>` | Create a release branch off `main` with version bumped and an empty in-progress CHANGELOG block — `release/v<MAJ.MIN>` for `.0` versions (e.g. `release/v1.6` ships `1.6.0`), `release/v<MAJ.MIN.PATCH>` for patches (e.g. `release/v1.6.1` ships `1.6.1`). Only relevant for projects that version their releases. |
+| `canon run <id>` | Run the full pipeline for a task. Auto-detaches into its own session when stdout is not a TTY (so harness/process-group kills don't take it down); opt out with `CANON_NO_DETACH=1`. |
+| `canon run <id> --step --expect <phase>` | Run one phase then stop, with a phase-mismatch guard |
+| `canon run <id> --pr` | Push branch and open a draft PR (at `human_review`) |
+| `canon run <id> --push` | Push branch only, no PR |
+| `canon run <id> --reroute` | Reset a task from `human_review` back to `implement` after appending an `## Amendment` section to `spec.md` |
+| `canon run <id> --full-send` | Skip the spec gate and auto-open a draft PR after clean QA |
+| `canon run <id> --ship` | After PR approval: squash-merge, delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
+| `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
+| `canon stop <id>` | Stop a detached canon run (SIGTERM → SIGKILL after 10s). Waits up to 30s — override via `CANON_STOP_WAIT_MS` — for the orchestrator's first heartbeat to verify the PID before signaling. |
 | `canon upgrade` | Sync vendored files to match installed version. Refuses to overwrite locally-modified managed files unless `--force` is set. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
 | `canon update` | Update the canon-ai package itself |
 
@@ -225,15 +249,15 @@ Drop this into any repo and you have:
 
 ✅ **Built and working:**
 
-- `canon` CLI — `init`, `doctor`, `run`, `task`, `update`, `upgrade`
+- `canon` CLI — `init`, `doctor`, `run`, `stop`, `task`, `update`, `upgrade`
 - Full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`. Bundled into `dist/scripts/run-task.js` and invoked via `canon run`.
 - Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
-- `canon task` lifecycle CLI (new / list / status / phase / reset-spec-review / post-merge-sync / release-init), in-process TS.
+- `canon task` lifecycle CLI (new / list / status / phase / accept / reset-spec-review / post-merge-sync / release-init), in-process TS.
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
 - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — workflow rules and per-agent guidance
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.codex/config.toml` / `.claude/settings.json` — agent CLI configs
-- `/canon-init` skill — interactive grill that generates the full knowledge corpus for a new project
+- Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-review` (pre-flight a spec), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**
