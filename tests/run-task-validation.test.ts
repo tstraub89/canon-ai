@@ -23,6 +23,8 @@ import {
     parseHandoffFiles,
     parseHandoffPathCell,
     validateHandoffAgainstSpec,
+    verifyBaseDivergence,
+    verifyBaseDivergenceFromData,
     verifyBaseDrift,
     verifyBaseDriftFromData,
     verifyHandoffAgainstDiffFromData,
@@ -668,6 +670,211 @@ void test('parseAffectedFilesFromSpec accepts backtick and markdown-link path ce
     });
 });
 
+void test('parseAffectedFilesFromSpec walks round-1 `## Amendment` Affected Files', () => {
+    withTempTaskSpec('amendment-r1-task', [
+        '# Spec: round-1 amendment',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/original.ts` | original scope |',
+        '',
+        '## Amendment',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/added-by-amendment.ts` | added during reroute |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('amendment-r1-task'), {
+            files: ['src/original.ts', 'src/added-by-amendment.ts'],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec walks round-N `## Amendment Round 2` Affected Files', () => {
+    withTempTaskSpec('amendment-r2-task', [
+        '# Spec: round-2 amendment',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/original.ts` | original scope |',
+        '',
+        '## Amendment Round 2',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/added-round-2.ts` | added during round-2 reroute |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('amendment-r2-task'), {
+            files: ['src/original.ts', 'src/added-round-2.ts'],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec dedupes a path declared in both Design and Amendment', () => {
+    withTempTaskSpec('amendment-dedupe-task', [
+        '# Spec: dedupe across sections',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/shared.ts` | first declared in Design |',
+        '',
+        '## Amendment',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/shared.ts` | redeclared in amendment (e.g., operator clarification) |',
+        '| `src/new.ts` | only declared in amendment |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('amendment-dedupe-task'), {
+            files: ['src/shared.ts', 'src/new.ts'],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec unions multiple amendment rounds with Design', () => {
+    withTempTaskSpec('amendment-multi-round-task', [
+        '# Spec: multi-round amendments',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/design.ts` | original |',
+        '',
+        '## Amendment',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/round-1.ts` | added in round 1 |',
+        '',
+        '## Amendment Round 2',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/round-2.ts` | added in round 2 |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('amendment-multi-round-task'), {
+            files: ['src/design.ts', 'src/round-1.ts', 'src/round-2.ts'],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec reports malformed rows inside an amendment', () => {
+    withTempTaskSpec('amendment-malformed-task', [
+        '# Spec: malformed in amendment',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/ok.ts` | valid |',
+        '',
+        '## Amendment',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `<path>` | placeholder left in amendment template |',
+        '',
+    ].join('\n'), () => {
+        const result = parseAffectedFilesFromSpec('amendment-malformed-task');
+        assert.deepEqual(result.files, ['src/ok.ts']);
+        assert.equal(result.malformed.length, 1);
+        assert.equal(result.malformed[0].cell, '`<path>`');
+        assert.match(result.malformed[0].reason, /template placeholder/);
+    });
+});
+
+void test('parseAffectedFilesFromSpec surfaces amendment-only Affected Files when Design has no H3', () => {
+    withTempTaskSpec('amendment-only-task', [
+        '# Spec: amendment-only',
+        '',
+        '## Design',
+        '',
+        'Originally a minimal-scope spec with no Affected Files table.',
+        '',
+        '## Amendment',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/late-arrival.ts` | scope arrived entirely via amendment |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('amendment-only-task'), {
+            files: ['src/late-arrival.ts'],
+            malformed: [],
+        });
+    });
+});
+
+void test('parseAffectedFilesFromSpec does NOT false-match `## Amendments` (plural)', () => {
+    // The \b word boundary in /^## Amendment\b/ should reject `## Amendments`
+    // because the next char ("s") is a word char. Guards against accidentally
+    // pulling in rows from prose H2s that happen to start with "Amendment".
+    withTempTaskSpec('amendment-plural-guard-task', [
+        '# Spec: word-boundary guard',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/in-design.ts` | should surface |',
+        '',
+        '## Amendments (prose section, not the reroute heading)',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/should-not-surface.ts` | this row must NOT be parsed |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('amendment-plural-guard-task'), {
+            files: ['src/in-design.ts'],
+            malformed: [],
+        });
+    });
+});
+
 void test('extractHandoffPath: backtick-quoted path', () => {
     assert.equal(extractHandoffPath('`src/foo.ts`'), 'src/foo.ts');
     assert.equal(extractHandoffPath('`src/foo.ts` some annotation'), 'src/foo.ts');
@@ -1288,6 +1495,86 @@ void test('verifyBaseDriftFromData: empty allowedPrefixes leaves the legacy 3-ar
         verifyBaseDriftFromData(['dist/cli/index.js'], new Set(), ['task-a']),
         ['dist/cli/index.js'],
     );
+});
+
+void test('verifyBaseDivergenceFromData: empty commits returns empty string', () => {
+    assert.equal(verifyBaseDivergenceFromData([]), '');
+});
+
+void test('verifyBaseDivergenceFromData: single commit includes short-sha and full subject', () => {
+    const message = verifyBaseDivergenceFromData([
+        { sha: 'abcdef1234567890', subject: 'task(foo): commit artifacts' },
+    ]);
+    assert.match(message, /abcdef1/);
+    assert.match(message, /task\(foo\): commit artifacts/);
+    assert.equal(
+        message,
+        [
+            'Base divergence detected: 1 colliding commit on <base> not yet on origin/<base>; they will collide when <base> is pulled:',
+            '  abcdef1  task(foo): commit artifacts',
+            'Fix: git push origin <base>',
+            'Override: rerun with --allow-divergent-base to skip this commit-divergence check only.',
+        ].join('\n'),
+    );
+});
+
+void test('verifyBaseDivergenceFromData: multiple commits listed in input order on separate lines', () => {
+    const message = verifyBaseDivergenceFromData([
+        { sha: 'aaaaaaa000000001', subject: 'first commit' },
+        { sha: 'bbbbbbb000000002', subject: 'second commit' },
+    ]);
+    assert.match(message, /\n  aaaaaaa  first commit\n  bbbbbbb  second commit\n/);
+});
+
+void test('verifyBaseDivergenceFromData: message includes operator fix and override literals', () => {
+    const message = verifyBaseDivergenceFromData([
+        { sha: 'deadbeef00000000', subject: 'some change' },
+    ]);
+    assert.match(message, /git push origin/);
+    assert.match(message, /--allow-divergent-base/);
+});
+
+void test('verifyBaseDivergence: clean repo with no divergent commits returns empty ok result', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-divergence-clean-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        const result = verifyBaseDivergence('main', localDir);
+        assert.deepEqual(result, { commits: [], ok: true, stderr: '', fetchFailed: false });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('verifyBaseDivergence: non-existent cwd returns ok:false with non-empty stderr', () => {
+    const result = verifyBaseDivergence('main', path.join(os.tmpdir(), `missing-cwd-${Date.now()}`));
+    assert.equal(result.ok, false);
+    assert.equal(result.fetchFailed, false);
+    assert.ok(result.stderr.length > 0);
+});
+
+void test('verifyBaseDivergence: unpushed base commits match from repo root and worktree cwd', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-divergence-worktree-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        fs.writeFileSync(path.join(localDir, 'scaffold.txt'), 'scaffold\n', 'utf8');
+        gitIn(localDir, 'add', 'scaffold.txt');
+        gitIn(localDir, 'commit', '-m', 'task(example): commit artifacts pre-pipeline');
+        const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+
+        const worktreeDir = path.join(dir, 'worktree');
+        gitIn(localDir, 'worktree', 'add', '-b', 'task/example', worktreeDir, 'main');
+        const repoRootResult = verifyBaseDivergence('main', localDir);
+        const worktreeResult = verifyBaseDivergence('main', worktreeDir);
+
+        assert.equal(repoRootResult.ok, true);
+        assert.equal(worktreeResult.ok, true);
+        assert.deepEqual(repoRootResult.commits, [
+            { sha, subject: 'task(example): commit artifacts pre-pipeline' },
+        ]);
+        assert.deepEqual(worktreeResult.commits, repoRootResult.commits);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });
 
 void test('verifyBaseDrift: two-dot diff catches base-advance drift that three-dot would miss', () => {

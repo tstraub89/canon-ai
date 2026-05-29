@@ -125,7 +125,7 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 ## Roadmap (Brief)
 
 - **Current state**: v1.0.0 shipped (2026-05-15). canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task), bundled Claude Code skills (`/spec`, `/pipeline`, `/status`, `/changelog`, `/canon-init`), template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the next hardening pass.
-- **Near-term**: Adopters extend validation by configuring Codex sandbox permissions in project-owned `.codex/config.toml` and wiring real checks through project scripts such as `package.json`. Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon").
+- **Near-term**: Adopters extend validation by wiring real checks through project scripts (`package.json` or equivalent), which Codex runs during the `implement` phase under canon's `--sandbox workspace-write` baseline. Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon").
 - **Future**: Additional agent-CLI adapters (Gemini, Aider). Public release decision.
 
 (See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)

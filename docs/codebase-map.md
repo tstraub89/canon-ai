@@ -45,8 +45,8 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task/main.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task/validation.ts` | |
 | Handoff Changes-table parser | `scripts/run-task/validation.ts` | Regex-based; extracts backtick-wrapped paths |
-| Spec Affected Files parser | `scripts/run-task/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `## Design → ### Affected Files` H3 table; used by `commitHumanReviewFiles` (managed-doc allow-list) and `verifyBaseDrift` (base-drift allow-list) |
-| Base-drift gate (`--pr`/`--push`) | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts` | `verifyBaseDrift` / `verifyBaseDriftFromData` — two-dot `git diff origin/<base> HEAD` at `--pr`/`--push` time; catches cross-pipeline contamination before PR creation; `getTreeDriftFiles` in `git.ts` is the low-level helper |
+| Spec Affected Files parser | `scripts/run-task/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; used by `commitHumanReviewFiles` (managed-doc allow-list) and `verifyBaseDrift` (base-drift allow-list) |
+| Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts` | `verifyBaseDivergence` / `getUnpushedBaseCommits` checks commit divergence first and blocks at `--push`, `--pr`, and `--ship`; `verifyBaseDrift` / `verifyBaseDriftFromData` remains the file-allow-list gate for `--push`/`--pr`; `getTreeDriftFiles` in `git.ts` is the low-level tree-drift helper |
 
 ## Task Lifecycle Artifacts
 
@@ -101,7 +101,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | ESLint flat config | `eslint.config.mjs` | `@typescript-eslint/recommendedTypeChecked`, `projectService: true` |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `scripts/` and `tests/` only |
 | Claude permissions + SessionStart hook | `.claude/settings.json` | Auto-shows in-progress tasks at session start |
-| Codex CLI features (multi-agent, shell snapshot) | `.codex/config.toml` | |
+| Codex sandbox baseline | `scripts/run-task/agents/codex.ts` | `--sandbox workspace-write` passed on fresh exec |
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
 | Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | `../dev-worktrees` |
 | Git ignores | `.gitignore` | |
@@ -143,5 +143,4 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | Claude instructions | `CLAUDE.md` | Architect + reviewer context |
 | Codex instructions | `CODEX.md` | Implementer context |
 | Agent permissions | `.claude/settings.json` | Allowlisted commands |
-| Codex config | `.codex/config.toml` | Multi-agent + shell snapshot |
 | Task artifacts | `tasks/` | Per-task specs, plans, reviews |

@@ -63,6 +63,30 @@ void test('backtick file-path refs: missing path fails', () => {
     );
 });
 
+void test('line-citation refs: ascii hyphen, en-dash, and em-dash all pass', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/line-cites.md',
+                [
+                    'ASCII: `scripts/fixture-target.ts:10-20`.',
+                    'En-dash: `scripts/fixture-target.ts:30–40`.',
+                    'Em-dash: `scripts/fixture-target.ts:50—60`.',
+                    'Single line: `scripts/fixture-target.ts:5`.',
+                    'GitHub anchor: `scripts/fixture-target.ts#L10-L20`.',
+                    'GitHub en-dash: `scripts/fixture-target.ts#L30–L40`.',
+                    '',
+                ].join('\n'),
+            );
+            writeFile(root, 'scripts/fixture-target.ts', 'export const fixtureTarget = true;\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
 void test('symbol-in-file refs: symbol present passes', () => {
     makeTempRepo(
         root => {

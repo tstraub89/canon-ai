@@ -26,7 +26,8 @@ diff .canon/templates/spec.md tasks/_templates/spec.md
 
 ## Project-specific validation checks during `implement`
 
-Configure Codex sandbox permissions in the project-owned `.codex/config.toml`
-when validation needs more access than the default implement sandbox provides.
 Real checks should live in project scripts such as `package.json` commands (or
-the local equivalent), not in canon-side policy modules.
+the local equivalent), not in canon-side policy modules. Canon's pipeline runs
+Codex with `--sandbox workspace-write` (writes within the worktree, plus
+network access) — appropriate for the checks an `implement` phase typically
+runs (lint, type-check, unit tests, build).

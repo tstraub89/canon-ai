@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parseTable, parseTableH3, extractSectionBodies } from './markdown-table.js';
 import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
-import { filterGitIgnoredPaths, getTreeDriftFiles, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
+import { filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { readStatus, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
@@ -739,12 +739,22 @@ export function parseAffectedFilesFromSpec(taskId: string): {
         return { files: [], malformed: [] };
     }
 
-    const designBodies = extractSectionBodies(content, /^## Design\b/);
-    if (designBodies.length === 0) return { files: [], malformed: [] };
+    // Walk both `## Design` and `## Amendment` / `## Amendment Round N` H2 bodies.
+    // Reroute amendments are a first-class spec surface where Codex declares
+    // newly-touched files; the base-drift gate must honor them or operators have
+    // to duplicate rows into the main Design table. The `\b` word boundary matches
+    // both bare `## Amendment` (round 1) and `## Amendment Round N` (round 2+) and
+    // rejects `## Amendments` etc. Mirrors the reroute heading gate's matching
+    // strategy at L184.
+    const sectionBodies = [
+        ...extractSectionBodies(content, /^## Design\b/),
+        ...extractSectionBodies(content, /^## Amendment\b/),
+    ];
+    if (sectionBodies.length === 0) return { files: [], malformed: [] };
 
     const files = new Set<string>();
     const malformed: Array<{ cell: string; reason: string }> = [];
-    for (const body of designBodies) {
+    for (const body of sectionBodies) {
         const rows = parseTableH3(body, 'Affected Files');
         for (const row of rows) {
             const firstColumn = Object.values(row)[0] ?? '';
@@ -1083,4 +1093,40 @@ export function verifyBaseDrift(
         fetchFailed: false,
         diffFailed: false,
     };
+}
+
+export function verifyBaseDivergenceFromData(
+    commits: readonly { sha: string; subject: string }[],
+): string {
+    if (commits.length === 0) return '';
+    const noun = commits.length === 1 ? 'commit' : 'commits';
+    return [
+        `Base divergence detected: ${commits.length} colliding ${noun} on <base> not yet on origin/<base>; they will collide when <base> is pulled:`,
+        ...commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`),
+        'Fix: git push origin <base>',
+        'Override: rerun with --allow-divergent-base to skip this commit-divergence check only.',
+    ].join('\n');
+}
+
+export function verifyBaseDivergence(
+    baseBranch: string,
+    cwd: string,
+): { commits: { sha: string; subject: string }[]; ok: boolean; stderr: string; fetchFailed: boolean } {
+    const fetchResult = gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
+    if (!fetchResult.ok) {
+        if (!fs.existsSync(cwd)) {
+            return { commits: [], ok: false, stderr: fetchResult.stderr, fetchFailed: false };
+        }
+        warn(
+            `Could not fetch origin/${baseBranch} (${fetchResult.stderr.trim() || 'unknown'}). ` +
+            `Skipping base-divergence check — re-run when network access is restored if you want this verified.`,
+        );
+        return { commits: [], ok: true, stderr: '', fetchFailed: true };
+    }
+
+    const result = getUnpushedBaseCommits(baseBranch, cwd);
+    if (!result.ok) {
+        return { commits: result.commits, ok: false, stderr: result.stderr, fetchFailed: false };
+    }
+    return { commits: result.commits, ok: true, stderr: '', fetchFailed: false };
 }

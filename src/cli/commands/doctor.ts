@@ -246,12 +246,6 @@ export function checkSkills(cwd: string): Check {
     return { label: '.claude/skills/', status: 'pass' };
 }
 
-export function checkCodexConfig(cwd: string): Check {
-    const path = join(cwd, '.codex', 'config.toml');
-    if (existsSync(path)) return { label: '.codex/config.toml', status: 'pass' };
-    return { label: '.codex/config.toml', status: 'warn', detail: 'missing — Codex will use defaults' };
-}
-
 /**
  * Parses the global `~/.codex/config.toml` and returns a map of project paths
  * to their declared trust level. Codex creates `[projects."<absolute-path>"]`
@@ -641,7 +635,6 @@ export function doctorCmd(_args: string[]): void {
     ];
 
     const configChecks: Check[] = [
-        checkCodexConfig(cwd),
         checkCodexProjectTrust(cwd),
         checkRecommendedPermissions(cwd),
         checkLocalSettingsGitignored(cwd),

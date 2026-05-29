@@ -99,6 +99,11 @@ function printUsage() {
   console.log("                      explicit safety gates where documented (currently:");
   console.log("                      --full-send on delicate tasks, reroute amendment gate,");
   console.log("                      base-drift gate, and dirty REPO_ROOT worktree-start gate).");
+  console.log("  --allow-divergent-base");
+  console.log("                      At --push, --pr, and --ship: bypass only the commit-divergence");
+  console.log("                      block when local <base> has commits not yet on origin/<base>.");
+  console.log("                      Does NOT bypass the file-allow-list gate; use --force for that.");
+  console.log("                      Independent of --force \u2014 both may be needed to pass both gates.");
   console.log("  --ship              Merge the open PR (calls gh pr merge --squash --delete-branch), tear");
   console.log("                      down the worktree, archive the task dir, and pull the base branch. Run");
   console.log("                      after the PR is approved \u2014 do NOT merge the PR manually first. If you");
@@ -133,6 +138,7 @@ function parseArgs(argv) {
   let dryRun = false;
   let fullSend = false;
   let force = false;
+  let allowDivergentBase = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     switch (arg) {
@@ -164,6 +170,9 @@ function parseArgs(argv) {
       case "--force":
         force = true;
         break;
+      case "--allow-divergent-base":
+        allowDivergentBase = true;
+        break;
       case "--ship":
         ship = true;
         break;
@@ -179,7 +188,7 @@ function parseArgs(argv) {
     die("--reroute and --full-send are mutually exclusive in a single invocation. Run --reroute first, then --full-send if you want to re-trust the result.");
   }
   if (taskIds.length === 0) die("At least one TASK-ID is required.");
-  return { taskIds, interactive, step, expectPhase, push: push2, pr, reroute, ship, dryRun, fullSend, force };
+  return { taskIds, interactive, step, expectPhase, push: push2, pr, reroute, ship, dryRun, fullSend, force, allowDivergentBase };
 }
 function validateTaskId(id) {
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -691,6 +700,23 @@ function getBaseBranch(taskIds) {
     return [...bases][0];
   }
   return getDefaultBaseBranch();
+}
+function getUnpushedBaseCommits(baseBranch, cwd) {
+  const result = gitSafeAtRaw(cwd, "log", `origin/${baseBranch}..${baseBranch}`, "--format=%H%x09%s");
+  if (!result.ok) {
+    return { commits: [], ok: false, stderr: result.stderr };
+  }
+  const commits = [];
+  for (const line of result.stdout.split("\n")) {
+    if (!line.trim()) continue;
+    const tabIndex = line.indexOf("	");
+    if (tabIndex === -1) continue;
+    commits.push({
+      sha: line.slice(0, tabIndex),
+      subject: line.slice(tabIndex + 1)
+    });
+  }
+  return { commits, ok: true, stderr: "" };
 }
 function truncateUtf8(input, capBytes) {
   const bytes = Buffer.from(input, "utf8");
@@ -1990,11 +2016,14 @@ function parseAffectedFilesFromSpec(taskId) {
   } catch {
     return { files: [], malformed: [] };
   }
-  const designBodies = extractSectionBodies(content, /^## Design\b/);
-  if (designBodies.length === 0) return { files: [], malformed: [] };
+  const sectionBodies = [
+    ...extractSectionBodies(content, /^## Design\b/),
+    ...extractSectionBodies(content, /^## Amendment\b/)
+  ];
+  if (sectionBodies.length === 0) return { files: [], malformed: [] };
   const files = /* @__PURE__ */ new Set();
   const malformed = [];
-  for (const body of designBodies) {
+  for (const body of sectionBodies) {
     const rows = parseTableH3(body, "Affected Files");
     for (const row of rows) {
       const firstColumn = Object.values(row)[0] ?? "";
@@ -2205,6 +2234,33 @@ function verifyBaseDrift(taskIds, baseBranch, cwd) {
     fetchFailed: false,
     diffFailed: false
   };
+}
+function verifyBaseDivergenceFromData(commits) {
+  if (commits.length === 0) return "";
+  const noun = commits.length === 1 ? "commit" : "commits";
+  return [
+    `Base divergence detected: ${commits.length} colliding ${noun} on <base> not yet on origin/<base>; they will collide when <base> is pulled:`,
+    ...commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`),
+    "Fix: git push origin <base>",
+    "Override: rerun with --allow-divergent-base to skip this commit-divergence check only."
+  ].join("\n");
+}
+function verifyBaseDivergence(baseBranch, cwd) {
+  const fetchResult = gitSafeAt(cwd, "fetch", "origin", baseBranch);
+  if (!fetchResult.ok) {
+    if (!fs5.existsSync(cwd)) {
+      return { commits: [], ok: false, stderr: fetchResult.stderr, fetchFailed: false };
+    }
+    warn(
+      `Could not fetch origin/${baseBranch} (${fetchResult.stderr.trim() || "unknown"}). Skipping base-divergence check \u2014 re-run when network access is restored if you want this verified.`
+    );
+    return { commits: [], ok: true, stderr: "", fetchFailed: true };
+  }
+  const result = getUnpushedBaseCommits(baseBranch, cwd);
+  if (!result.ok) {
+    return { commits: result.commits, ok: false, stderr: result.stderr, fetchFailed: false };
+  }
+  return { commits: result.commits, ok: true, stderr: "", fetchFailed: false };
 }
 
 // scripts/run-task/prompts/index.ts
@@ -3645,7 +3701,8 @@ async function runCodex(prompt, interactive, resumeId, model, effort, metricsCon
       };
     }
     const effortFlag = ["-c", `model_reasoning_effort=${effort}`];
-    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, effectivePrompt, "-m", model, "-C", cwd];
+    const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
+    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
     const displayChunks = [];
     let tokenTotal = 0;
     let sawUsage = false;
@@ -3720,6 +3777,10 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
   const worktreeAlreadyCreated = primaryStatus.worktree === true && Boolean(primaryStatus.branch);
   if (!worktreeAlreadyCreated) {
     commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
+    const scaffoldBase = getBaseBranch(taskIds);
+    info(
+      `Scaffold committed to local ${scaffoldBase}; run \`git push origin ${scaffoldBase}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`
+    );
   }
   ensureBranch(taskIds, { force });
   const activeCwd = getActiveCwd(taskIds);
@@ -4171,12 +4232,18 @@ var cliArgs = {
   ship: false,
   dryRun: false,
   fullSend: false,
-  force: false
+  force: false,
+  allowDivergentBase: false
 };
 var ghAvailable = false;
 var lastClaudeSessionId = null;
 var lastCodexSessionId = null;
 var lastCodexExitStatus = 0;
+function classifyMergeOutcome(opts) {
+  if (opts.exitOk) return "tolerate";
+  if (opts.mergeConfirmed) return "tolerate";
+  return "fail";
+}
 var die2 = die;
 var info2 = info;
 var warn2 = warn;
@@ -4740,6 +4807,18 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
     ghAvailable = isCommandAvailable("gh");
   }
   const baseBranch = getBaseBranch(taskIds);
+  const baseDivergenceResult = verifyBaseDivergence(baseBranch, cwd);
+  if (!baseDivergenceResult.ok) {
+    die2(`--pr aborted: git error checking base divergence: ${baseDivergenceResult.stderr || "unknown error"}`);
+  } else if (!baseDivergenceResult.fetchFailed && baseDivergenceResult.commits.length > 0) {
+    if (!cliArgs.allowDivergentBase) {
+      die2(verifyBaseDivergenceFromData(baseDivergenceResult.commits));
+    }
+    warn2(
+      `--allow-divergent-base override: bypassing base-divergence gate. Divergent commits:
+` + baseDivergenceResult.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
+    );
+  }
   const baseDriftResult = verifyBaseDrift(taskIds, baseBranch, cwd);
   if (baseDriftResult.fetchFailed) {
   } else if (baseDriftResult.diffFailed) {
@@ -5030,6 +5109,11 @@ function getMergedPRHeadSha(prNum) {
   if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null;
   return sha;
 }
+function isPRMerged(prNum) {
+  if (!ghAvailable) return false;
+  const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "state", "--jq", ".state"]);
+  return result.ok && result.stdout.trim() === "MERGED";
+}
 function assertNoOpenPRForTask(branchName, baseBranch) {
   const prNum = findOpenPRNumber(branchName, baseBranch);
   if (prNum !== null) {
@@ -5078,12 +5162,15 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
     if (!prNum) continue;
     info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via squash...`);
     const result = runCommand("gh", ["pr", "merge", String(prNum), "--squash", "--delete-branch"]);
-    const localDeleteFailed = !result.ok && result.stderr.includes("used by worktree");
-    if (!result.ok && !result.stderr.includes("already merged") && !localDeleteFailed) {
+    const outcome = classifyMergeOutcome({
+      exitOk: result.ok,
+      mergeConfirmed: result.ok ? true : isPRMerged(prNum)
+    });
+    if (outcome === "fail") {
       die(`Failed to merge PR #${prNum}: ${result.stderr}`);
     }
-    if (localDeleteFailed) {
-      info(`PR #${prNum} merged; local branch delete deferred until worktree teardown.`);
+    if (!result.ok) {
+      warn(`PR #${prNum} merged; branch-delete step failed and was tolerated: ${result.stderr.trim() || "unknown error"}`);
       for (const taskId of taskIds) {
         const branchName = branchByTaskId.get(taskId);
         if (branchName === branch) {
@@ -5195,6 +5282,18 @@ function shipTasks(taskIds) {
     }
   }
   ensureCheckedOutBaseBranch(taskIds);
+  const shipBaseDivergenceResult = verifyBaseDivergence(baseBranch, REPO_ROOT2);
+  if (!shipBaseDivergenceResult.ok) {
+    die(`--ship aborted: git error checking base divergence: ${shipBaseDivergenceResult.stderr || "unknown error"}`);
+  } else if (!shipBaseDivergenceResult.fetchFailed && shipBaseDivergenceResult.commits.length > 0) {
+    if (!cliArgs.allowDivergentBase) {
+      die(verifyBaseDivergenceFromData(shipBaseDivergenceResult.commits));
+    }
+    warn(
+      `--allow-divergent-base override: bypassing base-divergence gate at --ship. Divergent commits:
+` + shipBaseDivergenceResult.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
+    );
+  }
   const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
   if (!merged) {
     assertLocalBaseInSyncWithOrigin(baseBranch);

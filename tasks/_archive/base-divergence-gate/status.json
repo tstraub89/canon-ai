@@ -1,0 +1,74 @@
+{
+  "id": "base-divergence-gate",
+  "title": "Harden --push/--pr/--ship remote boundary: base-divergence gate, push reminder, tolerate auto-deleted branch",
+  "status": "complete",
+  "created": "2026-05-29",
+  "updated": "2026-05-29",
+  "branch": "task/base-divergence-gate",
+  "base_branch": "release/v1.6.1",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "c06de506b1ce4c604e4c5cb17695a5f1b9c01d97",
+    "orchestrator_commit": "c06de506b1ce4c604e4c5cb17695a5f1b9c01d97",
+    "codex_cli": "codex-cli 0.134.0",
+    "claude_code": "2.1.152 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 5,
+      "changes_requested_total": 3,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019e7399-d980-7002-9c22-93a298fcb5cc",
+    "codex": "019e74a7-0af4-74d3-a5a8-3baf468814b3",
+    "claude_review": "7b76b109-d430-4baa-ad72-193300b39413"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

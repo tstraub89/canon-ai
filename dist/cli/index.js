@@ -405,7 +405,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.6.0";
+  const installedVersion = "1.7.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -438,11 +438,6 @@ function checkSkills(cwd) {
     };
   }
   return { label: ".claude/skills/", status: "pass" };
-}
-function checkCodexConfig(cwd) {
-  const path10 = join(cwd, ".codex", "config.toml");
-  if (existsSync(path10)) return { label: ".codex/config.toml", status: "pass" };
-  return { label: ".codex/config.toml", status: "warn", detail: "missing \u2014 Codex will use defaults" };
 }
 function parseCodexProjectTrust(tomlContent) {
   const result = /* @__PURE__ */ new Map();
@@ -720,7 +715,6 @@ function doctorCmd(_args) {
     checkSkills(cwd)
   ];
   const configChecks = [
-    checkCodexConfig(cwd),
     checkCodexProjectTrust(cwd),
     checkRecommendedPermissions(cwd),
     checkLocalSettingsGitignored(cwd)
@@ -823,7 +817,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.6.0";
+  const version = "1.7.0";
   mkdirSync(dirname2(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -2920,7 +2914,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     pending.push({ rel, projectPath, content: templateContent });
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.6.0";
+  const newVersion = "1.7.0";
   const currentVersion = existsSync5(versionPath) ? readFileSync2(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -3118,7 +3112,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.6.0");
+  console.log("1.7.0");
 }
 switch (command) {
   case "doctor":

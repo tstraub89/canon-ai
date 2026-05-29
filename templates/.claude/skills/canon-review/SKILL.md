@@ -30,7 +30,6 @@ Verify `tasks/<id>/spec.md` exists and is filled out (no `<placeholder>` text or
 Read into context:
 - `tasks/<id>/spec.md` (the artifact under review)
 - `tasks/<id>/status.json` (size, delicate flag — informs whether the review is worth running)
-- `scripts/run-task/prompts/templates/spec-review.md` (the rubric Codex would receive; raw Mustache template is fine)
 
 State briefly: task ID, size, delicate flag, "dispatching 3 parallel sub-agents."
 
@@ -138,5 +137,4 @@ If an agent returned `[NO FINDINGS]`, say so under its section. Don't pad. If al
 
 - `/canon-spec` — where the spec under review came from.
 - `/canon-pipeline` — invoke `canon run <id>` after BLOCKING findings are addressed.
-- `scripts/run-task/prompts/templates/spec-review.md` — the Codex review rubric this skill mimics.
 - `CLAUDE.md` §"Spec Authorship Guidelines" — the rules of thumb Agent C audits against.

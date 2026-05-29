@@ -9,6 +9,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 import {
     buildHumanReviewStagePaths,
+    classifyMergeOutcome,
     enableFullSend,
     findPullRequestTemplate,
     formatCompleteStateBanner,
@@ -118,6 +119,14 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}..${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
+        '  if [ "${FAKE_GIT_BASE_LOG_FAIL:-}" = "1" ]; then',
+        '    printf "%s\\n" "${FAKE_GIT_BASE_LOG_ERROR:-base log failed}" >&2',
+        '    exit 1',
+        '  fi',
+        '  if [ -n "${FAKE_GIT_UNPUSHED_BASE_COMMITS:-}" ]; then printf "%s\\n" "$FAKE_GIT_UNPUSHED_BASE_COMMITS"; fi',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "rev-list" ] && [ "${2:-}" = "--count" ] && [ "${3:-}" = "HEAD..origin/${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
         '  printf "%s\\n" "${FAKE_GIT_REVLIST_COUNT:-0}"',
         '  exit 0',
@@ -217,6 +226,10 @@ function setupFakeCliTools(scriptDir: string): void {
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then',
+        '  if [ "${FAKE_GH_MERGE_FAIL:-}" = "1" ]; then',
+        '    printf "%s\\n" "${FAKE_GH_MERGE_ERROR:-merge failed}" >&2',
+        '    exit 1',
+        '  fi',
         '  read_pr_state',
         '  branch="${FAKE_GH_STATE_HEAD:-}"',
         '  if [ -z "$branch" ]; then branch="${FAKE_GH_PR_HEAD:-}"; fi',
@@ -226,7 +239,23 @@ function setupFakeCliTools(scriptDir: string): void {
         'fi',
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then',
         '  pr_num="${3:-}"',
+        '  json=""',
+        '  while [ $# -gt 0 ]; do',
+        '    case "$1" in',
+        '      --json) json="$2"; shift 2 ;;',
+        '      --jq) shift 2 ;;',
+        '      *) shift ;;',
+        '    esac',
+        '  done',
         '  read_pr_state',
+        '  if [ "$json" = "state" ]; then',
+        '    if [ -n "$FAKE_GH_PR_STATE" ]; then printf "%s\\n" "$FAKE_GH_PR_STATE"; exit 0; fi',
+        '    exit 1',
+        '  fi',
+        '  if [ "$json" = "headRefOid" ]; then',
+        '    if [ -n "$FAKE_GH_HEAD_REF_OID" ]; then printf "%s\\n" "$FAKE_GH_HEAD_REF_OID"; exit 0; fi',
+        '    exit 1',
+        '  fi',
         '  if [ -n "$FAKE_GH_STATE_NUMBER" ] && [ "$pr_num" = "$FAKE_GH_STATE_NUMBER" ] && [ -n "$FAKE_GH_STATE_URL" ]; then printf "%s\\n" "$FAKE_GH_STATE_URL"; exit 0; fi',
         '  if [ -n "${FAKE_GH_PR_URL:-}" ]; then printf "%s\\n" "$FAKE_GH_PR_URL"; exit 0; fi',
         '  exit 1',
@@ -311,6 +340,39 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     gitIn(localDir, 'commit', '-m', 'initial');
     gitIn(localDir, 'push', '-u', 'origin', 'main');
     return { localDir, originDir };
+}
+
+function makeHumanReviewPendingStatus(taskId: string, branch: string): Record<string, unknown> {
+    return {
+        ...makeCompleteStatus(taskId, branch),
+        status: 'human_review',
+        phases: {
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'done', agent: 'claude', verdict: 'approved' },
+            qa: { status: 'done', agent: 'claude' },
+            human_review: { status: 'pending', agent: 'human' },
+        },
+    };
+}
+
+function setupDivergentBaseRepo(dir: string, taskId: string): { localDir: string; shortSha: string } {
+    const { localDir } = makeGitFixture(dir);
+    fs.writeFileSync(path.join(localDir, 'unpushed-scaffold.txt'), 'local base only\n', 'utf8');
+    gitIn(localDir, 'add', 'unpushed-scaffold.txt');
+    gitIn(localDir, 'commit', '-m', 'task(other): commit artifacts pre-pipeline');
+    const shortSha = execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], {
+        cwd: localDir,
+        encoding: 'utf8',
+    }).trim();
+
+    const branch = `task/${taskId}`;
+    gitIn(localDir, 'checkout', '-b', branch);
+    writeTaskStatus(path.join(localDir, 'tasks'), taskId, makeHumanReviewPendingStatus(taskId, branch));
+    writeAffectedFilesSpec(path.join(localDir, 'tasks'), taskId, []);
+    return { localDir, shortSha };
 }
 
 function makeCompleteStatus(taskId: string, branch: string): Record<string, unknown> {
@@ -1175,6 +1237,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
         });
 
         assert.equal(result.status, 0, result.stderr);
+        assert.equal((result.stdout.match(/git push origin main/g) ?? []).length, 1);
         const rootTaskStatus = spawnSync('git', ['status', '--porcelain', '--', `tasks/${taskId}`], {
             cwd: localDir,
             encoding: 'utf8',
@@ -1184,6 +1247,33 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
         assert.match(fs.readFileSync(path.join(worktreeDir, 'docs', 'pipeline-invocations.md'), 'utf8'), /implement-ssot/);
         assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), 'utf8'), 'root scaffold\n');
         assert.equal(fs.readFileSync(path.join(worktreeDir, 'tasks', taskId, 'handoff.md'), 'utf8'), 'worktree handoff\n');
+
+        const secondResult = spawnSync(process.execPath, [
+            '--import',
+            path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs'),
+            '--import',
+            TSX_LOADER,
+            '-e',
+            [
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/phases/implement.ts')).href)})`,
+                '.then(async m => {',
+                '  const fs = await import("node:fs");',
+                `  const status = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(worktreeDir, 'tasks', taskId, 'status.json'))}, 'utf8'));`,
+                '  await m.runImplementPhase({',
+                `    tasks: [{ taskId: ${JSON.stringify(taskId)}, title: ${JSON.stringify(taskId)}, specReviewVerdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 0, rerouteCount: 0, status }],`,
+                "    tier: 'full',",
+                '    isBundle: false,',
+                '  }, false, null);',
+                '})',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('\n'),
+        ], {
+            cwd: localDir,
+            encoding: 'utf8',
+            env: childEnv,
+        });
+        assert.equal(secondResult.status, 0, secondResult.stderr);
+        assert.doesNotMatch(secondResult.stdout, /git push origin main/);
 
         if (fs.existsSync(worktreeDir)) {
             spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
@@ -2011,6 +2101,70 @@ void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree re
         const ghLog = fs.readFileSync(ghLogPath, 'utf8');
         assert.match(ghLog, /^pr list /m);
         assert.match(ghLog, /^pr create /m);
+    });
+});
+
+void test('classifyMergeOutcome tolerates clean gh merge exits', () => {
+    assert.equal(classifyMergeOutcome({ exitOk: true, mergeConfirmed: false }), 'tolerate');
+});
+
+void test('classifyMergeOutcome tolerates failed gh exits when the attempted PR is merged', () => {
+    assert.equal(classifyMergeOutcome({ exitOk: false, mergeConfirmed: true }), 'tolerate');
+});
+
+void test('classifyMergeOutcome fails failed gh exits when the attempted PR is not merged', () => {
+    assert.equal(classifyMergeOutcome({ exitOk: false, mergeConfirmed: false }), 'fail');
+});
+
+void test('main --push blocks when local base has unpushed commits', () => {
+    withTempDir('run-task-base-divergence-block-', dir => {
+        const taskId = 'task-a';
+        const { localDir, shortSha } = setupDivergentBaseRepo(dir, taskId);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), localDir);
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, new RegExp(shortSha));
+        assert.match(result.stderr, /--allow-divergent-base/);
+        assert.match(result.stderr, /Base divergence detected/);
+    });
+});
+
+void test('main --push --allow-divergent-base warns and proceeds past the divergence gate', () => {
+    withTempDir('run-task-base-divergence-bypass-', dir => {
+        const taskId = 'task-a';
+        const { localDir, shortSha } = setupDivergentBaseRepo(dir, taskId);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push', '--allow-divergent-base'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), localDir);
+
+        const output = combinedOutput(result);
+        assert.match(output, /--allow-divergent-base override/);
+        assert.match(output, new RegExp(shortSha));
+        assert.doesNotMatch(output, /Base divergence detected/);
     });
 });
 

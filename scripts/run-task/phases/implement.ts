@@ -45,6 +45,11 @@ export async function runImplementPhase(
     const worktreeAlreadyCreated = primaryStatus.worktree === true && Boolean(primaryStatus.branch);
     if (!worktreeAlreadyCreated) {
         commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
+        const scaffoldBase = getBaseBranch(taskIds);
+        info(
+            `Scaffold committed to local ${scaffoldBase}; run ` +
+            `\`git push origin ${scaffoldBase}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`,
+        );
     }
     ensureBranch(taskIds, { force });
 

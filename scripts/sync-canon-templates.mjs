@@ -1,15 +1,27 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import path, { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 import { CANON_OWNED, DELIMITED } from '../src/lib/canon-owned.ts';
 
-export const WHOLESALE_SYNC = [...CANON_OWNED, '.codex/config.toml'];
+export const WHOLESALE_SYNC = [...CANON_OWNED];
 export const DELIMITED_SYNC = DELIMITED;
 
 const CANON_END = '<!-- canon:end -->';
 const CANON_START_RE = /<!-- canon:start[^>]* -->/;
+
+// Canon's own orchestrator source trees. Backtick refs to anything under
+// these prefixes inside canon-managed content (CANON_OWNED files or the
+// canon:start..canon:end region of DELIMITED files) break on adopter
+// repos — those files don't exist there. The leak surfaces as broken
+// refs in `docs-refs-check.mjs` at adopter upgrade time; this guard
+// catches it on the canon-ai-dev side before sync, so the leak never
+// reaches `templates/`. Extend this list if a future split adds a new
+// canon-internal source tree. Adopter-visible paths (`tasks/<id>/...`,
+// `docs/patterns.md`, `status.json`, etc.) are NOT canon-internal and
+// must not be added here.
+export const CANON_INTERNAL_PATH_PREFIXES = ['scripts/run-task/'];
 
 /**
  * Merge root-owned canon content with the templates-side outside-delimiter tail.
@@ -38,6 +50,107 @@ function getTemplatesRelPath(relPath) {
 
 function hasCanonMarkers(content) {
     return CANON_START_RE.test(content) && content.indexOf(CANON_END) !== -1;
+}
+
+function isCanonInternalTarget(target, sourceRel) {
+    // Canon-ai-dev convention: refs are repo-root-relative
+    // (e.g., `scripts/run-task/main.ts` in any doc, at any depth).
+    if (CANON_INTERNAL_PATH_PREFIXES.some(prefix => target.startsWith(prefix))) {
+        return true;
+    }
+    // Also normalize source-file-relative refs (e.g., `../scripts/run-task/...`
+    // from a nested doc like `docs/pipeline-orchestrator.md`). Codex P2 on the
+    // 1.6.1 hotfix-leak diff flagged this bypass — without normalization, a
+    // maintainer could slip a canon-internal ref past the literal-prefix
+    // check by using a relative form.
+    if (target.startsWith('http://') || target.startsWith('https://')) return false;
+    if (target.startsWith('/')) return false;
+    const sourceDir = path.posix.dirname(sourceRel);
+    const resolved = path.posix.normalize(path.posix.join(sourceDir, target));
+    // Reject paths that escape repo root — they can't resolve to a
+    // canon-internal file in this checkout.
+    if (resolved.startsWith('..')) return false;
+    return CANON_INTERNAL_PATH_PREFIXES.some(prefix => resolved.startsWith(prefix));
+}
+
+/**
+ * Scan markdown content for backtick refs to canon-internal source paths.
+ * Returns `[{ line, target }, ...]` with line numbers 1-based, relative to
+ * the start of `content`. Skips code-fenced blocks (``` and ~~~) so example
+ * snippets in fenced regions are not flagged. `sourceRel` is the
+ * repo-relative POSIX path of the file the content came from — used to
+ * resolve source-file-relative refs (`../scripts/run-task/...`) before
+ * the canon-internal prefix check. Callers that scan only a subset of a
+ * file (e.g., the canon:start..canon:end region) must offset the
+ * returned line numbers themselves.
+ */
+function findCanonInternalRefs(content, sourceRel) {
+    const findings = [];
+    const lines = content.split(/\r?\n/);
+    let inFence = false;
+    for (let i = 0; i < lines.length; i += 1) {
+        const trimmed = lines[i].trim();
+        if (/^(```|~~~)/.test(trimmed)) {
+            inFence = !inFence;
+            continue;
+        }
+        if (inFence) continue;
+        for (const match of lines[i].matchAll(/`([^`]+)`/g)) {
+            if (isCanonInternalTarget(match[1], sourceRel)) {
+                findings.push({ line: i + 1, target: match[1] });
+            }
+        }
+    }
+    return findings;
+}
+
+/**
+ * Run `findCanonInternalRefs` over a substring of `content` (chars
+ * `[startIdx, endIdx)`) and return findings with line numbers offset to
+ * the whole-file frame so error messages cite the actual line a
+ * maintainer would open in their editor.
+ */
+function scanRegionForCanonInternalRefs(content, startIdx, endIdx, sourceRel) {
+    if (endIdx <= startIdx) return [];
+    const before = content.slice(0, startIdx);
+    const region = content.slice(startIdx, endIdx);
+    const leadingLines = before.split(/\r?\n/).length - 1;
+    return findCanonInternalRefs(region, sourceRel).map(finding => ({
+        line: finding.line + leadingLines,
+        target: finding.target,
+    }));
+}
+
+/**
+ * Scan only the canon:start..canon:end region of a DELIMITED file.
+ * Returns `[]` if the file lacks valid delimiters (a separate structural
+ * error is raised elsewhere in `buildSyncPlan`).
+ */
+function findCanonInternalRefsInDelimitedRegion(content, sourceRel) {
+    const startMatch = content.match(CANON_START_RE);
+    if (!startMatch) return [];
+    const endIdx = content.indexOf(CANON_END);
+    if (endIdx === -1) return [];
+    return scanRegionForCanonInternalRefs(content, startMatch.index + startMatch[0].length, endIdx, sourceRel);
+}
+
+/**
+ * Scan the preserved tail (everything after `<!-- canon:end -->`) of a
+ * DELIMITED file. The tail in `templates/<file>` ships to adopters as
+ * their default starting content below the canon-managed region — a
+ * canon-internal ref there still leaks even though it's outside the
+ * synced canon-region. Codex P2 on the 1.6.1 hotfix-leak diff caught
+ * this: scanning only the source canon-region missed
+ * `mergeDelimitedForSync`'s tail-preservation path.
+ *
+ * Callers pass `templates/<file>` content here; the root source tail is
+ * canon-ai-dev local-only and never ships, so scanning it would only
+ * produce false positives.
+ */
+function findCanonInternalRefsInDelimitedTail(content, sourceRel) {
+    const endIdx = content.indexOf(CANON_END);
+    if (endIdx === -1) return [];
+    return scanRegionForCanonInternalRefs(content, endIdx + CANON_END.length, content.length, sourceRel);
 }
 
 /**
@@ -154,6 +267,67 @@ function buildSyncPlan(repoRoot) {
             targetRel,
             nextContent: merged,
         });
+    }
+
+    // Third pass: canon-internal-leak scan. Catches the class of mistake
+    // where a maintainer adds a `scripts/run-task/...` ref to a canon-managed
+    // doc (good for canon-ai-dev navigation, broken for adopters since
+    // those files don't ship). Pre-1.6.1 release path: 4 such refs leaked
+    // into 1.6.0 and broke `docs-refs-check.mjs` on first adopter upgrade.
+    // Scanned set: WHOLESALE_SYNC markdown (.md) files in full, and the
+    // canon:start..canon:end region of DELIMITED files. JSON/template
+    // entries in WHOLESALE_SYNC (e.g., `.canon/templates/status.json`) are
+    // skipped — the backtick-ref grammar is markdown-specific.
+    for (const relPath of WHOLESALE_SYNC) {
+        if (!relPath.endsWith('.md')) continue;
+        const sourcePath = join(repoRoot, relPath);
+        if (!existsSync(sourcePath)) continue;
+        const content = readFileSync(sourcePath, 'utf8');
+        for (const leak of findCanonInternalRefs(content, relPath)) {
+            errors.push(
+                `[canon-internal-leak] ${relPath}:${leak.line} — \`${leak.target}\` is canon-internal and must not appear in canon-managed content (adopters don't have this file; ref would break their docs-refs-check at upgrade time)`,
+            );
+        }
+    }
+
+    for (const relPath of DELIMITED_SYNC) {
+        if (!relPath.endsWith('.md')) continue;
+        const sourcePath = join(repoRoot, relPath);
+        if (existsSync(sourcePath)) {
+            const sourceContent = readFileSync(sourcePath, 'utf8');
+            for (const leak of findCanonInternalRefsInDelimitedRegion(sourceContent, relPath)) {
+                errors.push(
+                    `[canon-internal-leak] ${relPath}:${leak.line} — \`${leak.target}\` is canon-internal and must not appear in canon-managed content (adopters don't have this file; ref would break their docs-refs-check at upgrade time)`,
+                );
+            }
+        }
+        // The templates-side tail (post canon:end) ships verbatim to
+        // adopters as their default starting content. A canon-internal
+        // ref there leaks even though it's outside the synced canon-region.
+        const targetRel = getTemplatesRelPath(relPath);
+        const targetPath = getTargetPath(repoRoot, relPath);
+        if (existsSync(targetPath)) {
+            const targetContent = readFileSync(targetPath, 'utf8');
+            for (const leak of findCanonInternalRefsInDelimitedTail(targetContent, targetRel)) {
+                errors.push(
+                    `[canon-internal-leak] ${targetRel}:${leak.line} — \`${leak.target}\` is canon-internal and must not appear in canon-managed content (adopters don't have this file; ref would break their docs-refs-check at upgrade time)`,
+                );
+            }
+        } else if (existsSync(sourcePath)) {
+            // First-create path: `buildSyncPlan` writes the full source
+            // content (including its post-canon:end tail) to a missing
+            // template. Canon-internal refs in the source tail are
+            // legitimate there (canon-ai-dev local notes), but they'd
+            // ship to adopters as the new template tail on first-create.
+            // Codex P1 on the 1.6.1 hotfix-leak diff: scanning only the
+            // existing template tail missed this case entirely.
+            const sourceContent = readFileSync(sourcePath, 'utf8');
+            for (const leak of findCanonInternalRefsInDelimitedTail(sourceContent, relPath)) {
+                errors.push(
+                    `[canon-internal-leak] ${relPath}:${leak.line} — \`${leak.target}\` in source tail would ship as ${targetRel}'s default tail on first-create (adopters don't have this file; move the ref above \`<!-- canon:end -->\` only if it should be canon-managed, otherwise drop it or create ${targetRel} manually with the desired adopter-default tail)`,
+                );
+            }
+        }
     }
 
     return { plan, errors };

@@ -58,6 +58,7 @@ void test('parseArgs recognizes --full-send', () => {
         dryRun: false,
         fullSend: true,
         force: false,
+        allowDivergentBase: false,
     });
 });
 
@@ -76,6 +77,7 @@ void test('parseArgs recognizes --force alongside --full-send', () => {
         dryRun: false,
         fullSend: true,
         force: true,
+        allowDivergentBase: false,
     });
 });
 
@@ -94,6 +96,26 @@ void test('parseArgs recognizes --force without --full-send', () => {
         dryRun: false,
         fullSend: false,
         force: true,
+        allowDivergentBase: false,
+    });
+});
+
+void test('parseArgs recognizes --allow-divergent-base', () => {
+    const result = runParseArgs(['--allow-divergent-base', 'task-id']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout) as Record<string, unknown>, {
+        taskIds: ['task-id'],
+        interactive: false,
+        step: false,
+        expectPhase: null,
+        push: false,
+        pr: false,
+        reroute: false,
+        ship: false,
+        dryRun: false,
+        fullSend: false,
+        force: false,
+        allowDivergentBase: true,
     });
 });
 

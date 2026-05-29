@@ -256,7 +256,7 @@ Drop this into any repo and you have:
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
 - `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — workflow rules and per-agent guidance
 - `docs/` — knowledge corpus templates with detailed scaffolding
-- `.codex/config.toml` / `.claude/settings.json` — agent CLI configs
+- `.claude/settings.json` — Claude Code permissions + SessionStart hook
 - Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-review` (pre-flight a spec), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 

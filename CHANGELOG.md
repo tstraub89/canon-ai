@@ -2,6 +2,30 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [Unreleased]
+
+## [1.7.0] — 2026-05-29
+
+### Added
+
+- **`--push` / `--pr` / `--ship` base-divergence gate.** Hard-fails when local `<base_branch>` is ahead of `origin/<base_branch>`, listing the colliding commits with a `git push origin <base>` fix and an `--allow-divergent-base` override. Runs before the file-allow-list gate (so the root-cause message replaces the misleading per-file "drift" error) and before `--ship`'s merge (so divergent commits can't conflict the post-merge pull and strand ship half-complete). The new `--allow-divergent-base` flag bypasses only this check; `--force` still bypasses only the file-allow-list gate.
+- **Scaffold push reminder.** The first `canon run` on a task prints a one-time reminder to `git push origin <base>` after the scaffold commits land on the local base branch. Fires once per bundle, never on reroutes or review iterations; informational only — `canon run` never pushes.
+
+### Changed
+
+- **Canon runs every fresh Codex `exec` with `--sandbox workspace-write`** regardless of the operator's `~/.codex/config.toml` state. Without an explicit baseline, the pipeline previously ran Codex with whatever sandbox the operator's HOME happened to declare. Resumed sessions still inherit their original sandbox.
+
+### Removed
+
+- **`canon init` no longer creates a project-local `.codex/config.toml`.** Codex CLI only reads `~/.codex/config.toml`. Adopters who want personal Codex defaults — sandbox, MCP servers, model preferences — set them in `~/.codex/config.toml`. `canon doctor`'s codex-trust check is unaffected.
+
+### Fixed
+
+- **Canon-shipped docs no longer reference orchestrator source paths that don't exist in adopter repos.** `CLAUDE.md`, `docs/pipeline-orchestrator.md`, and the `canon-review` skill referenced canon-internal paths that broke `npm run docs-refs-check` for adopters after upgrading to 1.6.0.
+- **`docs-refs-check` recognizes line ranges separated by en-dash (U+2013) and em-dash (U+2014)**, not just ASCII hyphen. Citations like `file.ts:42–50` are no longer flagged as missing refs.
+- **`--pr` base-drift gate honors files declared in `## Amendment` / `## Amendment Round N` sections of `spec.md`.** `parseAffectedFilesFromSpec` previously walked only `## Design`, forcing operators to duplicate amendment-added files into the main Affected Files table to clear the gate.
+- **`canon run --ship` tolerates a branch already deleted by GitHub's "auto-delete head branches".** When `gh pr merge --squash --delete-branch` fails on branch deletion but the specific attempted PR is confirmed merged, ship warns and completes teardown instead of dying after the irreversible merge.
+
 ## [1.6.0] — 2026-05-28
 
 ### Added

@@ -127,6 +127,7 @@ export type CliArgs = {
     dryRun: boolean;
     fullSend: boolean;
     force: boolean;
+    allowDivergentBase: boolean;
 };
 
 export type TaskContext = {

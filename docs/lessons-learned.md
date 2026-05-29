@@ -66,6 +66,12 @@ The pitfall itself ("when adding a code path on a shared surface, route it throu
 
 When rewiring a resolver function (`taskDirFor`) to route through another resolver (`resolveTaskCwd`), check whether the second resolver calls the first — if it does, the naive rewire creates infinite recursion. The fix is to extract a private function that hard-codes the pre-rewire behavior (REPO_ROOT-anchored lookup), use it inside the inner resolver to break the cycle, and let the public function use the new routing for everyone else. The previous attempt on the same codebase (parser-cwd task) threaded an explicit `cwd` parameter through callers instead; Codex spec_review ran 3 rounds catching missed call sites before the task was abandoned. The private-function approach is ~4 lines and requires zero call-site changes. When you see "route X through resolver Y but Y already calls X," reach for the private-function extraction, not parameter threading.
 
+### Adding a `CliArgs` field touches three files — list all three in Affected Files
+
+*(2026-05-29, source: base-divergence-gate)*
+
+`CliArgs` is defined in `scripts/run-task/types.ts`; `scripts/run-task/cli.ts` only imports it. Any spec that adds a field to `CliArgs` must list both `types.ts` (type definition) **and** `cli.ts` (parser + usage text) in Affected Files — missing `types.ts` causes a type-check block before Codex can prove the implementation compiles. A third file is also in scope: `tests/run-task-cli.test.ts` asserts the full parsed object shape, so a new field that changes the return type of `parseArgs()` will fail the existing parser shape tests. Omitting it from Affected Files triggers the "outside spec scope" deviation noted in the handoff. Prevention: before finalizing any spec that adds a CLI flag, grep for `CliArgs` in `types.ts` and check `tests/run-task-cli.test.ts` for a parser-shape snapshot test — both are cheap finds. Canonical spec: `base-divergence-gate` AC-4.
+
 ### Parse structured author-facing input cell-by-cell with explicit rejection, not permissive whole-string regex
 
 *(2026-05-19, source: handoff-changes-table-strict-parser — v1.3.0 release)*

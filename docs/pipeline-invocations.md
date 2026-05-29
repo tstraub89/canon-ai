@@ -228,3 +228,12 @@
 | 2026-05-26T06:41:58.069Z | codex-code-review-phase | spec | claude | opus | 0 | 102.4s | 1789972 | ok |
 | 2026-05-26T06:43:04.287Z | codex-code-review-phase | spec_review | codex | gpt-5.5 | 3 | 66.2s | 6806882 | ok |
 | 2026-05-26T06:52:01.123Z | codex-code-review-phase | plan | claude | sonnet | 0 | 536.8s | 3659376 | ok |
+| 2026-05-29T12:01:18.095Z | base-divergence-gate | spec_review | codex | gpt-5.5 | 0 | 155.1s | 1042861 | ok |
+| 2026-05-29T12:04:05.046Z | base-divergence-gate | spec_review | codex | gpt-5.5 | 1 | 69.2s | 1722827 | ok |
+| 2026-05-29T15:19:47.330Z | base-divergence-gate | spec_review | codex | gpt-5.5 | 0 | 104.2s | 2859102 | ok |
+| 2026-05-29T16:38:25.505Z | base-divergence-gate | spec_review | codex | gpt-5.5 | 1 | 83.6s | 4064945 | ok |
+| 2026-05-29T16:41:59.817Z | base-divergence-gate | spec_review | codex | gpt-5.5 | 2 | 90.6s | 5481306 | ok |
+| 2026-05-29T16:52:43.873Z | base-divergence-gate | plan | claude | sonnet | 0 | 394.2s | 1198291 | ok |
+| 2026-05-29T17:10:50.094Z | base-divergence-gate | implement | codex | gpt-5.5 | 0 | 1085.4s | 7224796 | ok |
+| 2026-05-29T17:13:57.889Z | base-divergence-gate | code_review | claude | opus | 0 | 187.2s | 1879437 | ok |
+| 2026-05-29T17:18:10.281Z | base-divergence-gate | qa | claude | sonnet | 0 | 252.4s | 1108368 | ok |

@@ -150,6 +150,28 @@ export function commitsAheadOfBase(branchName: string, baseBranch: string): numb
     return Number.isNaN(count) ? 0 : count;
 }
 
+export function getUnpushedBaseCommits(
+    baseBranch: string,
+    cwd: string,
+): { commits: { sha: string; subject: string }[]; ok: boolean; stderr: string } {
+    const result = gitSafeAtRaw(cwd, 'log', `origin/${baseBranch}..${baseBranch}`, '--format=%H%x09%s');
+    if (!result.ok) {
+        return { commits: [], ok: false, stderr: result.stderr };
+    }
+
+    const commits: { sha: string; subject: string }[] = [];
+    for (const line of result.stdout.split('\n')) {
+        if (!line.trim()) continue;
+        const tabIndex = line.indexOf('\t');
+        if (tabIndex === -1) continue;
+        commits.push({
+            sha: line.slice(0, tabIndex),
+            subject: line.slice(tabIndex + 1),
+        });
+    }
+    return { commits, ok: true, stderr: '' };
+}
+
 export type ScopedDiff = {
     diff: string;
     truncated: boolean;

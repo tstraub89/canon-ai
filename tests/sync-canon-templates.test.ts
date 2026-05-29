@@ -334,6 +334,256 @@ void test('findSyncErrors flags a delimited pair where neither side has canon ma
     });
 });
 
+// --- Canon-internal-leak guard ------------------------------------------
+// Backtick refs to canon's orchestrator source (`scripts/run-task/...`)
+// must not appear in canon-managed shipped content — adopter repos don't
+// have those files, and the leak surfaces as broken refs in their
+// `docs-refs-check.mjs` at upgrade time. Pre-1.6.1, four such refs leaked
+// into 1.6.0 (CLAUDE.md and docs/pipeline-orchestrator.md), motivating
+// this guard.
+
+void test('findSyncErrors flags canon-internal leak in a wholesale-synced markdown file', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        writeFile(
+            root,
+            'docs/pipeline-orchestrator.md',
+            'See `commitHumanReviewFiles` in `scripts/run-task/main.ts` for details.\n',
+        );
+        writeFile(
+            root,
+            'templates/docs/pipeline-orchestrator.md',
+            'See `commitHumanReviewFiles` in `scripts/run-task/main.ts` for details.\n',
+        );
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        assert.ok(
+            errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*scripts\/run-task\/main\.ts/.test(e)),
+            `expected canon-internal-leak error for docs/pipeline-orchestrator.md; got: ${errors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors flags canon-internal leak inside the canon-delimited region of a DELIMITED file', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const leaked = [
+            '# AGENTS',
+            '',
+            '<!-- canon:start -->',
+            'body line',
+            'See `scripts/run-task/git.ts` for the auto-commit logic.',
+            '<!-- canon:end -->',
+            'adopter tail',
+            '',
+        ].join('\n');
+        writeFile(root, 'AGENTS.md', leaked);
+        writeFile(root, 'templates/AGENTS.md', leaked);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        // The leak is on file-line 5 (1-indexed). The guard must report
+        // that file-line number, not a region-offset line number.
+        assert.ok(
+            errors.some(e => /\[canon-internal-leak\] AGENTS\.md:5 .*scripts\/run-task\/git\.ts/.test(e)),
+            `expected canon-internal-leak error at AGENTS.md:5; got: ${errors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors does NOT flag canon-internal refs in the ROOT-side outside-delimiter tail of a DELIMITED file', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        // The root-side tail (below canon:end in AGENTS.md / CLAUDE.md /
+        // CODEX.md at REPO_ROOT) is canon-ai-dev local-only — never ships.
+        // Refs to canon internals there are fine.
+        const withRootTailLeak = [
+            '# AGENTS',
+            '',
+            '<!-- canon:start -->',
+            'clean body',
+            '<!-- canon:end -->',
+            '',
+            'Maintainer note: see `scripts/run-task/main.ts` for the impl.',
+            '',
+        ].join('\n');
+        const cleanTemplate = [
+            '# AGENTS',
+            '',
+            '<!-- canon:start -->',
+            'clean body',
+            '<!-- canon:end -->',
+            '',
+            'adopter-default tail (clean)',
+            '',
+        ].join('\n');
+        writeFile(root, 'AGENTS.md', withRootTailLeak);
+        writeFile(root, 'templates/AGENTS.md', cleanTemplate);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        const leakErrors = errors.filter(e => e.startsWith('[canon-internal-leak]'));
+        assert.deepEqual(
+            leakErrors,
+            [],
+            `expected no canon-internal-leak errors for root-side tail content; got: ${leakErrors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors flags canon-internal leak in the TEMPLATES-side preserved tail of a DELIMITED file', () => {
+    // Codex P2 finding: the templates-side tail (post canon:end) is what
+    // ships to adopters as their default starting content. A leak there
+    // bypasses the source canon-region scan but still reaches adopters.
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const cleanRoot = [
+            '# AGENTS',
+            '',
+            '<!-- canon:start -->',
+            'clean body',
+            '<!-- canon:end -->',
+            '',
+            'canon-ai-dev maintainer notes (do not ship)',
+            '',
+        ].join('\n');
+        const templateWithTailLeak = [
+            '# AGENTS',
+            '',
+            '<!-- canon:start -->',
+            'clean body',
+            '<!-- canon:end -->',
+            '',
+            'Adopter tail starting content — see `scripts/run-task/main.ts` here.',
+            '',
+        ].join('\n');
+        writeFile(root, 'AGENTS.md', cleanRoot);
+        writeFile(root, 'templates/AGENTS.md', templateWithTailLeak);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        assert.ok(
+            errors.some(e => /\[canon-internal-leak\] templates\/AGENTS\.md:7 .*scripts\/run-task\/main\.ts/.test(e)),
+            `expected canon-internal-leak error at templates/AGENTS.md:7; got: ${errors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors does NOT flag canon-internal refs inside fenced code blocks', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        // Fenced blocks are example/illustration territory — refs inside
+        // them are not adopter-targeted assertions. Fence-aware scanning
+        // mirrors docs-refs-check.mjs behavior.
+        const fenced = [
+            '',
+            'Example only — do not copy:',
+            '',
+            '```',
+            'grep scripts/run-task/main.ts',
+            'cat `scripts/run-task/git.ts`',
+            '```',
+            '',
+        ].join('\n');
+        writeFile(root, 'docs/pipeline-orchestrator.md', fenced);
+        writeFile(root, 'templates/docs/pipeline-orchestrator.md', fenced);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        const leakErrors = errors.filter(e => e.startsWith('[canon-internal-leak]'));
+        assert.deepEqual(
+            leakErrors,
+            [],
+            `expected no canon-internal-leak errors for fenced refs; got: ${leakErrors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors flags canon-internal leaks reached via source-file-relative refs', () => {
+    // Codex P2 finding on the 1.6.1 hotfix-leak diff: a maintainer can
+    // bypass the literal-prefix check by writing the ref as a relative
+    // path from a nested doc, e.g., `../scripts/run-task/main.ts` from
+    // `docs/pipeline-orchestrator.md`. Normalization resolves both forms
+    // to the same canon-internal file.
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const relativeLeak = 'See `../scripts/run-task/main.ts` for the impl.\n';
+        writeFile(root, 'docs/pipeline-orchestrator.md', relativeLeak);
+        writeFile(root, 'templates/docs/pipeline-orchestrator.md', relativeLeak);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        assert.ok(
+            errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*\.\.\/scripts\/run-task\/main\.ts/.test(e)),
+            `expected canon-internal-leak error for relative ref; got: ${errors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors does NOT flag refs that resolve outside the repo root', () => {
+    // A relative ref that escapes the repo (`../../something`) cannot
+    // resolve to a canon-internal file — it points outside the checkout
+    // and would itself be a broken ref. Don't false-positive on it.
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const escapingRef = 'See `../../somewhere-else/main.ts` for details.\n';
+        writeFile(root, 'docs/pipeline-orchestrator.md', escapingRef);
+        writeFile(root, 'templates/docs/pipeline-orchestrator.md', escapingRef);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        const leakErrors = errors.filter(e => e.startsWith('[canon-internal-leak]'));
+        assert.deepEqual(
+            leakErrors,
+            [],
+            `expected no canon-internal-leak errors for repo-escaping refs; got: ${leakErrors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors flags canon-internal leak in the source tail on first-create of a DELIMITED template', () => {
+    // Codex P1 on the 1.6.1 hotfix-leak diff: when `templates/<file>` is
+    // absent, `buildSyncPlan()` writes the FULL source content (including
+    // the source tail) as the new template's content. Refs to canon
+    // internals in the source tail are legitimate there for canon-ai-dev's
+    // local notes, but they'd ship to adopters as the template's default
+    // tail. The guard must scan the source tail on this first-create path.
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const sourceWithTailLeak = [
+            '# AGENTS',
+            '',
+            '<!-- canon:start -->',
+            'clean canon-managed body',
+            '<!-- canon:end -->',
+            '',
+            'canon-ai-dev maintainer note: see `scripts/run-task/main.ts` for the impl.',
+            '',
+        ].join('\n');
+        writeFile(root, 'AGENTS.md', sourceWithTailLeak);
+        // Remove the seeded templates/AGENTS.md so we hit the first-create
+        // branch.
+        fs.rmSync(path.join(root, 'templates/AGENTS.md'));
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        assert.ok(
+            errors.some(e => /\[canon-internal-leak\] AGENTS\.md:7 .*scripts\/run-task\/main\.ts.*source tail would ship/.test(e)),
+            `expected first-create source-tail canon-internal-leak error; got: ${errors.join(' | ')}`,
+        );
+    });
+});
+
+void test('checkSync CLI exits 1 with a canon-internal-leak message when a leak is present', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const leaky = 'See `scripts/run-task/validation.ts` for base-drift checks.\n';
+        writeFile(root, 'docs/pipeline-orchestrator.md', leaky);
+        writeFile(root, 'templates/docs/pipeline-orchestrator.md', leaky);
+
+        const result = runCheckCli(root);
+        assert.equal(result.status, 1, result.stdout);
+        assert.match(
+            result.stderr,
+            /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*scripts\/run-task\/validation\.ts/,
+        );
+        assert.doesNotMatch(result.stdout, /All canon-managed files in sync/);
+    });
+});
+
 void test('applySync CLI exits 1 (not 0) when errors are present', () => {
     withTempDir(root => {
         // Set up a clean wholesale pair AND a broken delimited pair.

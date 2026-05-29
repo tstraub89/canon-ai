@@ -78,6 +78,7 @@ let cliArgs: CliArgs = {
     dryRun: false,
     fullSend: false,
     force: false,
+    allowDivergentBase: false,
 };
 let ghAvailable = false;
 // Claude session ID captured after each Claude-run phase for session resumption.
@@ -90,6 +91,12 @@ let lastCodexExitStatus = 0;
 
 export function setCliArgsForTest(next: Partial<CliArgs>): void {
     cliArgs = { ...cliArgs, ...next };
+}
+
+export function classifyMergeOutcome(opts: { exitOk: boolean; mergeConfirmed: boolean }): 'tolerate' | 'fail' {
+    if (opts.exitOk) return 'tolerate';
+    if (opts.mergeConfirmed) return 'tolerate';
+    return 'fail';
 }
 
 // ── Output helpers ─────────────────────────────────────────────────────────
@@ -905,6 +912,19 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     }
 
     const baseBranch = splitGit.getBaseBranch(taskIds);
+    const baseDivergenceResult = splitValidation.verifyBaseDivergence(baseBranch, cwd);
+    if (!baseDivergenceResult.ok) {
+        die(`--pr aborted: git error checking base divergence: ${baseDivergenceResult.stderr || 'unknown error'}`);
+    } else if (!baseDivergenceResult.fetchFailed && baseDivergenceResult.commits.length > 0) {
+        if (!cliArgs.allowDivergentBase) {
+            die(splitValidation.verifyBaseDivergenceFromData(baseDivergenceResult.commits));
+        }
+        warn(
+            `--allow-divergent-base override: bypassing base-divergence gate. Divergent commits:\n` +
+            baseDivergenceResult.commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'),
+        );
+    }
+
     const baseDriftResult = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
     if (baseDriftResult.fetchFailed) {
         // warn already emitted by verifyBaseDrift; offline runs keep the prior best-effort behavior.
@@ -1374,6 +1394,12 @@ function getMergedPRHeadSha(prNum: number): string | null {
     return sha;
 }
 
+function isPRMerged(prNum: number): boolean {
+    if (!ghAvailable) return false;
+    const result = splitGit.runCommand('gh', ['pr', 'view', String(prNum), '--json', 'state', '--jq', '.state']);
+    return result.ok && result.stdout.trim() === 'MERGED';
+}
+
 /**
  * Verify there is no open PR for the task's branch. Called after mergeOpenPRsAndPull
  * returned false (no PR was merged this run) — a defensive cross-check against gh
@@ -1474,30 +1500,19 @@ function mergeOpenPRsAndPull(
         splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via squash...`);
         // --delete-branch removes the remote branch; local cleanup happens post-teardown.
         const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), '--squash', '--delete-branch']);
-        // `gh pr merge --delete-branch` deletes remote then local branch. When a
-        // worktree holds the local branch, the local-delete step fails after the
-        // merge AND remote-delete already succeeded — gh exits non-zero on a
-        // SUCCESSFUL merge. The function-level comment above documents that
-        // local-delete failure is expected here; tolerate that specific stderr.
-        // Without this guard, --ship would die after the PR was actually merged,
-        // leaving the operator in a half-cleaned state (PR merged, worktree intact,
-        // local branch present) requiring manual recovery.
-        const localDeleteFailed = !result.ok && result.stderr.includes('used by worktree');
-        if (!result.ok && !result.stderr.includes('already merged') && !localDeleteFailed) {
+        const outcome = classifyMergeOutcome({
+            exitOk: result.ok,
+            mergeConfirmed: result.ok ? true : isPRMerged(prNum),
+        });
+        if (outcome === 'fail') {
             splitCli.die(`Failed to merge PR #${prNum}: ${result.stderr}`);
         }
-        if (localDeleteFailed) {
-            splitCli.info(`PR #${prNum} merged; local branch delete deferred until worktree teardown.`);
-            // gh's --delete-branch on a non-zero exit does not guarantee both
-            // remote and local deletes succeeded — the local-delete failure
-            // could have aborted the remote-delete too in some failure modes.
-            // Setting anyMerged = true below SKIPS the downstream
-            // assertOriginTaskBranchAbsent() safety net (only runs on the
-            // !merged path). Apply the same verification here for the task
-            // IDs that mapped to this branch so a stale origin ref doesn't
-            // silently survive --ship. The function dies on mismatch and
-            // auto-recovers when the PR is confirmed merged with matching
-            // head SHA.
+        if (!result.ok) {
+            splitCli.warn(`PR #${prNum} merged; branch-delete step failed and was tolerated: ${result.stderr.trim() || 'unknown error'}`);
+            // gh's --delete-branch on a non-zero exit does not guarantee both remote
+            // and local deletes succeeded. Setting anyMerged = true below skips the
+            // downstream !merged safety net, so verify the remote branch is absent
+            // here for every task mapped to this branch.
             for (const taskId of taskIds) {
                 const branchName = branchByTaskId.get(taskId);
                 if (branchName === branch) {
@@ -1686,6 +1701,19 @@ function shipTasks(taskIds: string[]): void {
     }
 
     splitGit.ensureCheckedOutBaseBranch(taskIds);
+
+    const shipBaseDivergenceResult = splitValidation.verifyBaseDivergence(baseBranch, REPO_ROOT);
+    if (!shipBaseDivergenceResult.ok) {
+        splitCli.die(`--ship aborted: git error checking base divergence: ${shipBaseDivergenceResult.stderr || 'unknown error'}`);
+    } else if (!shipBaseDivergenceResult.fetchFailed && shipBaseDivergenceResult.commits.length > 0) {
+        if (!cliArgs.allowDivergentBase) {
+            splitCli.die(splitValidation.verifyBaseDivergenceFromData(shipBaseDivergenceResult.commits));
+        }
+        splitCli.warn(
+            `--allow-divergent-base override: bypassing base-divergence gate at --ship. Divergent commits:\n` +
+            shipBaseDivergenceResult.commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'),
+        );
+    }
 
     // Merge open PRs and pull; if none found, assert the base is already in sync.
     const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);

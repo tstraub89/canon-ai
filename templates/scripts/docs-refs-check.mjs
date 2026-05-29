@@ -237,7 +237,7 @@ function isAllowedAnchorLinkPath(target) {
 }
 
 function isLineCitationTarget(target) {
-    return /(?::\d+(?:-\d+)?)$/.test(target) || /#L\d+(?:-L\d+)?$/.test(target);
+    return /(?::\d+(?:[-–—]\d+)?)$/.test(target) || /#L\d+(?:[-–—]L\d+)?$/.test(target);
 }
 
 // `templates/` markdown is intentionally scanned — those files ship to
