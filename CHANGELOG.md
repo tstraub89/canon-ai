@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.8.1] — 2026-05-31
+
+### Fixed
+
+- **`canon upgrade` no longer leaves a half-applied docs-refs cutover.** 1.8.0 deferred overwriting the canon-owned `scripts/docs-refs-check.mjs` (requiring a second `canon upgrade`) while updating its `scripts/docs-refs-check.mjs.d.ts` in the same run — leaving the type declaration describing an API the held-back checker lacked, and the scaffolded `scripts/docs-refs-config.mjs` inert until the re-run. The checker and its `.d.ts` now overwrite together in one pass. `scripts/docs-refs-config.mjs` stays adopter-owned (scaffolded only when missing, never overwritten); when a pre-split checker is replaced, upgrade prints a heads-up to recover any inline `noisySourcePaths` / `validDirs` / `markdownRootDirs` customizations from git history (`git diff HEAD -- scripts/docs-refs-check.mjs`) into the config. The warning fires whenever the installed checker predates the config split, even if a config file already exists (e.g. after an interrupted earlier upgrade).
+
 ## [1.8.0] — 2026-05-31
 
 ### Added

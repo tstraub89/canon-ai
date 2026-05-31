@@ -1101,7 +1101,7 @@ void test('runUpgrade: malformed .gitignore is reported and --force does not ove
     });
 });
 
-void test('runUpgrade: pre-split docs-refs checker scaffolds config and defers checker upgrade', () => {
+void test('runUpgrade: pre-split docs-refs checker scaffolds config and overwrites checker + .d.ts with a warning', () => {
     withTempDir(projectDir => {
         withTempDir(pkgDir => {
             const templatesDir = path.join(pkgDir, 'templates');
@@ -1112,6 +1112,13 @@ void test('runUpgrade: pre-split docs-refs checker scaffolds config and defers c
                     'export const checkerVersion = 2;',
                     '',
                 ].join('\n'),
+            );
+            // The .d.ts must move in lockstep with the checker: the original bug
+            // was that the deferral upgraded the .d.ts while holding back the
+            // .mjs, leaving the declaration describing a non-existent API.
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-check.mjs.d.ts'),
+                'export const checkerVersion: 2;\n',
             );
             fs.writeFileSync(
                 path.join(templatesDir, 'scripts', 'docs-refs-config.mjs'),
@@ -1133,17 +1140,28 @@ void test('runUpgrade: pre-split docs-refs checker scaffolds config and defers c
                     '',
                 ].join('\n'),
             );
+            fs.writeFileSync(
+                path.join(projectScriptsDir, 'docs-refs-check.mjs.d.ts'),
+                'export const checkerVersion: 1;\n',
+            );
 
             writeCurrentCanonVersion(projectDir);
 
             const result = runUpgrade(projectDir, pkgDir);
 
-            assert.deepEqual(result.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.deepEqual(result.cutoverWarnings, ['scripts/docs-refs-check.mjs']);
             assert.ok(result.upgraded.includes('scripts/docs-refs-config.mjs'));
-            assert.ok(!result.upgraded.includes('scripts/docs-refs-check.mjs'));
+            assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs'));
+            assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs.d.ts'));
+            // Checker overwritten in one shot (no deferral).
             assert.equal(
                 fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'),
-                'export const checkerVersion = 1;\n',
+                'export const checkerVersion = 2;\n',
+            );
+            // .d.ts upgraded in the SAME run — no desync with the .mjs.
+            assert.equal(
+                fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs.d.ts'), 'utf8'),
+                'export const checkerVersion: 2;\n',
             );
             assert.equal(
                 fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), 'utf8'),
@@ -1198,7 +1216,7 @@ void test('runUpgrade: new docs-refs checker with missing config scaffolds confi
 
             const result = runUpgrade(projectDir, pkgDir);
 
-            assert.deepEqual(result.cutoversDeferred, []);
+            assert.deepEqual(result.cutoverWarnings, []);
             assert.ok(result.upgraded.includes('scripts/docs-refs-config.mjs'));
             assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs'));
             assert.equal(
@@ -1223,7 +1241,12 @@ void test('runUpgrade: new docs-refs checker with missing config scaffolds confi
     });
 });
 
-void test('runUpgrade: after config exists, docs-refs checker upgrades normally and does not re-cutover', () => {
+void test('runUpgrade: pre-split checker with config already present is overwritten WITH a warning (interrupted-upgrade recovery)', () => {
+    // Codex P2 regression: the warning must not be gated on config-absence. A
+    // repo can carry an OLD inline checker alongside an already-scaffolded
+    // config (interrupted prior upgrade / manual scaffold). That adopter still
+    // has inline customizations trapped in the checker, so replacing it must
+    // emit the migration heads-up even though the config file already exists.
     withTempDir(projectDir => {
         withTempDir(pkgDir => {
             const templatesDir = path.join(pkgDir, 'templates');
@@ -1231,6 +1254,7 @@ void test('runUpgrade: after config exists, docs-refs checker upgrades normally 
             fs.writeFileSync(
                 path.join(templatesDir, 'scripts', 'docs-refs-check.mjs'),
                 [
+                    "import './docs-refs-config.mjs';",
                     'export const checkerVersion = 2;',
                     '',
                 ].join('\n'),
@@ -1248,6 +1272,7 @@ void test('runUpgrade: after config exists, docs-refs checker upgrades normally 
 
             const projectScriptsDir = path.join(projectDir, 'scripts');
             fs.mkdirSync(projectScriptsDir, { recursive: true });
+            // Old inline checker — does NOT import the config.
             fs.writeFileSync(
                 path.join(projectScriptsDir, 'docs-refs-check.mjs'),
                 [
@@ -1255,31 +1280,35 @@ void test('runUpgrade: after config exists, docs-refs checker upgrades normally 
                     '',
                 ].join('\n'),
             );
-            fs.writeFileSync(
-                path.join(projectScriptsDir, 'docs-refs-config.mjs'),
-                [
-                    '// scaffolded config',
-                    'export const noisySourcePaths = [];',
-                    "export const validDirs = ['templates'];",
-                    "export const markdownRootDirs = ['templates'];",
-                    '',
-                ].join('\n'),
-            );
+            // Config already present (e.g. left behind by an interrupted upgrade).
+            const existingConfig = [
+                '// scaffolded config',
+                'export const noisySourcePaths = [];',
+                "export const validDirs = ['templates'];",
+                "export const markdownRootDirs = ['templates'];",
+                '',
+            ].join('\n');
+            fs.writeFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), existingConfig);
 
             writeCurrentCanonVersion(projectDir);
 
             const result = runUpgrade(projectDir, pkgDir);
 
-            assert.deepEqual(result.cutoversDeferred, []);
+            // Warning fires even though config already exists.
+            assert.deepEqual(result.cutoverWarnings, ['scripts/docs-refs-check.mjs']);
+            // Checker overwritten; config NOT re-scaffolded (already present, adopter-owned).
             assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs'));
             assert.ok(!result.upgraded.includes('scripts/docs-refs-config.mjs'));
             assert.equal(
                 fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'),
                 [
+                    "import './docs-refs-config.mjs';",
                     'export const checkerVersion = 2;',
                     '',
                 ].join('\n'),
             );
+            // Existing config left untouched.
+            assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), 'utf8'), existingConfig);
         });
     });
 });
@@ -1333,7 +1362,7 @@ void test('runUpgrade: new docs-refs checker with config present upgrades normal
 
             const result = runUpgrade(projectDir, pkgDir);
 
-            assert.deepEqual(result.cutoversDeferred, []);
+            assert.deepEqual(result.cutoverWarnings, []);
             assert.ok(!result.upgraded.includes('scripts/docs-refs-config.mjs'));
             assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs'));
             assert.equal(
@@ -1380,9 +1409,11 @@ void test('runUpgrade --check: cutover plans config scaffold without writing', (
 
             const result = runUpgrade(projectDir, pkgDir, { check: true });
 
-            assert.deepEqual(result.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.deepEqual(result.cutoverWarnings, ['scripts/docs-refs-check.mjs']);
             assert.ok(result.wouldUpgrade.includes('scripts/docs-refs-config.mjs'));
-            assert.ok(!result.wouldUpgrade.includes('scripts/docs-refs-check.mjs'));
+            // No longer deferred — the checker is planned for overwrite too.
+            assert.ok(result.wouldUpgrade.includes('scripts/docs-refs-check.mjs'));
+            // --check still writes nothing.
             assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'), projectCheckerContent);
             assert.ok(!fs.existsSync(path.join(projectScriptsDir, 'docs-refs-config.mjs')));
         });
@@ -1414,17 +1445,18 @@ void test('runUpgrade: dirty cutover scaffold is refused without --force and ove
             fs.unlinkSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'));
 
             const refused = runUpgrade(projectDir, pkgDir);
-            assert.deepEqual(refused.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.deepEqual(refused.cutoverWarnings, ['scripts/docs-refs-check.mjs']);
             assert.ok(refused.dirtyRefused.includes('scripts/docs-refs-config.mjs'));
             assert.deepEqual(refused.upgraded, []);
             assert.equal(fs.existsSync(path.join(projectScriptsDir, 'docs-refs-config.mjs')), false);
 
             const forced = runUpgrade(projectDir, pkgDir, { force: true });
-            assert.deepEqual(forced.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.deepEqual(forced.cutoverWarnings, ['scripts/docs-refs-check.mjs']);
             assert.ok(forced.upgraded.includes('scripts/docs-refs-config.mjs'));
-            assert.ok(!forced.upgraded.includes('scripts/docs-refs-check.mjs'));
+            // No longer deferred — --force overwrites the checker in the same run.
+            assert.ok(forced.upgraded.includes('scripts/docs-refs-check.mjs'));
             assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), 'utf8'), configContent);
-            assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'), 'export const checkerVersion = 1;\n');
+            assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'), 'export const checkerVersion = 2;\n');
         });
     });
 });

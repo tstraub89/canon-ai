@@ -599,7 +599,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.8.0";
+  const installedVersion = "1.8.1";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -1024,7 +1024,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.8.0";
+  const version = "1.8.1";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -3543,16 +3543,19 @@ function mergeHeaderOnly(templateContent, projectContent) {
   const projectTail = projectContent.slice(projectSepEnd);
   return templateHeader + projectTail;
 }
-function printDocsRefsCutover(cutoversDeferred, check) {
-  if (cutoversDeferred.length === 0) return;
-  const heading = check ? "Would update" : "Updated";
-  console.log(`Migration required (script upgrade ${check ? "would be " : ""}deferred for these files):`);
-  for (const f of cutoversDeferred) console.log(`  \u26A1 ${f}`);
+function printDocsRefsCutoverWarning(cutoverWarnings, check) {
+  if (cutoverWarnings.length === 0) return;
+  console.log(`Heads-up: pre-split docs-refs checker ${check ? "would be" : "was"} replaced (inline config superseded by scripts/docs-refs-config.mjs):`);
+  for (const f of cutoverWarnings) console.log(`  \u21BB ${f}`);
   console.log("");
-  console.log(`  A new scripts/docs-refs-config.mjs ${check ? "will be" : "has been"} scaffolded (shown under "${heading}:" above).`);
-  console.log("  Move any custom NOISY_SOURCE_PATHS, VALID_DIRS, or MARKDOWN_ROOT_DIRS entries");
-  console.log("  from your current scripts/docs-refs-check.mjs into scripts/docs-refs-config.mjs,");
-  console.log("  then re-run `canon upgrade` to apply the script update.\n");
+  console.log("  If you hand-edited VALID_DIRS / NOISY_SOURCE_PATHS / MARKDOWN_ROOT_DIRS in the old");
+  console.log("  checker, inspect the diff and move any custom entries into scripts/docs-refs-config.mjs:");
+  if (check) {
+    console.log("    (after upgrading) git diff HEAD -- scripts/docs-refs-check.mjs\n");
+  } else {
+    console.log("    git diff HEAD -- scripts/docs-refs-check.mjs      # what changed");
+    console.log("    git show HEAD:scripts/docs-refs-check.mjs         # the pre-upgrade checker\n");
+  }
 }
 function isPathDirty(cwd, relPath) {
   const result = spawnSync8("git", ["status", "--porcelain", "--", relPath], {
@@ -3576,7 +3579,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const wouldUpgrade = [];
   const dirtyRefused = [];
   const malformed = [];
-  const cutoversDeferred = [];
+  const cutoverWarnings = [];
   const pending = [];
   for (const rel of DELIMITED) {
     const projectPath = join5(cwd, rel);
@@ -3645,7 +3648,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const docsRefsConfigPath = join5(cwd, docsRefsConfigRel);
   const docsRefsCheckContent = existsSync5(docsRefsCheckPath) ? readFileSync3(docsRefsCheckPath, "utf8") : null;
   const docsRefsConfigExists = existsSync5(docsRefsConfigPath);
-  const isPreSplitDocsRefs = docsRefsCheckContent !== null && !docsRefsCheckContent.includes("./docs-refs-config.mjs") && !docsRefsConfigExists;
+  const isPreSplitDocsRefs = docsRefsCheckContent !== null && !docsRefsCheckContent.includes("./docs-refs-config.mjs");
   const docsRefsConfigMissing = !docsRefsConfigExists;
   if (docsRefsConfigMissing) {
     const docsRefsConfigTemplatePath = join5(pkgDir, "templates", docsRefsConfigRel);
@@ -3656,13 +3659,11 @@ function runUpgrade(cwd, pkgDir, options = {}) {
       skipped.push(`${docsRefsConfigRel} (missing template for cutover scaffold)`);
     }
   }
-  if (isPreSplitDocsRefs && docsRefsConfigMissing) {
-    const deferredIndex = pending.findIndex((op) => op.rel === docsRefsCheckRel);
-    if (deferredIndex !== -1) pending.splice(deferredIndex, 1);
-    cutoversDeferred.push(docsRefsCheckRel);
+  if (isPreSplitDocsRefs) {
+    cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.8.0";
+  const newVersion = "1.8.1";
   const currentVersion = existsSync5(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -3687,11 +3688,11 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   if (options.check) {
     for (const op of clean) wouldUpgrade.push(op.rel);
     for (const op of dirty) dirtyRefused.push(op.rel);
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
   }
   if (dirty.length > 0 && !options.force) {
     for (const op of dirty) dirtyRefused.push(op.rel);
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
   }
   const toWrite = options.force ? pending : clean;
   for (const op of toWrite) {
@@ -3699,7 +3700,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     writeFileSync2(op.projectPath, op.content);
     upgraded.push(op.rel);
   }
-  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
+  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
 }
 function parseUpgradeArgs(args2) {
   const options = {};
@@ -3716,7 +3717,7 @@ function parseUpgradeArgs(args2) {
 function upgradeCmd(args2) {
   const options = parseUpgradeArgs(args2);
   const result = runUpgrade(process.cwd(), packageDir4, options);
-  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred } = result;
+  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings } = result;
   console.log("\ncanon upgrade" + (options.check ? " --check" : "") + "\n");
   if (options.check) {
     if (wouldUpgrade.length > 0) {
@@ -3724,8 +3725,8 @@ function upgradeCmd(args2) {
       for (const f of wouldUpgrade) console.log(`  \u2191 ${f}`);
       console.log("");
     }
-    if (cutoversDeferred.length > 0) {
-      printDocsRefsCutover(cutoversDeferred, true);
+    if (cutoverWarnings.length > 0) {
+      printDocsRefsCutoverWarning(cutoverWarnings, true);
     }
     if (dirtyRefused.length > 0) {
       console.log("Would refuse (dirty in git \u2014 pass --force to overwrite):");
@@ -3787,8 +3788,8 @@ function upgradeCmd(args2) {
       console.log("Stage:   git add <file>\n");
     }
   }
-  if (cutoversDeferred.length > 0) {
-    printDocsRefsCutover(cutoversDeferred, false);
+  if (cutoverWarnings.length > 0) {
+    printDocsRefsCutoverWarning(cutoverWarnings, false);
   }
   if (unchanged.length > 0) {
     console.log("Already up to date:");
@@ -3906,7 +3907,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.8.0");
+  console.log("1.8.1");
 }
 switch (command) {
   case "doctor":

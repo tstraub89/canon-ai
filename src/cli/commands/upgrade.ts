@@ -82,21 +82,25 @@ export function mergeHeaderOnly(templateContent: string, projectContent: string)
     return templateHeader + projectTail;
 }
 
-function printDocsRefsCutover(cutoversDeferred: string[], check: boolean): void {
-    if (cutoversDeferred.length === 0) return;
-    // The wording tracks the mode: under --check nothing is written and the
-    // config appears under the "Would update:" heading; on a real run it is
-    // written and appears under "Updated:". Referencing the wrong heading/tense
-    // (the pre-fix message always said `has been scaffolded` / "Updated") misled
-    // operators running the dry-run.
-    const heading = check ? 'Would update' : 'Updated';
-    console.log(`Migration required (script upgrade ${check ? 'would be ' : ''}deferred for these files):`);
-    for (const f of cutoversDeferred) console.log(`  ⚡ ${f}`);
+function printDocsRefsCutoverWarning(cutoverWarnings: string[], check: boolean): void {
+    if (cutoverWarnings.length === 0) return;
+    // The pre-split checker hardcoded VALID_DIRS / NOISY_SOURCE_PATHS /
+    // MARKDOWN_ROOT_DIRS inline. The checker is canon-owned, so it (and its
+    // .d.ts) overwrite in place — we no longer defer the upgrade. We DO warn,
+    // because an adopter who hand-edited those inline arrays needs to migrate
+    // them into the scaffolded scripts/docs-refs-config.mjs; the old inline
+    // values are recoverable from git history.
+    console.log(`Heads-up: pre-split docs-refs checker ${check ? 'would be' : 'was'} replaced (inline config superseded by scripts/docs-refs-config.mjs):`);
+    for (const f of cutoverWarnings) console.log(`  ↻ ${f}`);
     console.log('');
-    console.log(`  A new scripts/docs-refs-config.mjs ${check ? 'will be' : 'has been'} scaffolded (shown under "${heading}:" above).`);
-    console.log('  Move any custom NOISY_SOURCE_PATHS, VALID_DIRS, or MARKDOWN_ROOT_DIRS entries');
-    console.log('  from your current scripts/docs-refs-check.mjs into scripts/docs-refs-config.mjs,');
-    console.log('  then re-run `canon upgrade` to apply the script update.\n');
+    console.log('  If you hand-edited VALID_DIRS / NOISY_SOURCE_PATHS / MARKDOWN_ROOT_DIRS in the old');
+    console.log('  checker, inspect the diff and move any custom entries into scripts/docs-refs-config.mjs:');
+    if (check) {
+        console.log('    (after upgrading) git diff HEAD -- scripts/docs-refs-check.mjs\n');
+    } else {
+        console.log('    git diff HEAD -- scripts/docs-refs-check.mjs      # what changed');
+        console.log('    git show HEAD:scripts/docs-refs-check.mjs         # the pre-upgrade checker\n');
+    }
 }
 
 export interface UpgradeResult {
@@ -112,8 +116,9 @@ export interface UpgradeResult {
     dirtyRefused: string[];
     /** Files with malformed canon markers that cannot be safely rewritten. */
     malformed: string[];
-    /** Files whose checker upgrade was deferred because a config scaffold was written first. */
-    cutoversDeferred: string[];
+    /** Pre-split docs-refs checkers overwritten this run whose adopter should
+     *  migrate inline customizations into docs-refs-config.mjs. */
+    cutoverWarnings: string[];
 }
 
 /**
@@ -145,7 +150,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     const wouldUpgrade: string[] = [];
     const dirtyRefused: string[] = [];
     const malformed: string[] = [];
-    const cutoversDeferred: string[] = [];
+    const cutoverWarnings: string[] = [];
 
     // Compute the would-write content for every managed file. Don't write yet —
     // we need the full would-change list to (a) report under --check, and (b)
@@ -246,10 +251,15 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     const docsRefsConfigPath = join(cwd, docsRefsConfigRel);
     const docsRefsCheckContent = existsSync(docsRefsCheckPath) ? readFileSync(docsRefsCheckPath, 'utf8') : null;
     const docsRefsConfigExists = existsSync(docsRefsConfigPath);
+    // "Pre-split" = the old checker that hardcoded its config inline and never
+    // imports docs-refs-config.mjs. This is independent of whether the config
+    // file already exists: a repo can carry an old inline checker alongside a
+    // scaffolded config (an interrupted prior upgrade, or a manual scaffold),
+    // and that adopter STILL needs the migration heads-up because their inline
+    // customizations are trapped in the checker about to be overwritten.
     const isPreSplitDocsRefs =
         docsRefsCheckContent !== null &&
-        !docsRefsCheckContent.includes('./docs-refs-config.mjs') &&
-        !docsRefsConfigExists;
+        !docsRefsCheckContent.includes('./docs-refs-config.mjs');
     const docsRefsConfigMissing = !docsRefsConfigExists;
 
     if (docsRefsConfigMissing) {
@@ -262,10 +272,15 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         }
     }
 
-    if (isPreSplitDocsRefs && docsRefsConfigMissing) {
-        const deferredIndex = pending.findIndex(op => op.rel === docsRefsCheckRel);
-        if (deferredIndex !== -1) pending.splice(deferredIndex, 1);
-        cutoversDeferred.push(docsRefsCheckRel);
+    // Pre-split cutover: the old checker hardcoded its config inline. The new
+    // checker (and its .d.ts) are canon-owned and overwrite in place through the
+    // CANON_OWNED loop above — we do NOT defer the overwrite. Deferring left the
+    // freshly-upgraded .d.ts declaring an API the held-back .mjs lacked, and
+    // forced a confusing second `canon upgrade`. Instead we overwrite now and
+    // warn the adopter to migrate any inline customizations (recoverable from
+    // git history) into the scaffolded docs-refs-config.mjs.
+    if (isPreSplitDocsRefs) {
+        cutoverWarnings.push(docsRefsCheckRel);
     }
 
     // .canon/version — also subject to the dirty check.
@@ -310,14 +325,14 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         // Dry-run: report what would change, including dirty conflicts.
         for (const op of clean) wouldUpgrade.push(op.rel);
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
     }
 
     if (dirty.length > 0 && !options.force) {
         // Refuse: don't write ANY pending op. Report the dirty list so the
         // caller can surface it and the operator can decide.
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
     }
 
     // Write — every pending op when --force, else only the clean ones (no
@@ -329,7 +344,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         upgraded.push(op.rel);
     }
 
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
 }
 
 export function parseUpgradeArgs(args: string[]): UpgradeOptions {
@@ -348,7 +363,7 @@ export function parseUpgradeArgs(args: string[]): UpgradeOptions {
 export function upgradeCmd(args: string[]): void {
     const options = parseUpgradeArgs(args);
     const result = runUpgrade(process.cwd(), packageDir, options);
-    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred } = result;
+    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings } = result;
 
     console.log('\ncanon upgrade' + (options.check ? ' --check' : '') + '\n');
 
@@ -359,8 +374,8 @@ export function upgradeCmd(args: string[]): void {
             for (const f of wouldUpgrade) console.log(`  ↑ ${f}`);
             console.log('');
         }
-        if (cutoversDeferred.length > 0) {
-            printDocsRefsCutover(cutoversDeferred, true);
+        if (cutoverWarnings.length > 0) {
+            printDocsRefsCutoverWarning(cutoverWarnings, true);
         }
         if (dirtyRefused.length > 0) {
             console.log('Would refuse (dirty in git — pass --force to overwrite):');
@@ -428,8 +443,8 @@ export function upgradeCmd(args: string[]): void {
             console.log('Stage:   git add <file>\n');
         }
     }
-    if (cutoversDeferred.length > 0) {
-        printDocsRefsCutover(cutoversDeferred, false);
+    if (cutoverWarnings.length > 0) {
+        printDocsRefsCutoverWarning(cutoverWarnings, false);
     }
     if (unchanged.length > 0) {
         console.log('Already up to date:');
