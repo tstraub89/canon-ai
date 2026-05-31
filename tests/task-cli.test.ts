@@ -1217,13 +1217,40 @@ void test('task accept routes writes to the task worktree status.json', () => {
     });
 });
 
+const TELEMETRY_DOC_FILES = [
+    'docs/pipeline-invocations.md',
+    'docs/task-quality-log.md',
+    'docs/lessons-learned.md',
+] as const;
+
+// Snapshot the telemetry docs' *contents* at module load — before any test in
+// this file runs — so the assertion below flags writes the SUITE made, not
+// pre-existing working-tree dirt (e.g. a real pipeline run appended rows to
+// these docs before the suite started). Content comparison (not `git status`)
+// is deliberate: porcelain status reports ` M file` regardless of how much
+// changed, so it can't detect the suite appending to an already-modified file.
+function snapshotTelemetryDocs(): Record<string, string | null> {
+    const snapshot: Record<string, string | null> = {};
+    for (const rel of TELEMETRY_DOC_FILES) {
+        const abs = path.join(WORKSPACE_ROOT, rel);
+        snapshot[rel] = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null;
+    }
+    return snapshot;
+}
+
+const TELEMETRY_DOCS_BASELINE = snapshotTelemetryDocs();
+
 void test('docs telemetry files stay clean after the suite', () => {
-    const result = spawnSync('git', ['status', '-s', '--', 'docs/pipeline-invocations.md', 'docs/task-quality-log.md', 'docs/lessons-learned.md'], {
-        cwd: WORKSPACE_ROOT,
-        encoding: 'utf8',
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), '', `unexpected docs pollution:\n${result.stdout}`);
+    const after = snapshotTelemetryDocs();
+    for (const rel of TELEMETRY_DOC_FILES) {
+        assert.equal(
+            after[rel],
+            TELEMETRY_DOCS_BASELINE[rel],
+            `the test suite modified ${rel} — tests must not write to the real telemetry docs. ` +
+            `(Compared against a pre-suite snapshot, so pre-existing working-tree changes are ignored; ` +
+            `this fires only on changes introduced while the suite ran.)`,
+        );
+    }
 });
 
 void test('bundled orchestrator help is invocable once from dist', () => {

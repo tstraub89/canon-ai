@@ -16,6 +16,62 @@ Codex can technically operate canon — it has shell access to run `canon run` �
 
 If you find yourself wanting Codex as operator, use Claude Code instead and lean on Codex for the phases canon assigns to it (spec review, implementation, code review). That's canon's intended division of labor.
 
+## Monitoring detached runs
+
+`canon run` **auto-detaches** whenever stdout is not a TTY — always true inside Claude Code's Bash tool, CI, and piped invocations. The parent prints a PID + log path and exits in ~1s; the real pipeline runs on in a separate process group so it survives harness pgroup-kills on session resume. Use `canon watch` to re-attach.
+
+### `canon watch <id>`
+
+A read-only blocking observer. Attaches to an already-running orchestrator, streams phase transitions to stderr, and exits when the run goes idle.
+
+```bash
+# Normal two-step (Bash tool or headless):
+canon run <id>
+canon watch <id>
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| `0` | Healthy stop — checkpoint (`human_review`), complete, or `--step` step-done |
+| `2` | Bad usage, nothing to watch, unreadable state, ambiguous pid disagreement, or launch-window timeout |
+| `3` | Auto-block |
+| `4` | Crash — orchestrator died; run `canon run <id>` to resume |
+| `5` | `--timeout` elapsed while still attached |
+
+**Summary line** — always the final stdout line, stable `key=value`:
+
+```
+state=human_review reason=checkpoint phase=qa→human_review verdict=approved pid=48213
+```
+
+Keys: `state`, `reason` (always); `phase`, `verdict`, `pid` when applicable. All progress (attach line, phase transitions, heartbeat-age ticks, `--follow` log stream) goes to **stderr**; stdout carries only this one line.
+
+If the resolver detects a live `.canon-pid` / `heartbeat.pid` disagreement, `watch` exits `2` with `reason=ambiguous_pid` and a stderr diagnostic naming both pids instead of guessing which process to attach to.
+
+**Flags:**
+
+| Flag | Effect |
+|---|---|
+| `--until <phase>` | Return early (exit `0`, `reason=until`) the moment the named phase settles. Invalid phase → exit `2` before attaching. |
+| `--timeout <dur>` | Cap the wait. Accepts `<int>s`, `<int>m`, or bare integer seconds. Elapsed → exit `5`. |
+| `--follow` / `-f` | Additionally tail-stream the run log to stderr while watching. |
+
+**Requires a live run.** If no orchestrator is running at invocation, `watch` classifies the current state and exits non-zero — it does not block waiting for a run to appear. For point-in-time inspection of a finished task, use `canon task status <id>`.
+
+Do not hand-roll a poll loop (`canon task status` + `grep` + `sleep`) — use `canon watch` instead.
+
+### `canon doctor`
+
+Point-in-time health check. Reports active orchestrators, stale heartbeats, and worktree state. Does not block.
+
+### `canon stop <id>`
+
+Gracefully terminate a detached run. Sends SIGTERM then SIGKILL if needed. Self-heals stale `.canon-pid` / `.heartbeat.json` when the orchestrator is already dead.
+
+---
+
 ## Invocation surface
 
 ```bash

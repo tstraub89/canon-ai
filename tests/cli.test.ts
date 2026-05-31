@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,12 @@ import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, runUpgrade } from '.
 import { detectInstallType } from '../src/cli/commands/update.js';
 import { scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
+    CANON_GITIGNORE_BLOCK,
+    CANON_RUNTIME_GITIGNORE_PATTERNS,
+    extractCanonBlock,
+    upsertCanonBlock,
+} from '../src/lib/canon-block.js';
+import {
     checkActiveOrchestrators,
     checkNodeVersion,
     checkAgentFile,
@@ -16,6 +22,7 @@ import {
     checkSkills,
     checkCanonVersion,
     checkLocalSettingsGitignored,
+    checkRuntimeFilesGitignored,
     checkRecommendedPermissions,
     checkClaudeVersion,
     formatAge,
@@ -27,10 +34,25 @@ import {
 import { HEARTBEAT_STALE_AFTER_MS } from '../scripts/run-task/heartbeat.js';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 
+const WORKTREE_ROOT = process.cwd();
+const CLI_ENTRYPOINT = path.join(WORKTREE_ROOT, 'src', 'cli', 'index.ts');
+
 function withTempDir(fn: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-cli-'));
     try { fn(dir); }
     finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+function runCanonCli(args: string[]): { status: number | null; stdout: string; stderr: string } {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', CLI_ENTRYPOINT, ...args], {
+        cwd: WORKTREE_ROOT,
+        encoding: 'utf8',
+    });
+    return {
+        status: result.status,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+    };
 }
 
 const CANON_START = '<!-- canon:start -->';
@@ -92,6 +114,61 @@ void test('mergeDelimited: both template and project have no tail → result has
     assert.equal(mergeDelimited(template, project), `${CANON_START}\nt\n${CANON_END}`);
 });
 
+// ── canon .gitignore block ──────────────────────────────────────────────────
+
+void test('upsertCanonBlock: empty content returns just the canon block', () => {
+    assert.equal(upsertCanonBlock('', CANON_GITIGNORE_BLOCK), CANON_GITIGNORE_BLOCK);
+});
+
+void test('upsertCanonBlock: appends block while preserving existing content', () => {
+    const existing = 'node_modules\n.env\n';
+    assert.equal(
+        upsertCanonBlock(existing, CANON_GITIGNORE_BLOCK),
+        `${existing}\n${CANON_GITIGNORE_BLOCK}`,
+    );
+});
+
+void test('upsertCanonBlock: replaces existing block and preserves both sides verbatim', () => {
+    const before = 'node_modules\r\n.env\r\n\r\n';
+    const after = '\r\n# local tail\r\n*.local\r\n';
+    const oldBlock = '# canon:start\r\nold-pattern\r\n# canon:end\r\n';
+    assert.equal(
+        upsertCanonBlock(`${before}${oldBlock}${after}`, CANON_GITIGNORE_BLOCK),
+        `${before}${CANON_GITIGNORE_BLOCK}${after}`,
+    );
+});
+
+void test('upsertCanonBlock: applying twice is idempotent', () => {
+    const once = upsertCanonBlock('node_modules\n', CANON_GITIGNORE_BLOCK);
+    assert.ok(once);
+    assert.equal(upsertCanonBlock(once, CANON_GITIGNORE_BLOCK), once);
+});
+
+void test('upsertCanonBlock: non-marker mentions of canon markers are preserved', () => {
+    const existing = "# canon:start is canon's marker\nnode_modules\n";
+    assert.equal(
+        upsertCanonBlock(existing, CANON_GITIGNORE_BLOCK),
+        `${existing}\n${CANON_GITIGNORE_BLOCK}`,
+    );
+});
+
+void test('upsertCanonBlock: start marker without subsequent end marker returns null', () => {
+    assert.equal(upsertCanonBlock('node_modules\n# canon:start\nstill open\n', CANON_GITIGNORE_BLOCK), null);
+});
+
+void test('upsertCanonBlock: orphan end marker is adopter content and block is appended', () => {
+    const existing = 'node_modules\n# canon:end\n';
+    assert.equal(
+        upsertCanonBlock(existing, CANON_GITIGNORE_BLOCK),
+        `${existing}\n${CANON_GITIGNORE_BLOCK}`,
+    );
+});
+
+void test('root .gitignore canon block matches the shared constant', () => {
+    const rootGitignore = fs.readFileSync(path.join(WORKTREE_ROOT, '.gitignore'), 'utf8');
+    assert.equal(extractCanonBlock(rootGitignore), CANON_GITIGNORE_BLOCK);
+});
+
 // ── detectInstallType ────────────────────────────────────────────────────────
 
 void test('detectInstallType: unix npx path → npx', () => {
@@ -134,6 +211,22 @@ void test('detectInstallType: node_modules present but parent lacks package.json
         const pkgDir = path.join(dir, 'node_modules', 'canon-ai');
         assert.equal(detectInstallType(pkgDir), 'global');
     });
+});
+
+// ── CLI entrypoint dispatch ────────────────────────────────────────────────
+
+void test('canon CLI help mentions watch', () => {
+    const result = runCanonCli(['--help']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /canon watch <id>/);
+    assert.match(result.stdout, /Exit codes: 0 healthy stop\/until/);
+});
+
+void test('canon watch dispatches with usage when no task id is provided', () => {
+    const result = runCanonCli(['watch']);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /Usage: canon watch <task-id>/);
+    assert.match(result.stdout, /state=usage reason=usage_error/);
 });
 
 // ── checkNodeVersion ─────────────────────────────────────────────────────────
@@ -405,6 +498,38 @@ void test('checkLocalSettingsGitignored: present with no .gitignore at all → w
         const check = checkLocalSettingsGitignored(dir);
         assert.equal(check.status, 'warn');
         assert.match(check.detail ?? '', /no .gitignore/i);
+    });
+});
+
+// ── checkRuntimeFilesGitignored ──────────────────────────────────────────────
+
+void test('checkRuntimeFilesGitignored: all runtime patterns present → pass', () => {
+    withTempDir(dir => {
+        fs.writeFileSync(path.join(dir, '.gitignore'), CANON_RUNTIME_GITIGNORE_PATTERNS.join('\n') + '\n');
+        const check = checkRuntimeFilesGitignored(dir);
+        assert.equal(check.status, 'pass');
+    });
+});
+
+void test('checkRuntimeFilesGitignored: missing .gitignore → warn', () => {
+    withTempDir(dir => {
+        const check = checkRuntimeFilesGitignored(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /canon upgrade/);
+    });
+});
+
+void test('checkRuntimeFilesGitignored: missing pattern is named in warning', () => {
+    withTempDir(dir => {
+        fs.writeFileSync(path.join(dir, '.gitignore'), [
+            'tasks/**/.canon-pid',
+            'tasks/**/.heartbeat.json',
+            '',
+        ].join('\n'));
+        const check = checkRuntimeFilesGitignored(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /tasks\/\*\*\/\.canon-run\.log/);
+        assert.match(check.detail ?? '', /canon upgrade/);
     });
 });
 
@@ -872,6 +997,434 @@ void test('runUpgrade: task template unchanged → not in upgraded', () => {
 
             assert.ok(!upgraded.includes(rel));
             assert.ok(unchanged.includes(rel));
+        });
+    });
+});
+
+// ── runUpgrade .gitignore block sync ─────────────────────────────────────────
+
+function writeCurrentCanonVersion(projectDir: string): void {
+    const canonDir = path.join(projectDir, '.canon');
+    fs.mkdirSync(canonDir, { recursive: true });
+    const ver = process.env['CANON_VERSION'] ?? 'dev';
+    fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
+}
+
+void test('runUpgrade: .gitignore without canon block receives the block via pending queue', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            fs.mkdirSync(path.join(pkgDir, 'templates'), { recursive: true });
+            writeCurrentCanonVersion(projectDir);
+            const existing = 'node_modules\n.env\n';
+            fs.writeFileSync(path.join(projectDir, '.gitignore'), existing);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.upgraded.includes('.gitignore'));
+            const written = fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf8');
+            assert.equal(written, `${existing}\n${CANON_GITIGNORE_BLOCK}`);
+        });
+    });
+});
+
+void test('runUpgrade: current .gitignore block is unchanged', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            fs.mkdirSync(path.join(pkgDir, 'templates'), { recursive: true });
+            writeCurrentCanonVersion(projectDir);
+            fs.writeFileSync(path.join(projectDir, '.gitignore'), CANON_GITIGNORE_BLOCK);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.unchanged.includes('.gitignore'));
+            assert.ok(!result.upgraded.includes('.gitignore'));
+        });
+    });
+});
+
+void test('runUpgrade: dirty .gitignore is refused without --force and not written', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+            fs.mkdirSync(path.join(pkgDir, 'templates'), { recursive: true });
+            writeCurrentCanonVersion(projectDir);
+            const committed = 'node_modules\n';
+            fs.writeFileSync(path.join(projectDir, '.gitignore'), committed);
+            gitAddCommit(projectDir, 'initial commit');
+            const localEdit = 'node_modules\n.env\n';
+            fs.writeFileSync(path.join(projectDir, '.gitignore'), localEdit);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes('.gitignore'));
+            assert.deepEqual(result.upgraded, []);
+            assert.equal(fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf8'), localEdit);
+        });
+    });
+});
+
+void test('runUpgrade --check: .gitignore reports wouldUpgrade without writing', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            fs.mkdirSync(path.join(pkgDir, 'templates'), { recursive: true });
+            writeCurrentCanonVersion(projectDir);
+            const existing = 'node_modules\n';
+            fs.writeFileSync(path.join(projectDir, '.gitignore'), existing);
+
+            const result = runUpgrade(projectDir, pkgDir, { check: true });
+
+            assert.ok(result.wouldUpgrade.includes('.gitignore'));
+            assert.deepEqual(result.upgraded, []);
+            assert.equal(fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf8'), existing);
+        });
+    });
+});
+
+void test('runUpgrade: malformed .gitignore is reported and --force does not override', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            fs.mkdirSync(path.join(pkgDir, 'templates'), { recursive: true });
+            writeCurrentCanonVersion(projectDir);
+            const malformed = 'node_modules\n# canon:start\nstill open\n';
+            fs.writeFileSync(path.join(projectDir, '.gitignore'), malformed);
+
+            const result = runUpgrade(projectDir, pkgDir);
+            assert.ok(result.malformed.includes('.gitignore'));
+            assert.ok(!result.upgraded.includes('.gitignore'));
+            assert.equal(fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf8'), malformed);
+
+            const forced = runUpgrade(projectDir, pkgDir, { force: true });
+            assert.ok(forced.malformed.includes('.gitignore'));
+            assert.ok(!forced.upgraded.includes('.gitignore'));
+            assert.equal(fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf8'), malformed);
+        });
+    });
+});
+
+void test('runUpgrade: pre-split docs-refs checker scaffolds config and defers checker upgrade', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const templatesDir = path.join(pkgDir, 'templates');
+            fs.mkdirSync(path.join(templatesDir, 'scripts'), { recursive: true });
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-check.mjs'),
+                [
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-config.mjs'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+
+            const projectScriptsDir = path.join(projectDir, 'scripts');
+            fs.mkdirSync(projectScriptsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(projectScriptsDir, 'docs-refs-check.mjs'),
+                [
+                    'export const checkerVersion = 1;',
+                    '',
+                ].join('\n'),
+            );
+
+            writeCurrentCanonVersion(projectDir);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.deepEqual(result.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.ok(result.upgraded.includes('scripts/docs-refs-config.mjs'));
+            assert.ok(!result.upgraded.includes('scripts/docs-refs-check.mjs'));
+            assert.equal(
+                fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'),
+                'export const checkerVersion = 1;\n',
+            );
+            assert.equal(
+                fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), 'utf8'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+        });
+    });
+});
+
+void test('runUpgrade: new docs-refs checker with missing config scaffolds config but does not defer', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const templatesDir = path.join(pkgDir, 'templates');
+            fs.mkdirSync(path.join(templatesDir, 'scripts'), { recursive: true });
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-check.mjs'),
+                [
+                    "import './docs-refs-config.mjs';",
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-config.mjs'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+
+            const projectScriptsDir = path.join(projectDir, 'scripts');
+            fs.mkdirSync(projectScriptsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(projectScriptsDir, 'docs-refs-check.mjs'),
+                [
+                    "import './docs-refs-config.mjs';",
+                    'export const checkerVersion = 1;',
+                    '',
+                ].join('\n'),
+            );
+
+            writeCurrentCanonVersion(projectDir);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.deepEqual(result.cutoversDeferred, []);
+            assert.ok(result.upgraded.includes('scripts/docs-refs-config.mjs'));
+            assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs'));
+            assert.equal(
+                fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), 'utf8'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+            assert.equal(
+                fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'),
+                [
+                    "import './docs-refs-config.mjs';",
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+        });
+    });
+});
+
+void test('runUpgrade: after config exists, docs-refs checker upgrades normally and does not re-cutover', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const templatesDir = path.join(pkgDir, 'templates');
+            fs.mkdirSync(path.join(templatesDir, 'scripts'), { recursive: true });
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-check.mjs'),
+                [
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-config.mjs'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+
+            const projectScriptsDir = path.join(projectDir, 'scripts');
+            fs.mkdirSync(projectScriptsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(projectScriptsDir, 'docs-refs-check.mjs'),
+                [
+                    'export const checkerVersion = 1;',
+                    '',
+                ].join('\n'),
+            );
+            fs.writeFileSync(
+                path.join(projectScriptsDir, 'docs-refs-config.mjs'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+
+            writeCurrentCanonVersion(projectDir);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.deepEqual(result.cutoversDeferred, []);
+            assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs'));
+            assert.ok(!result.upgraded.includes('scripts/docs-refs-config.mjs'));
+            assert.equal(
+                fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'),
+                [
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+        });
+    });
+});
+
+void test('runUpgrade: new docs-refs checker with config present upgrades normally and does not scaffold', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const templatesDir = path.join(pkgDir, 'templates');
+            fs.mkdirSync(path.join(templatesDir, 'scripts'), { recursive: true });
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-check.mjs'),
+                [
+                    "import './docs-refs-config.mjs';",
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-config.mjs'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+
+            const projectScriptsDir = path.join(projectDir, 'scripts');
+            fs.mkdirSync(projectScriptsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(projectScriptsDir, 'docs-refs-check.mjs'),
+                [
+                    "import './docs-refs-config.mjs';",
+                    'export const checkerVersion = 1;',
+                    '',
+                ].join('\n'),
+            );
+            fs.writeFileSync(
+                path.join(projectScriptsDir, 'docs-refs-config.mjs'),
+                [
+                    '// scaffolded config',
+                    'export const noisySourcePaths = [];',
+                    "export const validDirs = ['templates'];",
+                    "export const markdownRootDirs = ['templates'];",
+                    '',
+                ].join('\n'),
+            );
+
+            writeCurrentCanonVersion(projectDir);
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.deepEqual(result.cutoversDeferred, []);
+            assert.ok(!result.upgraded.includes('scripts/docs-refs-config.mjs'));
+            assert.ok(result.upgraded.includes('scripts/docs-refs-check.mjs'));
+            assert.equal(
+                fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'),
+                [
+                    "import './docs-refs-config.mjs';",
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+        });
+    });
+});
+
+void test('runUpgrade --check: cutover plans config scaffold without writing', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const templatesDir = path.join(pkgDir, 'templates');
+            fs.mkdirSync(path.join(templatesDir, 'scripts'), { recursive: true });
+            const configContent = [
+                '// scaffolded config',
+                'export const noisySourcePaths = [];',
+                "export const validDirs = ['templates'];",
+                "export const markdownRootDirs = ['templates'];",
+                '',
+            ].join('\n');
+            fs.writeFileSync(
+                path.join(templatesDir, 'scripts', 'docs-refs-check.mjs'),
+                [
+                    'export const checkerVersion = 2;',
+                    '',
+                ].join('\n'),
+            );
+            fs.writeFileSync(path.join(templatesDir, 'scripts', 'docs-refs-config.mjs'), configContent);
+
+            const projectScriptsDir = path.join(projectDir, 'scripts');
+            fs.mkdirSync(projectScriptsDir, { recursive: true });
+            const projectCheckerContent = [
+                'export const checkerVersion = 1;',
+                '',
+            ].join('\n');
+            fs.writeFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), projectCheckerContent);
+            writeCurrentCanonVersion(projectDir);
+
+            const result = runUpgrade(projectDir, pkgDir, { check: true });
+
+            assert.deepEqual(result.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.ok(result.wouldUpgrade.includes('scripts/docs-refs-config.mjs'));
+            assert.ok(!result.wouldUpgrade.includes('scripts/docs-refs-check.mjs'));
+            assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'), projectCheckerContent);
+            assert.ok(!fs.existsSync(path.join(projectScriptsDir, 'docs-refs-config.mjs')));
+        });
+    });
+});
+
+void test('runUpgrade: dirty cutover scaffold is refused without --force and overwritten with --force', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const templatesDir = path.join(pkgDir, 'templates');
+            fs.mkdirSync(path.join(templatesDir, 'scripts'), { recursive: true });
+            const configContent = [
+                '// scaffolded config',
+                'export const noisySourcePaths = [];',
+                "export const validDirs = ['templates'];",
+                "export const markdownRootDirs = ['templates'];",
+                '',
+            ].join('\n');
+            fs.writeFileSync(path.join(templatesDir, 'scripts', 'docs-refs-check.mjs'), 'export const checkerVersion = 2;\n');
+            fs.writeFileSync(path.join(templatesDir, 'scripts', 'docs-refs-config.mjs'), configContent);
+
+            const projectScriptsDir = path.join(projectDir, 'scripts');
+            fs.mkdirSync(projectScriptsDir, { recursive: true });
+            fs.writeFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'export const checkerVersion = 1;\n');
+            fs.writeFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), 'local edits\n');
+            writeCurrentCanonVersion(projectDir);
+            gitInit(projectDir);
+            gitAddCommit(projectDir, 'initial commit');
+            fs.unlinkSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'));
+
+            const refused = runUpgrade(projectDir, pkgDir);
+            assert.deepEqual(refused.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.ok(refused.dirtyRefused.includes('scripts/docs-refs-config.mjs'));
+            assert.deepEqual(refused.upgraded, []);
+            assert.equal(fs.existsSync(path.join(projectScriptsDir, 'docs-refs-config.mjs')), false);
+
+            const forced = runUpgrade(projectDir, pkgDir, { force: true });
+            assert.deepEqual(forced.cutoversDeferred, ['scripts/docs-refs-check.mjs']);
+            assert.ok(forced.upgraded.includes('scripts/docs-refs-config.mjs'));
+            assert.ok(!forced.upgraded.includes('scripts/docs-refs-check.mjs'));
+            assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-config.mjs'), 'utf8'), configContent);
+            assert.equal(fs.readFileSync(path.join(projectScriptsDir, 'docs-refs-check.mjs'), 'utf8'), 'export const checkerVersion = 1;\n');
         });
     });
 });
@@ -1414,6 +1967,7 @@ type CanonDevTokens = {
 // refreshes in-place. `dist/` ships in the npm package — leaks there reach
 // every adopter via `npm install canon-ai`.
 const ADOPTER_SHIPPED_PATHS = [
+    'templates/.gitignore',
     'templates/AGENTS.md',
     'templates/CLAUDE.md',
     'templates/CODEX.md',
@@ -1498,6 +2052,7 @@ function makeTaskDir(cwd: string, id: string, status: object, heartbeat: object 
 }
 
 const MIN_VALID_STATUS = {
+    id: 'fake-task',
     title: 'fake',
     worktree: false,
     branch: '',

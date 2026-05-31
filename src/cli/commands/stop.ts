@@ -37,7 +37,6 @@
 //     own heartbeat write to prove identity.
 
 import { existsSync } from 'fs';
-import { dirname } from 'path';
 
 import { readCanonPid, removeCanonPid, runLogPathFor } from '../../../scripts/run-task/detach.js';
 import {
@@ -47,7 +46,7 @@ import {
     readHeartbeatStatus,
     removeHeartbeat,
 } from '../../../scripts/run-task/heartbeat.js';
-import { isOrphanedWorktreeState, statusFileFor, taskDirForRepoRoot } from '../../../scripts/run-task/state.js';
+import { probePidAlive, tolerantTaskDir } from '../../../scripts/run-task/run-context.js';
 import { formatAge } from './doctor.js';
 
 const SIGTERM_GRACE_MS = 10_000;
@@ -60,8 +59,8 @@ const SIGTERM_POLL_INTERVAL_MS = 200;
 // canon stop's worst-case CLI latency tolerable. Override with the
 // CANON_STOP_WAIT_MS env var when running against pathologically slow
 // systems.
-const STOP_WAIT_DEFAULT_MS = 30_000;
-const STOP_WAIT_POLL_INTERVAL_MS = 250;
+export const STOP_WAIT_DEFAULT_MS = 30_000;
+export const STOP_WAIT_POLL_INTERVAL_MS = 250;
 
 // ── waitForHeartbeat (pure-ish; testable via injected deps) ──────────────────
 
@@ -350,16 +349,6 @@ export function decideStopAction(inputs: DecideStopInputs): StopAction {
 
 // ── Production-side wiring helpers ───────────────────────────────────────────
 
-function taskDirFor(taskId: string): string {
-    // Match doctor.ts's resolution: prefer the worktree path; for orphan
-    // tasks fall back to REPO_ROOT so `canon stop` works even when the
-    // worktree is in a weird state.
-    if (isOrphanedWorktreeState(taskId)) {
-        return taskDirForRepoRoot(taskId);
-    }
-    return dirname(statusFileFor(taskId));
-}
-
 function sleepSync(ms: number): void {
     // Synchronous wait via Atomics.wait. CLI is one-shot — no event loop
     // interactivity to preserve, no other work to interleave.
@@ -422,15 +411,7 @@ export function stopCmd(args: string[], deps: StopCmdDeps = {}): void {
     const readHeartbeatStatusFn = deps.readHeartbeatStatusImpl ?? readHeartbeatStatus;
     const waitTimeoutMs = readWaitTimeoutMs(deps);
 
-    const probeAlive = (pid: number): boolean => {
-        try {
-            kill(pid, 0);
-            return true;
-        } catch (error) {
-            const code = (error as NodeJS.ErrnoException).code;
-            return code === 'EPERM';
-        }
-    };
+    const probeAlive = (pid: number): boolean => probePidAlive(pid, (value: number): void => { kill(value, 0); });
 
     const taskId = args[0];
     if (!taskId) {
@@ -438,7 +419,7 @@ export function stopCmd(args: string[], deps: StopCmdDeps = {}): void {
         return exit(1);
     }
 
-    const dir = deps.dirOverride ?? taskDirFor(taskId);
+    const dir = deps.dirOverride ?? tolerantTaskDir(taskId);
     if (!deps.dirOverride && !existsSync(dir)) {
         stderr(`canon stop: task '${taskId}' not found (looked in ${dir})`);
         return exit(1);

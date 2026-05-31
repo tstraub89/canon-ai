@@ -2,13 +2,22 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
-## [Unreleased]
+## [1.8.0] — 2026-05-31
+
+### Added
+
+- **`canon watch <id>`.** Blocking observer for detached pipeline runs. Attaches to an already-running orchestrator, streams `phase X → Y` transitions to stderr, and exits with a machine-parseable summary line (`state=… reason=…`) plus a classified exit code: `0` healthy stop (checkpoint / complete / `--step` done), `2` nothing-to-watch / read error / ambiguous PID, `3` auto-block, `4` crash, `5` timeout. Flags: `--until <phase>` (return early when a phase settles), `--timeout <dur>`, `--follow`/`-f` (tail the run log). Refuses to attach when `.canon-pid` and a live heartbeat PID disagree (PID-reuse safety). Settle detection is liveness-gated: a heartbeat that goes stale during a between-phase synchronous window (scaffold commit, `git worktree add`, node_modules symlink, agent session-init — all block the event loop so the heartbeat timer can't tick) does not trip a false `step_done` while the orchestrator pid is still alive and unblocked. Pair with `canon run <id>`: run detaches, watch blocks.
+- **Canon manages runtime-file `.gitignore` patterns across `init`, `upgrade`, and `doctor`.** `canon init` ensures an adopter's `.gitignore` contains a canon-owned `# canon:start`/`# canon:end` block with the three orchestrator runtime patterns (`tasks/**/.canon-pid`, `tasks/**/.canon-run.log`, `tasks/**/.heartbeat.json`), so they stop surfacing as untracked. `canon upgrade` retrofits and refreshes the block on existing adopters, routing through the standard dirty-refusal/`--check`/`--force` queue; a malformed block is reported and never auto-repaired, even under `--force`. `canon doctor` warns when the patterns are absent and names the fix. Adopter content outside the canon block is preserved verbatim.
+
+### Fixed
+
+- **`canon upgrade` no longer silently drops adopter `docs-refs-check` customizations.** The tunable allowlists (`noisySourcePaths`, `validDirs`, `markdownRootDirs`) now live in an adopter-owned `scripts/docs-refs-config.mjs` that `canon upgrade` never overwrites and `canon init` scaffolds. Existing adopters get it created on first upgrade with a prompt to move their entries over before the checker updates.
 
 ## [1.7.0] — 2026-05-29
 
 ### Added
 
-- **`--push` / `--pr` / `--ship` base-divergence gate.** Hard-fails when local `<base_branch>` is ahead of `origin/<base_branch>`, listing the colliding commits with a `git push origin <base>` fix and an `--allow-divergent-base` override. Runs before the file-allow-list gate (so the root-cause message replaces the misleading per-file "drift" error) and before `--ship`'s merge (so divergent commits can't conflict the post-merge pull and strand ship half-complete). The new `--allow-divergent-base` flag bypasses only this check; `--force` still bypasses only the file-allow-list gate.
+- **`--push` / `--pr` / `--ship` base-divergence gate.** Hard-fails when local `<base_branch>` is ahead of `origin/<base_branch>`, listing the colliding commits with a `git push origin <base>` fix and an `--allow-divergent-base` override. Runs before the file-allow-list gate (so the root-cause message replaces the misleading per-file "drift" error) and before `--ship`'s merge (so divergent commits can't conflict the post-merge pull and strand ship half-complete). The new `--allow-divergent-base` flag bypasses only this commit-divergence check. `--force` does not bypass the new gate; its existing documented bypasses (the file-allow-list gate, the reroute amendment gate, the dirty-`REPO_ROOT` worktree-start gate, and `--full-send` on a delicate task) are unchanged.
 - **Scaffold push reminder.** The first `canon run` on a task prints a one-time reminder to `git push origin <base>` after the scaffold commits land on the local base branch. Fires once per bundle, never on reroutes or review iterations; informational only — `canon run` never pushes.
 
 ### Changed
@@ -17,7 +26,7 @@
 
 ### Removed
 
-- **`canon init` no longer creates a project-local `.codex/config.toml`.** Codex CLI only reads `~/.codex/config.toml`. Adopters who want personal Codex defaults — sandbox, MCP servers, model preferences — set them in `~/.codex/config.toml`. `canon doctor`'s codex-trust check is unaffected.
+- **`canon init` no longer creates a project-local `.codex/config.toml`.** Codex CLI only reads `~/.codex/config.toml`. Adopters who want personal Codex defaults — sandbox, MCP servers, model preferences — set them in `~/.codex/config.toml`. `canon doctor`'s codex-trust check is unaffected. Upgrading does not delete an existing project-local `.codex/config.toml` left by an older install; the file is inert for Canon (Codex CLI reads `~/.codex/config.toml`, not repo-local config) and can be removed if unmodified.
 
 ### Fixed
 

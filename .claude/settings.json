@@ -18,11 +18,15 @@
       "Bash(awk *)",
       "Bash(ls *)",
       "Bash(find *)",
+      "Bash(fd *)",
+
+      "Bash(cd *)",
 
       "Bash(cat *)",
       "Bash(head *)",
       "Bash(tail *)",
       "Bash(grep *)",
+      "Bash(rg *)",
       "Bash(wc *)",
       "Bash(echo *)",
       "Bash(tr *)",

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
+import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -81,6 +82,23 @@ export function mergeHeaderOnly(templateContent: string, projectContent: string)
     return templateHeader + projectTail;
 }
 
+function printDocsRefsCutover(cutoversDeferred: string[], check: boolean): void {
+    if (cutoversDeferred.length === 0) return;
+    // The wording tracks the mode: under --check nothing is written and the
+    // config appears under the "Would update:" heading; on a real run it is
+    // written and appears under "Updated:". Referencing the wrong heading/tense
+    // (the pre-fix message always said `has been scaffolded` / "Updated") misled
+    // operators running the dry-run.
+    const heading = check ? 'Would update' : 'Updated';
+    console.log(`Migration required (script upgrade ${check ? 'would be ' : ''}deferred for these files):`);
+    for (const f of cutoversDeferred) console.log(`  ⚡ ${f}`);
+    console.log('');
+    console.log(`  A new scripts/docs-refs-config.mjs ${check ? 'will be' : 'has been'} scaffolded (shown under "${heading}:" above).`);
+    console.log('  Move any custom NOISY_SOURCE_PATHS, VALID_DIRS, or MARKDOWN_ROOT_DIRS entries');
+    console.log('  from your current scripts/docs-refs-check.mjs into scripts/docs-refs-config.mjs,');
+    console.log('  then re-run `canon upgrade` to apply the script update.\n');
+}
+
 export interface UpgradeResult {
     /** Files actually written this run. Empty under --check, or when dirty targets refused. */
     upgraded: string[];
@@ -92,6 +110,10 @@ export interface UpgradeResult {
     wouldUpgrade: string[];
     /** Files that would have been upgraded but are dirty in git. Empty under --force. */
     dirtyRefused: string[];
+    /** Files with malformed canon markers that cannot be safely rewritten. */
+    malformed: string[];
+    /** Files whose checker upgrade was deferred because a config scaffold was written first. */
+    cutoversDeferred: string[];
 }
 
 /**
@@ -122,6 +144,8 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     const skipped: string[] = [];
     const wouldUpgrade: string[] = [];
     const dirtyRefused: string[] = [];
+    const malformed: string[] = [];
+    const cutoversDeferred: string[] = [];
 
     // Compute the would-write content for every managed file. Don't write yet —
     // we need the full would-change list to (a) report under --check, and (b)
@@ -216,12 +240,55 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         pending.push({ rel, projectPath, content: templateContent });
     }
 
+    const docsRefsCheckRel = 'scripts/docs-refs-check.mjs';
+    const docsRefsConfigRel = 'scripts/docs-refs-config.mjs';
+    const docsRefsCheckPath = join(cwd, docsRefsCheckRel);
+    const docsRefsConfigPath = join(cwd, docsRefsConfigRel);
+    const docsRefsCheckContent = existsSync(docsRefsCheckPath) ? readFileSync(docsRefsCheckPath, 'utf8') : null;
+    const docsRefsConfigExists = existsSync(docsRefsConfigPath);
+    const isPreSplitDocsRefs =
+        docsRefsCheckContent !== null &&
+        !docsRefsCheckContent.includes('./docs-refs-config.mjs') &&
+        !docsRefsConfigExists;
+    const docsRefsConfigMissing = !docsRefsConfigExists;
+
+    if (docsRefsConfigMissing) {
+        const docsRefsConfigTemplatePath = join(pkgDir, 'templates', docsRefsConfigRel);
+        if (existsSync(docsRefsConfigTemplatePath)) {
+            const templateContent = readFileSync(docsRefsConfigTemplatePath, 'utf8');
+            pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: templateContent });
+        } else {
+            skipped.push(`${docsRefsConfigRel} (missing template for cutover scaffold)`);
+        }
+    }
+
+    if (isPreSplitDocsRefs && docsRefsConfigMissing) {
+        const deferredIndex = pending.findIndex(op => op.rel === docsRefsCheckRel);
+        if (deferredIndex !== -1) pending.splice(deferredIndex, 1);
+        cutoversDeferred.push(docsRefsCheckRel);
+    }
+
     // .canon/version — also subject to the dirty check.
     const versionPath = join(cwd, '.canon', 'version');
     const newVersion = process.env.CANON_VERSION ?? 'dev';
     const currentVersion = existsSync(versionPath) ? readFileSync(versionPath, 'utf8').trim() : null;
     if (currentVersion !== newVersion) {
         pending.push({ rel: '.canon/version', projectPath: versionPath, content: newVersion + '\n' });
+    }
+
+    // .gitignore — canon owns only the runtime-file block. Queue any write
+    // through the same pending path as other managed files so dirty refusal,
+    // --check, --force, and --no-stage stay uniform.
+    const gitignoreRel = '.gitignore';
+    const gitignorePath = join(cwd, gitignoreRel);
+    const existingGitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+    const desiredGitignore = upsertCanonBlock(existingGitignore, CANON_GITIGNORE_BLOCK);
+    if (desiredGitignore === null) {
+        malformed.push(gitignoreRel);
+    } else if (desiredGitignore === existingGitignore) {
+        unchanged.push(gitignoreRel);
+    } else {
+        pending.push({ rel: gitignoreRel, projectPath: gitignorePath, content: desiredGitignore });
     }
 
     // Dirty-target detection: any pending write whose project path has
@@ -243,14 +310,14 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         // Dry-run: report what would change, including dirty conflicts.
         for (const op of clean) wouldUpgrade.push(op.rel);
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
     }
 
     if (dirty.length > 0 && !options.force) {
         // Refuse: don't write ANY pending op. Report the dirty list so the
         // caller can surface it and the operator can decide.
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
     }
 
     // Write — every pending op when --force, else only the clean ones (no
@@ -262,7 +329,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         upgraded.push(op.rel);
     }
 
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred };
 }
 
 export function parseUpgradeArgs(args: string[]): UpgradeOptions {
@@ -281,7 +348,7 @@ export function parseUpgradeArgs(args: string[]): UpgradeOptions {
 export function upgradeCmd(args: string[]): void {
     const options = parseUpgradeArgs(args);
     const result = runUpgrade(process.cwd(), packageDir, options);
-    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused } = result;
+    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoversDeferred } = result;
 
     console.log('\ncanon upgrade' + (options.check ? ' --check' : '') + '\n');
 
@@ -291,6 +358,9 @@ export function upgradeCmd(args: string[]): void {
             console.log('Would update:');
             for (const f of wouldUpgrade) console.log(`  ↑ ${f}`);
             console.log('');
+        }
+        if (cutoversDeferred.length > 0) {
+            printDocsRefsCutover(cutoversDeferred, true);
         }
         if (dirtyRefused.length > 0) {
             console.log('Would refuse (dirty in git — pass --force to overwrite):');
@@ -307,7 +377,14 @@ export function upgradeCmd(args: string[]): void {
             for (const f of skipped) console.log(`  ? ${f}`);
             console.log('');
         }
-        if (wouldUpgrade.length === 0 && dirtyRefused.length === 0 && unchanged.length === 0 && skipped.length === 0) {
+        if (malformed.length > 0) {
+            console.log('Malformed (manual fix needed):');
+            for (const f of malformed) {
+                console.log(`  ⚠ ${f} — \`# canon:start\` has no \`# canon:end\`; add it manually, then re-run upgrade`);
+            }
+            console.log('');
+        }
+        if (wouldUpgrade.length === 0 && dirtyRefused.length === 0 && unchanged.length === 0 && skipped.length === 0 && malformed.length === 0) {
             console.log('No canon-managed files found. Run `canon init` to set up canon in this repo.\n');
         } else {
             console.log('(dry run — no files written.) Re-run without --check to apply.\n');
@@ -320,6 +397,13 @@ export function upgradeCmd(args: string[]): void {
         console.log('Refused (dirty in git — pass --force to overwrite, or commit/stash these paths first):');
         for (const f of dirtyRefused) console.log(`  ⚠ ${f}`);
         console.log('');
+        if (malformed.length > 0) {
+            console.log('Malformed (manual fix needed):');
+            for (const f of malformed) {
+                console.log(`  ⚠ ${f} — \`# canon:start\` has no \`# canon:end\`; add it manually, then re-run upgrade`);
+            }
+            console.log('');
+        }
         console.log('No files were upgraded. Resolve the dirty paths and re-run, or pass `--force`.');
         // Surface as a non-zero exit so scripts can detect.
         process.exit(2);
@@ -338,11 +422,14 @@ export function upgradeCmd(args: string[]): void {
         for (const f of upgraded) console.log(`  ↑ ${f}`);
         if (!options.noStage) {
             console.log('\nReview:  git diff --staged');
-            console.log('Revert:  git checkout -- <file>\n');
+            console.log('Revert:  git checkout HEAD -- <file>\n');
         } else {
             console.log('\n(--no-stage: files written but not staged. Review:  git diff)');
             console.log('Stage:   git add <file>\n');
         }
+    }
+    if (cutoversDeferred.length > 0) {
+        printDocsRefsCutover(cutoversDeferred, false);
     }
     if (unchanged.length > 0) {
         console.log('Already up to date:');
@@ -354,8 +441,15 @@ export function upgradeCmd(args: string[]): void {
         for (const f of skipped) console.log(`  ? ${f}`);
         console.log('');
     }
+    if (malformed.length > 0) {
+        console.log('Malformed (manual fix needed):');
+        for (const f of malformed) {
+            console.log(`  ⚠ ${f} — \`# canon:start\` has no \`# canon:end\`; add it manually, then re-run upgrade`);
+        }
+        console.log('');
+    }
 
-    if (upgraded.length === 0 && unchanged.length === 0) {
+    if (upgraded.length === 0 && unchanged.length === 0 && skipped.length === 0 && malformed.length === 0) {
         console.log('No canon-managed files found. Run `canon init` to set up canon in this repo.\n');
     } else {
         console.log('Orchestrator scripts update automatically — run `npm update canon-ai` to pull the latest.\n');

@@ -382,21 +382,21 @@ function statusFileFor(taskId) {
 function validateBranchField(value, taskId, fieldName) {
   if (value === void 0) return;
   if (typeof value !== "string") {
-    die(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);
+    throw new Error(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);
   }
   const trimmed = value.trim();
   if (trimmed === "") return;
   if (trimmed.startsWith("-")) {
-    die(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. Edit status.json.`);
+    throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. Edit status.json.`);
   }
   if (/[\x00-\x1F\x7F\s:]/.test(trimmed)) {
-    die(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. Edit status.json.`);
+    throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. Edit status.json.`);
   }
 }
 function validateNonNegativeInt(value, taskId, fieldPath) {
   if (value === void 0) return;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    die(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. Edit status.json.`);
+    throw new Error(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. Edit status.json.`);
   }
 }
 function validateStatus(taskId, parsed) {
@@ -411,8 +411,11 @@ function validateStatus(taskId, parsed) {
   }
 }
 function readStatus(taskId) {
-  const parsed = JSON.parse(fs2.readFileSync(statusFileFor(taskId), "utf8"));
-  validateStatus(taskId, parsed);
+  return readStatusFromPath(statusFileFor(taskId), taskId);
+}
+function readStatusFromPath(statusFile, taskIdForErrors = "<unknown>") {
+  const parsed = JSON.parse(fs2.readFileSync(statusFile, "utf8"));
+  validateStatus(taskIdForErrors, parsed);
   return parsed;
 }
 function deriveTopLevelStatus(status) {

@@ -117,26 +117,26 @@ export function statusFileFor(taskId: string): string {
 function validateBranchField(value: string | undefined, taskId: string, fieldName: string): void {
     if (value === undefined) return;
     if (typeof value !== 'string') {
-        die(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);
+        throw new Error(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);
     }
     const trimmed = value.trim();
     if (trimmed === '') return;
     if (trimmed.startsWith('-')) {
-        die(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. Edit status.json.`);
+        throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. Edit status.json.`);
     }
     if (/[\x00-\x1F\x7F\s:]/.test(trimmed)) {
-        die(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. Edit status.json.`);
+        throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. Edit status.json.`);
     }
 }
 
 function validateNonNegativeInt(value: unknown, taskId: string, fieldPath: string): void {
     if (value === undefined) return;
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-        die(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. Edit status.json.`);
+        throw new Error(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. Edit status.json.`);
     }
 }
 
-function validateStatus(taskId: string, parsed: StatusJson): void {
+export function validateStatus(taskId: string, parsed: StatusJson): void {
     validateBranchField(parsed.branch, taskId, 'branch');
     validateBranchField(parsed.base_branch, taskId, 'base_branch');
 
@@ -150,8 +150,12 @@ function validateStatus(taskId: string, parsed: StatusJson): void {
 }
 
 export function readStatus(taskId: string): StatusJson {
-    const parsed = JSON.parse(fs.readFileSync(statusFileFor(taskId), 'utf8')) as StatusJson;
-    validateStatus(taskId, parsed);
+    return readStatusFromPath(statusFileFor(taskId), taskId);
+}
+
+export function readStatusFromPath(statusFile: string, taskIdForErrors = '<unknown>'): StatusJson {
+    const parsed = JSON.parse(fs.readFileSync(statusFile, 'utf8')) as StatusJson;
+    validateStatus(taskIdForErrors, parsed);
     return parsed;
 }
 

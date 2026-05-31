@@ -4,7 +4,13 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NOISY_SOURCE_PATHS, runChecks } from '../scripts/docs-refs-check.mjs';
+import {
+    NOISY_SOURCE_PATHS,
+    VALID_DIRS,
+    loadAdopterConfig,
+    mergeAdopterConfig,
+    runChecks,
+} from '../scripts/docs-refs-check.mjs';
 
 function makeTempRepo(
     setup: (root: string) => void,
@@ -14,6 +20,19 @@ function makeTempRepo(
     try {
         setup(root);
         run(root);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+async function makeTempRepoAsync(
+    setup: (root: string) => void | Promise<void>,
+    run: (root: string) => void | Promise<void>,
+): Promise<void> {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-refs-check-'));
+    try {
+        await setup(root);
+        await run(root);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -332,6 +351,169 @@ void test('NOISY_SOURCE_PATHS: trailing slash on entry is normalized away', () =
     );
 });
 
+void test('config merge: bare defaults exclude templates, real config re-adds templates', async () => {
+    const bare = mergeAdopterConfig(null);
+    assert.ok(!bare.validDirs.has('templates'));
+    assert.ok(!bare.markdownRootDirs.includes('templates'));
+
+    const configPath = path.resolve('scripts/docs-refs-config.mjs');
+    const adopterConfig = await loadAdopterConfig(configPath);
+    assert.ok(adopterConfig);
+
+    const merged = mergeAdopterConfig(adopterConfig);
+    assert.ok(merged.validDirs.has('templates'));
+    assert.ok(merged.markdownRootDirs.includes('templates'));
+});
+
+void test('module exports VALID_DIRS as a Set and NOISY_SOURCE_PATHS as an array', () => {
+    assert.ok(VALID_DIRS instanceof Set);
+    assert.ok(Array.isArray(NOISY_SOURCE_PATHS));
+});
+
+void test('config merge: noisySourcePaths skips archive sources only when configured', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/archive/inside.md', 'See `scripts/missing.ts`.\n');
+            writeFile(root, 'docs/visible/outside.md', 'See `scripts/missing.ts`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root, { adopterConfig: null }), [
+                {
+                    file: 'docs/archive/inside.md',
+                    line: 1,
+                    ref: '`scripts/missing.ts`',
+                    reason: 'missing file',
+                },
+                {
+                    file: 'docs/visible/outside.md',
+                    line: 1,
+                    ref: '`scripts/missing.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+
+            assert.deepEqual(runChecks(root, { adopterConfig: { noisySourcePaths: ['docs/archive'] } }), [
+                {
+                    file: 'docs/visible/outside.md',
+                    line: 1,
+                    ref: '`scripts/missing.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('config merge: validDirs validates infra refs only when configured', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/allowlist.md', 'See `infra/foo.ts`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root, { adopterConfig: null }), []);
+
+            assert.deepEqual(runChecks(root, { adopterConfig: { validDirs: ['infra'] } }), [
+                {
+                    file: 'docs/allowlist.md',
+                    line: 1,
+                    ref: '`infra/foo.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('config merge: markdownRootDirs walks documentation only when configured', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'documentation/broken.md', 'See `scripts/missing.ts`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root, { adopterConfig: null }), []);
+
+            assert.deepEqual(runChecks(root, { adopterConfig: { markdownRootDirs: ['documentation'] } }), [
+                {
+                    file: 'documentation/broken.md',
+                    line: 1,
+                    ref: '`scripts/missing.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('malformed config degrades to defaults without throwing', async () => {
+    await makeTempRepoAsync(
+        root => {
+            writeFile(root, 'docs/fallback.md', 'See `scripts/missing.ts`.\n');
+        },
+        async root => {
+            const syntaxErrorPath = path.join(root, 'scripts', 'docs-refs-config.mjs');
+            fs.mkdirSync(path.dirname(syntaxErrorPath), { recursive: true });
+            fs.writeFileSync(syntaxErrorPath, 'export const validDirs = [\n', 'utf8');
+            assert.equal(await loadAdopterConfig(syntaxErrorPath), null);
+
+            const wrongShapePath = path.join(root, 'scripts', 'docs-refs-config-wrong-shape.mjs');
+            fs.writeFileSync(
+                wrongShapePath,
+                [
+                    "export const noisySourcePaths = 'docs/archive';",
+                    "export const validDirs = 'infra';",
+                    "export const markdownRootDirs = 'documentation';",
+                    '',
+                ].join('\n'),
+                'utf8',
+            );
+            // Wrong-shape exports are no longer rejected at the loader — it is a
+            // thin pass-through. mergeAdopterConfig is the single validator and
+            // coerces the non-array values back to canon defaults, so a
+            // wrong-shape config is equivalent to no config at all.
+            assert.deepEqual(
+                mergeAdopterConfig(await loadAdopterConfig(wrongShapePath)),
+                mergeAdopterConfig(null),
+            );
+
+            assert.deepEqual(runChecks(root, { adopterConfig: await loadAdopterConfig(wrongShapePath) }), [
+                {
+                    file: 'docs/fallback.md',
+                    line: 1,
+                    ref: '`scripts/missing.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('partial config file: a single exported array is honored, not dropped', async () => {
+    await makeTempRepoAsync(
+        root => {
+            writeFile(root, 'docs/archive/inside.md', 'See `scripts/missing.ts`.\n');
+            writeFile(root, 'docs/visible/outside.md', 'See `scripts/missing.ts`.\n');
+        },
+        async root => {
+            // A real adopter config FILE that exports ONLY noisySourcePaths and
+            // omits validDirs / markdownRootDirs. The old all-or-nothing loader
+            // returned null here, silently dropping the skip entry. The single
+            // exported array must survive the file-load path.
+            const configPath = path.join(root, 'scripts', 'docs-refs-config.mjs');
+            fs.mkdirSync(path.dirname(configPath), { recursive: true });
+            fs.writeFileSync(configPath, "export const noisySourcePaths = ['docs/archive'];\n", 'utf8');
+
+            assert.deepEqual(runChecks(root, { adopterConfig: await loadAdopterConfig(configPath) }), [
+                {
+                    file: 'docs/visible/outside.md',
+                    line: 1,
+                    ref: '`scripts/missing.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
 void test('isPlaceholderTarget: backtick ref containing ... is treated as placeholder', () => {
     makeTempRepo(
         root => {
@@ -364,6 +546,30 @@ void test('NOISY_SOURCE_PATHS: module default skip list is consulted when no opt
                     reason: 'missing file',
                 },
             ]);
+        },
+    );
+});
+
+void test('docs-refs-check CLI: repoRoot config is loaded from the target repo, not the checker install location', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'scripts/docs-refs-config.mjs',
+                [
+                    "export const noisySourcePaths = [];",
+                    "export const validDirs = ['infra'];",
+                    "export const markdownRootDirs = ['documentation'];",
+                    '',
+                ].join('\n'),
+            );
+            writeFile(root, 'documentation/broken.md', 'See `infra/missing.ts`.\n');
+        },
+        root => {
+            const result = runCli(scriptPath, root);
+            assert.equal(result.status, 1);
+            assert.match(result.stderr, /documentation\/broken\.md:1: `infra\/missing\.ts` — missing file/);
+            assert.match(result.stderr, /Found 1 broken ref/);
         },
     );
 });

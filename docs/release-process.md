@@ -74,7 +74,7 @@ git commit -m "chore: initialize release/v1.4 (version 1.4.0)"
 git push -u origin release/v1.4
 ```
 
-> **Note**: `canon task release-init <version>` is a helper that scaffolds this for adopters, but as of 1.4.0 it has two known bugs against canon-ai's release format: it doesn't update `.canon/version`, and the CHANGELOG block it inserts (`## v1.4 - unreleased`) doesn't match the bracketed format the auto-release workflow extracts (`## [1.4.0] — <date>`). Tracked in BACKLOG. Until those are fixed, do the initialization manually as shown above.
+> **Note**: `canon task release-init <version>` scaffolds most of this — branches off main, bumps `package.json` + `package-lock.json`, syncs `.canon/version`, inserts the canonical `## [<version>] — unreleased` CHANGELOG block, commits, and pushes. (The older `.canon/version`-not-synced and `## v1.4 - unreleased` format bugs are fixed.) **canon-ai still initializes manually as shown above because `release-init` does not run `npm run build`** — and canon-ai commits `dist/` with the version string baked in, so the rebuild must be atomic with the version-bump commit (otherwise CI's `git diff --exit-code -- dist/` fails on the next PR onto the release branch). Adopters who don't commit a built `dist/` can run `release-init` directly. (One open nit — blockquote ordering in the inserted block — is tracked in BACKLOG and is functionally harmless.)
 
 ## Patch release on an existing minor
 

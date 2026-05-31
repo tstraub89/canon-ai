@@ -1,6 +1,7 @@
 import { doctorCmd } from './commands/doctor.js';
 import { initCmd } from './commands/init.js';
 import { runCmd } from './commands/run-task.js';
+import { watchCmd } from './commands/watch.js';
 import { stopCmd } from './commands/stop.js';
 import { taskCmd } from './commands/task.js';
 import { updateCmd } from './commands/update.js';
@@ -21,6 +22,14 @@ Usage:
                                 During the launch window before the child writes its first
                                 heartbeat, waits up to CANON_STOP_WAIT_MS for proof of life
                                 (default 30000) before deciding whether to signal.
+  canon watch <id>            Blocking observer for an already-detached canon run.
+                                Waits for idle / checkpoint / death / timeout and prints
+                                one final summary line to stdout. Progress and any log
+                                tailing go to stderr.
+                                Flags: --until <phase>, --timeout <dur>, --follow, -f
+                                Exit codes: 0 healthy stop/until, 2 usage/nothing/read
+                                error/ambiguous_pid/launch-window timeout, 3 auto-block, 4 death,
+                                5 timeout.
   canon update                Update the canon-ai package itself
   canon upgrade               Sync vendored files to match the installed version
 
@@ -110,6 +119,9 @@ switch (command) {
         break;
     case 'task':
         taskCmd(args);
+        break;
+    case 'watch':
+        watchCmd(args);
         break;
     case 'update':
         updateCmd(args);

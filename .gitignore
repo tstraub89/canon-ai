@@ -17,18 +17,10 @@ build
 *.tmp
 .canon-write-test
 tasks/*/runtime-check-output/
-# Runtime liveness signal written by the orchestrator every 30s; see
-# scripts/run-task/heartbeat.ts. Never committed — staleness is the signal
-# that the orchestrator is dead, so a stale file in CI would be misleading.
-# Glob is `tasks/**/...` rather than `tasks/*/...` so files survive the
-# tasks/<id>/ → tasks/_archive/<id>/ rename that shipTasks performs at
-# task completion; the one-level pattern would otherwise stop matching
-# after archiving and stale runtime files could be committed into the
-# archive directory. (Codex PR #113 P2.)
-tasks/**/.heartbeat.json
-# Detached orchestrator state — see scripts/run-task/detach.ts.
-# .canon-pid:     PID of a running detached orchestrator (one line).
-# .canon-run.log: combined stdout + stderr of the detached run; can grow.
-# Both are runtime-only; nothing committed depends on them.
+
+# canon:start
+# This block is managed by canon. Edits are overwritten on `canon upgrade`.
 tasks/**/.canon-pid
 tasks/**/.canon-run.log
+tasks/**/.heartbeat.json
+# canon:end

@@ -72,6 +72,36 @@ When rewiring a resolver function (`taskDirFor`) to route through another resolv
 
 `CliArgs` is defined in `scripts/run-task/types.ts`; `scripts/run-task/cli.ts` only imports it. Any spec that adds a field to `CliArgs` must list both `types.ts` (type definition) **and** `cli.ts` (parser + usage text) in Affected Files — missing `types.ts` causes a type-check block before Codex can prove the implementation compiles. A third file is also in scope: `tests/run-task-cli.test.ts` asserts the full parsed object shape, so a new field that changes the return type of `parseArgs()` will fail the existing parser shape tests. Omitting it from Affected Files triggers the "outside spec scope" deviation noted in the handoff. Prevention: before finalizing any spec that adds a CLI flag, grep for `CliArgs` in `types.ts` and check `tests/run-task-cli.test.ts` for a parser-shape snapshot test — both are cheap finds. Canonical spec: `base-divergence-gate` AC-4.
 
+### When multiple CLI commands duplicate a tolerance-critical resolution path, extract it once
+
+*(2026-05-30, source: canon-watch)*
+
+When multiple CLI commands independently implement the same "tolerant resolution" pattern — orphan-worktree fallback, EPERM-tolerant PID probing, `.canon-pid` → `heartbeat.pid` fallback — each copy drifts independently. The `canon-watch` spec discovered that `doctor`, `stop`, and the new `watch` command all needed the same orphan-worktree + PID resolution logic, with each existing command having its own private copy that differed subtly. The fix: extract `scripts/run-task/run-context.ts` as the single audited home for `gatherRunContext()`, inject read/clock/probe impls for testing, and migrate all three consumers onto it. Before writing a new consumer of any tolerance-critical path, grep for existing implementations in sibling commands — if 2+ already exist, extract before adding a third.
+
+### Utility functions with multiple consumers must throw, not die
+
+*(2026-05-30, source: canon-watch)*
+
+When a utility function (e.g., `readStatus()`) is called by multiple consumers with different error-handling policies, it must throw on failure — not call `die()` / `process.exit()`. An initial revision converted `readStatus()` to `die()` to match the new `readStatusFromPath()` helper; this broke callers that intentionally wrap it in `try/catch` for fallback behavior (e.g., `doctor`'s active-orchestrator check, which falls back to a stale-read heuristic on parse failure). `die()` is appropriate at command-invocation boundaries where a failed read is always fatal; `throw` is required anywhere callers may need to handle the failure themselves. Check callers for `try/catch` before converting any shared utility from throw to die.
+
+### Sync test fixtures must seed every sync target, or exact-drift-list assertions break
+
+*(2026-05-30, source: adopter-gitignore-sync)*
+
+When `sync-canon-templates.mjs` adds a new dedicated sync step (e.g., a `.gitignore` constant-source step), the test fixture in `tests/sync-canon-templates.test.ts` must also seed the corresponding file in `seedCanonFixture()`. Without the seed, the new sync step reports the absent file as "drift" on every test run, breaking the exact-drift-list assertions used by all existing tests (`['templates/docs/pipeline-orchestrator.md']`, etc.). The `adopter-gitignore-sync` spec caught this during `spec_review` and extended `seedCanonFixture` to include `templates/.gitignore`. Prevention: when adding a sync step in the `.mjs`, immediately find `seedCanonFixture` in the test file and add the matching seed line — it's a one-liner that prevents cascading assertion rewrites.
+
+### Self-hosting guard tests must read the active checkout root, not REPO_ROOT
+
+*(2026-05-30, source: adopter-gitignore-sync)*
+
+When writing a test that reads a file the current task modified ("self-hosting guard" — verifying the canonical file matches the code constant), use the active checkout root (`process.cwd()` or equivalent at test time) rather than `REPO_ROOT`. In linked worktree runs, `REPO_ROOT` intentionally resolves to the supervising checkout, which does not have the task branch's changes; the guard would silently read the pre-change file and pass against stale content. `adopter-gitignore-sync` AC-14 hit this: `extractCanonBlock` run against `REPO_ROOT/.gitignore` in a worktree would have read the old file without the canon block. Since `process.cwd()` equals `REPO_ROOT` in a normal non-worktree checkout, using the active root is safe in both environments. Document this choice as an explicit deviation in `handoff.md` so reviewers understand the REPO_ROOT divergence is intentional.
+
+### Export a path-injectable loader when a module loads a sibling config at import time
+
+*(2026-05-31, source: docs-refs-adopter-config)*
+
+When a module loads a sibling config file at module-init (e.g., via `new URL('./docs-refs-config.mjs', import.meta.url)`), the load happens against the *checker's install location* — not the repo being checked. Unit tests that exercise absence or malformed-config paths then need to control which path is loaded; without an injectable seam they either read the real sibling (defeating the absent-config test) or require the real file to be absent (fragile). The fix: export the loader with a path parameter (`loadAdopterConfig(path)`) so tests can point it at temp fixtures. The module-level load retains its original form for the no-argument fallback and the exported symbol values; tests call the exported function directly. Without the seam, AC coverage for absence and malformed-config requires monkey-patching the module or the filesystem — both are fragile and hard to reason about. Prevention: before writing absence/malformed-config tests for any module-init load, ask "can I pass a path to the loader?" — if not, add the injectable form before writing tests.
+
 ### Parse structured author-facing input cell-by-cell with explicit rejection, not permissive whole-string regex
 
 *(2026-05-19, source: handoff-changes-table-strict-parser — v1.3.0 release)*

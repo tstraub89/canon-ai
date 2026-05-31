@@ -3,6 +3,7 @@ import path, { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { CANON_GITIGNORE_BLOCK } from '../src/lib/canon-block.ts';
 import { CANON_OWNED, DELIMITED } from '../src/lib/canon-owned.ts';
 
 export const WHOLESALE_SYNC = [...CANON_OWNED];
@@ -269,6 +270,17 @@ function buildSyncPlan(repoRoot) {
         });
     }
 
+    const gitignoreTargetRel = 'templates/.gitignore';
+    const gitignoreTargetPath = join(repoRoot, gitignoreTargetRel);
+    if (!existsSync(gitignoreTargetPath) || readFileSync(gitignoreTargetPath, 'utf8') !== CANON_GITIGNORE_BLOCK) {
+        plan.push({
+            kind: 'gitignore',
+            sourceRel: 'src/lib/canon-block.ts',
+            targetRel: gitignoreTargetRel,
+            nextContent: CANON_GITIGNORE_BLOCK,
+        });
+    }
+
     // Third pass: canon-internal-leak scan. Catches the class of mistake
     // where a maintainer adds a `scripts/run-task/...` ref to a canon-managed
     // doc (good for canon-ai-dev navigation, broken for adopters since
@@ -336,6 +348,9 @@ function buildSyncPlan(repoRoot) {
 function describePlanEntry(entry) {
     if (entry.kind === 'wholesale') {
         return `[wholesale] ${entry.targetRel} differs from ${entry.sourceRel}`;
+    }
+    if (entry.kind === 'gitignore') {
+        return `[gitignore] ${entry.targetRel} differs from CANON_GITIGNORE_BLOCK`;
     }
     return `[delimited] ${entry.targetRel} in-delimiter region differs from ${entry.sourceRel}`;
 }

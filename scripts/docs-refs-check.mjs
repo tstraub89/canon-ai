@@ -11,8 +11,8 @@
  *   3. Section refs:           `path.md` §"Heading Name"
  *   4. Markdown anchor links:  [text](#anchor) and [text](path.md#anchor)
  *
- * Adopter note: edit VALID_DIRS below after `canon upgrade` brings this script
- * into your repo so the allowlist matches your top-level directory layout.
+ * Adopter note: customize `scripts/docs-refs-config.mjs` beside this script.
+ * Canon defaults live here; the sibling config is merged at module load.
  *
  * Intentional limitation: symbol-in-file validation uses `\bSYMBOL\b` and can
  * match symbols that only appear inside comments or strings. Tightening that
@@ -33,10 +33,10 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// Adopters can edit this list after `canon upgrade` brings the script.
-const VALID_DIRS = new Set([
+const ROOT_MARKDOWN_FILES = ['AGENTS.md', 'CLAUDE.md', 'CODEX.md', 'README.md'];
+const CANON_VALID_DIRS = new Set([
     'src',
     'scripts',
     'tests',
@@ -47,20 +47,9 @@ const VALID_DIRS = new Set([
     '.canon',
     '.claude',
     '.codex',
-    'templates',
 ]);
-
-// Adopters: extend after `canon upgrade` to skip archive/log conventions
-// (e.g., 'docs/archive', 'docs/personas', 'docs/changelogs.md'). Entries
-// match the repo-relative POSIX path of each source file by exact match
-// (skip just that file — use this for individual append-only logs like
-// 'docs/changelogs.md') or by directory prefix ('docs/archive' skips every
-// file under 'docs/archive/'). Trailing slashes on entries are normalized
-// away, so 'docs/archive' and 'docs/archive/' behave identically.
-const NOISY_SOURCE_PATHS = [];
-
-const ROOT_MARKDOWN_FILES = ['AGENTS.md', 'CLAUDE.md', 'CODEX.md', 'README.md'];
-const MARKDOWN_ROOT_DIRS = ['docs', 'tasks', 'templates'];
+const CANON_NOISY_SOURCE_PATHS = [];
+const CANON_MARKDOWN_ROOT_DIRS = ['docs', 'tasks'];
 const PLACEHOLDER_SEGMENTS = new Set([
     'path',
     'file',
@@ -96,6 +85,51 @@ function slugify(text) {
         .replace(/^-+|-+$/g, '');
 }
 
+function isStringArray(value) {
+    return Array.isArray(value) && value.every(entry => typeof entry === 'string');
+}
+
+export function mergeAdopterConfig(adopterConfig) {
+    const source = adopterConfig && typeof adopterConfig === 'object' ? adopterConfig : null;
+    const noisySourcePaths = isStringArray(source?.noisySourcePaths) ? source.noisySourcePaths : [];
+    const validDirs = isStringArray(source?.validDirs) ? source.validDirs : [];
+    const markdownRootDirs = isStringArray(source?.markdownRootDirs) ? source.markdownRootDirs : [];
+
+    return {
+        validDirs: new Set([...CANON_VALID_DIRS, ...validDirs]),
+        noisySourcePaths: [...new Set([...CANON_NOISY_SOURCE_PATHS, ...noisySourcePaths])],
+        markdownRootDirs: [...new Set([...CANON_MARKDOWN_ROOT_DIRS, ...markdownRootDirs])],
+    };
+}
+
+export async function loadAdopterConfig(configPath) {
+    if (!configPath || !fs.existsSync(configPath)) return null;
+
+    try {
+        const mod = await import(pathToFileURL(configPath).href);
+        // Thin loader: return the raw exports and let mergeAdopterConfig be the
+        // single validator (it already coerces each non-array key to []). A
+        // config that exports only some of the three keys keeps the others at
+        // canon defaults rather than discarding ALL adopter entries when one is
+        // absent — the old all-or-nothing guard reintroduced the silent-drop
+        // bug class this task exists to remove.
+        return {
+            noisySourcePaths: mod.noisySourcePaths,
+            validDirs: mod.validDirs,
+            markdownRootDirs: mod.markdownRootDirs,
+        };
+    } catch {
+        return null;
+    }
+}
+
+const DEFAULT_ADOPTER_CONFIG_PATH = fileURLToPath(new URL('./docs-refs-config.mjs', import.meta.url));
+const DEFAULT_ADOPTER_CONFIG = await loadAdopterConfig(DEFAULT_ADOPTER_CONFIG_PATH);
+const DEFAULT_EFFECTIVE_CONFIG = mergeAdopterConfig(DEFAULT_ADOPTER_CONFIG);
+
+export const VALID_DIRS = DEFAULT_EFFECTIVE_CONFIG.validDirs;
+export const NOISY_SOURCE_PATHS = DEFAULT_EFFECTIVE_CONFIG.noisySourcePaths;
+
 function isVisibleDir(name) {
     return !name.startsWith('.');
 }
@@ -104,7 +138,7 @@ function readText(filePath) {
     return fs.readFileSync(filePath, 'utf8');
 }
 
-function collectMarkdownFiles(repoRoot) {
+function collectMarkdownFiles(repoRoot, markdownRootDirs) {
     const files = [];
 
     for (const rel of ROOT_MARKDOWN_FILES) {
@@ -114,7 +148,7 @@ function collectMarkdownFiles(repoRoot) {
         }
     }
 
-    for (const rel of MARKDOWN_ROOT_DIRS) {
+    for (const rel of markdownRootDirs) {
         const abs = path.join(repoRoot, rel);
         if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) continue;
         walkMarkdownTree(abs, files, rel === 'tasks');
@@ -221,19 +255,19 @@ function isPlaceholderSymbol(symbol) {
     return symbol.includes('...');
 }
 
-function isAllowedDocTarget(target) {
+function isAllowedDocTarget(target, validDirs) {
     if (ROOT_MARKDOWN_FILES.includes(target)) return true;
     if (!target.includes('/')) return false;
-    return VALID_DIRS.has(target.split('/')[0]);
+    return validDirs.has(target.split('/')[0]);
 }
 
 // Anchor links in nested docs commonly use relative paths (e.g.,
 // `[text](../AGENTS.md#section)` from `docs/foo.md`). The path-resolution
 // step below handles relative paths correctly; this helper widens the
 // allow-list at the gate so they're not silently skipped.
-function isAllowedAnchorLinkPath(target) {
+function isAllowedAnchorLinkPath(target, validDirs) {
     if (target.startsWith('./') || target.startsWith('../')) return true;
-    return isAllowedDocTarget(target);
+    return isAllowedDocTarget(target, validDirs);
 }
 
 function isLineCitationTarget(target) {
@@ -376,9 +410,12 @@ function collectCandidateTargetPaths(markdownFiles, repoRoot, skipPaths) {
 }
 
 function findBrokenRefs(repoRoot, options = {}) {
-    const skipPaths = options.skipPaths ?? NOISY_SOURCE_PATHS;
+    const effectiveConfig = options.effectiveConfig ?? DEFAULT_EFFECTIVE_CONFIG;
+    const skipPaths = options.skipPaths ?? effectiveConfig.noisySourcePaths;
+    const validDirs = effectiveConfig.validDirs;
+    const markdownRootDirs = effectiveConfig.markdownRootDirs;
     const findings = [];
-    const allMarkdownFiles = collectMarkdownFiles(repoRoot);
+    const allMarkdownFiles = collectMarkdownFiles(repoRoot, markdownRootDirs);
 
     // First pass: skip gitignored markdown source files entirely.
     // This is broader than just self-anchor false positives — refs of
@@ -452,7 +489,7 @@ function findBrokenRefs(repoRoot, options = {}) {
                 if (!target.includes('/') && path.extname(target) === '') continue;
                 if (isPlaceholderTarget(target)) continue;
                 const topLevel = target.split('/')[0];
-                if (!VALID_DIRS.has(topLevel)) continue;
+                if (!validDirs.has(topLevel)) continue;
                 if (gitIgnoredTargets.has(target)) continue;
 
                 const targetPath = resolveRepoRelative(repoRoot, target);
@@ -466,7 +503,7 @@ function findBrokenRefs(repoRoot, options = {}) {
                 const symbol = match[1];
                 const target = match[2];
                 if (isLineCitationTarget(target)) continue;
-                if (!isAllowedDocTarget(target)) continue;
+                if (!isAllowedDocTarget(target, validDirs)) continue;
                 if (isPlaceholderTarget(target)) continue;
                 if (isPlaceholderSymbol(symbol)) continue;
                 if (gitIgnoredTargets.has(target)) continue;
@@ -489,7 +526,7 @@ function findBrokenRefs(repoRoot, options = {}) {
                 const target = match[1];
                 const headingText = match[2];
                 if (isLineCitationTarget(target)) continue;
-                if (!isAllowedDocTarget(target)) continue;
+                if (!isAllowedDocTarget(target, validDirs)) continue;
                 if (isPlaceholderTarget(target) || isPlaceholderTarget(headingText)) continue;
                 if (gitIgnoredTargets.has(target)) continue;
                 const targetPath = resolveRepoRelative(repoRoot, target);
@@ -518,7 +555,7 @@ function findBrokenRefs(repoRoot, options = {}) {
                 const anchor = rawAnchor.trim();
                 if (!anchor) continue;
                 if (PLACEHOLDER_SEGMENTS.has(slugify(anchor))) continue;
-                if (linkPath && !isAllowedAnchorLinkPath(linkPath)) continue;
+                if (linkPath && !isAllowedAnchorLinkPath(linkPath, validDirs)) continue;
                 if (linkPath) {
                     const normalized = normalizeAnchorLinkPath(sourceFile, repoRoot, linkPath);
                     if (normalized && gitIgnoredTargets.has(normalized)) continue;
@@ -545,7 +582,10 @@ function findBrokenRefs(repoRoot, options = {}) {
 }
 
 export function runChecks(repoRoot, options = {}) {
-    return findBrokenRefs(repoRoot, options);
+    const effectiveConfig = options.adopterConfig === undefined
+        ? DEFAULT_EFFECTIVE_CONFIG
+        : mergeAdopterConfig(options.adopterConfig);
+    return findBrokenRefs(repoRoot, { ...options, effectiveConfig });
 }
 
 function printFindings(findings) {
@@ -555,9 +595,11 @@ function printFindings(findings) {
     console.error(`Found ${findings.length} broken ref${findings.length === 1 ? '' : 's'}`);
 }
 
-function main(argv = process.argv.slice(2)) {
+async function main(argv = process.argv.slice(2)) {
     const repoRoot = argv[0] ? path.resolve(argv[0]) : process.cwd();
-    const findings = runChecks(repoRoot);
+    const adopterConfigPath = path.join(repoRoot, 'scripts', 'docs-refs-config.mjs');
+    const adopterConfig = await loadAdopterConfig(adopterConfigPath);
+    const findings = runChecks(repoRoot, { adopterConfig });
 
     if (findings.length === 0) {
         console.log('All refs OK');
@@ -569,7 +611,12 @@ function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    process.exitCode = main();
+    void main().then(code => {
+        process.exitCode = code;
+    }).catch(error => {
+        console.error(error);
+        process.exitCode = 1;
+    });
 }
 
-export { VALID_DIRS, NOISY_SOURCE_PATHS, main };
+export { main };

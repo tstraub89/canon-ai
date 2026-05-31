@@ -1,6 +1,7 @@
 import {
     copyFileSync,
     existsSync,
+    readFileSync,
     mkdirSync,
     readdirSync,
     statSync,
@@ -10,6 +11,7 @@ import {
 import { fileURLToPath } from 'url';
 import { dirname, join, relative } from 'path';
 import { checkDeps } from '../deps.js';
+import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const templatesDir = join(packageDir, 'templates');
@@ -57,6 +59,15 @@ export function initCmd(_args: string[]): void {
 
     const cwd = process.cwd();
     const { scaffolded, skipped } = scaffoldTemplates(cwd, templatesDir);
+    const gitignorePath = join(cwd, '.gitignore');
+    const existingGitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+    const gitignoreResult = upsertCanonBlock(existingGitignore, CANON_GITIGNORE_BLOCK);
+    if (gitignoreResult === null) {
+        console.warn('warning: .gitignore has an unclosed `# canon:start` marker — add a matching `# canon:end` line manually, then re-run `canon init`.');
+    } else if (gitignoreResult !== existingGitignore) {
+        mkdirSync(dirname(gitignorePath), { recursive: true });
+        writeFileSync(gitignorePath, gitignoreResult);
+    }
 
     const pkgPath = join(cwd, 'package.json');
     const isJsProject = existsSync(pkgPath);
@@ -143,4 +154,3 @@ function launchGrill(cwd: string, hasExistingAgentFiles: boolean): void {
     }
     console.log('');
 }
-

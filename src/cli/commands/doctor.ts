@@ -1,10 +1,11 @@
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
-import { dirname, join, sep as pathSep } from 'path';
-import { HEARTBEAT_STALE_AFTER_MS, readHeartbeat, isHeartbeatStale } from '../../../scripts/run-task/heartbeat.js';
-import { isOrphanedWorktreeState, statusFileFor, taskDirForRepoRoot } from '../../../scripts/run-task/state.js';
-import type { StatusJson } from '../../../scripts/run-task/types.js';
+import { join, sep as pathSep } from 'path';
+import { HEARTBEAT_STALE_AFTER_MS, isHeartbeatStale } from '../../../scripts/run-task/heartbeat.js';
+import { gatherRunContext, isStatusJson } from '../../../scripts/run-task/run-context.js';
+import { type StatusJson } from '../../../scripts/run-task/types.js';
+import { CANON_RUNTIME_GITIGNORE_PATTERNS } from '../../lib/canon-block.js';
 import { isAvailable } from '../deps.js';
 
 interface Check {
@@ -37,10 +38,12 @@ export const RECOMMENDED_ALLOW = [
     'Bash(awk *)',
     'Bash(ls *)',
     'Bash(find *)',
+    'Bash(fd *)',
     'Bash(cat *)',
     'Bash(head *)',
     'Bash(tail *)',
     'Bash(grep *)',
+    'Bash(rg *)',
     'Bash(wc *)',
     'Bash(echo *)',
     'Bash(tr *)',
@@ -492,6 +495,30 @@ export function checkLocalSettingsGitignored(cwd: string): Check {
     };
 }
 
+export function checkRuntimeFilesGitignored(cwd: string): Check {
+    const label = 'runtime files .gitignored';
+    const gitignorePath = join(cwd, '.gitignore');
+
+    if (!existsSync(gitignorePath)) {
+        return {
+            label,
+            status: 'warn',
+            detail: 'no .gitignore found — run `canon upgrade` to add the canon runtime block',
+        };
+    }
+
+    const lines = readFileSync(gitignorePath, 'utf8').split('\n').map(line => line.trim());
+    const missing = CANON_RUNTIME_GITIGNORE_PATTERNS.filter(pattern => !lines.includes(pattern));
+    if (missing.length === 0) {
+        return { label, status: 'pass', detail: 'all runtime patterns present' };
+    }
+    return {
+        label,
+        status: 'warn',
+        detail: `missing runtime pattern(s): ${missing.join(', ')} — run \`canon upgrade\` to add them`,
+    };
+}
+
 // --- active-orchestrator detection ---
 
 /**
@@ -508,36 +535,6 @@ export function formatAge(ms: number): string {
     const hours = Math.floor(minutes / 60);
     const remMin = minutes % 60;
     return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`;
-}
-
-function readStatusForCheck(taskId: string): StatusJson | null {
-    // Match `canon task list`'s graceful-degradation contract (issue #83):
-    // don't crash doctor on orphan worktree state. Fall back to the REPO_ROOT
-    // snapshot of status.json when the worktree is gone but the task entry
-    // still claims one.
-    try {
-        const statusPath = isOrphanedWorktreeState(taskId)
-            ? join(taskDirForRepoRoot(taskId), 'status.json')
-            : statusFileFor(taskId);
-        if (!existsSync(statusPath)) return null;
-        return JSON.parse(readFileSync(statusPath, 'utf8')) as StatusJson;
-    } catch {
-        return null;
-    }
-}
-
-function resolveHeartbeatDir(taskId: string): string | null {
-    // Heartbeat lives next to the worktree's status.json. For orphan-worktree
-    // tasks the heartbeat is effectively unreachable — we still report
-    // "no live orchestrator" which is the right answer regardless.
-    try {
-        if (isOrphanedWorktreeState(taskId)) {
-            return taskDirForRepoRoot(taskId);
-        }
-        return dirname(statusFileFor(taskId));
-    } catch {
-        return null;
-    }
 }
 
 /**
@@ -563,8 +560,11 @@ export function checkActiveOrchestrators(cwd: string, now: number = Date.now()):
     }
     for (const id of entries) {
         if (id === '_archive') continue;
-        const status = readStatusForCheck(id);
-        if (!status) continue;
+        const ctx = gatherRunContext(id);
+        const status: StatusJson | null = ctx.statusResult.kind === 'ok' && isStatusJson(ctx.statusResult.status)
+            ? ctx.statusResult.status
+            : null;
+        if (status == null) continue;
         // Top-level `status.status` is the *current phase name* (e.g.,
         // "implement", "code_review", "complete") — NOT a phase-status value.
         // The signal that an orchestrator should be running is whether any
@@ -580,8 +580,7 @@ export function checkActiveOrchestrators(cwd: string, now: number = Date.now()):
         );
         if (!hasInProgressPhase) continue;
 
-        const taskDir = resolveHeartbeatDir(id);
-        const record = taskDir ? readHeartbeat(taskDir) : null;
+        const record = ctx.heartbeatResult.kind === 'found' ? ctx.heartbeatResult.record : null;
         const label = `orchestrator ${id}`;
         if (isHeartbeatStale(record, now)) {
             const detail = record === null
@@ -638,6 +637,7 @@ export function doctorCmd(_args: string[]): void {
         checkCodexProjectTrust(cwd),
         checkRecommendedPermissions(cwd),
         checkLocalSettingsGitignored(cwd),
+        checkRuntimeFilesGitignored(cwd),
     ];
 
     // Active-orchestrator section is conditional — only shows when at least

@@ -1,0 +1,6 @@
+# canon:start
+# This block is managed by canon. Edits are overwritten on `canon upgrade`.
+tasks/**/.canon-pid
+tasks/**/.canon-run.log
+tasks/**/.heartbeat.json
+# canon:end

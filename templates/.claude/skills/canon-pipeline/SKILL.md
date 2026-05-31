@@ -98,7 +98,7 @@ canon run <task-id> --ship
    ```bash
    canon task release-init X.Y.0
    ```
-   Creates `release/vX.Y`, bumps `package.json`, inserts an empty `## vX.Y - unreleased` CHANGELOG block, commits, pushes.
+   Creates `release/vX.Y`, bumps `package.json`, inserts an empty `## [X.Y.Z] — unreleased` CHANGELOG block, commits, pushes.
 3. Confirm: "Release branch `release/vX.Y` initialized and checked out."
 
 **Creating a task on a release branch:** run `canon task new <id> "Title"` while checked out on `release/vX.Y`. The helper auto-detects the current branch and writes `base_branch: release/vX.Y`. Don't pass `--base` — auto-detect is the load-bearing convention.
@@ -109,7 +109,7 @@ canon run <task-id> --ship
 
 **"Let's ship vX.Y":**
 1. Verify all vX.Y task PRs are merged to `release/vX.Y`.
-2. Swap `## vX.Y - unreleased` → `## vX.Y - YYYY-MM-DD` in CHANGELOG.md.
+2. Swap `## [X.Y.Z] — unreleased` → `## [X.Y.Z] — YYYY-MM-DD` in CHANGELOG.md (the bracketed em-dash form the auto-release workflow extracts).
 3. Commit and push.
 4. Open the release PR: `gh pr create --base main --head release/vX.Y --title "vX.Y: <theme>"`.
 5. After merge: `canon task post-merge-sync` on main, then tag and create a GitHub release.

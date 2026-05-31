@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import * as syncCanonTemplatesRaw from '../scripts/sync-canon-templates.mjs';
+import { CANON_GITIGNORE_BLOCK } from '../src/lib/canon-block.js';
 
 type SyncCanonTemplatesModule = {
     applySync(repoRoot: string): string[];
@@ -55,6 +56,7 @@ function seedCanonFixture(root: string): void {
         writeFile(root, rel, placeholderDelimited);
         writeFile(root, `templates/${rel}`, placeholderDelimited);
     }
+    writeFile(root, 'templates/.gitignore', CANON_GITIGNORE_BLOCK);
 }
 
 function runCheckCli(root: string) {
@@ -181,6 +183,39 @@ void test('applySync is idempotent on a freshly synced fixture', () => {
 
         assert.deepEqual(syncCanonTemplates.applySync(root), ['templates/docs/pipeline-orchestrator.md']);
         assert.deepEqual(syncCanonTemplates.applySync(root), []);
+    });
+});
+
+void test('gitignore sync rewrites templates/.gitignore from the shared constant', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        writeFile(root, 'templates/.gitignore', 'stale\n');
+
+        assert.deepEqual(syncCanonTemplates.checkSync(root), ['templates/.gitignore']);
+        assert.deepEqual(syncCanonTemplates.applySync(root), ['templates/.gitignore']);
+        assert.equal(fs.readFileSync(path.join(root, 'templates/.gitignore'), 'utf8'), CANON_GITIGNORE_BLOCK);
+        assert.deepEqual(syncCanonTemplates.checkSync(root), []);
+    });
+});
+
+void test('gitignore sync is clean when templates/.gitignore matches the shared constant', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+
+        assert.deepEqual(syncCanonTemplates.checkSync(root), []);
+        assert.deepEqual(syncCanonTemplates.applySync(root), []);
+    });
+});
+
+void test('gitignore sync first-creates missing templates/.gitignore without a source error', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        fs.rmSync(path.join(root, 'templates/.gitignore'));
+
+        assert.deepEqual(syncCanonTemplates.checkSync(root), ['templates/.gitignore']);
+        assert.deepEqual(syncCanonTemplates.findSyncErrors(root), []);
+        assert.deepEqual(syncCanonTemplates.applySync(root), ['templates/.gitignore']);
+        assert.equal(fs.readFileSync(path.join(root, 'templates/.gitignore'), 'utf8'), CANON_GITIGNORE_BLOCK);
     });
 });
 

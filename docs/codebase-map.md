@@ -34,10 +34,16 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Agent runners | `scripts/run-task/agents/*.ts` | Shared subprocess wrappers for Claude and Codex |
 | Prompt builders and templates | `scripts/run-task/prompts/index.ts`, `scripts/run-task/prompts/templates/*.md` | Data prep + Mustache rendering |
 | CLI parsing and logging | `scripts/run-task/cli.ts` | Args, usage, `die` / `info` / `warn` |
-| State I/O and session storage | `scripts/run-task/state.ts` | `status.json`, derived status, task/worktree path helpers |
+| State I/O and session storage | `scripts/run-task/state.ts` | `status.json`, derived status, task/worktree path helpers; exports `validateStatus` and `readStatusFromPath` |
+| Shared run-context resolver | `scripts/run-task/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
 | Git plumbing and porcelain parsing | `scripts/run-task/git.ts` | Branch helpers, commits, porcelain parsers |
 | Worktree management | `scripts/run-task/worktree.ts` | Worktree lifecycle, cleanup/detect helpers, `findExistingWorktreeForBranch`, and pipeline file registries |
 | Validation gates and diff checks | `scripts/run-task/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
+| `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
+| `canon stop` command | `src/cli/commands/stop.ts` | Gracefully terminates detached run; SIGTERM → SIGKILL; CASE A–D pid selection |
+| `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state |
+| Canon runtime `.gitignore` block | `src/lib/canon-block.ts`, `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts`, `src/cli/commands/doctor.ts` | canon manages a `# canon:start`/`# canon:end` block in `.gitignore`; `canon upgrade` refreshes it. |
+| CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()`, top-level `switch` dispatch for all `canon` commands |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `scripts/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
 | Task management helper (status.json updates, phase transitions) | `scripts/task.sh` | jq-driven; agents and humans both use it |
@@ -86,7 +92,10 @@ These must stay current — agents read them at session start (per phase rules i
 | Pipeline policy table tests | `tests/pipeline-policy.test.ts` | Tier, sizing, model matrix, loop caps |
 | Handoff/git porcelain parser | `tests/run-task-parse-porcelain.test.ts` | Edge cases for git status parsing |
 | Handoff validation logic | `tests/run-task-validation.test.ts` | `validateHandoff()` cases |
+| Shared run-context resolver tests | `tests/run-context.test.ts` | Orphaned-worktree, PID fallback (CASE C/D), launch-window, EPERM |
+| `canon watch` command tests | `tests/watch.test.ts` | Attach/idle branches, grace re-read, launch-window wait, `--until`, `--timeout`, read-failure, summary-line format |
 | Docs refs validator | `scripts/docs-refs-check.mjs` | Markdown reference gate; run via `npm run docs-refs-check` |
+| Docs refs config | `scripts/docs-refs-config.mjs` | Adopter-owned tuning surface loaded by `scripts/docs-refs-check.mjs`; canon-ai-dev re-adds `templates/` here so its own gate still scans templates. |
 | Canon-managed template sync | `tests/sync-canon-templates.test.ts` | Sync direction, delimiter preservation, CLI check, hook regression |
 
 Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test files import directly from `scripts/`.

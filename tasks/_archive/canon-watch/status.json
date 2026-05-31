@@ -1,0 +1,91 @@
+{
+  "id": "canon-watch",
+  "title": "canon watch — blocking observer for detached pipeline runs",
+  "status": "complete",
+  "created": "2026-05-29",
+  "updated": "2026-05-30",
+  "branch": "task/canon-watch",
+  "base_branch": "release/v1.8",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "b0b56288b57da3417dc194d102d7dfe5286cd8f3",
+    "orchestrator_commit": "b0b56288b57da3417dc194d102d7dfe5286cd8f3",
+    "codex_cli": "codex-cli 0.134.0",
+    "claude_code": "2.1.152 (Claude Code)"
+  },
+  "task_size": "L",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 7,
+      "changes_requested_total": 6,
+      "auto_block_count": 2,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0,
+      "preflight_rejections_total": 1
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-05-29",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    },
+    {
+      "date": "2026-05-30",
+      "phase": "spec_review",
+      "iteration_count": 6,
+      "reason": "Spec review hit 6 changes_requested iterations in a row (limit: 6). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    }
+  ],
+  "sessions": {
+    "codex_spec_review": "019e760c-e667-7511-a86e-de8f2b0f5bca",
+    "claude_spec": "abfdff15-b9fe-4b15-829f-00ac75a7b9e5",
+    "codex": "019e768b-177e-7b81-8e46-3d0e11c2b772",
+    "claude_review": "07edb589-232e-417a-8efc-b853b7144e4b"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

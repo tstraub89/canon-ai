@@ -11,29 +11,15 @@ effort: medium
 Argument: **$ARGUMENTS** _(empty = auto-detect mode from branch + CHANGELOG state)_
 
 ```!
-echo "Today:    $(date +%Y-%m-%d)"
-echo "Branch:   $(git branch --show-current 2>/dev/null)"
-echo "Version:  $(node -e "process.stdout.write(require('./package.json').version)" 2>/dev/null || echo "(no package.json)")"
-echo ""
-current=$(git branch --show-current 2>/dev/null)
-case "$current" in
-  main) base=main ;;
-  release/*) base=main ;;
-  task/*) base="$(git config branch.$current.merge 2>/dev/null | sed 's|refs/heads/||')" ; base="${base:-main}" ;;
-  *) base=main ;;
-esac
-echo "Base:     $base"
-echo ""
-echo "Commits ahead of $base:"
-git log "$base..HEAD" --oneline 2>/dev/null || echo "(none)"
-echo ""
-if [ ! -f CHANGELOG.md ]; then
-  echo "⚠️  No CHANGELOG.md found. Create one before using this skill."
-elif grep -q '^## v[0-9.]* - unreleased' CHANGELOG.md 2>/dev/null; then
-  echo "In-progress block:"
-  grep '^## v[0-9.]* - unreleased' CHANGELOG.md
-fi
+git branch --show-current
+git log --oneline -12
 ```
+
+**Orient from the above + your tools.** Do **not** use shell `case`/`if`/loops or `node -e` for orientation — Claude Code blocks unparseable control structures, and this skill's `allowed-tools` is `git` + Read/Glob/Grep/Edit/Write. Gather the rest by reasoning:
+
+- **Version** — Read `package.json` → `version`.
+- **CHANGELOG state** — Read `CHANGELOG.md`: note the heading format it actually uses and whether an in-progress / unreleased block is present. If `CHANGELOG.md` is missing, stop and create it (see *Prerequisites*).
+- **Base branch** (for "commits ahead") — `main` / `release/*` → base `main`; `task/*` → its upstream (`git rev-parse --abbrev-ref @{upstream}`), falling back to `main` if no upstream is set (fresh task branches often have none). Then `git log --oneline <base>..HEAD` for the ahead-list.
 
 ---
 
@@ -41,12 +27,14 @@ fi
 
 This skill requires `CHANGELOG.md` to exist. If it doesn't, create it before proceeding — a minimal structure:
 ```markdown
-# What's New
+# Changelog
 
-## v0.1.0 - YYYY-MM-DD
+> Format follows [Keep a Changelog](https://keepachangelog.com/). SemVer per the project's release rules.
 
-### ✨ New Features
-- **Initial release**: ...
+## [0.1.0] — unreleased
+
+### Added
+- Initial release.
 ```
 
 Also requires `AGENTS.md` to have a `## Release Rules` section defining:
@@ -60,12 +48,16 @@ If those aren't defined, read `docs/product-context.md` for context and use judg
 
 ## Mode detection
 
+> Match the format your `CHANGELOG.md` already uses. canon-ai's canonical form is `## [<version>] — <date|unreleased>` (bracketed full-semver + em-dash, per `docs/release-process.md`): the active block on a release branch is `## [X.Y.Z] — unreleased`, finalize swaps `unreleased` → the date, and the auto-release workflow extracts that block (failing if the `unreleased` placeholder remains).
+>
+> **"Active unreleased block" = the topmost section whose header marks it unreleased.** Recognize *either* `## [X.Y.Z] — unreleased` *or* a generic `## [Unreleased]` (the Keep-a-Changelog default, which this repo's `CHANGELOG.md` currently uses) — append to whichever exists. When *creating* a block, prefer canonical `## [X.Y.Z] — unreleased` so auto-release can extract it. Adapt headings/categories if your project's convention differs.
+
 | Branch | CHANGELOG state | Mode |
 |---|---|---|
-| `main` | no `## vX.Y - unreleased` block | **Fresh release** — draft new dated entry from tasks since last release |
-| `release/vX.Y` | `## vX.Y - unreleased` block exists | **In-progress append** — find new tasks not yet represented and add bullets |
-| `release/vX.Y` | unreleased block exists, `$ARGUMENTS = "finalize"` | **Finalize** — polish pass, swap `unreleased` → today's date |
-| Any | `$ARGUMENTS` is a single task ID | **Single-task append** — one bullet from that task's done.md |
+| `main` | no active unreleased block | **Fresh release** — draft a new dated `## [X.Y.Z] — YYYY-MM-DD` section from tasks since the last release |
+| `release/vX.Y` | active unreleased block exists (either form) | **In-progress append** — add bullets under that block for tasks not yet represented |
+| `release/vX.Y` | active unreleased block exists, `$ARGUMENTS = "finalize"` | **Finalize** — set its header to the canonical `## [X.Y.Z] — YYYY-MM-DD` (today's date) |
+| Any | `$ARGUMENTS` is a single task ID | **Single-task append** — one bullet under the active unreleased block from that task's done.md |
 
 Confirm the detected mode before proceeding. If multiple modes seem plausible, ask.
 
@@ -119,18 +111,21 @@ Before drafting bullets, look at the full working set as one release, not a list
 
 **Find non-entries**: apply your project's "would a user notice" test (defined in `AGENTS.md §"Release Rules"`). Omit: pure refactors, test changes, pipeline infra, dev tooling, lint cleanup, invisible implementation details. List skipped tasks explicitly in Phase 4 so the human can see your omit decisions.
 
-**Bullet format** (calibrate to your project's existing entries):
+**Bullet format** (calibrate to your project's existing entries; this repo uses Keep a Changelog):
 ```
-## vX.Y.Z - YYYY-MM-DD
+## [X.Y.Z] — unreleased
 
-### ✨ New Features
-- **Feature title**: Plain-language description. One to two sentences max.
+### Added
+- **Feature title.** Plain-language description. One to two sentences max.
 
-### 🚀 Improvements
-- **Improvement title**: Plain-language description.
+### Changed
+- **Change title.** Plain-language description.
 
-### 🐞 Fixes
-- **Fix title**: Plain-language description.
+### Fixed
+- **Fix title.** Plain-language description.
+
+### Removed
+- **Removal title.** Plain-language description.
 ```
 
 Formatting rules:
@@ -160,18 +155,18 @@ Wait for approval. The user may adjust wording or version. Incorporate edits, th
 
 ### Phase 5 — Write files
 
-**Fresh release mode** (main, no in-progress block):
-1. Insert new version section in `CHANGELOG.md` after the title and before the first `## v` line.
+**Fresh release mode** (main, no active `## [<version>] — unreleased` block):
+1. Insert a new `## [X.Y.Z] — YYYY-MM-DD` section immediately before the first existing `## [` version block (below the `# Changelog` title + meta note).
 2. Update `"version"` in `package.json` (and `package-lock.json` if present).
 
-**In-progress append mode** (release branch, unreleased block exists):
-1. Append bullets to the appropriate category subheadings within the `## vX.Y - unreleased` block.
+**In-progress append mode** (release branch):
+1. Append bullets to the appropriate `### Added` / `### Changed` / `### Fixed` / `### Removed` subheading within the active unreleased block (create the subheading if absent).
 2. Do NOT touch `package.json` — version was bumped at `release-init` time.
 
 **Single-task append**: same as the relevant branch mode, but for one bullet only.
 
 **Finalize mode**:
-1. Replace `## vX.Y - unreleased` with `## vX.Y - YYYY-MM-DD` (today's date).
+1. Set the active unreleased block's header to canonical `## [X.Y.Z] — YYYY-MM-DD` (today's date) — replace `unreleased` with the date, and version a generic `## [Unreleased]` to the bracketed semver while you're there. (The auto-release workflow extracts this block and fails if the `unreleased` placeholder remains.) Don't add a fresh block — the next cycle's `release-init` inserts the next `## [X.Y.Z] — unreleased`.
 2. Apply any polish edits approved in Phase 4.
 3. Do NOT touch `package.json`.
 
