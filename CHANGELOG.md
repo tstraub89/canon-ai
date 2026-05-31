@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.8.2] — 2026-05-31
+
+### Fixed
+
+- **The QA phase no longer autonomously rewrites `docs/lessons-learned.md` or promotes entries into permanent docs.** When the lessons-learned buffer exceeded ~15 entries, the QA-phase prompt instructed the agent to run a full "lessons sweep" — promoting entries into `docs/patterns.md` / `docs/decisions.md` / `AGENTS.md` and pruning or editing entries belonging to *other* tasks — with no human-approval gate (and a watchdog `SIGTERM` mid-sweep could strand the docs in a half-promoted state). QA is now strictly **append-only**: it adds only the current task's own entry, still corrects stale references in protected docs via the Docs-freshness step, and when the buffer exceeds ~15 entries it merely *signals* in `done.md` that a human sweep is due. Promoting and pruning the buffer is now a human-initiated, human-approved action, documented as such in the scaffolded `docs/lessons-learned.md` and across the canon-managed docs.
+
 ## [1.8.1] — 2026-05-31
 
 ### Fixed

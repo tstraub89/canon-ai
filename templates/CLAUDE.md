@@ -131,7 +131,7 @@ After code review passes:
 1. Write `done.md` for the human — plain English, test steps, results.
 2. Update `status.json`: set `qa.status` to `"done"`.
 3. Append a row to `docs/task-quality-log.md` (see that file for column definitions).
-4. If this task produced a reusable insight, append an entry to `docs/lessons-learned.md`.
+4. If this task produced a reusable insight, **append** an entry to `docs/lessons-learned.md` — append-only. Never edit, prune, promote, or reorganize other entries (this task's earlier ones or any other task's), and never promote into permanent docs; promoting/pruning the buffer is a human-initiated, human-approved action. If the buffer now exceeds ~15 entries, note in `done.md` that a human lessons sweep is due — do not perform it.
 
 ### Opening a PR (at human_review)
 

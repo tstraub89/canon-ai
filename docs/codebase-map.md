@@ -142,7 +142,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` / `CODEX.md` (authorship rules)
 
 **Promote a lesson into canon**:
-> `tasks/<id>/notes.md` (raw) → `docs/lessons-learned.md` (distilled, during QA) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule
+> `tasks/<id>/notes.md` (raw) → `docs/lessons-learned.md` (distilled & appended, during QA) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule. The final hop (promotion + pruning the buffer) is a **human-run sweep**, never automated by QA — QA only appends.
 
 ## Agent Config
 

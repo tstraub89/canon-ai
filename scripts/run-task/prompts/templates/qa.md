@@ -20,10 +20,10 @@ For each task:
    The human finalizes both.
 
 After writing all done.md files:
-- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" Only write to docs/lessons-learned.md if yes. Task-specific details stay in notes.md only.
+- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md / AGENTS.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
 - Append one row per task to docs/task-quality-log.md (see that file for column definitions).
-- **Docs freshness**: scan the protected docs in AGENTS.md (architecture.md, codebase-map.md, patterns.md, product-context.md, decisions.md) for anything contradicted by {{docsScope}}. Update stale references if found.
-- **Lessons sweep** (periodic — not every task): scan docs/lessons-learned.md. For each entry: promote durable truths to the right permanent doc (patterns.md / decisions.md / AGENTS.md), OR prune entries that turned out to be task-specific after all (just delete them — the detail lives in the task's notes.md). Leave a tombstone only for promoted entries. Do this when lessons-learned exceeds ~15 entries or at the end of a release milestone.
+- **Docs freshness**: scan the protected docs in AGENTS.md (architecture.md, codebase-map.md, patterns.md, product-context.md, decisions.md) for references that {{docsScope}} *contradicts* — a renamed symbol, a moved file, a behavior this task changed — and correct those stale references. That is the only edit QA makes to permanent docs. Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries — promotion is the human sweep, not Docs freshness.
+- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md now holds more than ~15 entries, add one line to this task's done.md — `Maintenance: lessons-learned.md has N entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").` Do not perform the sweep yourself.
 
 When done, run (use the Bash tool — do not just output the command as text):
 {{{phaseCommands}}}

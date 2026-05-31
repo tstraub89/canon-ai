@@ -72,7 +72,7 @@ Never add a suppression comment without a written justification on the same line
 
 > Hard-won lessons from past mistakes. Violating them causes subtle bugs.
 >
-> **TODO[canon]: This is where the project's accumulated wisdom lives. Each pitfall should follow the format below. Initially empty for new projects — entries land here as the QA phase distills `docs/lessons-learned.md` over time.**
+> **TODO[canon]: This is where the project's accumulated wisdom lives. Each pitfall should follow the format below. Initially empty for new projects — entries land here when a human promotes durable lessons from `docs/lessons-learned.md` during a sweep (see that file → "How to use this doc"). QA only appends to the buffer; it never promotes into this doc.**
 
 ### Pitfall format
 
