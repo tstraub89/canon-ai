@@ -85,139 +85,33 @@ The full-send auto-amend path opens a loop the per-loop counters cannot bound: `
 
 ## Acceptance Criteria
 
-### Schema, types, and the opt-in flag
+> These are **behavioral contracts** only. Implementation mechanics — exact symbol/constant names, the severity regex, the `codex review` argv ordering, the phase-gate field wiring, and the artifact format — live in *Design → Affected Files* and the *Mechanics (deferred)* note there; they are guidance for plan/implement against the current tree, **not** AC surface to be re-litigated at spec_review. Verification is consolidated into the single **Testing Matrix** (AC-12) rather than scattered across per-AC clauses.
 
-- [ ] **AC-1**: `PHASE_ORDER` in `scripts/run-task/types.ts` includes `'codex_code_review'` between `'code_review'` and `'qa'`. Full order: `['spec', 'spec_review', 'plan', 'implement', 'code_review', 'codex_code_review', 'qa', 'human_review']`.
-- [ ] **AC-2**: `Phase` type (derived from `typeof PHASE_ORDER[number]`) includes `'codex_code_review'`; all downstream usages (PhaseEntry, dispatcher cases) compile clean.
-- [ ] **AC-3**: The `codex_code_review` opt-in flag is added to the `StatusJson` type (top-level optional boolean, sibling of `delicate`/`full_send`), defaulting to `false` when absent. Document inline that absence ⇒ phase skipped.
-- [ ] **AC-4**: `.canon/templates/status.json` includes (a) the top-level `"codex_code_review": false` flag with a brief `_codex_code_review` doc line explaining opt-in semantics, and (b) a `phases.codex_code_review` entry with shape `{ status: 'pending', agent: 'codex', verdict: '', iterations: 0, iterations_current_loop: 0, iterations_total: 0, changes_requested_total: 0, auto_block_count: 0, reroutes_total: 0 }` — note the added cumulative `reroutes_total` (AC-18a). The existing `_verdict_values` block already covers all codex_code_review verdicts (unchanged).
-- [ ] **AC-5**: `canon task new` scaffolds new tasks with both the top-level `codex_code_review: false` flag and the `phases.codex_code_review` entry (per AC-4 defaults).
-- [ ] **AC-6**: `canon task phase <id> codex_code_review <status> [verdict]` accepts the new phase name and updates the phase entry; invalid usage rejected with the existing error format. Specifically, `src/task/index.ts` adds `'codex_code_review'` to the `REVIEW_PHASES` set (currently `{spec_review, code_review}`), updates the `assertValidVerdict` error message to read "verdict is only valid for spec_review, code_review, and codex_code_review phases", and the existing `updateReviewCounters` call site (guarded by `REVIEW_PHASES.has(phaseArg)`) fires for codex_code_review verdicts.
-- [ ] **AC-6a (pre-flight rejection interaction)**: Adding `codex_code_review` to `REVIEW_PHASES` also makes it eligible for `taskPhasePreflightRejected` (the pre-flight rejection path keyed off `REVIEW_PHASES` in `src/task/index.ts`). This is **intentional and accepted** — codex_code_review is a genuine review phase, so pre-flight rejection applying to it is consistent. Document the coupling inline so a future reader knows it's deliberate, not accidental. No separate pre-flight set is introduced.
-- [ ] **AC-7**: `deriveTopLevelStatus` walks the updated `PHASE_ORDER` and identifies `codex_code_review` as the current phase when prior phases are done. (Likely no code change — data-driven; verify.)
-- [ ] **AC-7a (non-resumable phase)**: `codex_code_review` is **intentionally non-resumable**. No `sessions.codex_code_review` slot is added to `StatusJson.sessions` or `.canon/templates/status.json`. Rationale: the `runCodexReview` helper (AC-10) does not consume the `codex exec --json` event stream that produces `thread.started.thread_id`, so there is no session ID to store; and the value is a *cold adversarial pass* — resuming a partial session defeats the framing benefit. Document the non-resumable choice inline in `runCodexCodeReviewPhase`.
+- [ ] **AC-1 (phase + opt-in, no tier gate)**: A new phase `codex_code_review` sits between `code_review` and `qa` in `PHASE_ORDER`, opt-in via a top-level `codex_code_review` boolean (default `false`/absent). **The flag alone governs eligibility — there is no tier gate**: task size and `delicate` never force or suppress the phase (size only sets Codex effort when it does run).
+- [ ] **AC-2 (skip when not opted in)**: When no in-scope task opts in, the phase is a no-op skip — it writes a skip artifact, sets verdict `approved`, invokes no Codex CLI, and advances to `qa`. In bundle mode the Codex pass runs if **any** bundled task opts in; non-opted tasks in the bundle receive the skip artifact.
+- [ ] **AC-3 (cold review, mini model)**: When opted in, the phase runs `codex review` against the **full task delta from `base_branch`**, **cold — no spec/AC/canon context injected** (the cold framing is the entire value and must be preserved). Model is `codexModelMini` for **every** size — no full-model promotion, even on XL/delicate; effort scales by size.
 
-### Phase implementation
+- [ ] **AC-4 (verdict + persistence)**: The phase derives a verdict from Codex's P0–P3 findings — any P0/P1/P2 → `changes_requested`; P3-only → `approved_with_nits`; none → `approved` — and persists the raw Codex output plus the computed verdict per round to `codex-review.md` (append, never overwrite).
+- [ ] **AC-5 (fail closed)**: A non-zero `codex` CLI exit (missing binary, network, auth, timeout) fails closed — phase marked `blocked`, stderr captured to the artifact, **never** marked `approved` (must not mask outages).
+- [ ] **AC-6 (non-resumable)**: The phase is non-resumable by design — no `sessions` slot; each iteration is a fresh cold pass.
+- [ ] **AC-7 (adjudication)**: On `changes_requested`, findings are **adjudicated by Claude** (the spec-aware agent) before any routing — never auto-rerouted blind. Each finding is classified **code bug / spec-plan gap / false positive**, and Claude's per-finding rationale is persisted to a human-readable adjudication artifact.
+- [ ] **AC-8 (altitude routing)**: Adjudicated findings route per the table in *Decision → Adjudicated, altitude-aware routing*: **code bug** → reroute to `implement` (full reroute reset; re-enters Claude `code_review` from scratch); **false positive** → dismissed with rationale, no reroute (an all-dismissed round resolves to `approved`/`approved_with_nits` and advances to `qa`); **spec/plan gap** → escalate to a human by default (halt, escalation entry, no spec edit, no `qa`), or auto-amend the spec and re-enter `spec_review` under full-send.
+- [ ] **AC-9 (runaway cap)**: A cumulative `codex_code_review.reroutes_total` counts every Codex-driven reroute (code-bug reroute **and** full-send amendment) and is **never reset** — not by reroute, amendment, or approval. It is capped by `MAX_CODEX_REROUTES` (default 3, env-overridable); at the cap the run **auto-blocks and escalates to a human even under full-send** (the guard overrides full-send, as ordinary auto-block does). Auto-block/escalation messaging frames a high count as a spec-design signal, never an invitation to bump the cap. (The existing per-loop `iterations_current_loop`/`MAX_REVIEW_LOOPS` still bounds within-version churn; this cumulative cap bounds the cross-amendment loop the per-loop counter cannot.)
+- [ ] **AC-10 (state + gate integrity)**: (a) Schema additions — the opt-in flag and the phase entry (including cumulative `reroutes_total`) — land in the StatusJson type, the template, and `canon task new` scaffolding, with absent-field reads defaulting safely (no migration). (b) `codex_code_review` is registered as a review phase for verdict/counter handling, which **intentionally** also makes it pre-flight-rejection eligible. (c) A **uniform phase gate** guards advancement to `done` (artifact present + non-template, verdict supplied, verdict matches the artifact) with **no exemption** — skip, escalate, and amend paths all satisfy it via their persisted artifacts. (d) The old `code_review → qa` transition is **removed** (advance path becomes `code_review → codex_code_review → qa`) so `qa` can never run before `codex_code_review`. (e) `--reroute` resets `codex_code_review` alongside `implement`/`code_review`/`qa`, and the dry-run plan shows the phase gated on the opt-in flag.
 
-- [ ] **AC-8**: New module `scripts/run-task/phases/codex-code-review.ts` exports `runCodexCodeReviewPhase(state: PipelineState, interactive: boolean, resumeId: string | null): Promise<PhaseRunResult>`. (Match the current signature shape of the sibling phase modules — verify against `scripts/run-task/phases/code-review.ts` at implement time; "mechanics deferred" where the current signature differs from this sketch.)
-- [ ] **AC-8a (opt-in skip)**: When **no** task in scope has `codex_code_review === true`, the phase writes the skip artifact (AC-13a) to each task's `codex-review.md`, marks `phases.codex_code_review.status = 'done'` and `verdict = 'approved'` **without invoking the Codex CLI**, and advances to `qa`. Skip reason text: `not opted in (codex_code_review flag not set)`.
-- [ ] **AC-9 (review scope)**: When at least one task is opted in, the phase invokes `codex review --base <base_branch>` where `<base_branch>` is read from `status.json.base_branch`. No commit-SHA scoping; the review covers the full task delta against the base branch so commits Claude rejected in earlier `code_review` cycles are not skipped.
-- [ ] **AC-9d (CLI invocation failure)**: If the `codex` CLI exits non-zero (binary missing, network, auth, timeout), the phase fails closed: marks `phases.codex_code_review.status = 'blocked'`, writes stderr (truncated to 4KB) into `codex-review.md` under a `### CLI Failure` heading, exits with code 2. Does **not** mark verdict = approved (would mask outages). Recovery: re-run after fixing the CLI environment.
-- [ ] **AC-10 (runner API)**: A **new** exported helper in `scripts/run-task/agents/codex.ts` invokes `codex review`. The existing `runCodex(prompt, …)` requires a non-empty prompt and routes through `codex exec`, neither of which fits `codex review`. Signature: `runCodexReview(args: { baseBranch: string; cwd: string; model: string; effort: string; metricsContext?: { taskId: string; phase: string; iteration?: number; activeCwd?: string } }): Promise<{ exitCode: number; stdout: string; stderr: string }>`. It invokes `codex` with argv `['-m', model, '-c', 'model_reasoning_effort=<effort>', 'review', '--base', baseBranch]` from `cwd` — **model and effort are top-level flags before the `review` subcommand** (`codex review -m <model>` is invalid; the `review` subcommand has no `-m`). Verify this invocation against the currently installed `codex` CLI at implement time (the CLI version in the original snapshot may differ from current). Captures stdout+stderr, records the standard metrics tuple via `recordMetric`, returns the raw result without exiting on non-zero (caller handles failure per AC-9d). Does **not** modify `runCodex`.
-- [ ] **AC-11**: Severity parser `parseCodexReviewSeverities(output: string): { P0: number; P1: number; P2: number; P3: number }` counts matches of regex `^- \[P([0-3])\] ` (multiline, global) on stdout. Exported and unit-tested.
-- [ ] **AC-12**: Verdict derivation `deriveCodexCodeReviewVerdict(counts): 'approved' | 'approved_with_nits' | 'changes_requested'`: any P0/P1/P2 > 0 → `changes_requested`; P3 > 0 and P0/P1/P2 = 0 → `approved_with_nits`; all zero → `approved`. Exported and unit-tested.
-- [ ] **AC-13**: `tasks/<id>/codex-review.md` is written with the raw `codex review` stdout as the iteration body, followed by a fenced orchestrator-appended verdict block:
-  ````
-  ## Round N
+- [ ] **AC-11 (docs + sync)**: All canon-managed surfaces are updated and template-synced — `docs/pipeline-orchestrator.md` (PHASE_ORDER, mini-only model row, opt-in flag, adjudicated routing, `MAX_CODEX_REROUTES`/`reroutes_total` + cap-overrides-full-send), `CLAUDE.md` (Review Responsibilities: opt-in two-agent review), `AGENTS.md` (review flow + the **extended full-send semantics**), `CODEX.md` (codex_code_review responsibilities, no spec injection), `docs/codebase-map.md` (new module), the `_full_send` template doc line, and a `CHANGELOG.md` Added bullet — and `npm run docs-refs-check` + `npm run sync-templates:check` pass. No reference to a `CODEX_CODE_REVIEW_DISABLED` env var exists anywhere (it is not part of this design).
 
-  <raw codex review stdout>
+- [ ] **AC-12 (Testing Matrix)**: The following are covered by automated tests. (Test-file placement and helper/symbol names are mechanics — locate existing files at implement time; consolidate per the project's per-feature test-file convention.)
 
-  ### Verdict (orchestrator-computed)
-  - P0: 0
-  - P1: 0
-  - P2: 1
-  - P3: 2
-  - Verdict: changes_requested
-  - Base branch reviewed: main
-  - Iteration: 1
-  ````
-  Subsequent iterations append `## Round N+1` rather than overwriting.
-- [ ] **AC-13a (skip artifact)**: On the opt-in skip path (AC-8a), the orchestrator writes a minimal `codex-review.md` whose `### Verdict (orchestrator-computed)` block parses cleanly via `extractCodexReviewVerdict` and matches the status.json verdict, so the phase gate (AC-14a) holds **without exemption**. Shape:
-  ````
-  ## Round 1
-
-  (skipped — not opted in (codex_code_review flag not set), no Codex review performed)
-
-  ### Verdict (orchestrator-computed)
-  - P0: 0
-  - P1: 0
-  - P2: 0
-  - P3: 0
-  - Verdict: approved
-  - Base branch reviewed: <base_branch> (skipped)
-  - Iteration: 1
-  ````
-  The artifact is *not* a template per `isTemplateUnfilled` (real prose + populated verdict block). Rationale: a uniform gate is simpler and more auditable than a gate exemption.
-- [ ] **AC-14**: On phase completion, `status.json.phases.codex_code_review.verdict` is set to the derived verdict and `status` to `done`.
-- [ ] **AC-14a (phase gate)**: `PHASE_GATE_CONFIG` in `scripts/run-task/validation.ts` gains a `codex_code_review` entry enforcing, when the phase is advanced to `done` (by operator **or** orchestrator, including the skip path which satisfies the gate via the AC-13a artifact — **no exemption**):
-  1. **Artifact present**: `tasks/<id>/codex-review.md` exists and is non-template (`isTemplateUnfilled`).
-  2. **Verdict required**: a verdict argument is supplied.
-  3. **Verdict matches artifact**: the verdict in the artifact's most recent `### Verdict (orchestrator-computed)` block (`- Verdict: <value>`) equals the verdict argument.
-  Property (3) can't reuse `extractCheckedVerdict()` (codex-review.md uses a `- Verdict:` line, not a checkbox). Extend `PhaseGateConfig` with optional `verdictExtractor?: (content: string) => string | null`; if set, `checkPhaseGate` calls it instead of `extractCheckedVerdict`. Add exported `extractCodexReviewVerdict(content: string): string | null` that locates the **last** `### Verdict (orchestrator-computed)` block and returns the value after `- Verdict: `. Wire: `codex_code_review: { artifactName: 'codex-review.md', requiresVerdict: true, verdictMustMatchArtifact: true, verdictExtractor: extractCodexReviewVerdict }`.
-
-### Orchestration and routing
-
-- [ ] **AC-15**: The dispatcher in `scripts/run-task/main.ts` advances to `codex_code_review` after `code_review` returns `approved`/`approved_with_nits`. On `changes_requested` from Claude, the existing reroute logic still routes back to implement; codex_code_review does not run. The old `code_review → qa` transition is removed (see Decision).
-- [ ] **AC-17 (adjudication)**: When `codex_code_review` returns `changes_requested`, the findings are **adjudicated by Claude** (the spec-aware agent) before any routing — they are **not** auto-rerouted straight to `implement`. Claude reads the Codex findings *and* `spec.md` and classifies each finding as one of: **code bug**, **spec/plan gap**, or **false positive**. The adjudication and per-finding classification + routing decision are written to a durable artifact (e.g. an `## Adjudication` section appended to `codex-review.md`, or a sibling `codex-adjudication.md` — artifact shape is a deferred mechanic, but it MUST be persisted and human-readable). *Mechanics deferred*: the adjudication may be a Claude sub-step within the phase or a re-entry into Claude `code_review` with findings injected (see Decision); the contract is what's fixed here.
-- [ ] **AC-17a (code-bug routing)**: For findings classified **code bug**, the orchestrator reroutes to `implement` using the same reroute reset logic Claude `code_review` uses (reset `implement`, `code_review`, `codex_code_review`, `qa` to `pending`; preserve per-loop iteration counters per `--reroute` semantics). `reroutes_total` is incremented (AC-18a).
-- [ ] **AC-17b (spec/plan-gap routing — default)**: For findings classified **spec/plan gap** when the task is **not** in full-send mode, the orchestrator does **not** auto-reroute. It marks `phases.codex_code_review.status = 'changes_requested'`, records an escalation (append to `status.json.escalations`) carrying the finding + Claude's diagnosis, and **halts for human action** (does not advance to qa, does not amend the spec). Recovery: human revises the spec's Amendment section and re-runs (re-entering at `spec_review`), or dismisses the finding.
-- [ ] **AC-17c (spec/plan-gap routing — full-send)**: For findings classified **spec/plan gap** when the task **is** in full-send mode (`full_send: true`), and provided `reroutes_total < MAX_CODEX_REROUTES` (AC-18b), Claude auto-drafts the spec amendment (into `spec.md`'s Amendment section) and the orchestrator re-enters at `spec_review` autonomously — no human interrupt. `reroutes_total` is incremented. The subsequent `spec_review` (Codex) + amendment-review guardrails still run.
-- [ ] **AC-17d (false-positive dismissal)**: For findings classified **false positive** (Claude judges the flagged behavior intended per a Non-Goal / spec intent Codex couldn't see), Claude records a dismissal rationale in the adjudication artifact and the finding does **not** trigger a reroute. If *all* findings in a round are dismissed, the phase's effective verdict becomes `approved` (or `approved_with_nits` if only P3s remain) and the pipeline advances to `qa` — i.e., a cold-Codex false positive never forces an implement cycle.
-- [ ] **AC-18 (per-loop counter)**: `codex_code_review.iterations_current_loop` increments on each *non-skip* phase run; resets to 0 when verdict is `approved`/`approved_with_nits`. `iterations_total` increments on each non-skip run. Auto-block fires when `iterations_current_loop >= MAX_REVIEW_LOOPS` (same size-aware default as code_review). The opt-in skip path does not increment iteration counters.
-- [ ] **AC-18a (cumulative reroute counter)**: A new counter `codex_code_review.reroutes_total` (cumulative, **never reset** — not on reroute, amendment, or approval) increments on every `codex_code_review`-driven reroute: each code-bug reroute (AC-17a) **and** each full-send spec amendment (AC-17c). It is added to the phase-entry shape in the StatusJson type and the template (AC-4). Default 0.
-- [ ] **AC-18b (runaway cap)**: A new cap `MAX_CODEX_REROUTES` (env-overridable, default `3`) bounds `reroutes_total`. Before any `codex_code_review`-driven reroute (code-bug or full-send amendment), the orchestrator checks `reroutes_total >= MAX_CODEX_REROUTES`; if so, it **auto-blocks and halts for human action regardless of full-send** (the runaway guard overrides full-send's no-interrupt promise, exactly as ordinary auto-block does). The env override follows the existing `MAX_REVIEW_LOOPS` pattern. Never hand-edit the counter to bypass the cap.
-- [ ] **AC-19**: The codex_code_review auto-block / escalation messages reference `tasks/<id>/codex-review.md` (and the adjudication artifact) — not `review.md`. The per-loop message mentions `phases.codex_code_review.iterations_current_loop = 0`; the `MAX_CODEX_REROUTES` message frames a high `reroutes_total` as a **design signal** (the spec likely has a deeper problem — especially when amendments dominate) and directs the human to inspect the spec rather than raise the cap. Per canon policy, neither message invites a silent counter bump.
-- [ ] **AC-19a (dry-run output)**: `printDryRunPlan` in `scripts/run-task/main.ts` is extended so that on an **opted-in** task it lists `codex_code_review: Codex / <model> / <effort>` between `code_review` and `qa`, and on a **non-opted-in** task the line is omitted (or shown as "skipped — not opted in"). The gate is the flag, not tier. Without this, `getCodexConfig('codex_code_review', tasks)` would fall through silently and the planned phase wouldn't appear in the operator preview.
-
-### Bundle mode
-
-- [ ] **AC-23**: In bundle mode, the Codex pass runs if **any** bundled task has `codex_code_review: true`. One `codex review --base <base_branch>` invocation against the bundle's shared base branch.
-- [ ] **AC-24**: The same raw output is written to each **opted-in** task's `tasks/<id>/codex-review.md` (with task-specific round headers). Non-opted-in tasks in the bundle receive the AC-13a skip artifact.
-- [ ] **AC-25**: The bundle-level verdict is applied to every **opted-in** task's `phases.codex_code_review.verdict`. If `changes_requested`, the whole bundle reroutes (every task's implement returns to `pending`, mirroring Claude `code_review` bundle behavior).
-
-### Pipeline policy
-
-- [ ] **AC-26**: `scripts/pipeline-policy.ts` adds `'codex_code_review'` to the `CodexPhase` type and a matching `codexMatrix` row, **mini-model for every size**:
-  - S: `{ model: codexModelMini, effort: 'medium' }`
-  - M: `{ model: codexModelMini, effort: 'medium' }`
-  - L: `{ model: codexModelMini, effort: 'high' }`
-  - XL: `{ model: codexModelMini, effort: 'high' }`
-  No `codexModelFull` entry for any size (contrast `spec_review`/`implement`, which promote XL to full).
-- [ ] **AC-27**: `getCodexConfig('codex_code_review', tasks)` returns mini at the size-appropriate effort. Delicate (which elevates effective size to XL) still resolves to `{ codexModelMini, 'high' }` — i.e., delicate raises effort to `high` but does **not** promote the model to full for this phase.
-
-### Tests
-
-- [ ] **AC-30**: New test file `tests/codex-code-review-phase.test.ts` covers `parseCodexReviewSeverities`:
-  - Empty string → all zeros.
-  - "No findings" prose only (e.g. "I did not find a discrete correctness issue introduced by the patch.") → all zeros.
-  - Single P2 finding → `{ P0: 0, P1: 0, P2: 1, P3: 0 }`.
-  - Mixed P0/P1/P2/P3 → correct counts.
-  - `- [P5]` (invalid digit) or `[P2]` without `- ` prefix → not counted.
-  - `- [P2] ` mid-content (code block / quote) → counted (accepted false positive; parser is line-prefix-based by design).
-- [ ] **AC-31**: New cases in `tests/pipeline-policy.test.ts`:
-  - codex_code_review × {S, M, L, XL} → expected **mini** model + effort.
-  - delicate M → effort `high`, model still **mini** (no full promotion).
-- [ ] **AC-32**: Verdict-derivation tests (same file as AC-30) cover all three outcomes per AC-12.
-- [ ] **AC-32a (task CLI verdict coverage)**: Tests in the existing `canon task phase` test file (locate via `grep -l "assertValidVerdict\|REVIEW_PHASES" tests/`; create a new file only if none fits) cover:
-  - `canon task phase <id> codex_code_review done approved` accepts and writes the verdict.
-  - `... done changes_requested` increments `iterations_current_loop`, `iterations_total`, `changes_requested_total`.
-  - `... done approved` after a prior `changes_requested` resets `iterations_current_loop` to 0 and increments `iterations_total`.
-  - The updated `assertValidVerdict` error text lists all three review phases.
-- [ ] **AC-32b (phase gate coverage)**: Tests in the existing phase-gate test file (`grep -l "checkPhaseGate\|PHASE_GATE_CONFIG" tests/`) cover:
-  - `extractCodexReviewVerdict` returns the value on well-formed single- and multi-round artifacts; returns the **last** block's value on multi-round; returns `null` when no verdict block exists.
-  - `checkPhaseGate('<task>', 'codex_code_review', 'approved')` → `{ ok: false }` when `codex-review.md` is missing.
-  - `checkPhaseGate` → `{ ok: false }` with a verdict-mismatch reason when the artifact's last verdict differs from the argument.
-  - `checkPhaseGate` → `{ ok: true }` when artifact exists, is non-template, and last verdict matches.
-  - `checkPhaseGate` → `{ ok: true }` for the AC-13a skip artifact (skip body + `Verdict: approved`), confirming the uniform gate covers the skip path without exemption.
-- [ ] **AC-32c (opt-in skip routing test)**: A test (in `tests/codex-code-review-phase.test.ts` or the harness test file) confirms that when no task is opted in, the phase writes the skip artifact, sets verdict `approved`, does not invoke the Codex CLI, and advances to `qa` — and that when a task is opted in, the Codex path is taken. Mock/stub the `runCodexReview` helper to assert it is/ isn't called.
-- [ ] **AC-32d (adjudication + runaway-cap coverage)**: Tests (harness-level, stubbing Codex + the adjudication step's classification) cover the routing table and the cap:
-  - **code-bug** classification → reroutes to `implement`, increments `reroutes_total`.
-  - **spec-gap, non-full-send** → halts with an `escalations` entry, does NOT reroute, does NOT amend, does NOT advance to qa.
-  - **spec-gap, full-send** (under cap) → re-enters at `spec_review`, increments `reroutes_total`.
-  - **false-positive** (all findings dismissed) → no reroute, verdict resolves to approved/approved_with_nits, advances to qa.
-  - **cap reached**: with `reroutes_total >= MAX_CODEX_REROUTES`, both a code-bug reroute *and* a full-send spec amendment auto-block and halt for human — assert full-send does **not** bypass the cap.
-  - `MAX_CODEX_REROUTES` env override is honored.
-
-### Docs
-
-- [ ] **AC-33**: `docs/pipeline-orchestrator.md`: PHASE_ORDER references reflect the new phase; Codex model-matrix table adds the `codex_code_review` row (mini-only); the opt-in flag (`codex_code_review` in status.json) is documented; the **adjudicated, altitude-aware routing** (code → implement; spec-gap → human escalation, or full-send auto-amend) is documented in the review-flow section; the new **`MAX_CODEX_REROUTES`** env var + `reroutes_total` counter are added to the env-var and review-loop tables, including that the cap overrides full-send. "Review Loops & Auto-block" notes the independent per-phase counters plus the cumulative cross-amendment cap. Remove any mention of a `CODEX_CODE_REVIEW_DISABLED` env var (it does not exist in this design).
-- [ ] **AC-34**: `CLAUDE.md` "Review Responsibilities" notes that codex_code_review runs after Claude approves **when a task opts in**; Claude code_review behavior is unchanged but documented as the first stage of a (conditionally) two-agent review.
-- [ ] **AC-35**: `AGENTS.md` updated where phase order / codex CLI invocations / review flow are documented, including the opt-in flag, the adjudicated routing, and — importantly — the **full-send section**, since this task *extends what full-send means* (full-send now also auto-amends the spec on a spec-gap Codex finding, bounded by `MAX_CODEX_REROUTES`). The `_full_send` doc line in `.canon/templates/status.json` is updated to reflect the extended semantics.
-- [ ] **AC-36**: `CODEX.md` updated to describe codex_code_review responsibilities (default review prompt, no spec injection, output format expectations).
-- [ ] **AC-37**: `docs/codebase-map.md` updated with the new phase module (`scripts/run-task/phases/codex-code-review.ts`).
-- [ ] **AC-38**: `templates/` mirror updated for every changed canon-managed file; `npm run sync-templates:check` passes. (Per the canon-managed convention, edit root, let the pre-commit sync stage templates.)
-- [ ] **AC-39**: `npm run docs-refs-check` passes (no broken refs from the new file path).
-- [ ] **AC-40**: `CHANGELOG.md` gets a new bullet under the current unreleased `### Added` describing the opt-in phase, the `codex_code_review` flag, mini-only model, and the cold-spec rationale (one paragraph max).
+  | Area | Cases | Expected |
+  |---|---|---|
+  | Severity parser | empty · "no findings" prose · single P2 · mixed P0–P3 · invalid digit (`[P5]`) / missing `- ` prefix · `- [P2]` mid-content | correct P-counts; invalid/unprefixed not counted; mid-content counted (accepted line-prefix false positive) |
+  | Verdict derivation | P0/P1/P2 present · P3-only · none | `changes_requested` · `approved_with_nits` · `approved` |
+  | Policy matrix | codex_code_review × {S,M,L,XL} · delicate M | mini model every size; delicate raises effort to `high` but stays mini (no full promotion) |
+  | Task CLI verdict | `done approved` · `done changes_requested` · `done approved` after prior CR · non-review phase given a verdict | verdict written; counters increment; `iterations_current_loop` resets on approve; error text lists all three review phases |
+  | Phase gate | missing artifact · verdict mismatch · match · skip artifact | `{ok:false}` · `{ok:false}` · `{ok:true}` · `{ok:true}` (uniform gate covers skip without exemption); last-block verdict extracted on multi-round |
+  | Opt-in routing | no task opted in · ≥1 opted in | skip artifact + `approved` + no CLI + advance to qa · Codex path taken |
+  | Adjudication + cap | code-bug · spec-gap non-full-send · spec-gap full-send (under cap) · false-positive (all dismissed) · cap reached (code-bug AND full-send amend) · env override | →implement +`reroutes_total` · halt + escalation, no reroute/amend/qa · →spec_review +`reroutes_total` · no reroute, →qa · auto-block + human **even in full-send** (full-send does not bypass cap) · `MAX_CODEX_REROUTES` honored |
 
 ## Design
 
@@ -225,20 +119,20 @@ The full-send auto-amend path opens a loop the per-loop counters cannot bound: `
 
 | File | Change |
 |---|---|
-| `scripts/run-task/types.ts` | Add `'codex_code_review'` to `PHASE_ORDER`; add optional `codex_code_review?: boolean` to `StatusJson`; add `reroutes_total` to the codex_code_review phase-entry type. Verify `Phase`/`PhaseEntry` derivations propagate. No `StatusJson.sessions` change (AC-7a). |
-| `scripts/run-task/phases/codex-code-review.ts` | **New file**. Exports `runCodexCodeReviewPhase`. Reads per-task `codex_code_review` flag; if none opted in, writes skip artifact + advances; else reads `base_branch`, calls `runCodexReview`, parses output, writes `codex-review.md`, sets verdict, and on `changes_requested` performs (or triggers) Claude adjudication → altitude-aware routing (AC-17/17a–d). |
+| `scripts/run-task/types.ts` | Add `'codex_code_review'` to `PHASE_ORDER`; add optional `codex_code_review?: boolean` to `StatusJson`; add `reroutes_total` to the codex_code_review phase-entry type. Verify `Phase`/`PhaseEntry` derivations propagate. No `StatusJson.sessions` change (AC-6, non-resumable). |
+| `scripts/run-task/phases/codex-code-review.ts` | **New file**. Exports `runCodexCodeReviewPhase`. Reads per-task `codex_code_review` flag; if none opted in, writes skip artifact + advances; else reads `base_branch`, calls `runCodexReview`, parses output, writes `codex-review.md`, sets verdict, and on `changes_requested` performs (or triggers) Claude adjudication → altitude-aware routing (AC-7/AC-8). |
 | `scripts/run-task/agents/codex.ts` | Add exported `runCodexReview(args)` invoking `codex -m <model> -c model_reasoning_effort=<effort> review --base <base_branch>` from task cwd; capture stdout+stderr; record metrics; return raw result without exiting on non-zero. Do **not** modify `runCodex`. |
-| `scripts/run-task/main.ts` | Dispatcher: route to codex_code_review after code_review approves; implement the adjudicated routing (code → implement; spec-gap → escalate/halt, or full-send → re-enter spec_review) and the `MAX_CODEX_REROUTES` cap check + `reroutes_total` increment + cap-overrides-full-send auto-block (AC-17/18a/18b). Extend `printDryRunPlan`'s Codex-phase branch to include codex_code_review gated on the opt-in flag (AC-19a). No `autoCommitCode` change (no SHA tracking). No `checkDeps` change (Codex binary already required for spec_review/implement). No `sessions` resumption change (AC-7a). |
+| `scripts/run-task/main.ts` | Dispatcher: route to codex_code_review after code_review approves; implement the adjudicated routing (code → implement; spec-gap → escalate/halt, or full-send → re-enter spec_review) and the `MAX_CODEX_REROUTES` cap check + `reroutes_total` increment + cap-overrides-full-send auto-block (AC-7–AC-9). Extend `printDryRunPlan`'s Codex-phase branch to include codex_code_review gated on the opt-in flag (AC-10e). No `autoCommitCode` change (no SHA tracking). No `checkDeps` change (Codex binary already required for spec_review/implement). No `sessions` resumption change (AC-6). |
 | `scripts/run-task/state.ts` | Verify `deriveTopLevelStatus` walks new PHASE_ORDER correctly (likely no code change). |
 | `scripts/run-task/check-phase-gate.ts` | Verify `--expect codex_code_review` works (likely no code change — PHASE_ORDER-driven). |
-| `scripts/pipeline-policy.ts` | Add `'codex_code_review'` to `CodexPhase`; add mini-only `codexMatrix` row (AC-26). |
+| `scripts/pipeline-policy.ts` | Add `'codex_code_review'` to `CodexPhase`; add mini-only `codexMatrix` row (AC-3). |
 | `scripts/run-task/validation.ts` | Add `parseCodexReviewSeverities`, `deriveCodexCodeReviewVerdict`, `extractCodexReviewVerdict`. Extend `PhaseGateConfig` with optional `verdictExtractor`. Add `codex_code_review` entry to `PHASE_GATE_CONFIG`. Extend `checkPhaseGate` to use `verdictExtractor` when present, else `extractCheckedVerdict`. |
-| `src/task/index.ts` | Add `'codex_code_review'` to `REVIEW_PHASES`; update `assertValidVerdict` error text to list all three review phases. Note the intentional pre-flight-rejection coupling (AC-6a). PHASE_ORDER-driven validation already handles the name. |
+| `src/task/index.ts` | Add `'codex_code_review'` to `REVIEW_PHASES`; update `assertValidVerdict` error text to list all three review phases. Note the intentional pre-flight-rejection coupling (AC-10b). PHASE_ORDER-driven validation already handles the name. |
 | `.canon/templates/status.json` | Add top-level `codex_code_review: false` flag (+ doc line) and `phases.codex_code_review` entry (incl. `reroutes_total: 0`). Update the `_full_send` doc line to reflect the extended semantics (full-send also auto-amends the spec on a spec-gap Codex finding, bounded by `MAX_CODEX_REROUTES`). |
 | `templates/.canon/templates/status.json` | Mirror (auto-synced). |
 | `tests/codex-code-review-phase.test.ts` | **New file**. Severity parser + verdict derivation + opt-in routing tests. |
 | `tests/pipeline-policy.test.ts` | Add codex_code_review matrix rows (mini-only; delicate stays mini). |
-| `tests/` (canon-task-phase + phase-gate test files — locate per AC-32a/32b) | Add task-CLI verdict and phase-gate cases. |
+| `tests/` (parser/policy/task-phase/phase-gate/harness test files — locate at implement time) | Cover the AC-12 Testing Matrix; consolidate per the project's per-feature test-file convention rather than one file per helper. |
 | `docs/pipeline-orchestrator.md` | PHASE_ORDER, model matrix row, opt-in flag, review-loop note. |
 | `templates/docs/pipeline-orchestrator.md` | Mirror (auto-synced). |
 | `CLAUDE.md` / `templates/CLAUDE.md` | Review Responsibilities note (opt-in two-agent review). |
@@ -248,24 +142,30 @@ The full-send auto-amend path opens a loop the per-loop counters cannot bound: `
 | `CHANGELOG.md` | New bullet under unreleased → Added. |
 | `dist/cli/index.js`, `dist/scripts/run-task.js` | Build-generated; regenerated by `npm run build`, committed to satisfy CI's `git diff --exit-code -- dist/` gate. No hand edits. |
 
-> Mechanics deferred: exact phase-module signature, helper-internal seams, and constant names are left to plan/implement against the current tree — the sibling phase modules and `runCodex` have likely drifted from the original snapshot. ACs above state observable behavior and contracts; verify symbol shapes at implement time.
+> **Mechanics deferred (guidance, not AC surface).** The following are left to plan/implement against the current tree — the sibling phase modules and `runCodex` have likely drifted from the original snapshot, so verify all shapes at implement time:
+> - **New helpers** (suggested names): `runCodexCodeReviewPhase` (phase module, signature matching the sibling phases); `runCodexReview` in `agents/codex.ts` (the existing `runCodex` requires a non-empty prompt + `codex exec`, so a new helper is needed); pure `parseCodexReviewSeverities` and `deriveCodexCodeReviewVerdict`; `extractCodexReviewVerdict` for the gate.
+> - **`codex review` invocation gotcha**: model/effort are **top-level flags before the `review` subcommand** — `codex -m <model> -c model_reasoning_effort=<effort> review --base <base>`. `codex review -m <model>` is invalid (the subcommand has no `-m`). Confirm against the installed CLI.
+> - **Severity parse**: line-prefix match `^- \[P([0-3])\] ` (multiline). Mid-content lines count (accepted false positive).
+> - **Phase gate**: extend `PhaseGateConfig` with an optional `verdictExtractor` (codex-review.md uses a `- Verdict: <value>` line, not a checkbox); the extractor reads the **last** `### Verdict (orchestrator-computed)` block.
+> - **Artifact shape** (illustrative): per round, raw Codex stdout followed by a `### Verdict (orchestrator-computed)` block listing `P0–P3`, `Verdict`, `Base branch reviewed`, `Iteration`. Skip/escalate/amend paths write the same block shape (with a `(skipped — <reason> …)` or adjudication body) so the uniform gate holds. Adjudication rationale is persisted as an `## Adjudication` section (or sibling artifact).
+> - **CLI failure**: capture stderr (truncate ~4KB) under a `### CLI Failure` heading; phase `blocked`, exit non-zero, never `approved`.
 
 ### Interaction Dependencies
 
 - **Reroute machinery (`canon run --reroute`)**: existing reroute resets `implement`, `code_review`, `qa` to pending. Extend to also reset `codex_code_review`.
 - **Bundle mode**: existing bundle dispatch runs one agent session for code_review across tasks. codex_code_review reuses the pattern (one CLI call, output replicated to opted-in tasks).
-- **Session resumption**: `codex_code_review` is intentionally non-resumable (AC-7a). No `sessions.codex_code_review` slot.
-- **Pre-flight rejection**: adding to `REVIEW_PHASES` couples codex_code_review into the pre-flight rejection path — intentional (AC-6a).
+- **Session resumption**: `codex_code_review` is intentionally non-resumable (AC-6). No `sessions.codex_code_review` slot.
+- **Pre-flight rejection**: adding to `REVIEW_PHASES` couples codex_code_review into the pre-flight rejection path — intentional (AC-10b).
 - **`canon task accept`**: today supports `implement` only. Out of scope to extend to codex_code_review; an operator who doesn't want the phase on a task simply leaves the flag unset.
-- **Full-send mode (`full_send`)**: this task **extends** full-send's meaning. Today full-send = skip spec gate + auto-open PR after clean QA. After this task, full-send *also* = auto-amend the spec on a spec-gap Codex finding (AC-17c), bounded by `MAX_CODEX_REROUTES`. The cap's auto-block overrides full-send (AC-18b) — full-send's "no interrupts" yields to the runaway guard, exactly as ordinary auto-block already does.
-- **Escalations (`status.json.escalations`)**: the non-full-send spec-gap halt (AC-17b) appends an escalation entry. Reuses the existing escalations array; no schema change beyond a new entry kind.
+- **Full-send mode (`full_send`)**: this task **extends** full-send's meaning. Today full-send = skip spec gate + auto-open PR after clean QA. After this task, full-send *also* = auto-amend the spec on a spec-gap Codex finding (AC-8), bounded by `MAX_CODEX_REROUTES`. The cap's auto-block overrides full-send (AC-9) — full-send's "no interrupts" yields to the runaway guard, exactly as ordinary auto-block already does.
+- **Escalations (`status.json.escalations`)**: the non-full-send spec-gap halt (AC-8) appends an escalation entry. Reuses the existing escalations array; no schema change beyond a new entry kind.
 - **Quality log (`docs/task-quality-log.md`)**: column schema unchanged.
 
 ### Data Model Changes
 
 - `Phase` union: adds `'codex_code_review'`.
 - `StatusJson`: adds optional top-level `codex_code_review?: boolean` (opt-in flag).
-- `StatusJson.phases.codex_code_review`: new phase entry — same shape as `code_review` **plus** a cumulative `reroutes_total: number` (never reset; AC-18a).
+- `StatusJson.phases.codex_code_review`: new phase entry — same shape as `code_review` **plus** a cumulative `reroutes_total: number` (never reset; AC-9).
 - `StatusJson.sessions`: no change (non-resumable).
 - New env var `MAX_CODEX_REROUTES` (default 3) — not persisted in status.json; read at dispatch like `MAX_REVIEW_LOOPS`.
 
@@ -297,8 +197,8 @@ All listed canon-managed files require matching `templates/` updates per the can
 - **Evidence gate consciously bypassed.** The parked-task recovery plan called for observing 5–10 tasks before reviving. The operator chose to proceed on qualitative signal instead. If catch rate proves low, the cost is opt-in-bounded (only opted-in tasks pay), so it self-limits rather than taxing every run. Re-evaluate via `docs/task-quality-log.md` after the first several opted-in tasks; if Codex consistently finds nothing Claude missed, the follow-up is to stop opting in (no code change needed) or remove the phase.
 - **Codex CLI output-format brittleness.** The severity parser depends on `codex review` emitting lines starting with `- [P<n>] `. A future CLI release changing the format silently miscounts. Mitigation: parser tests pin the current format; document the format-dependence near the regex. Also re-verify the `codex review` invocation flags (AC-10) against the *currently installed* CLI at implement time — the original snapshot's CLI version may differ.
 - **Iteration counter doubling (within a spec version).** Worst case: `MAX_REVIEW_LOOPS` Claude iterations + `MAX_REVIEW_LOOPS` Codex iterations, with every Codex code-bug reroute triggering a fresh Claude re-review (≤ `MAX_REVIEW_LOOPS²` Claude iterations in the absolute worst case). In practice tasks converge well below; hitting the per-loop cap signals a deeper spec/impl issue and auto-block is correct.
-- **Cross-amendment runaway (full-send).** The full-send auto-amend path (AC-17c) can loop `codex_code_review → amend → spec_review → plan → implement → code_review → codex_code_review`, and each amendment **resets** `iterations_current_loop` so the per-loop cap never trips. This is the specific runaway the cumulative `reroutes_total` + `MAX_CODEX_REROUTES` cap (AC-18a/18b) exists to stop — at cap the run auto-blocks and escalates to a human even under full-send. Without the cap a full-send run could amend the spec indefinitely; the cap is therefore load-bearing, not a nicety. Default 3 is deliberately low because amendment-driven churn almost always means the spec is wrong, not that more iterations will converge.
-- **Adjudication misclassification.** Claude could mis-classify a finding's altitude — call a genuine spec gap a "code bug" (→ wasted implement cycle that can't fix it, eventually caught by the cap) or a real bug a "false positive" (→ ships). Mitigation: the adjudication artifact records Claude's per-finding rationale (AC-17/17d) so a human can audit the calls at human_review or PR review; and the cap converts persistent mis-routing into a human escalation rather than an infinite loop. This is an inherent limit of any altitude-routing layer and is accepted; the artifact + cap bound the blast radius.
+- **Cross-amendment runaway (full-send).** The full-send auto-amend path (AC-8) can loop `codex_code_review → amend → spec_review → plan → implement → code_review → codex_code_review`, and each amendment **resets** `iterations_current_loop` so the per-loop cap never trips. This is the specific runaway the cumulative `reroutes_total` + `MAX_CODEX_REROUTES` cap (AC-9) exists to stop — at cap the run auto-blocks and escalates to a human even under full-send. Without the cap a full-send run could amend the spec indefinitely; the cap is therefore load-bearing, not a nicety. Default 3 is deliberately low because amendment-driven churn almost always means the spec is wrong, not that more iterations will converge.
+- **Adjudication misclassification.** Claude could mis-classify a finding's altitude — call a genuine spec gap a "code bug" (→ wasted implement cycle that can't fix it, eventually caught by the cap) or a real bug a "false positive" (→ ships). Mitigation: the adjudication artifact records Claude's per-finding rationale (AC-7/AC-8) so a human can audit the calls at human_review or PR review; and the cap converts persistent mis-routing into a human escalation rather than an infinite loop. This is an inherent limit of any altitude-routing layer and is accepted; the artifact + cap bound the blast radius.
 - **Bundle false-positive surface.** A P2 affecting one opted-in task reroutes the whole bundle (matches existing Claude `code_review` bundle behavior). If over-blocking, the answer is "don't bundle" rather than weakening the gate.
 - **Cold-spec adversarial framing is the *value*, not a bug.** Reviewers may instinctively suggest passing the spec into the Codex invocation "for context." Resist — it defeats the purpose. This is a Non-Goal for a reason; the Codex invocation must not see the spec.
 - **Re-review cost from `--base` scoping.** Reviewing the full task delta every Codex iteration re-examines previously-reviewed hunks. Deliberate tradeoff vs. a "last Codex-approved SHA" mechanism (rejected as more complex). If telemetry later shows material cost, the follow-up is recording a last-approved SHA and reviewing `<approved-SHA>..HEAD`. Out of scope here.
@@ -325,8 +225,8 @@ All listed canon-managed files require matching `templates/` updates per the can
 
 > Claude: complete this before marking spec done.
 
-- [x] Every AC states how to verify it (file path, function name, expected behavior)
-- [x] Affected Files lists specific files with specific change descriptions
+- [x] ACs are **behavioral contracts** (12, not 46); mechanics deferred to Affected Files + the Mechanics note; verification consolidated into the AC-12 Testing Matrix — per the over-specification lesson in `docs/lessons-learned.md`
+- [x] Affected Files lists specific files with specific change descriptions (and carries the deferred implementation mechanics)
 - [x] Known Risks covers failure modes for the trickiest ACs (parser brittleness, counter doubling, cross-amendment runaway + cap, adjudication misclassification, chicken-and-egg, bundle amplification, framing-anchor temptation, opt-in adoption, evidence bypass)
 - [x] Human Test Plan uses product/behavior language only
 - [x] Validation Required has at least one entry marked `- [x]`
