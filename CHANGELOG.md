@@ -2,6 +2,12 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.9.1] — 2026-06-04
+
+### Fixed
+
+- **`--reroute` help text now reflects v1.9.0's tier-specific re-entry.** `canon --help`, `canon run --help`, and the README quick reference still said `--reroute` sends a task back to `implement` — true only for fast-tier. They now state that full-tier tasks (M/L/XL or delicate) re-enter at `spec_review` while fast-tier (S) re-enter at `implement`, matching `docs/pipeline-orchestrator.md`. An operator following the old help could hit a phase mismatch running `--step --expect implement` after a full-tier reroute. ([#135](https://github.com/tstraub89/canon-ai/issues/135))
+
 ## [1.9.0] — 2026-06-04
 
 ### Added

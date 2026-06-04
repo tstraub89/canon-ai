@@ -70,7 +70,7 @@ A single command runs a task end-to-end:
 canon run <task-id>
 ```
 
-`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` runs *after* PR approval — it squash-merges the PR, deletes the branch, tears down the worktree, archives the task, and pulls the base branch (don't merge the PR manually first). `--reroute` resets a task from `human_review` back to `implement` after human feedback on the diff. `--full-send` skips the spec gate and auto-opens a draft PR on clean QA. `--dry-run` prints planned phases without spawning agents.
+`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` runs *after* PR approval — it squash-merges the PR, deletes the branch, tears down the worktree, archives the task, and pulls the base branch (don't merge the PR manually first). `--reroute` resets a task from `human_review` back into the post-review fix path after human feedback on the diff — full-tier tasks (M/L/XL or delicate) re-enter at `spec_review`, fast-tier tasks (S) re-enter at `implement`. `--full-send` skips the spec gate and auto-opens a draft PR on clean QA. `--dry-run` prints planned phases without spawning agents.
 
 Multiple task IDs in one invocation activates **bundle mode** — `canon run id1 id2 id3` runs all tasks together per phase under a single review loop with one commit history and one PR. Any full-tier task in the bundle promotes the entire bundle to full tier.
 
@@ -198,7 +198,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 | `canon run <id> --step --expect <phase>` | Run one phase then stop, with a phase-mismatch guard |
 | `canon run <id> --pr` | Push branch and open a draft PR (at `human_review`) |
 | `canon run <id> --push` | Push branch only, no PR |
-| `canon run <id> --reroute` | Reset a task from `human_review` back to `implement` after appending an `## Amendment` section to `spec.md` |
+| `canon run <id> --reroute` | Reset a task from `human_review` back into the post-review fix path after appending an `## Amendment` section to `spec.md` (full-tier re-enters at `spec_review`, fast-tier at `implement`) |
 | `canon run <id> --full-send` | Skip the spec gate and auto-open a draft PR after clean QA |
 | `canon run <id> --ship` | After PR approval: squash-merge, delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
