@@ -103,7 +103,7 @@ cd your-project
 canon init
 ```
 
-`canon init` installs a set of Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the `docs/` knowledge corpus tailored to your project.
+`canon init` installs a set of Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, and the `docs/` knowledge corpus tailored to your project.
 
 The other installed skills (auto-trigger on natural-language phrases — see each skill's frontmatter for the trigger set):
 
@@ -194,7 +194,6 @@ Claude Code creates `settings.json` on first use — check what's already there 
 | `canon task list` | Show all tasks and their pipeline phase |
 | `canon task phase <id> <phase> <status>` | Advance a task phase manually |
 | `canon task accept <id...> implement [--force]` | Accept a manually-committed `implement` phase outside the pipeline (e.g. after a manual recovery commit). `implement` is the only supported phase today — for other phases use `canon task phase`. |
-| `canon task release-init <version>` | Create a release branch off `main` with version bumped and an empty in-progress CHANGELOG block — `release/v<MAJ.MIN>` for `.0` versions (e.g. `release/v1.6` ships `1.6.0`), `release/v<MAJ.MIN.PATCH>` for patches (e.g. `release/v1.6.1` ships `1.6.1`). Only relevant for projects that version their releases. |
 | `canon run <id>` | Run the full pipeline for a task. Auto-detaches into its own session when stdout is not a TTY (so harness/process-group kills don't take it down); opt out with `CANON_NO_DETACH=1`. |
 | `canon run <id> --step --expect <phase>` | Run one phase then stop, with a phase-mismatch guard |
 | `canon run <id> --pr` | Push branch and open a draft PR (at `human_review`) |
@@ -234,7 +233,7 @@ Canon is two products:
 
 ### Layer 1: The Scaffold
 
-The portable structure: orchestration scripts, task templates, agent rules (`AGENTS.md` / `CLAUDE.md` / `CODEX.md`), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs.
+The portable structure: orchestration scripts, task templates, agent rules (`AGENTS.md` / `CLAUDE.md`), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs.
 
 Drop this into any repo and you have:
 
@@ -254,9 +253,9 @@ Drop this into any repo and you have:
 - `canon` CLI — `init`, `doctor`, `run`, `stop`, `task`, `update`, `upgrade`
 - Full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`. Bundled into `dist/scripts/run-task.js` and invoked via `canon run`.
 - Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
-- `canon task` lifecycle CLI (new / list / status / phase / accept / reset-spec-review / post-merge-sync / release-init), in-process TS.
+- `canon task` lifecycle CLI (new / list / status / phase / accept / reset-spec-review / post-merge-sync), in-process TS.
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
-- `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — workflow rules and per-agent guidance
+- `AGENTS.md` / `CLAUDE.md` — workflow rules and per-agent guidance
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/settings.json` — Claude Code permissions + SessionStart hook
 - Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-review` (pre-flight a spec), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)

@@ -15,6 +15,7 @@ import {
     formatCompleteStateBanner,
     formatExistingPRMessage,
     resolveCanonPrBody,
+    resolveQaPrBody,
 } from '../scripts/run-task/main.js';
 import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
 import { commitArchiveChanges } from '../scripts/run-task/main.js';
@@ -145,10 +146,16 @@ function setupFakeGit(scriptDir: string): void {
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "add" ]; then',
+        '  target=""',
         '  if [ "${3:-}" = "-b" ]; then',
-        '    mkdir -p "$5"',
+        '    target="$5"',
         '  else',
-        '    mkdir -p "$3"',
+        '    target="$3"',
+        '  fi',
+        '  mkdir -p "$target"',
+        '  if [ -n "${FAKE_GIT_WORKTREE_STATUS_SOURCE:-}" ] && [ -n "${FAKE_GIT_WORKTREE_TASK_ID:-}" ]; then',
+        '    mkdir -p "$target/tasks/$FAKE_GIT_WORKTREE_TASK_ID"',
+        '    cp "$FAKE_GIT_WORKTREE_STATUS_SOURCE" "$target/tasks/$FAKE_GIT_WORKTREE_TASK_ID/status.json"',
         '  fi',
         '  exit 0',
         'fi',
@@ -679,6 +686,191 @@ void test('ensureBranch allows first worktree creation when only task artifacts 
         assert.ok(log.includes(`worktree add -b task/${taskId} ${path.join(worktreesRoot, taskId)} release/v1`));
         const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as { branch?: string };
         assert.equal(updated.branch, `task/${taskId}`);
+    });
+});
+
+void test('ensureBranch ticks active heartbeats into the worktree task dir after first worktree creation', () => {
+    withTempDir('run-task-safety-worktree-heartbeat-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        const logPath = path.join(dir, 'git.log');
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'release/v1\n');
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'heartbeat-worktree-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'release/v1',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const sourceTaskDir = path.join(tasksRoot, taskId);
+        const worktreeTaskDir = path.join(worktreesRoot, taskId, 'tasks', taskId);
+        const sourceHeartbeatFile = path.join(sourceTaskDir, '.heartbeat.json');
+        const worktreeHeartbeatFile = path.join(worktreeTaskDir, '.heartbeat.json');
+
+        assert.ok(!fs.existsSync(worktreeHeartbeatFile), 'worktree heartbeat must not exist before worktree creation');
+
+        const childScript = [
+            "import fs from 'node:fs';",
+            "import path from 'node:path';",
+            "import { startHeartbeat } from './scripts/run-task/heartbeat.js';",
+            "import { ensureBranch } from './scripts/run-task/git.js';",
+            `const taskId = ${JSON.stringify(taskId)};`,
+            `const worktreesRoot = ${JSON.stringify(worktreesRoot)};`,
+            `const sourceHeartbeatFile = ${JSON.stringify(sourceHeartbeatFile)};`,
+            `const sourceTaskDir = ${JSON.stringify(sourceTaskDir)};`,
+            "let suppressFlip = false;",
+            "const handle = startHeartbeat([taskId], () => {",
+            "  if (suppressFlip) return sourceTaskDir;",
+            "  const worktreeStatusFile = path.join(worktreesRoot, taskId, 'tasks', taskId, 'status.json');",
+            "  return fs.existsSync(worktreeStatusFile)",
+            "    ? path.join(worktreesRoot, taskId, 'tasks', taskId)",
+            "    : sourceTaskDir;",
+            "}, { intervalMs: 999_999 });",
+            "try {",
+            "  if (!fs.existsSync(sourceHeartbeatFile)) throw new Error('initial heartbeat missing before worktree creation');",
+            "  ensureBranch([taskId]);",
+            "  suppressFlip = true;",
+            "} finally {",
+            "  handle.stop();",
+            "}",
+            "console.log(`CHILD_PID:${process.pid}`);",
+        ].join('\n');
+
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: logPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'release/v1',
+            FAKE_GIT_TASK_BRANCH: `task/${taskId}`,
+            FAKE_GIT_WORKTREE_STATUS_SOURCE: path.join(sourceTaskDir, 'status.json'),
+            FAKE_GIT_WORKTREE_TASK_ID: taskId,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline(childScript, env));
+
+        assert.equal(result.status, 0, result.stderr);
+        const childPidMatch = result.stdout.match(/CHILD_PID:(\d+)/);
+        assert.ok(childPidMatch, `child pid marker missing from stdout: ${result.stdout}`);
+        const childPid = Number(childPidMatch[1]);
+        assert.ok(fs.existsSync(worktreeHeartbeatFile), 'worktree heartbeat must be written by the creation-path tick');
+        const record = JSON.parse(fs.readFileSync(worktreeHeartbeatFile, 'utf8')) as { pid: number; last_update_ms: number };
+        assert.equal(record.pid, childPid);
+        assert.ok(Date.now() - record.last_update_ms < 1_000);
+
+        const log = fs.readFileSync(logPath, 'utf8');
+        assert.match(log, /worktree add -b task\/heartbeat-worktree-task/);
+    });
+});
+
+void test('ensureBranch ticks active heartbeats into every bundled worktree task dir after first worktree creation', () => {
+    withTempDir('run-task-safety-worktree-bundle-heartbeat-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        const logPath = path.join(dir, 'git.log');
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'release/v1\n');
+        setupFakeGit(fakeGitDir);
+
+        const primaryTaskId = 'bundle-heartbeat-primary';
+        const secondaryTaskId = 'bundle-heartbeat-secondary';
+        const taskIds = [primaryTaskId, secondaryTaskId];
+        const taskBranch = `task/${primaryTaskId}`;
+        const sourcePrimaryTaskDir = path.join(tasksRoot, primaryTaskId);
+        const primaryWorktreeTaskDir = path.join(worktreesRoot, primaryTaskId, 'tasks', primaryTaskId);
+        const secondaryWorktreeTaskDir = path.join(worktreesRoot, primaryTaskId, 'tasks', secondaryTaskId);
+
+        writeTaskStatus(tasksRoot, primaryTaskId, {
+            title: primaryTaskId,
+            base_branch: 'release/v1',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+        writeTaskStatus(tasksRoot, secondaryTaskId, {
+            title: secondaryTaskId,
+            base_branch: 'release/v1',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const childScript = [
+            "import fs from 'node:fs';",
+            "import path from 'node:path';",
+            "import { startHeartbeat } from './scripts/run-task/heartbeat.js';",
+            "import { ensureBranch } from './scripts/run-task/git.js';",
+            `const taskIds = ${JSON.stringify(taskIds)};`,
+            `const primaryTaskId = ${JSON.stringify(primaryTaskId)};`,
+            `const tasksRoot = ${JSON.stringify(tasksRoot)};`,
+            `const worktreesRoot = ${JSON.stringify(worktreesRoot)};`,
+            `const sourcePrimaryTaskDir = ${JSON.stringify(sourcePrimaryTaskDir)};`,
+            `const primaryWorktreeTaskDir = ${JSON.stringify(primaryWorktreeTaskDir)};`,
+            `const secondaryWorktreeTaskDir = ${JSON.stringify(secondaryWorktreeTaskDir)};`,
+            "const resolveTaskDir = (taskId) => {",
+            "  const sourceStatusPath = path.join(tasksRoot, taskId, 'status.json');",
+            "  if (taskId === primaryTaskId && fs.existsSync(path.join(primaryWorktreeTaskDir, 'status.json'))) {",
+            "    return primaryWorktreeTaskDir;",
+            "  }",
+            "  if (fs.existsSync(sourceStatusPath)) {",
+            "    const status = JSON.parse(fs.readFileSync(sourceStatusPath, 'utf8'));",
+            "    if (status.worktree === true && String(status.branch ?? '').trim()) {",
+            "      return path.join(worktreesRoot, primaryTaskId, 'tasks', taskId);",
+            "    }",
+            "  }",
+            "  return path.join(tasksRoot, taskId);",
+            "};",
+            "startHeartbeat(taskIds, resolveTaskDir, { intervalMs: 999_999 });",
+            "if (!fs.existsSync(sourcePrimaryTaskDir + '/.heartbeat.json')) throw new Error('initial primary heartbeat missing before worktree creation');",
+            "if (!fs.existsSync(path.join(tasksRoot, taskIds[1], '.heartbeat.json'))) throw new Error('initial secondary heartbeat missing before worktree creation');",
+            "ensureBranch(taskIds);",
+            "for (const taskId of taskIds) {",
+            "  const worktreeHeartbeatFile = path.join(worktreesRoot, primaryTaskId, 'tasks', taskId, '.heartbeat.json');",
+            "  if (!fs.existsSync(worktreeHeartbeatFile)) throw new Error(`${taskId} worktree heartbeat missing after branch recording`);",
+            "  const record = JSON.parse(fs.readFileSync(worktreeHeartbeatFile, 'utf8'));",
+            "  if (record.pid !== process.pid) throw new Error(`${taskId} heartbeat pid mismatch`);",
+            "  if (Date.now() - record.last_update_ms >= 1_000) throw new Error(`${taskId} heartbeat stale after branch recording`);",
+            "}",
+            "console.log(`CHILD_PID:${process.pid}`);",
+        ].join('\n');
+
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: logPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'release/v1',
+            FAKE_GIT_TASK_BRANCH: taskBranch,
+            FAKE_GIT_WORKTREE_STATUS_SOURCE: path.join(sourcePrimaryTaskDir, 'status.json'),
+            FAKE_GIT_WORKTREE_TASK_ID: primaryTaskId,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline(childScript, env));
+
+        const log = fs.readFileSync(logPath, 'utf8');
+        assert.ok(log.includes(`worktree add -b ${taskBranch} ${path.join(worktreesRoot, primaryTaskId)} release/v1`));
+        assert.equal(result.status, 0, result.stderr);
+        const childPidMatch = result.stdout.match(/CHILD_PID:(\d+)/);
+        assert.ok(childPidMatch, `child pid marker missing from stdout: ${result.stdout}`);
+        const childPid = Number(childPidMatch[1]);
+        for (const taskId of taskIds) {
+            const worktreeHeartbeatFile = path.join(worktreesRoot, primaryTaskId, 'tasks', taskId, '.heartbeat.json');
+            assert.ok(fs.existsSync(worktreeHeartbeatFile), `${taskId} worktree heartbeat must exist after branch recording`);
+            const record = JSON.parse(fs.readFileSync(worktreeHeartbeatFile, 'utf8')) as { pid: number; last_update_ms: number };
+            assert.equal(record.pid, childPid);
+            assert.ok(Date.now() - record.last_update_ms < 1_000);
+        }
+        const updatedPrimary = JSON.parse(fs.readFileSync(path.join(tasksRoot, primaryTaskId, 'status.json'), 'utf8')) as { branch?: string };
+        const updatedSecondary = JSON.parse(fs.readFileSync(path.join(tasksRoot, secondaryTaskId, 'status.json'), 'utf8')) as { branch?: string };
+        assert.equal(updatedPrimary.branch, taskBranch);
+        assert.equal(updatedSecondary.branch, taskBranch);
     });
 });
 
@@ -1351,6 +1543,60 @@ void test('resolveCanonPrBody: env var joins multiple task IDs into $LABEL', () 
     assert.equal(out, 'Tasks: a, b, c');
 });
 
+// ── resolveQaPrBody (QA drafted PR body) ───────────────────────────────────
+
+void test('resolveQaPrBody: returns body-file for a populated single-task body', () => {
+    withTempDir('canon-pr-body-', dir => {
+        const taskId = 'task-a';
+        const tasksDir = path.join(dir, 'tasks');
+        const prBodyPath = path.join(tasksDir, taskId, 'pr-body.md');
+        fs.mkdirSync(path.dirname(prBodyPath), { recursive: true });
+        fs.writeFileSync(prBodyPath, [
+            '# Summary',
+            '',
+            '- Filled by QA.',
+            '',
+        ].join('\n'));
+
+        const result = resolveQaPrBody([taskId], dir);
+        assert.deepEqual(result, { kind: 'body-file', path: prBodyPath });
+    });
+});
+
+void test('resolveQaPrBody: returns fallback for a missing single-task body', () => {
+    withTempDir('canon-pr-body-missing-', dir => {
+        const result = resolveQaPrBody(['task-a'], dir);
+        assert.deepEqual(result, { kind: 'fallback', reason: 'pr-body.md not found' });
+    });
+});
+
+void test('resolveQaPrBody: returns fallback for the stub template', () => {
+    withTempDir('canon-pr-body-stub-', dir => {
+        const taskId = 'task-a';
+        const prBodyPath = path.join(dir, 'tasks', taskId, 'pr-body.md');
+        fs.mkdirSync(path.dirname(prBodyPath), { recursive: true });
+        fs.writeFileSync(prBodyPath, [
+            '<!-- [pr-body-stub] QA fills this file during the qa phase. Do not edit manually before QA runs. -->',
+            '',
+            '# PR Body: [TASK-ID] - [Title]',
+            '',
+        ].join('\n'));
+
+        const result = resolveQaPrBody([taskId], dir);
+        assert.deepEqual(result, { kind: 'fallback', reason: 'pr-body.md is still the stub template' });
+    });
+});
+
+void test('resolveQaPrBody: bundles fall back because per-task bodies are not combined', () => {
+    withTempDir('canon-pr-body-bundle-', dir => {
+        const result = resolveQaPrBody(['task-a', 'task-b'], dir);
+        assert.deepEqual(result, {
+            kind: 'fallback',
+            reason: 'bundle: per-task pr-body.md files are not combined in this version',
+        });
+    });
+});
+
 void test('findPullRequestTemplate: returns null when no template exists', () => {
     withTempDir('canon-pr-template-', dir => {
         assert.equal(findPullRequestTemplate(dir), null);
@@ -1528,6 +1774,51 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
         // silently dropped without this push).
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
         assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run on PR-exists branch');
+    });
+});
+
+void test('main --pr on complete logs the pr-body fallback when pr-body.md is missing', () => {
+    withTempDir('run-task-complete-pr-body-fallback-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, 'task-a');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GH_LOG: path.join(dir, 'gh.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /PR body fallback \(pr-body\.md not found\) — falling back to repo PR template or --fill/);
+        const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
+        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run before falling back to the repo template');
+        const ghLog = fs.readFileSync(path.join(dir, 'gh.log'), 'utf8');
+        assert.match(ghLog, /pr create .*--body-file .*pull_request_template\.md/m);
     });
 });
 
@@ -3069,6 +3360,8 @@ void test('main --reroute clears full_send', () => {
         const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
             full_send?: boolean;
             phases?: {
+                spec_review?: { status?: string };
+                plan?: { status?: string };
                 implement?: { status?: string };
                 code_review?: { status?: string };
                 qa?: { status?: string };
@@ -3076,7 +3369,9 @@ void test('main --reroute clears full_send', () => {
             };
         };
         assert.equal(updated.full_send, false);
-        assert.equal(updated.phases?.implement?.status, 'in_progress');
+        assert.equal(updated.phases?.spec_review?.status, 'pending');
+        assert.equal(updated.phases?.plan?.status, 'pending');
+        assert.equal(updated.phases?.implement?.status, 'pending');
         assert.equal(updated.phases?.code_review?.status, 'pending');
         assert.equal(updated.phases?.qa?.status, 'pending');
         assert.equal(updated.phases?.human_review?.status, 'pending');

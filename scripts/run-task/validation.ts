@@ -154,6 +154,145 @@ export function parseValidationRequiredChecks(specPath: string): string[] | null
     }
 }
 
+// Reroute re-runs spec_review and plan against artifacts that already carry the
+// original pass's content (the approved `spec-review.md` / `plan.md`). The
+// recovery path that revises a rejected amendment and re-runs canon appends a
+// second same-round section, so the freshest same-round heading is the
+// authoritative one. Heading convention mirrors the amendment convention:
+// round 1 is the bare label (`## Amendment Review`, `## Reroute Plan`); round
+// N >= 2 is `<label> Round N`. Horizontal-whitespace classes ([ \t]) keep each
+// match on a single line (same gotcha as verifyRerouteAmendment). The round-1
+// pattern anchors to end-of-line so a `<label> Round 2` heading cannot satisfy a
+// round-1 check. Heading detection must ignore fenced code blocks and HTML
+// comments across the whole file so earlier same-round examples do not corrupt
+// the latest-match selection or the section boundary.
+// Returns the slice of `content` from the latest matching reroute heading down
+// to the next h1/h2 heading (or EOF), or null if that heading is absent. The
+// caller extracts the round's verdict from this slice — scoping the verdict to
+// the fresh section is what stops the original first-pass `- [x] Approved` box
+// (still present higher in the cumulative file) from satisfying a reroute that
+// was actually marked `Changes requested` or left blank.
+export function sliceRerouteRoundSection(content: string, label: string, round: number): string | null {
+    const esc = label.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[ \t]+/g, '[ \\t]+');
+    const headingRe = round >= 2
+        ? new RegExp(`^#{2,6}[ \\t]+${esc}[ \\t]+Round[ \\t]+${round}[ \\t]*$`, 'i')
+        : new RegExp(`^#{2,6}[ \\t]+${esc}[ \\t]*$`, 'i');
+    // Heading detection must ignore heading-like lines inside fenced code blocks
+    // and HTML comments — a verdict checkbox can legitimately follow a fenced
+    // example that contains a literal `## ...` line, and slicing on that would
+    // truncate the section before the verdict (mirrors extractSectionBodies'
+    // comment handling, plus fences).
+    const lines = content.split('\n');
+    let inFence = false;
+    let inComment = false;
+    let start = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        // HTML comments take precedence — ignore everything (including fence
+        // markers) inside them, so a fenced snippet within a comment can't corrupt
+        // fence state or swallow the comment's closing `-->`.
+        const opensComment = /<!--/.test(line);
+        const closesComment = /-->/.test(line);
+        const wasInComment = inComment;
+        if (opensComment && !closesComment) inComment = true;
+        else if (closesComment && !opensComment) inComment = false;
+        else if (opensComment && closesComment) inComment = false;
+        if (wasInComment || (opensComment && !closesComment)) continue;
+        // Outside comments: track fenced code blocks and skip their contents.
+        if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
+        if (inFence) continue;
+        if (headingRe.test(line)) start = i;
+    }
+    if (start === -1) return null;
+
+    // Find the end boundary with a second file-wide scan so the same fence /
+    // comment state that suppressed earlier fake headings also governs the
+    // post-heading boundary detection.
+    inFence = false;
+    inComment = false;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        const opensComment = /<!--/.test(line);
+        const closesComment = /-->/.test(line);
+        const wasInComment = inComment;
+        if (opensComment && !closesComment) inComment = true;
+        else if (closesComment && !opensComment) inComment = false;
+        else if (opensComment && closesComment) inComment = false;
+        if (wasInComment || (opensComment && !closesComment)) continue;
+        if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
+        if (inFence || i <= start) continue;
+        // After the heading: the next real h1/h2 ends the section; `### `+ stay in.
+        if (/^#{1,2}[ \t]+\S/.test(line)) return lines.slice(start, i).join('\n');
+    }
+    return lines.slice(start).join('\n');
+}
+
+// Fields are `unknown` on purpose: the status comes from untyped JSON on disk,
+// so the helper must runtime-validate the reroute signal rather than trust a
+// type that a corrupt status.json could violate (e.g. `rerouted: "true"`).
+export type RerouteStatusView = { phases?: { implement?: unknown } };
+
+export type RerouteEvidence =
+    | { reroute: false }
+    | { reroute: true; ok: false; reason: string }
+    | { reroute: true; ok: true; verdict?: Verdict };
+
+// Single source of truth for the reroute-evidence invariant: on a reroute, a
+// phase must show FRESH round-N work, not the original first-pass artifact (which
+// is still present in the cumulative file). Called by BOTH gates
+// (`tryEvidenceAdvance`, `checkPhaseGate`) for spec_review and plan, so they can
+// never disagree. Pure — callers fail closed on a missing/unreadable status
+// BEFORE invoking this, so `status` is always present + parsed here (no "unknown"
+// state to mishandle). `{ reroute: false }` means "not a reroute → caller uses its
+// normal first-pass logic"; `{ reroute: true, ok: false }` means the caller must
+// reject; `{ reroute: true, ok: true, verdict? }` means advance (verdict set only
+// for spec_review).
+export function checkRerouteEvidence(phase: Phase, artifactContent: string, status: RerouteStatusView): RerouteEvidence {
+    // Only spec_review and plan are reroute-gated; every other phase (code_review,
+    // etc.) uses its own first-pass logic regardless of status shape.
+    if (phase !== 'spec_review' && phase !== 'plan') return { reroute: false };
+    // The reroute signal is status.phases.implement.rerouted. A reroute ALWAYS has a
+    // populated implement entry with `rerouted === true` (a task can't reroute
+    // without having implemented), so any *absence* of that positive signal —
+    // implement entry missing/not an object, `rerouted` absent, or `rerouted ===
+    // false` — is a first-pass and uses the normal whole-file logic. Only a
+    // PRESENT-but-malformed signal (`rerouted` present yet not a boolean) is
+    // indeterminate → FAIL CLOSED, since that could be a corrupted reroute whose
+    // stale first-pass approval must not slip through.
+    const impl = status.phases?.implement;
+    const rerouted = (typeof impl === 'object' && impl !== null)
+        ? (impl as { rerouted?: unknown }).rerouted
+        : undefined;
+    if (rerouted !== undefined && typeof rerouted !== 'boolean') {
+        return { reroute: true, ok: false, reason: 'cannot determine reroute state — status.phases.implement.rerouted is present but not a boolean' };
+    }
+    if (rerouted !== true) return { reroute: false }; // first-pass (signal absent or false)
+    const round = (impl as { reroute_count?: unknown }).reroute_count;
+    // rerouteFromHumanReview always increments reroute_count to >= 1 before any
+    // phase dispatch, so a rerouted task with a missing/zero/non-numeric round is an
+    // invalid state — fail closed rather than guess round 1 (which would mis-target
+    // round-2+ work or let a stale round-1 section satisfy a later reroute).
+    if (typeof round !== 'number' || round < 1) {
+        return { reroute: true, ok: false, reason: 'reroute in progress but reroute_count is missing/invalid (<1) — cannot determine the amendment round' };
+    }
+    if (phase === 'spec_review') {
+        const section = sliceRerouteRoundSection(artifactContent, 'Amendment Review', round);
+        if (section === null) {
+            const expected = round >= 2 ? `## Amendment Review Round ${round}` : '## Amendment Review';
+            return { reroute: true, ok: false, reason: `no \`${expected}\` section — a fresh amendment review for round ${round} is required (the original review does not count)` };
+        }
+        const verdict = extractCheckedVerdict(section);
+        if (!verdict) return { reroute: true, ok: false, reason: `the round-${round} Amendment Review section has no checked verdict box` };
+        return { reroute: true, ok: true, verdict };
+    }
+    // phase === 'plan'
+    if (sliceRerouteRoundSection(artifactContent, 'Reroute Plan', round) === null) {
+        const expected = round >= 2 ? `## Reroute Plan Round ${round}` : '## Reroute Plan';
+        return { reroute: true, ok: false, reason: `no \`${expected}\` section — the reroute plan delta for round ${round} is required` };
+    }
+    return { reroute: true, ok: true };
+}
+
 export function verifyRerouteAmendment(
     taskId: string,
     requiredRound: number,
@@ -488,6 +627,11 @@ const DONE_MD_TEMPLATE_SENTINELS = [
     '`src/...` — brief note',
 ];
 
+const PR_BODY_TEMPLATE_SENTINELS = [
+    '[pr-body-stub]',
+    '[TASK-ID]',
+];
+
 // Generic template-detector for the most common task-artifact templates
 // (spec.md, plan.md, spec-review.md, review.md). The `[TASK-ID]` sentinel
 // is present in every template's header and survives into rendered tasks
@@ -512,6 +656,17 @@ export function isDoneMdTemplate(donePath: string): boolean {
         return true;
     }
     return DONE_MD_TEMPLATE_SENTINELS.some(s => content.includes(s));
+}
+
+export function isPrBodyTemplate(prBodyPath: string): boolean {
+    let content: string;
+    try {
+        content = fs.readFileSync(prBodyPath, 'utf8');
+    } catch {
+        return true;
+    }
+    if (content.trim() === '') return true;
+    return PR_BODY_TEMPLATE_SENTINELS.some(s => content.includes(s));
 }
 
 export function extractDoneMdFromStdout(stdout: string): string {
@@ -616,16 +771,41 @@ export function checkPhaseGate(
             return { ok: false, reason: `${config.artifactName} is still the unfilled template for phase '${phase}'` };
         }
 
+        // Reroute evidence (spec_review + plan), shared with tryEvidenceAdvance via
+        // checkRerouteEvidence so the two gates can never disagree. Only reroute-
+        // capable phases read status; for them a missing/unreadable/malformed
+        // status.json FAILS CLOSED — we cannot rule out a reroute, and falling back
+        // to whole-file evidence would re-accept the stale first-pass artifact.
+        let rerouteEv: RerouteEvidence = { reroute: false };
+        if (phase === 'spec_review' || phase === 'plan') {
+            let statusRaw: string;
+            try { statusRaw = fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8'); }
+            catch { return { ok: false, reason: `cannot determine reroute state for '${phase}': status.json in ${taskDir} is missing or unreadable` }; }
+            let st: RerouteStatusView;
+            try { st = JSON.parse(statusRaw) as RerouteStatusView; }
+            catch { return { ok: false, reason: `cannot determine reroute state for '${phase}': status.json in ${taskDir} is unparseable` }; }
+            rerouteEv = checkRerouteEvidence(phase, content, st);
+            if (rerouteEv.reroute && !rerouteEv.ok) {
+                return { ok: false, reason: `${config.artifactName}: ${rerouteEv.reason}` };
+            }
+        }
+
         if (config.verdictMustMatchArtifact) {
             if (!verdict) {
                 return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
             }
-            const extracted = extractCheckedVerdict(content);
+            // On a reroute the verdict comes from the round's `## Amendment Review`
+            // section (checkRerouteEvidence); otherwise from the whole file, which
+            // already narrows code_review's `## Round N` re-reviews.
+            const extracted = (rerouteEv.reroute && rerouteEv.ok) ? rerouteEv.verdict : extractCheckedVerdict(content);
+            const scopeLabel = (rerouteEv.reroute && rerouteEv.ok)
+                ? `${config.artifactName} reroute amendment-review section`
+                : config.artifactName;
             if (!extracted) {
-                return { ok: false, reason: `${config.artifactName} has no checked verdict checkbox` };
+                return { ok: false, reason: `${scopeLabel} has no checked verdict checkbox` };
             }
             if (extracted !== verdict) {
-                return { ok: false, reason: `verdict mismatch: status.json wants '${verdict}', ${config.artifactName} has '${extracted}'` };
+                return { ok: false, reason: `verdict mismatch: status.json wants '${verdict}', ${scopeLabel} has '${extracted}'` };
             }
         }
     }

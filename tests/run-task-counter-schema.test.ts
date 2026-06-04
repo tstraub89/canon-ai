@@ -229,6 +229,28 @@ void test('taskPhasePreflightRejected followed by a real changes_requested round
         assert.equal(phase?.iterations_total, 1);
         // Both rejections (preflight + real) tracked in changes_requested_total:
         assert.equal(phase?.changes_requested_total, 2);
+        // Pre-flight streak is cleared by the real review round:
+        assert.equal(phase?.preflight_rejections_current_loop, 0);
+        // Monotonic pre-flight total is preserved:
+        assert.equal(phase?.preflight_rejections_total, 1);
+    });
+});
+
+void test('taskPhasePreflightRejected followed by a real needs_re_review round resets preflight counter', () => {
+    withTempTasks(root => {
+        const taskId = 'preflight-then-needs-re-review';
+        const base = makeStatus(taskId);
+        base.phases.spec_review = { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0 };
+        writeTask(root, taskId, base);
+
+        taskPhasePreflightRejected(taskId, 'code_review');
+        withSkippedPhaseGate(() => taskPhase(taskId, 'code_review', 'done', 'needs_re_review'));
+
+        const phase = readTaskStatus(root, taskId).phases.code_review;
+        assert.equal(phase?.preflight_rejections_current_loop, 0);
+        assert.equal(phase?.preflight_rejections_total, 1);
+        assert.equal(phase?.iterations_current_loop, 1);
+        assert.equal(phase?.changes_requested_total, 2);
     });
 });
 

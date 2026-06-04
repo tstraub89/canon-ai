@@ -1,0 +1,77 @@
+{
+  "id": "watch-worktree-flip-false-idle",
+  "title": "Watch must not false-idle during the worktree-flip runtime-file gap",
+  "status": "complete",
+  "created": "2026-06-01",
+  "updated": "2026-06-01",
+  "branch": "task/watch-worktree-flip-false-idle",
+  "base_branch": "release/v1.9",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "63ebb05b43f67cee1d23c850c22fe7132a674329",
+    "orchestrator_commit": "63ebb05b43f67cee1d23c850c22fe7132a674329",
+    "codex_cli": "codex-cli 0.135.0",
+    "claude_code": "2.1.152 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 3,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0,
+      "preflight_rejections_total": 1
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex": "019e8204-1200-78e0-8be4-842a150b20e2",
+    "claude_review": "1e17d417-487b-46f0-af8e-3ebd417e3b6f",
+    "codex_spec_review": "019e832b-575a-7a00-adb3-c25b2f241851"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

@@ -1,0 +1,73 @@
+{
+  "id": "reroute-latest-amendment-section",
+  "title": "Reroute verdict reads the latest same-round amendment section, not the first",
+  "status": "complete",
+  "created": "2026-06-04",
+  "updated": "2026-06-04",
+  "branch": "task/reroute-latest-amendment-section",
+  "base_branch": "release/v1.9",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "3a6e8c09a63c04677590345ecdc7b44366aae29f",
+    "orchestrator_commit": "3a6e8c09a63c04677590345ecdc7b44366aae29f",
+    "codex_cli": "codex-cli 0.136.0",
+    "claude_code": "2.1.162 (Claude Code)"
+  },
+  "task_size": "S",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex": "019e90f6-ffa0-77c0-bceb-b92ac9c02cf2",
+    "claude_review": "aebb5dfd-8ea2-4a24-b92e-7167c116042d"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

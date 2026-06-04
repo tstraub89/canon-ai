@@ -13,10 +13,12 @@ import codeReviewRoundNTemplate from './templates/code-review-round-n.md';
 import implementTemplate from './templates/implement.md';
 import implementRerouteTemplate from './templates/implement-reroute.md';
 import implementRevisionsTemplate from './templates/implement-revisions.md';
+import planRerouteTemplate from './templates/plan-reroute.md';
 import planTemplate from './templates/plan.md';
 import qaTemplate from './templates/qa.md';
 import specTemplate from './templates/spec.md';
 import specRevisionTemplate from './templates/spec-revision.md';
+import specReviewRerouteTemplate from './templates/spec-review-reroute.md';
 import specReviewTemplate from './templates/spec-review.md';
 
 const TEMPLATES: Record<string, string> = {
@@ -25,10 +27,12 @@ const TEMPLATES: Record<string, string> = {
     'implement.md': implementTemplate,
     'implement-reroute.md': implementRerouteTemplate,
     'implement-revisions.md': implementRevisionsTemplate,
+    'plan-reroute.md': planRerouteTemplate,
     'plan.md': planTemplate,
     'qa.md': qaTemplate,
     'spec.md': specTemplate,
     'spec-revision.md': specRevisionTemplate,
+    'spec-review-reroute.md': specReviewRerouteTemplate,
     'spec-review.md': specReviewTemplate,
 };
 
@@ -119,6 +123,34 @@ export function promptSpecRevision(state: PipelineState): string {
 
 export function promptSpecReview(state: PipelineState): string {
     const { tasks, tier } = state;
+    const isReroute = tasks.some(t => t.status.phases.implement?.rerouted === true);
+
+    if (isReroute) {
+        const roundBanner = tasks.length === 1
+            ? (() => {
+                const rerouteCount = tasks[0].rerouteCount;
+                return rerouteCount <= 1
+                    ? '**This is reroute amendment review round 1.** Review the `## Amendment` section.\n\n'
+                    : `**This is reroute amendment review round ${rerouteCount}.** Review the \`## Amendment Round ${rerouteCount}\` section.\n\n`;
+            })()
+            : '**This is a reroute amendment review for a bundle.** Each task has its own round; use the per-task heading below.\n\n';
+        const taskLines = tasks.map(t => {
+            const expectedHeading = t.rerouteCount <= 1
+                ? '`## Amendment`'
+                : `\`## Amendment Round ${t.rerouteCount}\``;
+            return `- \`${t.taskId}\`: "${t.title}" (reroute round ${t.rerouteCount}) → review ${expectedHeading} in tasks/${t.taskId}/spec.md`;
+        }).join('\n');
+
+        return render('spec-review-reroute.md', {
+            projectName: config.projectName,
+            startup: CODEX_STARTUP,
+            taskScope: tasks.length > 1 ? 'a bundle of amended specs' : 'an amended spec',
+            roundBanner,
+            taskLines,
+            phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'spec_review', 'done', '<verdict>'),
+        });
+    }
+
     const combined = tier === 'fast';
     const fullSendActive = tasks.some(t => t.status.full_send === true);
     const taskLines = tasks.map(t =>
@@ -139,6 +171,34 @@ export function promptSpecReview(state: PipelineState): string {
 
 export function promptPlan(state: PipelineState): string {
     const { tasks } = state;
+    const isReroute = tasks.some(t => t.status.phases.implement?.rerouted === true);
+
+    if (isReroute) {
+        const roundBanner = tasks.length === 1
+            ? (() => {
+                const rerouteCount = tasks[0].rerouteCount;
+                return rerouteCount <= 1
+                    ? '**Reroute round 1.** Append `## Reroute Plan` to plan.md.\n\n'
+                    : `**Reroute round ${rerouteCount}.** Append \`## Reroute Plan Round ${rerouteCount}\` to plan.md.\n\n`;
+            })()
+            : '**Bundle reroute.** Each task has its own round; use the per-task lines below for the exact section heading.\n\n';
+        const verdictLines = tasks.map(t => {
+            const planHeading = t.rerouteCount <= 1
+                ? '`## Reroute Plan`'
+                : `\`## Reroute Plan Round ${t.rerouteCount}\``;
+            return `- \`${t.taskId}\`: amendment review verdict = ${t.specReviewVerdict}; reroute round ${t.rerouteCount}; append ${planHeading}`;
+        }).join('\n');
+
+        return render('plan-reroute.md', {
+            projectName: config.projectName,
+            startup: CLAUDE_STARTUP,
+            taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
+            roundBanner,
+            verdictLines,
+            phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'plan', 'done'),
+        });
+    }
+
     const verdictLines = tasks.map(t =>
         `- \`${t.taskId}\`: spec review verdict = ${t.specReviewVerdict}`
     ).join('\n');
@@ -432,7 +492,7 @@ export function promptCodeReview(
     });
 }
 
-export function promptQa(state: PipelineState): string {
+export function promptQa(state: PipelineState, prTemplate?: string | null): string {
     const { tasks } = state;
     const taskLines = tasks.map(t =>
         `- \`${t.taskId}\`: "${t.title}" → tasks/${t.taskId}/`
@@ -444,6 +504,7 @@ export function promptQa(state: PipelineState): string {
         startup: QA_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         taskLines,
+        prTemplate: prTemplate ?? null,
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'qa', 'done'),
     });
 }

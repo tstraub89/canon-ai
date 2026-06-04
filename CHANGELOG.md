@@ -2,6 +2,28 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.9.0] — 2026-06-04
+
+### Added
+
+- **`canon-changelog` and `canon-pipeline` are now release-format-agnostic.** Both shipped skills match your project's *existing* CHANGELOG style instead of imposing canon-ai's bracketed form, and the release-branch flow is an optional recommendation rather than a mandate — adopters with any release process can use them unchanged.
+- **QA drafts the PR body for `canon run --pr`.** The `qa` phase writes `tasks/<id>/pr-body.md` — an outward-facing description filling your repo's PR template (or a default skeleton), no tool attribution. `--pr` uses it for single-task runs and falls back gracefully when it's absent; QA never blocks on it. Scaffolded by `canon task new`, synced by `canon upgrade`.
+
+### Changed
+
+- **Full-tier reroutes now re-enter at `spec_review` + `plan`, not just `implement`.** A full-tier (M/L/XL/delicate) amendment gets the same review altitude as its original spec — Codex re-reviews it (and its interaction with approved ACs) before re-implementation, and a `changes_requested` amendment stops cleanly for revision. Fast-tier reroutes are unchanged. **Operator note:** `--step --expect` after a full-tier reroute now expects `spec_review`, not `implement`.
+
+### Fixed
+
+- **`canon watch` no longer false-idles during the plan→implement worktree flip.** A ~30s window where the heartbeat resolver pointed at the still-empty worktree dir could trip a false healthy-stop (`exit 0`) while the run was alive. The worktree is now seeded with a heartbeat the moment it's created (covering bundle secondaries too).
+- **Pre-flight rejection counter resets after a real review round.** It previously stayed ≥ 1 after a `changes_requested` round, so every subsequent re-implementation got the "fix your handoff" prompt instead of the reviewer's actual findings until the auto-block cap fired. Now resets on any real verdict; the auto-block safeguard for pure pre-flight loops is preserved.
+- **`/canon-status`'s status header no longer silently fails the permission gate.** Its `` ```! `` pre-exec block used nested command substitution (`$(...)`), which can't be allowlisted, so the header failed on every run. Now uses the `@{u}` upstream ref, with `Bash(git rev-list *)` added to `allowed-tools`.
+
+### Removed
+
+- **`CODEX.md` is no longer scaffolded or managed.** No tool read it — the Codex CLI loads `AGENTS.md` natively. `canon doctor` warns (never deletes) on a stale copy; its file-revert guidance moved to `AGENTS.md`.
+- **`canon task release-init` has been removed.** It hardcoded canon-ai's changelog format and overwrote `.canon/version` (canon's vendored-files version), making it unusable by adopters. Release branches still start from `main` — follow your project's own release steps.
+
 ## [1.8.2] — 2026-05-31
 
 ### Fixed

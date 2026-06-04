@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { REPO_ROOT } from './env.js';
 import { die, info, warn } from './cli.js';
+import { tickAllHeartbeats } from './heartbeat.js';
 import { readStatus, taskDirForRepoRoot, writeStatus } from './state.js';
 import { ensureWorktree, PIPELINE_TELEMETRY_FILES } from './worktree.js';
 import type { CommandResult } from './types.js';
@@ -261,6 +262,11 @@ export function ensureBranch(taskIds: string[], options: EnsureBranchOptions = {
     if (primaryStatus.branch) {
         if (useWorktree) {
             ensureWorktree(taskIds[0], primaryStatus.branch);
+            try {
+                tickAllHeartbeats();
+            } catch {
+                // Best-effort: a heartbeat refresh must never abort worktree reuse.
+            }
         } else {
             const current = getCurrentBranch();
             if (current !== primaryStatus.branch) {
@@ -286,6 +292,11 @@ export function ensureBranch(taskIds: string[], options: EnsureBranchOptions = {
             const s = readStatus(taskId);
             s.branch = branchName;
             writeStatus(taskId, s);
+        }
+        try {
+            tickAllHeartbeats();
+        } catch {
+            // Best-effort: a heartbeat refresh must never abort worktree creation.
         }
         info(`Branch recorded: ${branchName} (worktree mode — main checkout untouched)`);
         return;

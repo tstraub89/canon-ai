@@ -158,7 +158,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     type WriteOp = { rel: string; projectPath: string; content: string };
     const pending: WriteOp[] = [];
 
-    // --- Delimited files (AGENTS.md, CLAUDE.md, CODEX.md) ---
+    // --- Delimited files (AGENTS.md, CLAUDE.md) ---
     for (const rel of DELIMITED) {
         const projectPath = join(cwd, rel);
         const templatePath = join(pkgDir, 'templates', rel);

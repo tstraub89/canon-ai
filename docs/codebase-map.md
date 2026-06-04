@@ -20,7 +20,6 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 |---|---|
 | Workflow source of truth | `AGENTS.md` |
 | Claude (architect/reviewer) guide | `CLAUDE.md` |
-| Codex (implementer) guide | `CODEX.md` |
 | Project pitch + adoption guide | `README.md` |
 | Per-task state machine | `.canon/templates/status.json` |
 
@@ -67,11 +66,12 @@ Every task lives in `tasks/<TASK-ID>/`. Templates live in `.canon/templates/`.
 | Implementation handoff template | `.canon/templates/handoff.md` | Codex |
 | Code review template (2-stage) | `.canon/templates/review.md` | Claude |
 | QA / human-facing summary template | `.canon/templates/done.md` | Claude |
+| QA / outward-facing PR body template | `.canon/templates/pr-body.md` | Claude |
 | Per-task scratchpad | `.canon/templates/notes.md` | Any agent, any phase |
 
 ## Protected Docs (Institutional Memory)
 
-These must stay current — agents read them at session start (per phase rules in `CLAUDE.md` / `CODEX.md`).
+These must stay current — agents read them at session start (per phase rules in `CLAUDE.md`).
 
 | What | Where | Purpose |
 |---|---|---|
@@ -139,7 +139,10 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `scripts/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
 
 **Add a new task-template field or section**:
-> `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` / `CODEX.md` (authorship rules)
+> `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` (authorship rules)
+
+**Add a CLI flag / `CliArgs` field**:
+> `scripts/run-task/types.ts` (the `CliArgs` type) → `scripts/run-task/cli.ts` (parser + usage text) → `tests/run-task-cli.test.ts` (asserts the full parsed-object shape) — all three. Omitting `types.ts` blocks type-check; omitting the test fails the parser-shape snapshot.
 
 **Promote a lesson into canon**:
 > `tasks/<id>/notes.md` (raw) → `docs/lessons-learned.md` (distilled & appended, during QA) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule. The final hop (promotion + pruning the buffer) is a **human-run sweep**, never automated by QA — QA only appends.
@@ -150,6 +153,5 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 |---|---|---|
 | Workflow source of truth | `AGENTS.md` | All agents follow this |
 | Claude instructions | `CLAUDE.md` | Architect + reviewer context |
-| Codex instructions | `CODEX.md` | Implementer context |
 | Agent permissions | `.claude/settings.json` | Allowlisted commands |
 | Task artifacts | `tasks/` | Per-task specs, plans, reviews |

@@ -150,7 +150,7 @@ Task-scoped state is worktree-canonical once a task reaches implement: `tasks/<i
 
 CI is configured via `.github/workflows/ci.yml`.
 
-**Triggers**: push to `main` or `dev`, and pull requests targeting `main` or `dev`. The path filters opt out of doc/task paths, then re-include the canon-managed root files that need `sync-templates:check` and docs refs validation (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `docs/pipeline-orchestrator.md`).
+**Triggers**: push to `main` or `dev`, and pull requests targeting `main` or `dev`. The path filters opt out of doc/task paths, then re-include the canon-managed root files that need `sync-templates:check` and docs refs validation (`AGENTS.md`, `CLAUDE.md`, `docs/pipeline-orchestrator.md`).
 
 **Matrix**: Node 24.x only.
 

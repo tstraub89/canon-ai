@@ -1,15 +1,17 @@
 ---
 name: canon-status
 description: Use when the human asks where canon tasks stand — "where are we", "pipeline status", "what's in flight", "what should I work on next", "what's blocked", or explicit `/canon-status` invocation. Also use at session start when several canon tasks may be in progress and a map of what needs attention vs. what's still running is needed. Read-only — surfaces task phase, blockers, and recommended next action across all in-progress tasks.
-allowed-tools: Read Glob Grep Bash(canon task *) Bash(git branch *) Bash(git log *) Bash(git status *)
+allowed-tools: Read Glob Grep Bash(canon task *) Bash(git branch *) Bash(git rev-list *) Bash(git log *) Bash(git status *)
 effort: low
 ---
 
 # Pipeline Status
 
 ```!
-echo "Branch: $(git branch --show-current 2>/dev/null)"
-echo "Ahead of origin: $(git rev-list origin/$(git branch --show-current 2>/dev/null)..HEAD --count 2>/dev/null || echo '?') commits"
+echo "Branch:"
+git branch --show-current 2>/dev/null
+echo "Commits ahead of upstream:"
+git rev-list @{u}..HEAD --count 2>/dev/null || echo '?'
 echo ""
 canon task list 2>/dev/null || echo "(no tasks)"
 ```

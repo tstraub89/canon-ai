@@ -61,8 +61,6 @@ canon task subcommands:
                           After a squash-merge PR lands, reconcile local branch with origin.
                           Hard-resets if the only divergence is pipeline telemetry; refuses
                           if real unmerged work is present.
-  release-init <version>  Create release/v<MAJ.MIN> off main with version bumped and an
-                          empty in-progress CHANGELOG block.
 
 canon run options:
   --step, -1              Run one phase then stop

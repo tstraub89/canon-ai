@@ -29,7 +29,7 @@ export async function runPlanPhase(
             ?? tasks[0].status.phases.plan?.iterations
             ?? 0,
         activeCwd,
-    });
+    }, activeCwd);
     for (const t of tasks) {
         const planPath = path.join(taskDirFor(t.taskId), 'plan.md');
         let planContent: string | null = null;

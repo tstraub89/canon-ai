@@ -17,9 +17,9 @@ interface Check {
 const CANON_END = '<!-- canon:end -->';
 const CANON_START_RE = /<!-- canon:start[^>]* -->/;
 
-const EXPECTED_TEMPLATES = [
+export const EXPECTED_TEMPLATES = [
     'spec.md', 'plan.md', 'handoff.md', 'review.md',
-    'done.md', 'spec-review.md', 'notes.md', 'status.json',
+    'done.md', 'spec-review.md', 'notes.md', 'status.json', 'pr-body.md',
 ];
 
 // Canon's recommended .claude/settings.json permissions.allow entries.
@@ -192,6 +192,15 @@ export function checkAgentFile(cwd: string, filename: string): Check {
         return { label: filename, status: 'warn', detail: 'no canon delimiters — run `canon init` to add them' };
     }
     return { label: filename, status: 'pass' };
+}
+
+export function checkCodexMdDeprecated(cwd: string): Check | null {
+    if (!existsSync(join(cwd, 'CODEX.md'))) return null;
+    return {
+        label: 'CODEX.md',
+        status: 'warn',
+        detail: 'deprecated — no tool reads this file; it is safe to delete',
+    };
 }
 
 export function checkTemplates(cwd: string): Check {
@@ -624,10 +633,11 @@ export function doctorCmd(_args: string[]): void {
         checkBinary('gh', false, 'brew install gh && gh auth login  (required for --pr / --push)'),
     ];
 
+    const codexDeprecated = checkCodexMdDeprecated(cwd);
     const canonChecks: Check[] = [
         checkAgentFile(cwd, 'AGENTS.md'),
         checkAgentFile(cwd, 'CLAUDE.md'),
-        checkAgentFile(cwd, 'CODEX.md'),
+        ...(codexDeprecated ? [codexDeprecated] : []),
         checkTemplates(cwd),
         checkCanonVersion(cwd),
         checkSkills(cwd),

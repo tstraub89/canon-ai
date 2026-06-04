@@ -12,10 +12,8 @@ on:
       - '**'
       - '!AGENTS.md'
       - '!CLAUDE.md'
-      - '!CODEX.md'
       - 'AGENTS.md'
       - 'CLAUDE.md'
-      - 'CODEX.md'
       - '!docs/**'
       - 'docs/pipeline-orchestrator.md'
       - '!tasks/**'
@@ -30,10 +28,8 @@ on:
       - '**'
       - '!AGENTS.md'
       - '!CLAUDE.md'
-      - '!CODEX.md'
       - 'AGENTS.md'
       - 'CLAUDE.md'
-      - 'CODEX.md'
       - '!docs/**'
       - 'docs/pipeline-orchestrator.md'
       - '!tasks/**'
@@ -113,7 +109,6 @@ jobs:
           PATH="$SHIM_DIR" canon init
           test -f AGENTS.md
           test -f CLAUDE.md
-          test -f CODEX.md
           test -d .canon/templates
           test -d .claude/skills
           PATH="$SHIM_DIR" canon doctor

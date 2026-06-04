@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { checkRerouteEvidence, sliceRerouteRoundSection } from '../scripts/run-task/validation.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -34,23 +35,54 @@ function worktreeTasksRoot(worktreesRoot: string, taskId: string): string {
     return path.join(worktreesRoot, taskId, 'tasks');
 }
 
-function makeRerouteStatus(taskId: string, branch: string, rerouteCount = 0): Record<string, unknown> {
+type RerouteStatusOptions = {
+    taskSize?: 'S' | 'M' | 'L' | 'XL';
+    delicate?: boolean;
+    worktree?: boolean;
+    humanSpecGate?: boolean;
+    sessions?: Record<string, string>;
+    specReview?: Record<string, unknown>;
+    plan?: Record<string, unknown>;
+    implement?: Record<string, unknown>;
+};
+
+function makeRerouteStatus(
+    taskId: string,
+    branch: string,
+    rerouteCount = 0,
+    options: RerouteStatusOptions = {},
+): Record<string, unknown> {
     return {
         id: taskId,
         title: taskId,
+        status: 'human_review',
         branch,
         base_branch: 'main',
+        task_size: options.taskSize ?? 'M',
+        delicate: options.delicate ?? false,
+        human_spec_gate: options.humanSpecGate ?? false,
         full_send: false,
-        worktree: true,
+        worktree: options.worktree ?? true,
         phases: {
             spec: { status: 'done', agent: 'claude' },
-            spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
-            plan: { status: 'done', agent: 'claude' },
-            implement: { status: 'done', agent: 'codex', reroute_count: rerouteCount },
+            spec_review: {
+                status: 'done',
+                agent: 'codex',
+                verdict: 'approved',
+                iterations: 2,
+                iterations_current_loop: 2,
+                iterations_total: 5,
+                changes_requested_total: 2,
+                auto_block_count: 1,
+                ...options.specReview,
+            },
+            plan: { status: 'done', agent: 'claude', ...options.plan },
+            implement: { status: 'done', agent: 'codex', reroute_count: rerouteCount, ...options.implement },
             code_review: { status: 'done', agent: 'claude', verdict: 'approved' },
             qa: { status: 'done', agent: 'claude' },
             human_review: { status: 'pending', agent: 'human' },
         },
+        sessions: options.sessions,
     };
 }
 
@@ -99,6 +131,154 @@ function runReroute(
 
 function readStatus(tasksRoot: string, taskId: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as Record<string, unknown>;
+}
+
+function derivePhase(status: Record<string, unknown>): string {
+    const phases = status.phases as Record<string, { status?: string }>;
+    for (const phaseName of ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review']) {
+        if ((phases[phaseName]?.status ?? 'pending') !== 'done') return phaseName;
+    }
+    return 'complete';
+}
+
+function runCheckAndRoute(
+    cwd: string,
+    taskIds: readonly string[],
+): { status: number | null; stdout: string; stderr: string } {
+    const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        CANON_WORKTREES_ROOT: path.join(cwd, 'worktrees'),
+    };
+    delete env.CANON_TASKS_DIR_OVERRIDE;
+    const result = spawnSync(process.execPath, [
+        '--import',
+        MD_LOADER,
+        '--import',
+        TSX_LOADER,
+        '-e',
+        [
+            `import { checkAndRoute } from ${JSON.stringify(MAIN_URL)};`,
+            `await checkAndRoute('spec_review', ${JSON.stringify([...taskIds])});`,
+        ].join('\n'),
+    ], {
+        cwd,
+        encoding: 'utf8',
+        env,
+    });
+    return {
+        status: result.status,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+    };
+}
+
+function writeFakeAgentBins(binDir: string): void {
+    fs.mkdirSync(binDir, { recursive: true });
+    const codexPath = path.join(binDir, 'codex');
+    fs.writeFileSync(codexPath, [
+        '#!/usr/bin/env node',
+        'const fs = require("fs");',
+        'const path = require("path");',
+        'const capture = process.env.FAKE_AGENT_CAPTURE;',
+        'if (capture) fs.appendFileSync(capture, JSON.stringify({ name: "codex", cwd: process.cwd(), args: process.argv.slice(2) }) + "\\n");',
+        'const taskId = process.env.FAKE_CODEX_COMPLETE_SPEC_REVIEW_TASK;',
+        'if (taskId) {',
+        '  const taskDir = path.join(process.cwd(), "tasks", taskId);',
+        '  fs.mkdirSync(taskDir, { recursive: true });',
+        '  fs.writeFileSync(path.join(taskDir, "spec-review.md"), "# Spec Review\\n\\n## Verdict\\n\\n- [x] **Approved** — fixture\\n", "utf8");',
+        '  const statusPath = path.join(taskDir, "status.json");',
+        '  const status = JSON.parse(fs.readFileSync(statusPath, "utf8"));',
+        '  status.phases.spec_review.status = "done";',
+        '  status.phases.spec_review.verdict = "approved";',
+        '  const order = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];',
+        '  status.status = order.find(phase => (status.phases[phase]?.status ?? "pending") !== "done") ?? "complete";',
+        '  fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\\n`, "utf8");',
+        '}',
+        'console.log(JSON.stringify({ type: "thread.started", thread_id: "fake-codex-session" }));',
+        'console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }));',
+        '',
+    ].join('\n'), 'utf8');
+    fs.chmodSync(codexPath, 0o755);
+
+    const claudePath = path.join(binDir, 'claude');
+    fs.writeFileSync(claudePath, [
+        '#!/usr/bin/env node',
+        'const fs = require("fs");',
+        'const capture = process.env.FAKE_AGENT_CAPTURE;',
+        'if (capture) fs.appendFileSync(capture, JSON.stringify({ name: "claude", cwd: process.cwd(), args: process.argv.slice(2) }) + "\\n");',
+        'console.log(JSON.stringify({ type: "result", session_id: "fake-claude-session", usage: {} }));',
+        '',
+    ].join('\n'), 'utf8');
+    fs.chmodSync(claudePath, 0o755);
+}
+
+function runMain(
+    cwd: string,
+    args: readonly string[],
+    extraEnv: NodeJS.ProcessEnv,
+): { status: number | null; stdout: string; stderr: string } {
+    const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        CANON_WORKTREES_ROOT: path.join(cwd, 'worktrees'),
+        CANON_METRICS_FILE_OVERRIDE: path.join(cwd, 'metrics.md'),
+        ...extraEnv,
+    };
+    delete env.CANON_TASKS_DIR_OVERRIDE;
+    const result = spawnSync(process.execPath, [
+        '--import',
+        MD_LOADER,
+        '--import',
+        TSX_LOADER,
+        '-e',
+        [
+            `import { main } from ${JSON.stringify(MAIN_URL)};`,
+            `process.argv = ['node', 'run-task', ...${JSON.stringify([...args])}];`,
+            'await main();',
+        ].join('\n'),
+    ], {
+        cwd,
+        encoding: 'utf8',
+        env,
+    });
+    return {
+        status: result.status,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+    };
+}
+
+function probeActiveCwd(cwd: string, taskId: string): string {
+    const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        CANON_WORKTREES_ROOT: path.join(cwd, 'worktrees'),
+    };
+    delete env.CANON_TASKS_DIR_OVERRIDE;
+    const result = spawnSync(process.execPath, [
+        '--import',
+        MD_LOADER,
+        '--import',
+        TSX_LOADER,
+        '-e',
+        [
+            `import { getActiveCwd } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'worktree.ts')).href)};`,
+            `console.log(getActiveCwd([${JSON.stringify(taskId)}]));`,
+        ].join('\n'),
+    ], {
+        cwd,
+        encoding: 'utf8',
+        env,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+}
+
+function readCapture(capturePath: string): Array<{ name: string; cwd: string; args: string[] }> {
+    if (!fs.existsSync(capturePath)) return [];
+    return fs.readFileSync(capturePath, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line) as { name: string; cwd: string; args: string[] });
 }
 
 void test('rerouteFromHumanReview reads worktree spec.md when a task worktree exists', () => {
@@ -224,6 +404,353 @@ void test('rerouteFromHumanReview with --force proceeds and records reroute meta
     });
 });
 
+void test('rerouteFromHumanReview full-tier resets spec_review and plan, preserves monotonic counters, and clears stale spec_review session', () => {
+    withTempDir('reroute-preflight-full-tier-reset-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a', 2, {
+            taskSize: 'M',
+            sessions: {
+                codex_spec_review: 'old-spec-review-session',
+                codex: 'keep-implement-session',
+            },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(path.join(worktreesRoot, taskId), taskId, [
+            '# Spec',
+            '',
+            '## Amendment Round 3',
+            '',
+            'Round 3 amendment.',
+            '',
+        ].join('\n'));
+
+        const result = runReroute(dir, [taskId], false);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /human_review → spec_review/);
+        assert.match(result.stdout, /--step --expect spec_review/);
+        const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
+            status?: string;
+            sessions?: Record<string, string>;
+            phases?: {
+                spec_review?: {
+                    status?: string;
+                    verdict?: string;
+                    iterations?: number;
+                    iterations_current_loop?: number;
+                    iterations_total?: number;
+                    changes_requested_total?: number;
+                    auto_block_count?: number;
+                };
+                plan?: { status?: string };
+                implement?: { status?: string; rerouted?: boolean; reroute_count?: number };
+            };
+        };
+        assert.equal(updated.status, 'spec_review');
+        assert.equal(updated.phases?.spec_review?.status, 'pending');
+        assert.equal(updated.phases?.spec_review?.verdict, '');
+        assert.equal(updated.phases?.spec_review?.iterations_current_loop, 0);
+        assert.equal(updated.phases?.spec_review?.iterations, 0);
+        assert.equal(updated.phases?.spec_review?.iterations_total, 5);
+        assert.equal(updated.phases?.spec_review?.changes_requested_total, 2);
+        assert.equal(updated.phases?.spec_review?.auto_block_count, 1);
+        assert.equal(updated.phases?.plan?.status, 'pending');
+        assert.equal(updated.phases?.implement?.status, 'pending');
+        assert.equal(updated.phases?.implement?.rerouted, true);
+        assert.equal(updated.phases?.implement?.reroute_count, 3);
+        assert.equal(updated.sessions?.codex_spec_review, undefined);
+        assert.equal(updated.sessions?.codex, 'keep-implement-session');
+    });
+});
+
+void test('rerouteFromHumanReview fast-tier leaves spec_review and plan untouched and resumes at implement', () => {
+    withTempDir('reroute-preflight-fast-tier-reset-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a', 0, {
+            taskSize: 'S',
+            delicate: false,
+            sessions: {
+                codex_spec_review: 'unchanged-session',
+                codex: 'keep-implement-session',
+            },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(path.join(worktreesRoot, taskId), taskId, [
+            '# Spec',
+            '',
+            '## Amendment',
+            '',
+            'Round 1 amendment.',
+            '',
+        ].join('\n'));
+
+        const result = runReroute(dir, [taskId], false);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /human_review → implement/);
+        assert.doesNotMatch(result.stdout, /--step --expect spec_review/);
+        const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
+            status?: string;
+            sessions?: Record<string, string>;
+            phases?: {
+                spec_review?: { status?: string; verdict?: string; iterations_current_loop?: number };
+                plan?: { status?: string };
+                implement?: { status?: string; rerouted?: boolean; reroute_count?: number };
+            };
+        };
+        assert.equal(updated.status, 'implement');
+        assert.equal(updated.phases?.spec_review?.status, 'done');
+        assert.equal(updated.phases?.spec_review?.verdict, 'approved');
+        assert.equal(updated.phases?.spec_review?.iterations_current_loop, 2);
+        assert.equal(updated.phases?.plan?.status, 'done');
+        assert.equal(updated.phases?.implement?.status, 'pending');
+        assert.equal(updated.phases?.implement?.rerouted, true);
+        assert.equal(updated.phases?.implement?.reroute_count, 1);
+        assert.equal(updated.sessions?.codex_spec_review, 'unchanged-session');
+    });
+});
+
+void test('checkAndRoute blocks reroute amendment rejection to the human and resets the whole bundle to spec_review', () => {
+    withTempDir('reroute-preflight-option-b-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskA = makeRerouteStatus('task-a', 'task/task-a', 1, {
+            worktree: false,
+            specReview: { status: 'done', verdict: 'changes_requested' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending', rerouted: true },
+        });
+        const taskB = makeRerouteStatus('task-b', 'task/task-b', 2, {
+            worktree: false,
+            specReview: { status: 'done', verdict: 'approved' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending', rerouted: true },
+        });
+        writeTaskStatus(tasksRoot, 'task-a', taskA);
+        writeTaskStatus(tasksRoot, 'task-b', taskB);
+
+        const result = runCheckAndRoute(dir, ['task-a', 'task-b']);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /AMENDMENT REVIEW/);
+        assert.match(result.stdout, /tasks\/task-a\/spec\.md/);
+        assert.match(result.stdout, /tasks\/task-a\/spec-review\.md/);
+        assert.doesNotMatch(result.stdout, /tasks\/task-b\/spec\.md/);
+        assert.match(result.stdout, /canon run task-a task-b/);
+        const updatedA = readStatus(tasksRoot, 'task-a') as { status?: string; phases?: { spec?: { status?: string }; spec_review?: { status?: string; verdict?: string } } };
+        const updatedB = readStatus(tasksRoot, 'task-b') as { status?: string; phases?: { spec?: { status?: string }; spec_review?: { status?: string; verdict?: string } } };
+        assert.equal(updatedA.status, 'spec_review');
+        assert.equal(updatedB.status, 'spec_review');
+        assert.equal(updatedA.phases?.spec?.status, 'done');
+        assert.equal(updatedB.phases?.spec?.status, 'done');
+        assert.equal(updatedA.phases?.spec_review?.status, 'pending');
+        assert.equal(updatedB.phases?.spec_review?.status, 'pending');
+        assert.equal(updatedA.phases?.spec_review?.verdict, '');
+        assert.equal(updatedB.phases?.spec_review?.verdict, '');
+    });
+});
+
+void test('checkAndRoute preserves non-reroute spec_review changes_requested routing back to spec', () => {
+    withTempDir('reroute-preflight-non-reroute-spec-loop-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a', 0, {
+            worktree: false,
+            specReview: { status: 'done', verdict: 'changes_requested' },
+            implement: { rerouted: undefined },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+
+        const result = runCheckAndRoute(dir, [taskId]);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /routing back to spec/);
+        const updated = readStatus(tasksRoot, taskId) as {
+            status?: string;
+            phases?: { spec?: { status?: string }; spec_review?: { status?: string } };
+        };
+        assert.equal(updated.status, 'spec');
+        assert.equal(updated.phases?.spec?.status, 'pending');
+        assert.equal(updated.phases?.spec_review?.status, 'pending');
+    });
+});
+
+void test('checkAndRoute lets approved reroute spec_review flow through to plan without re-arming the spec gate', () => {
+    withTempDir('reroute-preflight-approved-flow-through-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a', 1, {
+            worktree: false,
+            humanSpecGate: false,
+            specReview: { status: 'done', verdict: 'approved' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending', rerouted: true },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+
+        const result = runCheckAndRoute(dir, [taskId]);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stdout, /SPEC GATE/);
+        const updated = readStatus(tasksRoot, taskId) as { phases?: { plan?: { status?: string } } };
+        assert.equal(derivePhase(updated as Record<string, unknown>), 'plan');
+        assert.equal(updated.phases?.plan?.status, 'pending');
+    });
+});
+
+void test('spec_review phase runs in REPO_ROOT on first pass and fresh in the worktree on reroute', () => {
+    withTempDir('reroute-preflight-spec-review-cwd-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const binDir = path.join(dir, 'bin');
+        writeFakeAgentBins(binDir);
+
+        const firstPassCapture = path.join(dir, 'first-pass-capture.jsonl');
+        const firstPassStatus = makeRerouteStatus('task-first', 'task/task-first', 0, {
+            worktree: false,
+            specReview: { status: 'pending', verdict: '' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending' },
+        });
+        writeTaskStatus(tasksRoot, 'task-first', firstPassStatus);
+        writeSpec(dir, 'task-first', '# Spec\n\n## Design\n\nFixture.\n');
+
+        const firstPass = runMain(dir, ['--step', '--expect', 'spec_review', 'task-first'], {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_AGENT_CAPTURE: firstPassCapture,
+            FAKE_CODEX_COMPLETE_SPEC_REVIEW_TASK: 'task-first',
+        });
+
+        assert.equal(firstPass.status, 0, firstPass.stderr);
+        const firstPassCodex = readCapture(firstPassCapture)
+            .find(entry => entry.name === 'codex' && entry.args[0] === 'exec');
+        assert.equal(firstPassCodex ? fs.realpathSync(firstPassCodex.cwd) : '', fs.realpathSync(dir));
+        assert.equal(firstPassCodex?.args.includes('resume'), false);
+
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const taskId = 'task-reroute';
+        const rerouteStatus = makeRerouteStatus(taskId, 'task/task-reroute', 0, {
+            taskSize: 'M',
+            sessions: { codex_spec_review: 'old-root-session' },
+        });
+        writeTaskStatus(tasksRoot, taskId, rerouteStatus);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, rerouteStatus);
+        writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nFixture.\n');
+
+        const reroute = runReroute(dir, [taskId], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        assert.equal(
+            fs.realpathSync(probeActiveCwd(dir, taskId)),
+            fs.realpathSync(path.join(worktreesRoot, taskId)),
+        );
+
+        const rerouteCapture = path.join(dir, 'reroute-capture.jsonl');
+        const rerouteStep = runMain(dir, ['--step', '--expect', 'spec_review', taskId], {
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_AGENT_CAPTURE: rerouteCapture,
+            FAKE_CODEX_COMPLETE_SPEC_REVIEW_TASK: taskId,
+        });
+
+        assert.equal(rerouteStep.status, 0, rerouteStep.stderr);
+        const rerouteCaptures = readCapture(rerouteCapture).filter(entry => entry.name === 'codex');
+        const rerouteCodex = rerouteCaptures.find(entry => entry.args[0] === 'exec');
+        assert.equal(
+            rerouteCodex ? fs.realpathSync(rerouteCodex.cwd) : '',
+            fs.realpathSync(path.join(worktreesRoot, taskId)),
+            JSON.stringify(rerouteCaptures, null, 2),
+        );
+        assert.equal(rerouteCodex?.args.includes('resume'), false);
+    });
+});
+
+void test('retryAgentForPhase uses worktree cwd for reroute spec_review and REPO_ROOT otherwise', () => {
+    withTempDir('reroute-preflight-retry-cwd-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const binDir = path.join(dir, 'bin');
+        const capturePath = path.join(dir, 'retry-capture.jsonl');
+        writeFakeAgentBins(binDir);
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a', 1, {
+            sessions: { codex_spec_review: 'retry-session' },
+            specReview: { status: 'in_progress', verdict: '' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending', rerouted: true },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        const retryEnv: NodeJS.ProcessEnv = {
+            ...process.env,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_AGENT_CAPTURE: capturePath,
+        };
+        delete retryEnv.CANON_TASKS_DIR_OVERRIDE;
+
+        const rerouteResult = spawnSync(process.execPath, [
+            '--import',
+            MD_LOADER,
+            '--import',
+            TSX_LOADER,
+            '-e',
+            [
+                `import { retryAgentForPhase } from ${JSON.stringify(MAIN_URL)};`,
+                `await retryAgentForPhase(${JSON.stringify(taskId)}, 'spec_review', 'fixture evidence');`,
+            ].join('\n'),
+        ], {
+            cwd: dir,
+            encoding: 'utf8',
+            env: retryEnv,
+        });
+        assert.equal(rerouteResult.status, 0, rerouteResult.stderr);
+        let captures = readCapture(capturePath).filter(entry => entry.name === 'codex');
+        let latestCapture = captures.at(-1);
+        assert.equal(
+            latestCapture ? fs.realpathSync(latestCapture.cwd) : '',
+            fs.realpathSync(path.join(worktreesRoot, taskId)),
+        );
+
+        const nonRerouteStatus = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
+            phases?: { implement?: Record<string, unknown> };
+        };
+        if (nonRerouteStatus.phases?.implement) {
+            delete nonRerouteStatus.phases.implement.rerouted;
+        }
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, nonRerouteStatus);
+
+        const nonRerouteResult = spawnSync(process.execPath, [
+            '--import',
+            MD_LOADER,
+            '--import',
+            TSX_LOADER,
+            '-e',
+            [
+                `import { retryAgentForPhase } from ${JSON.stringify(MAIN_URL)};`,
+                `await retryAgentForPhase(${JSON.stringify(taskId)}, 'spec_review', 'fixture evidence');`,
+            ].join('\n'),
+        ], {
+            cwd: dir,
+            encoding: 'utf8',
+            env: retryEnv,
+        });
+        assert.equal(nonRerouteResult.status, 0, nonRerouteResult.stderr);
+        captures = readCapture(capturePath).filter(entry => entry.name === 'codex');
+        latestCapture = captures.at(-1);
+        assert.equal(latestCapture ? fs.realpathSync(latestCapture.cwd) : '', fs.realpathSync(dir));
+    });
+});
+
 void test('rerouteFromHumanReview reports every failing task in a bundle', () => {
     withTempDir('reroute-preflight-bundle-', dir => {
         initGitRepo(dir);
@@ -302,5 +829,206 @@ void test('rerouteFromHumanReview enforces the round-2 heading and accepts the s
         assert.equal(updated.phases?.implement?.status, 'pending');
         assert.equal(updated.phases?.implement?.rerouted, true);
         assert.equal(updated.phases?.implement?.reroute_count, 2);
+    });
+});
+
+// ── Amendment 1: round-aware reroute evidence gates (P1/P2) ──────────────────
+
+void test('sliceRerouteRoundSection matches only the round-specific section', () => {
+    const has = (c: string, l: string, r: number): boolean => sliceRerouteRoundSection(c, l, r) !== null;
+    // Round 1 = bare heading.
+    assert.equal(has('## Amendment Review\n- [x] Approved', 'Amendment Review', 1), true);
+    // Round 1 must reject an original review with no amendment-review section.
+    assert.equal(has('## Verdict\n- [x] Approved\n', 'Amendment Review', 1), false);
+    // Round 1 must reject a round-2-only heading (end-of-line anchor).
+    assert.equal(has('## Amendment Review Round 2\n', 'Amendment Review', 1), false);
+    // Round 2 matches "Round 2" and rejects round-1-only / round-3.
+    assert.equal(has('## Amendment Review Round 2\n', 'Amendment Review', 2), true);
+    assert.equal(has('## Amendment Review\n', 'Amendment Review', 2), false);
+    assert.equal(has('## Amendment Review Round 3\n', 'Amendment Review', 2), false);
+    // Single-line anchoring: bare round-1 heading + body text "Round 2" ≠ round 2.
+    assert.equal(has('## Amendment Review\nRound 2 notes\n', 'Amendment Review', 2), false);
+    // Tolerant of heading level and extra horizontal whitespace.
+    assert.equal(has('###   Amendment   Review   Round   2  \n', 'Amendment Review', 2), true);
+    // Reroute Plan label.
+    assert.equal(has('## Reroute Plan\n### Delta\n', 'Reroute Plan', 1), true);
+    assert.equal(has('## Reroute Plan Round 2\n', 'Reroute Plan', 2), true);
+    assert.equal(has('## Reroute Plan\n', 'Reroute Plan', 2), false);
+
+    // Returns ONLY the current round's section — excludes an earlier first-pass
+    // verdict block above it (the basis for scoping the reroute verdict).
+    const sr = '## Verdict\n- [x] **Approved**\n\n## Amendment Review\n- [x] **Changes requested**\n';
+    const slice = sliceRerouteRoundSection(sr, 'Amendment Review', 1);
+    assert.ok(slice !== null && slice.includes('Changes requested') && !slice.includes('## Verdict'));
+    assert.equal(sliceRerouteRoundSection(sr, 'Amendment Review', 2), null);
+
+    // A heading-like line inside a fenced code block must NOT truncate the section
+    // before the verdict checkbox below it (P2 hardening).
+    const fenced = '## Amendment Review\n```md\n## not a real heading\n```\n- [x] **Approved**\n';
+    const fencedSlice = sliceRerouteRoundSection(fenced, 'Amendment Review', 1);
+    assert.ok(fencedSlice !== null && fencedSlice.includes('- [x] **Approved**'));
+    // A round heading that only appears inside a fence is not a real heading.
+    assert.equal(sliceRerouteRoundSection('```\n## Amendment Review\n```\n', 'Amendment Review', 1), null);
+
+    // A fenced block INSIDE an HTML comment must not corrupt comment/fence state.
+    const cf = '## Amendment Review\n- [x] **Approved**\n<!--\n```\n## x\n```\n-->\n## Next\n- [x] **Changes requested**\n';
+    const cfSlice = sliceRerouteRoundSection(cf, 'Amendment Review', 1);
+    assert.ok(cfSlice !== null && cfSlice.includes('- [x] **Approved**') && !cfSlice.includes('Changes requested'));
+});
+
+void test('checkRerouteEvidence is the shared reroute-evidence invariant', () => {
+    const reroute = (round?: number) => round === undefined
+        ? { phases: { implement: { rerouted: true } } }
+        : { phases: { implement: { rerouted: true, reroute_count: round } } };
+    const firstPass = { phases: { implement: { rerouted: false, reroute_count: 0 } } };
+
+    // Not a reroute → caller uses first-pass logic.
+    assert.deepEqual(checkRerouteEvidence('spec_review', '## Amendment Review\n- [x] **Approved**\n', firstPass), { reroute: false });
+
+    // Reroute but reroute_count missing/invalid → fail closed (R4 P2).
+    let r = checkRerouteEvidence('spec_review', '## Amendment Review\n- [x] **Approved**\n', reroute(undefined));
+    assert.ok(r.reroute && !r.ok && /reroute_count/.test(r.reason));
+    r = checkRerouteEvidence('plan', '## Reroute Plan\n', reroute(0));
+    assert.ok(r.reroute && !r.ok);
+
+    // A present-but-non-boolean `rerouted` is a corrupted reroute signal → fail
+    // closed (must not silently fall back to first-pass).
+    r = checkRerouteEvidence('spec_review', '## Amendment Review\n- [x] **Approved**\n', { phases: { implement: { rerouted: 'true' } } });
+    assert.ok(r.reroute && !r.ok && /not a boolean/.test(r.reason));
+    // A missing implement entry can't be a reroute (reroute implies implemented) →
+    // first-pass, NOT fail-closed.
+    assert.deepEqual(checkRerouteEvidence('plan', '## Reroute Plan\n', {}), { reroute: false });
+    // code_review is never reroute-gated, even with a corrupt status.
+    assert.deepEqual(checkRerouteEvidence('code_review', 'x', { phases: { implement: { rerouted: 'true' } } }), { reroute: false });
+
+    // spec_review reroute: verdict scoped to the round section — a Changes
+    // requested amendment below a stale Approved box yields changes_requested.
+    r = checkRerouteEvidence('spec_review', '## Verdict\n- [x] **Approved**\n## Amendment Review\n- [x] **Changes requested**\n', reroute(1));
+    assert.ok(r.reroute && r.ok && r.verdict === 'changes_requested');
+    // Approved amendment → approved.
+    r = checkRerouteEvidence('spec_review', '## Verdict\n- [x] **Approved**\n## Amendment Review\n- [x] **Approved**\n', reroute(1));
+    assert.ok(r.reroute && r.ok && r.verdict === 'approved');
+    // Missing amendment section → reject.
+    r = checkRerouteEvidence('spec_review', '## Verdict\n- [x] **Approved**\n', reroute(1));
+    assert.ok(r.reroute && !r.ok && /Amendment Review/.test(r.reason));
+    // Section present, no checked box → reject.
+    r = checkRerouteEvidence('spec_review', '## Amendment Review\n(no box)\n', reroute(1));
+    assert.ok(r.reroute && !r.ok && /verdict box/.test(r.reason));
+
+    // plan reroute: requires the round's Reroute Plan section, carries no verdict.
+    r = checkRerouteEvidence('plan', '# Plan\n## Steps\n1. x\n## Reroute Plan\n- delta\n', reroute(1));
+    assert.ok(r.reroute && r.ok && r.verdict === undefined);
+    r = checkRerouteEvidence('plan', '# Plan\n## Steps\n1. x\n', reroute(1));
+    assert.ok(r.reroute && !r.ok && /Reroute Plan/.test(r.reason));
+    // round 2 needs the Round 2 heading; the stale round-1 section is insufficient.
+    r = checkRerouteEvidence('plan', '## Reroute Plan\n- old\n', reroute(2));
+    assert.ok(r.reroute && !r.ok);
+    r = checkRerouteEvidence('plan', '## Reroute Plan\n- old\n## Reroute Plan Round 2\n- new\n', reroute(2));
+    assert.ok(r.reroute && r.ok);
+
+    // code_review is not reroute-gated by this helper.
+    assert.deepEqual(checkRerouteEvidence('code_review', 'anything', reroute(1)), { reroute: false });
+});
+
+function runTryEvidenceAdvance(
+    cwd: string,
+    taskId: string,
+    phase: string,
+): { advanced: boolean; verdict?: string; note: string } {
+    const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        CANON_WORKTREES_ROOT: path.join(cwd, 'worktrees'),
+    };
+    delete env.CANON_TASKS_DIR_OVERRIDE;
+    const result = spawnSync(process.execPath, [
+        '--import', MD_LOADER,
+        '--import', TSX_LOADER,
+        '-e',
+        [
+            `import { tryEvidenceAdvance } from ${JSON.stringify(MAIN_URL)};`,
+            `const r = tryEvidenceAdvance(${JSON.stringify(taskId)}, ${JSON.stringify(phase)});`,
+            `process.stdout.write('RESULT:' + JSON.stringify(r));`,
+        ].join('\n'),
+    ], { cwd, encoding: 'utf8', env });
+    const m = (result.stdout ?? '').match(/RESULT:(\{.*\})/);
+    if (!m) throw new Error(`no tryEvidenceAdvance result; stdout=${result.stdout} stderr=${result.stderr}`);
+    return JSON.parse(m[1]) as { advanced: boolean; verdict?: string; note: string };
+}
+
+void test('reroute spec_review evidence gate scopes the verdict to the current round amendment review (AC-15 / P1)', () => {
+    withTempDir('reroute-evidence-', (dir) => {
+        initGitRepo(dir);
+        const taskId = 'evidence-sr';
+        const status = makeRerouteStatus(taskId, 'task/evidence-sr', 1, {
+            worktree: false,
+            implement: { status: 'done', agent: 'codex', reroute_count: 1, rerouted: true },
+            specReview: { status: 'pending' },
+        });
+        writeTaskStatus(path.join(dir, 'tasks'), taskId, status);
+        const reviewPath = path.join(dir, 'tasks', taskId, 'spec-review.md');
+        // Original approved review, no fresh "## Amendment Review" section → reject.
+        const original = '# Spec Review\n\n## Verdict\n- [x] **Approved** — implementable as written\n';
+        fs.writeFileSync(reviewPath, original);
+        const stale = runTryEvidenceAdvance(dir, taskId, 'spec_review');
+        assert.equal(stale.advanced, false, stale.note);
+        assert.match(stale.note, /Amendment Review/);
+
+        // The original approved box is still present, but the fresh amendment
+        // review is Changes requested — the verdict must reflect the AMENDMENT,
+        // not the stale original approval (the exact bug Codex's PR review caught).
+        fs.writeFileSync(reviewPath, `${original}\n## Amendment Review\n- [x] **Changes requested** — amendment contradicts AC-3\n`);
+        const cr = runTryEvidenceAdvance(dir, taskId, 'spec_review');
+        assert.equal(cr.advanced, true, cr.note);
+        assert.equal(cr.verdict, 'changes_requested', cr.note);
+
+        // Amendment review approved → approved.
+        fs.writeFileSync(reviewPath, `${original}\n## Amendment Review\n- [x] **Approved**\n`);
+        const ok = runTryEvidenceAdvance(dir, taskId, 'spec_review');
+        assert.equal(ok.advanced, true, ok.note);
+        assert.equal(ok.verdict, 'approved', ok.note);
+
+        // Amendment section present but no verdict box checked → reject.
+        fs.writeFileSync(reviewPath, `${original}\n## Amendment Review\n(no verdict yet)\n`);
+        const noVerdict = runTryEvidenceAdvance(dir, taskId, 'spec_review');
+        assert.equal(noVerdict.advanced, false, noVerdict.note);
+    });
+});
+
+void test('first-pass spec_review evidence gate still advances on a normal review (AC-15 regression)', () => {
+    withTempDir('reroute-evidence-', (dir) => {
+        initGitRepo(dir);
+        const taskId = 'evidence-fp';
+        const status = makeRerouteStatus(taskId, 'task/evidence-fp', 0, {
+            worktree: false,
+            implement: { status: 'pending', agent: 'codex' }, // rerouted falsy → first pass
+            specReview: { status: 'pending' },
+        });
+        writeTaskStatus(path.join(dir, 'tasks'), taskId, status);
+        fs.writeFileSync(path.join(dir, 'tasks', taskId, 'spec-review.md'),
+            '# Spec Review\n\n## Verdict\n- [x] **Approved**\n');
+        const r = runTryEvidenceAdvance(dir, taskId, 'spec_review');
+        assert.equal(r.advanced, true, r.note);
+    });
+});
+
+void test('reroute plan evidence gate rejects the stale original plan, accepts a fresh reroute plan (AC-16 / P2)', () => {
+    withTempDir('reroute-evidence-', (dir) => {
+        initGitRepo(dir);
+        const taskId = 'evidence-plan';
+        const status = makeRerouteStatus(taskId, 'task/evidence-plan', 1, {
+            worktree: false,
+            implement: { status: 'done', agent: 'codex', reroute_count: 1, rerouted: true },
+            plan: { status: 'pending', agent: 'claude' },
+        });
+        writeTaskStatus(path.join(dir, 'tasks'), taskId, status);
+        const planPath = path.join(dir, 'tasks', taskId, 'plan.md');
+        fs.writeFileSync(planPath, '# Plan\n\n## Steps\n1. original step\n');
+        const stale = runTryEvidenceAdvance(dir, taskId, 'plan');
+        assert.equal(stale.advanced, false, stale.note);
+        assert.match(stale.note, /Reroute Plan/);
+
+        fs.appendFileSync(planPath, '\n## Reroute Plan\n### Delta\n- new step\n');
+        const fresh = runTryEvidenceAdvance(dir, taskId, 'plan');
+        assert.equal(fresh.advanced, true, fresh.note);
     });
 });

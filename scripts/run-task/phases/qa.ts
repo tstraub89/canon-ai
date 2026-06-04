@@ -15,6 +15,7 @@ import { taskPhase } from '../../../src/task/index.js';
 export async function runQaPhase(
     state: PipelineState,
     interactive: boolean,
+    resolvedPrTemplate?: string | null,
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
@@ -24,7 +25,7 @@ export async function runQaPhase(
     for (const t of tasks) taskPhase(t.taskId, 'qa', 'in_progress');
     const cfg = getClaudeConfig('qa', tasks);
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptQa(state), interactive, null, cfg.model, cfg.effort, {
+    const result = await runClaude(promptQa(state, resolvedPrTemplate), interactive, null, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'qa',
         iteration: tasks[0].status.phases.qa?.iterations_current_loop

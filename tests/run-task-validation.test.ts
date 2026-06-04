@@ -16,8 +16,10 @@ import type { StatusJson } from '../scripts/run-task/types.js';
 import {
     canonicalizeValidationCheck,
     checkAcCoveragePlaceholders,
+    checkRerouteEvidence,
     computeLatestValidationResults,
     extractHandoffPath,
+    isPrBodyTemplate,
     parseAffectedFilesFromSpec,
     parseHandoffChangesRows,
     parseHandoffFiles,
@@ -28,8 +30,10 @@ import {
     verifyBaseDrift,
     verifyBaseDriftFromData,
     verifyHandoffAgainstDiffFromData,
+    sliceRerouteRoundSection,
     verifyRerouteAmendment,
 } from '../scripts/run-task/validation.js';
+import { resolveQaPrBody } from '../scripts/run-task/main.js';
 
 function withTempPair(
     specContent: string,
@@ -43,6 +47,15 @@ function withTempPair(
     fs.writeFileSync(handoffPath, handoffContent);
     try {
         fn(specPath, handoffPath);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+function withTempDir(prefix: string, fn: (dir: string) => void): void {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    try {
+        fn(dir);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -77,6 +90,72 @@ void test('parseNameStatusOutput: paths with spaces survive NUL decoding', () =>
         parseNameStatusOutput('M\0src/has spaces.ts\0R100\0old name.ts\0new name.ts\0'),
         ['new name.ts', 'old name.ts', 'src/has spaces.ts'],
     );
+});
+
+void test('isPrBodyTemplate returns true when pr-body.md is missing', () => {
+    withTempDir('pr-body-missing-', dir => {
+        assert.equal(isPrBodyTemplate(path.join(dir, 'pr-body.md')), true);
+    });
+});
+
+void test('isPrBodyTemplate returns true for the unfilled template stub', () => {
+    withTempDir('pr-body-stub-', dir => {
+        const prBodyPath = path.join(dir, 'pr-body.md');
+        fs.writeFileSync(prBodyPath, [
+            '<!-- [pr-body-stub] QA fills this file during the qa phase. Do not edit manually before QA runs. -->',
+            '',
+            '# PR Body: [TASK-ID] - [Title]',
+            '',
+            '> Stub - QA will replace this entire file with the filled PR body.',
+            '',
+        ].join('\n'));
+        assert.equal(isPrBodyTemplate(prBodyPath), true);
+    });
+});
+
+void test('isPrBodyTemplate returns false for a populated PR body', () => {
+    withTempDir('pr-body-populated-', dir => {
+        const prBodyPath = path.join(dir, 'pr-body.md');
+        fs.writeFileSync(prBodyPath, [
+            '# Summary',
+            '',
+            '- Filled by QA.',
+            '',
+            '# Changes',
+            '',
+            '- Updated the orchestrator prompt path.',
+            '',
+        ].join('\n'));
+        assert.equal(isPrBodyTemplate(prBodyPath), false);
+    });
+});
+
+void test('isPrBodyTemplate returns true for blank content', () => {
+    withTempDir('pr-body-blank-', dir => {
+        const prBodyPath = path.join(dir, 'pr-body.md');
+        fs.writeFileSync(prBodyPath, '');
+        assert.equal(isPrBodyTemplate(prBodyPath), true);
+    });
+});
+
+void test('isPrBodyTemplate returns true for whitespace-only content', () => {
+    withTempDir('pr-body-whitespace-', dir => {
+        const prBodyPath = path.join(dir, 'pr-body.md');
+        fs.writeFileSync(prBodyPath, '  \n\t');
+        assert.equal(isPrBodyTemplate(prBodyPath), true);
+    });
+});
+
+void test('resolveQaPrBody falls back for a blank single-task pr-body.md', () => {
+    withTempDir('resolve-qa-pr-body-', dir => {
+        const taskId = 'blank-pr-body-task';
+        const taskDir = path.join(dir, 'tasks', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, 'pr-body.md'), ' \n\t');
+        const result = resolveQaPrBody([taskId], dir);
+        assert.equal(result.kind, 'fallback');
+        assert.match(result.reason, /stub template/);
+    });
 });
 
 void test('legacy status with retired phase block parses, routes implement to code_review, and roundtrips intact', () => {
@@ -2027,6 +2106,179 @@ void test('checkPhaseGate: spec phase rejects when spec.md is missing', () => {
         const result = checkPhaseGate(taskId, 'spec');
         assert.equal(result.ok, false);
         if (!result.ok) assert.match(result.reason, /spec\.md is missing/);
+    });
+});
+
+function writeGateStatus(taskDir: string, opts: { rerouted: boolean; reroute_count?: number }): void {
+    fs.writeFileSync(path.join(taskDir, 'status.json'), `${JSON.stringify({
+        phases: { implement: { rerouted: opts.rerouted, ...(opts.reroute_count !== undefined ? { reroute_count: opts.reroute_count } : {}) } },
+    }, null, 2)}\n`);
+}
+
+void test('checkPhaseGate: reroute plan requires the round Reroute Plan section (R4 P1 bypass)', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        writeGateStatus(taskDir, { rerouted: true, reroute_count: 1 });
+        // Stale original plan, no `## Reroute Plan` → reject (the manual
+        // `canon task phase plan done` bypass that this closes).
+        fs.writeFileSync(path.join(taskDir, 'plan.md'), '# Plan\n\n## Steps\n1. original\n');
+        const result = checkPhaseGate(taskId, 'plan');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /Reroute Plan/);
+        // Fresh reroute plan appended → ok.
+        fs.appendFileSync(path.join(taskDir, 'plan.md'), '\n## Reroute Plan\n- delta\n');
+        assert.deepEqual(checkPhaseGate(taskId, 'plan'), { ok: true });
+    });
+});
+
+void test('checkPhaseGate: first-pass plan accepts a populated plan.md', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        writeGateStatus(taskDir, { rerouted: false, reroute_count: 0 });
+        fs.writeFileSync(path.join(taskDir, 'plan.md'), '# Plan\n\n## Steps\n1. original\n');
+        assert.deepEqual(checkPhaseGate(taskId, 'plan'), { ok: true });
+    });
+});
+
+void test('checkPhaseGate: reroute spec_review verdict is scoped to the amendment section', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        writeGateStatus(taskDir, { rerouted: true, reroute_count: 1 });
+        // Stale Approved box above + Changes requested amendment section: the gate
+        // must match the amendment verdict, not the stale approval.
+        fs.writeFileSync(path.join(taskDir, 'spec-review.md'),
+            '# Spec Review\n## Verdict\n- [x] **Approved**\n## Amendment Review\n- [x] **Changes requested**\n');
+        const result = checkPhaseGate(taskId, 'spec_review', 'approved');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /verdict mismatch/);
+        assert.deepEqual(checkPhaseGate(taskId, 'spec_review', 'changes_requested'), { ok: true });
+    });
+});
+
+void test('sliceRerouteRoundSection: duplicate round-2 sections returns the latest section', () => {
+    const content = [
+        '# Spec Review',
+        '',
+        '## Amendment Review Round 2',
+        '- [x] **Changes requested**',
+        '',
+        '## Amendment Review Round 2',
+        '- [x] **Approved**',
+        '',
+        '## Final Notes',
+        '',
+    ].join('\n');
+    const section = sliceRerouteRoundSection(content, 'Amendment Review', 2);
+    assert.notEqual(section, null);
+    assert.match(section ?? '', /Approved/);
+    assert.doesNotMatch(section ?? '', /Changes requested/);
+});
+
+void test('sliceRerouteRoundSection: single match returns the current section and no match returns null', () => {
+    const single = [
+        '# Spec Review',
+        '',
+        '## Amendment Review Round 2',
+        '- [x] **Approved**',
+        '',
+        '## Final Notes',
+        '',
+    ].join('\n');
+    assert.equal(
+        sliceRerouteRoundSection(single, 'Amendment Review', 2),
+        [
+            '## Amendment Review Round 2',
+            '- [x] **Approved**',
+            '',
+        ].join('\n'),
+    );
+    assert.equal(sliceRerouteRoundSection('# Spec Review\n\n## Final Notes\n', 'Amendment Review', 2), null);
+});
+
+void test('sliceRerouteRoundSection: round-1 bare-label duplicates select the latest bare heading', () => {
+    const content = [
+        '# Spec Review',
+        '',
+        '## Amendment Review',
+        '- [x] **Changes requested**',
+        '',
+        '## Amendment Review',
+        '- [x] **Approved**',
+        '',
+        '## Final Notes',
+        '',
+    ].join('\n');
+    const section = sliceRerouteRoundSection(content, 'Amendment Review', 1);
+    assert.notEqual(section, null);
+    assert.match(section ?? '', /Approved/);
+    assert.doesNotMatch(section ?? '', /Changes requested/);
+});
+
+void test('sliceRerouteRoundSection: fenced fake same-round heading is ignored and earlier fence state does not corrupt the last section', () => {
+    const content = [
+        '# Spec Review',
+        '',
+        '## Amendment Review Round 2',
+        '- [x] **Changes requested**',
+        '```md',
+        '## Amendment Review Round 2',
+        '- [x] **Changes requested**',
+        '```',
+        '',
+        '## Amendment Review Round 2',
+        '- [x] **Approved**',
+        '',
+        '## Final Notes',
+        '',
+    ].join('\n');
+    const section = sliceRerouteRoundSection(content, 'Amendment Review', 2);
+    assert.notEqual(section, null);
+    assert.match(section ?? '', /^## Amendment Review Round 2\n- \[x\] \*\*Approved\*\*\n$/m);
+    assert.doesNotMatch(section ?? '', /Changes requested/);
+    assert.doesNotMatch(section ?? '', /```md/);
+    assert.doesNotMatch(section ?? '', /Final Notes/);
+});
+
+void test('checkRerouteEvidence: spec_review reads the fresh verdict from the latest same-round amendment section', () => {
+    const content = [
+        '# Spec Review',
+        '',
+        '## Amendment Review Round 2',
+        '- [x] **Changes requested**',
+        '',
+        '## Amendment Review Round 2',
+        '- [x] **Approved**',
+        '',
+    ].join('\n');
+    const status = {
+        phases: {
+            implement: {
+                rerouted: true,
+                reroute_count: 2,
+            },
+        },
+    };
+    assert.deepEqual(checkRerouteEvidence('spec_review', content, status), {
+        reroute: true,
+        ok: true,
+        verdict: 'approved',
+    });
+});
+
+void test('checkPhaseGate: reroute-capable phase fails closed on missing/malformed/schema-invalid status.json', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'plan.md'), '# Plan\n## Reroute Plan\n- delta\n');
+        // Missing status.json → fail closed (cannot rule out a reroute).
+        let result = checkPhaseGate(taskId, 'plan');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /cannot determine reroute state/);
+        // Malformed (unparseable) status.json → fail closed.
+        fs.writeFileSync(path.join(taskDir, 'status.json'), '{ not json');
+        result = checkPhaseGate(taskId, 'plan');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /unparseable/);
+        // Parseable but schema-invalid (rerouted not a boolean) → fail closed.
+        fs.writeFileSync(path.join(taskDir, 'status.json'), JSON.stringify({ phases: { implement: { rerouted: 'true' } } }));
+        result = checkPhaseGate(taskId, 'plan');
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.reason, /not a boolean/);
     });
 });
 

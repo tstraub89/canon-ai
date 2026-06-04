@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { classifyAttach, classifyIdle, watchCmd } from '../src/cli/commands/watch.js';
 import type { HeartbeatReadResult, HeartbeatRecord } from '../scripts/run-task/heartbeat.js';
+import { gatherRunContext } from '../scripts/run-task/run-context.js';
 import type { RunContext } from '../scripts/run-task/run-context.js';
 import { type StatusJson } from '../scripts/run-task/types.js';
 
@@ -699,4 +700,45 @@ void test('watchCmd: a stale heartbeat while the pid is alive at a phase boundar
     assert.doesNotMatch(result.stdout[0], /step_done/);
     // The forward transition is still surfaced while blocking.
     assert.match(result.stderr.join('\n'), /phase plan → implement/);
+});
+
+void test('watchCmd: worktree flip with a fresh heartbeat keeps blocking instead of step_done', () => {
+    const clock = makeClock();
+    withTempDir(dir => {
+        const worktreeTaskDir = path.join(dir, 'worktrees', 't1', 'tasks', 't1');
+        fs.mkdirSync(worktreeTaskDir, { recursive: true });
+        fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(makeStatus('implement', {
+            spec: { status: 'done', agent: 'codex' },
+            spec_review: { status: 'done', agent: 'claude' },
+            plan: { status: 'done', agent: 'codex' },
+            implement: { status: 'in_progress', agent: 'codex' },
+        }), null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, '.heartbeat.json'), `${JSON.stringify(makeHeartbeat(process.pid, clock.now()), null, 2)}\n`, 'utf8');
+
+        const ctx = gatherRunContext('t1', {
+            resolveTaskDirImpl: () => worktreeTaskDir,
+            probeAliveImpl: (pid: number): void => {
+                if (pid === process.pid) return;
+                const err = new Error('ESRCH') as NodeJS.ErrnoException;
+                err.code = 'ESRCH';
+                throw err;
+            },
+        });
+
+        assert.equal(ctx.canonPid, null);
+        assert.equal(ctx.resolvedPid, process.pid);
+        assert.equal(ctx.launchWindow, false);
+
+        const result = runWatchCommand(['t1', '--timeout', '1s'], {
+            nowImpl: clock.now,
+            sleepImpl: clock.sleep,
+            gatherContextImpl: () => ctx,
+            probeAliveImpl: (pid: number): boolean => pid === process.pid,
+        });
+
+        assert.equal(result.exitCode, 5);
+        assert.equal(result.stdout.length, 1);
+        assert.match(result.stdout[0], /reason=timeout/);
+        assert.doesNotMatch(result.stdout[0], /step_done/);
+    });
 });

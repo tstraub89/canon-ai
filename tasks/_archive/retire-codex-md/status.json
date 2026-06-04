@@ -1,0 +1,75 @@
+{
+  "id": "retire-codex-md",
+  "title": "Retire CODEX.md — no tool reads it",
+  "status": "complete",
+  "created": "2026-06-01",
+  "updated": "2026-06-01",
+  "branch": "task/retire-codex-md",
+  "base_branch": "release/v1.9",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "43f75bb4a534cbfaee582f2ef4fef6c06111914f",
+    "orchestrator_commit": "43f75bb4a534cbfaee582f2ef4fef6c06111914f",
+    "codex_cli": "codex-cli 0.135.0",
+    "claude_code": "2.1.159 (Claude Code)"
+  },
+  "task_size": "L",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019e83d0-b07b-7ef1-ac7b-498114eb84c8",
+    "claude_spec": "92af6bb3-debc-459e-acd7-4505b4e8e9ea",
+    "codex": "019e83e4-8d0f-7b43-9f12-514f530fcb20",
+    "claude_review": "f781ca43-6fe0-4d10-84af-eec8e44238c5"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

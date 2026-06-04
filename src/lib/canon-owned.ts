@@ -13,10 +13,11 @@ export const CANON_OWNED = [
     '.canon/templates/spec-review.md',
     '.canon/templates/review.md',
     '.canon/templates/done.md',
+    '.canon/templates/pr-body.md',
     '.canon/templates/notes.md',
     'docs/pipeline-orchestrator.md',
     'scripts/docs-refs-check.mjs',
     'scripts/docs-refs-check.mjs.d.ts',
 ] as const;
 
-export const DELIMITED = ['AGENTS.md', 'CLAUDE.md', 'CODEX.md'] as const;
+export const DELIMITED = ['AGENTS.md', 'CLAUDE.md'] as const;

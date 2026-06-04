@@ -1,0 +1,77 @@
+{
+  "id": "release-agnostic-surface",
+  "title": "Align canon's shipped surface to its release-agnostic stance",
+  "status": "complete",
+  "created": "2026-06-01",
+  "updated": "2026-06-04",
+  "branch": "task/release-agnostic-surface",
+  "base_branch": "release/v1.9",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "3aade179bbec585f0234cfd43b24c64454899a0c",
+    "orchestrator_commit": "3aade179bbec585f0234cfd43b24c64454899a0c",
+    "codex_cli": "codex-cli 0.136.0",
+    "claude_code": "2.1.162 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 6,
+      "changes_requested_total": 3,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 2
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 4,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "claude_spec": "bd6a8354-b37c-41b4-89ff-2fba8a6f2981",
+    "codex": "019e903c-7edb-7aa2-9fd7-11daa900cb20",
+    "claude_review": "73af1a04-00b4-4eee-82a5-6f8dd4d5d531",
+    "codex_spec_review": "019e90ad-86cd-7c23-b452-1c479a60f416"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

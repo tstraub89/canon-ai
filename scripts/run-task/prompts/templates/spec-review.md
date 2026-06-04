@@ -14,6 +14,7 @@ Grounding rule: if a finding depends on code, a symbol, or a validation result, 
 
 **First, a strategic read of the spec itself — shape before implementability.** Ask:
 - Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)
+- For a bug or flake fix: has the targeted root cause been *verified by reproducing the mechanism* (deterministically — fault injection, forced race, targeted repro)? A paper argument can rule out a wrong hypothesis but doesn't by itself verify the real cause, so a fix on an unreproduced mechanism may just be the first plausible story that fit the symptom. An unverified mechanism is a blocking Shape Check concern. (See AGENTS.md §"Diagnose Before You Fix".)
 - Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)
 - Is there a materially simpler solution that changes the shape of the work?
 - Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)

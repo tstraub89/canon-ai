@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findUntrackedClobberPaths, taskAccept, taskList, taskNew, taskPhase, taskPostMergeSync, taskReleaseInit, taskResetSpecReview, taskStatus } from '../src/task/index.js';
+import { findUntrackedClobberPaths, taskAccept, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetSpecReview, taskStatus } from '../src/task/index.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
 
 const WORKSPACE_ROOT = process.cwd();
@@ -122,9 +122,6 @@ function writeTask(tasksRoot: string, taskId: string, status: StatusJson = makeS
 function readStatusFile(taskDir: string): StatusJson {
     return JSON.parse(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8')) as StatusJson;
 }
-
-type PackageJsonFixture = { version: string };
-type PackageLockFixture = { version: string; packages: { '': { version: string } } };
 
 function withTasksRoot<T>(fn: (root: string) => T): T {
     return withTempDir('task-cli-', root => {
@@ -907,119 +904,6 @@ void test('task post-merge-sync allows untracked files when in sync with origin'
     });
 });
 
-function setupReleaseRepo(): { root: string; work: string; origin: string } {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'release-init-'));
-    const origin = path.join(root, 'origin.git');
-    const work = path.join(root, 'work');
-    git(root, ['init', '--bare', origin]);
-    git(root, ['init', '-b', 'main', work]);
-    git(work, ['config', 'user.email', 'test@example.com']);
-    git(work, ['config', 'user.name', 'Test User']);
-    fs.writeFileSync(path.join(work, 'package.json'), `${JSON.stringify({ name: 'fixture', version: '1.0.0' }, null, 2)}\n`, 'utf8');
-    fs.writeFileSync(path.join(work, 'package-lock.json'), `${JSON.stringify({ name: 'fixture', version: '1.0.0', packages: { '': { version: '1.0.0' } } }, null, 2)}\n`, 'utf8');
-    fs.writeFileSync(path.join(work, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
-    fs.mkdirSync(path.join(work, '.canon'), { recursive: true });
-    fs.writeFileSync(path.join(work, '.canon/version'), '1.0.0\n', 'utf8');
-    git(work, ['add', 'package.json', 'package-lock.json', 'CHANGELOG.md', '.canon/version']);
-    git(work, ['commit', '-m', 'init']);
-    git(work, ['remote', 'add', 'origin', origin]);
-    git(work, ['push', '-u', 'origin', 'main']);
-    return { root, work, origin };
-}
-
-void test('task release-init creates release branch, bumps files, commits, and uses injectable push', () => {
-    const { root, work } = setupReleaseRepo();
-    try {
-        const pushed: string[] = [];
-        withCwd(work, () => {
-            captureStdout(() => taskReleaseInit('1.6.0', { pushFn: branch => { pushed.push(branch); } }));
-            assert.equal(git(work, ['branch', '--show-current']), 'release/v1.6');
-        });
-
-        assert.deepEqual(pushed, ['release/v1.6']);
-        const pkg = JSON.parse(fs.readFileSync(path.join(work, 'package.json'), 'utf8')) as PackageJsonFixture;
-        const lock = JSON.parse(fs.readFileSync(path.join(work, 'package-lock.json'), 'utf8')) as PackageLockFixture;
-        assert.equal(pkg.version, '1.6.0');
-        assert.equal(lock.packages[''].version, '1.6.0');
-        // CHANGELOG block must use bracketed full-semver + em-dash to match the
-        // auto-release workflow's extraction regex (^## \[<version>\] — <date>)
-        // and the canonical format every existing canon-ai CHANGELOG entry uses.
-        const changelog = fs.readFileSync(path.join(work, 'CHANGELOG.md'), 'utf8');
-        assert.match(changelog, /## \[1\.6\.0\] — unreleased/);
-        // .canon/version must track package.json — the auto-release workflow
-        // asserts they agree and dies otherwise.
-        assert.equal(fs.readFileSync(path.join(work, '.canon/version'), 'utf8'), '1.6.0\n');
-    } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-    }
-});
-
-void test('task release-init skips .canon/version when the file does not exist (adopter without .canon/ dir)', () => {
-    // Some adopter installs may not have a .canon/ directory yet. The write
-    // should be conditional — its absence is not an error.
-    withTempDir('release-init-no-canon-version-', root => {
-        const origin = path.join(root, 'origin.git');
-        const work = path.join(root, 'work');
-        git(root, ['init', '--bare', origin]);
-        git(root, ['init', '-b', 'main', work]);
-        git(work, ['config', 'user.email', 'test@example.com']);
-        git(work, ['config', 'user.name', 'Test User']);
-        fs.writeFileSync(path.join(work, 'package.json'), `${JSON.stringify({ name: 'fixture', version: '1.0.0' }, null, 2)}\n`, 'utf8');
-        fs.writeFileSync(path.join(work, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
-        git(work, ['add', 'package.json', 'CHANGELOG.md']);
-        git(work, ['commit', '-m', 'init']);
-        git(work, ['remote', 'add', 'origin', origin]);
-        git(work, ['push', '-u', 'origin', 'main']);
-        withCwd(work, () => {
-            captureStdout(() => taskReleaseInit('1.6.0', { pushFn: () => undefined }));
-        });
-        // .canon/version still does not exist (we didn't create it).
-        assert.equal(fs.existsSync(path.join(work, '.canon/version')), false);
-        // package.json and CHANGELOG.md still bumped/updated.
-        const pkg = JSON.parse(fs.readFileSync(path.join(work, 'package.json'), 'utf8')) as PackageJsonFixture;
-        assert.equal(pkg.version, '1.6.0');
-        assert.match(fs.readFileSync(path.join(work, 'CHANGELOG.md'), 'utf8'), /## \[1\.6\.0\] — unreleased/);
-    });
-});
-
-void test('task release-init inserts new block after intro blockquote, before first existing version block', () => {
-    // Regression for the 1.5.0 init bug: the new ## block was inserted
-    // directly after the H1, pushing any intro blockquote (e.g.,
-    // "> Format follows Keep a Changelog...") below the new entry.
-    // The blockquote is file-level meta and belongs between the H1 and
-    // the first version block.
-    const { root, work } = setupReleaseRepo();
-    try {
-        const initialChangelog = [
-            '# Changelog',
-            '',
-            '> Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).',
-            '',
-            '## [1.0.0] — 2026-05-01',
-            '',
-            '- Initial release.',
-            '',
-        ].join('\n');
-        fs.writeFileSync(path.join(work, 'CHANGELOG.md'), initialChangelog, 'utf8');
-        git(work, ['add', 'CHANGELOG.md']);
-        git(work, ['commit', '-m', 'changelog with intro blockquote']);
-        withCwd(work, () => {
-            captureStdout(() => taskReleaseInit('1.6.0', { pushFn: () => undefined }));
-        });
-        const result = fs.readFileSync(path.join(work, 'CHANGELOG.md'), 'utf8');
-        // New block must appear AFTER the intro blockquote and BEFORE the
-        // prior version block.
-        const blockquoteIdx = result.indexOf('> Format follows');
-        const newBlockIdx = result.indexOf('## [1.6.0] — unreleased');
-        const priorBlockIdx = result.indexOf('## [1.0.0] — 2026-05-01');
-        assert.ok(blockquoteIdx > 0, 'intro blockquote should still be in the file');
-        assert.ok(newBlockIdx > blockquoteIdx, 'new block must follow the blockquote');
-        assert.ok(priorBlockIdx > newBlockIdx, 'prior block must follow the new block');
-    } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-    }
-});
-
 function runTaskCmd(cwd: string, args: string[], env: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
     const code = [
         `import(${JSON.stringify(path.join(WORKSPACE_ROOT, 'src/task/index.ts'))})`,
@@ -1037,19 +921,6 @@ function runTaskCmd(cwd: string, args: string[], env: Record<string, string> = {
         stderr: result.stderr ?? '',
     };
 }
-
-void test('task release-init exits non-zero with exact local-branch guard message', () => {
-    const { root, work } = setupReleaseRepo();
-    try {
-        git(work, ['branch', 'release/v1.6']);
-        const result = runTaskCmd(work, ['release-init', '1.6.0']);
-        assert.equal(result.status, 1);
-        assert.match(result.stderr, /Error: branch 'release\/v1\.6' already exists locally\./);
-        assert.doesNotMatch(result.stdout, /initialized and pushed/);
-    } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-    }
-});
 
 void test('task phase routes to the task worktree status.json', () => {
     withTempDir('task-worktree-routing-', root => {

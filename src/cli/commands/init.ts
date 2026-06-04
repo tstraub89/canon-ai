@@ -16,7 +16,7 @@ import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.j
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const templatesDir = join(packageDir, 'templates');
 
-const AGENT_FILES = new Set(['AGENTS.md', 'CLAUDE.md', 'CODEX.md']);
+const AGENT_FILES = new Set(['AGENTS.md', 'CLAUDE.md']);
 
 function walkDir(dir: string, base: string = dir): string[] {
     const results: string[] = [];
@@ -149,7 +149,7 @@ function launchGrill(cwd: string, hasExistingAgentFiles: boolean): void {
     console.log('Claude will read your codebase, confirm its inferences, and ask targeted');
     console.log('questions to fill all docs in one pass.');
     if (hasExistingAgentFiles) {
-        console.log('\nNote: existing AGENTS.md / CLAUDE.md / CODEX.md detected — the grill');
+        console.log('\nNote: existing AGENTS.md / CLAUDE.md detected — the grill');
         console.log('will run the merge protocol on them automatically.');
     }
     console.log('');

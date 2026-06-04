@@ -1,6 +1,6 @@
 ---
 name: canon-pipeline
-description: Use when an existing canon task needs the pipeline driven forward — invoking `canon run`, advancing a single phase, opening the draft PR, shipping a merged task, or recovering from a snag (auto-block hit, phase mismatch, post-merge branch divergence, agent auth failure). Also for release branch operations: `release-init`, hotfix absorption, finalize-and-ship. Don't use to author a new spec (use `/canon-spec`) or check pipeline status (use `/canon-status`).
+description: Use when an existing canon task needs the pipeline driven forward — invoking `canon run`, advancing a single phase, opening the draft PR, shipping a merged task, or recovering from a snag (auto-block hit, phase mismatch, post-merge branch divergence, agent auth failure). Also for release branch operations: hotfix absorption, finalize-and-ship. Don't use to author a new spec (use `/canon-spec`) or check pipeline status (use `/canon-status`).
 allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(git *) Bash(gh *)
 effort: medium
 ---
@@ -92,24 +92,22 @@ canon run <task-id> --ship
 
 ### 5. Release branches
 
-**"Let's start vX.Y":**
+**This is canon's recommended, optional release-branch model.** Some projects release differently (for example, tag from `main`, use no separate release branch, or don't version at all). Adapt these steps to your project's release setup; anything that mentions CHANGELOG format or versioning policy defers to your project conventions.
+
+**"Let's start vX.Y":** Release-branch initialization is a **manual operator procedure** — this skill does **not** run it. For canon-ai, the init steps use `npm version`, `npm install --package-lock-only`, `npm run build`, and edits to `.canon/version` + `CHANGELOG.md`; other projects may initialize release branches differently. All of that is outside this skill's command scope (`canon`/`git`/`gh` + read/search only). What this skill does:
 1. Verify main is clean and in sync: `canon task post-merge-sync` if needed.
-2. Initialize the release branch:
-   ```bash
-   canon task release-init X.Y.0
-   ```
-   Creates `release/vX.Y`, bumps `package.json`, inserts an empty `## [X.Y.Z] — unreleased` CHANGELOG block, commits, pushes.
-3. Confirm: "Release branch `release/vX.Y` initialized and checked out."
+2. Direct the operator to your project's release-branch initialization steps to run themselves (or in a context with the needed permissions). Do not claim the skill initialized the branch.
+3. Once the operator reports `release/vX.Y` is up, resume here for task creation on it.
 
 **Creating a task on a release branch:** run `canon task new <id> "Title"` while checked out on `release/vX.Y`. The helper auto-detects the current branch and writes `base_branch: release/vX.Y`. Don't pass `--base` — auto-detect is the load-bearing convention.
 
-**Creating a task for a release branch while NOT checked out on it:** check if `release/vX.Y` exists before acting. If yes, warn about uncommitted changes, switch to it, pull, then create the task. If no, ask: "release/vX.Y hasn't been initialized yet — want me to run `release-init`?"
+**Creating a task for a release branch while NOT checked out on it:** check if `release/vX.Y` exists before acting. If yes, warn about uncommitted changes, switch to it, pull, then create the task. If no, ask: "release/vX.Y hasn't been initialized yet — want me to walk you through the steps to initialize a release branch for your project?"
 
 **Hotfixes during a release cycle:** hotfixes go directly to main. After the hotfix lands, proactively offer: "Release branch `release/vX.Y` will need to absorb this — want me to merge main into it?"
 
 **"Let's ship vX.Y":**
 1. Verify all vX.Y task PRs are merged to `release/vX.Y`.
-2. Swap `## [X.Y.Z] — unreleased` → `## [X.Y.Z] — YYYY-MM-DD` in CHANGELOG.md (the bracketed em-dash form the auto-release workflow extracts).
+2. Finalize the CHANGELOG unreleased block — use the `canon-changelog` skill in finalize mode (`/canon-changelog finalize`); it handles both version-carrying and version-less headings in your project's own format.
 3. Commit and push.
 4. Open the release PR: `gh pr create --base main --head release/vX.Y --title "vX.Y: <theme>"`.
 5. After merge: `canon task post-merge-sync` on main, then tag and create a GitHub release.
@@ -148,7 +146,6 @@ If any are missing post-pipeline, manually advance or fix before `--pr` / `--shi
 - `docs/pipeline-orchestrator.md` — orchestrator internals (model matrix, env vars, worktree, session resumption).
 - `AGENTS.md` — workflow rules, roles, escalation, validation matrix, git/release.
 - `CLAUDE.md` — Claude phase-specific guidance.
-- `CODEX.md` — Codex phase-specific guidance.
 - `/canon-status` — read task state and get recommended next action.
 - `/canon-spec` — author a new task spec.
 - `/canon-review` — adversarial pre-pipeline spec review before invoking the pipeline.

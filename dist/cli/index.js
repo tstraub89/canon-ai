@@ -451,7 +451,8 @@ var EXPECTED_TEMPLATES = [
   "done.md",
   "spec-review.md",
   "notes.md",
-  "status.json"
+  "status.json",
+  "pr-body.md"
 ];
 var RECOMMENDED_ALLOW = [
   "Bash(git *)",
@@ -582,6 +583,14 @@ function checkAgentFile(cwd, filename) {
   }
   return { label: filename, status: "pass" };
 }
+function checkCodexMdDeprecated(cwd) {
+  if (!existsSync(join(cwd, "CODEX.md"))) return null;
+  return {
+    label: "CODEX.md",
+    status: "warn",
+    detail: "deprecated \u2014 no tool reads this file; it is safe to delete"
+  };
+}
 function checkTemplates(cwd) {
   const dir = join(cwd, ".canon", "templates");
   if (!existsSync(dir)) {
@@ -599,7 +608,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.8.2";
+  const installedVersion = "1.9.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -902,10 +911,11 @@ function doctorCmd(_args) {
     checkBinary("codex", true, "npm install -g @openai/codex"),
     checkBinary("gh", false, "brew install gh && gh auth login  (required for --pr / --push)")
   ];
+  const codexDeprecated = checkCodexMdDeprecated(cwd);
   const canonChecks = [
     checkAgentFile(cwd, "AGENTS.md"),
     checkAgentFile(cwd, "CLAUDE.md"),
-    checkAgentFile(cwd, "CODEX.md"),
+    ...codexDeprecated ? [codexDeprecated] : [],
     checkTemplates(cwd),
     checkCanonVersion(cwd),
     checkSkills(cwd)
@@ -959,7 +969,7 @@ import { fileURLToPath as fileURLToPath2 } from "url";
 import { dirname, join as join2, relative } from "path";
 var packageDir = join2(dirname(fileURLToPath2(import.meta.url)), "../..");
 var templatesDir = join2(packageDir, "templates");
-var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md", "CODEX.md"]);
+var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md"]);
 function walkDir(dir, base = dir) {
   const results = [];
   for (const entry of readdirSync2(dir)) {
@@ -1024,7 +1034,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.8.2";
+  const version = "1.9.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -1040,7 +1050,7 @@ function launchGrill(cwd, hasExistingAgentFiles) {
   console.log("Claude will read your codebase, confirm its inferences, and ask targeted");
   console.log("questions to fill all docs in one pass.");
   if (hasExistingAgentFiles) {
-    console.log("\nNote: existing AGENTS.md / CLAUDE.md / CODEX.md detected \u2014 the grill");
+    console.log("\nNote: existing AGENTS.md / CLAUDE.md detected \u2014 the grill");
     console.log("will run the merge protocol on them automatically.");
   }
   console.log("");
@@ -2209,6 +2219,78 @@ function canonicalizeValidationCheck(value) {
   }
   return normalized;
 }
+function sliceRerouteRoundSection(content, label, round) {
+  const esc = label.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[ \t]+/g, "[ \\t]+");
+  const headingRe = round >= 2 ? new RegExp(`^#{2,6}[ \\t]+${esc}[ \\t]+Round[ \\t]+${round}[ \\t]*$`, "i") : new RegExp(`^#{2,6}[ \\t]+${esc}[ \\t]*$`, "i");
+  const lines = content.split("\n");
+  let inFence = false;
+  let inComment = false;
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const opensComment = /<!--/.test(line);
+    const closesComment = /-->/.test(line);
+    const wasInComment = inComment;
+    if (opensComment && !closesComment) inComment = true;
+    else if (closesComment && !opensComment) inComment = false;
+    else if (opensComment && closesComment) inComment = false;
+    if (wasInComment || opensComment && !closesComment) continue;
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (headingRe.test(line)) start = i;
+  }
+  if (start === -1) return null;
+  inFence = false;
+  inComment = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const opensComment = /<!--/.test(line);
+    const closesComment = /-->/.test(line);
+    const wasInComment = inComment;
+    if (opensComment && !closesComment) inComment = true;
+    else if (closesComment && !opensComment) inComment = false;
+    else if (opensComment && closesComment) inComment = false;
+    if (wasInComment || opensComment && !closesComment) continue;
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || i <= start) continue;
+    if (/^#{1,2}[ \t]+\S/.test(line)) return lines.slice(start, i).join("\n");
+  }
+  return lines.slice(start).join("\n");
+}
+function checkRerouteEvidence(phase, artifactContent, status) {
+  if (phase !== "spec_review" && phase !== "plan") return { reroute: false };
+  const impl = status.phases?.implement;
+  const rerouted = typeof impl === "object" && impl !== null ? impl.rerouted : void 0;
+  if (rerouted !== void 0 && typeof rerouted !== "boolean") {
+    return { reroute: true, ok: false, reason: "cannot determine reroute state \u2014 status.phases.implement.rerouted is present but not a boolean" };
+  }
+  if (rerouted !== true) return { reroute: false };
+  const round = impl.reroute_count;
+  if (typeof round !== "number" || round < 1) {
+    return { reroute: true, ok: false, reason: "reroute in progress but reroute_count is missing/invalid (<1) \u2014 cannot determine the amendment round" };
+  }
+  if (phase === "spec_review") {
+    const section = sliceRerouteRoundSection(artifactContent, "Amendment Review", round);
+    if (section === null) {
+      const expected = round >= 2 ? `## Amendment Review Round ${round}` : "## Amendment Review";
+      return { reroute: true, ok: false, reason: `no \`${expected}\` section \u2014 a fresh amendment review for round ${round} is required (the original review does not count)` };
+    }
+    const verdict = extractCheckedVerdict(section);
+    if (!verdict) return { reroute: true, ok: false, reason: `the round-${round} Amendment Review section has no checked verdict box` };
+    return { reroute: true, ok: true, verdict };
+  }
+  if (sliceRerouteRoundSection(artifactContent, "Reroute Plan", round) === null) {
+    const expected = round >= 2 ? `## Reroute Plan Round ${round}` : "## Reroute Plan";
+    return { reroute: true, ok: false, reason: `no \`${expected}\` section \u2014 the reroute plan delta for round ${round} is required` };
+  }
+  return { reroute: true, ok: true };
+}
 function isHumanPendingResult(result) {
   return /^human[_ -]?pending\b/i.test(result.trim());
 }
@@ -2281,16 +2363,36 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     if (isTemplate) {
       return { ok: false, reason: `${config2.artifactName} is still the unfilled template for phase '${phase}'` };
     }
+    let rerouteEv = { reroute: false };
+    if (phase === "spec_review" || phase === "plan") {
+      let statusRaw;
+      try {
+        statusRaw = fs8.readFileSync(path9.join(taskDir, "status.json"), "utf8");
+      } catch {
+        return { ok: false, reason: `cannot determine reroute state for '${phase}': status.json in ${taskDir} is missing or unreadable` };
+      }
+      let st;
+      try {
+        st = JSON.parse(statusRaw);
+      } catch {
+        return { ok: false, reason: `cannot determine reroute state for '${phase}': status.json in ${taskDir} is unparseable` };
+      }
+      rerouteEv = checkRerouteEvidence(phase, content, st);
+      if (rerouteEv.reroute && !rerouteEv.ok) {
+        return { ok: false, reason: `${config2.artifactName}: ${rerouteEv.reason}` };
+      }
+    }
     if (config2.verdictMustMatchArtifact) {
       if (!verdict) {
         return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
       }
-      const extracted = extractCheckedVerdict(content);
+      const extracted = rerouteEv.reroute && rerouteEv.ok ? rerouteEv.verdict : extractCheckedVerdict(content);
+      const scopeLabel = rerouteEv.reroute && rerouteEv.ok ? `${config2.artifactName} reroute amendment-review section` : config2.artifactName;
       if (!extracted) {
-        return { ok: false, reason: `${config2.artifactName} has no checked verdict checkbox` };
+        return { ok: false, reason: `${scopeLabel} has no checked verdict checkbox` };
       }
       if (extracted !== verdict) {
-        return { ok: false, reason: `verdict mismatch: status.json wants '${verdict}', ${config2.artifactName} has '${extracted}'` };
+        return { ok: false, reason: `verdict mismatch: status.json wants '${verdict}', ${scopeLabel} has '${extracted}'` };
       }
     }
   }
@@ -2501,8 +2603,7 @@ function usage() {
     "  phase <TASK-ID> <phase> <status> [verdict]",
     "  accept <TASK-ID...> <phase> [--force]",
     "  reset-spec-review <TASK-ID>",
-    "  post-merge-sync [<branch>]",
-    "  release-init <version>"
+    "  post-merge-sync [<branch>]"
   ].join("\n");
 }
 function validateTaskId(id) {
@@ -2784,6 +2885,7 @@ function updateReviewCounters(entry, verdict) {
     entry.iterations_total += 1;
     entry.changes_requested_total += 1;
     entry.iterations = entry.iterations_current_loop;
+    entry.preflight_rejections_current_loop = 0;
   } else if (verdict === "approved" || verdict === "approved_with_nits") {
     entry.iterations_total += 1;
     entry.iterations_current_loop = 0;
@@ -3281,118 +3383,6 @@ function nudgeShippableTasks() {
   for (const id of shippable) console.log(`    ${id}`);
   console.log("  Run `canon run <id> --ship` on each to archive + clean up.");
 }
-function updatePackageVersion(filePath, version, updateLockRoot = false) {
-  const parsed = readJsonFile(filePath);
-  parsed.version = version;
-  if (updateLockRoot) {
-    const packages = parsed.packages;
-    if (packages && typeof packages === "object") {
-      const rootPackage = packages[""];
-      if (rootPackage && typeof rootPackage === "object") {
-        rootPackage.version = version;
-      }
-    }
-  }
-  writeJsonAtomic(filePath, parsed);
-}
-function insertChangelogBlock(filePath, version) {
-  const content = fs9.readFileSync(filePath, "utf8");
-  const lines = content.split("\n");
-  let insertAt = lines.findIndex((line) => /^## \[/.test(line));
-  if (insertAt === -1) insertAt = lines.length;
-  const before = lines.slice(0, insertAt);
-  const after = lines.slice(insertAt);
-  while (before.length > 0 && before[before.length - 1] === "") before.pop();
-  const block = [
-    ...before,
-    "",
-    `## [${version}] \u2014 unreleased`,
-    "",
-    `<!-- Bullets land here as tasks for ${version} ship. The single squash-merge of release/v${version.replace(/\.0$/, "")} \u2192 main carries this entry to production. -->`,
-    "",
-    ...after
-  ];
-  fs9.writeFileSync(filePath, block.join("\n"), "utf8");
-}
-function defaultPush(branch) {
-  const result = runGit(["push", "-u", "origin", branch], { stdio: "inherit" });
-  if (result.error) throw new Error(result.error.message);
-  if (result.status !== 0) throw new Error(`git push -u origin ${branch} failed`);
-}
-function taskReleaseInit(version, options = {}) {
-  if (!version) {
-    throw new Error("Error: usage: canon task release-init <version>\n       e.g.: canon task release-init 1.6.0");
-  }
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    throw new Error(`Error: version must be semver (e.g. 1.6.0). Got: ${version}`);
-  }
-  ensureGitAvailable();
-  const short = `v${version.replace(/\.0$/, "")}`;
-  const branch = `release/${short}`;
-  const current = currentBranchOrEmpty();
-  if (current !== "main") {
-    throw new Error(`Error: release-init expects you to start on 'main' (you are on '${current}').`);
-  }
-  if (git2(["status", "--porcelain"])) {
-    throw new Error("Error: working tree is dirty. Commit or stash first.");
-  }
-  console.log("\u2192 Fetching origin/main...");
-  const fetch = runGit(["fetch", "origin", "main"]);
-  if (fetch.error || fetch.status !== 0) {
-    throw new Error("Error: git fetch failed.");
-  }
-  const behind = Number.parseInt(git2(["rev-list", "--count", "main..origin/main"]) || "0", 10);
-  if (behind > 0) {
-    throw new Error(`Error: local main is ${behind} commit(s) behind origin/main. Pull first.`);
-  }
-  if (gitOk(["rev-parse", "--verify", branch])) {
-    throw new Error(`Error: branch '${branch}' already exists locally.`);
-  }
-  if (gitOk(["rev-parse", "--verify", `origin/${branch}`])) {
-    throw new Error(`Error: branch '${branch}' already exists on origin.`);
-  }
-  console.log(`\u2192 Creating ${branch} off main...`);
-  git2(["checkout", "-b", branch, "main"]);
-  const filesToAdd = [];
-  if (fs9.existsSync("package.json")) {
-    console.log(`\u2192 Bumping package.json version to ${version}...`);
-    updatePackageVersion("package.json", version);
-    filesToAdd.push("package.json");
-    if (fs9.existsSync("package-lock.json")) {
-      console.log("\u2192 Bumping package-lock.json...");
-      updatePackageVersion("package-lock.json", version, true);
-      filesToAdd.push("package-lock.json");
-    }
-  }
-  if (fs9.existsSync("CHANGELOG.md")) {
-    console.log(`\u2192 Inserting empty changelog block for ${version}...`);
-    insertChangelogBlock("CHANGELOG.md", version);
-    filesToAdd.push("CHANGELOG.md");
-  }
-  if (fs9.existsSync(".canon/version")) {
-    console.log(`\u2192 Updating .canon/version to ${version}...`);
-    fs9.writeFileSync(".canon/version", `${version}
-`, "utf8");
-    filesToAdd.push(".canon/version");
-  }
-  if (filesToAdd.length > 0) {
-    git2(["add", ...filesToAdd]);
-    git2(["commit", "-m", `chore: initialize ${branch} (version ${version})`]);
-  } else {
-    git2(["commit", "--allow-empty", "-m", `chore: initialize ${branch} (version ${version}, no version files to bump)`]);
-  }
-  if (options.pushFn) options.pushFn(branch);
-  else defaultPush(branch);
-  console.log("");
-  console.log(`\u2713 Release branch ${branch} initialized and pushed.`);
-  console.log("");
-  console.log("Next steps:");
-  console.log("  1. Create tasks on this branch: canon task new <id> <title>");
-  console.log(`     (auto-detects base_branch=${branch} from your current checkout)`);
-  console.log(`  2. Each task PR targets ${branch} (not main).`);
-  console.log(`  3. As tasks ship, append bullets to the ${short} block in CHANGELOG.md.`);
-  console.log(`  4. When ready: open PR ${branch} \u2192 main, squash-merge for the release.`);
-}
 function taskCmd(args2) {
   const [subcommand, ...rest] = args2;
   try {
@@ -3425,9 +3415,6 @@ function taskCmd(args2) {
         break;
       case "post-merge-sync":
         taskPostMergeSync(rest[0]);
-        break;
-      case "release-init":
-        taskReleaseInit(rest[0] ?? "");
         break;
       default:
         console.error(`Unknown subcommand: ${subcommand ?? "(none)"}
@@ -3510,12 +3497,13 @@ var CANON_OWNED = [
   ".canon/templates/spec-review.md",
   ".canon/templates/review.md",
   ".canon/templates/done.md",
+  ".canon/templates/pr-body.md",
   ".canon/templates/notes.md",
   "docs/pipeline-orchestrator.md",
   "scripts/docs-refs-check.mjs",
   "scripts/docs-refs-check.mjs.d.ts"
 ];
-var DELIMITED = ["AGENTS.md", "CLAUDE.md", "CODEX.md"];
+var DELIMITED = ["AGENTS.md", "CLAUDE.md"];
 
 // src/cli/commands/upgrade.ts
 var packageDir4 = join5(dirname4(fileURLToPath5(import.meta.url)), "../..");
@@ -3663,7 +3651,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.8.2";
+  const newVersion = "1.9.0";
   const currentVersion = existsSync5(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -3869,8 +3857,6 @@ canon task subcommands:
                           After a squash-merge PR lands, reconcile local branch with origin.
                           Hard-resets if the only divergence is pipeline telemetry; refuses
                           if real unmerged work is present.
-  release-init <version>  Create release/v<MAJ.MIN> off main with version bumped and an
-                          empty in-progress CHANGELOG block.
 
 canon run options:
   --step, -1              Run one phase then stop
@@ -3907,7 +3893,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.8.2");
+  console.log("1.9.0");
 }
 switch (command) {
   case "doctor":

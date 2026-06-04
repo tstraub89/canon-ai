@@ -1,0 +1,75 @@
+{
+  "id": "qa-drafts-pr-body",
+  "title": "QA drafts a filled PR body for --pr",
+  "status": "complete",
+  "created": "2026-05-30",
+  "updated": "2026-06-02",
+  "branch": "task/qa-drafts-pr-body",
+  "base_branch": "release/v1.9",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "60ace76c916ab789a56809096f3991de33cc0fb1",
+    "orchestrator_commit": "60ace76c916ab789a56809096f3991de33cc0fb1",
+    "codex_cli": "codex-cli 0.136.0",
+    "claude_code": "2.1.160 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019e860d-9d3e-7f10-b15d-47c429f224a7",
+    "claude_spec": "9e0ba2a6-e508-4791-9376-ac2ddf0f3489",
+    "codex": "019e861f-89dc-7d11-b6b1-60acf8489721",
+    "claude_review": "b2d10786-df4e-42d2-a7bc-73a5a481cc19"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

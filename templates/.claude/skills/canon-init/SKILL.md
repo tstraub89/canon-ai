@@ -19,7 +19,6 @@ Follow these phases in order. Do not skip or combine phases.
 
 CLAUDE.md is already loaded. Before doing anything else:
 
-- If `CODEX.md` exists, read it.
 - If `AGENTS.md` exists, read it.
 
 For each file, scan for content **below** the `<!-- canon:end -->` delimiter. That content is project-specific and must be preserved. Note what you find — you'll need it in Phase 4.
@@ -110,7 +109,7 @@ Topics to cover — skip any that the codebase already answered:
 
 Write every stub doc with real, project-specific content. No placeholders. No "TBD". If you realize you're missing information for a section mid-write, ask one targeted question before writing that section.
 
-For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/lessons-learned.md`, plus the merge protocol for `AGENTS.md` / `CLAUDE.md` / `CODEX.md` — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
+For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/lessons-learned.md`, plus the merge protocol for `AGENTS.md` / `CLAUDE.md` — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
 
 ---
 
@@ -135,7 +134,7 @@ This is purely ergonomics. The committed `.claude/settings.json` is project-leve
 Stage all written docs (and `.claude/settings.json` if Phase 5 modified it):
 
 ```bash
-git add docs/ AGENTS.md CLAUDE.md CODEX.md 2>/dev/null
+git add docs/ AGENTS.md CLAUDE.md 2>/dev/null
 [ -f .claude/settings.json ] && git add .claude/settings.json
 git status --short
 ```

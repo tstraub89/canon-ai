@@ -12,7 +12,7 @@ Rule of thumb: real content for every section that applies; remove the section e
 - `docs/decisions.md` — settled architectural decisions
 - `docs/patterns.md` — implementation patterns and known pitfalls
 - `docs/lessons-learned.md` — accumulating insights
-- Agent config files — merge protocol for `AGENTS.md` / `CLAUDE.md` / `CODEX.md`
+- Agent config files — merge protocol for `AGENTS.md` / `CLAUDE.md`
 
 ---
 
@@ -64,7 +64,7 @@ At least 3–5 entries covering major settled decisions: why this stack, why thi
 
 ## Agent config files — merge protocol
 
-If any of `AGENTS.md`, `CLAUDE.md`, `CODEX.md` had project-specific content below `<!-- canon:end -->` (noted in Phase 0):
+If any of `AGENTS.md`, `CLAUDE.md` had project-specific content below `<!-- canon:end -->` (noted in Phase 0):
 
 1. For each custom section, classify it:
    - **Redundant with canon** → drop it (canon handles this structurally)

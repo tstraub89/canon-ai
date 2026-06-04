@@ -37,8 +37,9 @@ export type PhaseEntry = {
     /**
      * Counts orchestrator-side pre-flight rejections (handoff validation
      * failures that reject without invoking the reviewer) in the current
-     * loop. Reset to 0 when a real reviewer round returns approved /
-     * approved_with_nits. Watched alongside `iterations_current_loop` by the
+     * loop. Reset to 0 when any real review verdict ends the pre-flight streak
+     * (approved, approved_with_nits, changes_requested, or needs_re_review).
+     * Watched alongside `iterations_current_loop` by the
      * review-loop auto-block — persistent pre-flight failures must trip the
      * cap so the pipeline can't bounce implement→pre-flight→implement
      * forever. Separate from `iterations_current_loop` because pre-flight

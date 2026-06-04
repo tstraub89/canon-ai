@@ -24,7 +24,7 @@ export const PIPELINE_MANAGED_DOCS = [
 export const PIPELINE_SHARED_DOCS = [...PIPELINE_TELEMETRY_FILES, ...PIPELINE_MANAGED_DOCS] as const;
 
 export const TASK_ARTIFACT_FILES = new Set([
-    'spec.md', 'spec-review.md', 'plan.md', 'handoff.md', 'review.md', 'done.md', 'notes.md',
+    'spec.md', 'spec-review.md', 'plan.md', 'handoff.md', 'review.md', 'done.md', 'pr-body.md', 'notes.md',
 ]);
 
 export function worktreePath(taskId: string): string {

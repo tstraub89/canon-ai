@@ -145,6 +145,19 @@ function makeTask(overrides: Partial<TaskContext> = {}): TaskContext {
     };
 }
 
+function makeReroutedTask(taskId = TASK_ID, rerouteCount = 1, title = 'Prompt fidelity fixture'): TaskContext {
+    const status = makeStatus({ id: taskId, title });
+    status.phases.spec_review = phase('codex', { status: 'done', verdict: 'approved' });
+    status.phases.implement = phase('codex', { rerouted: true, reroute_count: rerouteCount });
+    return makeTask({
+        taskId,
+        title,
+        specReviewVerdict: 'approved',
+        rerouteCount,
+        status,
+    });
+}
+
 function makeState(task: TaskContext): PipelineState {
     return {
         tasks: [task],
@@ -218,6 +231,27 @@ void test('promptSpecReview', () => {
     recordOrAssert('promptSpecReview', actual);
 });
 
+void test('promptSpecReview_reroute_round1', () => {
+    const actual = normalize(promptSpecReview(makeState(makeReroutedTask(TASK_ID, 1))));
+    recordOrAssert('promptSpecReview_reroute_round1', actual);
+});
+
+void test('promptSpecReview_reroute_round2', () => {
+    const actual = normalize(promptSpecReview(makeState(makeReroutedTask(TASK_ID, 2))));
+    recordOrAssert('promptSpecReview_reroute_round2', actual);
+});
+
+void test('promptSpecReview_reroute_bundle', () => {
+    const taskA = makeReroutedTask(TASK_ID, 1);
+    const taskBId = 'test-pf-002';
+    const taskB = makeReroutedTask(taskBId, 2, 'Bundle peer');
+    const taskBDir = path.join(tmpRoot, taskBId);
+    fs.mkdirSync(taskBDir, { recursive: true });
+    fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskB.status, null, 2));
+    const actual = normalize(promptSpecReview({ tasks: [taskA, taskB], tier: 'full', isBundle: true }));
+    recordOrAssert('promptSpecReview_reroute_bundle', actual);
+});
+
 void test('promptSpecReview injects the full-send rigor block when status.full_send is true', () => {
     const fullSendState = makeState(makeTask({ status: makeStatus({ full_send: true }) }));
     const actual = normalize(promptSpecReview(fullSendState));
@@ -228,6 +262,52 @@ void test('promptSpecReview injects the full-send rigor block when status.full_s
 void test('promptPlan', () => {
     const actual = normalize(promptPlan(planState));
     recordOrAssert('promptPlan', actual);
+});
+
+void test('promptPlan_reroute_round1', () => {
+    const actual = normalize(promptPlan(makeState(makeReroutedTask(TASK_ID, 1))));
+    recordOrAssert('promptPlan_reroute_round1', actual);
+});
+
+void test('promptPlan_reroute_bundle', () => {
+    const taskA = makeReroutedTask(TASK_ID, 1);
+    const taskBId = 'test-pf-003';
+    const taskB = makeReroutedTask(taskBId, 2, 'Bundle plan peer');
+    const taskBDir = path.join(tmpRoot, taskBId);
+    fs.mkdirSync(taskBDir, { recursive: true });
+    fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskB.status, null, 2));
+    const actual = normalize(promptPlan({ tasks: [taskA, taskB], tier: 'full', isBundle: true }));
+    recordOrAssert('promptPlan_reroute_bundle', actual);
+});
+
+void test('promptSpecReview and promptPlan dispatch reroute variants only when implement.rerouted is true', () => {
+    const normalSpecReview = normalize(promptSpecReview(baseState));
+    const rerouteSpecReview = normalize(promptSpecReview(makeState(makeReroutedTask(TASK_ID, 1))));
+    assert.doesNotMatch(normalSpecReview, /reroute amendment review/);
+    assert.match(rerouteSpecReview, /reroute amendment review/);
+
+    const normalPlan = normalize(promptPlan(planState));
+    const reroutePlan = normalize(promptPlan(makeState(makeReroutedTask(TASK_ID, 1))));
+    assert.doesNotMatch(normalPlan, /Reroute Plan/);
+    assert.match(reroutePlan, /Reroute Plan/);
+});
+
+void test('promptSpecReview and promptPlan reroute bundle lines preserve per-task rounds', () => {
+    const taskA = makeReroutedTask(TASK_ID, 1);
+    const taskBId = 'test-pf-004';
+    const taskB = makeReroutedTask(taskBId, 2, 'Bundle mixed round peer');
+    const taskBDir = path.join(tmpRoot, taskBId);
+    fs.mkdirSync(taskBDir, { recursive: true });
+    fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskB.status, null, 2));
+    const state: PipelineState = { tasks: [taskA, taskB], tier: 'full', isBundle: true };
+
+    const specReviewOutput = normalize(promptSpecReview(state));
+    assert.match(specReviewOutput, /test-pf-001.*reroute round 1.*`## Amendment`/);
+    assert.match(specReviewOutput, /test-pf-004.*reroute round 2.*`## Amendment Round 2`/);
+
+    const planOutput = normalize(promptPlan(state));
+    assert.match(planOutput, /test-pf-001.*reroute round 1.*`## Reroute Plan`/);
+    assert.match(planOutput, /test-pf-004.*reroute round 2.*`## Reroute Plan Round 2`/);
 });
 
 void test('promptImplement_fresh', () => {
@@ -252,6 +332,44 @@ void test('promptImplement renders affected files when provided', () => {
 void test('promptImplementRevisions', () => {
     const actual = normalize(promptImplementRevisions(iterState, [], 'main'));
     recordOrAssert('promptImplementRevisions', actual);
+});
+
+void test('promptImplementRevisions selects review-findings branch when preflight counter is 0 and iterations >= 1', () => {
+    const reviewFindingsTask = makeTask({
+        iterations: 1,
+        iterations_current_loop: 1,
+        iterations_total: 1,
+        status: makeStatus({
+            phases: {
+                ...makeStatus().phases,
+                code_review: phase('claude', { preflight_rejections_current_loop: 0 }),
+            },
+        }),
+    });
+
+    const output = normalize(promptImplementRevisions(makeState(reviewFindingsTask), [], 'main'));
+
+    assert.match(output, /addressing code review round \d+/);
+    assert.doesNotMatch(output, /addressing pre-flight handoff rejection/);
+});
+
+void test('promptImplementRevisions selects pre-flight branch when preflight counter is >= 1', () => {
+    const preflightTask = makeTask({
+        iterations: 0,
+        iterations_current_loop: 0,
+        iterations_total: 0,
+        status: makeStatus({
+            phases: {
+                ...makeStatus().phases,
+                code_review: phase('claude', { preflight_rejections_current_loop: 1 }),
+            },
+        }),
+    });
+
+    const output = normalize(promptImplementRevisions(makeState(preflightTask), [], 'main'));
+
+    assert.match(output, /addressing pre-flight handoff rejection/);
+    assert.doesNotMatch(output, /addressing code review round/);
 });
 
 void test('promptImplementReroute', () => {
@@ -361,4 +479,9 @@ void test('promptCodeReview forces Round-1 when review.md lacks a Stage 1 headin
 void test('promptQa', () => {
     const actual = normalize(promptQa(baseState));
     recordOrAssert('promptQa', actual);
+});
+
+void test('promptQa_withTemplate', () => {
+    const actual = normalize(promptQa(baseState, '## Summary\n- Fill this section.\n'));
+    recordOrAssert('promptQa_withTemplate', actual);
 });

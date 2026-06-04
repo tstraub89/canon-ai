@@ -88,8 +88,8 @@ Multiple IDs = bundle mode (see below).
 | `--expect <phase>` | — | Assert the current phase matches before running — fails fast on phase mismatch. Combine with `--step` for safety. |
 | `--interactive` | `-I` | Open interactive agent sessions instead of non-interactive. |
 | `--push` | — | Push the task branch to remote at `human_review`. |
-| `--pr` | — | Push + create a draft PR at `human_review`. |
-| `--reroute` | — | Reset a task from `human_review` back to `implement` (post-review fix path). |
+| `--pr` | — | Push + create a draft PR at `human_review`; prefers QA-drafted `tasks/<id>/pr-body.md` for single-task PRs, with a soft fallback. |
+| `--reroute` | — | Reset a task from `human_review` back into the post-review fix path. Full-tier tasks re-enter at `spec_review`; fast-tier tasks re-enter at `implement`. |
 | `--ship` | — | Squash-merge any open PR for the task branch (via `gh pr merge --squash --delete-branch`), pull the base, tear down the worktree, archive `tasks/<id>/` to `_archive/`, and clean up local branches. If the PR was already merged externally, picks up at the cleanup step. |
 | `--allow-divergent-base` | — | At `--push`, `--pr`, and `--ship`, bypass only the commit-divergence block when local `<base>` has commits not yet on `origin/<base>`. It does not bypass the file-allow-list base-drift gate; use `--force` for that. |
 | `--dry-run` | — | Print the planned phases, agents, model, and effort without spawning an LLM. |
@@ -115,7 +115,6 @@ canon task <subcommand> [args]
 | `accept` | `<id...> <phase> [--force]` | Operator escape hatch for the case where work has been manually committed outside the pipeline and `canon run` keeps re-running auto-commit against the already-landed commit. Marks the phase done AND sets `phases.<phase>.operator_accepted: true` so the post-phase dispatch (auto-commit for implement) is skipped on subsequent runs. Today only `implement` is supported. Accepts multiple task IDs for bundle mode — the handoff coverage check unions every task's handoff against one `baseRef..HEAD` diff, so siblings don't cross-reject. All tasks must share `base_branch` and working tree. Guards: prior phases complete, clean source tree, reachable `base_branch`, non-empty `baseRef..HEAD`, no malformed handoff Changes rows, and handoff coverage matches the diff. `--force` bypasses the accept-time guards, but downstream code_review preflight may still reject malformed or mismatched handoffs. |
 | `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`. |
 | `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
-| `release-init` | `<version>` | Initialize a `release/v<MAJ.MIN>` branch off main with the version bumped and an empty CHANGELOG block. |
 
 ### Common patterns
 
@@ -137,8 +136,7 @@ canon task phase feat-search plan done
 # After a squash-merge PR lands
 canon task post-merge-sync
 
-# Initialize a release branch
-canon task release-init 1.6.0
+# Initialize a release branch per your project's release setup
 ```
 
 ## Pipeline Tiers
@@ -246,7 +244,7 @@ your CLI exposes rather than changing the orchestrator contract.
 
 ## Worktree Isolation
 
-Set `"worktree": true` in `status.json` to run Codex's implement, code_review, and qa phases in a git worktree sibling directory rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree.
+Set `"worktree": true` in `status.json` to run implement, code_review, qa, and reroute-time spec_review/plan phases in a git worktree sibling directory rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree.
 
 **Layout**: `../dev-worktrees/<task-id>/` (sibling of the repo root, not a subdirectory).
 
@@ -281,9 +279,11 @@ Every task carries a provenance snapshot in `status.json.canon`. `canon task new
 
 At `human_review` with `--push` or `--pr`, the orchestrator auto-commits a scoped allow-list before pushing:
 
-- **`tasks/<id>/`** — task artifacts (spec, plan, handoff, review, done, notes).
+- **`tasks/<id>/`** — task artifacts (spec, plan, handoff, review, done, pr-body, notes).
 - **`PIPELINE_TELEMETRY_FILES`** (`docs/lessons-learned.md`, `docs/task-quality-log.md`, `docs/pipeline-invocations.md`) — always auto-committed.
 - **`PIPELINE_MANAGED_DOCS`** (`docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/pipeline-orchestrator.md`, `docs/product-context.md`) — auto-committed when the task's `spec.md` `### Affected Files` table lists the doc. **QA-done widening**: once a task's `qa.status === 'done'`, the allow-list expands to the full `PIPELINE_MANAGED_DOCS` set regardless of Affected Files. QA's Docs Freshness step (`AGENTS.md` §Docs Freshness) corrects stale references in protected docs the spec author couldn't have predicted (codebase-map drift, patterns/pitfalls contradicted by the task's behavior change); widening at QA-done avoids forcing a manual spec backfill before `--pr`. QA does **not** promote lessons-learned entries into these docs — promotion is a human-only sweep; QA only appends to `docs/lessons-learned.md` and corrects stale references in the protected set. Tasks that edit a managed doc *before* QA must still list it in Affected Files.
+
+The `--pr` body resolution order is `CANON_PR_BODY` → populated `tasks/<id>/pr-body.md` (single task only) → repo PR template file → `--fill`. Bundles log that per-task QA bodies are not combined and fall back to the template/`--fill` path in this version.
 
 If a dirty file falls outside this union, the pipeline dies with an actionable message describing the allow-list, suggesting either adding the file to `spec.md '### Affected Files'` (for managed docs) or reverting with `git checkout HEAD -- <path>` (for source/test files that should have been committed in the implement phase).
 
@@ -295,7 +295,7 @@ Before that dirty-tree auto-commit path runs, the orchestrator also runs remote-
 
 For renames, both the old path and the new path must appear in the spec's `### Affected Files` table. The two-dot diff uses rename detection and surfaces both sides; listing only one side leaves the other as drift. `--force` bypasses detected drift with a loud warning after the operator has verified it, but `--force` does not bypass diff-computation failure. `--force` and `--allow-divergent-base` are independent bypasses for distinct gates; pass both only when both the file-allow-list drift and the commit-divergence are intentional.
 
-Changelog and version bump remain a manual human + Claude step.
+For projects that version their releases, changelog and version bump remain a manual human + Claude step; projects that don't version skip it.
 
 ## Phase Routing + Auto-Block
 
@@ -378,15 +378,41 @@ The Stage 1 AC table is redone on round 2+. Earlier AC tables were snapshots of 
 
 ## Human Reroute
 
-If the human rejects at `human_review`, use `--reroute` to atomically reset `implement`, `code_review`, and `qa` back to pending and resume the pipeline. Reroute sets `phases.implement.rerouted = true` so the next `implement` phase sends Codex an **amended-spec** prompt (read `spec.md` for new Amendment sections, compare against `handoff.md`, update the delta).
+If the human rejects at `human_review`, use `--reroute` to resume the pipeline against amended requirements. Reroute sets `phases.implement.rerouted = true` so later reroute prompts read `spec.md` for new Amendment sections, compare against prior artifacts, and update only the delta.
 
 Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the active task directory** as an Amendment section. If a worktree exists for the task, edit the worktree copy; edit REPO_ROOT only before the task has a worktree. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract.
+
+Full-tier reroute (any M/L/XL task or any `delicate` task) re-enters at the same review altitude as the original spec: `human_review` → `spec_review` → `plan` → `implement`. Codex reviews the amendment in the context of the previously approved ACs and prior `spec-review.md`, without auditing `handoff.md`, `review.md`, or `done.md`. If the amendment is approved, the pipeline flows through to `plan` without re-arming the human spec gate; Claude appends a reroute plan section (`## Reroute Plan` or `## Reroute Plan Round N`) to `plan.md`; Codex then implements from the amendment plus that reroute plan.
+
+If Codex returns `changes_requested` on a full-tier reroute amendment, the pipeline blocks to the human instead of routing to pipeline-Claude spec revision. The block names the rejected task's `spec.md` and `spec-review.md`; revise the amendment in `spec.md`, then re-run the normal command:
+
+```bash
+canon run <id>
+```
+
+Do **not** re-run with `--reroute` after this block. `--reroute` starts a new reroute round and increments `reroute_count`; an amendment rejection is still the same round.
+
+Fast-tier reroute is unchanged mechanically: S, non-delicate tasks re-enter directly at `implement`. Operators may optionally append a conversational `## Reroute Plan` section to `plan.md` before rerouting; implement-reroute reads it when present and falls back to the base plan when absent.
+
+Stepped runs must expect the tier-specific re-entry phase:
+
+```bash
+# Full tier
+canon run <id> --reroute
+canon run <id> --step --expect spec_review
+
+# Fast tier
+canon run <id> --reroute
+canon run <id> --step --expect implement
+```
 
 The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation.
 
 ## Shipping & Post-Merge Reconciliation
 
 **Normal sequence**: `--pr` (push + draft PR) → mark PR ready, get it approved → `--ship` (merge + archive + cleanup, all in one). `--ship` calls `gh pr merge --squash --delete-branch` itself before tearing down the worktree and archiving, so don't merge the PR manually — canon's `--ship` controls the teardown ordering that prevents the "local branch held by worktree → gh fails to delete → remote branch stays around" partial-cleanup state. If you've already merged the PR externally, `--ship` detects the merge and picks up at cleanup. Running `--ship` with no PR open at all archives the task without the implementation landing — don't do that.
+
+**Note on merge strategy**: `--ship` uses `gh pr merge --squash` as canon's default merge strategy. Projects that use rebase-merge or merge-commit should handle the merge outside canon, then run `--ship` afterward so it can detect the merged PR and proceed with cleanup.
 
 `--ship` runs in this order: (1) verify local `<base>` has no commits ahead of `origin/<base>` unless `--allow-divergent-base` is passed, (2) merge any open PR for the task branch via `gh pr merge --squash --delete-branch`, (3) pull the base branch (now has the squashed commit), (4) run any project-specific post-merge hook under `.canon/hooks/`, (5) archive `tasks/<id>/` to `tasks/_archive/<id>/`, (6) `git worktree remove --force` if a worktree was active, (7) clean up local branches. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
 
@@ -396,7 +422,7 @@ The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amend
 
 ## Customizing Canon for Your Project
 
-Project-level customization happens at the files canon scaffolded into your repo: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads them on every session start.
+Project-level customization happens at the files canon scaffolded into your repo: `AGENTS.md`, `CLAUDE.md`, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads them on every session start.
 
 Task templates are managed by canon — `canon upgrade` overwrites `.canon/templates/*`. To customize a template for your project without losing your changes on upgrade, copy it to `tasks/_templates/<file>` — `canon task new` checks there first and falls back to `.canon/templates/`.
 
@@ -404,7 +430,6 @@ Task templates are managed by canon — `canon upgrade` overwrites `.canon/templ
 
 - `AGENTS.md` — workflow rules, roles, escalation, validation, git/release.
 - `CLAUDE.md` — Claude phase-specific guidance (spec authorship, code review, QA).
-- `CODEX.md` — Codex phase-specific guidance (implementation, handoff, spec review).
 - `docs/patterns.md` — implementation patterns and Known Pitfalls.
 - `docs/decisions.md` — settled architectural decisions.
 - `/canon-pipeline` — command patterns and snag-recovery flows for operating the pipeline.

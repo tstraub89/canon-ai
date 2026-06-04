@@ -742,6 +742,26 @@ export function resolveCanonPrBody(
     return template.replaceAll('$LABEL', label).replaceAll('$TITLE', title);
 }
 
+type QaPrBodyResolution =
+    | { kind: 'body-file'; path: string }
+    | { kind: 'fallback'; reason: string };
+
+export function resolveQaPrBody(taskIds: readonly string[], activeCwd: string): QaPrBodyResolution {
+    if (taskIds.length !== 1) {
+        return { kind: 'fallback', reason: 'bundle: per-task pr-body.md files are not combined in this version' };
+    }
+
+    const prBodyPath = path.join(activeCwd, 'tasks', taskIds[0], 'pr-body.md');
+    if (!splitValidation.isPrBodyTemplate(prBodyPath)) {
+        return { kind: 'body-file', path: prBodyPath };
+    }
+
+    return {
+        kind: 'fallback',
+        reason: fs.existsSync(prBodyPath) ? 'pr-body.md is still the stub template' : 'pr-body.md not found',
+    };
+}
+
 function createDraftPRForTask(taskIds: string[], branchName: string): void {
     if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
     const baseBranch = getBaseBranch(taskIds);
@@ -760,6 +780,18 @@ function createDraftPRForTask(taskIds: string[], branchName: string): void {
     if (body !== null) {
         args.push('--body', body);
     } else {
+        const activeCwd = splitWorktree.getActiveCwd(taskIds);
+        const qaPrBody = resolveQaPrBody(taskIds, activeCwd);
+        if (qaPrBody.kind === 'body-file') {
+            args.push('--body-file', qaPrBody.path);
+            const prResult = splitGit.runCommand('gh', args);
+            if (!prResult.ok) {
+                die(`Failed to create draft PR: ${prResult.stderr || 'unknown error'}`);
+            }
+            info(`Draft PR created: ${prResult.stdout || branchName}`);
+            return;
+        }
+        warn(`PR body fallback (${qaPrBody.reason}) — falling back to repo PR template or --fill`);
         // `gh pr create` only consults `.github/pull_request_template.md`
         // in interactive mode; in non-tty contexts (CI, background pipeline
         // runs) it errors without a `--body` / `--body-file` / `--fill`.
@@ -772,7 +804,6 @@ function createDraftPRForTask(taskIds: string[], branchName: string): void {
         // adopters expect the BRANCH-HEAD version to be used for the PR they
         // are about to open (codex P2, round 11 of PR #86). Fall back to
         // REPO_ROOT if no worktree is active.
-        const activeCwd = splitWorktree.getActiveCwd(taskIds);
         const templatePath =
             findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT);
         if (templatePath) {
@@ -1865,18 +1896,30 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             );
         }
     }
-    splitCli.info(`Rerouting: human_review → implement (resetting implement, code_review, qa)`);
+    const rerouteStatuses = taskIds.map(splitState.readStatus);
+    const reroutableTier = splitPolicy.detectTier(rerouteStatuses);
+    const isFullTierReroute = reroutableTier === 'full';
+    splitCli.info(isFullTierReroute
+        ? 'Rerouting: human_review → spec_review (resetting spec_review, plan, implement, code_review, qa)'
+        : 'Rerouting: human_review → implement (resetting implement, code_review, qa)');
     let clearedFullSend = false;
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
         status.updated = new Date().toISOString().slice(0, 10);
-        // writeStatus() derives top-level .status from phases — resetting
-        // implement→pending will flip top-level back to 'implement' automatically.
+        // writeStatus() derives top-level .status from phases — the earliest
+        // reset phase becomes the next pipeline phase (spec_review for full-tier
+        // reroutes, implement for fast-tier reroutes).
         const implement = status.phases.implement;
         if (implement) {
             implement.status = 'pending';
-            // Flag that Codex must treat this as an amended-spec revision, not a resume.
-            // Consumed and cleared in runPhase case 'implement' after the reroute pass runs.
+            // implement.rerouted is set on reroute entry and intentionally not
+            // cleared. Dispatch correctness relies on the invariant that, at
+            // spec_review / plan / implement dispatch time, rerouted === true
+            // iff a human reroute is in progress: task creation starts falsy;
+            // the original spec_review loop routes to spec only before reroute
+            // because reroute+changes_requested is intercepted first; code_review
+            // loops prefer the revision prompt before the reroute prompt; and
+            // this path sets the flag when a human reroute starts.
             implement.rerouted = true;
             // Accumulate (never reset). The reroute prompt reads this to inject a round
             // marker so session-resumed Codex can't confuse a new reroute with a duplicate
@@ -1908,14 +1951,35 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
         if (qa) qa.status = 'pending';
         const humanReview = status.phases.human_review;
         if (humanReview) humanReview.status = 'pending';
+        if (isFullTierReroute) {
+            const specReview = status.phases.spec_review;
+            if (specReview) {
+                specReview.status = 'pending';
+                specReview.verdict = '';
+                // Reset the current-loop counter for the new amendment-review
+                // loop. Preserve monotonic history fields.
+                specReview.iterations_current_loop = 0;
+                specReview.iterations = 0;
+            }
+            const plan = status.phases.plan;
+            if (plan) plan.status = 'pending';
+            if (status.sessions) {
+                delete status.sessions.codex_spec_review;
+            }
+        }
         if (status.full_send === true) {
             status.full_send = false;
             clearedFullSend = true;
         }
         splitState.writeStatus(taskId, status);
     }
-    splitCli.info('Status reset. Pipeline will resume from implement phase with amended-spec context.');
-    splitCli.info('Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.');
+    if (isFullTierReroute) {
+        splitCli.info('Status reset. Pipeline will resume from spec_review, then plan, then implement.');
+        splitCli.info('Stepped reroute now expects spec_review: use --step --expect spec_review.');
+    } else {
+        splitCli.info('Status reset. Pipeline will resume from implement phase with amended-spec context.');
+        splitCli.info('Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.');
+    }
     splitCli.info('');
     if (clearedFullSend) {
         splitCli.info('⚠ full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with \'canon run --full-send <id>\' if you\'re confident.');
@@ -1975,8 +2039,9 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     const specClaudeSession = splitState.getStoredSessionId(taskIds, 'claude_spec');
     // code_review cluster: round 1 is always fresh; round 2+ resumes (same worktree cwd)
     const reviewClaudeSession = splitState.getStoredSessionId(taskIds, 'claude_review');
-    // spec_review and implement use separate codex slots — they run in different cwds
-    // (REPO_ROOT vs worktree) and must not share session context.
+    // spec_review and implement use separate Codex slots. First-pass spec_review
+    // is REPO_ROOT-bound; reroute spec_review clears this slot and starts fresh
+    // in the active worktree, so it must still never share implement context.
     const codexSpecReviewSession = splitState.getStoredSessionId(taskIds, 'codex_spec_review');
     const codexSession = splitState.getStoredSessionId(taskIds, 'codex');
 
@@ -1996,7 +2061,11 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
         return runCodeReviewPhase(state, cliArgs.interactive, reviewClaudeSession);
     }
     if ((phase as Phase) === 'qa') {
-        return runQaPhase(state, cliArgs.interactive);
+        const activeCwd = splitWorktree.getActiveCwd(taskIds);
+        const qaTemplatePath =
+            findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT);
+        const resolvedPrTemplate = qaTemplatePath ? fs.readFileSync(qaTemplatePath, 'utf8') : null;
+        return runQaPhase(state, cliArgs.interactive, resolvedPrTemplate);
     }
     if (phase === 'human_review') {
         const taskIds = tasks.map(t => t.taskId);
@@ -2123,7 +2192,7 @@ function readArtifact(taskId: string, name: string): string | null {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
 }
 
-function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
+export function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
     switch (phase) {
         case 'implement': {
             // Four gates before auto-advancing (each rules out a different false-positive):
@@ -2197,6 +2266,21 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
         case 'spec_review': {
             const content = readArtifact(taskId, 'spec-review.md');
             if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'spec-review.md is missing or still the template' };
+            // Guard the status read: recoverPhaseForTask does not catch throws, so a
+            // missing/partial status.json must fail closed (advanced:false → retry),
+            // not abort the recovery flow.
+            let sSR: ReturnType<typeof splitState.readStatus>;
+            try { sSR = splitState.readStatus(taskId); }
+            catch { return { advanced: false, note: 'spec_review: status.json unreadable — cannot evaluate reroute evidence' }; }
+            // On a reroute the verdict must come from the current round's `## Amendment
+            // Review` section, not the stale whole-file approval (checkRerouteEvidence
+            // is the shared invariant, also enforced in checkPhaseGate).
+            const ev = splitValidation.checkRerouteEvidence('spec_review', content!, sSR);
+            if (ev.reroute) {
+                if (!ev.ok) return { advanced: false, note: `reroute spec_review: ${ev.reason}` };
+                taskPhase(taskId, 'spec_review', 'done', ev.verdict);
+                return { advanced: true, verdict: ev.verdict, note: `verdict=${ev.verdict} (reroute amendment review)` };
+            }
             const verdict = extractCheckedVerdict(content!);
             if (!verdict) return { advanced: false, note: 'no verdict box checked in spec-review.md' };
             taskPhase(taskId, 'spec_review', 'done', verdict);
@@ -2205,6 +2289,15 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
         case 'plan': {
             const content = readArtifact(taskId, 'plan.md');
             if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'plan.md is missing or still the template' };
+            // Guard the status read (recoverPhaseForTask does not catch throws).
+            let sPlan: ReturnType<typeof splitState.readStatus>;
+            try { sPlan = splitState.readStatus(taskId); }
+            catch { return { advanced: false, note: 'plan: status.json unreadable — cannot evaluate reroute evidence' }; }
+            // On a reroute, require the current round's `## Reroute Plan` delta so
+            // implement-reroute doesn't fall back to the stale plan as if fast-tier
+            // (checkRerouteEvidence is the shared invariant, also in checkPhaseGate).
+            const ev = splitValidation.checkRerouteEvidence('plan', content!, sPlan);
+            if (ev.reroute && !ev.ok) return { advanced: false, note: `reroute plan: ${ev.reason}` };
             taskPhase(taskId, 'plan', 'done');
             return { advanced: true, note: 'plan.md is populated' };
         }
@@ -2230,7 +2323,7 @@ function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
 
 // Resume the last agent session for this phase and prompt them to complete.
 // Single turn, terse — the agent has full conversational context already.
-async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: string): Promise<'done' | 'drift' | 'no_session'> {
+export async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: string): Promise<'done' | 'drift' | 'no_session'> {
     const status = splitState.readStatus(taskId);
     const agent = status.phases[phase]?.agent;
     if (!agent || (agent !== 'codex' && agent !== 'claude')) return 'no_session';
@@ -2261,12 +2354,14 @@ async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: st
     ].join('\n');
 
     warn(`Retrying ${agent} session ${sessionId.slice(0, 8)}... for ${taskId} ${phase}.`);
-    // Retries must use the same cwd as the original phase. Worktree-using
-    // phases (implement, code_review) run in the active worktree when worktree
-    // mode is enabled; spec/spec_review/plan/qa always run in REPO_ROOT.
-    // getActiveCwd falls back to REPO_ROOT when worktree mode is off, so this
-    // is also correct for non-worktree tasks.
-    const isWorktreePhase = phase === 'implement' || phase === 'code_review';
+    // Retries must use the same cwd as the original phase. implement and
+    // code_review always use the active worktree when worktree mode is enabled.
+    // spec_review also uses the worktree during human reroutes, because the
+    // amended spec lives there and the reroute clears the old REPO_ROOT-bound
+    // Codex spec_review session before creating a fresh one. spec, plan, and qa
+    // keep REPO_ROOT retry semantics.
+    const isWorktreePhase = phase === 'implement' || phase === 'code_review' ||
+        (phase === 'spec_review' && status.phases.implement?.rerouted === true);
     const retryCwd = isWorktreePhase ? splitWorktree.getActiveCwd([taskId]) : REPO_ROOT;
     if (agent === 'codex') {
         // Retry phase must be a Codex-run phase. spec_review and implement are
@@ -2335,7 +2430,7 @@ async function recoverPhaseForTask(taskId: string, phase: Phase, initialStatus: 
 
 // ── checkAndRoute ──────────────────────────────────────────────────────────
 
-async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
+export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
     let statuses = taskIds.map(splitState.readStatus);
 
     // Verify all tasks completed this phase. If any didn't, attempt
@@ -2366,6 +2461,40 @@ async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
     switch (phase) {
         case 'spec_review': {
             const anyChangesRequested = statuses.some(s => getVerdict(s, 'spec_review') === 'changes_requested');
+            const isRerouteInProgress = statuses.some(s => s.phases.implement?.rerouted === true);
+            // Reroute amendment rejection is human-owned. This must run before
+            // routeBackTo('spec'); otherwise a stale rerouted=true flag could
+            // send the pipeline through the normal spec loop with reroute prompt
+            // variants selected later.
+            if (isRerouteInProgress && anyChangesRequested) {
+                for (const taskId of taskIds) {
+                    const s = splitState.readStatus(taskId);
+                    const specReview = s.phases.spec_review;
+                    if (specReview) {
+                        specReview.status = 'pending';
+                        specReview.verdict = '';
+                    }
+                    splitState.writeStatus(taskId, s);
+                }
+                const rejectedIds = taskIds.filter((_, index) =>
+                    getVerdict(statuses[index], 'spec_review') === 'changes_requested'
+                );
+                console.log('');
+                console.log('════════════════════════════════════════════════════════');
+                console.log('  ✋  AMENDMENT REVIEW — Changes requested.');
+                console.log('');
+                console.log('  Revise the amendment in these files:');
+                for (const taskId of rejectedIds) {
+                    console.log(`    tasks/${taskId}/spec.md`);
+                    console.log(`    tasks/${taskId}/spec-review.md  ← review findings`);
+                }
+                console.log('');
+                console.log('  After revising, re-run the normal pipeline command (NOT --reroute):');
+                console.log(`  canon run ${taskIds.join(' ')}`);
+                console.log('════════════════════════════════════════════════════════');
+                console.log('');
+                process.exit(0);
+            }
             if (anyChangesRequested) {
                 info('Spec review requested changes — routing back to spec.');
                 routeBackTo(taskIds, 'spec');

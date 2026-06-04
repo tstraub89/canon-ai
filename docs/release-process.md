@@ -8,13 +8,13 @@ canon-ai uses **release-branch-per-version**:
 
 - **Task branches** → PR to the active `release/v<version>` branch.
 - **`release/v<version>`** is temporary. One per release (`release/v1.4`, `release/v1.5`, `release/v1.5.1`, `release/v1.5.2`, `release/v2.0`). The branch is named for the specific version it ships — minor releases drop the patch suffix (`release/v1.5` ships 1.5.0), patch releases use the full version (`release/v1.5.2` ships 1.5.2). Major bumps follow the minor naming (`release/v2.0` ships 2.0.0).
-- **`release/v<version>` → `main` PR** is the release boundary. The version bump and CHANGELOG date land in this PR. The squash-merge to `main` triggers auto-release.
+- **`release/v<version>` → `main` PR** is the release boundary. The version was already bumped when the branch was created (see "Creating a new release branch" below) — this PR only flips the active CHANGELOG block's `unreleased` → the release date. The squash-merge to `main` triggers auto-release.
 - **`main`** is the published state. Tags and GitHub releases live on `main`.
 - **Release branches are deleted on merge** (the repo's PR settings + canon's `--ship` flow handle this automatically). No persistent integration branch to keep in sync.
 
 There is no direct-to-`main` path. Hotfixes follow the same flow — branch off `main`, accumulate the patch, PR back.
 
-> **History**: Through 1.3.x, canon-ai used a persistent `dev` integration branch. That model required an extra "reset `dev` to `origin/main` after each squash-merge" operator step (the squash collapsed `dev`'s history into one new commit on `main`, leaving `dev`'s old history redundant and producing `CONFLICTING` next PRs). 1.4.0 switched to release-branch-per-version — the same flow `canon task release-init` was already built for and the flow canon-ai recommends to adopters.
+> **History**: Through 1.3.x, canon-ai used a persistent `dev` integration branch. That model required an extra "reset `dev` to `origin/main` after each squash-merge" operator step (the squash collapsed `dev`'s history into one new commit on `main`, leaving `dev`'s old history redundant and producing `CONFLICTING` next PRs). 1.4.0 switched to release-branch-per-version — the release-branch model canon-ai uses and recommends to adopters.
 
 ## Triggering a release
 
@@ -26,6 +26,8 @@ The product owner says something like "ship v1.4.0" or "let's do a patch":
 4. **Ship** by opening `release/vMAJ.MIN` → `main` PR and squash-merging.
 
 ## Creating a new release branch
+
+The version is bumped **immediately at branch creation** (not deferred to the release PR) so `package.json` / `.canon/version` / `canon --version` always reflect the in-flight version — you can tell at a glance which release a checkout is working toward, and accumulating tasks never have to re-decide a tier the branch already pins.
 
 When starting work on a new release of any tier:
 
@@ -73,8 +75,6 @@ git add package.json package-lock.json .canon/version dist/ CHANGELOG.md
 git commit -m "chore: initialize release/v1.4 (version 1.4.0)"
 git push -u origin release/v1.4
 ```
-
-> **Note**: `canon task release-init <version>` scaffolds most of this — branches off main, bumps `package.json` + `package-lock.json`, syncs `.canon/version`, inserts the canonical `## [<version>] — unreleased` CHANGELOG block, commits, and pushes. (The older `.canon/version`-not-synced and `## v1.4 - unreleased` format bugs are fixed.) **canon-ai still initializes manually as shown above because `release-init` does not run `npm run build`** — and canon-ai commits `dist/` with the version string baked in, so the rebuild must be atomic with the version-bump commit (otherwise CI's `git diff --exit-code -- dist/` fails on the next PR onto the release branch). Adopters who don't commit a built `dist/` can run `release-init` directly. (One open nit — blockquote ordering in the inserted block — is tracked in BACKLOG and is functionally harmless.)
 
 ## Patch release on an existing minor
 
@@ -149,5 +149,4 @@ gh release create v<new-version> --target "$BUMP_SHA" \
 ## Related references
 
 - [`decisions.md`](decisions.md) §"Versioning and release policy" — what counts as patch / minor / major, who authorizes, changelog scope.
-- [`pipeline-orchestrator.md`](pipeline-orchestrator.md) §"Task management (canon task)" — `canon task release-init` helper (with known-bug notes; see BACKLOG).
 - [`../CHANGELOG.md`](../CHANGELOG.md) — historical release incidents (1.1.2 lockfile sync, 1.1.3 picocolors lockfile, 1.3.0/1.3.1 tag/notes mismatch recovery, 1.3.2 cleanup).

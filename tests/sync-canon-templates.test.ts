@@ -297,7 +297,7 @@ void test('findSyncErrors flags wholesale canon-managed source missing on both s
 void test('findSyncErrors flags delimited canon-managed source missing on both sides', () => {
     withTempDir(root => {
         // Set up every WHOLESALE_SYNC entry so only the DELIMITED loop produces
-        // errors. The AGENTS.md / CLAUDE.md / CODEX.md sources are absent on
+        // errors. The AGENTS.md / CLAUDE.md sources are absent on
         // both sides; the delimited loop must flag each.
         for (const wholesalePath of (syncCanonTemplatesRaw as unknown as { WHOLESALE_SYNC: readonly string[] }).WHOLESALE_SYNC) {
             writeFile(root, wholesalePath, 'placeholder\n');
@@ -305,7 +305,7 @@ void test('findSyncErrors flags delimited canon-managed source missing on both s
         }
         const errors = syncCanonTemplates.findSyncErrors(root);
         const delimitedErrors = errors.filter(e => e.startsWith('[delimited]'));
-        assert.ok(delimitedErrors.length > 0, 'expected delimited errors for missing AGENTS/CLAUDE/CODEX sources');
+        assert.ok(delimitedErrors.length > 0, 'expected delimited errors for missing AGENTS/CLAUDE sources');
         for (const error of delimitedErrors) {
             assert.match(error, /no source, no mirror|cannot sync/);
         }
@@ -428,8 +428,8 @@ void test('findSyncErrors flags canon-internal leak inside the canon-delimited r
 void test('findSyncErrors does NOT flag canon-internal refs in the ROOT-side outside-delimiter tail of a DELIMITED file', () => {
     withTempDir(root => {
         seedCanonFixture(root);
-        // The root-side tail (below canon:end in AGENTS.md / CLAUDE.md /
-        // CODEX.md at REPO_ROOT) is canon-ai-dev local-only — never ships.
+        // The root-side tail (below canon:end in AGENTS.md / CLAUDE.md at
+        // REPO_ROOT) is canon-ai-dev local-only — never ships.
         // Refs to canon internals there are fine.
         const withRootTailLeak = [
             '# AGENTS',

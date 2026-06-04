@@ -12,6 +12,7 @@ import {
     readHeartbeatStatus,
     startHeartbeat,
     stopAllHeartbeats,
+    tickAllHeartbeats,
     type HeartbeatRecord,
 } from '../scripts/run-task/heartbeat.js';
 
@@ -115,6 +116,66 @@ void test('stopAllHeartbeats() cleans up every active handle', () => {
         h1.stop();
         h2.stop();
         stopAllHeartbeats();
+    });
+});
+
+void test('handle.tick() writes heartbeat to the dir the resolver currently points to', () => {
+    withTempDir((root) => {
+        const dir1 = path.join(root, 'tasks', 'dir1');
+        const dir2 = path.join(root, 'tasks', 'dir2');
+        let currentDir = dir1;
+        const handle = startHeartbeat(['t1'], () => currentDir, { intervalMs: 999_999 });
+        try {
+            const file1 = path.join(dir1, '.heartbeat.json');
+            const file2 = path.join(dir2, '.heartbeat.json');
+            assert.ok(fs.existsSync(file1), 'initial heartbeat must land in the first resolver dir');
+            assert.ok(!fs.existsSync(file2));
+
+            currentDir = dir2;
+            const before = Date.now();
+            handle.tick();
+
+            assert.ok(fs.existsSync(file1), 'existing heartbeat file in the old resolver dir must remain untouched');
+            assert.ok(fs.existsSync(file2), 'tick must write heartbeat to the new resolver dir');
+            const record1 = JSON.parse(fs.readFileSync(file1, 'utf8')) as HeartbeatRecord;
+            const record = JSON.parse(fs.readFileSync(file2, 'utf8')) as HeartbeatRecord;
+            assert.equal(record1.pid, process.pid);
+            assert.equal(record.pid, process.pid);
+            assert.ok(record.last_update_ms >= record1.last_update_ms);
+            assert.ok(record.last_update_ms >= before);
+        } finally {
+            handle.stop();
+        }
+    });
+});
+
+void test('tickAllHeartbeats() writes fresh heartbeat for every active handle', () => {
+    withTempDir((root) => {
+        const dir1 = path.join(root, 'tasks', 'h1');
+        const dir2 = path.join(root, 'tasks', 'h2');
+        const h1 = startHeartbeat(['h1'], () => dir1, { intervalMs: 999_999 });
+        const h2 = startHeartbeat(['h2'], () => dir2, { intervalMs: 999_999 });
+        try {
+            const file1 = path.join(dir1, '.heartbeat.json');
+            const file2 = path.join(dir2, '.heartbeat.json');
+            fs.unlinkSync(file1);
+            fs.unlinkSync(file2);
+
+            const before = Date.now();
+            tickAllHeartbeats();
+
+            assert.ok(fs.existsSync(file1));
+            assert.ok(fs.existsSync(file2));
+            const record1 = JSON.parse(fs.readFileSync(file1, 'utf8')) as HeartbeatRecord;
+            const record2 = JSON.parse(fs.readFileSync(file2, 'utf8')) as HeartbeatRecord;
+            assert.equal(record1.pid, process.pid);
+            assert.equal(record2.pid, process.pid);
+            assert.ok(record1.last_update_ms >= before);
+            assert.ok(record2.last_update_ms >= before);
+        } finally {
+            h1.stop();
+            h2.stop();
+        }
     });
 });
 

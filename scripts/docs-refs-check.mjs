@@ -35,7 +35,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const ROOT_MARKDOWN_FILES = ['AGENTS.md', 'CLAUDE.md', 'CODEX.md', 'README.md'];
+const ROOT_MARKDOWN_FILES = ['AGENTS.md', 'CLAUDE.md', 'README.md'];
 const CANON_VALID_DIRS = new Set([
     'src',
     'scripts',

@@ -21,10 +21,6 @@ const REVIEW_PHASES = new Set<string>(['spec_review', 'code_review']);
 
 type GitResult = SpawnSyncReturns<string>;
 
-export type ReleaseInitOptions = {
-    pushFn?: (branch: string) => void;
-};
-
 function today(): string {
     return new Date().toISOString().slice(0, 10);
 }
@@ -41,7 +37,6 @@ function usage(): string {
         '  accept <TASK-ID...> <phase> [--force]',
         '  reset-spec-review <TASK-ID>',
         '  post-merge-sync [<branch>]',
-        '  release-init <version>',
     ].join('\n');
 }
 
@@ -375,6 +370,9 @@ function updateReviewCounters(entry: PhaseEntry, verdict: Verdict | undefined): 
         entry.iterations_total += 1;
         entry.changes_requested_total += 1;
         entry.iterations = entry.iterations_current_loop;
+        // A real review verdict ends the current pre-flight streak — the
+        // handoff was good enough to actually be reviewed.
+        entry.preflight_rejections_current_loop = 0;
     } else if (verdict === 'approved' || verdict === 'approved_with_nits') {
         entry.iterations_total += 1;
         entry.iterations_current_loop = 0;
@@ -1177,156 +1175,6 @@ function nudgeShippableTasks(): void {
     console.log('  Run `canon run <id> --ship` on each to archive + clean up.');
 }
 
-function updatePackageVersion(filePath: string, version: string, updateLockRoot = false): void {
-    const parsed = readJsonFile<Record<string, unknown>>(filePath);
-    parsed.version = version;
-    if (updateLockRoot) {
-        const packages = parsed.packages;
-        if (packages && typeof packages === 'object') {
-            const rootPackage = (packages as Record<string, unknown>)[''];
-            if (rootPackage && typeof rootPackage === 'object') {
-                (rootPackage as Record<string, unknown>).version = version;
-            }
-        }
-    }
-    writeJsonAtomic(filePath, parsed);
-}
-
-function insertChangelogBlock(filePath: string, version: string): void {
-    // Uses bracketed full-semver + em-dash format (`## [1.6.0] — unreleased`) to
-    // match every existing canon-ai CHANGELOG entry AND the auto-release
-    // workflow's extraction regex (^## \[<version>\] — <date>). A prior format
-    // (`## v1.6 - unreleased`) drifted from both — the workflow couldn't find
-    // the block and the entries it produced disagreed with the conventions in
-    // the file it was modifying.
-    //
-    // Insertion point: immediately before the first existing `## [X.Y.Z]`
-    // version block, not directly after the H1. A CHANGELOG with an
-    // intro blockquote ("> Format follows Keep a Changelog...") would
-    // otherwise have the blockquote pushed below the new version block —
-    // the comment is file-level meta, it belongs between the H1 and the
-    // first version entry. Anchor explicitly on the `## [` bracketed-
-    // version format (canon's canonical shape) rather than any `## `, so
-    // future non-version H2 sections in the meta region (e.g. an intro
-    // "## About this file" paragraph) stay above the new block too. If
-    // there's no prior version block (initial scaffold), the new block
-    // is appended at the end, preserving any leading material.
-    const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n');
-    let insertAt = lines.findIndex(line => /^## \[/.test(line));
-    if (insertAt === -1) insertAt = lines.length;
-    const before = lines.slice(0, insertAt);
-    const after = lines.slice(insertAt);
-    while (before.length > 0 && before[before.length - 1] === '') before.pop();
-    const block = [
-        ...before,
-        '',
-        `## [${version}] — unreleased`,
-        '',
-        `<!-- Bullets land here as tasks for ${version} ship. The single squash-merge of release/v${version.replace(/\.0$/, '')} → main carries this entry to production. -->`,
-        '',
-        ...after,
-    ];
-    fs.writeFileSync(filePath, block.join('\n'), 'utf8');
-}
-
-function defaultPush(branch: string): void {
-    const result = runGit(['push', '-u', 'origin', branch], { stdio: 'inherit' });
-    if (result.error) throw new Error(result.error.message);
-    if (result.status !== 0) throw new Error(`git push -u origin ${branch} failed`);
-}
-
-export function taskReleaseInit(version: string, options: ReleaseInitOptions = {}): void {
-    if (!version) {
-        throw new Error('Error: usage: canon task release-init <version>\n       e.g.: canon task release-init 1.6.0');
-    }
-    if (!/^\d+\.\d+\.\d+$/.test(version)) {
-        throw new Error(`Error: version must be semver (e.g. 1.6.0). Got: ${version}`);
-    }
-    ensureGitAvailable();
-
-    const short = `v${version.replace(/\.0$/, '')}`;
-    const branch = `release/${short}`;
-    const current = currentBranchOrEmpty();
-    if (current !== 'main') {
-        throw new Error(`Error: release-init expects you to start on 'main' (you are on '${current}').`);
-    }
-    if (git(['status', '--porcelain'])) {
-        throw new Error('Error: working tree is dirty. Commit or stash first.');
-    }
-
-    console.log('→ Fetching origin/main...');
-    const fetch = runGit(['fetch', 'origin', 'main']);
-    if (fetch.error || fetch.status !== 0) {
-        throw new Error('Error: git fetch failed.');
-    }
-    const behind = Number.parseInt(git(['rev-list', '--count', 'main..origin/main']) || '0', 10);
-    if (behind > 0) {
-        throw new Error(`Error: local main is ${behind} commit(s) behind origin/main. Pull first.`);
-    }
-
-    if (gitOk(['rev-parse', '--verify', branch])) {
-        throw new Error(`Error: branch '${branch}' already exists locally.`);
-    }
-    if (gitOk(['rev-parse', '--verify', `origin/${branch}`])) {
-        throw new Error(`Error: branch '${branch}' already exists on origin.`);
-    }
-
-    console.log(`→ Creating ${branch} off main...`);
-    git(['checkout', '-b', branch, 'main']);
-
-    const filesToAdd: string[] = [];
-    if (fs.existsSync('package.json')) {
-        console.log(`→ Bumping package.json version to ${version}...`);
-        updatePackageVersion('package.json', version);
-        filesToAdd.push('package.json');
-
-        if (fs.existsSync('package-lock.json')) {
-            console.log('→ Bumping package-lock.json...');
-            updatePackageVersion('package-lock.json', version, true);
-            filesToAdd.push('package-lock.json');
-        }
-    }
-
-    if (fs.existsSync('CHANGELOG.md')) {
-        console.log(`→ Inserting empty changelog block for ${version}...`);
-        insertChangelogBlock('CHANGELOG.md', version);
-        filesToAdd.push('CHANGELOG.md');
-    }
-
-    // Keep .canon/version in sync with package.json. The auto-release workflow
-    // asserts package.json.version === .canon/version and dies if they drift;
-    // requiring the operator to bump .canon/version separately on every
-    // release-init was friction with no benefit — the helper already owns the
-    // package.json bump above. Conditional on the file existing because some
-    // adopter installs may not have a .canon/ directory yet.
-    if (fs.existsSync('.canon/version')) {
-        console.log(`→ Updating .canon/version to ${version}...`);
-        fs.writeFileSync('.canon/version', `${version}\n`, 'utf8');
-        filesToAdd.push('.canon/version');
-    }
-
-    if (filesToAdd.length > 0) {
-        git(['add', ...filesToAdd]);
-        git(['commit', '-m', `chore: initialize ${branch} (version ${version})`]);
-    } else {
-        git(['commit', '--allow-empty', '-m', `chore: initialize ${branch} (version ${version}, no version files to bump)`]);
-    }
-
-    if (options.pushFn) options.pushFn(branch);
-    else defaultPush(branch);
-
-    console.log('');
-    console.log(`✓ Release branch ${branch} initialized and pushed.`);
-    console.log('');
-    console.log('Next steps:');
-    console.log('  1. Create tasks on this branch: canon task new <id> <title>');
-    console.log(`     (auto-detects base_branch=${branch} from your current checkout)`);
-    console.log(`  2. Each task PR targets ${branch} (not main).`);
-    console.log(`  3. As tasks ship, append bullets to the ${short} block in CHANGELOG.md.`);
-    console.log(`  4. When ready: open PR ${branch} → main, squash-merge for the release.`);
-}
-
 export function taskCmd(args: string[]): void {
     const [subcommand, ...rest] = args;
     try {
@@ -1360,9 +1208,6 @@ export function taskCmd(args: string[]): void {
                 break;
             case 'post-merge-sync':
                 taskPostMergeSync(rest[0]);
-                break;
-            case 'release-init':
-                taskReleaseInit(rest[0] ?? '');
                 break;
             default:
                 console.error(`Unknown subcommand: ${subcommand ?? '(none)'}\n${usage()}`);

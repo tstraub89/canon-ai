@@ -7,7 +7,7 @@
 
 Ensure all agentic contributions are correct, verifiable, and aligned with the project's architecture, conventions, validation requirements, and git hygiene.
 
-This file is the source of truth for workflow, quality, validation, and git rules. [`CLAUDE.md`](./CLAUDE.md) and [`CODEX.md`](./CODEX.md) add agent-specific context but must not override this file. If two sections overlap, the stricter rule wins.
+This file is the source of truth for workflow, quality, validation, and git rules. [`CLAUDE.md`](./CLAUDE.md) adds Claude-specific context but must not override this file. If two sections overlap, the stricter rule wins.
 
 ## Agents
 
@@ -53,7 +53,7 @@ Codex implements → Claude reviews code ↔ Codex iterates →
 Claude writes QA summary → Human tests
 ```
 - Spec and plan are written in separate Claude sessions.
-- Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe. Silence is the default — a real shape concern becomes the lead reason for `changes_requested`; no concern leaves the section empty and review proceeds.
+- Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? for a bug or flake fix, is the targeted root cause *verified* or just a plausible hypothesis — see §"Diagnose Before You Fix"? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe. Silence is the default — a real shape concern becomes the lead reason for `changes_requested`; no concern leaves the section empty and review proceeds.
 - Codex model/effort scales with effective size: M gets mini at medium effort (low-cost sanity check), L gets mini at high, XL/delicate gets the full model at high (spec review) or xhigh (implement).
 
 ### Full-send mode
@@ -85,6 +85,7 @@ tasks/
     handoff.md        # Codex writes after implementing
     review.md         # Claude writes after reviewing code
     done.md           # Claude writes for human consumption
+    pr-body.md        # Claude drafts the outward-facing PR body for --pr
     notes.md          # Any agent, any phase — raw observations and gotchas
     status.json       # Updated by whichever agent acts
 ```
@@ -100,7 +101,7 @@ Templates live in `.canon/templates/` (managed by canon — do not edit directly
 4. Codex implements, creates `tasks/TASK-ID/handoff.md`, sets `implement` → `done`
 5. Claude reads handoff + diff, creates `tasks/TASK-ID/review.md`, sets `code_review` → `done`
 6. If changes requested: Codex iterates, updates `handoff.md`, Claude re-reviews
-7. Claude creates `tasks/TASK-ID/done.md` for the human, sets `qa` → `done`
+7. Claude creates `tasks/TASK-ID/done.md` and `tasks/TASK-ID/pr-body.md` for the human, sets `qa` → `done`
 8. Human tests against `done.md` checklist, sets `human_review` → `done`
 
 **`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a failure outside the task's Affected Files, Codex may record `Fail – unrelated` instead of a bare `Fail`. The Notes column must contain a specific file reference (path, extension, or `file:line`) — vague explanations are rejected by the orchestrator. Claude assesses credibility in Stage 1 code review; an implausible explanation is a Stage 1 fail.
@@ -113,6 +114,18 @@ Templates live in `.canon/templates/` (managed by canon — do not edit directly
 The orchestrator's slim resumed-session prompts on round 2+ depend on this convention: they point the agent at the latest section as the scope of the current iteration, rather than re-injecting the full task framing. If an agent rewrites instead of appending, the cumulative record is lost and the slim-prompt mechanism degrades to a fresh full re-prompt.
 
 The artifact templates carry a comment block at the bottom showing the expected per-round shape so the convention survives even when prompts are slim.
+
+**Reverting a file during iteration.** `git restore` is blocked in the sandbox. For a byte-perfect revert to the task baseline, use `git show origin/<base-branch>:<path>` (read-only git, always allowed) and write the output to the file — this avoids residual diffs like trailing newlines.
+
+- **Perfect revert** (file no longer appears in `git diff base...HEAD`): delete it from all prior iteration Changes tables in `handoff.md` and do not add it to the current one. The pre-flight check validates the aggregate union against the final diff; a net-zero file left in any Changes table is a false `handoff→diff` error.
+- **Imperfect revert** (file still appears in the diff, e.g. a trailing newline remains): add it to the current iteration's Changes table with "Reverted to original (describe residual diff)". Leaving a changed file out of all Changes tables is a `diff→handoff` error.
+
+**Referencing deleted (or not-yet-created) files in artifacts.** `docs-refs-check` scans `handoff.md` / `review.md` / `done.md` (but not `spec.md` / `plan.md` / `notes.md`) and flags a backtick path-ref to a file that does not exist — *including one this task deleted* — so a deleted path is **never** written in backticks in these files. The non-backtick form depends on **where** it sits:
+
+- **`handoff.md` Changes-table first column** — `[path](path)` markdown-link **only**. That cell is also parsed by the diff↔handoff reconciler (`parseHandoffPathCell`), which accepts a backtick-path or a markdown-link but **not** bare prose; backticks are out (docs-refs-check), so the markdown-link is the only form that passes both.
+- **Free prose** (`review.md`, `done.md`, handoff text outside the table) — `[path](path)` or bare prose; only backticks fail.
+
+(Aside: a bare top-level filename like `` `FOO.md` `` slips past `docs-refs-check` while `` `templates/FOO.md` `` trips it — don't lean on that asymmetry.)
 
 ### Pipeline Orchestrator
 
@@ -137,9 +150,9 @@ The pipeline produces three categories of changes. Each has a clear owner:
 
 2. **Task artifacts** (`tasks/TASK-ID/`): The orchestrator commits these in two automatic stages, not one — see [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md) §Worktree Isolation and §Auto-Branch + Auto-Commit for the mechanics.
    - **Pre-implement → base branch**: Before the first `implement` phase runs, the orchestrator commits the task scaffold (`spec.md`, `plan.md`, `status.json`, and the empty `handoff.md` / `review.md` / `done.md` / `notes.md` templates) to the base branch with message `task(<TASK-ID>): commit artifacts pre-pipeline`. If `PIPELINE_TELEMETRY_FILES` are dirty at that point, a sibling commit follows: `chore: absorb pre-implement telemetry into scaffold for <TASK-ID>`. In worktree mode (the default), this is what lets the new worktree inherit the scaffold via its initial branch checkout — without it, the worktree boots from a base branch that has no `tasks/<id>/` and the pipeline has nothing to read. On re-runs of `implement` (reroutes, review iterations) the worktree already exists and this commit is skipped.
-   - **At `--push` / `--pr` → task branch**: When the operator runs `canon run <id> --push` or `--pr` at `human_review`, the orchestrator auto-commits the evolved artifacts (`handoff.md`, `review.md`, `done.md`, final `status.json`, `notes.md`), telemetry rows, and managed docs (any `PIPELINE_MANAGED_DOCS` entry the spec's `### Affected Files` lists — and, once `qa.status === 'done'`, any `PIPELINE_MANAGED_DOCS` entry regardless of Affected Files, since QA's Docs Freshness step can correct stale references in protected docs the spec author didn't predict). Full allow-list in `docs/pipeline-orchestrator.md` §Auto-Branch + Auto-Commit. These return to the base branch via `--ship`'s squash-merge.
+   - **At `--push` / `--pr` → task branch**: When the operator runs `canon run <id> --push` or `--pr` at `human_review`, the orchestrator auto-commits the evolved artifacts (`handoff.md`, `review.md`, `done.md`, `pr-body.md`, final `status.json`, `notes.md`), telemetry rows, and managed docs (any `PIPELINE_MANAGED_DOCS` entry the spec's `### Affected Files` lists — and, once `qa.status === 'done'`, any `PIPELINE_MANAGED_DOCS` entry regardless of Affected Files, since QA's Docs Freshness step can correct stale references in protected docs the spec author didn't predict). Full allow-list in `docs/pipeline-orchestrator.md` §Auto-Branch + Auto-Commit. These return to the base branch via `--ship`'s squash-merge.
 
-3. **Changelog + version bump**: A separate release step after human_review, done collaboratively by the human and Claude. Not automated by the pipeline. See Release Rules below.
+3. **Changelog + version bump** *(for projects that version)*: A separate release step after human_review, done collaboratively by the human and Claude per project policy. Not automated by the pipeline. See Release Rules below.
 
 **Who commits when** (summary):
 
@@ -149,7 +162,7 @@ The pipeline produces three categories of changes. Each has a clear owner:
 | After implement passes static validation | Code changes → task branch | Orchestrator (auto) |
 | At `--push` / `--pr` (human_review) | Final task artifacts + telemetry + managed docs (per rule 2 allow-list) → task branch | Orchestrator (auto) |
 | At `--ship` | Squash-merge task branch → base | Orchestrator (auto, via `gh pr merge`) |
-| Before PR / merge | Changelog + version bump | Human + Claude |
+| Before PR / merge | Changelog + version bump (per project policy; skip if the project doesn't version) | Human + Claude |
 
 ### Spec Lifecycle
 
@@ -160,7 +173,7 @@ The pipeline produces three categories of changes. Each has a clear owner:
 
 ### Docs Freshness
 
-These docs are "institutional memory." If they drift, agents start with stale assumptions and make bad decisions. They **must stay current**, but each phase decides what to actually load — see `CLAUDE.md` and `CODEX.md` for phase-specific reading lists.
+These docs are "institutional memory." If they drift, agents start with stale assumptions and make bad decisions. They **must stay current**, but each phase decides what to actually load — see `CLAUDE.md` for phase-specific reading lists.
 
 **Protected docs** (must stay current; not all read every session):
 - `docs/architecture.md` — system overview, tech stack, state model
@@ -191,13 +204,13 @@ The code is the source of truth for anything derivable from code: numbers, thres
 **When docs ARE the source of truth** (state directly):
 - Intent and decisions (`docs/decisions.md`) — code shows *what*, not *why*.
 - Cross-cutting invariants — "all premium features gate through `Entitlements`" is a rule across many files.
-- Workflow/process — `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `docs/pipeline-orchestrator.md`.
+- Workflow/process — `AGENTS.md`, `CLAUDE.md`, `docs/pipeline-orchestrator.md`.
 - History — `docs/lessons-learned.md`.
 - Product behavior + terminology — `docs/product-context.md`.
 
 ## Roles (Summary)
 
-See `CLAUDE.md` for full Claude guidance (spec authorship, code review rules, QA format). See `CODEX.md` for full Codex guidance (implementation rules, handoff format, spec review approach).
+See `CLAUDE.md` for full Claude guidance (spec authorship, code review rules, QA format). Codex guidance (implementation rules, handoff format, spec review approach) lives in `AGENTS.md` and the orchestrator's injected prompt.
 
 **Claude**: Writes specs and plans, reviews code, writes QA summaries. Does not review its own specs.
 **Codex**: Reviews Claude's specs (full tier), implements, writes handoffs. Does not review its own code.
@@ -268,6 +281,24 @@ The rules below are canon-supplied universals — they apply to every project ca
 > 1. **Lint suppression comments**: Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*. If you can't write that justification, the rule is right and the code needs to change.
 > 2. **`any` / dynamic typing**: `any` propagates silently — once it enters a call chain, every downstream consumer loses type safety. When the shape is truly unknown at the boundary (network responses, JSON parsing, third-party callbacks), type as `unknown` and narrow explicitly.
 
+### Diagnose Before You Fix
+
+> Always applicable when authoring, reviewing, or implementing a fix for an intermittent, flaky, or hard-to-reproduce failure.
+>
+> A failure *snapshot* — a CI log, one stack trace, a screenshot of a stuck UI — is usually consistent with several mechanisms. A fix built on the first plausible story can be real-but-irrelevant: it closes a bug that isn't the one you're seeing, the true cause ships untouched, and the symptom returns later. Before a fix is specced, approved, or implemented:
+>
+> 1. **Falsify the hypothesis on paper first.** Reason about whether the proposed mechanism can actually produce the observed symptom. A timing, latency, or ordering argument often kills a plausible story before a line of code is written.
+> 2. **Reproduce the mechanism deterministically.** Fault injection, a forced race, or a targeted repro — so the failure has been observed happening *for the reason being claimed*, not merely "it stopped happening after the change."
+> 3. **Each role owns a checkpoint.** The spec author states the *verified* mechanism (not a guess) in *Problem*. The spec reviewer (Codex) challenges the premise — does the proposed fix address a confirmed root cause, or an unconfirmed hypothesis? An unverified mechanism is a Shape Check concern. The implementer reproduces before fixing and reports the repro in the handoff.
+
+**Canonical case**: a Smart Fill e2e flake (an "Analyze Library" button stuck, never reaching "✓ Library Analyzed") was first "fixed" with a React cancellation-guard against an out-of-order async-resolution hypothesis — which a latency argument falsified (the runs that read "not analyzed" short-circuit fast and fire *early*, so they cannot resolve last and clobber a later run). Fault injection — forcing the analysis worker to drop one photo — revealed the real cause: a dropped-photo silent-skip, where a worker error / null blob / exception decremented the pending counter *without* recording a result or scheduling a retry, leaving the photo permanently uncached. The cancellation guard closed a near-unreachable race and missed the actual flake; the whole task had to be re-scoped.
+
+### Parsing Structured Input
+
+> Always applicable when implementing a parser for author-facing structured input — table cells, headed sections, delimited fields.
+>
+> Parse cell-by-cell with explicit rejection, not a permissive whole-string regex. When a field has a defined per-cell shape (e.g., a table column expecting exactly one backtick-quoted path), a permissive regex over the whole cell silently extracts the *first* match and discards the rest — the parse "succeeds" but a later step fails with a cryptic error that hides the real contract violation. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason *at the parse boundary*. "Silently drop data" is far worse than "loud rejection at parse time." (Companion to the Lint & Type Safety rule: type genuinely-unknown input as `unknown` and narrow/validate explicitly rather than trusting a permissive shape.)
+
 ## Validation Matrix
 
 The matrix below is the canon-supplied **structural** matrix — it tells agents which *categories* of check apply to which *categories* of change. The structure is universal and ships with canon.
@@ -316,14 +347,14 @@ Adopters fill `docs/decisions.md` with a "Versioning and release policy" entry a
 ### Canon's general rules (non-negotiable)
 
 1. **Agents do not bump versions or land changelog edits without explicit scope authorization.** The project-policy block defines what's pre-authorized; everything else is propose-only.
-2. **The QA step proposes a draft changelog entry in `done.md`**. The human reviews and finalizes the copy, then Claude applies the changelog update + version bump before PR/merge. Agents do not auto-finalize changelog copy — phrasing is a human decision.
-3. **Changelog + version bump are committed separately from code changes** — they are the last commit on the branch. Keeps version-bump commits cherry-pickable / revertable in isolation.
+2. **The QA step proposes a draft changelog *entry* in `done.md`** — the entry text only. QA does **not** propose, choose, or re-litigate the version number or bump tier: versioning is governed by project policy, and where a project accumulates work on a versioned release branch the version is already pinned by that branch. The human reviews and finalizes the copy, then Claude applies the changelog update + version bump per project policy before PR/merge. Agents do not auto-finalize changelog copy — phrasing is a human decision.
+3. **Changelog + version bump are committed separately from code changes** *(when a project versions its releases)* — isolation intent: keeps version-bump commits cherry-pickable / revertable in isolation. Projects that do not do versioned releases skip this step per their project policy.
 4. **No major versioning surprises.** If a task introduces a breaking change that the spec didn't flag, raise it during QA before shipping — do not silently assume the change is acceptable.
 
 ## Handoff Validation (Before Merge)
 
-- [ ] Version correct
-- [ ] Changelog updated if needed
+- [ ] Version correct (per project policy; skip if the project doesn't version)
+- [ ] Changelog updated if needed (per project policy; skip if the project doesn't version)
 - [ ] PR body current
 - [ ] Final CI/CD checks green
 - [ ] Final diff matches spec intent

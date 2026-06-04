@@ -18,6 +18,8 @@ import {
     checkActiveOrchestrators,
     checkNodeVersion,
     checkAgentFile,
+    checkCodexMdDeprecated,
+    EXPECTED_TEMPLATES,
     checkTemplates,
     checkSkills,
     checkCanonVersion,
@@ -31,6 +33,7 @@ import {
     MIN_CLAUDE_VERSION,
     RECOMMENDED_ALLOW,
 } from '../src/cli/commands/doctor.js';
+import { CANON_OWNED } from '../src/lib/canon-owned.js';
 import { HEARTBEAT_STALE_AFTER_MS } from '../scripts/run-task/heartbeat.js';
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 
@@ -331,6 +334,23 @@ void test('checkAgentFile: present with start but missing end → warn', () => {
     });
 });
 
+void test('checkCodexMdDeprecated: missing file → null', () => {
+    withTempDir(dir => {
+        assert.equal(checkCodexMdDeprecated(dir), null);
+    });
+});
+
+void test('checkCodexMdDeprecated: present file → warn', () => {
+    withTempDir(dir => {
+        fs.writeFileSync(path.join(dir, 'CODEX.md'), '# title\nbody\n');
+        const check = checkCodexMdDeprecated(dir);
+        assert.ok(check);
+        assert.equal(check.status, 'warn');
+        assert.equal(check.label, 'CODEX.md');
+        assert.match(check.detail ?? '', /deprecated/);
+    });
+});
+
 // ── checkTemplates ───────────────────────────────────────────────────────────
 
 void test('checkTemplates: missing .canon/templates/ → fail', () => {
@@ -345,25 +365,40 @@ void test('checkTemplates: all expected templates present → pass', () => {
     withTempDir(dir => {
         const templatesDir = path.join(dir, '.canon', 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        for (const f of ['spec.md', 'plan.md', 'handoff.md', 'review.md',
-                         'done.md', 'spec-review.md', 'notes.md', 'status.json']) {
+        for (const f of EXPECTED_TEMPLATES) {
             fs.writeFileSync(path.join(templatesDir, f), '');
         }
         assert.equal(checkTemplates(dir).status, 'pass');
     });
 });
 
-void test('checkTemplates: some templates missing → warn with file list', () => {
+void test('checkTemplates: missing pr-body.md → warn with file list', () => {
     withTempDir(dir => {
         const templatesDir = path.join(dir, '.canon', 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'spec.md'), '');
+        for (const f of EXPECTED_TEMPLATES) {
+            if (f === 'pr-body.md') continue;
+            fs.writeFileSync(path.join(templatesDir, f), '');
+        }
         const check = checkTemplates(dir);
         assert.equal(check.status, 'warn');
-        // detail lists the missing files
-        assert.match(check.detail ?? '', /plan\.md/);
-        assert.match(check.detail ?? '', /done\.md/);
+        assert.match(check.detail ?? '', /pr-body\.md/);
     });
+});
+
+void test('EXPECTED_TEMPLATES covers every canon-owned .canon/templates entry', () => {
+    const canonOwnedTemplates = CANON_OWNED
+        .filter(entry => entry.startsWith('.canon/templates/'))
+        .map(entry => path.basename(entry));
+
+    for (const template of canonOwnedTemplates) {
+        assert.ok(
+            EXPECTED_TEMPLATES.includes(template),
+            `${template} missing from EXPECTED_TEMPLATES`,
+        );
+    }
+
+    assert.ok(EXPECTED_TEMPLATES.includes('pr-body.md'));
 });
 
 // ── checkSkills ──────────────────────────────────────────────────────────────
@@ -1950,11 +1985,9 @@ const RETIRED_PHASE_TOKENS = ['runtime_validation', 'Orchestrator runtime valida
 const OPERATIONAL_DOCS = [
     'AGENTS.md',
     'CLAUDE.md',
-    'CODEX.md',
     'docs/pipeline-orchestrator.md',
     'templates/AGENTS.md',
     'templates/CLAUDE.md',
-    'templates/CODEX.md',
     'templates/docs/pipeline-orchestrator.md',
 ];
 
@@ -2002,12 +2035,12 @@ const ADOPTER_SHIPPED_PATHS = [
     'templates/.gitignore',
     'templates/AGENTS.md',
     'templates/CLAUDE.md',
-    'templates/CODEX.md',
     'templates/.canon/templates/spec.md',
     'templates/.canon/templates/plan.md',
     'templates/.canon/templates/handoff.md',
     'templates/.canon/templates/review.md',
     'templates/.canon/templates/done.md',
+    'templates/.canon/templates/pr-body.md',
     'templates/.canon/templates/notes.md',
     'templates/.canon/templates/spec-review.md',
     'templates/.canon/templates/status.json',
@@ -2019,7 +2052,6 @@ const ADOPTER_SHIPPED_PATHS = [
     // CLAUDE.md.
     'AGENTS.md',
     'CLAUDE.md',
-    'CODEX.md',
     // Bundled dist/ ships in the canon-ai npm package (per package.json
     // `files`). Bundled JS may include string literals from source — a
     // banned token making it into a source-file string would land in

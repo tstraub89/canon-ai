@@ -48,6 +48,7 @@ export interface HeartbeatRecord {
 
 export interface HeartbeatHandle {
     stop: () => void;
+    tick: () => void;
 }
 
 // Module-level registry so the signal forwarder can sweep all active
@@ -104,6 +105,7 @@ export function startHeartbeat(
     timer.unref();
 
     const handle: HeartbeatHandle = {
+        tick: writeOnce,
         stop: (): void => {
             clearInterval(timer);
             activeHandles.delete(handle);
@@ -137,6 +139,17 @@ export function startHeartbeat(
 export function stopAllHeartbeats(): void {
     for (const handle of [...activeHandles]) {
         handle.stop();
+    }
+}
+
+/**
+ * Fire one synchronous heartbeat tick on every active handle. Used after
+ * worktree creation so the newly-resolved task dir gets a fresh heartbeat
+ * before the orchestrator advances.
+ */
+export function tickAllHeartbeats(): void {
+    for (const handle of [...activeHandles]) {
+        handle.tick();
     }
 }
 

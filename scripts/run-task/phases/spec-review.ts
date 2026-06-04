@@ -98,7 +98,7 @@ export async function runSpecReviewPhase(
         phase: 'spec_review',
         iteration: maxSpecIter,
         activeCwd,
-    });
+    }, activeCwd);
 
     // Mirror the post-run template check that code-review.ts and plan.ts
     // already run for their artifacts. Catches the failure mode where Codex
