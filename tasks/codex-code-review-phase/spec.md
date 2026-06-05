@@ -1,7 +1,17 @@
 # Spec: codex-code-review-phase — Opt-in Codex adversarial code-review phase after Claude approves
 
 > Written by: Claude | Review by: Codex
-> Status: draft (revival — supersedes the v1.5-era spec; see Revival Context)
+> Status: **PARKED** (2026-06-04) — pivoted to multi-agent Claude review; see Parking Note. Spec preserved as reference; supersedes the v1.5-era spec.
+
+## Parking Note (2026-06-04)
+
+**This task is parked again — not archived, not killed.** After the v1.9.1 release, the operator chose to pursue **multi-agent Claude cold review** as canon's independent-adversarial-review mechanism, rather than build out this Codex-specific phase.
+
+**Why park instead of archive:** the design here stays genuinely useful down the road. Not every canon adopter runs Codex on PR review (GitHub's `@codex` is one provider, async, and rate-limited), so a formalized **opt-in in-pipeline Codex pass** could be the right tool for an adopter who lacks an external cold-review source. The spec below + the empirical evidence are the durable artifacts; revive from them, not from the stale `task/codex-code-review-phase` branch.
+
+**Why the pivot is evidence-backed (not arbitrary):** the head-to-head in `evidence-codex-vs-claude.md` found Codex and cold-Claude are *complementary, not substitutes*, and concluded the **highest-value marginal add is a cold-Claude in-pipeline pass** — it uses the in-loop model (no new dependency) and needs no external review provider. Cold-Claude is noisier than Codex (high recall, lower precision), so the adjudication/precision layer designed below matters *more* with Claude than with Codex — i.e., this spec's adjudication design partly carries over to the Claude direction.
+
+**If ever revived:** `status.json` still carries stale `base_branch: release/v1.5` and phases from the old (fake-approved) v1.5 run — reset `code_review`/`qa` to pending and set the real base atomically with a base-branch decision. The same stale `base_branch` afflicts `bundle-preflight-atomic-rejection` and `telemetry-discrimination-gate`.
 
 ## Revival Context
 

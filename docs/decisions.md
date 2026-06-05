@@ -232,3 +232,13 @@ What the orchestrator does uniquely (and these stand): routes between phases and
 5. **The validation-authority boundary in `AGENTS.md` is removed by the retirement task.** Going forward there is one validation outcomes section, authored by Codex during implement. There is no separate orchestrator-authored counterpart.
 
 **Supersedes**: The validation-authority boundary previously documented in `AGENTS.md` (Codex authors `## Validation Outcomes`; orchestrator authors `## Runtime Validation Outcomes`). Also supersedes the unshipped design that would have added a project-policy loader extension point for `runtime_validation` (`tasks/project-phases/` — deleted; design rationale in conversation history 2026-05-15).
+
+---
+
+## Cold independent review: pursue multi-agent Claude, park the Codex code-review phase
+
+**Decision** (2026-06-04): Canon's independent-adversarial-review direction is **multi-agent Claude cold review**, not a built-in Codex code-review phase. The `codex-code-review-phase` task is **parked (not archived)** — its spec and evidence stay as reference for possible later use.
+
+**Why**: A cold review pass (a reviewer reading the diff with no spec anchor) catches a class of lifecycle/state-machine/consistency bugs that spec-anchored Claude `code_review` structurally misses — the empirical case is strong (`tasks/codex-code-review-phase/evidence-codex-vs-claude.md`: across 173 Codex PR findings, 0 false positives and ~76% sat off-AC). But the head-to-head also found Codex and cold-Claude are *complementary, not substitutes*, and that the highest-value marginal add is a **cold-Claude in-pipeline pass**: it reuses the in-loop model (no new dependency) and needs no external review provider, whereas a Codex phase binds canon to one provider that not every adopter runs and that is async + rate-limited on PRs. Parking rather than archiving keeps the Codex-phase design available for an adopter who lacks any external cold-review source. This refines, not reverses, the [[Two distinct agents]] decision — the goal is still no-self-review independence; the open question is which second reviewer, and the answer is now "a cold-context Claude pass" by default.
+
+**Rule**: Don't build the opt-in Codex code-review phase without fresh human direction. New cold-review work targets a multi-agent Claude pass. Cold-Claude is higher-recall but noisier (lower precision) than Codex, so any cold-Claude review phase must carry an adjudication/precision layer (the adjudication design in the parked spec largely carries over). If reviving the Codex phase for an adopter, drive from `tasks/codex-code-review-phase/spec.md`, not the stale `task/codex-code-review-phase` branch.
