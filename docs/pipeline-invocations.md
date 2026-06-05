@@ -354,3 +354,13 @@
 | 2026-06-04T05:43:11.888Z | pr-body-completeness-guards | implement | codex | gpt-5.4-mini | 0 | 261.4s | 3018040 | ok |
 | 2026-06-04T05:45:14.165Z | pr-body-completeness-guards | code_review | claude | sonnet | 0 | 121.6s | 394786 | ok |
 | 2026-06-04T05:47:46.191Z | pr-body-completeness-guards | qa | claude | sonnet | 0 | 152.0s | 769856 | ok |
+| 2026-06-05T03:36:19.352Z | multi-agent-code-review | spec_review | codex | gpt-5.5 | 0 | 228.2s | 1595465 | ok |
+| 2026-06-05T03:46:59.727Z | preflight-failure-routing | spec_review | codex | gpt-5.5 | 0 | 180.8s | 1238206 | ok |
+| 2026-06-05T03:48:24.539Z | multi-agent-code-review | spec_review | codex | gpt-5.5 | 1 | 147.4s | 3231491 | ok |
+| 2026-06-05T03:51:12.464Z | preflight-failure-routing | spec | claude | opus | 0 | 252.7s | 1494457 | ok |
+| 2026-06-05T03:52:58.622Z | preflight-failure-routing | spec_review | codex | gpt-5.5 | 1 | 106.1s | 2551606 | ok |
+| 2026-06-05T03:54:45.898Z | multi-agent-code-review | spec_review | codex | gpt-5.5 | 2 | 71.4s | 4559421 | ok |
+| 2026-06-05T03:55:21.651Z | preflight-failure-routing | spec | claude | opus | 0 | 143.0s | 1237279 | ok |
+| 2026-06-05T03:56:25.243Z | preflight-failure-routing | spec_review | codex | gpt-5.5 | 2 | 63.6s | 3553802 | ok |
+| 2026-06-05T03:57:31.625Z | multi-agent-code-review | spec_review | codex | gpt-5.5 | 3 | 68.5s | 6008245 | ok |
+| 2026-06-05T04:07:05.435Z | preflight-failure-routing | plan | claude | sonnet | 0 | 576.5s | 1495163 | ok |
