@@ -5,19 +5,16 @@ import { REPO_ROOT, config } from './env.js';
 import { getEffectiveSize, getNominalSize } from './policy.js';
 import { taskDirFor } from './state.js';
 import type { ImplementMode, PipelineState } from './types.js';
+import { parseAffectedFilesFromSpec } from './validation.js';
 import { getActiveCwd } from './worktree.js';
 
+// Delegates to parseAffectedFilesFromSpec so the implement-prompt preload uses
+// the same section coverage (## Design + ## Amendment bodies), cell formats
+// (backtick and markdown-link), and multi-table support as the --pr allow-list
+// gate. Single source of truth — no format drift between the two consumers.
 export function extractAffectedFiles(taskId: string): string[] {
-    const specPath = path.join(taskDirFor(taskId), 'spec.md');
     try {
-        const content = fs.readFileSync(specPath, 'utf8');
-        const match = content.match(/### Affected Files\n\n\|[^\n]+\|\n\|[^\n]+\|\n((?:\|[^\n]+\|\n?)*)/);
-        if (!match) return [];
-        return match[1]
-            .split('\n')
-            .filter(l => l.startsWith('|'))
-            .map(row => row.match(/\|\s*`([^`]+)`/)?.[1])
-            .filter((f): f is string => !!f);
+        return parseAffectedFilesFromSpec(taskId).files;
     } catch {
         return [];
     }

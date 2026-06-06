@@ -62,6 +62,7 @@ Full doc load applies — the orchestrator resumes sessions where possible, but 
 - **One pipeline per worktree.** Multiple `canon run` invocations are safe IF each runs in its own worktree on its own branch (the default — worktree isolation is what makes that work). What's NOT safe is two invocations on the **same branch and folder** — they corrupt each other's git state. Use bundle mode (multiple task IDs to one invocation) when tasks should converge on one review loop and one commit history.
 - **Prefer `canon task` helpers over hand-editing `status.json`.** `canon task phase` re-derives the top-level `status` pointer; hand-editing skips that and produces inconsistent state the dispatcher misroutes from.
 - **`canon task` key ops**: `canon task new <id> "Title"` — scaffold a task; `canon task list` — show all tasks; `canon task phase <id> <phase> <status>` — advance a phase; `canon task post-merge-sync` — reconcile after squash-merge. `canon task status/list/accept/phase` run from REPO_ROOT read or write the worktree's `status.json` when one exists past plan, so mid-pipeline status reads show live worktree state. Full subcommand list in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md#task-management-canon-task).
+- **Never read `tasks/<id>/status.json` directly from REPO_ROOT once a task is past plan.** From implement onward, the worktree is the live copy — the base branch copy is stale. Use `canon task status <id>` to get current state (it routes to the worktree automatically).
 
 ### Writing a Spec (conversational — all tiers)
 
@@ -106,11 +107,18 @@ Invoked by the orchestrator (pipeline session only).
 
 ### Reviewing Code
 
-Reviews run in **two stages**. Stage 1 is a gate — if it fails, skip Stage 2 entirely and send back. Writing code-quality findings against code that's about to change wastes tokens and can mislead Codex on the re-implementation.
+The pipeline-spawned `code_review` session is a **synthesis foreman**. It spawns two isolated review lenses in parallel, adjudicates their findings, writes the single `review.md`, and sets the verdict.
+
+- **Anchored lens**: applies the normal two-stage charter below using `spec.md`, `handoff.md`, and the diff.
+- **Cold lens**: reviews the diff only, with no spec, AC, handoff rationale, canon docs, or prior findings.
+
+The foreman deduplicates overlapping findings, drops cold findings that the spec shows are intended, and classifies every surviving finding as `code-bug` or `spec-gap`. A `spec_gap` verdict means the implementation cannot fix the issue because the spec is missing, wrong, or too ambiguous; the orchestrator blocks `code_review` with an escalation so the human can amend the spec and re-run.
+
+The anchored lens runs in **two stages**. Stage 1 is a gate — if it fails, skip Stage 2 entirely and send back. Writing code-quality findings against code that's about to change wastes tokens and can mislead Codex on the re-implementation.
 
 **Stage 1 — Spec compliance (gate)**:
 1. Read `handoff.md` for changed files, rationale, and deviations.
-2. **Validation gate**: Verify the Codex-authored Validation Outcomes table has no `Fail` results and all applicable checks were run. A `Fail – unrelated` entry is acceptable only when Notes contains a specific file reference (path, extension, or `file:line`) and the explanation is credible — assess it; don't rubber-stamp it. Missing or unexplained failure = Stage 1 fail.
+2. **Validation gate**: Verify the Codex-authored Validation Outcomes table has no `Fail` results and all applicable checks were run. A `Fail – unrelated` entry is acceptable only when Notes contains a specific file reference (path, extension, or `file:line`) and the explanation is credible — assess it; don't rubber-stamp it. Missing or unexplained failure = Stage 1 fail. A `Fail – unrelated` entry citing a file the task itself modified is invalid — a failure in a file Codex changed belongs to the task regardless of the label. The pre-flight gate enforces this deterministically; Stage 1 catches subtler cases where the file changed indirectly.
 3. Read the injected diff in your prompt (the orchestrator pre-computes `git diff <baseBranch>...HEAD` and includes it). If the diff was truncated, read individual files from the handoff Changes table directly.
 4. **AC cross-reference**: Fill the Stage 1 AC table in `review.md` with **every** AC from `spec.md`. Missing an AC from the table is itself a Stage 1 fail — no skipping.
 5. **Dropped sections check**: Non-goals respected? Known Risks addressed or accepted? Human Test Plan satisfiable? Any dropped section = Stage 1 fail.
@@ -118,13 +126,13 @@ Reviews run in **two stages**. Stage 1 is a gate — if it fails, skip Stage 2 e
 
 **Stage 2 — Code quality (only if Stage 1 passed)**:
 
-7. Write findings labeled: `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, `spec gap`. Reference the spec by AC number and the diff by `file:line` — do not restate AC text or paste large code blocks back at the implementer. Every line in `review.md` should be load-bearing; padding dilutes signal and slows the review-iteration loop.
+7. Return findings labeled: `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap`. Reference the spec by AC number and the diff by `file:line` — do not restate AC text or paste large code blocks back at the implementer. Every line that reaches `review.md` should be load-bearing; padding dilutes signal and slows the review-iteration loop.
 8. **Test change rule**: Any change to a test must be directly justified by a spec AC that intentionally changes behavior. If a test was updated to pass against broken behavior (i.e., to accommodate the regression rather than fix it), flag it as `correctness bug`. Tests must only change when behavior is intentionally changing.
 
 Then:
 
-9. Update `status.json`.
-10. If changes requested → Codex iterates → re-review **runs both stages from scratch** (re-implementation may invalidate prior Stage 2 conclusions even when the original failure was Stage 1).
+9. Foreman writes `review.md` and updates `status.json` with `approved`, `approved_with_nits`, `changes_requested`, `needs_re_review`, or `spec_gap`.
+10. If changes requested → Codex iterates → re-review **runs both lenses from scratch** (re-implementation may invalidate prior Stage 2 conclusions even when the original failure was Stage 1). If `spec_gap` → human amends the spec and re-runs; do not route to Codex implementation.
 
 ### Writing QA Summary
 
@@ -189,12 +197,14 @@ When writing specs:
 ## Review Responsibilities
 
 **Code review** (after Codex implements):
-- Review the diff against the spec and Codex's `handoff.md`.
+- Run as the foreman over the anchored and cold lenses; do not collapse back to a single direct-review pass.
+- Review the anchored lens output against the spec and Codex's `handoff.md`.
+- Reconcile cold-lens findings against the spec before keeping or dismissing them.
 - **CRITICAL**: Verify the entire PR against the *original spec*, actively checking for dropped sections or missing Acceptance Criteria.
 - Focus on what Codex cannot self-verify: correctness bugs, edge cases, type safety, UX implications, architectural drift.
 - Do not re-verify lint/type-check/test/build status that Codex already reported passing.
 
-**Feedback format**: Label every comment as `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap`. Be specific, actionable, and reference the relevant convention or code path. Any finding that warrants a change goes back to Codex — the reviewer does not edit the diff. Nits the human may choose to skip ride along with the `Approved with nits` verdict and surface at QA.
+**Feedback format**: Label every comment as `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap`. Be specific, actionable, and reference the relevant convention or code path. Code-bug findings go back to Codex. Spec gaps block for human amendment. Nits the human may choose to skip ride along with the `Approved with nits` verdict and surface at QA.
 
 ## Codebase Navigation
 

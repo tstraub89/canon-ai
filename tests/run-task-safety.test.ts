@@ -3378,6 +3378,63 @@ void test('main --reroute clears full_send', () => {
     });
 });
 
+void test('checkAndRoute blocks code_review on spec_gap without advancing qa', () => {
+    withTempDir('spec-gap-route-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-a';
+        writeTaskStatus(tasksRoot, taskId, {
+            ...makeCompleteStatus(taskId, 'task/task-a'),
+            status: 'code_review',
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: {
+                    status: 'done',
+                    agent: 'claude',
+                    verdict: 'spec_gap',
+                    iterations: 0,
+                    iterations_current_loop: 0,
+                    iterations_total: 1,
+                    changes_requested_total: 0,
+                    auto_block_count: 0,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+            escalations: [],
+        });
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "checkAndRoute('code_review', ['task-a']).catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.equal(result.status, 2);
+        assert.match(result.stdout, /SPEC GAP/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            status?: string;
+            escalations?: Array<{ phase?: string; reason?: string }>;
+            phases?: {
+                code_review?: { status?: string; auto_block_count?: number };
+                qa?: { status?: string };
+            };
+        };
+        assert.equal(updated.status, 'code_review');
+        assert.equal(updated.phases?.code_review?.status, 'blocked');
+        assert.equal(updated.phases?.code_review?.auto_block_count, 1);
+        assert.equal(updated.phases?.qa?.status, 'pending');
+        assert.equal(updated.escalations?.length, 1);
+        assert.equal(updated.escalations?.[0]?.phase, 'code_review');
+        assert.match(updated.escalations?.[0]?.reason ?? '', /spec_gap/);
+    });
+});
+
 void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
     withTempDir('run-task-metrics-override-', dir => {
         const telemetryFile = path.join(dir, 'pipeline-invocations.md');

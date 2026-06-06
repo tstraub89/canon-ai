@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseTable } from '../scripts/run-task/markdown-table.js';
+import { parseTable, parseAllTablesH3 } from '../scripts/run-task/markdown-table.js';
 
 void test('parseTable maps named columns in a basic markdown table', () => {
     const rows = parseTable([
@@ -109,6 +109,103 @@ void test('parseTable returns [] when a section heading exists but no table foll
         '| x | y |',
         '',
     ].join('\n'), 'Empty Section');
+
+    assert.deepEqual(rows, []);
+});
+
+// --- parseAllTablesH3 ---
+
+void test('parseAllTablesH3 returns rows from a single table (same as parseTableH3)', () => {
+    const rows = parseAllTablesH3([
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/foo.ts` | update |',
+        '| `src/bar.ts` | add |',
+        '',
+    ].join('\n'), 'Affected Files');
+
+    assert.deepEqual(rows, [
+        { File: '`src/foo.ts`', Change: 'update' },
+        { File: '`src/bar.ts`', Change: 'add' },
+    ]);
+});
+
+void test('parseAllTablesH3 collects rows from two tables separated by a blank line', () => {
+    const rows = parseAllTablesH3([
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/a.ts` | update |',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/b.ts` | add |',
+        '',
+    ].join('\n'), 'Affected Files');
+
+    assert.deepEqual(rows, [
+        { File: '`src/a.ts`', Change: 'update' },
+        { File: '`src/b.ts`', Change: 'add' },
+    ]);
+});
+
+void test('parseAllTablesH3 collects rows from two tables separated by a bold sub-heading', () => {
+    const rows = parseAllTablesH3([
+        '### Affected Files',
+        '',
+        '**Core**',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/core.ts` | update |',
+        '',
+        '**Tests**',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `tests/core.test.ts` | add |',
+        '',
+    ].join('\n'), 'Affected Files');
+
+    assert.deepEqual(rows, [
+        { File: '`src/core.ts`', Change: 'update' },
+        { File: '`tests/core.test.ts`', Change: 'add' },
+    ]);
+});
+
+void test('parseAllTablesH3 stops at the next H3 heading and does not collect sibling rows', () => {
+    const rows = parseAllTablesH3([
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/a.ts` | update |',
+        '',
+        '### Other Section',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/b.ts` | should not appear |',
+        '',
+    ].join('\n'), 'Affected Files');
+
+    assert.deepEqual(rows, [
+        { File: '`src/a.ts`', Change: 'update' },
+    ]);
+});
+
+void test('parseAllTablesH3 returns [] when the heading is absent', () => {
+    const rows = parseAllTablesH3([
+        '### Other Section',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/a.ts` | update |',
+        '',
+    ].join('\n'), 'Affected Files');
 
     assert.deepEqual(rows, []);
 });

@@ -157,6 +157,78 @@ export function parseTableH3(markdown: string, sectionHeading: string): Array<Re
     return rows;
 }
 
+// Like parseTableH3 but collects rows from ALL contiguous table blocks under the
+// heading, not just the first one. Blank lines and non-`|` lines (sub-headings,
+// prose) end the current block; the scanner then looks for the next `|` line to
+// start the next block. Each block's header row is read fresh at the start of
+// each block, so a second table with the same column names does not bleed state
+// from the first. Used for `### Affected Files` where a spec author may write
+// one table per subsystem — the allow-list gate and context preload must see
+// all of them.
+export function parseAllTablesH3(markdown: string, sectionHeading: string): Array<Record<string, string>> {
+    const lines = markdown.split('\n');
+    const headingIndex = lines.findIndex(line => line.trimEnd() === `### ${sectionHeading}`);
+    if (headingIndex === -1) return [];
+
+    let sectionEnd = lines.length;
+    for (let index = headingIndex + 1; index < lines.length; index += 1) {
+        if (/^#{1,3}\s/.test(lines[index])) {
+            sectionEnd = index;
+            break;
+        }
+    }
+
+    const allRows: Array<Record<string, string>> = [];
+    let scanFrom = headingIndex + 1;
+
+    while (scanFrom < sectionEnd) {
+        // Find the next table block start (first `|` line from scanFrom).
+        let tableStart = -1;
+        for (let i = scanFrom; i < sectionEnd; i += 1) {
+            if (lines[i].trimStart().startsWith('|')) {
+                tableStart = i;
+                break;
+            }
+        }
+        if (tableStart === -1) break;
+
+        // The first `|` line of each block is the header row.
+        const headerCells = normalizeCells(lines[tableStart]);
+        if (headerCells.length === 0) {
+            scanFrom = tableStart + 1;
+            continue;
+        }
+
+        // Skip an optional separator row immediately after the header.
+        let rowStart = tableStart + 1;
+        if (rowStart < sectionEnd) {
+            const maybeSep = normalizeCells(lines[rowStart]);
+            if (isSeparatorRow(maybeSep)) rowStart += 1;
+        }
+
+        // Collect contiguous `|` lines as data rows for this block.
+        let tableEnd = rowStart;
+        while (tableEnd < sectionEnd && lines[tableEnd].trimStart().startsWith('|')) {
+            tableEnd += 1;
+        }
+
+        for (let index = rowStart; index < tableEnd; index += 1) {
+            const cells = normalizeCells(lines[index]);
+            if (isSeparatorRow(cells)) continue;
+            const row: Record<string, string> = {};
+            for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+                row[headerCells[cellIndex]] = cells[cellIndex] ?? '';
+            }
+            allRows.push(row);
+        }
+
+        // Advance past this block and look for the next one.
+        scanFrom = tableEnd;
+    }
+
+    return allRows;
+}
+
 export function parseTable(markdown: string, sectionHeading: string): Array<Record<string, string>> {
     const lines = markdown.split('\n');
     const headingIndex = lines.findIndex(line => isSectionHeading(line, sectionHeading));

@@ -11,7 +11,7 @@ import type {
 
 export const PHASE_ORDER = ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review'] as const;
 export const _PHASE_STATUS_VALUES = ['pending', 'in_progress', 'done', 'changes_requested', 'blocked'] as const;
-export const _VERDICT_VALUES = ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review'] as const;
+export const _VERDICT_VALUES = ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap'] as const;
 
 export type Phase = (typeof PHASE_ORDER)[number];
 export type PhaseStatus = (typeof _PHASE_STATUS_VALUES)[number];
@@ -38,7 +38,7 @@ export type PhaseEntry = {
      * Counts orchestrator-side pre-flight rejections (handoff validation
      * failures that reject without invoking the reviewer) in the current
      * loop. Reset to 0 when any real review verdict ends the pre-flight streak
-     * (approved, approved_with_nits, changes_requested, or needs_re_review).
+     * (approved, approved_with_nits, changes_requested, needs_re_review, or spec_gap).
      * Watched alongside `iterations_current_loop` by the
      * review-loop auto-block — persistent pre-flight failures must trip the
      * cap so the pipeline can't bounce implement→pre-flight→implement

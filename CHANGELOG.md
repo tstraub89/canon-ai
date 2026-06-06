@@ -2,6 +2,21 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.10.0] — 2026-06-06
+
+### Added
+
+- **`code_review` now runs as a synthesis foreman over two independent review lenses.** An *anchored* lens applies the existing spec-compliance + code-quality charter; a *cold*, spec-blind lens reads the diff adversarially with no spec context. The foreman deduplicates them, drops cold findings the spec shows are intended, classifies the rest as code-bug vs. spec-gap, and writes the single review + verdict. Phase order, reroute target, bundle behavior, and model tier are unchanged; the new lens definitions ship to adopters via `canon upgrade`.
+- **New `spec_gap` verdict halts `code_review` for a human spec fix instead of looping back to the implementer.** When a finding's real cause is a missing or wrong requirement — not a coding mistake — the reviewer returns `spec_gap`, which blocks for amendment rather than burning another implementation pass. Recover by amending the spec and re-running.
+- **`--pr`/`--push` now runs `docs-refs-check` before committing task artifacts, if your project has adopted it.** Broken backtick refs in `done.md`, `review.md`, and `pr-body.md` are caught at push time rather than after CI fails, with the same actionable finding list the CI gate prints. The gate is skipped automatically when `scripts/docs-refs-check.mjs` is absent. `--force` bypasses it, consistent with the base-drift gate.
+
+### Fixed
+
+- **Pre-flight rejection in bundle mode is now all-or-nothing.** When any task in a bundle fails handoff pre-flight, all sibling tasks now receive the same outcome. On the fixable route (`format`/`regression` blocker), all tasks get `changes_requested` and the bundle reroutes to implement together — ending phantom solo Claude retries for clean siblings and divergent per-task counters. On the blocked-only route (infrastructure unavailable), all tasks receive a halt stub `review.md`; previously clean siblings were auto-blocked with no artifact and an incomplete audit trail.
+- **`### Affected Files` sections with multiple tables are now fully parsed.** The `--pr` base-drift allow-list and the implement-prompt file preload previously stopped reading at the first blank line, silently dropping any paths declared in a second (or later) table under the same heading. All table blocks are now collected. `extractAffectedFiles()` in the context preloader is unified with `parseAffectedFilesFromSpec()` so both consumers see the same paths, including Amendment sections and markdown-link cell formats.
+- **Pre-flight now classifies a failed check by who can fix it instead of always blaming the handoff.** Format problems (missing tables, malformed rows, unfilled template) say "fix the handoff"; a real `Fail` says "fix the code" and names the check; infrastructure failures halt for human triage. As part of this, a `Fail – unrelated` label that cites a file the task itself changed is rejected — a regression can no longer slip through by calling its own failure "unrelated."
+- **`canon task list` no longer lists the `tasks/_templates` override directory as a task.** Projects that add `tasks/_templates/` to customize their scaffold saw it appear as a spurious (often "invalid") row; it's now skipped, like `_archive`.
+
 ## [1.9.1] — 2026-06-04
 
 ### Fixed

@@ -956,6 +956,30 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         );
     }
 
+    // Docs-refs gate: catch broken refs in QA/review artifacts before they hit CI.
+    // printFindings() in docs-refs-check.mjs writes to stderr (console.error);
+    // stdout only carries the "All refs OK" success message.
+    const docsRefsScript = path.join(REPO_ROOT, 'scripts', 'docs-refs-check.mjs');
+    if (fs.existsSync(docsRefsScript)) {
+        const docsRefsResult = spawnSync('node', [docsRefsScript], {
+            cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf8',
+        });
+        if (docsRefsResult.status !== 0) {
+            const docsRefsOutput = (docsRefsResult.stderr ?? '').trim();
+            if (cliArgs.force) {
+                splitCli.warn(`--force: docs-refs-check found broken refs (bypassed):\n${docsRefsOutput}`);
+            } else {
+                splitCli.die(
+                    `--pr aborted: docs-refs-check found broken refs in task artifacts that would be committed.\n` +
+                    `${docsRefsOutput}\n` +
+                    `Fix the references and re-run --pr/--push. Use --force to bypass.`,
+                );
+            }
+        }
+    }
+
     const baseDriftResult = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
     if (baseDriftResult.fetchFailed) {
         // warn already emitted by verifyBaseDrift; offline runs keep the prior best-effort behavior.
@@ -2535,6 +2559,34 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             return;
 
         case 'code_review': {
+            const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], 'code_review') === 'spec_gap');
+            if (specGapIds.length > 0) {
+                const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
+                const reason =
+                    `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(', ')}. ` +
+                    `The implementation cannot resolve this because the root cause is the spec. ` +
+                    `Review tasks/<id>/review.md for the specific spec problem, amend the spec, ` +
+                    `reset code_review to pending, and re-run.`;
+                console.log('');
+                console.log('════════════════════════════════════════════════════════');
+                console.log('  ✋  SPEC GAP — Code review surfaced a spec problem.');
+                console.log('');
+                console.log('  The code review found a problem in the spec, not a fixable');
+                console.log('  implementation bug. Review the findings:');
+                for (const id of specGapIds) console.log(`    tasks/${id}/review.md`);
+                console.log('');
+                console.log('  To resume after human triage:');
+                for (const id of specGapIds) {
+                    console.log(`    # Amend tasks/${id}/spec.md`);
+                    console.log(`    canon task phase ${id} code_review pending`);
+                }
+                console.log(`    canon run ${taskIds.join(' ')}`);
+                console.log('════════════════════════════════════════════════════════');
+                console.log('');
+                splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
+                process.exit(2);
+            }
+
             const anyChangesRequested = statuses.some(s =>
                 getVerdict(s, 'code_review') === 'changes_requested' ||
                 getVerdict(s, 'code_review') === 'needs_re_review'

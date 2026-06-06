@@ -383,7 +383,7 @@ import path3 from "path";
 // scripts/run-task/types.ts
 var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
 var _PHASE_STATUS_VALUES = ["pending", "in_progress", "done", "changes_requested", "blocked"];
-var _VERDICT_VALUES = ["approved", "approved_with_nits", "changes_requested", "needs_re_review"];
+var _VERDICT_VALUES = ["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap"];
 function isPhaseStatus(value) {
   return typeof value === "string" && _PHASE_STATUS_VALUES.includes(value);
 }
@@ -1653,6 +1653,55 @@ function parseTableH3(markdown, sectionHeading) {
   }
   return rows;
 }
+function parseAllTablesH3(markdown, sectionHeading) {
+  const lines = markdown.split("\n");
+  const headingIndex = lines.findIndex((line) => line.trimEnd() === `### ${sectionHeading}`);
+  if (headingIndex === -1) return [];
+  let sectionEnd = lines.length;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (/^#{1,3}\s/.test(lines[index])) {
+      sectionEnd = index;
+      break;
+    }
+  }
+  const allRows = [];
+  let scanFrom = headingIndex + 1;
+  while (scanFrom < sectionEnd) {
+    let tableStart = -1;
+    for (let i = scanFrom; i < sectionEnd; i += 1) {
+      if (lines[i].trimStart().startsWith("|")) {
+        tableStart = i;
+        break;
+      }
+    }
+    if (tableStart === -1) break;
+    const headerCells = normalizeCells(lines[tableStart]);
+    if (headerCells.length === 0) {
+      scanFrom = tableStart + 1;
+      continue;
+    }
+    let rowStart = tableStart + 1;
+    if (rowStart < sectionEnd) {
+      const maybeSep = normalizeCells(lines[rowStart]);
+      if (isSeparatorRow(maybeSep)) rowStart += 1;
+    }
+    let tableEnd = rowStart;
+    while (tableEnd < sectionEnd && lines[tableEnd].trimStart().startsWith("|")) {
+      tableEnd += 1;
+    }
+    for (let index = rowStart; index < tableEnd; index += 1) {
+      const cells = normalizeCells(lines[index]);
+      if (isSeparatorRow(cells)) continue;
+      const row = {};
+      for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+        row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
+      }
+      allRows.push(row);
+    }
+    scanFrom = tableEnd;
+  }
+  return allRows;
+}
 function parseTable(markdown, sectionHeading) {
   const lines = markdown.split("\n");
   const headingIndex = lines.findIndex((line) => isSectionHeading(line, sectionHeading));
@@ -1733,28 +1782,6 @@ function computeLatestValidationResults(handoffContent) {
     }
   }
   return latest;
-}
-function validateHandoff(taskId) {
-  const handoffPath = path7.join(taskDirFor(taskId), "handoff.md");
-  const specPath = path7.join(taskDirFor(taskId), "spec.md");
-  const issues = [];
-  try {
-    const content = fs6.readFileSync(handoffPath, "utf8");
-    const latestResults = computeLatestValidationResults(content);
-    const hasFail = Array.from(latestResults.values()).some((row) => row.result.trim().toLowerCase() === "fail");
-    if (hasFail) {
-      issues.push("Validation Outcomes table has one or more Fail results");
-    }
-    issues.push(...checkAcCoveragePlaceholders(content));
-    issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults));
-    const { malformed } = parseHandoffChangesRows(taskId);
-    for (const entry of malformed) {
-      issues.push(`Changes table row '${entry.cell}': ${entry.reason}`);
-    }
-  } catch {
-    issues.push("handoff.md not found");
-  }
-  return issues;
 }
 function canonicalizeValidationCheck(value) {
   const backtickMatch = value.match(/`([^`]+)`/);
@@ -1903,6 +1930,62 @@ function verifyRerouteAmendment(taskId, requiredRound) {
     reason: `no \`## Amendment Round ${requiredRound}\` heading found in ${specPath}`
   };
 }
+function cleanCitedPathToken(rawToken) {
+  return rawToken.trim().replace(/^[`'"\[({<]+/, "").replace(/[>`'"\])}.,;]+$/, "");
+}
+function stripCitedLocation(token) {
+  return token.replace(/:\d+(?::\d+)?$/, "");
+}
+function hasLineLocation(token) {
+  return /:\d+(?::\d+)?$/.test(token);
+}
+function hasSpecificFailUnrelatedReference(notes) {
+  for (const rawToken of notes.split(/\s+/)) {
+    const cleaned = cleanCitedPathToken(rawToken);
+    if (!cleaned) continue;
+    if (hasLineLocation(cleaned)) return true;
+    const withoutLocation = stripCitedLocation(cleaned);
+    const hasPathSeparator = withoutLocation.includes("/") || withoutLocation.includes("\\");
+    const hasFilenameExtension = /\.[A-Za-z0-9]+$/.test(withoutLocation);
+    if (hasPathSeparator && hasFilenameExtension) return true;
+  }
+  return false;
+}
+function extractCitedFilePaths(notes) {
+  const seen = /* @__PURE__ */ new Set();
+  const paths = [];
+  for (const rawToken of notes.split(/\s+/)) {
+    const cleaned = cleanCitedPathToken(rawToken);
+    const hasLine = hasLineLocation(cleaned);
+    const withoutLocation = stripCitedLocation(cleaned);
+    if (!withoutLocation || !(withoutLocation.includes("/") || withoutLocation.includes("\\") || /\.[A-Za-z0-9]+$/.test(withoutLocation) || hasLine)) {
+      continue;
+    }
+    const normalized = withoutLocation.replace(/^\.\//, "");
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    paths.push(normalized);
+  }
+  return paths;
+}
+function matchAgainstChangedFiles(citedPath, changedFiles) {
+  const normalized = citedPath.replace(/\\/g, "/").replace(/^\.\//, "");
+  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("../");
+  if (!isAbsolute) {
+    if (normalized.includes("/")) return changedFiles.has(normalized);
+    for (const changedFile of changedFiles) {
+      const lastSegment = changedFile.replace(/\\/g, "/").split("/").pop() ?? "";
+      if (lastSegment === normalized) return true;
+    }
+    return false;
+  }
+  const parts = normalized.split("/");
+  for (let i = 1; i < parts.length; i += 1) {
+    const suffix = parts.slice(i).join("/");
+    if (suffix && changedFiles.has(suffix)) return true;
+  }
+  return false;
+}
 function isPassResult(result) {
   return result.trim().toLowerCase().startsWith("pass");
 }
@@ -1921,6 +2004,9 @@ function isDeferredBySpecResult(result) {
 function isBlockedResult(result) {
   return /^blocked\b/i.test(result.trim());
 }
+function isFailResult(result) {
+  return /^fail/i.test(result.trim());
+}
 function isUnrelatedFailResult(result) {
   return /^fail\s*[–—-]\s*unrelated\b/i.test(result.trim());
 }
@@ -1930,16 +2016,133 @@ function isPendingResult(result) {
   if (/\bPass\s*\/\s*Fail\b/i.test(trimmed)) return true;
   return false;
 }
-function validateHandoffAgainstSpec(specPath, handoffPath, latestResults) {
-  const requiredChecks = parseValidationRequiredChecks(specPath);
+function classifyValidationChecks(requiredChecks, latestResults, changedFiles) {
+  const format = (message) => ({ bucket: "format", message });
+  const regression = (message) => ({ bucket: "regression", message });
+  const blocked = (message) => ({ bucket: "blocked", message });
+  const issues = [];
   if (requiredChecks === null) {
-    return ["Validation Required section is missing from spec.md"];
+    return [format("Validation Required section is missing from spec.md")];
   }
   if (requiredChecks.length === 0) {
     return [
-      "Validation Required section in spec.md has no `[x]`-checked items \u2014 mark at least one required check `[x]`. The template ships with `[ ]` placeholders; the spec author marks the required checks before invoking canon. If no checks apply, use a single `[x] None \u2014 <reason>` entry to document the decision."
+      format(
+        "Validation Required section in spec.md has no `[x]`-checked items \u2014 mark at least one required check `[x]`. The template ships with `[ ]` placeholders; the spec author marks the required checks before invoking canon. If no checks apply, use a single `[x] None \u2014 <reason>` entry to document the decision."
+      )
     ];
   }
+  for (const required of requiredChecks) {
+    const canonical = canonicalizeValidationCheck(required);
+    const row = latestResults.get(canonical);
+    if (!row) {
+      const present = [...latestResults.keys()];
+      const hint = present.length > 0 ? ` Handoff has rows for: ${present.join(", ")}. (Required canonicalized to: '${canonical}'.)` : " Handoff has no Validation Outcomes rows.";
+      issues.push(format(`Validation Required item missing from handoff.md: ${required}.${hint}`));
+      continue;
+    }
+    const note = row.notes ? ` (${row.notes})` : "";
+    if (isPendingResult(row.result)) {
+      issues.push(format(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`));
+      continue;
+    }
+    if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
+      issues.push(format(`Validation Required item marked ${row.result} in handoff.md: ${required} (required checks cannot be skipped \u2014 adjust spec or run the check)`));
+      continue;
+    }
+    if (isDeferredBySpecResult(row.result)) {
+      if (!/spec[:.-]/i.test(row.notes ?? "")) {
+        issues.push(format(`Validation Required item marked deferred_by_spec without a spec citation in Notes: ${required}`));
+      }
+      continue;
+    }
+    if (isHumanPendingResult(row.result)) {
+      continue;
+    }
+    if (isBlockedResult(row.result)) {
+      issues.push(blocked(`Validation Required item marked blocked in handoff.md: ${required}${note} \u2014 triage required (CI/network/infrastructure)`));
+      continue;
+    }
+    if (isUnrelatedFailResult(row.result)) {
+      const hasFileRef = hasSpecificFailUnrelatedReference(row.notes ?? "");
+      if (!hasFileRef) {
+        issues.push(format(`Validation Required item marked Fail \u2013 unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`));
+        continue;
+      }
+      if (changedFiles.size > 0) {
+        const citedPaths = extractCitedFilePaths(row.notes ?? "");
+        const citedChangedFiles = citedPaths.filter((citedPath) => matchAgainstChangedFiles(citedPath, changedFiles));
+        if (citedChangedFiles.length > 0) {
+          issues.push(regression(
+            `Validation Required item marked Fail \u2013 unrelated cites a file changed by this task: ${required}. A failure in a file you modified is yours to fix; if genuinely unrelated, cite a file outside your diff. (cited changed file${citedChangedFiles.length === 1 ? "" : "s"}: ${citedChangedFiles.join(", ")})`
+          ));
+          continue;
+        }
+      }
+      continue;
+    }
+    if (!isPassResult(row.result)) {
+      issues.push(regression(`Validation Required item did not pass in handoff.md: ${required} \u2014 ${row.result}${note}`));
+    }
+  }
+  return issues;
+}
+function classifyPreflightBlockersFromData(data) {
+  const format = (message) => ({ bucket: "format", message });
+  const regression = (message) => ({ bucket: "regression", message });
+  if (data.handoffMissing) return [format("handoff.md not found")];
+  const requiredCanonicalKeys = new Set(
+    (data.requiredChecks ?? []).map((required) => canonicalizeValidationCheck(required))
+  );
+  const fromRequired = classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles);
+  const fromNonRequired = [];
+  for (const [canonical, row] of data.latestResults) {
+    if (requiredCanonicalKeys.has(canonical)) continue;
+    if (isFailResult(row.result) && !isUnrelatedFailResult(row.result)) {
+      const note = row.notes ? ` (${row.notes})` : "";
+      fromNonRequired.push(regression(
+        `Validation Outcomes row not listed in spec's required checks has a plain Fail: ${row.check}${note} \u2014 fix the regression.`
+      ));
+    }
+  }
+  return [
+    ...data.acCoverageIssues.map(format),
+    ...data.changesTableIssues.map(format),
+    ...data.bundleDiffIssues.map(format),
+    ...fromRequired,
+    ...fromNonRequired
+  ];
+}
+function classifyPreflightBlockers(taskId, changedFiles, bundleDiffIssues = []) {
+  const handoffPath = path7.join(taskDirFor(taskId), "handoff.md");
+  const specPath = path7.join(taskDirFor(taskId), "spec.md");
+  try {
+    const content = fs6.readFileSync(handoffPath, "utf8");
+    const latestResults = computeLatestValidationResults(content);
+    const requiredChecks = parseValidationRequiredChecks(specPath);
+    const { malformed } = parseHandoffChangesRows(taskId);
+    return classifyPreflightBlockersFromData({
+      latestResults,
+      requiredChecks,
+      changedFiles,
+      acCoverageIssues: checkAcCoveragePlaceholders(content),
+      changesTableIssues: malformed.map((entry) => `Changes table row '${entry.cell}': ${entry.reason}`),
+      bundleDiffIssues: [...bundleDiffIssues],
+      handoffMissing: false
+    });
+  } catch {
+    return classifyPreflightBlockersFromData({
+      latestResults: /* @__PURE__ */ new Map(),
+      requiredChecks: null,
+      changedFiles,
+      acCoverageIssues: [],
+      changesTableIssues: [],
+      bundleDiffIssues: [...bundleDiffIssues],
+      handoffMissing: true
+    });
+  }
+}
+function validateHandoffAgainstSpec(specPath, handoffPath, latestResults, changedFiles = /* @__PURE__ */ new Set()) {
+  const requiredChecks = parseValidationRequiredChecks(specPath);
   let rowMap;
   if (latestResults) {
     rowMap = latestResults;
@@ -1951,50 +2154,7 @@ function validateHandoffAgainstSpec(specPath, handoffPath, latestResults) {
       rowMap = /* @__PURE__ */ new Map();
     }
   }
-  const issues = [];
-  for (const required of requiredChecks) {
-    const canonical = canonicalizeValidationCheck(required);
-    const row = rowMap.get(canonical);
-    if (!row) {
-      const present = [...rowMap.keys()];
-      const hint = present.length > 0 ? ` Handoff has rows for: ${present.join(", ")}. (Required canonicalized to: '${canonical}'.)` : " Handoff has no Validation Outcomes rows.";
-      issues.push(`Validation Required item missing from handoff.md: ${required}.${hint}`);
-      continue;
-    }
-    const note = row.notes ? ` (${row.notes})` : "";
-    if (isPendingResult(row.result)) {
-      issues.push(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`);
-      continue;
-    }
-    if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
-      issues.push(`Validation Required item marked ${row.result} in handoff.md: ${required} (required checks cannot be skipped \u2014 adjust spec or run the check)`);
-      continue;
-    }
-    if (isDeferredBySpecResult(row.result)) {
-      if (!/spec[:.-]/i.test(row.notes ?? "")) {
-        issues.push(`Validation Required item marked deferred_by_spec without a spec citation in Notes: ${required}`);
-      }
-      continue;
-    }
-    if (isHumanPendingResult(row.result)) {
-      continue;
-    }
-    if (isBlockedResult(row.result)) {
-      issues.push(`Validation Required item marked blocked in handoff.md: ${required}${note} \u2014 triage required (CI/network/infrastructure)`);
-      continue;
-    }
-    if (isUnrelatedFailResult(row.result)) {
-      const hasFileRef = /\w+\.\w+|:\d+/.test(row.notes ?? "");
-      if (!hasFileRef) {
-        issues.push(`Validation Required item marked Fail \u2013 unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`);
-      }
-      continue;
-    }
-    if (!isPassResult(row.result)) {
-      issues.push(`Validation Required item did not pass in handoff.md: ${required} \u2014 ${row.result}${note}`);
-    }
-  }
-  return issues;
+  return classifyValidationChecks(requiredChecks, rowMap, changedFiles).map((issue) => issue.message);
 }
 function countHumanPendingChecks(handoffContent) {
   const latest = computeLatestValidationResults(handoffContent);
@@ -2071,6 +2231,7 @@ function extractCheckedVerdict(content) {
   if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return "approved";
   if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return "changes_requested";
   if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return "needs_re_review";
+  if (/^- \[x\] (?:\*\*)?Spec gap(?:\*\*)?(?:\s|$)/mi.test(scope)) return "spec_gap";
   return null;
 }
 var PHASE_GATE_CONFIG = {
@@ -2216,7 +2377,7 @@ function parseAffectedFilesFromSpec(taskId) {
   const files = /* @__PURE__ */ new Set();
   const malformed = [];
   for (const body of sectionBodies) {
-    const rows = parseTableH3(body, "Affected Files");
+    const rows = parseAllTablesH3(body, "Affected Files");
     for (const row of rows) {
       const firstColumn = Object.values(row)[0] ?? "";
       if (!firstColumn.trim()) continue;
@@ -2463,12 +2624,8 @@ import path9 from "path";
 import fs7 from "fs";
 import path8 from "path";
 function extractAffectedFiles(taskId) {
-  const specPath = path8.join(taskDirFor(taskId), "spec.md");
   try {
-    const content = fs7.readFileSync(specPath, "utf8");
-    const match = content.match(/### Affected Files\n\n\|[^\n]+\|\n\|[^\n]+\|\n((?:\|[^\n]+\|\n?)*)/);
-    if (!match) return [];
-    return match[1].split("\n").filter((l) => l.startsWith("|")).map((row) => row.match(/\|\s*`([^`]+)`/)?.[1]).filter((f) => !!f);
+    return parseAffectedFilesFromSpec(taskId).files;
   } catch {
     return [];
   }
@@ -3154,20 +3311,17 @@ function renderTemplate(template, view) {
   }
 }
 
-// scripts/run-task/prompts/templates/code-review-round-1.md
-var code_review_round_1_default = "You are reviewing implementation for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks to review:\n{{{taskLines}}}\n\nGrounding rule: inspect the current diff and changed files before you trust any statement in handoff.md. If a claim is not visible in the current artifact, treat it as unverified.\n\n**Read in this order: spec.md \u2192 handoff.md \u2192 diff.** Do not read handoff.md first \u2014 Codex's explanation of what it did will anchor your review before you've formed an independent read of the requirements. Let the spec set the frame, then check whether the handoff and diff match it.\n\n{{#hasDiff}}\n**Task diff against {{{baseBranch}}}**\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes \u2014 read changed files listed in handoff.md Changes table directly for the remainder.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRead the actual diff: `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n{{#isBundle}}\nAlso check for cross-task interactions \u2014 unintended coupling or conflicts between tasks.{{/isBundle}}\n\n**Validation gate**: verify each handoff.md Validation Outcomes table has no Fail results and all applicable checks were run.\n`Fail \u2013 unrelated` rows are permitted only when the Notes column names the specific failing test/file \u2014 assess whether the explanation is credible and the failure is genuinely outside the task's Affected Files.\nTreat a required check marked N/A as a failure of the handoff.\n\n**On plan deviations**: Codex may deviate from plan.md if the deviation is documented with justification in handoff.md. Treat documented deviations as design decisions to evaluate \u2014 not automatic violations. Ask: is the AC still met? Is the approach sound?\n\n**Always flag**: dropped or partially-met ACs, undocumented behavior changes, skipped or failed validation checks.\n\nFor each task, write tasks/<id>/review.md. Label every finding: `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap` (something ambiguous or missing in the spec that caused Codex to guess \u2014 flag it so the spec template can improve). On re-review (round 2+), append a `## Round N` section rather than rewriting \u2014 the template's \"On re-review\" comment shows the shape.\n\nSet verdict per task: approved, approved_with_nits, changes_requested, or needs_re_review.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
-
-// scripts/run-task/prompts/templates/code-review-round-n.md
-var code_review_round_n_default = "[REVIEW ROUND {{roundN}} \u2014 verifying iteration {{priorIteration}}'s response to round {{maxIter}} findings]\n\nCodex appended `## Iteration {{priorIteration}}` to `handoff.md` addressing your prior round's findings. If you're resuming the prior review session, the full task framing (spec, prior review history, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and the earlier `## Round` sections of `tasks/<id>/review.md` before verifying the new iteration.\n\nTasks to re-review:\n{{{taskLines}}}\n{{{tightenLine}}}\n{{#hasDiff}}\n**Task diff against {{{baseBranch}}}**\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes \u2014 read changed files listed in handoff.md Changes table directly for the remainder.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRead the actual code diff since your prior review: `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>`.\n{{/hasDiff}}\n\nFor each task:\n1. Read the `## Iteration {{priorIteration}}` section of `tasks/<id>/handoff.md` \u2014 that's the diff under review this round.\n{{#hasDiff}}\n2. Read the pre-computed code diff above. Do not trust handoff claims that are not visible in the diff.\n{{/hasDiff}}\n{{^hasDiff}}\n2. Read the actual code diff since your prior review using `git diff {{{baseBranch}}}...HEAD -- <files-from-iteration-{{priorIteration}}>` when the diff was not precomputed. Do not trust handoff claims that are not visible in the diff.\n{{/hasDiff}}\n3. **Re-fill the Stage 1 AC table.** Every AC from `tasks/<id>/spec.md` gets a row with current Met / Partial / Not Met status against the latest code. This is NOT optional \u2014 earlier rounds' AC tables were snapshots of THOSE iterations' code, and iteration {{priorIteration}}'s changes can have broken previously-Met ACs or fixed previously-failing ones. Only a fresh table catches both directions. ACs that were Not Met or Partial in `## Round {{maxIter}}` are this round's load-bearing focus: confirm whether iteration {{priorIteration}} resolved them. For ACs that were Met in round {{maxIter}} AND whose code paths iteration {{priorIteration}} didn't touch, you may mark them `Met (unchanged from round {{maxIter}})` with a one-line evidence pointer \u2014 no need to re-derive full evidence \u2014 but every AC must still appear in the table.\n4. For each finding in your prior `## Round {{maxIter}}` section of `review.md`, verify whether iteration {{priorIteration}} addressed it. The Stage 1 re-table from step 3 feeds this directly: an AC that was Not Met in round {{maxIter}} and is now Met means the corresponding finding is resolved.\n5. **APPEND** `## Round {{roundN}} \u2014 verifying iteration {{priorIteration}}'s response to round {{maxIter}}` to `review.md` (the template's \"On re-review\" comment shows the shape). Do not rewrite earlier rounds. Include:\n   - **Stage 1 AC re-table** (every AC; current status against current code)\n   - Per-finding verification (addressed / still open / no longer relevant) \u2014 cross-referenced to the AC re-table where applicable\n   - NEW findings introduced by iteration {{priorIteration}}'s changes \u2014 **including any AC that regressed from Met to Not Met since round {{maxIter}}** (regressions in previously-passing ACs are correctness bugs even when no explicit finding called them out)\n   - Verdict for this round\n\nSet verdict per task: `approved`, `approved_with_nits`, `changes_requested`, or `needs_re_review`.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
+// scripts/run-task/prompts/templates/code-review-foreman.md
+var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nYour job is to spawn two review lenses as isolated sub-agents, collect their findings, adjudicate using the spec (which you hold and the cold lens does not), then write one `review.md` and set the verdict.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. Both lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give both lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Foreman Protocol\n\n### 1. Spawn Lenses In Parallel\n\nUse the Task tool to spawn both lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nDo not let either lens see the other lens's output.\n\n### 2. Adjudicate\n\nUse the two lens outputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\n1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record \"flagged by both lenses.\"\n2. Cold-vs-spec reconciliation: if a cold finding is explained as intended by the spec, drop it and record `Dismissed (cold): <finding> - <spec reason>` in `review.md`.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Only optional nits or cleanup -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure. Re-review appends a new `## Round {{roundN}}` section near the bottom, preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the spec reason.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement.md
-var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md and the matrix in AGENTS.md. Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
+var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md and the matrix in AGENTS.md. Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
 // scripts/run-task/prompts/templates/implement-reroute.md
 var implement_reroute_default = "You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n1. For each task above, read `tasks/<id>/spec.md` from your current working directory (the worktree). REPO_ROOT's copy is the pre-implement scaffold and does NOT contain operator amendments. Locate the exact heading named in its entry \u2014 `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.\n2. Check `tasks/<id>/plan.md` for `## Reroute Plan` (round 1) or `## Reroute Plan Round N` (N = that task's reroute round). If present, use that section as the delta guide. If absent (fast-tier reroute with no conversational reroute plan), read the base plan for orientation.\n3. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n4. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n5. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n6. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec's Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n7. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. The reviewer reads handoff.md as the single source of truth, not your prior session's context.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement-revisions.md
-var implement_revisions_default = "{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you're resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template's \"On revision rounds\" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n{{#hasPreflightFindings}}\nYour prior iteration's handoff was rejected by the orchestrator's pre-flight gate **before any Claude review ran**. The rejection details are recorded in `review.md` under `## Validation Gate` / `## Pre-Flight Rejection`. This is an input-validation failure (typically a malformed Validation Outcomes table, missing AC Coverage rows, or a diff/handoff mismatch), not a code-quality finding.\n\nTasks with pre-flight rejection feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read every BLOCKED bullet under `## Validation Gate` (and `## Pre-Flight Rejection` if appended after a prior round) in `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Fix the handoff itself \u2014 usually `handoff.md`'s Validation Outcomes rows (use backticked command keys, not prose labels), AC Coverage table (fill in concrete statuses, no placeholders), or the Changes table (every path in `git diff <base>...HEAD` must have a row).\n3. Source-code changes are usually unnecessary for pre-flight fixes. Only touch source if the rejection lists a concrete bug (e.g., a Fail validation result on a real test).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}`. Include the delta: which BLOCKED items you addressed and how.\n{{/hasPreflightFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
+var implement_revisions_default = '{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you\'re resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template\'s "On revision rounds" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n{{#hasPreflightFindings}}\nYour prior iteration was rejected by the orchestrator\'s pre-flight gate **before any Claude review ran**. The rejection details are recorded in `review.md` under `## Validation Gate` / `## Pre-Flight Rejection`.\n\nTasks with pre-flight rejection feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the pre-flight block in `tasks/<id>/review.md` and follow **whichever framing it carries**:\n   - **"Fix the handoff"** items \u2192 fix `handoff.md` (Validation Outcomes rows, AC Coverage table, Changes table).\n   - **"Fix the code"** items \u2192 a required check failed on a file you changed. Fix the regression, re-run the check, and update the handoff.\n   - Both framings may be present \u2014 address all items from both before resubmitting.\n2. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}`. Include the delta: which items you addressed and how.\n{{/hasPreflightFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
 // scripts/run-task/prompts/templates/plan-reroute.md
 var plan_reroute_default = "You are updating the implementation plan for {{taskScope}} for {{projectName}} after a human reroute.\n\n{{{startup}}}\n\nThe spec was amended after human review and Codex has reviewed the amendment. Your job is to **append** a reroute plan section to `plan.md`; do not rewrite or remove existing plan content.\n\n{{{roundBanner}}}Amendment review verdicts:\n{{{verdictLines}}}\n\nFor each task:\n1. Read `tasks/<id>/spec.md` from your current directory, including the amendment for the round listed above.\n2. Read `tasks/<id>/plan.md` to understand the prior plan.\n3. Read `tasks/<id>/handoff.md` to understand what Codex previously shipped.\n4. Read `tasks/<id>/spec-review.md` for the latest reroute amendment review and any nits to incorporate.\n5. Append a new section to `tasks/<id>/plan.md`:\n   - Round 1: `## Reroute Plan`\n   - Round N >= 2: `## Reroute Plan Round N`\n6. Plan only the delta from the amendment. Reference specific files, functions, and existing patterns. Acknowledge prior plan steps that still apply without re-planning them.\n\nDo **not** rewrite or remove existing sections from `plan.md`. The appended reroute plan is what implement-reroute reads as its delta guide.\n\nWhen done, run:\n{{{phaseCommands}}}\n\n<!-- per-round append shape:\n## Reroute Plan [Round N]\n### Delta\n- ...ordered steps for the amendment delta only...\n-->\n";
@@ -3192,8 +3346,7 @@ var spec_review_default = "You are reviewing {{taskScope}} for {{projectName}}.\
 
 // scripts/run-task/prompts/index.ts
 var TEMPLATES = {
-  "code-review-round-1.md": code_review_round_1_default,
-  "code-review-round-n.md": code_review_round_n_default,
+  "code-review-foreman.md": code_review_foreman_default,
   "implement.md": implement_default,
   "implement-reroute.md": implement_reroute_default,
   "implement-revisions.md": implement_revisions_default,
@@ -3398,12 +3551,12 @@ function promptImplementRevisions(state, affectedFiles, baseBranch) {
   const hasReviewFindings = maxCodeReviewIter > 0 && !hasPreflightFindings;
   const iterationN = maxCodeReviewIter + 1;
   const priorRound = maxCodeReviewIter;
-  const iterBanner = hasPreflightFindings ? `[ITERATION ${iterationN} \u2014 addressing pre-flight handoff rejection (no Claude review yet)]` : `[ITERATION ${iterationN} \u2014 addressing code review round ${priorRound}]`;
-  const handoffAppend = hasPreflightFindings ? `## Iteration ${iterationN} \u2014 addressing pre-flight handoff rejection` : `## Iteration ${iterationN} \u2014 addressing review round ${priorRound}`;
+  const iterBanner = hasPreflightFindings ? `[ITERATION ${iterationN} \u2014 addressing pre-flight rejection]` : `[ITERATION ${iterationN} \u2014 addressing code review round ${priorRound}]`;
+  const handoffAppend = hasPreflightFindings ? `## Iteration ${iterationN} \u2014 addressing pre-flight rejection` : `## Iteration ${iterationN} \u2014 addressing review round ${priorRound}`;
   const reviewLines = hasReviewFindings ? tasks.map(
     (t) => `- \`${t.taskId}\` \u2192 read \`tasks/${t.taskId}/review.md\` (most recent \`## Round ${priorRound}\` section only \u2014 earlier rounds are already addressed)`
   ).join("\n") : hasPreflightFindings ? tasks.map(
-    (t) => `- \`${t.taskId}\` \u2192 read \`tasks/${t.taskId}/review.md\` (\`## Pre-Flight Rejection\` block lists handoff-format issues; no Claude review ran). Address every listed item \u2014 usually a malformed Validation Outcomes table or missing AC Coverage rows.`
+    (t) => `- \`${t.taskId}\` \u2192 read \`tasks/${t.taskId}/review.md\` (\`## Validation Gate\` / \`## Pre-Flight Rejection\` block). Follow whichever framing it carries: fix the handoff, fix the code, or both.`
   ).join("\n") : "";
   return render3("implement-revisions.md", {
     projectName: config.projectName,
@@ -3478,40 +3631,9 @@ function promptCodeReview(state, baseBranch, scopedDiff = null) {
   const maxIter = bundleHasRealPriorReview(tasks.map((t) => t.taskId)) ? rawMaxIter : 0;
   const resolvedBaseBranch = baseBranch ?? getBaseBranch(tasks.map((t) => t.taskId));
   const hasDiff = scopedDiff !== null;
-  if (maxIter > 0) {
-    const roundN = maxIter + 1;
-    const priorIteration = maxIter;
-    const diffView2 = hasDiff ? {
-      hasDiff,
-      baseBranch: resolvedBaseBranch,
-      diffContent: scopedDiff.diff,
-      diffTruncated: scopedDiff.truncated
-    } : {
-      hasDiff,
-      baseBranch: resolvedBaseBranch,
-      diffContent: "",
-      diffTruncated: false
-    };
-    const taskLines2 = tasks.map(
-      (t) => `- \`${t.taskId}\` \u2192 read the \`## Iteration ${priorIteration} \u2014 addressing review round ${maxIter}\` section of \`tasks/${t.taskId}/handoff.md\``
-    ).join("\n");
-    const tightenLine = roundN >= 3 ? `
-**Round ${roundN} discipline.** This is round ${roundN}+. Findings must be \`correctness bug\` or \`spec gap\` only \u2014 NO \`optional cleanup/nit\` and no wording-only changes. We are tightening, not exploring. If your only finding is a wording preference, approve.
-` : "";
-    return render3("code-review-round-n.md", {
-      projectName: config.projectName,
-      roundN,
-      priorIteration,
-      maxIter,
-      taskLines: taskLines2,
-      tightenLine,
-      ...diffView2,
-      phaseCommands: phaseCommands(tasks.map((t) => t.taskId), "code_review", "done", "<verdict>")
-    });
-  }
-  const taskLines = tasks.map(
-    (t) => `- \`${t.taskId}\`: read tasks/${t.taskId}/handoff.md and cross-reference tasks/${t.taskId}/spec.md ACs`
-  ).join("\n");
+  const isRound1 = maxIter === 0;
+  const roundN = maxIter + 1;
+  const priorIteration = maxIter;
   const diffView = hasDiff ? {
     hasDiff,
     baseBranch: resolvedBaseBranch,
@@ -3523,12 +3645,23 @@ function promptCodeReview(state, baseBranch, scopedDiff = null) {
     diffContent: "",
     diffTruncated: false
   };
-  return render3("code-review-round-1.md", {
+  const taskLines = isRound1 ? tasks.map(
+    (t) => `- \`${t.taskId}\`: read tasks/${t.taskId}/handoff.md and cross-reference tasks/${t.taskId}/spec.md ACs`
+  ).join("\n") : tasks.map(
+    (t) => `- \`${t.taskId}\` -> read the Iteration ${priorIteration} section of \`tasks/${t.taskId}/handoff.md\` that addresses review round ${priorIteration}`
+  ).join("\n");
+  const tightenLine = roundN >= 3 ? `**Round ${roundN} discipline.** Findings must be \`correctness bug\` or \`spec gap\` only - no \`optional cleanup/nit\` and no wording-only changes. We are tightening, not exploring. If your only finding is a wording preference, approve.` : "";
+  return render3("code-review-foreman.md", {
     projectName: config.projectName,
     startup: CLAUDE_STARTUP,
     taskScope: tasks.length > 1 ? "a bundle of tasks" : `task "${tasks[0].taskId}"`,
     taskLines,
     isBundle: tasks.length > 1,
+    isRound1,
+    roundN,
+    priorIteration,
+    maxIter,
+    tightenLine,
     ...diffView,
     phaseCommands: phaseCommands(tasks.map((t) => t.taskId), "code_review", "done", "<verdict>")
   });
@@ -3626,7 +3759,7 @@ function refreshCanonSnapshotsAtPaths(statusFilePaths, options = {}) {
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
-var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review"]);
+var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -3690,7 +3823,10 @@ function assertValidVerdict(phase, verdict) {
     throw new Error("Error: verdict is only valid for spec_review and code_review phases");
   }
   if (!VALID_VERDICTS.has(verdict)) {
-    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review`);
+    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap`);
+  }
+  if (verdict === "spec_gap" && phase !== "code_review") {
+    throw new Error(`Error: verdict 'spec_gap' is only valid for the code_review phase, not '${phase}'.`);
   }
 }
 function priorIncompletePhases(status, phase) {
@@ -3716,7 +3852,7 @@ function updateReviewCounters(entry, verdict) {
     entry.changes_requested_total += 1;
     entry.iterations = entry.iterations_current_loop;
     entry.preflight_rejections_current_loop = 0;
-  } else if (verdict === "approved" || verdict === "approved_with_nits") {
+  } else if (verdict === "approved" || verdict === "approved_with_nits" || verdict === "spec_gap") {
     entry.iterations_total += 1;
     entry.iterations_current_loop = 0;
     entry.iterations = 0;
@@ -3807,6 +3943,157 @@ function taskPhasePreflightRejected(id, phaseArg) {
 }
 
 // scripts/run-task/phases/code-review.ts
+function determinePreflightRoute(failures) {
+  const allClassified = failures.flatMap((failure) => failure.classified);
+  const hasFixable = allClassified.some((blocker) => blocker.bucket === "format" || blocker.bucket === "regression");
+  return hasFixable ? "implement" : "auto_block";
+}
+function bullets(issues) {
+  return issues.map((issue) => `- ${issue.message}`).join("\n");
+}
+function buildPreflightReviewBlock(classified, route) {
+  const formatIssues = classified.filter((issue) => issue.bucket === "format");
+  const regressionIssues = classified.filter((issue) => issue.bucket === "regression");
+  const blockedIssues = classified.filter((issue) => issue.bucket === "blocked");
+  const sections = [
+    "## Validation Gate",
+    "",
+    "## Pre-Flight Rejection",
+    ""
+  ];
+  if (route === "auto_block") {
+    sections.push(
+      "**HALTED \u2014 infrastructure unavailable before full review:**",
+      "",
+      "### Human triage required",
+      "",
+      bullets(blockedIssues),
+      "",
+      "Infrastructure was unavailable, so the required check status is unknown. Re-implementing cannot resolve this. Triage the infrastructure, update the Validation Outcomes rows once the checks can run, reset `phases.code_review.status` to `pending`, and re-run the pipeline."
+    );
+    return `${sections.join("\n")}
+`;
+  }
+  sections.push("**BLOCKED \u2014 pre-flight rejected before full review:**", "");
+  if (formatIssues.length > 0) {
+    sections.push(
+      "### Fix the handoff",
+      "",
+      bullets(formatIssues),
+      "",
+      "Fix the handoff structure called out above, then resubmit.",
+      ""
+    );
+  }
+  if (regressionIssues.length > 0) {
+    sections.push(
+      "### Fix the code",
+      "",
+      bullets(regressionIssues),
+      "",
+      "You broke one or more required checks. Fix the regression, re-run the failing check, and update the Validation Outcomes row. Use `Fail \u2013 unrelated` only when the failure is genuinely outside your changed files and the Notes cite a specific file/line reference outside your diff.",
+      ""
+    );
+  }
+  if (blockedIssues.length > 0) {
+    sections.push(
+      "### Infra note (address the above first)",
+      "",
+      bullets(blockedIssues),
+      "",
+      "Address the fixable items above first; blocked rows will be re-evaluated on the next pre-flight.",
+      ""
+    );
+  }
+  sections.push(
+    "## Verdict",
+    "",
+    "- [x] **Changes requested** \u2014 address the items above and resubmit."
+  );
+  return `${sections.join("\n")}
+`;
+}
+function siblingBullets(siblingTaskIds) {
+  return siblingTaskIds.map((taskId) => `- \`${taskId}\` \u2014 see \`tasks/${taskId}/review.md\``).join("\n");
+}
+function buildCleanTaskReviewStub(taskId, siblingTaskIds, route, appendHeadingN) {
+  const siblings = siblingBullets(siblingTaskIds);
+  if (route === "auto_block") {
+    const heading2 = appendHeadingN === null ? "## Bundle Pre-Flight Halt" : `## Bundle Pre-Flight Halt (round ${appendHeadingN}) \u2014 sibling infrastructure unavailable`;
+    const sections2 = [
+      ...appendHeadingN === null ? [`# Code Review: ${taskId}`, ""] : [],
+      heading2,
+      "",
+      "This task is part of a bundle whose handoff pre-flight found only infrastructure-blocked validation rows. The required checks could not run, so no Claude review ran and re-implementation cannot resolve it.",
+      "",
+      "This task itself had no per-task pre-flight findings \u2014 the halt was triggered by sibling task(s) in the bundle:",
+      "",
+      siblings,
+      "",
+      'Human triage required: restore the infrastructure, update the affected sibling\'s `handoff.md` Validation Outcomes rows, set `phases.code_review.status = "pending"` for all bundle tasks, and re-run the pipeline.'
+    ];
+    return `${sections2.join("\n")}
+`;
+  }
+  const heading = appendHeadingN === null ? "## Bundle Pre-Flight Rejection" : `## Bundle Pre-Flight Rejection (round ${appendHeadingN}) \u2014 sibling task(s) failed`;
+  const sections = [
+    ...appendHeadingN === null ? [`# Code Review: ${taskId}`, ""] : [],
+    heading,
+    "",
+    "This task is part of a bundle whose handoff failed orchestrator pre-flight validation. No Claude review ran for the bundle.",
+    "",
+    "This task itself had no per-task pre-flight findings \u2014 the rejection was triggered by sibling task(s) in the bundle:",
+    "",
+    siblings
+  ];
+  if (appendHeadingN === null) {
+    sections.push(
+      "",
+      "## Verdict",
+      "",
+      "- [x] **Changes requested** \u2014 fix the sibling task(s) above and resubmit handoff."
+    );
+  }
+  return `${sections.join("\n")}
+`;
+}
+function writePreflightReviewArtifacts(tasks, preflightFailed, route) {
+  if (preflightFailed.length === 0) return false;
+  const failuresByTask = new Map(preflightFailed.map((failure) => [failure.taskId, failure]));
+  const siblingTaskIds = preflightFailed.map((failure) => failure.taskId);
+  for (const t of tasks) {
+    const reviewPath = path12.join(taskDirFor(t.taskId), "review.md");
+    let existing = "";
+    try {
+      existing = fs11.readFileSync(reviewPath, "utf8");
+    } catch {
+    }
+    const hasPriorRealReview = existing.length > 0 && !isTemplateUnfilled(existing) && /^## Stage 1\b/m.test(existing);
+    const failure = failuresByTask.get(t.taskId);
+    if (failure) {
+      const blockedBlock = buildPreflightReviewBlock(failure.classified, route);
+      const reviewContent2 = hasPriorRealReview ? `${existing.replace(/\s*$/, "")}
+
+---
+
+${blockedBlock}` : `# Code Review: ${t.taskId}
+
+${blockedBlock}`;
+      fs11.writeFileSync(reviewPath, reviewContent2, "utf8");
+      continue;
+    }
+    const currentPreflight = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
+    const appendHeadingN = hasPriorRealReview ? currentPreflight + 1 : null;
+    const stub = buildCleanTaskReviewStub(t.taskId, siblingTaskIds, route, appendHeadingN);
+    const reviewContent = hasPriorRealReview ? `${existing.replace(/\s*$/, "")}
+
+---
+
+${stub}` : stub;
+    fs11.writeFileSync(reviewPath, reviewContent, "utf8");
+  }
+  return true;
+}
 async function runCodeReviewPhase(state, interactive, resumeId) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
@@ -3831,62 +4118,30 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
     autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
     process.exit(2);
   }
+  const changedFiles = new Set(getAffectedFiles(baseBranch, activeCwd));
+  const bundleIssues = verifyHandoffAgainstDiff(taskIds, baseBranch);
   const preflightFailed = [];
   for (const t of tasks) {
-    const issues = validateHandoff(t.taskId);
-    if (issues.length > 0) preflightFailed.push({ taskId: t.taskId, issues });
-  }
-  const bundleIssues = verifyHandoffAgainstDiff(taskIds, baseBranch);
-  if (bundleIssues.length > 0) {
-    for (const taskId of taskIds) {
-      const existing = preflightFailed.find((entry) => entry.taskId === taskId);
-      if (existing) {
-        existing.bundleIssues = bundleIssues;
-      } else {
-        preflightFailed.push({ taskId, issues: [], bundleIssues });
-      }
-    }
+    const taskBundleIssues = bundleIssues.filter(
+      (issue) => !issue.startsWith("[") || issue.startsWith(`[${t.taskId}]`)
+    );
+    const classified = classifyPreflightBlockers(t.taskId, changedFiles, taskBundleIssues);
+    if (classified.length > 0) preflightFailed.push({ taskId: t.taskId, classified });
   }
   if (preflightFailed.length > 0) {
+    const route = determinePreflightRoute(preflightFailed);
     warn("Validation pre-flight FAILED \u2014 rejecting handoff without Claude review:");
-    for (const { taskId, issues, bundleIssues: taskBundleIssues } of preflightFailed) {
-      for (const issue of issues) warn(`  [${taskId}] ${issue}`);
-      if (taskBundleIssues) {
-        for (const issue of taskBundleIssues) warn(`  [bundle:${taskId}] ${issue}`);
-      }
-      const perTaskSection = issues.length > 0 ? `${issues.map((i) => `- ${i}`).join("\n")}
-` : "";
-      const bundleSection = taskBundleIssues && taskBundleIssues.length > 0 ? `
-### Bundle-Level Handoff Verification
-
-${taskBundleIssues.map((i) => `- ${i}`).join("\n")}
-` : "";
-      const blockedBlock = `## Validation Gate
-
-**BLOCKED \u2014 pre-flight rejected handoff before full review:**
-
-` + perTaskSection + bundleSection + `
-## Verdict
-
-- [x] **Changes requested** \u2014 fix the above and resubmit handoff.
-`;
-      const reviewPath = path12.join(taskDirFor(taskId), "review.md");
-      let existing = "";
-      try {
-        existing = fs11.readFileSync(reviewPath, "utf8");
-      } catch {
-      }
-      const hasPriorRealReview = existing.length > 0 && !isTemplateUnfilled(existing) && /^## Stage 1\b/m.test(existing);
-      const reviewContent = hasPriorRealReview ? `${existing.replace(/\s*$/, "")}
-
----
-
-## Pre-Flight Rejection \u2014 handoff rejected before review (no Claude session ran)
-
-${blockedBlock}` : `# Code Review: ${taskId}
-
-${blockedBlock}`;
-      fs11.writeFileSync(reviewPath, reviewContent);
+    for (const { taskId, classified } of preflightFailed) {
+      for (const issue of classified) warn(`  [${taskId}:${issue.bucket}] ${issue.message}`);
+    }
+    writePreflightReviewArtifacts(tasks, preflightFailed, route);
+    if (route === "auto_block") {
+      const reason = `Code review pre-flight found only blocked validation rows for task(s) ${preflightFailed.map((f) => f.taskId).join(", ")}. Infrastructure was unavailable, and re-implementation cannot resolve it. Human triage required. To resume after infrastructure is restored: update the affected handoff.md Validation Outcomes rows, set phases.code_review.status = "pending" for all bundle tasks in status.json, and re-run the pipeline.`;
+      warn(reason);
+      autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
+      process.exit(2);
+    }
+    for (const { taskId } of tasks) {
       taskPhasePreflightRejected(taskId, "code_review");
     }
     return { agent: "claude", sessionId: null, exitCode: 0 };
@@ -5021,6 +5276,27 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
 ` + baseDivergenceResult.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
     );
   }
+  const docsRefsScript = path17.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
+  if (fs16.existsSync(docsRefsScript)) {
+    const docsRefsResult = spawnSync6("node", [docsRefsScript], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8"
+    });
+    if (docsRefsResult.status !== 0) {
+      const docsRefsOutput = (docsRefsResult.stderr ?? "").trim();
+      if (cliArgs.force) {
+        warn(`--force: docs-refs-check found broken refs (bypassed):
+${docsRefsOutput}`);
+      } else {
+        die(
+          `--pr aborted: docs-refs-check found broken refs in task artifacts that would be committed.
+${docsRefsOutput}
+Fix the references and re-run --pr/--push. Use --force to bypass.`
+        );
+      }
+    }
+  }
   const baseDriftResult = verifyBaseDrift(taskIds, baseBranch, cwd);
   if (baseDriftResult.fetchFailed) {
   } else if (baseDriftResult.diffFailed) {
@@ -6049,6 +6325,29 @@ async function checkAndRoute(phase, taskIds) {
       autoCommitCode(taskIds, getActiveCwd(taskIds));
       return;
     case "code_review": {
+      const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], "code_review") === "spec_gap");
+      if (specGapIds.length > 0) {
+        const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
+        const reason = `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(", ")}. The implementation cannot resolve this because the root cause is the spec. Review tasks/<id>/review.md for the specific spec problem, amend the spec, reset code_review to pending, and re-run.`;
+        console.log("");
+        console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        console.log("  \u270B  SPEC GAP \u2014 Code review surfaced a spec problem.");
+        console.log("");
+        console.log("  The code review found a problem in the spec, not a fixable");
+        console.log("  implementation bug. Review the findings:");
+        for (const id of specGapIds) console.log(`    tasks/${id}/review.md`);
+        console.log("");
+        console.log("  To resume after human triage:");
+        for (const id of specGapIds) {
+          console.log(`    # Amend tasks/${id}/spec.md`);
+          console.log(`    canon task phase ${id} code_review pending`);
+        }
+        console.log(`    canon run ${taskIds.join(" ")}`);
+        console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+        console.log("");
+        autoBlockPhase(taskIds, "code_review", maxIter, reason);
+        process.exit(2);
+      }
       const anyChangesRequested = statuses.some(
         (s) => getVerdict(s, "code_review") === "changes_requested" || getVerdict(s, "code_review") === "needs_re_review"
       );

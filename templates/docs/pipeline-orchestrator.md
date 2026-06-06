@@ -167,7 +167,7 @@ Claude writes QA summary → Human tests
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
-**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the bundle blocks for human spec amendment.
 
 **One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
 
@@ -299,7 +299,14 @@ For projects that version their releases, changelog and version bump remain a ma
 
 ## Phase Routing + Auto-Block
 
-After `spec_review` or `code_review`, the orchestrator checks the verdict. If `changes_requested`, it loops back to the prior agent automatically (up to `MAX_REVIEW_LOOPS`).
+After `spec_review` or `code_review`, the orchestrator checks the verdict.
+
+| Phase | Verdict | Route |
+|---|---|---|
+| `spec_review` | `changes_requested` | Loop back to `spec` automatically, except reroute-amendment reviews block for human revision. |
+| `code_review` | `changes_requested` / `needs_re_review` | Loop back to `implement` automatically. |
+| `code_review` | `spec_gap` | Block `code_review` with an escalation for human spec amendment; do not route to `implement` or `qa`. |
+| `spec_review` / `code_review` | `approved` / `approved_with_nits` | Continue to the next phase. |
 
 **Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
 
@@ -335,11 +342,11 @@ PIPELINE_STALL_TIMEOUT_MS=1800000 canon run <id>
 
 ## Code Review Diff Injection
 
-Both round-1 and round-N code review prompts include a scoped diff: `git diff <baseBranch>...HEAD` run in the active worktree (three-dot, so only commits on the task branch are included, not unrelated divergence on `baseBranch`). The diff is capped at 50,000 bytes; if truncated, the prompt notes it. This keeps the reviewer focused on the task delta and avoids attributing unrelated baseline work to the current task.
+The code-review foreman prompt includes a scoped diff: `git diff <baseBranch>...HEAD` run in the active worktree (three-dot, so only commits on the task branch are included, not unrelated divergence on `baseBranch`). The diff is capped at 50,000 bytes; if truncated, the prompt notes it. The foreman gives the anchored lens the diff plus spec/handoff context and gives the cold lens the diff without spec/AC/canon context.
 
 ## Per-Iteration Prompt Slimming
 
-Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context; round-1 findings are durable in the artifacts; the round-2+ prompts target only the delta.
+Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context; round-1 findings are durable in the artifacts; the round-2+ prompts target only the delta. Code-review re-runs both lenses from scratch on every round before the foreman synthesizes the new verdict.
 
 **Cumulative artifacts.** `handoff.md` and `review.md` grow by section per round:
 - Round 1 fills the existing template structure.

@@ -91,3 +91,21 @@ When a large block of code is deleted in a retirement or refactoring task, share
 *(2026-06-04, source: pr-body-completeness-guards)*
 
 A test that asserts "list A must cover set B" can only avoid duplicating list A if it can import A directly. When the guarded list is module-private, the test has two choices: export the list, or hardcode a second copy — and hardcoding re-introduces the exact drift the guard exists to prevent. Prevention: when writing a drift-guard test, check whether the guarded constant is exported. If not, exporting it is the right fix (not duplicating it in the test). The tell: a new drift-guard test that, to compile, declares its own `const EXPECTED_... = [...]` next to the one it's supposed to guard against. In `src/cli/commands/doctor.ts`, `EXPECTED_TEMPLATES` was module-private until this task exported it for the AC-2 drift guard.
+
+### Adding a new verdict requires updating both the TypeScript type union and the separate runtime validator
+
+*(2026-06-05, source: multi-agent-code-review)*
+
+Canon's verdict type (`Verdict` union in `scripts/run-task/types.ts`) and the runtime validator (`VALID_VERDICTS` set + `assertValidVerdict()` in `src/task/index.ts`) diverge by design. Adding a new verdict to only the type union makes TypeScript happy but leaves `canon task phase ... <verdict>` throwing a runtime error — the command calls `assertValidVerdict()` before writing `status.json`. Similarly, the CLI help list (`src/cli/index.ts`) and the `extractCheckedVerdict()` regex in `scripts/run-task/validation.ts` are separate surfaces that both need the new value. When a spec adds a new verdict, enumerate all four surfaces explicitly in the Affected Files table (or use AC-10's full seven-surface enumeration as the template). The tell: TypeScript compiles cleanly but `canon task phase ... <new_verdict>` fails at runtime with an "unknown verdict" error.
+
+### When appending an audit block to a versioned artifact, use a non-scoping heading to preserve prior verdict parsing
+
+*(2026-06-06, source: bundle-preflight-atomic-rejection)*
+
+When a pre-flight or other orchestrator block appends to a `review.md` that already contains a real verdict (`- [x] **Approved**`), the append heading must NOT match the verdict parser's scope delimiter (`## Round`). `extractCheckedVerdict` uses `extractSectionBodies(content, /^## Round\b/)` to scope parsing to the latest `## Round N` body when one exists — so a new `## Round`-headed block with no verdict checkbox would return `undefined` instead of the prior approval. The correct pattern: use a non-`## Round` heading (e.g., `## Bundle Pre-Flight Rejection (round <N>)`) and omit the verdict checkbox entirely. This applies to any future path that appends administrative blocks (halts, rejections, audit notes) to a file that `extractCheckedVerdict` must also parse for routing. Prevention: grep `extractSectionBodies(content, /^## Round\b/)` in `scripts/run-task/validation.ts` before choosing an append heading. The tell: `extractCheckedVerdict` returns `undefined` on a file with a clear prior checked verdict, because a `## Round`-headed append block with no checkbox was added after it.
+
+### A gate with one rejection message for all failure classes trains agents to fix the layer the message names
+
+*(2026-06-05, source: preflight-failure-routing)*
+
+When a validation gate emits the same verdict text for structurally different failure classes, the implementer learns to fix whichever layer the message points at — not the actual root cause. The concrete failure: the code_review pre-flight said "fix the handoff" for every blocker, including real test regressions; Codex's path of least resistance became relabeling `Fail` rows as `Fail – unrelated` (a handoff edit) rather than fixing the broken check. This looped until the review cap hit. Prevention: when writing or extending a gate, enumerate the distinct failure classes and emit a separate verdict message for each class that names the correct fix action ("fix the handoff" vs. "fix the code"). A single catch-all message is a design smell — it means the gate is conflating classes. The tell: a gate that fires repeatedly on the same failure while the agent iterates on the wrong layer.

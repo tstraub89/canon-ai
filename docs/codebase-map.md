@@ -45,13 +45,36 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()`, top-level `switch` dispatch for all `canon` commands |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `scripts/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
-| Task management helper (status.json updates, phase transitions) | `scripts/task.sh` | jq-driven; agents and humans both use it |
+| Task management helper (status.json updates, phase transitions) | `src/task/index.ts` | `taskCmd()` implementation; `src/cli/commands/task.ts` is the thin CLI wrapper |
+| `canon run` CLI dispatch wrapper | `src/cli/commands/run-task.ts` | Spawns the compiled `scripts/run-task.ts` via `spawnSync`; the installed-package entry point for `canon run` |
+| `canon update` command | `src/cli/commands/update.ts` | Detects install type (`local`/`global`/`npx`); drives adopter update checks |
 | Phase routing logic (phase order, transitions) | `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task/main.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task/validation.ts` | |
 | Handoff Changes-table parser | `scripts/run-task/validation.ts` | Regex-based; extracts backtick-wrapped paths |
 | Spec Affected Files parser | `scripts/run-task/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; used by `commitHumanReviewFiles` (managed-doc allow-list) and `verifyBaseDrift` (base-drift allow-list) |
-| Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts` | `verifyBaseDivergence` / `getUnpushedBaseCommits` checks commit divergence first and blocks at `--push`, `--pr`, and `--ship`; `verifyBaseDrift` / `verifyBaseDriftFromData` remains the file-allow-list gate for `--push`/`--pr`; `getTreeDriftFiles` in `git.ts` is the low-level tree-drift helper |
+| Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts` | `verifyBaseDivergence` / `verifyBaseDivergenceFromData` in `validation.ts` checks commit divergence first and blocks at `--push`, `--pr`, and `--ship`; `verifyBaseDrift` / `verifyBaseDriftFromData` remains the file-allow-list gate for `--push`/`--pr`; `getUnpushedBaseCommits` / `getTreeDriftFiles` in `git.ts` are the low-level helpers |
+
+## Internal Orchestrator Modules
+
+Supporting modules consumed by `scripts/run-task/main.ts` and the phase handlers. Not entry points — agents rarely need to read these directly, but they're the right place to look when tracing a specific behavior.
+
+| What | Where | Notes |
+|---|---|---|
+| Type definitions | `scripts/run-task/types.ts` | `Phase`, `PhaseStatus`, `Verdict`, `PHASE_ORDER`, `StatusJson`, `CliArgs` |
+| Environment constants | `scripts/run-task/env.ts` | `REPO_ROOT`, `WORKTREES_ROOT`, all env-var config; synced at module load |
+| Policy config wrappers | `scripts/run-task/policy.ts` | Claude/Codex model and size getters; wraps `scripts/pipeline-policy.ts` with resolved config |
+| Task context extractors | `scripts/run-task/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
+| Signal handlers | `scripts/run-task/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |
+| Detached-mode isolation | `scripts/run-task/detach.ts` | Process group detachment for SIGHUP-safe background runs |
+| Heartbeat monitor | `scripts/run-task/heartbeat.ts` | Per-task `.heartbeat.json` writes at 30s intervals; used by `canon watch` / `canon doctor` to detect live vs. stale runs |
+| Phase gate validator | `scripts/run-task/check-phase-gate.ts` | CLI wrapper around `checkPhaseGate()`; called by `canon task phase` before status writes |
+| Canon snapshot | `scripts/run-task/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
+| Markdown table parser | `scripts/run-task/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |
+| Prompt rendering | `scripts/run-task/prompts/render.ts` | Mustache rendering with LLM-safe escape-disable; consumed by `scripts/run-task/prompts/index.ts` |
+| Prompt startup constants | `scripts/run-task/prompts/helpers.ts` | `CLAUDE_STARTUP`, `CODEX_STARTUP` strings injected into every agent prompt |
+| Agent stream handler | `scripts/run-task/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
+| Canon-managed files whitelist | `src/lib/canon-owned.ts` | `CANON_OWNED` and `DELIMITED` lists — authoritative source for which files `canon upgrade` controls |
 
 ## Task Lifecycle Artifacts
 
@@ -97,6 +120,13 @@ These must stay current — agents read them at session start (per phase rules i
 | Docs refs validator | `scripts/docs-refs-check.mjs` | Markdown reference gate; run via `npm run docs-refs-check` |
 | Docs refs config | `scripts/docs-refs-config.mjs` | Adopter-owned tuning surface loaded by `scripts/docs-refs-check.mjs`; canon-ai-dev re-adds `templates/` here so its own gate still scans templates. |
 | Canon-managed template sync | `tests/sync-canon-templates.test.ts` | Sync direction, delimiter preservation, CLI check, hook regression |
+| CLI integration tests | `tests/cli.test.ts` | `canon upgrade`, `canon init`, canon-block extraction and upsert |
+| Orchestrator harness tests | `tests/run-task-harness.test.ts` | Affected-files extraction, AC summary, validation checks extraction |
+| Task CLI tests | `tests/task-cli.test.ts` | `canon task` subcommand dispatch and argument validation |
+| Signal + detach tests | `tests/run-task-signals.test.ts`, `tests/detach.test.ts` | SIGHUP handler registration, process group isolation |
+| Heartbeat tests | `tests/heartbeat.test.ts` | Write intervals, stale-detection thresholds |
+| Markdown table parser tests | `tests/markdown-table.test.ts` | Escaped pipes, empty cells, malformed rows |
+| `canon stop` command tests | `tests/stop.test.ts` | CASE A–D pid selection, SIGTERM → SIGKILL sequencing |
 
 Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test files import directly from `scripts/`.
 
@@ -114,6 +144,8 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
 | Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | `../dev-worktrees` |
 | Git ignores | `.gitignore` | |
+| Postinstall git-hooks setup | `scripts/install-git-hooks.mjs` | Conditional `simple-git-hooks` wrapper; skips gracefully when no `.git/` present (e.g. adopter CI) |
+| Build dist/ path normalizer | `scripts/normalize-dist-paths.mjs` | Post-build step that normalizes worktree symlink path comments in `dist/` |
 
 ## Public Assets (README only)
 
@@ -127,7 +159,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > Common changes that touch multiple files. Use as starting checklists, not exhaustive.
 
 **Add a new pipeline phase**:
-> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `scripts/task.sh` (`cmd_phase()` validation) → `.canon/templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
+> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `src/task/index.ts` (`VALID_PHASES`, `assertValidPhase()`) → `.canon/templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
 
 **Add a new validation check (handoff or pre-flight gate)**:
 > `scripts/run-task/validation.ts` (or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `.canon/templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)

@@ -53,7 +53,7 @@ canon task subcommands:
                             phases:   spec | spec_review | plan | implement |
                                       code_review | qa | human_review
                             status:   pending | in_progress | done | changes_requested | blocked
-                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review
+                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review | spec_gap
                                       (verdict applies to spec_review and code_review only)
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.

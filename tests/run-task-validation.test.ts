@@ -8,18 +8,23 @@ import {
     parseNameStatusOutput,
 } from '../scripts/run-task/git.js';
 import {
+    autoBlockPhase,
     deriveTopLevelStatus,
     readStatus,
     writeStatusToFile,
 } from '../scripts/run-task/state.js';
-import type { StatusJson } from '../scripts/run-task/types.js';
+import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
 import {
     canonicalizeValidationCheck,
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
+    classifyPreflightBlockersFromData,
     computeLatestValidationResults,
+    extractCheckedVerdict,
+    extractCitedFilePaths,
     extractHandoffPath,
     isPrBodyTemplate,
+    matchAgainstChangedFiles,
     parseAffectedFilesFromSpec,
     parseHandoffChangesRows,
     parseHandoffFiles,
@@ -33,7 +38,13 @@ import {
     sliceRerouteRoundSection,
     verifyRerouteAmendment,
 } from '../scripts/run-task/validation.js';
-import { resolveQaPrBody } from '../scripts/run-task/main.js';
+import { checkAndRoute, resolveQaPrBody } from '../scripts/run-task/main.js';
+import {
+    buildPreflightReviewBlock,
+    determinePreflightRoute,
+    writePreflightReviewArtifacts,
+} from '../scripts/run-task/phases/code-review.js';
+import { taskPhasePreflightRejected } from '../src/task/index.js';
 
 function withTempPair(
     specContent: string,
@@ -59,6 +70,120 @@ function withTempDir(prefix: string, fn: (dir: string) => void): void {
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+}
+
+function withTempTasks<T>(fn: (tasksRoot: string) => T): T {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-validation-tasks-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const previousOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        fs.mkdirSync(tasksRoot, { recursive: true });
+        return fn(tasksRoot);
+    } finally {
+        if (previousOverride === undefined) {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        } else {
+            process.env.CANON_TASKS_DIR_OVERRIDE = previousOverride;
+        }
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+async function withTempTasksAsync<T>(fn: (tasksRoot: string) => Promise<T>): Promise<T> {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-validation-tasks-'));
+    const tasksRoot = path.join(root, 'tasks');
+    const previousOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+    try {
+        fs.mkdirSync(tasksRoot, { recursive: true });
+        return await fn(tasksRoot);
+    } finally {
+        if (previousOverride === undefined) {
+            delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        } else {
+            process.env.CANON_TASKS_DIR_OVERRIDE = previousOverride;
+        }
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+function makeCodeReviewStatus(
+    taskId: string,
+    codeReviewOverrides: Partial<NonNullable<StatusJson['phases']['code_review']>> = {},
+): StatusJson {
+    return {
+        id: taskId,
+        title: taskId,
+        status: 'code_review',
+        created: '2026-06-06',
+        updated: '2026-06-06',
+        branch: `task/${taskId}`,
+        base_branch: 'dev',
+        task_size: 'S',
+        delicate: false,
+        human_spec_gate: false,
+        full_send: false,
+        worktree: false,
+        phases: {
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0 },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'done', agent: 'codex' },
+            code_review: {
+                status: 'pending',
+                agent: 'claude',
+                verdict: '',
+                iterations: 0,
+                iterations_current_loop: 0,
+                iterations_total: 0,
+                changes_requested_total: 0,
+                preflight_rejections_current_loop: 0,
+                preflight_rejections_total: 0,
+                auto_block_count: 0,
+                ...codeReviewOverrides,
+            },
+            qa: { status: 'pending', agent: 'claude' },
+            human_review: { status: 'pending', agent: 'human' },
+        },
+        escalations: [],
+        sessions: {},
+    };
+}
+
+function writeCodeReviewTask(
+    tasksRoot: string,
+    taskId: string,
+    options: {
+        codeReview?: Partial<NonNullable<StatusJson['phases']['code_review']>>;
+        review?: string;
+    } = {},
+): void {
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    writeStatusToFile(path.join(taskDir, 'status.json'), makeCodeReviewStatus(taskId, options.codeReview));
+    if (options.review !== undefined) {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), options.review, 'utf8');
+    }
+}
+
+function readReview(tasksRoot: string, taskId: string): string {
+    return fs.readFileSync(path.join(tasksRoot, taskId, 'review.md'), 'utf8');
+}
+
+function taskContext(tasksRoot: string, taskId: string): TaskContext {
+    const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+    const codeReview = status.phases.code_review;
+    return {
+        taskId,
+        title: status.title ?? taskId,
+        specReviewVerdict: 'approved',
+        iterations: codeReview?.iterations ?? 0,
+        iterations_current_loop: codeReview?.iterations_current_loop ?? codeReview?.iterations ?? 0,
+        iterations_total: codeReview?.iterations_total ?? codeReview?.iterations ?? 0,
+        rerouteCount: codeReview?.reroute_count ?? 0,
+        status,
+    };
 }
 
 function makeHandoffMap(entries: Record<string, readonly string[]>): Map<string, readonly string[]> {
@@ -2297,6 +2422,25 @@ void test('checkPhaseGate: code_review accepts when review.md is filled AND verd
     });
 });
 
+void test('checkPhaseGate: code_review accepts spec_gap when review.md has the Spec gap checkbox checked', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'review.md'), [
+            '# Code Review: real task',
+            '',
+            '## Stage 2 - Code Quality',
+            '',
+            'Spec root cause found.',
+            '',
+            '## Final Verdict',
+            '',
+            '- [ ] **Approved**',
+            '- [x] **Spec gap**',
+        ].join('\n'));
+        const result = checkPhaseGate(taskId, 'code_review', 'spec_gap');
+        assert.deepEqual(result, { ok: true });
+    });
+});
+
 void test('checkPhaseGate: code_review rejects when verdict argument disagrees with checked box in review.md', () => {
     withTempTaskDir((taskId, taskDir) => {
         fs.writeFileSync(path.join(taskDir, 'review.md'), [
@@ -2394,6 +2538,579 @@ void test('result enum: state-detector helpers recognize each new value (case + 
     assert.equal(isBlockedResult('human_pending'), false);
 });
 
+function classifyFixture(
+    rows: Array<{ check?: string; result: string; notes?: string }>,
+    changedFiles: readonly string[] = [],
+    extra: Partial<Parameters<typeof classifyPreflightBlockersFromData>[0]> = {},
+) {
+    return classifyPreflightBlockersFromData({
+        latestResults: new Map(rows.map(row => [
+            canonicalizeValidationCheck(row.check ?? '`npm run test`'),
+            { check: row.check ?? '`npm run test`', result: row.result, notes: row.notes ?? '' },
+        ])),
+        requiredChecks: ['`npm run test`'],
+        changedFiles: new Set(changedFiles),
+        acCoverageIssues: [],
+        changesTableIssues: [],
+        bundleDiffIssues: [],
+        handoffMissing: false,
+        ...extra,
+    });
+}
+
+void test('extractCitedFilePaths strips line and column suffixes from cited paths', () => {
+    assert.deepEqual(extractCitedFilePaths('e2e/specs/editor.spec.ts:1231'), ['e2e/specs/editor.spec.ts']);
+    assert.deepEqual(extractCitedFilePaths('src/foo.ts:42:7'), ['src/foo.ts']);
+    assert.deepEqual(
+        extractCitedFilePaths('tests/a.test.ts:10 tests/b.test.ts:20'),
+        ['tests/a.test.ts', 'tests/b.test.ts'],
+    );
+    assert.deepEqual(extractCitedFilePaths('some prose'), []);
+});
+
+void test('matchAgainstChangedFiles matches relative paths and absolute path suffixes', () => {
+    const changedFiles = new Set(['e2e/specs/editor.spec.ts']);
+
+    assert.equal(matchAgainstChangedFiles('e2e/specs/editor.spec.ts', changedFiles), true);
+    assert.equal(matchAgainstChangedFiles('./e2e/specs/editor.spec.ts', changedFiles), true);
+    assert.equal(matchAgainstChangedFiles('src/other.ts', changedFiles), false);
+    assert.equal(matchAgainstChangedFiles('/workspace/repo/e2e/specs/editor.spec.ts', changedFiles), true);
+    assert.equal(matchAgainstChangedFiles('/workspace/repo/src/other.ts', changedFiles), false);
+    assert.equal(matchAgainstChangedFiles('C:\\workspace\\repo\\e2e\\specs\\editor.spec.ts', changedFiles), true);
+    assert.equal(matchAgainstChangedFiles('editor.spec.ts', changedFiles), true);
+    assert.equal(matchAgainstChangedFiles('foo.spec.ts', changedFiles), false);
+    // ../‐prefixed relative paths are treated as absolute-style (suffix walk)
+    assert.equal(matchAgainstChangedFiles('../e2e/specs/editor.spec.ts', changedFiles), true);
+    assert.equal(matchAgainstChangedFiles('../../e2e/specs/editor.spec.ts', changedFiles), true);
+    assert.equal(matchAgainstChangedFiles('../other/file.ts', changedFiles), false);
+});
+
+void test('extractCitedFilePaths includes extensionless filenames when they have a :line reference', () => {
+    // Extensionless files (Dockerfile, Makefile, Gemfile) with a line number
+    // must not be dropped by the extension filter — they are valid citations.
+    assert.deepEqual(extractCitedFilePaths('Dockerfile:17'), ['Dockerfile']);
+    assert.deepEqual(extractCitedFilePaths('Makefile:42'), ['Makefile']);
+    // A bare line-number token with no filename is still dropped (empty after strip).
+    assert.deepEqual(extractCitedFilePaths(':1231'), []);
+    // Extensionless file with NO line ref is not emitted (outer check already
+    // rejects it, but belt-and-suspenders: extractCitedFilePaths also drops it).
+    assert.deepEqual(extractCitedFilePaths('Dockerfile'), []);
+});
+
+void test('classifyPreflightBlockersFromData rejects Fail – unrelated when cited file is in the diff', () => {
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: 'e2e/specs/editor.spec.ts:1231 (Editor flake)' }],
+        ['e2e/specs/editor.spec.ts'],
+    );
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].bucket, 'regression');
+    assert.match(issues[0].message, /file changed by this task/);
+});
+
+void test('classifyPreflightBlockersFromData rejects Fail – unrelated when an absolute cited path suffix is in the diff', () => {
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: '/workspace/repo/e2e/specs/editor.spec.ts:1231 (Editor flake)' }],
+        ['e2e/specs/editor.spec.ts'],
+    );
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].bucket, 'regression');
+    assert.match(issues[0].message, /file changed by this task/);
+});
+
+void test('classifyPreflightBlockersFromData rejects bare basename Fail – unrelated notes without a line suffix', () => {
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: 'editor.spec.ts' }],
+        ['e2e/specs/editor.spec.ts'],
+    );
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].bucket, 'format');
+    assert.match(issues[0].message, /needs a specific test\/file reference/);
+});
+
+void test('classifyPreflightBlockersFromData rejects bare basename Fail – unrelated notes with a line suffix when the basename is in the diff', () => {
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: 'editor.spec.ts:1231' }],
+        ['e2e/specs/editor.spec.ts'],
+    );
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].bucket, 'regression');
+    assert.match(issues[0].message, /file changed by this task/);
+});
+
+void test('classifyPreflightBlockersFromData accepts bare basename Fail – unrelated notes with a line suffix when the basename is not in the diff', () => {
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: 'foo.spec.ts:1231' }],
+        ['e2e/specs/editor.spec.ts'],
+    );
+
+    assert.deepEqual(issues, []);
+});
+
+void test('classifyPreflightBlockersFromData accepts Fail – unrelated when cited file is outside the diff', () => {
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: 'e2e/specs/editor.spec.ts:1231 (Editor flake)' }],
+        ['src/app.ts'],
+    );
+
+    assert.deepEqual(issues, []);
+});
+
+void test('classifyPreflightBlockersFromData matches in-diff Fail – unrelated without a line suffix', () => {
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: 'e2e/specs/editor.spec.ts' }],
+        ['e2e/specs/editor.spec.ts'],
+    );
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].bucket, 'regression');
+});
+
+void test('classifyPreflightBlockersFromData skips laundering guard when changed-files set is empty', () => {
+    const issues = classifyFixture([
+        { result: 'Fail – unrelated', notes: 'e2e/specs/editor.spec.ts:1231' },
+    ]);
+
+    assert.deepEqual(issues, []);
+});
+
+void test('classifyPreflightBlockersFromData classifies non-required plain Fail rows as regression blockers', () => {
+    const issues = classifyFixture([
+        { check: '`npm run test`', result: 'Pass' },
+        { check: '`npm run smoke`', result: 'Fail', notes: 'smoke regression' },
+    ], [], { requiredChecks: ['`npm run test`'] });
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].bucket, 'regression');
+    assert.match(issues[0].message, /not listed in spec's required checks/);
+    assert.match(issues[0].message, /npm run smoke/);
+});
+
+void test('classifyPreflightBlockersFromData ignores non-required Pass rows', () => {
+    const issues = classifyFixture([
+        { check: '`npm run test`', result: 'Pass' },
+        { check: '`npm run smoke`', result: 'Pass' },
+    ], [], { requiredChecks: ['`npm run test`'] });
+
+    assert.deepEqual(issues, []);
+});
+
+void test('classifyPreflightBlockersFromData leaves non-required Fail – unrelated rows on the accept path', () => {
+    const issues = classifyFixture([
+        { check: '`npm run test`', result: 'Pass' },
+        { check: '`npm run smoke`', result: 'Fail – unrelated', notes: 'e2e/specs/other.spec.ts:1231' },
+    ], ['src/app.ts'], { requiredChecks: ['`npm run test`'] });
+
+    assert.deepEqual(issues, []);
+});
+
+void test('classifyPreflightBlockersFromData does not double-count required plain Fail rows', () => {
+    const issues = classifyFixture([
+        { check: '`npm run test`', result: 'Fail', notes: 'unit failure' },
+    ], [], { requiredChecks: ['`npm run test`'] });
+
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].bucket, 'regression');
+    assert.match(issues[0].message, /Validation Required item did not pass/);
+});
+
+void test('classifyPreflightBlockersFromData assigns format, regression, and blocked buckets', () => {
+    assert.deepEqual(
+        classifyFixture([{ result: 'Pass' }], [], { acCoverageIssues: ['AC Coverage section is missing'] }).map(issue => issue.bucket),
+        ['format'],
+    );
+    assert.deepEqual(
+        classifyFixture([{ result: 'Fail', notes: 'unit failure' }]).map(issue => issue.bucket),
+        ['regression'],
+    );
+    assert.deepEqual(
+        classifyFixture(
+            [{ result: 'Fail', notes: 'unit failure' }],
+            [],
+            { changesTableIssues: ['Changes table row \'<path>\': template placeholder'] },
+        ).map(issue => issue.bucket),
+        ['format', 'regression'],
+    );
+    assert.deepEqual(
+        classifyFixture([{ result: 'Pass' }], [], { bundleDiffIssues: ['diff→handoff: src/app.ts in diff but not in any bundle handoff'] })
+            .map(issue => issue.bucket),
+        ['format'],
+    );
+    assert.deepEqual(
+        classifyFixture([{ result: 'blocked', notes: 'CI unavailable' }]).map(issue => issue.bucket),
+        ['blocked'],
+    );
+    assert.deepEqual(
+        classifyFixture([
+            { check: '`npm run test`', result: 'Fail', notes: 'unit failure' },
+            { check: '`npm run lint`', result: 'blocked', notes: 'CI unavailable' },
+        ], [], { requiredChecks: ['`npm run test`', '`npm run lint`'] }).map(issue => issue.bucket),
+        ['regression', 'blocked'],
+    );
+});
+
+void test('pre-flight route and review block frame format blockers as handoff fixes', () => {
+    const failures = [{
+        taskId: 'format-task',
+        classified: [{ bucket: 'format' as const, message: 'AC Coverage section is missing' }],
+    }];
+    const block = buildPreflightReviewBlock(failures[0].classified, determinePreflightRoute(failures));
+
+    assert.equal(determinePreflightRoute(failures), 'implement');
+    assert.match(block, /## Validation Gate/);
+    assert.match(block, /## Pre-Flight Rejection/);
+    assert.match(block, /Fix the handoff/);
+    assert.match(block, /AC Coverage section is missing/);
+    assert.doesNotMatch(block, /Fix the code/);
+});
+
+void test('pre-flight route and review block frame regression blockers as code fixes', () => {
+    const failures = [{
+        taskId: 'regression-task',
+        classified: [{ bucket: 'regression' as const, message: 'Validation Required item did not pass in handoff.md: `npm test` — Fail' }],
+    }];
+    const block = buildPreflightReviewBlock(failures[0].classified, determinePreflightRoute(failures));
+
+    assert.equal(determinePreflightRoute(failures), 'implement');
+    assert.match(block, /Fix the code/);
+    assert.match(block, /You broke one or more required checks/);
+    assert.match(block, /Fail – unrelated/);
+    assert.doesNotMatch(block, /resubmit handoff/);
+});
+
+void test('pre-flight review block stacks mixed fixable framings and keeps implement route', () => {
+    const failures = [{
+        taskId: 'mixed-task',
+        classified: [
+            { bucket: 'format' as const, message: 'Changes table row \'<path>\': template placeholder' },
+            { bucket: 'regression' as const, message: 'Validation Required item did not pass in handoff.md: `npm test` — Fail' },
+        ],
+    }];
+    const block = buildPreflightReviewBlock(failures[0].classified, determinePreflightRoute(failures));
+
+    assert.equal(determinePreflightRoute(failures), 'implement');
+    assert.match(block, /Fix the handoff/);
+    assert.match(block, /Fix the code/);
+});
+
+void test('pre-flight blocked-only route halts for human triage', () => {
+    const failures = [{
+        taskId: 'blocked-task',
+        classified: [{ bucket: 'blocked' as const, message: 'Validation Required item marked blocked in handoff.md: `npm test` — triage required' }],
+    }];
+    const block = buildPreflightReviewBlock(failures[0].classified, determinePreflightRoute(failures));
+
+    assert.equal(determinePreflightRoute(failures), 'auto_block');
+    assert.match(block, /Human triage required/);
+    assert.match(block, /Infrastructure was unavailable/);
+    assert.match(block, /Re-implementing cannot resolve this/);
+});
+
+void test('pre-flight fixable blocker wins over blocked rows', () => {
+    const failures = [{
+        taskId: 'priority-task',
+        classified: [
+            { bucket: 'regression' as const, message: 'Validation Required item did not pass in handoff.md: `npm test` — Fail' },
+            { bucket: 'blocked' as const, message: 'Validation Required item marked blocked in handoff.md: `npm run lint` — triage required' },
+        ],
+    }];
+    const block = buildPreflightReviewBlock(failures[0].classified, determinePreflightRoute(failures));
+
+    assert.equal(determinePreflightRoute(failures), 'implement');
+    assert.match(block, /Fix the code/);
+    assert.match(block, /Infra note/);
+    assert.doesNotMatch(block, /Human triage required/);
+});
+
+void test('bundle pre-flight Route A rejects a two-task bundle atomically', () => {
+    withTempTasks(tasksRoot => {
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        writeCodeReviewTask(tasksRoot, 'task-b');
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'format' as const, message: 'AC Coverage section is missing' }],
+        }];
+        const route = determinePreflightRoute(failures);
+
+        assert.equal(writePreflightReviewArtifacts([
+            taskContext(tasksRoot, 'task-a'),
+            taskContext(tasksRoot, 'task-b'),
+        ], failures, route), true);
+        for (const taskId of ['task-a', 'task-b']) taskPhasePreflightRejected(taskId, 'code_review');
+
+        for (const taskId of ['task-a', 'task-b']) {
+            const phase = readStatus(taskId).phases.code_review;
+            assert.equal(phase?.status, 'done');
+            assert.equal(phase?.verdict, 'changes_requested');
+            assert.equal(phase?.preflight_rejections_current_loop, 1);
+            assert.equal(phase?.preflight_rejections_total, 1);
+            assert.equal(phase?.changes_requested_total, 1);
+            assert.equal(phase?.iterations_current_loop, 0);
+            assert.equal(phase?.iterations_total, 0);
+        }
+
+        const failingReview = readReview(tasksRoot, 'task-a');
+        assert.match(failingReview, /## Validation Gate/);
+        assert.match(failingReview, /## Pre-Flight Rejection/);
+        assert.match(failingReview, /AC Coverage section is missing/);
+
+        const cleanReview = readReview(tasksRoot, 'task-b');
+        assert.match(cleanReview, /^# Code Review: task-b/m);
+        assert.match(cleanReview, /^## Bundle Pre-Flight Rejection$/m);
+        assert.match(cleanReview, /`task-a` — see `tasks\/task-a\/review\.md`/);
+        assert.match(cleanReview, /^- \[x\] \*\*Changes requested\*\*/m);
+        assert.doesNotMatch(cleanReview, /^## Stage 1\b/m);
+        assert.equal(extractCheckedVerdict(cleanReview), 'changes_requested');
+    });
+});
+
+void test('bundle pre-flight Route A rejects every task in a three-task bundle', () => {
+    withTempTasks(tasksRoot => {
+        for (const taskId of ['task-a', 'task-b', 'task-c']) writeCodeReviewTask(tasksRoot, taskId);
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'regression' as const, message: 'Validation Required item did not pass in handoff.md: `npm test` — Fail' }],
+        }];
+
+        writePreflightReviewArtifacts([
+            taskContext(tasksRoot, 'task-a'),
+            taskContext(tasksRoot, 'task-b'),
+            taskContext(tasksRoot, 'task-c'),
+        ], failures, determinePreflightRoute(failures));
+        for (const taskId of ['task-a', 'task-b', 'task-c']) taskPhasePreflightRejected(taskId, 'code_review');
+
+        for (const taskId of ['task-a', 'task-b', 'task-c']) {
+            const phase = readStatus(taskId).phases.code_review;
+            assert.equal(phase?.status, 'done');
+            assert.equal(phase?.verdict, 'changes_requested');
+            assert.equal(phase?.preflight_rejections_current_loop, 1);
+        }
+        for (const taskId of ['task-b', 'task-c']) {
+            const cleanReview = readReview(tasksRoot, taskId);
+            assert.match(cleanReview, /`task-a` — see `tasks\/task-a\/review\.md`/);
+            assert.doesNotMatch(cleanReview, /^## Stage 1\b/m);
+        }
+    });
+});
+
+void test('bundle pre-flight Route A appends clean-task stub over a prior real review', () => {
+    withTempTasks(tasksRoot => {
+        const prior = [
+            '# Code Review: task-b',
+            '',
+            '## Stage 1',
+            '',
+            'Prior AC table.',
+            '',
+        ].join('\n');
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        writeCodeReviewTask(tasksRoot, 'task-b', { review: prior });
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'format' as const, message: 'AC Coverage section is missing' }],
+        }];
+
+        writePreflightReviewArtifacts([
+            taskContext(tasksRoot, 'task-a'),
+            taskContext(tasksRoot, 'task-b'),
+        ], failures, determinePreflightRoute(failures));
+
+        const cleanReview = readReview(tasksRoot, 'task-b');
+        assert.ok(cleanReview.startsWith(prior.trimEnd()));
+        assert.match(cleanReview, /^---$/m);
+        assert.match(cleanReview, /^## Bundle Pre-Flight Rejection \(round 1\) — sibling task\(s\) failed$/m);
+        const appended = cleanReview.slice(cleanReview.indexOf('## Bundle Pre-Flight Rejection'));
+        assert.doesNotMatch(appended, /^## Verdict\b/m);
+        assert.doesNotMatch(appended, /^- \[x\] \*\*Changes requested\*\*/m);
+        assert.equal(extractCheckedVerdict(cleanReview), null);
+    });
+});
+
+void test('bundle pre-flight Route A preserves prior approved clean-task verdict while status records rejection', () => {
+    withTempTasks(tasksRoot => {
+        const priorApproved = [
+            '# Code Review: task-b',
+            '',
+            '## Stage 1',
+            '',
+            'Prior AC table.',
+            '',
+            '## Final Verdict',
+            '',
+            '- [x] **Approved**',
+            '',
+        ].join('\n');
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        writeCodeReviewTask(tasksRoot, 'task-b', { review: priorApproved });
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'format' as const, message: 'AC Coverage section is missing' }],
+        }];
+
+        writePreflightReviewArtifacts([
+            taskContext(tasksRoot, 'task-a'),
+            taskContext(tasksRoot, 'task-b'),
+        ], failures, determinePreflightRoute(failures));
+        const cleanReview = readReview(tasksRoot, 'task-b');
+        const appended = cleanReview.slice(cleanReview.indexOf('## Bundle Pre-Flight Rejection'));
+        assert.match(cleanReview, /^## Stage 1$/m);
+        assert.match(cleanReview, /^## Final Verdict$/m);
+        assert.match(appended, /^## Bundle Pre-Flight Rejection \(round 1\) — sibling task\(s\) failed$/m);
+        assert.doesNotMatch(appended, /^## Verdict\b/m);
+        assert.doesNotMatch(appended, /^- \[x\] \*\*Changes requested\*\*/m);
+        assert.equal(extractCheckedVerdict(cleanReview), 'approved');
+
+        for (const taskId of ['task-a', 'task-b']) taskPhasePreflightRejected(taskId, 'code_review');
+        assert.equal(readStatus('task-b').phases.code_review?.verdict, 'changes_requested');
+    });
+});
+
+void test('bundle pre-flight Route A statuses route the whole bundle back to implement', async () => {
+    await withTempTasksAsync(async tasksRoot => {
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        writeCodeReviewTask(tasksRoot, 'task-b', {
+            review: [
+                '# Code Review: task-b',
+                '',
+                '## Stage 1',
+                '',
+                'Prior AC table.',
+                '',
+                '## Final Verdict',
+                '',
+                '- [x] **Approved**',
+                '',
+            ].join('\n'),
+        });
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'format' as const, message: 'AC Coverage section is missing' }],
+        }];
+        writePreflightReviewArtifacts([
+            taskContext(tasksRoot, 'task-a'),
+            taskContext(tasksRoot, 'task-b'),
+        ], failures, determinePreflightRoute(failures));
+        for (const taskId of ['task-a', 'task-b']) taskPhasePreflightRejected(taskId, 'code_review');
+
+        assert.equal(extractCheckedVerdict(readReview(tasksRoot, 'task-b')), 'approved');
+        await checkAndRoute('code_review', ['task-a', 'task-b']);
+
+        for (const taskId of ['task-a', 'task-b']) {
+            const status = readStatus(taskId);
+            assert.equal(status.phases.implement?.status, 'pending');
+            assert.equal(status.phases.code_review?.status, 'pending');
+            assert.equal(status.status, 'implement');
+        }
+    });
+});
+
+void test('bundle pre-flight Route B auto-blocks every task and writes clean halt stubs without verdicts', () => {
+    withTempTasks(tasksRoot => {
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        writeCodeReviewTask(tasksRoot, 'task-b');
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'blocked' as const, message: 'Validation Required item marked blocked in handoff.md: `npm test` — triage required' }],
+        }];
+        const route = determinePreflightRoute(failures);
+
+        assert.equal(route, 'auto_block');
+        writePreflightReviewArtifacts([
+            taskContext(tasksRoot, 'task-a'),
+            taskContext(tasksRoot, 'task-b'),
+        ], failures, route);
+        autoBlockPhase(['task-a', 'task-b'], 'code_review', 0, 'blocked validation rows');
+
+        const failingReview = readReview(tasksRoot, 'task-a');
+        assert.match(failingReview, /HALTED — infrastructure unavailable before full review/);
+        assert.doesNotMatch(failingReview, /^## Bundle Pre-Flight Halt$/m);
+
+        const cleanReview = readReview(tasksRoot, 'task-b');
+        assert.match(cleanReview, /^# Code Review: task-b/m);
+        assert.match(cleanReview, /^## Bundle Pre-Flight Halt$/m);
+        assert.match(cleanReview, /Human triage required/);
+        assert.match(cleanReview, /`task-a` — see `tasks\/task-a\/review\.md`/);
+        assert.doesNotMatch(cleanReview, /^## Verdict\b/m);
+        assert.doesNotMatch(cleanReview, /^## Stage 1\b/m);
+        assert.equal(extractCheckedVerdict(cleanReview), null);
+
+        for (const taskId of ['task-a', 'task-b']) {
+            const status = readStatus(taskId);
+            const phase = status.phases.code_review;
+            assert.equal(phase?.status, 'blocked');
+            assert.equal(phase?.auto_block_count, 1);
+            assert.equal(phase?.preflight_rejections_current_loop, 0);
+            assert.equal(phase?.preflight_rejections_total, 0);
+            assert.equal(phase?.changes_requested_total, 0);
+            assert.equal(status.escalations?.length, 1);
+        }
+    });
+});
+
+void test('bundle pre-flight artifact writer is a no-op when every task passes pre-flight', () => {
+    withTempTasks(tasksRoot => {
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        writeCodeReviewTask(tasksRoot, 'task-b');
+
+        assert.equal(writePreflightReviewArtifacts([
+            taskContext(tasksRoot, 'task-a'),
+            taskContext(tasksRoot, 'task-b'),
+        ], [], 'implement'), false);
+
+        for (const taskId of ['task-a', 'task-b']) {
+            assert.equal(fs.existsSync(path.join(tasksRoot, taskId, 'review.md')), false);
+            assert.equal(readStatus(taskId).phases.code_review?.status, 'pending');
+        }
+    });
+});
+
+void test('single-task Route A pre-flight failure keeps the existing failing-task block shape', () => {
+    withTempTasks(tasksRoot => {
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'format' as const, message: 'AC Coverage section is missing' }],
+        }];
+
+        writePreflightReviewArtifacts([taskContext(tasksRoot, 'task-a')], failures, determinePreflightRoute(failures));
+        taskPhasePreflightRejected('task-a', 'code_review');
+
+        const review = readReview(tasksRoot, 'task-a');
+        assert.match(review, /^# Code Review: task-a/m);
+        assert.match(review, /^## Validation Gate$/m);
+        assert.match(review, /^## Pre-Flight Rejection$/m);
+        assert.doesNotMatch(review, /^## Bundle Pre-Flight Rejection$/m);
+        const phase = readStatus('task-a').phases.code_review;
+        assert.equal(phase?.status, 'done');
+        assert.equal(phase?.verdict, 'changes_requested');
+    });
+});
+
+void test('single-task Route B pre-flight failure keeps the existing auto-block shape', () => {
+    withTempTasks(tasksRoot => {
+        writeCodeReviewTask(tasksRoot, 'task-a');
+        const failures = [{
+            taskId: 'task-a',
+            classified: [{ bucket: 'blocked' as const, message: 'Validation Required item marked blocked in handoff.md: `npm test` — triage required' }],
+        }];
+
+        writePreflightReviewArtifacts([taskContext(tasksRoot, 'task-a')], failures, determinePreflightRoute(failures));
+        autoBlockPhase(['task-a'], 'code_review', 0, 'blocked validation rows');
+
+        const review = readReview(tasksRoot, 'task-a');
+        assert.match(review, /HALTED — infrastructure unavailable before full review/);
+        assert.doesNotMatch(review, /^## Bundle Pre-Flight Halt$/m);
+        const phase = readStatus('task-a').phases.code_review;
+        assert.equal(phase?.status, 'blocked');
+        assert.equal(phase?.auto_block_count, 1);
+        assert.equal(phase?.preflight_rejections_current_loop, 0);
+        assert.equal(phase?.changes_requested_total, 0);
+    });
+});
+
 void test('validateHandoffAgainstSpec: Fail – unrelated with notes is accepted (reviewer assesses)', () => {
     withTempPair(
         ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
@@ -2407,6 +3124,43 @@ void test('validateHandoffAgainstSpec: Fail – unrelated with notes is accepted
         ].join('\n'),
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.deepEqual(issues, []);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: Fail – unrelated citing an in-diff file is rejected', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | Fail – unrelated | tests/foo.test.ts:42 — pre-existing timing race unrelated to Affected Files |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath, undefined, new Set(['tests/foo.test.ts']));
+            assert.equal(issues.length, 1);
+            assert.match(issues[0], /file changed by this task/);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: Fail – unrelated citing a not-in-diff file is accepted', () => {
+    withTempPair(
+        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | Fail – unrelated | tests/foo.test.ts:42 — pre-existing timing race unrelated to Affected Files |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath, undefined, new Set(['src/app.ts']));
             assert.deepEqual(issues, []);
         },
     );

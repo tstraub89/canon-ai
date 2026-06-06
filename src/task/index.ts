@@ -16,7 +16,7 @@ import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type Status
 
 const VALID_PHASES = new Set<string>(PHASE_ORDER);
 const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
-const VALID_VERDICTS = new Set<string>(['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review']);
+const VALID_VERDICTS = new Set<string>(['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap']);
 const REVIEW_PHASES = new Set<string>(['spec_review', 'code_review']);
 
 type GitResult = SpawnSyncReturns<string>;
@@ -252,7 +252,7 @@ export function taskList(): void {
     // shouldn't be left thinking everything is fine either.
     let invalidCount = 0;
     for (const entry of fs.readdirSync(root).sort()) {
-        if (entry === '_archive') continue;
+        if (entry === '_archive' || entry === '_templates') continue;
         // Detect orphan-worktree state BEFORE taskDirForCwd → resolveTaskCwd,
         // which die()s on this state and aborts the entire listing —
         // regressing the issue #83 graceful-degradation contract.
@@ -341,7 +341,16 @@ function assertValidVerdict(phase: Phase, verdict: string | undefined): asserts 
         throw new Error('Error: verdict is only valid for spec_review and code_review phases');
     }
     if (!VALID_VERDICTS.has(verdict)) {
-        throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review`);
+        throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap`);
+    }
+    // spec_gap is a code_review-only verdict: it means "the implementation is
+    // correct but the spec is wrong," which halts for human amendment. On
+    // spec_review the equivalent outcome is changes_requested. Accepting
+    // spec_gap on spec_review would slip past checkAndRoute's spec_review case
+    // (which only blocks on changes_requested) and silently advance instead of
+    // halting. Reject it at the boundary.
+    if (verdict === 'spec_gap' && phase !== 'code_review') {
+        throw new Error(`Error: verdict 'spec_gap' is only valid for the code_review phase, not '${phase}'.`);
     }
 }
 
@@ -373,7 +382,7 @@ function updateReviewCounters(entry: PhaseEntry, verdict: Verdict | undefined): 
         // A real review verdict ends the current pre-flight streak — the
         // handoff was good enough to actually be reviewed.
         entry.preflight_rejections_current_loop = 0;
-    } else if (verdict === 'approved' || verdict === 'approved_with_nits') {
+    } else if (verdict === 'approved' || verdict === 'approved_with_nits' || verdict === 'spec_gap') {
         entry.iterations_total += 1;
         entry.iterations_current_loop = 0;
         entry.iterations = 0;

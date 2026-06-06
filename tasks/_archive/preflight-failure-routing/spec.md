@@ -121,6 +121,7 @@ None. No new `status.json` fields; classification is computed at pre-flight time
 - **`review.md` append/overwrite handling is already subtle** (the non-`## Round` heading convention exists so `extractCheckedVerdict` keeps parsing the latest real verdict). The bucket-specific framing must preserve that convention — don't introduce a `## Round`-prefixed heading for the pre-flight block.
 - **Halt-path recoverability:** auto-blocking on infra-blocked must emit a clear resume path (how to reset and re-run after infra is restored), consistent with the existing cap-hit auto-block message. A halt with no recovery guidance strands the task.
 - **AC-10 neutral prompt ↔ pre-flight block coupling:** the implement-revision prompt is made *neutral* and defers to `review.md` for the actual fix instruction. That only works if the bucket-specific framing (AC-3a/3b/3c) reliably lands in the pre-flight block where the prompt points it (`## Validation Gate` / `## Pre-Flight Rejection`). If `code-review.ts` renames or relocates that block, the neutral prompt's pointer goes stale and Codex loses its instruction. Keep the heading names stable and verify the golden + a regression-bucket integration check together: prompt points at the block, block carries code-fix framing. A neutral prompt without code-fix framing in `review.md` is worse than today (Codex gets no direction at all), so both halves must land together — same declared/executable-drift discipline as AC-1/AC-7.
+- **Residual gaps in the `Fail – unrelated` in-diff guard (documented, not in scope to close):** Three edge cases pass the deterministic guard and proceed to Claude Stage 1 review, which is the designed backstop for credibility judgment: (1) `:line`-only reference with no filename (e.g. `:1231` alone) — `extractCitedFilePaths` emits nothing, guard skips, row accepted; not a realistic attack surface since it provides no file identity. (2) Basename false positive — when two files share a basename (e.g. `src/utils/editor.spec.ts` and `test/utils/editor.spec.ts`), the last-segment scan (AC-1c) will fire if either is in the diff; this over-catches but in the safe direction (Codex gets a "fix the code" instruction at worst). (3) URL-style citations (`https://github.com/.../editor.spec.ts#L42`) — `#L42` is not stripped by the `:line` pattern; the URL is extracted but not matched; row accepted. Not a realistic attack surface. All three pass to Claude Stage 1 where the credibility judgment lives per `docs/decisions.md`.
 
 ## Human Test Plan
 
@@ -129,6 +130,93 @@ None. No new `status.json` fields; classification is computed at pre-flight time
 3. Take a task where a check failed for a reason genuinely outside the files the task touched, properly labeled "unrelated" with the failing file named. Run the review step. Expected: the handoff is accepted into full review (the reviewer then judges credibility) — it is not bounced.
 4. Take a task whose only outstanding problem is that the test infrastructure was unavailable (e.g., the check could not run at all). Run the review step. Expected: the task stops and asks for human triage of the infrastructure, rather than repeatedly sending the work back for re-implementation.
 5. Take a task whose handoff is structurally incomplete (missing the acceptance-criteria coverage table). Run the review step. Expected: the message tells the implementer to fix the handoff document, and the work goes back for another pass.
+
+---
+
+## Amendment
+
+**Problem (discovered post-implementation via CodeRabbit P2 on PR #138):** `extractCitedFilePaths` strips `:line`/`:line:col` suffixes and `./` prefixes but does not normalize absolute paths or bare basenames before the `changedFiles.has(citedPath)` set lookup. The `changedFiles` set contains repo-relative paths from `git diff` (e.g. `e2e/specs/editor.spec.ts`). So:
+
+- An absolute path citation like `/workspace/canon-ai/e2e/specs/editor.spec.ts:1231` → stripped to `/workspace/canon-ai/e2e/specs/editor.spec.ts` → `has()` returns false → guard passes → regression laundered.
+- A bare basename like `editor.spec.ts:1231` (common in test-runner stack traces) → stripped to `editor.spec.ts` → `has()` returns false → guard passes → regression laundered.
+
+Both paths bypass the laundering guard AC-1 was designed to close. The spec's AC-1 and AC-8 enumerated `:line` suffix stripping but assumed cited paths would be repo-relative; the normalization requirement for absolute paths and the non-matching treatment of bare basenames were unspecified.
+
+**Change:** Two fixes in `scripts/run-task/validation.ts`:
+
+1. **Tighten the outer `hasFileRef` check** (line ~571): the current regex `/\w+\.\w+|:\d+/` accepts a bare basename like `editor.spec.ts` (matches `\w+\.\w+`). Change it to require either a path separator (`/`) in the token OR a `:line` reference. A bare basename with no line number and no path — e.g. `editor.spec.ts` — is rejected as insufficient for a `Fail – unrelated` claim. A `filename.ext:line` form (e.g. `editor.spec.ts:1231`) still passes and proceeds to Claude Stage 1 review.
+
+2. **Normalize absolute paths in `extractCitedFilePaths`** before the `changedFiles.has()` lookup: if a cited path starts with `/` (or a Windows-style drive letter), walk suffixes from the right to find the longest suffix that matches a key in `changedFiles`. If a suffix matches, use it for the comparison; if none matches, the path is treated as not-in-diff (safe — it won't falsely classify as a regression).
+
+**New ACs:**
+
+- [ ] **AC-1a (absolute-path citation → in-diff match):** A `Fail – unrelated` Notes entry citing an absolute path that resolves to a repo-relative path in the task's diff (e.g. `/abs/path/to/repo/e2e/specs/editor.spec.ts:1231`) is recognized as citing an in-diff file and classified as a regression blocker. *Verify:* unit test — absolute path citation whose suffix matches a changed file → regression issue emitted.
+- [ ] **AC-1b (bare basename without `:line` → rejected at outer check):** A `Fail – unrelated` Notes entry citing only a bare filename with no path separator and no `:line` reference (e.g. `editor.spec.ts` alone) is rejected by the tightened `hasFileRef` check — it does not reach the in-diff guard. A form with a line reference (e.g. `editor.spec.ts:1231`) passes the outer check and then goes through the in-diff guard (AC-1c): if the basename matches a changed file it is classified as regression; if it does not match it proceeds to Claude Stage 1 review. *Verify:* unit test — bare basename with no `/` and no `:line` → `Fail – unrelated` row rejected (hasFileRef fails); same basename with `:line` appended → passes outer check (subject to AC-1c in-diff check).
+
+**Affected files (amendment additions only):**
+
+| File | Change |
+|---|---|
+| `scripts/run-task/validation.ts` | Tighten `hasFileRef` regex; extend `extractCitedFilePaths` with absolute-path suffix matching. |
+| `tests/run-task-validation.test.ts` | Two new test rows: AC-1a (absolute path → regression) and AC-1b (bare basename without `:line` → outer rejection; with `:line` → passes). |
+
+---
+
+## Amendment Round 2
+
+**Problem (discovered via CodeRabbit P2 on PR #139, after Amendment 1 shipped):** The Amendment 1 fix closed bare-basename-without-`:line` at the outer check, but `editor.spec.ts:1231` (basename + `:line`) still slips through: `hasSpecificFailUnrelatedReference` fires on the `:line` component (returns true), `extractCitedFilePaths` emits `editor.spec.ts` (no path separator, has extension — passes the filter), and `matchAgainstChangedFiles` does `changedFiles.has('editor.spec.ts')` — an exact match against repo-relative paths — which returns false. Guard passes. Regression laundered.
+
+The matching hierarchy after Amendment 1 was: (1) absolute path → suffix walk, (2) relative with `/` → exact match. The bare-basename case (no `/`, no absolute prefix) was left as an exact-match attempt that always fails.
+
+**Full matching threat model (enumerated before writing this amendment to avoid a fourth round):**
+
+| Citation form | After Amendment 1 | Correct outcome |
+|---|---|---|
+| `e2e/specs/editor.spec.ts` | exact match ✓ | caught |
+| `e2e/specs/editor.spec.ts:1231` | exact match after strip ✓ | caught |
+| `/abs/path/e2e/specs/editor.spec.ts:1231` | suffix walk ✓ | caught |
+| `editor.spec.ts` (no line) | rejected at outer check ✓ | not reached |
+| `editor.spec.ts:1231` (basename + line) | `has('editor.spec.ts')` = false 🔴 | **miss — this PR** |
+| `:1231` alone (line only, no file) | `extractCitedFilePaths` emits nothing → guard skips → accepted | passes to Claude Stage 1 (documented gap, not a practical attack surface) |
+| Two files share a basename (false positive) | after fix: basename match fires on both | safe direction — overcatches, documented |
+| URL citation `https://.../editor.spec.ts#L42` | `#L42` not stripped; URL not matched | passes to Claude Stage 1 (not a realistic attack surface) |
+
+**Change:** Extend `matchAgainstChangedFiles` (`validation.ts` line ~433) with a third branch: when the cited path has no path separator (it's a bare basename after `:line` stripping), scan `changedFiles` for any entry whose last path segment matches the basename. If any matches, return true.
+
+This closes the `editor.spec.ts:1231` case. The two documented gaps (`:line`-only reference, URL citations) pass to Claude Stage 1 review where credibility is assessed — both are degenerate inputs a real implementer wouldn't write as a laundering attempt.
+
+**New ACs:**
+
+- [ ] **AC-1c (basename + `:line` citation → in-diff match via last-segment scan):** A `Fail – unrelated` Notes entry of the form `editor.spec.ts:1231` (basename with extension + `:line`, no path separator) is matched against `changedFiles` by comparing the basename against the last path segment of each changed file. If any changed file has that basename, the entry is classified as a regression blocker. *Verify:* unit test — `editor.spec.ts:1231` in Notes with `e2e/specs/editor.spec.ts` in `changedFiles` → regression issue emitted. *And* a basename that does NOT appear as the last segment of any changed file → no regression issue (genuinely-unrelated accept path preserved).
+- [ ] **AC-1d (known limitations documented in Known Risks):** The Known Risks section documents the three remaining gaps (`:line`-only reference, same-basename false positive, URL citations) with their safe-direction rationale. *Verify:* Known Risks section contains entries for each.
+
+**Affected files (round 2 additions only):**
+
+| File | Change |
+|---|---|
+| `scripts/run-task/validation.ts` | Extend `matchAgainstChangedFiles` with last-segment basename scan when no path separator present. |
+| `tests/run-task-validation.test.ts` | Two new test rows: AC-1c (basename+line → caught) and AC-1c negative (non-matching basename → not caught). |
+
+---
+
+## Amendment Round 3
+
+**Problem (discovered via CodeRabbit P2 on PR #139, after Amendment Round 2 shipped):** The original `validateHandoff` contained an explicit all-row scan (`hasFail`) that blocked on any `Fail` result anywhere in the Validation Outcomes table, including rows for checks Codex ran voluntarily that are NOT listed in the spec's `Validation Required` section. The refactor in this task replaced that with `classifyValidationChecks(requiredChecks, ...)` which only iterates the spec's checked `[x]` items. Non-required `Fail` rows are now silently ignored — a task can proceed to Claude review with an explicitly failed non-required check.
+
+This is a direct behavioral regression from the old `validateHandoff` gate. All other result states on non-required rows (`Fail – unrelated`, `blocked`, `Pass`, `pending`) were never flagged by the old `hasFail` scan and remain consistent between old and new behavior. Only plain `Fail` on non-required rows is the regression.
+
+**Change:** In `classifyPreflightBlockersFromData` (`validation.ts` line ~643), add a pass over all `latestResults` values after `classifyValidationChecks` runs. For any row where `isFailResult(row.result) && !isUnrelatedFailResult(row.result)` is true (plain `Fail` only — explicitly excluding `Fail – unrelated` which has its own accept/laundering-guard path) AND the row's canonical key is NOT already covered by `requiredChecks` (to avoid double-counting), emit a `regression`-bucket blocker with code-fix framing. The set of canonical required-check keys is pre-computed from `data.requiredChecks` (or empty when `requiredChecks` is null) before the scan. Non-required `Fail – unrelated` rows remain on the accept path (proceed to Claude Stage 1) — unchanged from the original pre-flight behavior.
+
+**New AC:**
+
+- [ ] **AC-11 (non-required plain-Fail row → regression blocker):** When the Validation Outcomes table contains a plain `Fail` row for a check that is NOT in the spec's `Validation Required` section, the pre-flight classifies it as a `regression`-bucket blocker (code-fix framing). A `Pass` row for a non-required check produces no blocker. A `Fail – unrelated` row for a non-required check is NOT classified as a regression blocker — it remains on the accept path (unchanged behavior). *Verify:* unit tests — (a) non-required `Fail` → regression issue emitted; (b) non-required `Pass` → no issue; (c) non-required `Fail – unrelated` with valid file ref → no regression issue from this rule; (d) a required check with `Fail` is not double-counted (only one blocker emitted).
+
+**Affected files (round 3 additions only):**
+
+| File | Change |
+|---|---|
+| `scripts/run-task/validation.ts` | Add all-row plain-Fail scan (`isFailResult && !isUnrelatedFailResult`) in `classifyPreflightBlockersFromData`, skipping already-required canonical keys. |
+| `tests/run-task-validation.test.ts` | Four new test rows per AC-11 verify clause: (a) non-required Fail → blocker, (b) non-required Pass → no blocker, (c) non-required Fail–unrelated → no regression blocker, (d) required Fail not double-counted. |
 
 ---
 

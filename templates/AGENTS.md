@@ -68,7 +68,7 @@ Full-send mode is the explicit opt-in for "spec to draft PR with no human interr
 - The mode is recorded in `status.json.full_send`, which future human-interrupt gates should honor by convention.
 - Bundle semantics: full-send applies per-task. To skip the spec gate for a bundle, every task in the invocation must have `full_send: true`. A single non-full-send task in the bundle re-engages the gate for all.
 
-**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review changes_requested, the whole bundle reroutes to implement.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review `changes_requested`, the whole bundle reroutes to implement. On code review `spec_gap`, the bundle halts for human spec amendment instead of rerouting to implement.
 
 **Conversational spec authorship**: Specs for emergent tasks are often written conversationally with Claude rather than through the pipeline's spec phase. Manually mark spec (and plan if written together) as done in `status.json`, then run the pipeline — it picks up from the current phase.
 
@@ -99,12 +99,12 @@ Templates live in `.canon/templates/` (managed by canon — do not edit directly
 2. Codex reads spec, writes `tasks/TASK-ID/spec-review.md` with findings, sets `spec_review` → `done` (or `changes_requested`)
 3. Claude creates `tasks/TASK-ID/plan.md`, sets `plan` → `done`
 4. Codex implements, creates `tasks/TASK-ID/handoff.md`, sets `implement` → `done`
-5. Claude reads handoff + diff, creates `tasks/TASK-ID/review.md`, sets `code_review` → `done`
+5. Claude's code-review foreman spawns an anchored lens (spec/AC compliance + quality) and a cold lens (diff-only), synthesizes their findings into `tasks/TASK-ID/review.md`, and sets `code_review` → `done`
 6. If changes requested: Codex iterates, updates `handoff.md`, Claude re-reviews
 7. Claude creates `tasks/TASK-ID/done.md` and `tasks/TASK-ID/pr-body.md` for the human, sets `qa` → `done`
 8. Human tests against `done.md` checklist, sets `human_review` → `done`
 
-**`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a failure outside the task's Affected Files, Codex may record `Fail – unrelated` instead of a bare `Fail`. The Notes column must contain a specific file reference (path, extension, or `file:line`) — vague explanations are rejected by the orchestrator. Claude assesses credibility in Stage 1 code review; an implausible explanation is a Stage 1 fail.
+**`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a failure outside the task's Affected Files, Codex may record `Fail – unrelated` instead of a bare `Fail`. The Notes column must contain a specific file reference (path, extension, or `file:line`) — vague explanations are rejected by the orchestrator. A `Fail – unrelated` entry whose cited file is in the task's branch diff is invalid — the pre-flight gate rejects it deterministically, and Stage 1 flags any that slip through. Claude assesses credibility in Stage 1 code review; an implausible explanation is a Stage 1 fail.
 
 **Per-iteration artifact convention.** `handoff.md` and `review.md` are **cumulative across review rounds, not rewritten**. Round 1 fills the existing template structure. On every subsequent revision:
 
@@ -212,11 +212,20 @@ The code is the source of truth for anything derivable from code: numbers, thres
 
 See `CLAUDE.md` for full Claude guidance (spec authorship, code review rules, QA format). Codex guidance (implementation rules, handoff format, spec review approach) lives in `AGENTS.md` and the orchestrator's injected prompt.
 
-**Claude**: Writes specs and plans, reviews code, writes QA summaries. Does not review its own specs.
+**Claude**: Writes specs and plans, runs code review as a synthesis foreman over anchored and cold lenses, writes QA summaries. Does not review its own specs.
 **Codex**: Reviews Claude's specs (full tier), implements, writes handoffs. Does not review its own code.
 **Human**: Product decisions, priority, final behavioral testing.
 
 If Claude and Codex disagree on approach, escalate to the human with a clear summary of each side's rationale.
+
+### Code Review Responsibilities
+
+The pipeline-spawned `code_review` Claude session is a **synthesis foreman**, not a single direct reviewer. It spawns two isolated lenses:
+
+- **Anchored lens**: applies canon's normal Stage 1 AC-compliance gate, Stage 2 code-quality review, and test-integrity checks using the spec, handoff, and diff.
+- **Cold lens**: reads the diff without spec, AC, handoff rationale, or canon context to catch bugs the spec-anchored pass may miss.
+
+The foreman deduplicates the lens findings, drops cold findings that the spec shows are intended, classifies surviving findings as `code-bug` or `spec-gap`, writes the single `review.md`, and sets one verdict. `changes_requested` routes back to Codex implementation. `spec_gap` means the code cannot fix the issue because the spec is missing or wrong; the phase is blocked with an escalation for the human to amend the spec and re-run.
 
 ## Human Escalation Contract
 

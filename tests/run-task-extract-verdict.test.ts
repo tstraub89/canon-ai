@@ -213,3 +213,32 @@ void test('extractCheckedVerdict: unbolded Needs re-review in round-N', () => {
     ].join('\n');
     assert.equal(extractCheckedVerdict(content), 'needs_re_review');
 });
+
+void test('extractCheckedVerdict: bolded Spec gap is recognized', () => {
+    const content = [
+        '## Final Verdict',
+        '',
+        '- [ ] **Approved**',
+        '- [x] **Spec gap**',
+    ].join('\n');
+    assert.equal(extractCheckedVerdict(content), 'spec_gap');
+});
+
+void test('extractCheckedVerdict: unbolded Spec gap in latest round is recognized', () => {
+    const content = [
+        '## Final Verdict',
+        '',
+        '- [x] **Approved**',
+        '',
+        '## Round 2',
+        '',
+        '- [ ] Approved',
+        '- [x] Spec gap',
+    ].join('\n');
+    assert.equal(extractCheckedVerdict(content), 'spec_gap');
+});
+
+void test('extractCheckedVerdict: unchecked or misspelled Spec gap returns null', () => {
+    assert.equal(extractCheckedVerdict('- [ ] **Spec gap**'), null);
+    assert.equal(extractCheckedVerdict('- [x] **Spec-gap**'), null);
+});

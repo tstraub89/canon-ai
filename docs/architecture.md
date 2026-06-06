@@ -23,7 +23,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **Runtime**: Node.js 24.x — `package.json` `engines`
 - **Test runner**: Node built-in `node --test` with `tsx` import hook for direct TS execution
 - **Type checker**: `tsc --noEmit` for fast validation; `tsup` (via `npm run build`) emits the published CLI bundle in `dist/` from `src/`. Orchestrator scripts run directly via `tsx` without a build step.
-- **Shell helpers**: bash + `jq` for status.json updates (`scripts/task.sh`)
+- **Task management CLI**: `canon task` subcommands (`src/task/index.ts`) for status.json updates and phase transitions
 - **External CLIs the orchestrator drives**: `claude` (Anthropic CLI), `codex` (OpenAI Codex CLI), `git`, `gh`
 - **Persistence**: filesystem only — `status.json` files and markdown artifacts under `tasks/<id>/`
 - **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
@@ -47,7 +47,7 @@ Anything that would change if you migrated to a different framework belongs here
 │   • Invokes orchestrator after spec gate                      │
 │   • Monitors progress                                         │
 └──────────────────────────────────────────────────────────────┘
-        │ npx tsx scripts/run-task.ts <id>
+        │ canon run <id>
         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Orchestrator (scripts/run-task/main.ts via scripts/run-task.ts) │
@@ -69,15 +69,15 @@ Anything that would change if you migrated to a different framework belongs here
 └─────────────────┘  └─────────────────┘   └─────────────────┘  └─────────────────┘
 ```
 
-The orchestrator is a long-running TypeScript process. It spawns agent CLIs as subprocesses, reads their stdout/stderr, parses structured artifacts they wrote to disk, advances phase state, and loops until the task reaches `human_review`.
+The orchestrator is a long-running TypeScript process. It spawns agent CLIs as subprocesses, reads their stdout/stderr, parses structured artifacts they wrote to disk, advances phase state, and loops until the task reaches `human_review`. It detaches by default when stdout is not a TTY (the normal case in the operator session); use `canon watch <id>` to block and stream phase transitions.
 
 ## Data Flow
 
 ### One-task lifecycle (full tier)
 
-1. **Human + conversational Claude** discuss the problem. Claude creates `tasks/<id>/` with templated artifacts via `./scripts/task.sh new <id> <title>`. Status starts at `phases.spec.status = "pending"`.
+1. **Human + conversational Claude** discuss the problem. Claude creates `tasks/<id>/` with templated artifacts via `canon task new <id> "<title>"`. Status starts at `phases.spec.status = "pending"`.
 2. **Spec authorship** happens in the conversation. Claude writes `spec.md` and updates status (`phases.spec.status = "done"`).
-3. **Human spec gate**: human reads `spec.md`, signals approval. Claude invokes `npx tsx scripts/run-task.ts <id>`.
+3. **Human spec gate**: human reads `spec.md`, signals approval. Claude invokes `canon run <id>`.
 4. **Orchestrator boots**: reads `status.json`, derives current phase (`spec_review`), resolves policy from `pipeline-policy.ts` (tier=full, model=codex-mini medium effort, etc.).
 5. **Codex spec review**: orchestrator spawns `codex exec` with the spec-review prompt and the spec file. Codex writes `spec-review.md`. Orchestrator parses verdict; if `changes_requested`, increments iteration count and routes back to spec (or auto-blocks if cap hit).
 6. **Plan**: orchestrator spawns Claude with the plan prompt. Claude writes `plan.md`.
@@ -101,7 +101,7 @@ After every agent invocation, the orchestrator appends a row to `docs/pipeline-i
 
 Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json` is the only structured contract between phases. Schema lives in `.canon/templates/status.json`:
 
-- Top-level `status` is **derived** — it points at the first non-`done` phase. Hand-editing it produces inconsistent state. Use `./scripts/task.sh phase` instead.
+- Top-level `status` is **derived** — it points at the first non-`done` phase. Hand-editing it produces inconsistent state. Use `canon task phase` instead.
 - Each phase has at least `{ status, agent }`. Review phases also have `{ verdict, iterations }`.
 - `task_size` (`S | M | L | XL`) and `delicate` (boolean) are set at task creation; both feed `pipeline-policy.ts` to choose tier, model, and loop cap.
 
@@ -161,27 +161,6 @@ Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-che
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 
 **To make CI a hard merge gate**: in GitHub → Settings → Branches, add a protection rule for `main` and `dev` with required status check `test (24.x)`. Until configured, CI is informational only.
-
-## Validation
-
-> **TODO[canon]: Bind the [AGENTS.md Validation Matrix](../AGENTS.md#validation-matrix) categories to your project's actual commands. One row per category; mark N/A with rationale where a category doesn't apply.**
-
-| Category (from AGENTS.md) | Project binding |
-|---|---|
-| Linting | `<command>` |
-| Type checking | `<command>` |
-| Unit tests | `<command>` |
-| Full build | `<command>` |
-| End-to-end tests | `<command>` |
-| Prerender / sitemap / feed | `<command>` |
-| Migration runner | `<command>` |
-| Cross-platform | `<note>` |
-
-**Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.
-
-## CI
-
-> **TODO[canon]: Document the project's CI pipeline structure — provider, workflow files in `.github/workflows/` (or equivalent), and which checks block merges. If no CI is configured, state that explicitly with a note about manual validation discipline.**
 
 ## Cross-Cutting Concerns
 

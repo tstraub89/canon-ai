@@ -178,6 +178,28 @@ void test('approved real review resets preflight_rejections_current_loop alongsi
     });
 });
 
+void test('spec_gap real review increments total and resets the loop like an approval', () => {
+    withTempTasks(root => {
+        const taskId = 'preflight-then-spec-gap';
+        const base = makeStatus(taskId);
+        base.phases.spec_review = { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0 };
+        writeTask(root, taskId, base);
+
+        taskPhasePreflightRejected(taskId, 'code_review');
+        taskPhasePreflightRejected(taskId, 'code_review');
+        withSkippedPhaseGate(() => taskPhase(taskId, 'code_review', 'done', 'spec_gap'));
+
+        const phase = readTaskStatus(root, taskId).phases.code_review;
+        assert.equal(phase?.verdict, 'spec_gap');
+        assert.equal(phase?.preflight_rejections_current_loop, 0);
+        assert.equal(phase?.iterations_current_loop, 0);
+        assert.equal(phase?.iterations, 0);
+        assert.equal(phase?.iterations_total, 1);
+        assert.equal(phase?.preflight_rejections_total, 2);
+        assert.equal(phase?.changes_requested_total, 2);
+    });
+});
+
 void test('taskPhasePreflightRejected sets verdict but does NOT bump iteration counters', () => {
     // The bug this fixes: pre-flight rejection was previously calling
     // taskPhase(..., 'changes_requested'), which bumped iterations_current_loop.

@@ -99,16 +99,62 @@ void test('extractAffectedFiles parses the Affected Files table and ignores malf
     withTempTaskSpec([
         '# Spec',
         '',
+        '## Design',
+        '',
         '### Affected Files',
         '',
         '| File | Change |',
         '|---|---|',
         '| `src/foo.ts` | update |',
-        '| src/bar.ts | malformed |',
+        '| src/bar.ts | malformed — no backtick |',
         '| `docs/baz.md` | docs |',
         '',
     ].join('\n'), taskId => {
         assert.deepEqual(extractAffectedFiles(taskId), ['src/foo.ts', 'docs/baz.md']);
+    });
+});
+
+void test('extractAffectedFiles picks up paths from an Amendment section', () => {
+    withTempTaskSpec([
+        '# Spec',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/original.ts` | update |',
+        '',
+        '## Amendment',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/added-in-amendment.ts` | add |',
+        '',
+    ].join('\n'), taskId => {
+        const files = extractAffectedFiles(taskId);
+        assert.ok(files.includes('src/original.ts'), 'Design table path missing');
+        assert.ok(files.includes('src/added-in-amendment.ts'), 'Amendment table path missing');
+    });
+});
+
+void test('extractAffectedFiles extracts paths from markdown-link cells', () => {
+    withTempTaskSpec([
+        '# Spec',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| [src/linked.ts](src/linked.ts) | update via markdown link |',
+        '',
+    ].join('\n'), taskId => {
+        assert.deepEqual(extractAffectedFiles(taskId), ['src/linked.ts']);
     });
 });
 

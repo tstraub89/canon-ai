@@ -608,7 +608,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.9.1";
+  const installedVersion = "1.10.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -1034,7 +1034,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.9.1";
+  const version = "1.10.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -2330,6 +2330,7 @@ function extractCheckedVerdict(content) {
   if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return "approved";
   if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return "changes_requested";
   if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return "needs_re_review";
+  if (/^- \[x\] (?:\*\*)?Spec gap(?:\*\*)?(?:\s|$)/mi.test(scope)) return "spec_gap";
   return null;
 }
 var PHASE_GATE_CONFIG = {
@@ -2587,7 +2588,7 @@ function parseDiffNameStatus(stdout) {
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
-var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review"]);
+var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -2784,7 +2785,7 @@ function taskList() {
   const rows = [];
   let invalidCount = 0;
   for (const entry of fs9.readdirSync(root).sort()) {
-    if (entry === "_archive") continue;
+    if (entry === "_archive" || entry === "_templates") continue;
     if (isOrphanedWorktreeState(entry)) {
       invalidCount += 1;
       let title = "(untitled)";
@@ -2860,7 +2861,10 @@ function assertValidVerdict(phase, verdict) {
     throw new Error("Error: verdict is only valid for spec_review and code_review phases");
   }
   if (!VALID_VERDICTS.has(verdict)) {
-    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review`);
+    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap`);
+  }
+  if (verdict === "spec_gap" && phase !== "code_review") {
+    throw new Error(`Error: verdict 'spec_gap' is only valid for the code_review phase, not '${phase}'.`);
   }
 }
 function priorIncompletePhases(status, phase) {
@@ -2886,7 +2890,7 @@ function updateReviewCounters(entry, verdict) {
     entry.changes_requested_total += 1;
     entry.iterations = entry.iterations_current_loop;
     entry.preflight_rejections_current_loop = 0;
-  } else if (verdict === "approved" || verdict === "approved_with_nits") {
+  } else if (verdict === "approved" || verdict === "approved_with_nits" || verdict === "spec_gap") {
     entry.iterations_total += 1;
     entry.iterations_current_loop = 0;
     entry.iterations = 0;
@@ -3490,6 +3494,8 @@ var CANON_OWNED = [
   ".claude/skills/canon-status/SKILL.md",
   ".claude/skills/canon-changelog/SKILL.md",
   ".claude/skills/canon-review/SKILL.md",
+  ".claude/agents/code-review-anchored.md",
+  ".claude/agents/code-review-cold.md",
   ".canon/templates/status.json",
   ".canon/templates/spec.md",
   ".canon/templates/plan.md",
@@ -3651,7 +3657,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.9.1";
+  const newVersion = "1.10.0";
   const currentVersion = existsSync5(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -3849,7 +3855,7 @@ canon task subcommands:
                             phases:   spec | spec_review | plan | implement |
                                       code_review | qa | human_review
                             status:   pending | in_progress | done | changes_requested | blocked
-                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review
+                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review | spec_gap
                                       (verdict applies to spec_review and code_review only)
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.
@@ -3895,7 +3901,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.9.1");
+  console.log("1.10.0");
 }
 switch (command) {
   case "doctor":

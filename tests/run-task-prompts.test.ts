@@ -368,8 +368,15 @@ void test('promptImplementRevisions selects pre-flight branch when preflight cou
 
     const output = normalize(promptImplementRevisions(makeState(preflightTask), [], 'main'));
 
-    assert.match(output, /addressing pre-flight handoff rejection/);
+    assert.match(output, /addressing pre-flight rejection/);
+    assert.doesNotMatch(output, /addressing pre-flight handoff rejection/);
     assert.doesNotMatch(output, /addressing code review round/);
+    assert.doesNotMatch(output, /input-validation failure/);
+    assert.doesNotMatch(output, /Fix the handoff itself/);
+    assert.doesNotMatch(output, /Source-code changes are usually unnecessary/);
+    assert.match(output, /review\.md/);
+    assert.match(output, /Validation Gate|Pre-Flight Rejection/);
+    assert.match(output, /fix the handoff, fix the code, or both/);
 });
 
 void test('promptImplementReroute', () => {
@@ -431,6 +438,14 @@ void test('promptImplementReroute single-task at reroute #2 retains strong-ancho
 void test('promptCodeReview_round1', () => {
     const actual = normalize(promptCodeReview(baseState));
     recordOrAssert('promptCodeReview_round1', actual);
+});
+
+void test('promptCodeReview renders the synthesis foreman and both lens subagents', () => {
+    const actual = normalize(promptCodeReview(baseState));
+    assert.match(actual, /synthesis foreman/);
+    assert.match(actual, /subagent_type: code-review-anchored/);
+    assert.match(actual, /subagent_type: code-review-cold/);
+    assert.match(actual, /Do not give it `spec\.md`, ACs, handoff rationale, canon docs/);
 });
 
 void test('promptCodeReview_roundN', () => {

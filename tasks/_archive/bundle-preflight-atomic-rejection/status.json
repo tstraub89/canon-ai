@@ -1,21 +1,21 @@
 {
   "id": "bundle-preflight-atomic-rejection",
   "title": "Pre-flight rejection of bundled tasks must be all-or-nothing",
-  "status": "spec_review",
+  "status": "complete",
   "created": "2026-05-26",
-  "updated": "2026-05-26",
-  "branch": "",
-  "base_branch": "release/v1.5",
+  "updated": "2026-06-06",
+  "branch": "task/bundle-preflight-atomic-rejection",
+  "base_branch": "release/v1.10",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "1544047c71f5dc55959b52fba8009f195c61e3b6",
-    "orchestrator_commit": "1544047c71f5dc55959b52fba8009f195c61e3b6",
-    "codex_cli": "codex-cli 0.133.0",
-    "claude_code": "2.1.150 (Claude Code)"
+    "upstream_commit": "506bd17eb961a1f41bdec90820c98d9246ec8405",
+    "orchestrator_commit": "506bd17eb961a1f41bdec90820c98d9246ec8405",
+    "codex_cli": "codex-cli 0.137.0",
+    "claude_code": "2.1.163 (Claude Code)"
   },
   "task_size": "M",
   "delicate": true,
-  "human_spec_gate": true,
+  "human_spec_gate": false,
   "full_send": false,
   "worktree": true,
   "phases": {
@@ -24,44 +24,51 @@
       "agent": "claude"
     },
     "spec_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "plan": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
   "escalations": [],
-  "sessions": {},
+  "sessions": {
+    "codex_spec_review": "019e9d31-8c8f-7612-a585-3af043f30a26",
+    "claude_spec": "b97c4fc3-1405-4b1d-b00c-9852502526e3",
+    "codex": "019e9d4b-3fee-7220-b208-2baab206efad",
+    "claude_review": "ddbcb4df-d973-4984-9da1-2a516faf5d38"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."

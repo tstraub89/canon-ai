@@ -514,3 +514,276 @@ All checks must pass clean. If `npm test` fails on a stale golden, re-run `UPDAT
 ## Rollback Plan
 
 No data migration. No new `status.json` fields. The changes are behavioral: routing and messaging in `code-review.ts`, new helpers in `validation.ts`, copy changes in prompts and templates. Reverting the commit reverts the behavior. In-flight tasks that hit a pre-flight rejection mid-pipeline are not affected by the routing change retroactively — they re-enter `code_review` from the top on re-run.
+
+---
+
+## Reroute Plan
+
+### Context
+
+Steps 1–15 of the original plan are implemented and committed. The reroute implements the **Amendment** section of `spec.md`: two targeted fixes to `validation.ts` that close the absolute-path and bare-basename bypass gaps in the `Fail – unrelated` laundering guard (AC-1a, AC-1b). No prompt templates, no canon docs, no routing logic, no counters change — this is a pure `validation.ts` + test delta.
+
+The `approved_with_nits` amendment review flag: if Windows drive-letter path support is kept in scope (the spec amendment names it), AC-1a test coverage must include a drive-letter variant or explicitly scope it out.
+
+### Delta
+
+<!-- per-round append shape:
+## Reroute Plan [Round N]
+### Delta
+- ...ordered steps for the amendment delta only...
+-->
+
+**Step R1 — `validation.ts`: Tighten `hasFileRef` regex (AC-1b)**
+
+Two sites contain `const hasFileRef = /\w+\.\w+|:\d+/.test(row.notes ?? '')`:
+- `validateHandoffAgainstSpec` — `isUnrelatedFailResult` branch (plan Step 2, ~L571)
+- `classifyPreflightBlockersFromData` — same branch (plan Step 4b)
+
+Change both to:
+```ts
+const hasFileRef = /\/\S+|:\d+/.test(row.notes ?? '');
+```
+This requires either a `/` path separator **or** a `:\d+` line reference. Effect:
+- `editor.spec.ts` (no `/`, no `:\d+`) → `hasFileRef = false` → row rejected (AC-1b)
+- `editor.spec.ts:1231` (has `:\d+`) → `hasFileRef = true` → proceeds to in-diff guard / Stage 1 (AC-1b: line-ref form still passes)
+- `e2e/specs/editor.spec.ts` (has `/`) → `hasFileRef = true` → unchanged behavior
+- `/abs/path/to/repo/e2e/specs/editor.spec.ts:1231` (has both) → `hasFileRef = true` → proceeds to in-diff guard (AC-1a)
+
+**Step R2 — `validation.ts`: Add `matchAgainstChangedFiles` helper (AC-1a)**
+
+Add a new exported pure helper immediately after `extractCitedFilePaths`:
+
+```ts
+export function matchAgainstChangedFiles(
+    citedPath: string,
+    changedFiles: ReadonlySet<string>,
+): boolean {
+    const isAbsolute = citedPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(citedPath);
+    if (!isAbsolute) return changedFiles.has(citedPath);
+    // Absolute path: split on both / and \, walk suffixes right-to-left,
+    // join with / to match git-diff repo-relative paths.
+    const parts = citedPath.split(/[/\\]/);
+    for (let i = 1; i < parts.length; i++) {
+        const suffix = parts.slice(i).join('/');
+        if (suffix && changedFiles.has(suffix)) return true;
+    }
+    return false;
+}
+```
+
+Replace `citedPaths.some(p => changedFiles.has(p))` with `citedPaths.some(p => matchAgainstChangedFiles(p, changedFiles))` in both:
+- `validateHandoffAgainstSpec` (plan Step 2 call site)
+- `classifyPreflightBlockersFromData` (plan Step 4b call site)
+
+Splitting on both `/` and `\\` handles POSIX absolute paths (e.g. `/workspace/repo/e2e/specs/editor.spec.ts`) and Windows drive-letter paths (e.g. `C:\workspace\repo\e2e\specs\editor.spec.ts`) — the suffix is always joined with `/` so it matches the git-diff repo-relative key.
+
+**Step R3 — `tests/run-task-validation.test.ts`: AC-1a and AC-1b tests**
+
+Add two test groups after the existing `extractCitedFilePaths` tests (plan Step 11):
+
+**`matchAgainstChangedFiles`** (new pure helper):
+- Relative path in `changedFiles` → `true`
+- Relative path not in `changedFiles` → `false`
+- POSIX absolute path whose suffix matches → `true` (AC-1a core case)
+- POSIX absolute path whose suffix does not match → `false`
+- Windows drive-letter path whose suffix matches (e.g. `C:\workspace\repo\e2e\specs\editor.spec.ts`, `changedFiles` has `e2e/specs/editor.spec.ts`) → `true` (addresses `approved_with_nits` flag)
+
+**`classifyPreflightBlockersFromData` — AC-1a and AC-1b integration:**
+- `Fail – unrelated` Notes = `'/workspace/repo/e2e/specs/editor.spec.ts:1231'`, `changedFiles` has `'e2e/specs/editor.spec.ts'` → one `regression` issue (AC-1a)
+- `Fail – unrelated` Notes = `'editor.spec.ts'` (bare basename, no `/`, no `:\d+`) → `hasFileRef` check fails → the row is rejected as format-class (no `Fail – unrelated` accept) — **not** silently accepted (AC-1b outer rejection)
+- `Fail – unrelated` Notes = `'editor.spec.ts:1231'` (bare basename + line ref) → `hasFileRef` passes; cited path `'editor.spec.ts'` does not match `'e2e/specs/editor.spec.ts'` in `changedFiles` → no regression issue raised (proceeds to Stage 1 credibility review — the safe/conservative behavior)
+
+**Step R4 — Build artifacts**
+
+```bash
+npm run build
+```
+
+`validation.ts` changes recompile into **both** `dist/scripts/run-task.js` and `dist/cli/index.js`. The original handoff noted `dist/cli/index.js` was byte-identical in round 1; it will change this round. Commit both dist deltas.
+
+**Step R5 — Final validation**
+
+```bash
+npm run lint && npm run type-check && npm test && npm run sync-templates:check && npm run docs-refs-check
+```
+
+No prompt template edits → no golden regeneration needed. If `npm test` shows unexpected golden diffs, investigate before committing.
+
+---
+
+## Reroute Plan Round 2
+
+### Context
+
+Reroute Round 1 (Steps R1–R5) is implemented and committed. The missing case: `editor.spec.ts:1231` (bare basename + `:line`) still bypasses the guard. After Round 1, `matchAgainstChangedFiles` has two branches — absolute-path suffix walk and exact match — but the exact-match branch (`changedFiles.has(citedPath)`) returns false for a bare basename when `changedFiles` contains `e2e/specs/editor.spec.ts`. The fix is a third branch in `matchAgainstChangedFiles` that scans `changedFiles` by last segment when the cited path has no path separator.
+
+No prompt templates, no canon docs, no routing, no counters change.
+
+**Approved-with-nits flag**: A stale sentence in Amendment 1 prose (spec.md:147) says `filename.ext:line` "proceeds to Claude Stage 1 review" — Round 2 supersedes that behavior. Non-blocking; no code action required.
+
+### Delta
+
+**Step R2.1 — `validation.ts`: Extend `matchAgainstChangedFiles` with bare-basename last-segment scan (AC-1c)**
+
+**File**: `scripts/run-task/validation.ts` — `matchAgainstChangedFiles`
+
+The current non-absolute branch is:
+```ts
+if (!isAbsolute) return changedFiles.has(citedPath);
+```
+
+Replace it with:
+```ts
+if (!isAbsolute) {
+    // Relative path with a separator: exact match works.
+    if (citedPath.includes('/') || citedPath.includes('\\')) {
+        return changedFiles.has(citedPath);
+    }
+    // Bare basename (no separator): scan for any changed file whose last segment matches.
+    for (const file of changedFiles) {
+        const lastSeg = file.split('/').pop() ?? '';
+        if (lastSeg === citedPath) return true;
+    }
+    return false;
+}
+```
+
+This closes `editor.spec.ts:1231`: `extractCitedFilePaths` emits `editor.spec.ts` (stripped of `:1231`), the new branch finds `e2e/specs/editor.spec.ts` in `changedFiles` whose last segment is `editor.spec.ts`, and returns `true` — regression blocker emitted.
+
+The documented same-basename false positive (AC-1d / Known Risks) fires in the safe direction — two changed files with the same basename both trigger the guard. Existing Known Risks entry already covers this.
+
+**Step R2.2 — `tests/run-task-validation.test.ts`: AC-1c tests**
+
+Add two rows to the `matchAgainstChangedFiles` group (after the existing AC-1a rows from Reroute Round 1):
+
+- **Positive (AC-1c)**: `citedPath = 'editor.spec.ts'`, `changedFiles = new Set(['e2e/specs/editor.spec.ts'])` → `matchAgainstChangedFiles` returns `true`
+- **Negative (AC-1c)**: `citedPath = 'foo.spec.ts'`, `changedFiles = new Set(['e2e/specs/editor.spec.ts'])` → returns `false` (basename not in any changed file's last segment)
+
+Also add two integration rows to the `classifyPreflightBlockersFromData` group:
+
+- **AC-1c positive**: `Fail – unrelated` Notes = `'editor.spec.ts:1231'`, `changedFiles` has `'e2e/specs/editor.spec.ts'` → one `regression` issue emitted
+- **AC-1c negative**: `Fail – unrelated` Notes = `'foo.spec.ts:1231'`, `changedFiles` has `'e2e/specs/editor.spec.ts'` → no regression issue (genuinely-unrelated accept path preserved)
+
+**Step R2.3 — AC-1d: Known Risks verification (no code change)**
+
+AC-1d requires the Known Risks section of `spec.md` to document the three remaining gaps. The spec's existing Known Risks section (lines 117–124) already enumerates all three: `:line`-only reference with no filename, same-basename false positive, and URL-style citations — each with safe-direction rationale. AC-1d is satisfied; no edit needed.
+
+**Step R2.4 — Build artifacts**
+
+```bash
+npm run build
+```
+
+`validation.ts` change recompiles into **both** `dist/scripts/run-task.js` and `dist/cli/index.js`. Commit both deltas.
+
+**Step R2.5 — Final validation**
+
+```bash
+npm run lint && npm run type-check && npm test && npm run sync-templates:check && npm run docs-refs-check
+```
+
+No prompt template edits → no golden regeneration needed.
+
+---
+
+## Reroute Plan Round 3
+
+### Context
+
+Reroute Rounds 1–2 (Steps R1–R5, R2.1–R2.5) are implemented and committed. The regression: the refactor replaced the old `validateHandoff`'s unconditional `hasFail` all-row scan with `classifyValidationChecks`, which iterates only the spec's `[x]`-checked `requiredChecks` items. Non-required rows with a plain `Fail` result are now silently ignored — a task can reach Claude review with an explicitly-failed non-required check. Only plain `Fail` is the gap; all other result states on non-required rows (`Fail – unrelated`, `blocked`, `Pass`, `pending`) were never flagged by the old `hasFail` scan and remain consistent.
+
+The spec renames the new AC label to **AC-11** (the original draft used AC-10, which is already taken by the implement-revision prompt requirement).
+
+No prompt templates, no canon docs, no routing changes, no counter changes — pure `validation.ts` + test delta.
+
+### Delta
+
+**Step R3.1 — `validation.ts`: Add non-required plain-Fail scan in `classifyPreflightBlockersFromData` (AC-11)**
+
+**File**: `scripts/run-task/validation.ts` — `classifyPreflightBlockersFromData` (L643–652)
+
+The current function body is:
+
+```ts
+export function classifyPreflightBlockersFromData(data: PreflightClassificationData): ClassifiedBlocker[] {
+    const format = (message: string): ClassifiedBlocker => ({ bucket: 'format', message });
+    if (data.handoffMissing) return [format('handoff.md not found')];
+    return [
+        ...data.acCoverageIssues.map(format),
+        ...data.changesTableIssues.map(format),
+        ...data.bundleDiffIssues.map(format),
+        ...classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles),
+    ];
+}
+```
+
+Replace with an expanded body that adds the non-required plain-Fail scan after `classifyValidationChecks` runs:
+
+```ts
+export function classifyPreflightBlockersFromData(data: PreflightClassificationData): ClassifiedBlocker[] {
+    const format = (message: string): ClassifiedBlocker => ({ bucket: 'format', message });
+    const regression = (message: string): ClassifiedBlocker => ({ bucket: 'regression', message });
+    if (data.handoffMissing) return [format('handoff.md not found')];
+
+    const fromRequired = classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles);
+
+    // Pre-compute the set of canonical keys already covered by requiredChecks so
+    // the non-required scan does not double-count them.
+    const requiredCanonicalKeys = new Set(
+        (data.requiredChecks ?? []).map(r => canonicalizeValidationCheck(r)),
+    );
+
+    // Restore the old validateHandoff all-row plain-Fail scan for non-required rows.
+    // Fail – unrelated on non-required rows remains on the accept path (unchanged behavior).
+    const fromNonRequired: ClassifiedBlocker[] = [];
+    for (const [canonical, row] of data.latestResults) {
+        if (requiredCanonicalKeys.has(canonical)) continue;
+        if (isFailResult(row.result) && !isUnrelatedFailResult(row.result)) {
+            const note = row.notes ? ` (${row.notes})` : '';
+            fromNonRequired.push(regression(
+                `Validation Outcomes row not in spec's required checks has a plain Fail: ${canonical}${note} — fix the regression.`,
+            ));
+        }
+    }
+
+    return [
+        ...data.acCoverageIssues.map(format),
+        ...data.changesTableIssues.map(format),
+        ...data.bundleDiffIssues.map(format),
+        ...fromRequired,
+        ...fromNonRequired,
+    ];
+}
+```
+
+Key points:
+- `isFailResult` at L502 is `/^fail/i` — matches both `Fail` and `Fail – unrelated`. Guarding with `!isUnrelatedFailResult(row.result)` (L513) restricts to plain `Fail` only, consistent with the spec's stated boundary.
+- `canonicalizeValidationCheck` at L90 is the same normalizer used inside `classifyValidationChecks`, so the canonical keys match.
+- `data.requiredChecks` may be `null` (missing section). The `?? []` coercion makes `requiredCanonicalKeys` an empty set, which is safe — if the required section is missing, `classifyValidationChecks` already returns a format blocker and the non-required scan runs over all rows (over-inclusive in the safe direction; the format blocker takes priority anyway).
+
+**Step R3.2 — `tests/run-task-validation.test.ts`: AC-11 tests**
+
+**File**: `tests/run-task-validation.test.ts`
+
+Add four test rows to the `classifyPreflightBlockersFromData` group (after the existing R2.x integration tests), covering all four AC-11 verify clauses:
+
+- **(a) Non-required plain `Fail` → regression blocker**: a `latestResults` map with a `Fail` row for a key NOT in `requiredChecks` → one `regression`-bucket blocker emitted.
+- **(b) Non-required `Pass` → no blocker**: a `latestResults` map with a `Pass` row for a non-required key → no blocker from this rule.
+- **(c) Non-required `Fail – unrelated` with valid file ref → no regression blocker**: a `Fail – unrelated` row for a non-required key (Notes with a valid file ref, file NOT in `changedFiles`) → no regression blocker emitted (row remains on accept path — proceeds to Claude Stage 1).
+- **(d) Required `Fail` not double-counted**: a `Fail` row whose key appears in both `latestResults` AND `requiredChecks` → only one `regression` blocker total (one from `classifyValidationChecks`, zero from the non-required scan).
+
+**Step R3.3 — Build artifacts**
+
+```bash
+npm run build
+```
+
+`validation.ts` change recompiles into **both** `dist/scripts/run-task.js` and `dist/cli/index.js`. Commit both deltas.
+
+**Step R3.4 — Final validation**
+
+```bash
+npm run lint && npm run type-check && npm test && npm run sync-templates:check && npm run docs-refs-check
+```
+
+No prompt template edits → no golden regeneration needed.

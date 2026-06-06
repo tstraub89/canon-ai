@@ -1,19 +1,19 @@
 {
-  "id": "preflight-failure-routing",
-  "title": "Classify code-review pre-flight failures and route by who-can-fix-it",
-  "status": "implement",
+  "id": "multi-agent-code-review",
+  "title": "Multi-agent code review: anchored + cold lenses, synthesis foreman",
+  "status": "complete",
   "created": "2026-06-05",
-  "updated": "2026-06-05",
-  "branch": "",
-  "base_branch": "main",
+  "updated": "2026-06-06",
+  "branch": "task/multi-agent-code-review",
+  "base_branch": "release/v1.10",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "c1e674bc02989f2e615cbe7b8344d04e683efb41",
-    "orchestrator_commit": "c1e674bc02989f2e615cbe7b8344d04e683efb41",
+    "upstream_commit": "b2ff160664c8fb83d2f315e6d35865b735815def",
+    "orchestrator_commit": "b2ff160664c8fb83d2f315e6d35865b735815def",
     "codex_cli": "codex-cli 0.137.0",
     "claude_code": "2.1.163 (Claude Code)"
   },
-  "task_size": "M",
+  "task_size": "L",
   "delicate": true,
   "human_spec_gate": false,
   "full_send": false,
@@ -26,11 +26,11 @@
     "spec_review": {
       "status": "done",
       "agent": "codex",
-      "verdict": "approved",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 3,
-      "changes_requested_total": 2,
+      "iterations_total": 4,
+      "changes_requested_total": 3,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
     },
@@ -39,32 +39,34 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "019e95e1-6dba-7850-879c-ae11d383ac0e",
-    "claude_spec": "5f498664-02ff-40d1-b604-a445fb5d2a6f"
+    "codex_spec_review": "019e95d6-ef27-7383-bc79-6048e0d362cf",
+    "codex": "019e9adb-3271-78a0-af7d-ef93f3bf0923",
+    "claude_review": "6695ada8-c372-47ec-b2ad-dcb77fa3802e"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",

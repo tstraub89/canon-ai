@@ -280,6 +280,59 @@ void test('task phase updates phase state and derives top-level status', () => {
     });
 });
 
+void test('task phase accepts spec_gap for code_review', () => {
+    withTasksRoot(tasksRoot => {
+        const taskId = 'phase-spec-gap';
+        const taskDir = writeTask(tasksRoot, taskId, makeStatus(taskId, {
+            phases: {
+                ...makeStatus(taskId).phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: {
+                    status: 'pending',
+                    agent: 'claude',
+                    verdict: '',
+                    iterations: 0,
+                    iterations_current_loop: 0,
+                    iterations_total: 0,
+                    changes_requested_total: 0,
+                    preflight_rejections_current_loop: 1,
+                    auto_block_count: 0,
+                },
+            },
+        }));
+
+        captureStdout(() => taskPhase(taskId, 'code_review', 'done', 'spec_gap'));
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.code_review?.verdict, 'spec_gap');
+        assert.equal(updated.phases.code_review?.iterations_total, 1);
+        assert.equal(updated.phases.code_review?.iterations_current_loop, 0);
+        assert.equal(updated.phases.code_review?.preflight_rejections_current_loop, 0);
+        assert.equal(updated.status, 'qa');
+    });
+});
+
+void test('task phase rejects spec_gap for spec_review (code_review-only verdict)', () => {
+    withTasksRoot(tasksRoot => {
+        const taskId = 'phase-spec-gap-reject';
+        writeTask(tasksRoot, taskId, makeStatus(taskId, {
+            phases: {
+                ...makeStatus(taskId).phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'in_progress', agent: 'codex', verdict: '' },
+            },
+        }));
+
+        assert.throws(
+            () => taskPhase(taskId, 'spec_review', 'done', 'spec_gap'),
+            /spec_gap.*only valid for the code_review phase/,
+        );
+    });
+});
+
 void test('task phase rejects invalid phase and out-of-order transitions', () => {
     withTasksRoot(tasksRoot => {
         writeTask(tasksRoot, 'phase-errors');

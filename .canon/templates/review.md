@@ -4,7 +4,9 @@
 >
 > **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
 
-Review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
+Code review is synthesized by a foreman from two review lenses: an anchored lens that applies the Stage 1 / Stage 2 charter below, and a cold lens that reads only the diff. The foreman writes this single consolidated artifact and verdict.
+
+The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
 
 ## Stage 1 — Spec Compliance (gate)
 
@@ -66,7 +68,13 @@ One paragraph: overall code quality of the implementation.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous or silent. Not a code bug — a signal to improve the spec template or spec authorship. Not blocking unless the guess was wrong (in which case reclassify as correctness bug).
+> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
+
+(none / list items)
+
+### Dismissed Cold Findings
+
+> Cold-lens findings dropped because the spec shows the behavior is intended. Include the spec reason.
 
 (none / list items)
 
@@ -76,6 +84,7 @@ One paragraph: overall code quality of the implementation.
 - [ ] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Needs re-review** — significant changes expected; re-review (both stages) after iteration
+- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
 ---
 
@@ -108,6 +117,7 @@ Re-fill this table with every AC from spec.md against the latest code. Earlier A
 - [ ] Approved with nits
 - [ ] Changes requested
 - [ ] Needs re-review
+- [ ] Spec gap
 
 > Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
 -->

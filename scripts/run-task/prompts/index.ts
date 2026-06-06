@@ -8,8 +8,7 @@ import { taskDirFor } from '../state.js';
 import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
 import type { PipelineState } from '../types.js';
-import codeReviewRound1Template from './templates/code-review-round-1.md';
-import codeReviewRoundNTemplate from './templates/code-review-round-n.md';
+import codeReviewForemanTemplate from './templates/code-review-foreman.md';
 import implementTemplate from './templates/implement.md';
 import implementRerouteTemplate from './templates/implement-reroute.md';
 import implementRevisionsTemplate from './templates/implement-revisions.md';
@@ -22,8 +21,7 @@ import specReviewRerouteTemplate from './templates/spec-review-reroute.md';
 import specReviewTemplate from './templates/spec-review.md';
 
 const TEMPLATES: Record<string, string> = {
-    'code-review-round-1.md': codeReviewRound1Template,
-    'code-review-round-n.md': codeReviewRoundNTemplate,
+    'code-review-foreman.md': codeReviewForemanTemplate,
     'implement.md': implementTemplate,
     'implement-reroute.md': implementRerouteTemplate,
     'implement-revisions.md': implementRevisionsTemplate,
@@ -265,19 +263,19 @@ export function promptImplementRevisions(
     // `iterations` (it's not a Claude review round — see
     // taskPhasePreflightRejected). Detect it so the revision prompt still
     // points Codex at review.md (which contains the BLOCKED block listing
-    // handoff-format issues to fix). Without this branch, the prompt's
+    // pre-flight issues to fix). Without this branch, the prompt's
     // reviewLines would be empty and Codex wouldn't be told to address the
     // pre-flight findings (Codex P1 on the prior iteration of the fix).
     const maxPreflightRejections = tasks.reduce(
         (m, t) => Math.max(m, t.status.phases.code_review?.preflight_rejections_current_loop ?? 0),
         0,
     );
-    // Pre-flight takes priority when present — it's an input-validation
-    // failure that must be fixed before any further code-review work, even
-    // if prior real review rounds also had findings. Mutually exclusive
-    // routing simplifies Codex's task: address the pre-flight now, get back
-    // into a state where the real review can run, then any unresolved prior
-    // findings will surface in the next real review round naturally.
+    // Pre-flight takes priority when present — the orchestrator rejected the
+    // submission before any further code-review work, even if prior real
+    // review rounds also had findings. Mutually exclusive routing simplifies
+    // Codex's task: address the pre-flight now, get back into a state where
+    // the real review can run, then any unresolved prior findings will
+    // surface in the next real review round naturally.
     // (Codex P2 on the prior iteration: pre-flight after a real review round
     // was rendering review-revision instructions instead of pre-flight
     // instructions in the mixed-history case.)
@@ -286,10 +284,10 @@ export function promptImplementRevisions(
     const iterationN = maxCodeReviewIter + 1;
     const priorRound = maxCodeReviewIter;
     const iterBanner = hasPreflightFindings
-        ? `[ITERATION ${iterationN} — addressing pre-flight handoff rejection (no Claude review yet)]`
+        ? `[ITERATION ${iterationN} — addressing pre-flight rejection]`
         : `[ITERATION ${iterationN} — addressing code review round ${priorRound}]`;
     const handoffAppend = hasPreflightFindings
-        ? `## Iteration ${iterationN} — addressing pre-flight handoff rejection`
+        ? `## Iteration ${iterationN} — addressing pre-flight rejection`
         : `## Iteration ${iterationN} — addressing review round ${priorRound}`;
     const reviewLines = hasReviewFindings
         ? tasks.map(t =>
@@ -297,7 +295,7 @@ export function promptImplementRevisions(
         ).join('\n')
         : hasPreflightFindings
             ? tasks.map(t =>
-                `- \`${t.taskId}\` → read \`tasks/${t.taskId}/review.md\` (\`## Pre-Flight Rejection\` block lists handoff-format issues; no Claude review ran). Address every listed item — usually a malformed Validation Outcomes table or missing AC Coverage rows.`
+                `- \`${t.taskId}\` → read \`tasks/${t.taskId}/review.md\` (\`## Validation Gate\` / \`## Pre-Flight Rejection\` block). Follow whichever framing it carries: fix the handoff, fix the code, or both.`
             ).join('\n')
             : '';
 
@@ -428,45 +426,9 @@ export function promptCodeReview(
     const maxIter = bundleHasRealPriorReview(tasks.map(t => t.taskId)) ? rawMaxIter : 0;
     const resolvedBaseBranch = baseBranch ?? getBaseBranch(tasks.map(t => t.taskId));
     const hasDiff = scopedDiff !== null;
-
-    if (maxIter > 0) {
-        const roundN = maxIter + 1;
-        const priorIteration = maxIter;
-        const diffView = hasDiff
-            ? {
-                hasDiff,
-                baseBranch: resolvedBaseBranch,
-                diffContent: scopedDiff.diff,
-                diffTruncated: scopedDiff.truncated,
-            }
-            : {
-                hasDiff,
-                baseBranch: resolvedBaseBranch,
-                diffContent: '',
-                diffTruncated: false,
-            };
-        const taskLines = tasks.map(t =>
-            `- \`${t.taskId}\` → read the \`## Iteration ${priorIteration} — addressing review round ${maxIter}\` section of \`tasks/${t.taskId}/handoff.md\``
-        ).join('\n');
-        const tightenLine = roundN >= 3
-            ? `\n**Round ${roundN} discipline.** This is round ${roundN}+. Findings must be \`correctness bug\` or \`spec gap\` only — NO \`optional cleanup/nit\` and no wording-only changes. We are tightening, not exploring. If your only finding is a wording preference, approve.\n`
-            : '';
-        return render('code-review-round-n.md', {
-            projectName: config.projectName,
-            roundN,
-            priorIteration,
-            maxIter,
-            taskLines,
-            tightenLine,
-            ...diffView,
-            phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
-        });
-    }
-
-    const taskLines = tasks.map(t =>
-        `- \`${t.taskId}\`: read tasks/${t.taskId}/handoff.md and cross-reference tasks/${t.taskId}/spec.md ACs`
-    ).join('\n');
-
+    const isRound1 = maxIter === 0;
+    const roundN = maxIter + 1;
+    const priorIteration = maxIter;
     const diffView = hasDiff
         ? {
             hasDiff,
@@ -481,12 +443,28 @@ export function promptCodeReview(
             diffTruncated: false,
         };
 
-    return render('code-review-round-1.md', {
+    const taskLines = isRound1
+        ? tasks.map(t =>
+            `- \`${t.taskId}\`: read tasks/${t.taskId}/handoff.md and cross-reference tasks/${t.taskId}/spec.md ACs`
+        ).join('\n')
+        : tasks.map(t =>
+            `- \`${t.taskId}\` -> read the Iteration ${priorIteration} section of \`tasks/${t.taskId}/handoff.md\` that addresses review round ${priorIteration}`
+        ).join('\n');
+    const tightenLine = roundN >= 3
+        ? `**Round ${roundN} discipline.** Findings must be \`correctness bug\` or \`spec gap\` only - no \`optional cleanup/nit\` and no wording-only changes. We are tightening, not exploring. If your only finding is a wording preference, approve.`
+        : '';
+
+    return render('code-review-foreman.md', {
         projectName: config.projectName,
         startup: CLAUDE_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         taskLines,
         isBundle: tasks.length > 1,
+        isRound1,
+        roundN,
+        priorIteration,
+        maxIter,
+        tightenLine,
         ...diffView,
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
     });

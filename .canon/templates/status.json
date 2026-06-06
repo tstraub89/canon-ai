@@ -48,6 +48,6 @@
   "escalations": [],
   "sessions": {},
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
-  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review | spec_gap",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
 }

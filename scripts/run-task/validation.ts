@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { parseTable, parseTableH3, extractSectionBodies } from './markdown-table.js';
+import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies } from './markdown-table.js';
 import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
 import { filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
@@ -68,20 +68,15 @@ export function computeLatestValidationResults(handoffContent: string): Map<stri
     return latest;
 }
 
-export function validateHandoff(taskId: string): string[] {
+export function validateHandoff(taskId: string, changedFiles: ReadonlySet<string> = new Set<string>()): string[] {
     const handoffPath = path.join(taskDirFor(taskId), 'handoff.md');
     const specPath = path.join(taskDirFor(taskId), 'spec.md');
     const issues: string[] = [];
     try {
         const content = fs.readFileSync(handoffPath, 'utf8');
         const latestResults = computeLatestValidationResults(content);
-        const hasFail = Array.from(latestResults.values())
-            .some(row => row.result.trim().toLowerCase() === 'fail');
-        if (hasFail) {
-            issues.push('Validation Outcomes table has one or more Fail results');
-        }
         issues.push(...checkAcCoveragePlaceholders(content));
-        issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults));
+        issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults, changedFiles));
         const { malformed } = parseHandoffChangesRows(taskId);
         for (const entry of malformed) {
             issues.push(`Changes table row '${entry.cell}': ${entry.reason}`);
@@ -359,6 +354,23 @@ export type ValidationOutcomeRow = {
     notes: string;
 };
 
+export type BlockerBucket = 'format' | 'regression' | 'blocked';
+
+export type ClassifiedBlocker = {
+    bucket: BlockerBucket;
+    message: string;
+};
+
+export type PreflightClassificationData = {
+    latestResults: Map<string, ValidationOutcomeRow>;
+    requiredChecks: string[] | null;
+    changedFiles: ReadonlySet<string>;
+    acCoverageIssues: string[];
+    changesTableIssues: string[];
+    bundleDiffIssues: string[];
+    handoffMissing: boolean;
+};
+
 export function parseValidationOutcomeRows(handoffPath: string): ValidationOutcomeRow[] {
     try {
         const content = fs.readFileSync(handoffPath, 'utf8');
@@ -370,6 +382,82 @@ export function parseValidationOutcomeRows(handoffPath: string): ValidationOutco
     } catch {
         return [];
     }
+}
+
+function cleanCitedPathToken(rawToken: string): string {
+    return rawToken
+        .trim()
+        .replace(/^[`'"\[({<]+/, '')
+        .replace(/[>`'"\])}.,;]+$/, '');
+}
+
+function stripCitedLocation(token: string): string {
+    return token.replace(/:\d+(?::\d+)?$/, '');
+}
+
+function hasLineLocation(token: string): boolean {
+    return /:\d+(?::\d+)?$/.test(token);
+}
+
+function hasSpecificFailUnrelatedReference(notes: string): boolean {
+    for (const rawToken of notes.split(/\s+/)) {
+        const cleaned = cleanCitedPathToken(rawToken);
+        if (!cleaned) continue;
+        if (hasLineLocation(cleaned)) return true;
+
+        const withoutLocation = stripCitedLocation(cleaned);
+        const hasPathSeparator = withoutLocation.includes('/') || withoutLocation.includes('\\');
+        const hasFilenameExtension = /\.[A-Za-z0-9]+$/.test(withoutLocation);
+        if (hasPathSeparator && hasFilenameExtension) return true;
+    }
+    return false;
+}
+
+export function extractCitedFilePaths(notes: string): string[] {
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    for (const rawToken of notes.split(/\s+/)) {
+        const cleaned = cleanCitedPathToken(rawToken);
+        // Check for a line-location marker BEFORE stripping it, so extensionless
+        // filenames like `Dockerfile:17` or `Makefile:42` are not dropped by the
+        // extension filter below. The marker alone (`:1231` with no leading filename)
+        // is still filtered because `withoutLocation` will be empty after stripping.
+        const hasLine = hasLineLocation(cleaned);
+        const withoutLocation = stripCitedLocation(cleaned);
+        if (!withoutLocation || !(withoutLocation.includes('/') || withoutLocation.includes('\\') || /\.[A-Za-z0-9]+$/.test(withoutLocation) || hasLine)) {
+            continue;
+        }
+        const normalized = withoutLocation.replace(/^\.\//, '');
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        paths.push(normalized);
+    }
+    return paths;
+}
+
+export function matchAgainstChangedFiles(citedPath: string, changedFiles: ReadonlySet<string>): boolean {
+    const normalized = citedPath.replace(/\\/g, '/').replace(/^\.\//, '');
+    // Treat `../`-prefixed relative paths as absolute-style so they get the
+    // suffix walk below. CI tools often emit paths relative to a subdirectory
+    // (e.g. `../src/foo.ts` from the `e2e/` runner root). The suffix walk
+    // correctly resolves `../src/foo.ts` → tries `src/foo.ts` at depth 1.
+    const isAbsolute = normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('../');
+    if (!isAbsolute) {
+        if (normalized.includes('/')) return changedFiles.has(normalized);
+
+        for (const changedFile of changedFiles) {
+            const lastSegment = changedFile.replace(/\\/g, '/').split('/').pop() ?? '';
+            if (lastSegment === normalized) return true;
+        }
+        return false;
+    }
+
+    const parts = normalized.split('/');
+    for (let i = 1; i < parts.length; i += 1) {
+        const suffix = parts.slice(i).join('/');
+        if (suffix && changedFiles.has(suffix)) return true;
+    }
+    return false;
 }
 
 export function isPassResult(result: string): boolean {
@@ -452,29 +540,185 @@ export function isPendingResult(result: string): boolean {
     return false;
 }
 
+function classifyValidationChecks(
+    requiredChecks: string[] | null,
+    latestResults: Map<string, ValidationOutcomeRow>,
+    changedFiles: ReadonlySet<string>,
+): ClassifiedBlocker[] {
+    const format = (message: string): ClassifiedBlocker => ({ bucket: 'format', message });
+    const regression = (message: string): ClassifiedBlocker => ({ bucket: 'regression', message });
+    const blocked = (message: string): ClassifiedBlocker => ({ bucket: 'blocked', message });
+    const issues: ClassifiedBlocker[] = [];
+
+    if (requiredChecks === null) {
+        return [format('Validation Required section is missing from spec.md')];
+    }
+    if (requiredChecks.length === 0) {
+        return [
+            format(
+                'Validation Required section in spec.md has no `[x]`-checked items — ' +
+                'mark at least one required check `[x]`. The template ships with `[ ]` placeholders; ' +
+                'the spec author marks the required checks before invoking canon. ' +
+                'If no checks apply, use a single `[x] None — <reason>` entry to document the decision.',
+            ),
+        ];
+    }
+
+    for (const required of requiredChecks) {
+        const canonical = canonicalizeValidationCheck(required);
+        const row = latestResults.get(canonical);
+        if (!row) {
+            // Distinguish "no row at all" from "row present but canonicalized
+            // to a different key." The second case usually means a slight
+            // mismatch between the spec phrasing and the handoff cell text;
+            // surface the present keys so the user can spot it without
+            // chasing the wrong root cause. (Issue #71.)
+            const present = [...latestResults.keys()];
+            const hint = present.length > 0
+                ? ` Handoff has rows for: ${present.join(', ')}. (Required canonicalized to: '${canonical}'.)`
+                : ' Handoff has no Validation Outcomes rows.';
+            issues.push(format(`Validation Required item missing from handoff.md: ${required}.${hint}`));
+            continue;
+        }
+        const note = row.notes ? ` (${row.notes})` : '';
+
+        // Required items in `pending` template state count as missing — the
+        // agent didn't actually fill in the row.
+        if (isPendingResult(row.result)) {
+            issues.push(format(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`));
+            continue;
+        }
+        if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
+            issues.push(format(`Validation Required item marked ${row.result} in handoff.md: ${required} (required checks cannot be skipped — adjust spec or run the check)`));
+            continue;
+        }
+        // `deferred_by_spec` valid only with a spec citation in Notes.
+        if (isDeferredBySpecResult(row.result)) {
+            if (!/spec[:.-]/i.test(row.notes ?? '')) {
+                issues.push(format(`Validation Required item marked deferred_by_spec without a spec citation in Notes: ${required}`));
+            }
+            continue;
+        }
+        // `human_pending` is a soft state — valid in handoff (the human will
+        // pick this up at human_review). NOT a validateHandoffAgainstSpec
+        // failure. The `human_review.done` gate enforces zero human_pending
+        // before the task closes.
+        if (isHumanPendingResult(row.result)) {
+            continue;
+        }
+        // `blocked` means infrastructure was unavailable. It blocks progress,
+        // but re-implementation cannot fix it unless a separate format or
+        // regression blocker is also present.
+        if (isBlockedResult(row.result)) {
+            issues.push(blocked(`Validation Required item marked blocked in handoff.md: ${required}${note} — triage required (CI/network/infrastructure)`));
+            continue;
+        }
+        // `fail – unrelated` is accepted only when Notes contains a specific
+        // line reference (`:\d+`, e.g. `file:42`) or a path-like token with a
+        // path separator and filename extension. Vague prose like
+        // "pre-existing flake", "CI/network flake", or "unit/e2e failure" is
+        // rejected — the reviewer assesses credibility at code_review using
+        // the named reference. Extracted citations are then matched against the
+        // changed-file set, including absolute-path suffixes, so a failure in
+        // a file this task changed cannot be laundered as unrelated.
+        if (isUnrelatedFailResult(row.result)) {
+            const hasFileRef = hasSpecificFailUnrelatedReference(row.notes ?? '');
+            if (!hasFileRef) {
+                issues.push(format(`Validation Required item marked Fail – unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`));
+                continue;
+            }
+            if (changedFiles.size > 0) {
+                const citedPaths = extractCitedFilePaths(row.notes ?? '');
+                const citedChangedFiles = citedPaths.filter(citedPath => matchAgainstChangedFiles(citedPath, changedFiles));
+                if (citedChangedFiles.length > 0) {
+                    issues.push(regression(
+                        `Validation Required item marked Fail – unrelated cites a file changed by this task: ${required}. ` +
+                        `A failure in a file you modified is yours to fix; if genuinely unrelated, cite a file outside your diff. ` +
+                        `(cited changed file${citedChangedFiles.length === 1 ? '' : 's'}: ${citedChangedFiles.join(', ')})`,
+                    ));
+                    continue;
+                }
+            }
+            continue;
+        }
+        if (!isPassResult(row.result)) {
+            issues.push(regression(`Validation Required item did not pass in handoff.md: ${required} — ${row.result}${note}`));
+        }
+    }
+
+    return issues;
+}
+
+export function classifyPreflightBlockersFromData(data: PreflightClassificationData): ClassifiedBlocker[] {
+    const format = (message: string): ClassifiedBlocker => ({ bucket: 'format', message });
+    const regression = (message: string): ClassifiedBlocker => ({ bucket: 'regression', message });
+    if (data.handoffMissing) return [format('handoff.md not found')];
+
+    const requiredCanonicalKeys = new Set(
+        (data.requiredChecks ?? []).map(required => canonicalizeValidationCheck(required)),
+    );
+    const fromRequired = classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles);
+    const fromNonRequired: ClassifiedBlocker[] = [];
+    for (const [canonical, row] of data.latestResults) {
+        if (requiredCanonicalKeys.has(canonical)) continue;
+        if (isFailResult(row.result) && !isUnrelatedFailResult(row.result)) {
+            const note = row.notes ? ` (${row.notes})` : '';
+            fromNonRequired.push(regression(
+                `Validation Outcomes row not listed in spec's required checks has a plain Fail: ${row.check}${note} — fix the regression.`,
+            ));
+        }
+    }
+
+    return [
+        ...data.acCoverageIssues.map(format),
+        ...data.changesTableIssues.map(format),
+        ...data.bundleDiffIssues.map(format),
+        ...fromRequired,
+        ...fromNonRequired,
+    ];
+}
+
+export function classifyPreflightBlockers(
+    taskId: string,
+    changedFiles: ReadonlySet<string>,
+    bundleDiffIssues: readonly string[] = [],
+): ClassifiedBlocker[] {
+    const handoffPath = path.join(taskDirFor(taskId), 'handoff.md');
+    const specPath = path.join(taskDirFor(taskId), 'spec.md');
+    try {
+        const content = fs.readFileSync(handoffPath, 'utf8');
+        const latestResults = computeLatestValidationResults(content);
+        const requiredChecks = parseValidationRequiredChecks(specPath);
+        const { malformed } = parseHandoffChangesRows(taskId);
+        return classifyPreflightBlockersFromData({
+            latestResults,
+            requiredChecks,
+            changedFiles,
+            acCoverageIssues: checkAcCoveragePlaceholders(content),
+            changesTableIssues: malformed.map(entry => `Changes table row '${entry.cell}': ${entry.reason}`),
+            bundleDiffIssues: [...bundleDiffIssues],
+            handoffMissing: false,
+        });
+    } catch {
+        return classifyPreflightBlockersFromData({
+            latestResults: new Map(),
+            requiredChecks: null,
+            changedFiles,
+            acCoverageIssues: [],
+            changesTableIssues: [],
+            bundleDiffIssues: [...bundleDiffIssues],
+            handoffMissing: true,
+        });
+    }
+}
+
 export function validateHandoffAgainstSpec(
     specPath: string,
     handoffPath: string,
     latestResults?: Map<string, ValidationOutcomeRow>,
+    changedFiles: ReadonlySet<string> = new Set<string>(),
 ): string[] {
     const requiredChecks = parseValidationRequiredChecks(specPath);
-    if (requiredChecks === null) {
-        return ['Validation Required section is missing from spec.md'];
-    }
-    if (requiredChecks.length === 0) {
-        // Distinguish from null (missing section). Section exists but no `[x]`
-        // checks marked — likely a spec authoring error where the operator left
-        // the template's `- [ ]` placeholders unchanged. Caught 2026-05-24
-        // during docs-refs-check-canon-template's code_review preflight, which
-        // auto-blocked at 3 CRs because Codex iterated against an unfixable-
-        // from-implement-side error.
-        return [
-            'Validation Required section in spec.md has no `[x]`-checked items — ' +
-            'mark at least one required check `[x]`. The template ships with `[ ]` placeholders; ' +
-            'the spec author marks the required checks before invoking canon. ' +
-            'If no checks apply, use a single `[x] None — <reason>` entry to document the decision.',
-        ];
-    }
 
     let rowMap: Map<string, ValidationOutcomeRow>;
     if (latestResults) {
@@ -490,79 +734,7 @@ export function validateHandoffAgainstSpec(
             rowMap = new Map<string, ValidationOutcomeRow>();
         }
     }
-
-    const issues: string[] = [];
-    for (const required of requiredChecks) {
-        const canonical = canonicalizeValidationCheck(required);
-        const row = rowMap.get(canonical);
-        if (!row) {
-            // Distinguish "no row at all" from "row present but canonicalized
-            // to a different key." The second case usually means a slight
-            // mismatch between the spec phrasing and the handoff cell text;
-            // surface the present keys so the user can spot it without
-            // chasing the wrong root cause. (Issue #71.)
-            const present = [...rowMap.keys()];
-            const hint = present.length > 0
-                ? ` Handoff has rows for: ${present.join(', ')}. (Required canonicalized to: '${canonical}'.)`
-                : ' Handoff has no Validation Outcomes rows.';
-            issues.push(`Validation Required item missing from handoff.md: ${required}.${hint}`);
-            continue;
-        }
-        const note = row.notes ? ` (${row.notes})` : '';
-
-        // Required items in `pending` template state count as missing — the
-        // agent didn't actually fill in the row.
-        if (isPendingResult(row.result)) {
-            issues.push(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`);
-            continue;
-        }
-        if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
-            issues.push(`Validation Required item marked ${row.result} in handoff.md: ${required} (required checks cannot be skipped — adjust spec or run the check)`);
-            continue;
-        }
-        // `deferred_by_spec` valid only with a spec citation in Notes.
-        if (isDeferredBySpecResult(row.result)) {
-            if (!/spec[:.-]/i.test(row.notes ?? '')) {
-                issues.push(`Validation Required item marked deferred_by_spec without a spec citation in Notes: ${required}`);
-            }
-            continue;
-        }
-        // `human_pending` is a soft state — valid in handoff (the human will
-        // pick this up at human_review). NOT a validateHandoffAgainstSpec
-        // failure. The `human_review.done` gate enforces zero human_pending
-        // before the task closes.
-        if (isHumanPendingResult(row.result)) {
-            continue;
-        }
-        // `blocked` is a hard fail at the handoff layer — infrastructure
-        // unavailable means the check status is unknown, which is not a
-        // valid "I ran it" state.
-        if (isBlockedResult(row.result)) {
-            issues.push(`Validation Required item marked blocked in handoff.md: ${required}${note} — triage required (CI/network/infrastructure)`);
-            continue;
-        }
-        // `fail – unrelated` is accepted only when Notes contains a filename
-        // with an extension (`\w+\.\w+`, e.g. `foo.test.ts`) or a line ref
-        // (`:\d+`, e.g. `file:42`). Vague prose like "pre-existing flake"
-        // or "CI/network flake" is rejected — the reviewer assesses
-        // credibility at code_review using the named reference. Issue #71
-        // proposed broadening (paths without extension, npm-script citations)
-        // but every broader pattern we considered either false-positives on
-        // prose (`unit/e2e failure`, `test: failed`) or requires opinionated
-        // folder-name lists — keep the tight set and address the diagnostics
-        // angle of the issue instead (better error messages elsewhere).
-        if (isUnrelatedFailResult(row.result)) {
-            const hasFileRef = /\w+\.\w+|:\d+/.test(row.notes ?? '');
-            if (!hasFileRef) {
-                issues.push(`Validation Required item marked Fail – unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`);
-            }
-            continue;
-        }
-        if (!isPassResult(row.result)) {
-            issues.push(`Validation Required item did not pass in handoff.md: ${required} — ${row.result}${note}`);
-        }
-    }
-    return issues;
+    return classifyValidationChecks(requiredChecks, rowMap, changedFiles).map(issue => issue.message);
 }
 
 // Count `human_pending` rows in a handoff's Validation Outcomes table (latest
@@ -698,6 +870,7 @@ export function extractCheckedVerdict(content: string): Verdict | null {
     if (/^- \[x\] (?:\*\*)?Approved(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'approved';
     if (/^- \[x\] (?:\*\*)?Changes requested(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'changes_requested';
     if (/^- \[x\] (?:\*\*)?Needs re-review(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'needs_re_review';
+    if (/^- \[x\] (?:\*\*)?Spec gap(?:\*\*)?(?:\s|$)/mi.test(scope)) return 'spec_gap';
     return null;
 }
 
@@ -935,7 +1108,7 @@ export function parseAffectedFilesFromSpec(taskId: string): {
     const files = new Set<string>();
     const malformed: Array<{ cell: string; reason: string }> = [];
     for (const body of sectionBodies) {
-        const rows = parseTableH3(body, 'Affected Files');
+        const rows = parseAllTablesH3(body, 'Affected Files');
         for (const row of rows) {
             const firstColumn = Object.values(row)[0] ?? '';
             if (!firstColumn.trim()) continue;
