@@ -2,6 +2,13 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.10.1] — 2026-06-06
+
+### Changed
+
+- **Spec-authoring guidance now favors replacement framing and structural assertions over prose negations.** The "Name effects to DELETE" rule recommends stating supersession as a single replacement ("replace `oldFn` with `newFn`; `oldFn` must not exist after") rather than an add bullet beside a separate remove bullet, and a new rule of thumb prefers grep-backed or positively-framed constraints over bare "we are NOT doing X" prose for load-bearing exclusions. Ships to adopters via `canon upgrade`.
+- **Clarified that round 2+ amendments must use the `## Amendment Round N` heading.** The reroute step-guard guidance now spells out that the orchestrator matches on that heading, so a bare `## Amendment` on a second-round amendment won't be picked up.
+
 ## [1.10.0] — 2026-06-06
 
 ### Added
