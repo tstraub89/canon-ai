@@ -2,6 +2,16 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.10.2] — unreleased
+
+### Fixed
+
+- **`--ship` is now resilient to interrupted runs, already-deleted remote branches, and stricter about merge evidence before local branch deletion.** After a partial ship (squash-merge landed but pull/archive aborted), a re-run fast-forwards the local base branch and completes cleanly — the non-destructive fast-forward no longer blocks. Remote branch cleanup that finds the ref already gone (e.g. GitHub's auto-delete-head-branches) is treated as a no-op. Merge verification keys off the PR number `--pr` pins in `status.json` (base-ref match + head-ancestor check) rather than a branch-name lookup — closing a data-loss path on branch-name reuse; tasks created before this release fall back to the branch lookup under the same head check. `--force` does not bypass the merge-evidence gate.
+- **Pre-flight now correctly preserves a completed `review.md` when the foreman nested round-1 under `## Round 1` / `### Stage 1` instead of the H2 template structure.** `hasPriorRealReview` (and its bundle counterpart `bundleHasRealPriorReview`) now accept `### Stage 1` inside a real `## Round N` section (digit — not the comment scaffold's literal "Round N"). The foreman template instruction is also tightened to explicitly forbid wrapping round-1 in a `## Round 1` container.
+- **`canon task phase <id> <phase> pending` now clears the prior `verdict`.** The `spec_review` and `code_review` reset paths previously left it in place; the next review round now always starts with an empty verdict field.
+- **The `canon-spec` skill now applies the same replacement-framing guidance as `CLAUDE.md`.** It prefers a single replacement statement backed by a structural/grep AC over paired "remove X"/"add Y" bullets (the style v1.10.1 established), and its Non-Goals check steers load-bearing exclusions toward positive/structural framing.
+- **The Negation Neglect citation in `CLAUDE.md` is reworded as a scoped markdown link referencing the paper's finetuning result and its local-vs-separated negation contrast**, removing wording that over-implied the paper demonstrates in-context instruction-following failures.
+
 ## [1.10.1] — 2026-06-06
 
 ### Changed

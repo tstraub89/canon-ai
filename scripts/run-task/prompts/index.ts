@@ -407,7 +407,11 @@ function bundleHasRealPriorReview(taskIds: readonly string[]): boolean {
         try {
             const content = fs.readFileSync(reviewPath, 'utf8');
             // Stage 1 heading present and review.md isn't the unfilled template.
-            return /^## Stage 1\b/m.test(content) && !content.includes('[TASK-ID]');
+            // Accept H2 (template-fill path) or H3 when it appears inside a real
+            // ## Round N section — not a stray ### in the HTML comment scaffold.
+            const hasH2 = /^## Stage 1\b/m.test(content);
+            const hasNested = /^## Round \d+\b/m.test(content) && /^### Stage 1\b/m.test(content);
+            return (hasH2 || hasNested) && !content.includes('[TASK-ID]');
         } catch {
             return false;
         }
@@ -482,7 +486,8 @@ export function promptQa(state: PipelineState, prTemplate?: string | null): stri
         startup: QA_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         taskLines,
-        prTemplate: prTemplate ?? null,
+        // Bundles skip pr-body.md entirely — don't inject a template that won't be used.
+        prTemplate: state.isBundle ? null : (prTemplate ?? null),
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'qa', 'done'),
     });
 }

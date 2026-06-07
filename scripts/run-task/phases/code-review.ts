@@ -165,8 +165,12 @@ export function writePreflightReviewArtifacts(
         const reviewPath = path.join(taskDirFor(t.taskId), 'review.md');
         let existing = '';
         try { existing = fs.readFileSync(reviewPath, 'utf8'); } catch { /* missing — first run */ }
+        // Accept H2 Stage 1 (template-fill path) or H3 Stage 1 only when a real
+        // ## Round N section (digit, not the comment scaffold's literal "Round N") exists.
+        const hasH2Stage1 = /^## Stage 1\b/m.test(existing);
+        const hasNestedStage1 = /^## Round \d+\b/m.test(existing) && /^### Stage 1\b/m.test(existing);
         const hasPriorRealReview =
-            existing.length > 0 && !isTemplateUnfilled(existing) && /^## Stage 1\b/m.test(existing);
+            existing.length > 0 && !isTemplateUnfilled(existing) && (hasH2Stage1 || hasNestedStage1);
 
         const failure = failuresByTask.get(t.taskId);
         if (failure) {

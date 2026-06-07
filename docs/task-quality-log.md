@@ -71,6 +71,7 @@ The QA phase appends a row at the end of every task. The product owner reviews t
 | 2026-06-05 | multi-agent-code-review | L delicate | approved_with_nits | 4 (3 changes_requested) | 1 (approved_with_nits, no iteration) | 0 | 0 | No | code_review restructured to foreman + anchored + cold lenses; spec_gap verdict wired across all 7 surfaces. Clean single-pass impl — phases/code-review.ts untouched (all-LLM foreman). No correctness bugs; 2 risk items (cold isolation prompt-only, lens tier inherited not unit-verified) deferred to Human Test Plan. |
 
 | 2026-06-06 | bundle-preflight-atomic-rejection | M delicate | approved_with_nits | 3 (2 changes_requested) | 1 (approved, no findings) | 0 | 0 | No | Bundle atomicity gap in pre-flight rejection: clean siblings left at `pending`, triggering phantom solo retries. Fix: enumerate all tasks in the artifact loop; Route A applies `taskPhasePreflightRejected` to all; Route B writes halt stubs. Append-over-approved parser divergence intentional and pinned by test. |
+| 2026-06-07 | ship-merge-proof | L delicate | approved | 3 (1 changes_requested) | 1 (approved_with_nits, no iteration) | 0 | 0 | No | Fixes --ship multi-invocation friction + data-loss gap (ungated local branch deletion). PR-number pinning + MERGED+base-ref+head-SHA proof gate. Fast-forward ungated (non-destructive). New `tests/run-task-ship.test.ts` (real-git fixtures). `recordPinnedPRNumber()` persistence ordering required 2nd commit/push step after `commitHumanReviewFiles()` chain. |
 
 ---
 

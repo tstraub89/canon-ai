@@ -136,11 +136,11 @@ After scope is approved:
 Self-check before presenting:
 - [ ] Every AC states exactly how to verify it (not just "it works")
 - [ ] Affected Files lists specific files (not directories) with specific change descriptions
-- [ ] If this spec replaces existing behavior: explicit "remove X" bullets paired with "add Y" bullets — don't just describe the new state
+- [ ] If this spec replaces existing behavior: frame it as one replacement ("replace X with Y; X must not exist after") and add a structural/grep AC when practical; use paired add/remove bullets only when true replacement framing doesn't fit
 - [ ] Known Risks covers failure modes for the trickiest ACs
 - [ ] Human Test Plan uses product language only — no code, no file paths
 - [ ] Validation Required has at least one entry (or "None" with a reason)
-- [ ] Non-Goals rules out the most tempting scope expansions
+- [ ] Non-Goals rules out the most tempting scope expansions — back load-bearing exclusions with a positive scope-bound or grep AC, not prose "NOT" alone
 - [ ] Symbols named in ACs actually exist in the codebase — grep-verify before presenting
 
 **⛔ STOP — present the spec and wait for approval.**

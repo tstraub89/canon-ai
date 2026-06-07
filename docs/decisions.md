@@ -130,6 +130,7 @@ Decisions can be reopened, but only with **strong justification and human approv
   - **Patch**: bug fixes only, no behavior change beyond fixing the bug.
   - **Minor**: new features (new pipeline phase, new validation gate, new template section, new agent capability) without breaking existing usage.
   - **Major**: breaking changes — anything that requires adopters to update their `.canon/templates/`, their `status.json` schema, their workflow expectations, or any canon-supplied policy in a way that breaks existing tasks mid-flight.
+  - **Guidance refinements are patch-eligible**: clarifying, tightening, or adding a rule of thumb / pitfall to *existing* canon guidance docs (`CLAUDE.md`, `AGENTS.md`, `docs/*`) is a patch even though it ships to adopters via `canon upgrade` — it refines guidance rather than adding a capability. A *new template section*, *new managed file*, *new pipeline phase/gate*, or *new agent capability* remains minor. Categorize net-new rules of thumb under `### Added` and edits to existing rules under `### Changed`.
 
 - **Agent authorization**:
   - **Patch**: agents may bump the version and commit the changelog edit autonomously.

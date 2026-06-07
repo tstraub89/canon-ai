@@ -263,6 +263,11 @@ function setupFakeCliTools(scriptDir: string): void {
         '    if [ -n "$FAKE_GH_HEAD_REF_OID" ]; then printf "%s\\n" "$FAKE_GH_HEAD_REF_OID"; exit 0; fi',
         '    exit 1',
         '  fi',
+        '  if [ "$json" = "baseRefName" ]; then',
+        '    if [ -n "${FAKE_GH_BASE_REF_NAME:-}" ]; then printf "%s\\n" "$FAKE_GH_BASE_REF_NAME"; exit 0; fi',
+        '    if [ -n "$FAKE_GH_STATE_BASE" ]; then printf "%s\\n" "$FAKE_GH_STATE_BASE"; exit 0; fi',
+        '    exit 1',
+        '  fi',
         '  if [ -n "$FAKE_GH_STATE_NUMBER" ] && [ "$pr_num" = "$FAKE_GH_STATE_NUMBER" ] && [ -n "$FAKE_GH_STATE_URL" ]; then printf "%s\\n" "$FAKE_GH_STATE_URL"; exit 0; fi',
         '  if [ -n "${FAKE_GH_PR_URL:-}" ]; then printf "%s\\n" "$FAKE_GH_PR_URL"; exit 0; fi',
         '  exit 1',
@@ -1795,6 +1800,7 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
         writeTaskStatus(tasksRoot, 'task-a', status);
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+        const prStateFile = path.join(dir, 'gh-pr-state.txt');
 
         const result = runNodeInline([
             "import { main } from './scripts/run-task/main.ts';",
@@ -1811,6 +1817,7 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
             FAKE_GIT_REMOTE_EXISTS: '1',
             FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GH_PR_STATE_FILE: prStateFile,
         });
 
         assert.equal(result.status, 0, result.stderr);
@@ -2068,6 +2075,7 @@ void test('main --ship handles a task with worktree: false when base lacks statu
         writeShipTaskArtifacts(localDir, taskId, branch, false);
         gitIn(localDir, 'add', 'tasks');
         gitIn(localDir, 'commit', '-m', `add ${taskId}`);
+        const taskTip = execFileSync('git', ['rev-parse', branch], { cwd: localDir, encoding: 'utf8' }).trim();
         gitIn(localDir, 'push', '-u', 'origin', branch);
 
         simulateShipMergeOnOrigin(dir, originDir, taskId, branch, false);
@@ -2076,6 +2084,7 @@ void test('main --ship handles a task with worktree: false when base lacks statu
             FAKE_GH_PR_NUMBER: '42',
             FAKE_GH_PR_HEAD: branch,
             FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_HEAD_REF_OID: taskTip,
             CANON_WORKTREES_ROOT: worktreesRoot,
         });
 
@@ -2100,6 +2109,7 @@ void test('main --ship handles a task with worktree: true and tears down the wor
         writeShipTaskArtifacts(localDir, taskId, branch, true);
         gitIn(localDir, 'add', 'tasks');
         gitIn(localDir, 'commit', '-m', `add ${taskId}`);
+        const taskTip = execFileSync('git', ['rev-parse', branch], { cwd: localDir, encoding: 'utf8' }).trim();
         gitIn(localDir, 'push', '-u', 'origin', branch);
 
         gitIn(localDir, 'checkout', 'main');
@@ -2112,6 +2122,7 @@ void test('main --ship handles a task with worktree: true and tears down the wor
                 FAKE_GH_PR_NUMBER: '43',
                 FAKE_GH_PR_HEAD: branch,
                 FAKE_GH_PR_BASE: 'main',
+                FAKE_GH_HEAD_REF_OID: taskTip,
                 CANON_WORKTREES_ROOT: worktreesRoot,
             });
 
@@ -2365,6 +2376,7 @@ void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree re
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
         const gitLogPath = path.join(dir, 'git.log');
         const ghLogPath = path.join(dir, 'gh.log');
+        const prStateFile = path.join(dir, 'gh-pr-state.txt');
 
         const result = runNodeInline([
             "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
@@ -2381,6 +2393,7 @@ void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree re
             FAKE_GIT_STATUS_OUTPUT: '',
             FAKE_GIT_DIFF_OUTPUT: '',
             FAKE_GH_LOG: ghLogPath,
+            FAKE_GH_PR_STATE_FILE: prStateFile,
             FAKE_GH_PR_CREATE_NUMBER: '202',
             FAKE_GH_PR_CREATE_URL: 'https://github.com/x/y/pull/202',
         });
@@ -2531,7 +2544,7 @@ void test('main --full-send --force advances to draft PR and marks human_review 
     });
 });
 
-void test('main full-send tail falls back to a placeholder when inspectCompleteState cannot see the PR', () => {
+void test('main full-send tail reports the PR URL after pinning pr.number', () => {
     withTempDir('run-task-full-send-pr-placeholder-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
         const fakeBins = path.join(dir, 'fake-bins');
@@ -2561,6 +2574,7 @@ void test('main full-send tail falls back to a placeholder when inspectCompleteS
 
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+        const prStateFile = path.join(dir, 'gh-pr-state.txt');
 
         const result = runNodeInline([
             "import { main } from './scripts/run-task/main.ts';",
@@ -2575,12 +2589,13 @@ void test('main full-send tail falls back to a placeholder when inspectCompleteS
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
             FAKE_GIT_REMOTE_EXISTS: '1',
             FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GH_PR_STATE_FILE: prStateFile,
             FAKE_GH_PR_CREATE_NUMBER: '303',
             FAKE_GH_PR_CREATE_URL: 'https://github.com/x/y/pull/303',
         });
 
         assert.equal(result.status, 0, result.stderr);
-        assert.match(result.stdout, /PR: \(PR URL unavailable — check GitHub\)/);
+        assert.match(result.stdout, /PR: https:\/\/github\.com\/x\/y\/pull\/303/);
 
         const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'), 'utf8')) as {
             phases?: { human_review?: { status?: string } };

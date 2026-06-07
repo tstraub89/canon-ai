@@ -73,7 +73,7 @@ Test-integrity findings are always code-bugs.
 
 For each task, write `tasks/<id>/review.md`.
 
-Round 1 fills the existing template structure. Re-review appends a new `## Round {{roundN}}` section near the bottom, preserving earlier rounds.
+Round 1 fills the existing template structure directly — do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.
 
 Include:
 - Stage 1: anchored lens validation gate result and AC table.

@@ -491,6 +491,79 @@ void test('promptCodeReview forces Round-1 when review.md lacks a Stage 1 headin
     }
 });
 
+// Complement to the test above: a review.md where the foreman deviated and
+// used `### Stage 1` nested under `## Round 1` (instead of filling the
+// template directly with H2 headings) must still be recognised as a real prior
+// review — so Round-N is selected, not Round-1, and no data loss occurs.
+void test('promptCodeReview treats ### Stage 1 (nested) as a real prior review and selects Round-N', () => {
+    const reviewPath = path.join(tmpRoot, TASK_ID, 'review.md');
+    const original = fs.readFileSync(reviewPath, 'utf8');
+    try {
+        // Foreman-deviated structure: `### Stage 1` under `## Round 1`.
+        // No H2 `## Stage 1` is present — this is the heading-level mismatch.
+        fs.writeFileSync(reviewPath, [
+            '# Code Review: test-pf-001',
+            '',
+            '## Round 1',
+            '',
+            '### Stage 1 — Spec Compliance (gate)',
+            '',
+            '| AC | Status | Notes |',
+            '|---|---|---|',
+            '| AC-1: something | Fail | missing implementation |',
+            '',
+            '### Stage 1 Verdict',
+            '',
+            '- [x] **Fail** — skip Stage 2',
+            '',
+            '## Verdict',
+            '',
+            '- [x] **Changes requested**',
+            '',
+        ].join('\n'));
+
+        const output = promptCodeReview(codeReviewRoundNState);
+
+        // Must select Round-N (real prior review exists): foreman says "This is Round N: re-review…"
+        assert.match(output, /This is Round \d+: re-review after iteration/);
+        // Must NOT fall back to Round-1 (which would say "cross-reference … spec.md ACs").
+        assert.doesNotMatch(output, /This is Round 1, the initial code review/);
+    } finally {
+        fs.writeFileSync(reviewPath, original);
+    }
+});
+
+// Guard against false-positive: a stray `### Stage 1` that is NOT inside a
+// real `## Round N` section (e.g. the HTML comment scaffold in the review
+// template) must NOT be treated as a real prior review.
+void test('promptCodeReview treats ### Stage 1 without a ## Round N wrapper as no prior review (forces Round-1)', () => {
+    const reviewPath = path.join(tmpRoot, TASK_ID, 'review.md');
+    const original = fs.readFileSync(reviewPath, 'utf8');
+    try {
+        // ### Stage 1 present but no ## Round N heading — stray / comment scaffold shape.
+        fs.writeFileSync(reviewPath, [
+            '# Code Review: test-pf-001',
+            '',
+            '<!--',
+            'On re-review, append below this line:',
+            '',
+            '## Round N — verifying ...',
+            '',
+            '### Stage 1 — Acceptance Criteria Re-Check',
+            '-->',
+            '',
+        ].join('\n'));
+
+        const output = promptCodeReview(codeReviewRoundNState);
+
+        // Must fall back to Round-1 — the stray H3 must not count as a real prior review.
+        assert.match(output, /This is Round 1, the initial code review/);
+        assert.doesNotMatch(output, /This is Round \d+: re-review after iteration/);
+    } finally {
+        fs.writeFileSync(reviewPath, original);
+    }
+});
+
 void test('promptQa', () => {
     const actual = normalize(promptQa(baseState));
     recordOrAssert('promptQa', actual);
@@ -499,4 +572,14 @@ void test('promptQa', () => {
 void test('promptQa_withTemplate', () => {
     const actual = normalize(promptQa(baseState, '## Summary\n- Fill this section.\n'));
     recordOrAssert('promptQa_withTemplate', actual);
+});
+
+void test('promptQa bundle ignores prTemplate — bundles skip pr-body.md', () => {
+    const t1 = makeTask({ taskId: 'bundle-qa-a', title: 'Task A' });
+    const t2 = makeTask({ taskId: 'bundle-qa-b', title: 'Task B' });
+    const bundleState: PipelineState = { tasks: [t1, t2], tier: 'full', isBundle: true };
+    const withTemplate = promptQa(bundleState, '## Summary\n- Fill this section.\n');
+    const withoutTemplate = promptQa(bundleState);
+    assert.equal(withTemplate, withoutTemplate, 'bundle QA prompt must not change when a PR template is passed');
+    assert.ok(!withTemplate.includes('Fill this section'), 'PR template content must not appear in bundle QA prompt');
 });

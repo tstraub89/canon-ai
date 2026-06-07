@@ -3312,7 +3312,7 @@ function renderTemplate(template, view) {
 }
 
 // scripts/run-task/prompts/templates/code-review-foreman.md
-var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nYour job is to spawn two review lenses as isolated sub-agents, collect their findings, adjudicate using the spec (which you hold and the cold lens does not), then write one `review.md` and set the verdict.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. Both lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give both lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Foreman Protocol\n\n### 1. Spawn Lenses In Parallel\n\nUse the Task tool to spawn both lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nDo not let either lens see the other lens's output.\n\n### 2. Adjudicate\n\nUse the two lens outputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\n1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record \"flagged by both lenses.\"\n2. Cold-vs-spec reconciliation: if a cold finding is explained as intended by the spec, drop it and record `Dismissed (cold): <finding> - <spec reason>` in `review.md`.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Only optional nits or cleanup -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure. Re-review appends a new `## Round {{roundN}}` section near the bottom, preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the spec reason.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
+var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nYour job is to spawn two review lenses as isolated sub-agents, collect their findings, adjudicate using the spec (which you hold and the cold lens does not), then write one `review.md` and set the verdict.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. Both lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give both lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Foreman Protocol\n\n### 1. Spawn Lenses In Parallel\n\nUse the Task tool to spawn both lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nDo not let either lens see the other lens's output.\n\n### 2. Adjudicate\n\nUse the two lens outputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\n1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record \"flagged by both lenses.\"\n2. Cold-vs-spec reconciliation: if a cold finding is explained as intended by the spec, drop it and record `Dismissed (cold): <finding> - <spec reason>` in `review.md`.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Only optional nits or cleanup -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the spec reason.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement.md
 var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md and the matrix in AGENTS.md. Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
@@ -3619,7 +3619,9 @@ function bundleHasRealPriorReview(taskIds) {
     const reviewPath = path9.join(taskDirFor(taskId), "review.md");
     try {
       const content = fs8.readFileSync(reviewPath, "utf8");
-      return /^## Stage 1\b/m.test(content) && !content.includes("[TASK-ID]");
+      const hasH2 = /^## Stage 1\b/m.test(content);
+      const hasNested = /^## Round \d+\b/m.test(content) && /^### Stage 1\b/m.test(content);
+      return (hasH2 || hasNested) && !content.includes("[TASK-ID]");
     } catch {
       return false;
     }
@@ -3677,7 +3679,8 @@ function promptQa(state, prTemplate) {
     startup: QA_STARTUP,
     taskScope: tasks.length > 1 ? "a bundle of tasks" : `task "${tasks[0].taskId}"`,
     taskLines,
-    prTemplate: prTemplate ?? null,
+    // Bundles skip pr-body.md entirely — don't inject a template that won't be used.
+    prTemplate: state.isBundle ? null : prTemplate ?? null,
     phaseCommands: phaseCommands(tasks.map((t) => t.taskId), "qa", "done")
   });
 }
@@ -3892,6 +3895,9 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   const previousStatus = entry.status;
   entry.status = statusArg;
   status.updated = today();
+  if (statusArg === "pending" && Object.hasOwn(entry, "verdict")) {
+    entry.verdict = "";
+  }
   if (verdictArg && Object.hasOwn(entry, "verdict")) {
     entry.verdict = verdictArg;
   }
@@ -4068,7 +4074,9 @@ function writePreflightReviewArtifacts(tasks, preflightFailed, route) {
       existing = fs11.readFileSync(reviewPath, "utf8");
     } catch {
     }
-    const hasPriorRealReview = existing.length > 0 && !isTemplateUnfilled(existing) && /^## Stage 1\b/m.test(existing);
+    const hasH2Stage1 = /^## Stage 1\b/m.test(existing);
+    const hasNestedStage1 = /^## Round \d+\b/m.test(existing) && /^### Stage 1\b/m.test(existing);
+    const hasPriorRealReview = existing.length > 0 && !isTemplateUnfilled(existing) && (hasH2Stage1 || hasNestedStage1);
     const failure = failuresByTask.get(t.taskId);
     if (failure) {
       const blockedBlock = buildPreflightReviewBlock(failure.classified, route);
@@ -5171,16 +5179,55 @@ function createDraftPRForTask(taskIds, branchName) {
 function formatExistingPRMessage(prNum, prUrl) {
   return `Existing draft PR: #${prNum} (${prUrl})`;
 }
-function reportOrCreatePR(taskIds, branchName) {
+function recordPinnedPRNumber(taskIds, prNum, branchName, cwd) {
+  let anyChanged = false;
+  for (const taskId of taskIds) {
+    const status = readStatus(taskId);
+    if (readPinnedPrNumber(status) === prNum) continue;
+    status.pr = { number: prNum };
+    writeStatus(taskId, status);
+    anyChanged = true;
+  }
+  if (!anyChanged) return;
+  for (const taskId of taskIds) {
+    const relStatusPath = path17.join("tasks", taskId, "status.json");
+    const addResult = gitSafeAt2(cwd, "add", "--", relStatusPath);
+    if (!addResult.ok) {
+      die2(`Failed to stage ${relStatusPath} after recording PR #${prNum}: ${addResult.stderr || "unknown error"}`);
+    }
+  }
+  const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(", ");
+  const commitResult = gitSafeAt2(cwd, "commit", "-m", `chore: record pr.number for ${label}`);
+  if (!commitResult.ok) {
+    die2(`Failed to commit pr.number recording for ${label}: ${commitResult.stderr || "unknown error"}`);
+  }
+  const pushResult = gitSafeAt2(cwd, "push", "origin", branchName);
+  if (!pushResult.ok) {
+    die2(`Failed to push pr.number recording for ${label}: ${pushResult.stderr || "unknown error"}`);
+  }
+}
+function reportOrCreatePR(taskIds, branchName, cwd) {
   if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
   const baseBranch = getBaseBranch(taskIds);
   const openPR = findOpenPRNumber(branchName, baseBranch);
+  let prNum;
   if (openPR !== null) {
     const prUrl = lookupPRUrl(openPR);
     info2(formatExistingPRMessage(openPR, prUrl));
-    return;
+    prNum = openPR;
+  } else {
+    createDraftPRForTask(taskIds, branchName);
+    const createdPR = findOpenPRNumber(branchName, baseBranch);
+    if (createdPR === null) {
+      die2(
+        `Draft PR was created for ${branchName}, but canon could not retrieve its PR number. Re-run --pr so canon can pin pr.number before --ship.`
+      );
+      return;
+    } else {
+      prNum = createdPR;
+    }
   }
-  createDraftPRForTask(taskIds, branchName);
+  recordPinnedPRNumber(taskIds, prNum, branchName, cwd);
 }
 function parseOriginRepoSlug(remoteUrl) {
   const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
@@ -5371,7 +5418,7 @@ Bypass with --force if you've verified the drift is intentional.`
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
       }
-      if (createPR) reportOrCreatePR(taskIds, branchName2);
+      if (createPR) reportOrCreatePR(taskIds, branchName2, cwd);
       return;
     }
   }
@@ -5451,7 +5498,7 @@ If this is a source or test file, it should have been committed during the imple
   if (!pushResult.ok) {
     die2(`Human review push failed: ${pushResult.stderr || "unknown error"}`);
   }
-  if (createPR) reportOrCreatePR(taskIds, branchName);
+  if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
 }
 function printDryRunPlan(state) {
   const { tasks } = state;
@@ -5494,9 +5541,15 @@ function assertLocalBaseInSyncWithOrigin(baseBranch) {
   }
   const behind = Number.parseInt(behindResult.stdout, 10);
   if (Number.isNaN(behind) || behind === 0) return;
-  die2(
-    `Local ${baseBranch} is ${behind} commit${behind === 1 ? "" : "s"} behind origin/${baseBranch}. Rebase before --ship: \`git pull --rebase origin ${baseBranch}\` (or \`canon task post-merge-sync ${baseBranch}\`). The squash merge of the implement-phase PR re-introduces tasks/<id>/ on origin/${baseBranch}; rebasing first ensures --ship consumes the post-merge files instead of leaving a duplicate. See docs/pipeline-orchestrator.md \xA7Shipping & Post-Merge Reconciliation.`
-  );
+  const aheadResult = gitSafe2("rev-list", "--count", `origin/${baseBranch}..HEAD`);
+  const ahead = aheadResult.ok ? Number.parseInt(aheadResult.stdout, 10) : NaN;
+  if (!Number.isNaN(ahead) && ahead > 0) {
+    die2(
+      `Local ${baseBranch} has diverged from origin/${baseBranch} (${behind} behind, ${ahead} ahead). Resolve with \`git rebase origin/${baseBranch}\` and re-run --ship.`
+    );
+  }
+  info2(`Local ${baseBranch} is ${behind} commit${behind === 1 ? "" : "s"} behind origin/${baseBranch}; fast-forwarding...`);
+  git2("pull", "--ff-only", "origin", baseBranch);
 }
 function resolveTaskBranchName(taskId) {
   try {
@@ -5559,9 +5612,15 @@ function assertOriginTaskBranchAbsent(branchName, baseBranch) {
       );
       const del = gitSafe("push", "origin", `--delete`, branchName);
       if (!del.ok) {
-        die(
-          `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but \`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || "unknown error"}. Delete the remote branch manually and re-run --ship.`
-        );
+        if (del.stderr.includes("remote ref does not exist")) {
+          info(
+            `Remote branch ${branchName} is already absent ("remote ref does not exist"). No-op delete; continuing cleanup.`
+          );
+        } else {
+          die(
+            `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but \`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || "unknown error"}. Delete the remote branch manually and re-run --ship.`
+          );
+        }
       }
       return;
     }
@@ -5591,6 +5650,84 @@ function isPRMerged(prNum) {
   if (!ghAvailable) return false;
   const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "state", "--jq", ".state"]);
   return result.ok && result.stdout.trim() === "MERGED";
+}
+function getPRBaseRefName(prNum) {
+  if (!ghAvailable) return null;
+  const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "baseRefName", "--jq", ".baseRefName"]);
+  if (!result.ok) return null;
+  const ref = result.stdout.trim();
+  return ref || null;
+}
+function readPinnedPrNumber(status) {
+  const pr = status.pr;
+  if (typeof pr !== "object" || pr === null) return null;
+  const num = pr.number;
+  if (typeof num !== "number" || !Number.isFinite(num) || !Number.isInteger(num) || num <= 0) {
+    return null;
+  }
+  return num;
+}
+function resolveProofPRNumberForPrefetch(status, branchName, baseBranch) {
+  if (!ghAvailable) return null;
+  const pinnedPrNum = readPinnedPrNumber(status);
+  if (pinnedPrNum !== null) return pinnedPrNum;
+  return findOpenPRNumber(branchName, baseBranch) ?? findMergedPRNumber(branchName, baseBranch);
+}
+function commitObjectExists(cwd, sha) {
+  return gitSafeAt(cwd, "cat-file", "-e", `${sha}^{commit}`).ok;
+}
+function materializePRHead(cwd, prNum, headSha) {
+  if (commitObjectExists(cwd, headSha)) return true;
+  gitSafeAt(cwd, "fetch", "origin", `refs/pull/${prNum}/head`);
+  if (commitObjectExists(cwd, headSha)) return true;
+  gitSafeAt(cwd, "fetch", "origin", headSha);
+  return commitObjectExists(cwd, headSha);
+}
+function establishPRHeadAncestryProof(cwd, prNum, prHead, localTip) {
+  if (prHead === null) {
+    return {
+      proven: false,
+      reason: `headRefOid for PR #${prNum} could not be materialized locally; merge proof is unproven.`
+    };
+  }
+  const ancestorCheck = gitSafeAt(cwd, "merge-base", "--is-ancestor", localTip, prHead);
+  if (!ancestorCheck.ok) {
+    return {
+      proven: false,
+      reason: `Local tip ${localTip.slice(0, 7)} is not an ancestor of PR #${prNum} head ${prHead.slice(0, 7)}. Possible branch reuse or local-only commits not included in the merged PR.`
+    };
+  }
+  return { proven: true };
+}
+function establishMergeProof(status, branchName, localTip, baseBranch, cwd, prefetchedHeads) {
+  const pinnedPrNum = readPinnedPrNumber(status);
+  if (ghAvailable && pinnedPrNum !== null) {
+    if (!isPRMerged(pinnedPrNum)) {
+      return { proven: false, reason: `Pinned PR #${pinnedPrNum} is not in MERGED state.` };
+    }
+    const prBase = getPRBaseRefName(pinnedPrNum);
+    if (prBase !== baseBranch) {
+      return {
+        proven: false,
+        reason: `Pinned PR #${pinnedPrNum} was merged into '${prBase ?? "unknown"}', not '${baseBranch}'.`
+      };
+    }
+    return establishPRHeadAncestryProof(cwd, pinnedPrNum, prefetchedHeads.get(pinnedPrNum) ?? null, localTip);
+  }
+  if (ghAvailable) {
+    const mergedPrNum = findMergedPRNumber(branchName, baseBranch);
+    if (mergedPrNum !== null) {
+      return establishPRHeadAncestryProof(cwd, mergedPrNum, prefetchedHeads.get(mergedPrNum) ?? null, localTip);
+    }
+    return {
+      proven: false,
+      reason: `No merged PR found for ${branchName} targeting ${baseBranch}. Verify the PR was merged, then re-run --ship.`
+    };
+  }
+  return {
+    proven: false,
+    reason: `gh CLI is not available; cannot verify merge proof. Re-run --ship when gh is reachable, or delete the local branch manually and re-run to take the no-branch archive path.`
+  };
 }
 function assertNoOpenPRForTask(branchName, baseBranch) {
   const prNum = findOpenPRNumber(branchName, baseBranch);
@@ -5744,7 +5881,8 @@ function shipTasks(taskIds) {
     const branch = resolveTaskBranchName(taskId);
     taskSnapshots.set(taskId, {
       branch,
-      worktree: status.worktree === true
+      worktree: status.worktree === true,
+      statusForProof: status
     });
     branchByTaskId.set(taskId, branch);
   }
@@ -5772,6 +5910,20 @@ function shipTasks(taskIds) {
 ` + shipBaseDivergenceResult.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
     );
   }
+  const prefetchedPRHeads = /* @__PURE__ */ new Map();
+  for (const taskId of taskIds) {
+    const { branch: branchName, worktree: hasWorktree, statusForProof } = taskSnapshot(taskId);
+    if (!branchExistsLocally(branchName)) continue;
+    const prNum = resolveProofPRNumberForPrefetch(statusForProof, branchName, baseBranch);
+    if (prNum === null || prefetchedPRHeads.has(prNum)) continue;
+    const prHead = getMergedPRHeadSha(prNum);
+    if (prHead === null) {
+      prefetchedPRHeads.set(prNum, null);
+      continue;
+    }
+    const activeCwd = hasWorktree ? getActiveCwd([taskId], { tolerateMissingWorktree: true }) : REPO_ROOT2;
+    prefetchedPRHeads.set(prNum, materializePRHead(activeCwd, prNum, prHead) ? prHead : null);
+  }
   const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
   if (!merged) {
     assertLocalBaseInSyncWithOrigin(baseBranch);
@@ -5779,6 +5931,37 @@ function shipTasks(taskIds) {
     for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskSnapshot(taskId).branch, baseBranch);
   }
   runPostMergeHook();
+  const proofFailures = [];
+  for (const taskId of taskIds) {
+    const branchName = taskSnapshot(taskId).branch;
+    if (!branchExistsLocally(branchName)) continue;
+    const activeCwd = taskSnapshot(taskId).worktree ? getActiveCwd([taskId], { tolerateMissingWorktree: true }) : REPO_ROOT2;
+    const tipResult = gitSafeAt(activeCwd, "rev-parse", branchName);
+    if (!tipResult.ok || !tipResult.stdout.trim()) {
+      proofFailures.push({ taskId, reason: `Could not resolve local tip for ${branchName}.` });
+      continue;
+    }
+    let taskStatus = taskSnapshot(taskId).statusForProof;
+    try {
+      taskStatus = readStatus(taskId);
+    } catch {
+    }
+    const proof = establishMergeProof(taskStatus, branchName, tipResult.stdout.trim(), baseBranch, activeCwd, prefetchedPRHeads);
+    if (!proof.proven) proofFailures.push({ taskId, reason: proof.reason });
+  }
+  if (proofFailures.length > 0) {
+    const lines = proofFailures.map(({ taskId, reason }) => `  ${taskId}: ${reason}`).join("\n");
+    die(
+      `--ship aborted: merge proof could not be established for the following task(s):
+${lines}
+
+Recovery:
+  - Verify the PR was merged: gh pr list --head <branch> --state merged.
+  - If merged but proof fails after branch reuse or local advancement, delete the local branch
+    (git branch -D <branch>) and re-run --ship; the no-branch path archives without proof.
+  - --force does not bypass this gate.`
+    );
+  }
   const archiveDir = path17.join(TASKS_DIR2, "_archive");
   if (!fs16.existsSync(archiveDir)) fs16.mkdirSync(archiveDir, { recursive: true });
   const localBranchesToDelete = [];
@@ -5939,7 +6122,12 @@ function routeBackTo(taskIds, targetPhase) {
     }
     for (let i = targetIdx; i < PHASE_ORDER2.length; i += 1) {
       const phaseEntry = status.phases[PHASE_ORDER2[i]];
-      if (phaseEntry) phaseEntry.status = "pending";
+      if (phaseEntry) {
+        phaseEntry.status = "pending";
+        if (Object.hasOwn(phaseEntry, "verdict")) {
+          phaseEntry.verdict = "";
+        }
+      }
     }
     writeStatus(taskId, status);
   }
@@ -5968,7 +6156,7 @@ async function runPhase(phase, state) {
   }
   if (phase === "qa") {
     const activeCwd = getActiveCwd(taskIds);
-    const qaTemplatePath = findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
+    const qaTemplatePath = state.isBundle ? null : findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
     const resolvedPrTemplate = qaTemplatePath ? fs16.readFileSync(qaTemplatePath, "utf8") : null;
     return runQaPhase(state, cliArgs.interactive, resolvedPrTemplate);
   }

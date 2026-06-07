@@ -104,6 +104,7 @@ export type StatusJson = {
     full_send?: boolean;
     worktree?: boolean;
     canon?: CanonStamp;
+    pr?: { number: number };
     phases: Partial<Record<Phase, PhaseEntry>>;
     escalations?: Escalation[];
     sessions?: {

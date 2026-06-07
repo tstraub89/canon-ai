@@ -18,6 +18,7 @@
   "human_spec_gate": true,
   "full_send": false,
   "worktree": true,
+  "_pr": "optional: { number: <PR number> } - set by --pr, read by --ship for forge-proof merge verification. Absence is valid (legacy/pre-PR state).",
   "phases": {
     "spec": { "status": "pending", "agent": "claude" },
     "spec_review": {

@@ -429,6 +429,11 @@ export function taskPhase(id: string, phaseArg: string, statusArg: string, verdi
     const previousStatus = entry.status;
     entry.status = statusArg;
     status.updated = today();
+    // Clear a stale verdict when resetting a review phase to pending — the
+    // next review round will re-derive it from a fresh review artifact.
+    if (statusArg === 'pending' && Object.hasOwn(entry, 'verdict')) {
+        entry.verdict = '';
+    }
     if (verdictArg && Object.hasOwn(entry, 'verdict')) {
         entry.verdict = verdictArg;
     }

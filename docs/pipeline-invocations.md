@@ -400,3 +400,14 @@
 | 2026-06-06T14:27:54.635Z | bundle-preflight-atomic-rejection | implement | codex | gpt-5.5 | 0 | 659.8s | 4779314 | ok |
 | 2026-06-06T14:32:50.773Z | bundle-preflight-atomic-rejection | code_review | claude | opus | 0 | 295.5s | 1780309 | ok |
 | 2026-06-06T14:36:42.308Z | bundle-preflight-atomic-rejection | qa | claude | sonnet | 0 | 231.5s | 1270509 | ok |
+| 2026-06-07T01:59:19.695Z | ship-merge-proof | spec_review | codex | gpt-5.5 | 0 | 179.5s | 1113141 | ok |
+| 2026-06-07T02:03:56.679Z | ship-merge-proof | spec_review | codex | gpt-5.5 | 1 | 124.2s | 2296585 | ok |
+| 2026-06-07T03:01:29.942Z | ship-merge-proof | spec_review | codex | gpt-5.5 | 0 | 94.7s | 3605761 | ok |
+| 2026-06-07T03:14:47.681Z | ship-merge-proof | plan | claude | sonnet | 0 | 635.4s | 1822382 | ok |
+| 2026-06-07T03:46:23.729Z | ship-merge-proof | implement | codex | gpt-5.5 | 0 | 1895.2s | 14524216 | ok |
+| 2026-06-07T04:09:53.162Z | ship-merge-proof | code_review | claude | opus | 0 | 443.0s | 838615 | ok |
+| 2026-06-07T04:14:22.830Z | ship-merge-proof | qa | claude | sonnet | 0 | 269.7s | 852398 | ok |
+| 2026-06-07T04:47:46.535Z | ship-merge-proof | spec_review | codex | gpt-5.5 | 0 | 98.4s | 634200 | ok |
+| 2026-06-07T04:49:32.838Z | ship-merge-proof | plan | claude | sonnet | 0 | 106.3s | 299018 | ok |
+| 2026-06-07T04:58:42.023Z | ship-merge-proof | implement | codex | gpt-5.5 | 0 | 549.1s | 19461029 | ok |
+| 2026-06-07T05:11:12.499Z | ship-merge-proof | qa | claude | sonnet | 0 | 281.7s | 868795 | ok |

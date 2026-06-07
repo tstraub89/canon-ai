@@ -333,6 +333,62 @@ void test('task phase rejects spec_gap for spec_review (code_review-only verdict
     });
 });
 
+void test('task phase clears stale verdict when resetting a review phase to pending', () => {
+    withTasksRoot(tasksRoot => {
+        // spec_review: stale 'approved' verdict should be cleared on reset to pending
+        const taskId = 'phase-stale-verdict-spec';
+        const taskDir = writeTask(tasksRoot, taskId, makeStatus(taskId, {
+            phases: {
+                ...makeStatus(taskId).phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: {
+                    status: 'done',
+                    agent: 'codex',
+                    verdict: 'approved',
+                    iterations: 1,
+                    iterations_current_loop: 1,
+                    iterations_total: 1,
+                    changes_requested_total: 0,
+                    auto_block_count: 0,
+                },
+            },
+        }));
+
+        captureStdout(() => taskPhase(taskId, 'spec_review', 'pending'));
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.spec_review?.status, 'pending');
+        assert.equal(updated.phases.spec_review?.verdict, '');
+
+        // code_review: stale 'changes_requested' verdict should be cleared on reset to pending
+        const taskId2 = 'phase-stale-verdict-cr';
+        const taskDir2 = writeTask(tasksRoot, taskId2, makeStatus(taskId2, {
+            phases: {
+                ...makeStatus(taskId2).phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: {
+                    status: 'done',
+                    agent: 'claude',
+                    verdict: 'changes_requested',
+                    iterations: 1,
+                    iterations_current_loop: 1,
+                    iterations_total: 1,
+                    changes_requested_total: 1,
+                    preflight_rejections_current_loop: 0,
+                    auto_block_count: 0,
+                },
+            },
+        }));
+
+        captureStdout(() => taskPhase(taskId2, 'code_review', 'pending'));
+        const updated2 = readStatusFile(taskDir2);
+        assert.equal(updated2.phases.code_review?.status, 'pending');
+        assert.equal(updated2.phases.code_review?.verdict, '');
+    });
+});
+
 void test('task phase rejects invalid phase and out-of-order transitions', () => {
     withTasksRoot(tasksRoot => {
         writeTask(tasksRoot, 'phase-errors');

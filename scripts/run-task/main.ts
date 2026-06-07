@@ -837,16 +837,62 @@ export function formatExistingPRMessage(prNum: number, prUrl: string): string {
  * `gh` exit when GP rebuilt task artifacts on an already-PR'd branch (1.3.0
  * failure mode #10).
  */
-function reportOrCreatePR(taskIds: string[], branchName: string): void {
+function recordPinnedPRNumber(taskIds: string[], prNum: number, branchName: string, cwd: string): void {
+    let anyChanged = false;
+    for (const taskId of taskIds) {
+        const status = splitState.readStatus(taskId);
+        if (readPinnedPrNumber(status) === prNum) continue;
+        status.pr = { number: prNum };
+        splitState.writeStatus(taskId, status);
+        anyChanged = true;
+    }
+
+    if (!anyChanged) return;
+
+    for (const taskId of taskIds) {
+        const relStatusPath = path.join('tasks', taskId, 'status.json');
+        const addResult = gitSafeAt(cwd, 'add', '--', relStatusPath);
+        if (!addResult.ok) {
+            die(`Failed to stage ${relStatusPath} after recording PR #${prNum}: ${addResult.stderr || 'unknown error'}`);
+        }
+    }
+
+    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
+    const commitResult = gitSafeAt(cwd, 'commit', '-m', `chore: record pr.number for ${label}`);
+    if (!commitResult.ok) {
+        die(`Failed to commit pr.number recording for ${label}: ${commitResult.stderr || 'unknown error'}`);
+    }
+
+    const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
+    if (!pushResult.ok) {
+        die(`Failed to push pr.number recording for ${label}: ${pushResult.stderr || 'unknown error'}`);
+    }
+}
+
+function reportOrCreatePR(taskIds: string[], branchName: string, cwd: string): void {
     if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
     const baseBranch = splitGit.getBaseBranch(taskIds);
     const openPR = findOpenPRNumber(branchName, baseBranch);
+    let prNum: number;
     if (openPR !== null) {
         const prUrl = lookupPRUrl(openPR);
         info(formatExistingPRMessage(openPR, prUrl));
-        return;
+        prNum = openPR;
+    } else {
+        createDraftPRForTask(taskIds, branchName);
+        const createdPR = findOpenPRNumber(branchName, baseBranch);
+        if (createdPR === null) {
+            die(
+                `Draft PR was created for ${branchName}, but canon could not retrieve its PR number. ` +
+                `Re-run --pr so canon can pin pr.number before --ship.`,
+            );
+            return;
+        } else {
+            prNum = createdPR;
+        }
     }
-    createDraftPRForTask(taskIds, branchName);
+
+    recordPinnedPRNumber(taskIds, prNum, branchName, cwd);
 }
 
 function parseOriginRepoSlug(remoteUrl: string): string | null {
@@ -1090,7 +1136,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
 
-            if (createPR) reportOrCreatePR(taskIds, branchName);
+            if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
             return;
         }
     }
@@ -1189,7 +1235,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
 
-    if (createPR) reportOrCreatePR(taskIds, branchName);
+    if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
 }
 
 function printDryRunPlan(state: PipelineState): void {
@@ -1224,8 +1270,9 @@ function printDryRunPlan(state: PipelineState): void {
 // ── Ship (archive) ─────────────────────────────────────────────────────────
 
 /**
- * Refuse to ship if local <baseBranch> is behind origin/<baseBranch>.
- * Only called when no PR was merged (i.e., user merged manually before --ship).
+ * Fast-forward local <baseBranch> when it is strictly behind origin/<baseBranch>.
+ * Only called when no PR was merged in this process (i.e., user merged manually
+ * or a prior --ship run merged before aborting).
  */
 function assertLocalBaseInSyncWithOrigin(baseBranch: string): void {
     const fetchResult = gitSafe('fetch', 'origin', baseBranch);
@@ -1246,13 +1293,17 @@ function assertLocalBaseInSyncWithOrigin(baseBranch: string): void {
     const behind = Number.parseInt(behindResult.stdout, 10);
     if (Number.isNaN(behind) || behind === 0) return;
 
-    die(
-        `Local ${baseBranch} is ${behind} commit${behind === 1 ? '' : 's'} behind origin/${baseBranch}. ` +
-        `Rebase before --ship: \`git pull --rebase origin ${baseBranch}\` (or \`canon task post-merge-sync ${baseBranch}\`). ` +
-        `The squash merge of the implement-phase PR re-introduces tasks/<id>/ on origin/${baseBranch}; ` +
-        `rebasing first ensures --ship consumes the post-merge files instead of leaving a duplicate. ` +
-        `See docs/pipeline-orchestrator.md §Shipping & Post-Merge Reconciliation.`,
-    );
+    const aheadResult = gitSafe('rev-list', '--count', `origin/${baseBranch}..HEAD`);
+    const ahead = aheadResult.ok ? Number.parseInt(aheadResult.stdout, 10) : NaN;
+    if (!Number.isNaN(ahead) && ahead > 0) {
+        die(
+            `Local ${baseBranch} has diverged from origin/${baseBranch} (${behind} behind, ${ahead} ahead). ` +
+            `Resolve with \`git rebase origin/${baseBranch}\` and re-run --ship.`,
+        );
+    }
+
+    info(`Local ${baseBranch} is ${behind} commit${behind === 1 ? '' : 's'} behind origin/${baseBranch}; fast-forwarding...`);
+    git('pull', '--ff-only', 'origin', baseBranch);
 }
 
 /**
@@ -1396,11 +1447,18 @@ function assertOriginTaskBranchAbsent(branchName: string, baseBranch: string): v
             );
             const del = splitGit.gitSafe('push', 'origin', `--delete`, branchName);
             if (!del.ok) {
-                splitCli.die(
-                    `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but ` +
-                    `\`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || 'unknown error'}. ` +
-                    `Delete the remote branch manually and re-run --ship.`,
-                );
+                if (del.stderr.includes('remote ref does not exist')) {
+                    splitCli.info(
+                        `Remote branch ${branchName} is already absent ("remote ref does not exist"). ` +
+                        `No-op delete; continuing cleanup.`,
+                    );
+                } else {
+                    splitCli.die(
+                        `--ship aborted: detected merged PR #${mergedPrNum} for ${branchName}, but ` +
+                        `\`git push origin --delete ${branchName}\` failed: ${del.stderr.trim() || 'unknown error'}. ` +
+                        `Delete the remote branch manually and re-run --ship.`,
+                    );
+                }
             }
             return;
         }
@@ -1436,9 +1494,10 @@ function findMergedPRNumber(branch: string, baseBranch: string): number | null {
 }
 
 /**
- * Returns the head commit SHA of a merged PR, or null if the lookup fails.
- * Used by `assertOriginTaskBranchAbsent` to verify the current remote tip
- * matches what was actually merged before auto-deleting the branch.
+ * Returns the head commit SHA of a PR, or null if the lookup fails.
+ * Works for open and merged PRs; `assertOriginTaskBranchAbsent` also uses it
+ * to verify the current remote tip matches what was actually merged before
+ * auto-deleting the branch.
  */
 function getMergedPRHeadSha(prNum: number): string | null {
     if (!ghAvailable) return null;
@@ -1453,6 +1512,112 @@ function isPRMerged(prNum: number): boolean {
     if (!ghAvailable) return false;
     const result = splitGit.runCommand('gh', ['pr', 'view', String(prNum), '--json', 'state', '--jq', '.state']);
     return result.ok && result.stdout.trim() === 'MERGED';
+}
+
+function getPRBaseRefName(prNum: number): string | null {
+    if (!ghAvailable) return null;
+    const result = splitGit.runCommand('gh', ['pr', 'view', String(prNum), '--json', 'baseRefName', '--jq', '.baseRefName']);
+    if (!result.ok) return null;
+    const ref = result.stdout.trim();
+    return ref || null;
+}
+
+function readPinnedPrNumber(status: StatusJson): number | null {
+    const pr = (status as unknown as { pr?: unknown }).pr;
+    if (typeof pr !== 'object' || pr === null) return null;
+    const num = (pr as { number?: unknown }).number;
+    if (typeof num !== 'number' || !Number.isFinite(num) || !Number.isInteger(num) || num <= 0) {
+        return null;
+    }
+    return num;
+}
+
+type MergeProofResult = { proven: true } | { proven: false; reason: string };
+
+function resolveProofPRNumberForPrefetch(status: StatusJson, branchName: string, baseBranch: string): number | null {
+    if (!ghAvailable) return null;
+    const pinnedPrNum = readPinnedPrNumber(status);
+    if (pinnedPrNum !== null) return pinnedPrNum;
+    return findOpenPRNumber(branchName, baseBranch) ?? findMergedPRNumber(branchName, baseBranch);
+}
+
+function commitObjectExists(cwd: string, sha: string): boolean {
+    return splitGit.gitSafeAt(cwd, 'cat-file', '-e', `${sha}^{commit}`).ok;
+}
+
+function materializePRHead(cwd: string, prNum: number, headSha: string): boolean {
+    if (commitObjectExists(cwd, headSha)) return true;
+
+    splitGit.gitSafeAt(cwd, 'fetch', 'origin', `refs/pull/${prNum}/head`);
+    if (commitObjectExists(cwd, headSha)) return true;
+
+    splitGit.gitSafeAt(cwd, 'fetch', 'origin', headSha);
+    return commitObjectExists(cwd, headSha);
+}
+
+function establishPRHeadAncestryProof(cwd: string, prNum: number, prHead: string | null, localTip: string): MergeProofResult {
+    if (prHead === null) {
+        return {
+            proven: false,
+            reason: `headRefOid for PR #${prNum} could not be materialized locally; merge proof is unproven.`,
+        };
+    }
+
+    const ancestorCheck = splitGit.gitSafeAt(cwd, 'merge-base', '--is-ancestor', localTip, prHead);
+    if (!ancestorCheck.ok) {
+        return {
+            proven: false,
+            reason:
+                `Local tip ${localTip.slice(0, 7)} is not an ancestor of PR #${prNum} head ${prHead.slice(0, 7)}. ` +
+                `Possible branch reuse or local-only commits not included in the merged PR.`,
+        };
+    }
+
+    return { proven: true };
+}
+
+function establishMergeProof(
+    status: StatusJson,
+    branchName: string,
+    localTip: string,
+    baseBranch: string,
+    cwd: string,
+    prefetchedHeads: ReadonlyMap<number, string | null>,
+): MergeProofResult {
+    const pinnedPrNum = readPinnedPrNumber(status);
+
+    if (ghAvailable && pinnedPrNum !== null) {
+        if (!isPRMerged(pinnedPrNum)) {
+            return { proven: false, reason: `Pinned PR #${pinnedPrNum} is not in MERGED state.` };
+        }
+        const prBase = getPRBaseRefName(pinnedPrNum);
+        if (prBase !== baseBranch) {
+            return {
+                proven: false,
+                reason: `Pinned PR #${pinnedPrNum} was merged into '${prBase ?? 'unknown'}', not '${baseBranch}'.`,
+            };
+        }
+        return establishPRHeadAncestryProof(cwd, pinnedPrNum, prefetchedHeads.get(pinnedPrNum) ?? null, localTip);
+    }
+
+    if (ghAvailable) {
+        const mergedPrNum = findMergedPRNumber(branchName, baseBranch);
+        if (mergedPrNum !== null) {
+            return establishPRHeadAncestryProof(cwd, mergedPrNum, prefetchedHeads.get(mergedPrNum) ?? null, localTip);
+        }
+        return {
+            proven: false,
+            reason:
+                `No merged PR found for ${branchName} targeting ${baseBranch}. Verify the PR was merged, then re-run --ship.`,
+        };
+    }
+
+    return {
+        proven: false,
+        reason:
+            `gh CLI is not available; cannot verify merge proof. Re-run --ship when gh is reachable, ` +
+            `or delete the local branch manually and re-run to take the no-branch archive path.`,
+    };
 }
 
 /**
@@ -1725,7 +1890,7 @@ function shipTasks(taskIds: string[]): void {
     // pre-switch snapshot for the archive-loop write would overwrite fields
     // that landed via the squash merge if local was behind origin (Codex P2
     // on PR #103). The archive loop reads status fresh post-merge instead.
-    type ShipTaskSnapshot = { branch: string; worktree: boolean };
+    type ShipTaskSnapshot = { branch: string; worktree: boolean; statusForProof: StatusJson };
     const baseBranch = splitGit.getBaseBranch(taskIds);
     const taskSnapshots = new Map<string, ShipTaskSnapshot>();
     const branchByTaskId = new Map<string, string>();
@@ -1735,6 +1900,7 @@ function shipTasks(taskIds: string[]): void {
         taskSnapshots.set(taskId, {
             branch,
             worktree: status.worktree === true,
+            statusForProof: status,
         });
         branchByTaskId.set(taskId, branch);
     }
@@ -1770,6 +1936,26 @@ function shipTasks(taskIds: string[]): void {
         );
     }
 
+    const prefetchedPRHeads = new Map<number, string | null>();
+    for (const taskId of taskIds) {
+        const { branch: branchName, worktree: hasWorktree, statusForProof } = taskSnapshot(taskId);
+        if (!splitGit.branchExistsLocally(branchName)) continue;
+
+        const prNum = resolveProofPRNumberForPrefetch(statusForProof, branchName, baseBranch);
+        if (prNum === null || prefetchedPRHeads.has(prNum)) continue;
+
+        const prHead = getMergedPRHeadSha(prNum);
+        if (prHead === null) {
+            prefetchedPRHeads.set(prNum, null);
+            continue;
+        }
+
+        const activeCwd = hasWorktree
+            ? splitWorktree.getActiveCwd([taskId], { tolerateMissingWorktree: true })
+            : REPO_ROOT;
+        prefetchedPRHeads.set(prNum, materializePRHead(activeCwd, prNum, prHead) ? prHead : null);
+    }
+
     // Merge open PRs and pull; if none found, assert the base is already in sync.
     const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
     if (!merged) {
@@ -1796,6 +1982,44 @@ function shipTasks(taskIds: string[]): void {
 
     // Post-merge: project-specific hook (default no-op; edit runPostMergeHook).
     runPostMergeHook();
+
+    const proofFailures: Array<{ taskId: string; reason: string }> = [];
+    for (const taskId of taskIds) {
+        const branchName = taskSnapshot(taskId).branch;
+        if (!splitGit.branchExistsLocally(branchName)) continue;
+
+        const activeCwd = taskSnapshot(taskId).worktree
+            ? splitWorktree.getActiveCwd([taskId], { tolerateMissingWorktree: true })
+            : REPO_ROOT;
+        const tipResult = splitGit.gitSafeAt(activeCwd, 'rev-parse', branchName);
+        if (!tipResult.ok || !tipResult.stdout.trim()) {
+            proofFailures.push({ taskId, reason: `Could not resolve local tip for ${branchName}.` });
+            continue;
+        }
+
+        let taskStatus = taskSnapshot(taskId).statusForProof;
+        try {
+            taskStatus = splitState.readStatus(taskId);
+        } catch {
+            // If no merge happened, the base checkout may not contain the task
+            // directory. Use the pre-switch status for proof only; archive writes
+            // still re-read fresh after a proven merge.
+        }
+        const proof = establishMergeProof(taskStatus, branchName, tipResult.stdout.trim(), baseBranch, activeCwd, prefetchedPRHeads);
+        if (!proof.proven) proofFailures.push({ taskId, reason: proof.reason });
+    }
+    if (proofFailures.length > 0) {
+        const lines = proofFailures.map(({ taskId, reason }) => `  ${taskId}: ${reason}`).join('\n');
+        splitCli.die(
+            `--ship aborted: merge proof could not be established for the following task(s):\n` +
+            `${lines}\n\n` +
+            `Recovery:\n` +
+            `  - Verify the PR was merged: gh pr list --head <branch> --state merged.\n` +
+            `  - If merged but proof fails after branch reuse or local advancement, delete the local branch\n` +
+            `    (git branch -D <branch>) and re-run --ship; the no-branch path archives without proof.\n` +
+            `  - --force does not bypass this gate.`,
+        );
+    }
 
     const archiveDir = path.join(TASKS_DIR, '_archive');
     if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
@@ -2045,7 +2269,13 @@ function routeBackTo(taskIds: string[], targetPhase: Phase): void {
         // came in after the bug bit a real task.
         for (let i = targetIdx; i < PHASE_ORDER.length; i += 1) {
             const phaseEntry = status.phases[PHASE_ORDER[i]];
-            if (phaseEntry) phaseEntry.status = 'pending';
+            if (phaseEntry) {
+                phaseEntry.status = 'pending';
+                // Clear any stale verdict so the next review round starts clean.
+                if (Object.hasOwn(phaseEntry, 'verdict')) {
+                    phaseEntry.verdict = '';
+                }
+            }
         }
         // writeStatus() derives top-level .status from phases. With target
         // and all downstream flipped to 'pending', derivation correctly lands
@@ -2086,8 +2316,9 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     }
     if ((phase as Phase) === 'qa') {
         const activeCwd = splitWorktree.getActiveCwd(taskIds);
-        const qaTemplatePath =
-            findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT);
+        const qaTemplatePath = state.isBundle
+            ? null
+            : (findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT));
         const resolvedPrTemplate = qaTemplatePath ? fs.readFileSync(qaTemplatePath, 'utf8') : null;
         return runQaPhase(state, cliArgs.interactive, resolvedPrTemplate);
     }

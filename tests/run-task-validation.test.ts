@@ -11,6 +11,7 @@ import {
     autoBlockPhase,
     deriveTopLevelStatus,
     readStatus,
+    validateStatus,
     writeStatusToFile,
 } from '../scripts/run-task/state.js';
 import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
@@ -334,6 +335,16 @@ void test('legacy status with retired phase block parses, routes implement to co
         else process.env.CANON_TASKS_DIR_OVERRIDE = prevOverride;
         fs.rmSync(root, { recursive: true, force: true });
     }
+});
+
+void test('validateStatus accepts optional pr.number and legacy statuses without pr', () => {
+    const baseStatus = makeCodeReviewStatus('pr-status-task');
+
+    assert.doesNotThrow(() => validateStatus('pr-status-task', baseStatus));
+    assert.doesNotThrow(() => validateStatus('pr-status-task', {
+        ...baseStatus,
+        pr: { number: 42 },
+    }));
 });
 
 function withTempTaskHandoff(
