@@ -58,6 +58,21 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci
+      - name: Verify CHANGELOG date on release PRs to main
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          HEADER="$(awk -v v="$VERSION" '$0 ~ ("^## \\[" v "\\]") { print; exit }' CHANGELOG.md)"
+          if [ -z "$HEADER" ]; then
+            echo "::error::CHANGELOG.md has no '## [$VERSION]' block — add an entry before opening a release PR to main"
+            exit 1
+          fi
+          if printf '%s' "$HEADER" | grep -qi 'unreleased'; then
+            echo "::error::CHANGELOG block for $VERSION still says 'unreleased' — replace with the real release date before merging to main"
+            exit 1
+          fi
+          echo "CHANGELOG date check passed: $HEADER"
       - run: npm audit --omit=dev
       - run: npm run lint
       - run: npm run type-check

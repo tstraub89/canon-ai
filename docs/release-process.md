@@ -98,7 +98,7 @@ As each task ships, append a bullet to the active `## [<version>] — unreleased
 
 When the release scope is complete:
 
-1. **Replace `unreleased` with the date.** Edit the active CHANGELOG block's header to read `## [1.4.0] — 2026-MM-DD`. Commit and push.
+1. **Replace `unreleased` with the date.** Edit the active CHANGELOG block's header to read `## [1.4.0] — 2026-MM-DD`. Commit and push. CI enforces this: a PR to `main` with `unreleased` still in the block fails the "Verify CHANGELOG date" step before it can merge.
 2. **Verify the lockfile.** `git diff main..release/v1.4 -- package-lock.json | grep '"version"'` should show only the two root `"version"` lines changing. Any transitive `node_modules/*` version line is the picocolors-style corruption repeating.
 3. **Open the release PR:**
    ```bash
