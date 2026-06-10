@@ -1,0 +1,88 @@
+{
+  "id": "upgrade-template-override-nudge",
+  "title": "Nudge on customized task-template overrides when canon upgrade touches their canon source",
+  "status": "complete",
+  "created": "2026-06-07",
+  "updated": "2026-06-08",
+  "branch": "task/upgrade-template-override-nudge",
+  "base_branch": "release/v1.11",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "d031017dbc31878ad4235bdee55ec33fbe1830ba",
+    "orchestrator_commit": "d031017dbc31878ad4235bdee55ec33fbe1830ba",
+    "codex_cli": "codex-cli 0.137.0",
+    "claude_code": "2.1.163 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr": "optional: { number: <PR number> } - set by --pr, read by --ship for forge-proof merge verification. Absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 4,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex",
+      "reroute_count": 2,
+      "rerouted": true
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 4,
+      "changes_requested_total": 1,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-06-08",
+      "phase": "code_review",
+      "iteration_count": 0,
+      "reason": "Code review surfaced a spec_gap verdict for task(s): upgrade-template-override-nudge. The implementation cannot resolve this because the root cause is the spec. Review tasks/<id>/review.md for the specific spec problem, amend the spec, reset code_review to pending, and re-run."
+    }
+  ],
+  "sessions": {
+    "claude_spec": "a66df35e-9729-4965-a0fc-9e2cb709c7f4",
+    "codex": "019ea535-aad7-7662-abfd-0bad82fb2a08",
+    "claude_review": "2b520136-1190-4ca9-ae55-3bcec7f8ff4c",
+    "codex_spec_review": "019ea586-cc77-7f50-9fec-123b7aa03733"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review | spec_gap",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode.",
+  "pr": {
+    "number": 150
+  }
+}

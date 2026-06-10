@@ -23,6 +23,7 @@ const config = {
     codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? 'gpt-5.4-mini',
     codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? 'gpt-5.5',
     maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+    claudeBudget: process.env.CLAUDE_BUDGET ?? null,
 };
 
 export function policyConfig(): PolicyConfig {
@@ -35,6 +36,7 @@ export function policyConfig(): PolicyConfig {
         codexModelMini: config.codexModelMini,
         codexModelFull: config.codexModelFull,
         maxReviewLoops: config.maxReviewLoops,
+        claudeBudget: config.claudeBudget,
     };
 }
 

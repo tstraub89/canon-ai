@@ -131,6 +131,7 @@ Decisions can be reopened, but only with **strong justification and human approv
   - **Minor**: new features (new pipeline phase, new validation gate, new template section, new agent capability) without breaking existing usage.
   - **Major**: breaking changes — anything that requires adopters to update their `.canon/templates/`, their `status.json` schema, their workflow expectations, or any canon-supplied policy in a way that breaks existing tasks mid-flight.
   - **Guidance refinements are patch-eligible**: clarifying, tightening, or adding a rule of thumb / pitfall to *existing* canon guidance docs (`CLAUDE.md`, `AGENTS.md`, `docs/*`) is a patch even though it ships to adopters via `canon upgrade` — it refines guidance rather than adding a capability. A *new template section*, *new managed file*, *new pipeline phase/gate*, or *new agent capability* remains minor. Categorize net-new rules of thumb under `### Added` and edits to existing rules under `### Changed`.
+  - **Changed canon-supplied defaults are minor**: changing the default model or reasoning-effort the matrix selects for a phase/size (what adopters get unless they override an env var) is a **minor** behavior change, not a patch — adopters feel it as different cost/latency/quality even though it doesn't break existing tasks. It is human-authorized (minor) and goes under `### Changed`. (A pure prompt-wording refinement that does not change which model/effort runs stays patch.)
 
 - **Agent authorization**:
   - **Patch**: agents may bump the version and commit the changelog edit autonomously.
@@ -144,6 +145,25 @@ Decisions can be reopened, but only with **strong justification and human approv
   - The repo is currently private; the package is published from `main`. A future public release would not change the changelog model — `CHANGELOG.md` stays in-tree.
 
 - **Release mechanics**: How to actually execute a release (version bump commands, lockfile refresh, tag-and-publish flow, hotfix path, auto-release workflow) lives in [`release-process.md`](release-process.md). That doc is the source of truth for *how*; this entry is the source of truth for *what counts as a bump and who authorizes it*. Notable rule from `release-process.md`: never use `sed` to bump versions in `package.json` or `package-lock.json` — use `npm version --no-git-tag-version` + `npm install --package-lock-only`. The 1.1.3 picocolors lockfile incident was caused by exactly that footgun.
+
+---
+
+## Model-generation re-baseline (2026-06)
+
+_Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
+
+**Decision**: Re-baseline the review harness and the code_review/implement model+effort tiers for the model generation canon now runs on. Three changes land in 1.11.0: (1) the two review lenses are instructed to over-report with severity + confidence labels and the foreman filters (find/filter split); (2) `code_review` L tier moves Opus → Sonnet 4.6, leaving Opus only for XL/delicate; (3) `implement` XL/delicate effort eases `xhigh` → `high`. Full analysis: [`harness-audit-2026-06.md`](harness-audit-2026-06.md).
+
+**Why**:
+- **Find/filter split.** Opus 4.8 and Sonnet 4.6 follow review instructions *literally*. Conservative prompts ("only high-severity," "don't nitpick") now measurably suppress real-bug recall, not just noise (CodeRabbit 100-PR planted-bug study: criticals 35→29, majors 119→81; recovered to parity once conservative language was dropped and filtering moved downstream). Canon's foreman architecture already separates synthesis from finding, so the fix is prompt wording: lenses report everything with severity+confidence; the foreman ranks and filters. The round-3+ tightening rule was likewise reworded to a *synthesis-stage* filter so it no longer instructs the lenses to self-censor.
+- **L review → Sonnet 4.6.** The earlier L→Opus bump was a Sonnet-4.5-era response to missed lifecycle/state-machine bugs. Sonnet 4.6 closed that long-horizon gap (matches the prior Opus flagship per vendor + practitioner eval), so L returns to Sonnet at ~1/5 cost. Opus stays on XL/delicate.
+- **Implement XL/delicate effort `xhigh` → `high`.** GPT-5.5 tends to *overthink* at `xhigh` with open-ended tool access — latency and token cost without a quality gain, per OpenAI's own guidance — and canon's core thesis is token discipline over reflexive max-effort. The blast-radius caution that initially argued for keeping `xhigh` doesn't hold up: `high` isn't "less careful," and `xhigh`'s overthinking can *reduce* quality on open-ended agentic work, not just cost more. Raise via `CODEX_*`/effort env only if eval shows under-reasoning on delicate work.
+
+**Deliberately NOT changed**:
+- **Effort floors** — audited and already adequate: the matrix's `medium` entries are either on Sonnet/tiny diffs or on phase/size combos that don't run (fast-tier spec is conversational); every Opus exploration tier (spec M+, code_review XL) is already `high`/`xhigh`, and code_review L is Sonnet/`high`.
+- **Lens count stays two** (one anchored + one cold). 2026 correlated-error research endorses exactly this: beyond one anchored + one adversarial lens, added reviewers are near-clones (limited recall, more noise). Do not add a third lens.
+
+**Backlogged (separate future minors, each its own spec)**: a test-generation / self-verification phase after implement; confidence-based cascaded reviewer escalation (Sonnet→Opus on low confidence) replacing pure size-based routing; micro-spec decomposition guidance for L/XL; a spec-contradiction lint in `/canon-review`.
 
 ---
 

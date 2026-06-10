@@ -91,6 +91,13 @@ One paragraph: overall code quality of the implementation.
 <!--
 On re-review, append below this line:
 
+Heading rule for ANY append to this file: only real review rounds may use a
+`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
+an administrative block (pre-flight rejection, halt note, audit stamp) headed
+`## Round …` with no verdict checkbox makes the parser return no verdict and
+breaks routing. Administrative appends use a non-Round heading (e.g.
+`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
+
 ## Round N — verifying iteration N-1's response to round N-1
 
 ### Stage 1 — Acceptance Criteria Re-Check

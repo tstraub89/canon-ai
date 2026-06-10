@@ -170,6 +170,9 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 **Change model selection**:
 > `scripts/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
 
+**Add a new review verdict**:
+> `scripts/run-task/types.ts` (`Verdict` union) → `src/task/index.ts` (`VALID_VERDICTS` + `assertValidVerdict()` — the runtime validator diverges from the type union by design) → `src/cli/index.ts` (help text) → `scripts/run-task/validation.ts` (`extractCheckedVerdict()` regex) — all four. TypeScript compiles cleanly with only the first; `canon task phase … <new_verdict>` then fails at runtime with "unknown verdict".
+
 **Add a new task-template field or section**:
 > `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` (authorship rules)
 

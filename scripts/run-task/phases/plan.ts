@@ -22,7 +22,7 @@ export async function runPlanPhase(
     for (const t of tasks) taskPhase(t.taskId, 'plan', 'in_progress');
     const cfg = getClaudeConfig('plan', tasks);
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, {
+    const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'plan',
         iteration: tasks[0].status.phases.plan?.iterations_current_loop

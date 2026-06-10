@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findUntrackedClobberPaths, taskAccept, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetSpecReview, taskStatus } from '../src/task/index.js';
+import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetSpecReview, taskStatus } from '../src/task/index.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
 
 const WORKSPACE_ROOT = process.cwd();
@@ -333,6 +333,31 @@ void test('task phase rejects spec_gap for spec_review (code_review-only verdict
     });
 });
 
+void test('task phase rejects sanctioned verdict outside canon task accept', () => {
+    withTasksRoot(tasksRoot => {
+        const taskId = 'phase-sanctioned-reject';
+        writeTask(tasksRoot, taskId, makeStatus(taskId, {
+            phases: {
+                ...makeStatus(taskId).phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+            },
+        }));
+
+        assert.throws(
+            () => taskPhase(taskId, 'code_review', 'done', 'sanctioned'),
+            /canon task accept <id> code_review --reason/,
+        );
+        assert.throws(
+            () => taskPhase(taskId, 'plan', 'done', 'sanctioned'),
+            /verdict is only valid for spec_review and code_review/,
+        );
+    });
+});
+
 void test('task phase clears stale verdict when resetting a review phase to pending', () => {
     withTasksRoot(tasksRoot => {
         // spec_review: stale 'approved' verdict should be cleared on reset to pending
@@ -525,14 +550,167 @@ void test('task accept marks implement done, sets operator_accepted, logs to not
     }
 });
 
-void test('task accept rejects non-implement phases', () => {
+void test('task accept rejects unsupported phases', () => {
     withTasksRoot(tasksRoot => {
         writeTask(tasksRoot, 'accept-task');
         assert.throws(
-            () => taskAccept(['accept-task'], 'code_review'),
-            /only supports the implement phase/,
+            () => taskAccept(['accept-task'], 'plan'),
+            /supports implement, spec_review, and code_review phases/,
         );
     });
+});
+
+void test('task accept requires reason for review phases and sanctions code_review with audit trail', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir, {
+            status: 'code_review',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex', reroute_count: 4 },
+                code_review: {
+                    status: 'blocked',
+                    agent: 'claude',
+                    verdict: 'spec_gap',
+                    iterations: 2,
+                    iterations_current_loop: 2,
+                    iterations_total: 2,
+                    changes_requested_total: 0,
+                    auto_block_count: 1,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+            escalations: [{ date: '2026-06-08', phase: 'code_review', reason: 'spec_gap block' }],
+        });
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), '# Spec\n\n## Design\n\nNo amendment.\n', 'utf8');
+        const beforeSpec = fs.readFileSync(path.join(taskDir, 'spec.md'), 'utf8');
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                assert.throws(
+                    () => taskAccept(['accept-task'], 'code_review'),
+                    /--reason "<text>" is required/,
+                );
+                captureStdout(() => taskCmd(['accept', 'accept-task', 'code_review', '--reason', 'false positive with spaces']));
+            });
+        });
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.status, 'qa');
+        assert.equal(updated.phases.code_review?.status, 'done');
+        assert.equal(updated.phases.code_review?.verdict, 'sanctioned');
+        assert.equal(updated.phases.code_review?.operator_accepted, true);
+        assert.ok(updated.phases.code_review?.operator_accepted_at);
+        assert.ok(updated.phases.code_review?.operator_accepted_sha);
+        assert.equal(updated.phases.implement?.reroute_count, 4);
+        assert.equal(fs.readFileSync(path.join(taskDir, 'spec.md'), 'utf8'), beforeSpec);
+        assert.equal(updated.escalations?.length, 1);
+        const notes = fs.readFileSync(path.join(taskDir, 'notes.md'), 'utf8');
+        assert.match(notes, /Operator accepted code_review/);
+        assert.match(notes, /false positive with spaces/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept sanctions spec_review and advances to plan', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir, {
+            status: 'spec_review',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: {
+                    status: 'done',
+                    agent: 'codex',
+                    verdict: 'changes_requested',
+                    iterations: 1,
+                    iterations_current_loop: 1,
+                    iterations_total: 1,
+                    changes_requested_total: 1,
+                    auto_block_count: 0,
+                },
+                plan: { status: 'pending', agent: 'claude' },
+            },
+        });
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                assert.throws(
+                    () => taskAccept(['accept-task'], 'spec_review'),
+                    /--reason "<text>" is required/,
+                );
+                captureStdout(() => taskAccept(['accept-task'], 'spec_review', { reason: 'nit accepted' }));
+            });
+        });
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.status, 'plan');
+        assert.equal(updated.phases.spec_review?.status, 'done');
+        assert.equal(updated.phases.spec_review?.verdict, 'sanctioned');
+        assert.equal(updated.phases.spec_review?.operator_accepted, true);
+        assert.match(fs.readFileSync(path.join(taskDir, 'notes.md'), 'utf8'), /nit accepted/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept review bundle sanctions non-advancing verdicts and preserves approvals', () => {
+    const { root, work, tasksRoot, taskDir: taskDirA } = setupAcceptRepo();
+    try {
+        const taskDirB = path.join(tasksRoot, 'task-b');
+        fs.mkdirSync(taskDirB, { recursive: true });
+        writeAcceptTaskStatus(taskDirA, {
+            status: 'code_review',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude', verdict: 'spec_gap', iterations: 1, iterations_current_loop: 1, iterations_total: 1, changes_requested_total: 0, auto_block_count: 1 },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+            escalations: [{ date: '2026-06-08', phase: 'code_review', reason: 'bundle blocked' }],
+        });
+        const statusB = readStatusFile(taskDirA);
+        statusB.id = 'task-b';
+        statusB.title = 'Task task-b';
+        statusB.phases.code_review = { status: 'blocked', agent: 'claude', verdict: 'approved', iterations: 1, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 1 };
+        fs.writeFileSync(path.join(taskDirB, 'status.json'), `${JSON.stringify(statusB, null, 2)}\n`, 'utf8');
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                captureStdout(() => taskAccept(['accept-task'], 'code_review', { reason: 'partial first' }));
+                const partialB = readStatusFile(taskDirB);
+                assert.equal(partialB.phases.code_review?.status, 'blocked');
+
+                captureStdout(() => taskAccept(['accept-task', 'task-b'], 'code_review', { reason: 'bundle bless' }));
+            });
+        });
+
+        const a = readStatusFile(taskDirA);
+        const b = readStatusFile(taskDirB);
+        assert.equal(a.status, 'qa');
+        assert.equal(a.phases.code_review?.status, 'done');
+        assert.equal(a.phases.code_review?.verdict, 'sanctioned');
+        assert.equal(a.phases.code_review?.operator_accepted, true);
+        assert.equal(a.escalations?.length, 1);
+        assert.equal(b.status, 'qa');
+        assert.equal(b.phases.code_review?.status, 'done');
+        assert.equal(b.phases.code_review?.verdict, 'approved');
+        assert.equal(b.phases.code_review?.operator_accepted, undefined);
+        assert.match(fs.readFileSync(path.join(taskDirA, 'notes.md'), 'utf8'), /bundle bless/);
+        assert.match(fs.readFileSync(path.join(taskDirB, 'notes.md'), 'utf8'), /advancing verdict preserved/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 });
 
 void test('task accept refuses dirty working tree without --force', () => {

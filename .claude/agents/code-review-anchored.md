@@ -27,6 +27,8 @@ Run Stage 2 only if Stage 1 passed.
 
 Find correctness bugs, risk/guardrail issues, optional cleanup/nits, and spec gaps. A changed test that passes against broken behavior is a correctness bug. Reference findings by file:line and AC number where applicable.
 
+Report every issue you find, including ones you are uncertain about or consider low-severity. Do not filter for importance or confidence here — the foreman does that downstream. Tag each Stage 2 finding with both a severity and a confidence so the foreman can rank and filter. Coverage is your job; filtering is not.
+
 ## Return Format
 
 Return structured text for the foreman:
@@ -38,7 +40,7 @@ AC_TABLE:
 STAGE_1_GAPS:
 - ...
 STAGE_2_FINDINGS:
-- [correctness bug | risk/guardrail | optional cleanup/nit | spec gap] file:line - description
+- [correctness bug | risk/guardrail | optional cleanup/nit | spec gap] file:line - description. Severity: high | medium | low. Confidence: high | medium | low
 OVERALL_SIGNAL: approve | changes_requested
 ```
 

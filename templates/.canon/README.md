@@ -17,8 +17,10 @@ cp .canon/templates/spec.md tasks/_templates/spec.md
 `.canon/templates/`. Files in `tasks/_templates/` are never touched by
 `canon upgrade`.
 
-After running `canon upgrade`, check whether structural changes landed in the
-canonical template that you should incorporate into your override:
+After running `canon upgrade`, the command automatically flags any task-template
+overrides that differ from a canon template changed by that upgrade. Those
+override files are not updated automatically; review the delta and fold any
+structural changes into your customization:
 
 ```bash
 diff .canon/templates/spec.md tasks/_templates/spec.md

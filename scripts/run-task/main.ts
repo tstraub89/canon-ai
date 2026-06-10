@@ -837,39 +837,22 @@ export function formatExistingPRMessage(prNum: number, prUrl: string): string {
  * `gh` exit when GP rebuilt task artifacts on an already-PR'd branch (1.3.0
  * failure mode #10).
  */
-function recordPinnedPRNumber(taskIds: string[], prNum: number, branchName: string, cwd: string): void {
-    let anyChanged = false;
-    for (const taskId of taskIds) {
-        const status = splitState.readStatus(taskId);
-        if (readPinnedPrNumber(status) === prNum) continue;
-        status.pr = { number: prNum };
-        splitState.writeStatus(taskId, status);
-        anyChanged = true;
-    }
+function sidecarPathFor(taskId: string, taskDir: string = taskDirFor(taskId)): string {
+    return path.join(taskDir, '.pr-number');
+}
 
-    if (!anyChanged) return;
+function recordPinnedPRNumber(taskIds: string[], prNum: number): void {
+    const alreadyPinned = taskIds.every(taskId => readSidecarPRNumber(taskId) === prNum);
+    if (alreadyPinned) return;
 
     for (const taskId of taskIds) {
-        const relStatusPath = path.join('tasks', taskId, 'status.json');
-        const addResult = gitSafeAt(cwd, 'add', '--', relStatusPath);
-        if (!addResult.ok) {
-            die(`Failed to stage ${relStatusPath} after recording PR #${prNum}: ${addResult.stderr || 'unknown error'}`);
-        }
-    }
-
-    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
-    const commitResult = gitSafeAt(cwd, 'commit', '-m', `chore: record pr.number for ${label}`);
-    if (!commitResult.ok) {
-        die(`Failed to commit pr.number recording for ${label}: ${commitResult.stderr || 'unknown error'}`);
-    }
-
-    const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
-    if (!pushResult.ok) {
-        die(`Failed to push pr.number recording for ${label}: ${pushResult.stderr || 'unknown error'}`);
+        const sidecarPath = sidecarPathFor(taskId);
+        fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
+        fs.writeFileSync(sidecarPath, String(prNum), 'utf8');
     }
 }
 
-function reportOrCreatePR(taskIds: string[], branchName: string, cwd: string): void {
+function reportOrCreatePR(taskIds: string[], branchName: string): void {
     if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
     const baseBranch = splitGit.getBaseBranch(taskIds);
     const openPR = findOpenPRNumber(branchName, baseBranch);
@@ -892,7 +875,7 @@ function reportOrCreatePR(taskIds: string[], branchName: string, cwd: string): v
         }
     }
 
-    recordPinnedPRNumber(taskIds, prNum, branchName, cwd);
+    recordPinnedPRNumber(taskIds, prNum);
 }
 
 function parseOriginRepoSlug(remoteUrl: string): string | null {
@@ -1136,7 +1119,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
 
-            if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
+            if (createPR) reportOrCreatePR(taskIds, branchName);
             return;
         }
     }
@@ -1221,7 +1204,6 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     }
     const branchName = branchResult.stdout.trim();
     const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
-
     const commitMessage = `chore: add task artifacts for ${label}`;
     const commitResult = gitSafeAt(cwd, 'commit', '-m', commitMessage);
     if (!commitResult.ok) {
@@ -1235,7 +1217,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
 
-    if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
+    if (createPR) reportOrCreatePR(taskIds, branchName);
 }
 
 function printDryRunPlan(state: PipelineState): void {
@@ -1335,19 +1317,19 @@ function resolveTaskBranchName(taskId: string): string {
     return `task/${taskId}`;
 }
 
-function assertTaskBranchPushed(taskId: string): void {
-    const branchName = resolveTaskBranchName(taskId);
-    if (!splitGit.branchExistsLocally(branchName)) return;
+function assertTaskBranchPushed(taskId: string, branchName?: string): void {
+    const resolvedBranchName = branchName ?? resolveTaskBranchName(taskId);
+    if (!splitGit.branchExistsLocally(resolvedBranchName)) return;
 
     // Refresh remote-tracking ref before comparing.
-    splitGit.gitSafe('fetch', 'origin', branchName);
+    splitGit.gitSafe('fetch', 'origin', resolvedBranchName);
 
-    const remoteRefResult = splitGit.gitSafe('rev-parse', '--verify', `origin/${branchName}`);
+    const remoteRefResult = splitGit.gitSafe('rev-parse', '--verify', `origin/${resolvedBranchName}`);
     if (!remoteRefResult.ok) {
         warn(
-            `origin/${branchName} not found (${remoteRefResult.stderr.trim() || 'unknown'}). ` +
+            `origin/${resolvedBranchName} not found (${remoteRefResult.stderr.trim() || 'unknown'}). ` +
             `Continuing — assuming the remote branch was deleted by an earlier merge. ` +
-            `If you have unpushed work on local ${branchName} you wanted to ship, abort with Ctrl+C and push it now.`,
+            `If you have unpushed work on local ${resolvedBranchName} you wanted to ship, abort with Ctrl+C and push it now.`,
         );
         return;
     }
@@ -1357,22 +1339,22 @@ function assertTaskBranchPushed(taskId: string): void {
     // advanced from another checkout, or remote was force-pushed forward) — that's
     // safe to delete; the work isn't unique to local. Only block when local has
     // commits the remote doesn't.
-    const aheadResult = splitGit.gitSafe('rev-list', '--count', `origin/${branchName}..${branchName}`);
+    const aheadResult = splitGit.gitSafe('rev-list', '--count', `origin/${resolvedBranchName}..${resolvedBranchName}`);
     if (!aheadResult.ok) {
-        warn(`Could not compute ${branchName} vs origin/${branchName} divergence: ${aheadResult.stderr}. Skipping push-verify.`);
+        warn(`Could not compute ${resolvedBranchName} vs origin/${resolvedBranchName} divergence: ${aheadResult.stderr}. Skipping push-verify.`);
         return;
     }
     const ahead = Number.parseInt(aheadResult.stdout.trim(), 10);
     if (Number.isNaN(ahead) || ahead === 0) return;
 
-    const localSha = splitGit.gitSafe('rev-parse', branchName).stdout.trim();
-    const remoteSha = splitGit.gitSafe('rev-parse', `origin/${branchName}`).stdout.trim();
+    const localSha = splitGit.gitSafe('rev-parse', resolvedBranchName).stdout.trim();
+    const remoteSha = splitGit.gitSafe('rev-parse', `origin/${resolvedBranchName}`).stdout.trim();
     splitCli.die(
-        `--ship aborted: local ${branchName} has ${ahead} commit${ahead === 1 ? '' : 's'} not on origin.\n` +
-        `  Local HEAD: ${localSha.slice(0, 7)} | origin/${branchName}: ${remoteSha.slice(0, 7)}\n` +
+        `--ship aborted: local ${resolvedBranchName} has ${ahead} commit${ahead === 1 ? '' : 's'} not on origin.\n` +
+        `  Local HEAD: ${localSha.slice(0, 7)} | origin/${resolvedBranchName}: ${remoteSha.slice(0, 7)}\n` +
         `  Pushing first prevents work loss — --ship destroys the local branch after merging the PR,\n` +
         `  so unpushed commits would be unreachable. Push:\n` +
-        `    git push origin ${branchName}\n` +
+        `    git push origin ${resolvedBranchName}\n` +
         `  Then re-run --ship.`,
     );
 }
@@ -1522,21 +1504,25 @@ function getPRBaseRefName(prNum: number): string | null {
     return ref || null;
 }
 
-function readPinnedPrNumber(status: StatusJson): number | null {
-    const pr = (status as unknown as { pr?: unknown }).pr;
-    if (typeof pr !== 'object' || pr === null) return null;
-    const num = (pr as { number?: unknown }).number;
-    if (typeof num !== 'number' || !Number.isFinite(num) || !Number.isInteger(num) || num <= 0) {
+function readSidecarPRNumber(taskId: string, taskDir: string = taskDirFor(taskId)): number | null {
+    const sidecarPath = sidecarPathFor(taskId, taskDir);
+    let raw: string;
+    try {
+        raw = fs.readFileSync(sidecarPath, 'utf8').trim();
+    } catch {
         return null;
     }
+    if (!/^\d+$/.test(raw)) return null;
+    const num = Number.parseInt(raw, 10);
+    if (!Number.isFinite(num) || !Number.isInteger(num) || num <= 0) return null;
     return num;
 }
 
 type MergeProofResult = { proven: true } | { proven: false; reason: string };
 
-function resolveProofPRNumberForPrefetch(status: StatusJson, branchName: string, baseBranch: string): number | null {
+function resolveProofPRNumberForPrefetch(taskId: string, branchName: string, baseBranch: string, taskCwd: string): number | null {
     if (!ghAvailable) return null;
-    const pinnedPrNum = readPinnedPrNumber(status);
+    const pinnedPrNum = readSidecarPRNumber(taskId, path.join(taskCwd, 'tasks', taskId));
     if (pinnedPrNum !== null) return pinnedPrNum;
     return findOpenPRNumber(branchName, baseBranch) ?? findMergedPRNumber(branchName, baseBranch);
 }
@@ -1577,14 +1563,14 @@ function establishPRHeadAncestryProof(cwd: string, prNum: number, prHead: string
 }
 
 function establishMergeProof(
-    status: StatusJson,
+    taskId: string,
     branchName: string,
     localTip: string,
     baseBranch: string,
     cwd: string,
     prefetchedHeads: ReadonlyMap<number, string | null>,
 ): MergeProofResult {
-    const pinnedPrNum = readPinnedPrNumber(status);
+    const pinnedPrNum = readSidecarPRNumber(taskId, path.join(cwd, 'tasks', taskId));
 
     if (ghAvailable && pinnedPrNum !== null) {
         if (!isPRMerged(pinnedPrNum)) {
@@ -1826,14 +1812,58 @@ function rewriteArchivedTaskRefs(taskIds: string[]): void {
 }
 
 function shipTasks(taskIds: string[]): void {
+    const resolveShipCwd = (taskId: string): string => {
+        const tasksDirOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+        if (tasksDirOverride) {
+            // The override points at a tasks/ root. Ship reads join back through
+            // its parent cwd so downstream path joins continue to land under the
+            // override tree instead of the supervising checkout.
+            return path.dirname(tasksDirOverride);
+        }
+        if (splitState.isOrphanedWorktreeState(taskId)) return REPO_ROOT;
+        return path.dirname(path.dirname(taskDirFor(taskId)));
+    };
+
+    const taskStatuses = new Map<string, StatusJson>();
+    const readShipStatus = (taskId: string): StatusJson => {
+        const taskCwd = resolveShipCwd(taskId);
+        const candidates = [
+            path.join(taskCwd, 'tasks', taskId, 'status.json'),
+            path.join(taskCwd, taskId, 'status.json'),
+            path.join(taskDirForRepoRoot(taskId), 'status.json'),
+        ];
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) return splitState.readStatusFromPath(candidate, taskId);
+        }
+        const snapshot = taskStatuses.get(taskId);
+        if (snapshot) return snapshot;
+        return splitState.readStatusFromPath(candidates[0], taskId);
+    };
+    const readShipBranchName = (taskId: string): string => {
+        const branch = readShipStatus(taskId).branch;
+        return branch && branch.trim() ? branch.trim() : `task/${taskId}`;
+    };
+    const baseBranches = new Set<string>();
+    for (const taskId of taskIds) {
+        const status = readShipStatus(taskId);
+        const declared = status.base_branch?.trim() ?? '';
+        baseBranches.add(declared || splitGit.getDefaultBaseBranch());
+    }
+    if (baseBranches.size > 1) {
+        splitCli.die(
+            `Bundle base_branch mismatch: tasks have different base branches (${[...baseBranches].join(', ')}). ` +
+            `All tasks in a bundle must target the same base. Edit status.json to align before invoking.`,
+        );
+    }
+    const baseBranch = [...baseBranches][0];
+
     // Phase guard first — fail fast before any network calls.
     for (const taskId of taskIds) {
-        const currentPhase = getCurrentPhase(splitState.readStatus(taskId));
+        const currentPhase = getCurrentPhase(readShipStatus(taskId));
         if (currentPhase !== 'human_review' && currentPhase !== 'complete') {
             splitCli.die(`--ship requires tasks at human_review or complete. '${taskId}' is at: ${currentPhase}`);
         }
     }
-
     // 1b human_review invariant: --ship advances human_review.status directly
     // (line ~1057) and bypasses the task CLI, so the checkPhaseGate enforcement
     // on `canon task` wouldn't catch unresolved human_pending checks. Run the gate
@@ -1841,7 +1871,7 @@ function shipTasks(taskIds: string[]): void {
     // already at `complete` — those have already passed the gate). Caught
     // via Codex review on the 1b inline change.
     for (const taskId of taskIds) {
-        const currentPhase = getCurrentPhase(splitState.readStatus(taskId));
+        const currentPhase = getCurrentPhase(readShipStatus(taskId));
         if (currentPhase !== 'human_review') continue;
         // Resolve the tasks-root for the gate read. Three signals, in
         // priority order:
@@ -1857,7 +1887,7 @@ function shipTasks(taskIds: string[]): void {
         // (Codex P2 on PR #77 iter 1: previous form used `path.dirname(
         // taskDirFor(taskId))` unconditionally, which honored the env override
         // but ignored the worktree — gate would read stale artifacts.)
-        const taskCwd = splitWorktree.getActiveCwd([taskId], { tolerateMissingWorktree: true });
+        const taskCwd = resolveShipCwd(taskId);
         const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE
             ?? path.join(taskCwd, 'tasks');
         const gateResult = splitValidation.checkPhaseGate(
@@ -1881,7 +1911,7 @@ function shipTasks(taskIds: string[]): void {
     // was committed locally, never pushed, then --ship deleted the branch; only
     // the dangling commits in `git fsck` survived (with a partial subset of files).
     for (const taskId of taskIds) {
-        assertTaskBranchPushed(taskId);
+        assertTaskBranchPushed(taskId, readShipBranchName(taskId));
     }
 
     // Snapshot only the values that are stable across the upcoming branch
@@ -1890,17 +1920,16 @@ function shipTasks(taskIds: string[]): void {
     // pre-switch snapshot for the archive-loop write would overwrite fields
     // that landed via the squash merge if local was behind origin (Codex P2
     // on PR #103). The archive loop reads status fresh post-merge instead.
-    type ShipTaskSnapshot = { branch: string; worktree: boolean; statusForProof: StatusJson };
-    const baseBranch = splitGit.getBaseBranch(taskIds);
+    type ShipTaskSnapshot = { branch: string; worktree: boolean };
     const taskSnapshots = new Map<string, ShipTaskSnapshot>();
     const branchByTaskId = new Map<string, string>();
     for (const taskId of taskIds) {
-        const status = splitState.readStatus(taskId);
-        const branch = resolveTaskBranchName(taskId);
+        const status = readShipStatus(taskId);
+        const branch = readShipBranchName(taskId);
+        taskStatuses.set(taskId, status);
         taskSnapshots.set(taskId, {
             branch,
             worktree: status.worktree === true,
-            statusForProof: status,
         });
         branchByTaskId.set(taskId, branch);
     }
@@ -1921,7 +1950,24 @@ function shipTasks(taskIds: string[]): void {
         }
     }
 
-    splitGit.ensureCheckedOutBaseBranch(taskIds);
+    const orphanedStatusPaths = taskIds
+        .filter(taskId => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT)
+        .map(taskId => path.join('tasks', taskId, 'status.json'));
+    if (orphanedStatusPaths.length > 0) {
+        splitGit.gitSafe('checkout', 'HEAD', '--', ...orphanedStatusPaths);
+    }
+
+    const currentBaseCheckout = splitGit.getCurrentBranch();
+    if (currentBaseCheckout !== baseBranch) {
+        if (!splitGit.branchExistsLocally(baseBranch)) {
+            splitCli.die(
+                `Task bundle targets base branch '${baseBranch}', but the current checkout is '${currentBaseCheckout}' ` +
+                `and '${baseBranch}' is not available locally. Check out the declared base branch first or fetch it, then re-run.`,
+            );
+        }
+        splitCli.info(`Switching from '${currentBaseCheckout}' to base branch '${baseBranch}' before shipping...`);
+        splitGit.git('checkout', baseBranch);
+    }
 
     const shipBaseDivergenceResult = splitValidation.verifyBaseDivergence(baseBranch, REPO_ROOT);
     if (!shipBaseDivergenceResult.ok) {
@@ -1938,10 +1984,11 @@ function shipTasks(taskIds: string[]): void {
 
     const prefetchedPRHeads = new Map<number, string | null>();
     for (const taskId of taskIds) {
-        const { branch: branchName, worktree: hasWorktree, statusForProof } = taskSnapshot(taskId);
+        const { branch: branchName } = taskSnapshot(taskId);
         if (!splitGit.branchExistsLocally(branchName)) continue;
 
-        const prNum = resolveProofPRNumberForPrefetch(statusForProof, branchName, baseBranch);
+        const activeCwd = resolveShipCwd(taskId);
+        const prNum = resolveProofPRNumberForPrefetch(taskId, branchName, baseBranch, activeCwd);
         if (prNum === null || prefetchedPRHeads.has(prNum)) continue;
 
         const prHead = getMergedPRHeadSha(prNum);
@@ -1950,12 +1997,8 @@ function shipTasks(taskIds: string[]): void {
             continue;
         }
 
-        const activeCwd = hasWorktree
-            ? splitWorktree.getActiveCwd([taskId], { tolerateMissingWorktree: true })
-            : REPO_ROOT;
         prefetchedPRHeads.set(prNum, materializePRHead(activeCwd, prNum, prHead) ? prHead : null);
     }
-
     // Merge open PRs and pull; if none found, assert the base is already in sync.
     const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
     if (!merged) {
@@ -1988,24 +2031,14 @@ function shipTasks(taskIds: string[]): void {
         const branchName = taskSnapshot(taskId).branch;
         if (!splitGit.branchExistsLocally(branchName)) continue;
 
-        const activeCwd = taskSnapshot(taskId).worktree
-            ? splitWorktree.getActiveCwd([taskId], { tolerateMissingWorktree: true })
-            : REPO_ROOT;
+        const activeCwd = resolveShipCwd(taskId);
         const tipResult = splitGit.gitSafeAt(activeCwd, 'rev-parse', branchName);
         if (!tipResult.ok || !tipResult.stdout.trim()) {
             proofFailures.push({ taskId, reason: `Could not resolve local tip for ${branchName}.` });
             continue;
         }
 
-        let taskStatus = taskSnapshot(taskId).statusForProof;
-        try {
-            taskStatus = splitState.readStatus(taskId);
-        } catch {
-            // If no merge happened, the base checkout may not contain the task
-            // directory. Use the pre-switch status for proof only; archive writes
-            // still re-read fresh after a proven merge.
-        }
-        const proof = establishMergeProof(taskStatus, branchName, tipResult.stdout.trim(), baseBranch, activeCwd, prefetchedPRHeads);
+        const proof = establishMergeProof(taskId, branchName, tipResult.stdout.trim(), baseBranch, activeCwd, prefetchedPRHeads);
         if (!proof.proven) proofFailures.push({ taskId, reason: proof.reason });
     }
     if (proofFailures.length > 0) {
@@ -2044,7 +2077,7 @@ function shipTasks(taskIds: string[]): void {
         // torn down) or in REPO_ROOT (squashed-in on base) — both routes that
         // `resolveTaskCwd` already handles. The original ENOENT this PR
         // exists to fix is bypassed because the merge has completed.
-        const status = splitState.readStatus(taskId);
+        const status = readShipStatus(taskId);
 
         // Teardown before the final write so the worktree can disappear cleanly.
         if (hasWorktree) splitWorktree.teardownWorktree(taskId);
@@ -2094,11 +2127,27 @@ function shipTasks(taskIds: string[]): void {
 // ── Reroute ────────────────────────────────────────────────────────────────
 
 export function rerouteFromHumanReview(taskIds: string[]): void {
-    for (const taskId of taskIds) {
-        const currentPhase = getCurrentPhase(splitState.readStatus(taskId));
-        if (currentPhase !== 'human_review') {
-            splitCli.die(`--reroute requires all tasks to be at human_review. '${taskId}' is at: ${currentPhase}`);
-        }
+    const entryStatuses = taskIds.map(taskId => ({ taskId, status: splitState.readStatus(taskId) }));
+    const allAtHumanReview = entryStatuses.every(({ status }) => getCurrentPhase(status) === 'human_review');
+    const allCodeReviewBlocked = entryStatuses.every(({ status }) => {
+        const codeReview = status.phases.code_review;
+        return getCurrentPhase(status) === 'code_review' && codeReview?.status === 'blocked';
+    });
+    const someSpecGap = entryStatuses.some(({ status }) => getVerdict(status, 'code_review') === 'spec_gap');
+    const isSpecGapReroute = allCodeReviewBlocked && someSpecGap;
+    if (!allAtHumanReview && !isSpecGapReroute) {
+        const summary = entryStatuses
+            .map(({ taskId, status }) => {
+                const currentPhase = getCurrentPhase(status);
+                const verdict = getVerdict(status, 'code_review') || 'none';
+                const codeReviewStatus = status.phases.code_review?.status ?? 'missing';
+                return `'${taskId}': ${currentPhase} (code_review ${codeReviewStatus}, verdict ${verdict})`;
+            })
+            .join(', ');
+        splitCli.die(
+            `--reroute requires either all tasks at human_review, or all tasks at code_review blocked with at least one spec_gap verdict. ` +
+            `Current state: ${summary}`
+        );
     }
     const amendmentFailures: Array<{
         taskId: string;
@@ -2147,9 +2196,10 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     const rerouteStatuses = taskIds.map(splitState.readStatus);
     const reroutableTier = splitPolicy.detectTier(rerouteStatuses);
     const isFullTierReroute = reroutableTier === 'full';
+    const rerouteSource = isSpecGapReroute ? 'code_review spec_gap' : 'human_review';
     splitCli.info(isFullTierReroute
-        ? 'Rerouting: human_review → spec_review (resetting spec_review, plan, implement, code_review, qa)'
-        : 'Rerouting: human_review → implement (resetting implement, code_review, qa)');
+        ? `Rerouting: ${rerouteSource} → spec_review (resetting spec_review, plan, implement, code_review, qa)`
+        : `Rerouting: ${rerouteSource} → implement (resetting implement, code_review, qa)`);
     let clearedFullSend = false;
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
@@ -2173,7 +2223,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             // marker so session-resumed Codex can't confuse a new reroute with a duplicate
             // of a prior one — the static prompt text is otherwise identical each round.
             implement.reroute_count = (implement.reroute_count ?? 0) + 1;
-            clearImplementOperatorAcceptance(implement);
+            clearPhaseOperatorAcceptance(implement);
         }
         const codeReview = status.phases.code_review;
         if (codeReview) {
@@ -2194,6 +2244,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             // review cycle into the next reroute's loop and can trip the cap
             // before the new Claude session runs.
             codeReview.preflight_rejections_current_loop = 0;
+            clearPhaseOperatorAcceptance(codeReview);
         }
         const qa = status.phases.qa;
         if (qa) qa.status = 'pending';
@@ -2208,6 +2259,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
                 // loop. Preserve monotonic history fields.
                 specReview.iterations_current_loop = 0;
                 specReview.iterations = 0;
+                clearPhaseOperatorAcceptance(specReview);
             }
             const plan = status.phases.plan;
             if (plan) plan.status = 'pending';
@@ -2237,15 +2289,14 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     splitCli.info('   edit REPO_ROOT only before a worktree exists. review.md alone is not sufficient — Codex reads spec.md as the contract.');
 }
 
-function clearImplementOperatorAcceptance(implement: PhaseEntry | undefined): void {
-    if (!implement) return;
-    // When implement reopens (reroute, changes_requested), a prior
-    // `canon task accept` is stale by definition — the operator-accepted SHA
-    // belongs to a discarded iteration. Leaving the flag set would let the
-    // next dispatch skip auto-commit against fresh implement work.
-    delete implement.operator_accepted;
-    delete implement.operator_accepted_sha;
-    delete implement.operator_accepted_at;
+function clearPhaseOperatorAcceptance(entry: PhaseEntry | undefined): void {
+    if (!entry) return;
+    // When a phase reopens, a prior operator accept is stale. For implement,
+    // the accepted SHA belongs to a discarded iteration; for review phases,
+    // a stale sanction must not mask the next agent verdict.
+    delete entry.operator_accepted;
+    delete entry.operator_accepted_sha;
+    delete entry.operator_accepted_at;
 }
 
 function routeBackTo(taskIds: string[], targetPhase: Phase): void {
@@ -2253,7 +2304,7 @@ function routeBackTo(taskIds: string[], targetPhase: Phase): void {
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
         if (targetIdx <= PHASE_ORDER.indexOf('implement')) {
-            clearImplementOperatorAcceptance(status.phases.implement);
+            clearPhaseOperatorAcceptance(status.phases.implement);
         }
         // Reset the target phase AND every downstream phase back to pending.
         //
@@ -2275,6 +2326,7 @@ function routeBackTo(taskIds: string[], targetPhase: Phase): void {
                 if (Object.hasOwn(phaseEntry, 'verdict')) {
                     phaseEntry.verdict = '';
                 }
+                clearPhaseOperatorAcceptance(phaseEntry);
             }
         }
         // writeStatus() derives top-level .status from phases. With target
@@ -2649,7 +2701,7 @@ export async function retryAgentForPhase(taskId: string, phase: Phase, evidenceN
             status,
         }];
         const cfg = splitPolicy.getClaudeConfig(phase, retryTasks);
-        await splitClaude.runClaude(prompt, false, sessionId, cfg.model, cfg.effort, undefined, retryCwd);
+        await splitClaude.runClaude(prompt, false, sessionId, cfg.model, cfg.effort, cfg.budget, undefined, retryCwd);
     }
 
     return getPhaseStatus(splitState.readStatus(taskId), phase) === 'done' ? 'done' : 'drift';
@@ -2795,9 +2847,10 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
                 const reason =
                     `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(', ')}. ` +
-                    `The implementation cannot resolve this because the root cause is the spec. ` +
-                    `Review tasks/<id>/review.md for the specific spec problem, amend the spec, ` +
-                    `reset code_review to pending, and re-run.`;
+                    `The implementation cannot resolve this — the root cause is in the spec. ` +
+                    `Recovery options (both operate on the full blocked bundle [${taskIds.join(' ')}]):\n` +
+                    `  FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(' ')} --reroute\n` +
+                    `  BLESS: canon task accept ${taskIds.join(' ')} code_review --reason "<why>"`;
                 console.log('');
                 console.log('════════════════════════════════════════════════════════');
                 console.log('  ✋  SPEC GAP — Code review surfaced a spec problem.');
@@ -2806,14 +2859,22 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 console.log('  implementation bug. Review the findings:');
                 for (const id of specGapIds) console.log(`    tasks/${id}/review.md`);
                 console.log('');
-                console.log('  To resume after human triage:');
+                console.log('  Two recovery options:');
+                console.log('');
+                console.log('  FIX  — Amend the spec and re-run the full review chain:');
                 for (const id of specGapIds) {
-                    console.log(`    # Amend tasks/${id}/spec.md`);
-                    console.log(`    canon task phase ${id} code_review pending`);
+                    console.log(`    # Edit tasks/${id}/spec.md — add a ## Amendment section`);
                 }
-                console.log(`    canon run ${taskIds.join(' ')}`);
+                console.log(`    canon run ${taskIds.join(' ')} --reroute`);
+                console.log('');
+                console.log('  BLESS — Sanction the gap as acceptable (adds an audit trail):');
+                console.log(`    canon task accept ${taskIds.join(' ')} code_review --reason "<why this gap is acceptable>"`);
                 console.log('════════════════════════════════════════════════════════');
                 console.log('');
+                // Block the entire bundle, not just specGapIds. Bundle members
+                // share one branch and one commit history: an approved sibling
+                // must not advance to qa while a gap task can force a shared
+                // re-implementation. Both recovery paths operate on all IDs.
                 splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
                 process.exit(2);
             }
@@ -2867,7 +2928,11 @@ function checkDeps(taskIds: string[], skipAgentDeps = false): void {
 
     for (const taskId of taskIds) {
         splitCli.validateTaskId(taskId);
-        if (!fs.existsSync(splitState.statusFileFor(taskId))) {
+        const repoRootStatusFile = path.join(REPO_ROOT, 'tasks', taskId, 'status.json');
+        const statusFile = cliArgs.ship && fs.existsSync(repoRootStatusFile)
+            ? repoRootStatusFile
+            : splitState.statusFileFor(taskId);
+        if (!fs.existsSync(statusFile)) {
             splitCli.die(`No status.json at tasks/${taskId}/status.json — run canon task new ${taskId} first`);
         }
     }
@@ -2940,7 +3005,12 @@ export async function main(): Promise<void> {
     // immediately cleaned up.
     const earlyHeartbeatTaskIds = cliArgs.taskIds;
     let heartbeatStarted = false;
-    const earlyHeartbeatResolver = (id: string): string => path.dirname(splitState.statusFileFor(id));
+    const earlyHeartbeatResolver = (id: string): string => {
+        const repoRootStatusFile = path.join(REPO_ROOT, 'tasks', id, 'status.json');
+        return path.dirname(cliArgs.ship && fs.existsSync(repoRootStatusFile)
+            ? repoRootStatusFile
+            : splitState.statusFileFor(id));
+    };
     if (process.env.CANON_DETACHED === '1' && earlyHeartbeatTaskIds.length > 0) {
         bootHeartbeatWithHooks(earlyHeartbeatTaskIds, earlyHeartbeatResolver);
         heartbeatStarted = true;
@@ -2958,6 +3028,7 @@ export async function main(): Promise<void> {
 
     if (cliArgs.ship) {
         shipTasks(cliArgs.taskIds);
+        return;
     }
 
     if (cliArgs.reroute) {

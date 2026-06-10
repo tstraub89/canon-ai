@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { REPO_ROOT, config } from '../env.js';
+import { REPO_ROOT } from '../env.js';
 import { info, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
 import { toResumePrompt } from '../prompts/helpers.js';
@@ -60,11 +60,14 @@ export async function runClaude(
     resumeId: string | null,
     model: string,
     effort: string,
+    budget: string,
     metricsContext?: { taskId: string; phase: string; iteration?: number; activeCwd?: string },
     cwd = REPO_ROOT,
 ): Promise<ClaudeRunResult> {
     info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : 'Calling Claude Code...');
-    info(`Model: ${model} | Effort: ${effort}`);
+    info(interactive
+        ? `Model: ${model} | Effort: ${effort} | Budget: uncapped (interactive)`
+        : `Model: ${model} | Effort: ${effort} | Budget: ${budget}`);
 
     const startMs = Date.now();
     let status: 'ok' | 'failed' = 'ok';
@@ -107,7 +110,7 @@ export async function runClaude(
                 '--model', model,
                 '--effort', effort,
                 '--add-dir', REPO_ROOT,
-                '--max-budget-usd', config.claudeBudget,
+                '--max-budget-usd', budget,
                 '--dangerously-skip-permissions',
                 '--output-format', 'stream-json',
                 '--verbose',

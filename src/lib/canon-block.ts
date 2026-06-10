@@ -5,6 +5,7 @@ export const CANON_RUNTIME_GITIGNORE_PATTERNS = [
     'tasks/**/.canon-pid',
     'tasks/**/.canon-run.log',
     'tasks/**/.heartbeat.json',
+    'tasks/**/.pr-number',
 ] as const;
 
 export const CANON_GITIGNORE_BLOCK = [

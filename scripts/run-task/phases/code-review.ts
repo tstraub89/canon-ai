@@ -299,7 +299,7 @@ export async function runCodeReviewPhase(
     const cfg = getClaudeConfig('code_review', tasks);
     const reviewResumeId = maxIter > 0 ? resumeId : null;
     const scopedDiff = getScopedDiff(baseBranch, activeCwd);
-    const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, {
+    const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,

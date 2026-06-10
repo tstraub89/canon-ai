@@ -54,7 +54,9 @@ Do not let either lens see the other lens's output.
 
 Use the two lens outputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.
 
-1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record "flagged by both lenses."
+The lenses are instructed to over-report — to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence × severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence — verify it against the spec/diff first, then rank.
+
+1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record "flagged by both lenses." A finding flagged by both lenses is higher-confidence regardless of either lens's self-tag.
 2. Cold-vs-spec reconciliation: if a cold finding is explained as intended by the spec, drop it and record `Dismissed (cold): <finding> - <spec reason>` in `review.md`.
 3. Altitude classification: every surviving finding is either:
    - `code-bug`: the implementation is wrong or test integrity is compromised.

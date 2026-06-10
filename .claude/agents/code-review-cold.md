@@ -13,6 +13,8 @@ This agent intentionally declares no model override; it inherits the foreman's s
 
 Review adversarially for bugs the diff introduces: race conditions, lifecycle issues, consistency gaps, data loss, security risk, broken error handling, and test-integrity problems visible from the diff. Treat suspicious behavior as potentially wrong. The synthesis foreman will reconcile your findings against the spec afterward.
 
+Report every issue you find, including ones you are uncertain about or consider low-severity. Do not filter for importance or confidence here — the foreman does that downstream. Tag each finding with both a confidence and a severity so the foreman can rank and filter. Coverage is your job; filtering is not.
+
 If the visible diff is truncated and you need more context, inspect only changed files or run a diff against the provided base ref. Do not read `spec.md`, `handoff.md`, `review.md`, canon docs, task notes, or acceptance criteria.
 
 ## Return Format
@@ -21,7 +23,7 @@ Return structured text for the foreman:
 
 ```text
 COLD_FINDINGS:
-- [correctness bug | race condition | lifecycle issue | consistency gap | security risk | code quality | test integrity] file:line - description. Severity: high | medium | low
+- [correctness bug | race condition | lifecycle issue | consistency gap | security risk | code quality | test integrity] file:line - description. Severity: high | medium | low. Confidence: high | medium | low
 COLD_OVERALL_SIGNAL: approve | changes_requested
 ```
 

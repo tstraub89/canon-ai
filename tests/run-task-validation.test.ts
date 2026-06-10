@@ -14,6 +14,7 @@ import {
     validateStatus,
     writeStatusToFile,
 } from '../scripts/run-task/state.js';
+import { _VERDICT_VALUES } from '../scripts/run-task/types.js';
 import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
 import {
     canonicalizeValidationCheck,
@@ -45,7 +46,7 @@ import {
     determinePreflightRoute,
     writePreflightReviewArtifacts,
 } from '../scripts/run-task/phases/code-review.js';
-import { taskPhasePreflightRejected } from '../src/task/index.js';
+import { taskPhasePreflightRejected, VALID_VERDICTS } from '../src/task/index.js';
 
 function withTempPair(
     specContent: string,
@@ -193,6 +194,20 @@ function makeHandoffMap(entries: Record<string, readonly string[]>): Map<string,
 
 void test('parseNameStatusOutput: empty diff returns no affected files', () => {
     assert.deepEqual(parseNameStatusOutput(''), []);
+});
+
+void test('sanctioned verdict is registered on status value surfaces but not artifact parsing', () => {
+    assert.ok(_VERDICT_VALUES.includes('sanctioned'));
+    assert.ok(VALID_VERDICTS.has('sanctioned'));
+
+    const cliHelp = fs.readFileSync(path.join(process.cwd(), 'src', 'cli', 'index.ts'), 'utf8');
+    assert.match(cliHelp, /approved \| approved_with_nits \| changes_requested \| needs_re_review \| spec_gap \| sanctioned/);
+    assert.match(cliHelp, /sanctioned is written via canon task accept --reason/);
+
+    const statusTemplate = fs.readFileSync(path.join(process.cwd(), '.canon', 'templates', 'status.json'), 'utf8');
+    assert.match(statusTemplate, /spec_gap \| sanctioned/);
+
+    assert.equal(extractCheckedVerdict('- [x] **Sanctioned**'), null);
 });
 
 void test('parseNameStatusOutput: non-renamed change returns one path', () => {
@@ -3015,6 +3030,68 @@ void test('bundle pre-flight Route A statuses route the whole bundle back to imp
             assert.equal(status.phases.code_review?.status, 'pending');
             assert.equal(status.status, 'implement');
         }
+    });
+});
+
+void test('checkAndRoute treats sanctioned review verdicts as advancing outcomes', async () => {
+    await withTempTasksAsync(async tasksRoot => {
+        writeCodeReviewTask(tasksRoot, 'task-code', {
+            codeReview: {
+                status: 'done',
+                verdict: 'sanctioned',
+                operator_accepted: true,
+                operator_accepted_at: '2026-06-08',
+                operator_accepted_sha: 'abc123',
+            },
+        });
+
+        await checkAndRoute('code_review', ['task-code']);
+        const codeStatus = readStatus('task-code');
+        assert.equal(codeStatus.phases.code_review?.status, 'done');
+        assert.equal(codeStatus.phases.code_review?.verdict, 'sanctioned');
+        assert.equal(codeStatus.escalations?.length ?? 0, 0);
+
+        const specTaskDir = path.join(tasksRoot, 'task-spec');
+        fs.mkdirSync(specTaskDir, { recursive: true });
+        const specStatus: StatusJson = {
+            id: 'task-spec',
+            title: 'task-spec',
+            status: 'plan',
+            created: '2026-06-08',
+            updated: '2026-06-08',
+            branch: 'task/task-spec',
+            base_branch: 'dev',
+            task_size: 'M',
+            delicate: false,
+            human_spec_gate: false,
+            full_send: false,
+            worktree: false,
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: {
+                    status: 'done',
+                    agent: 'codex',
+                    verdict: 'sanctioned',
+                    operator_accepted: true,
+                    operator_accepted_at: '2026-06-08',
+                    operator_accepted_sha: 'abc123',
+                },
+                plan: { status: 'pending', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+            escalations: [],
+            sessions: {},
+        };
+        writeStatusToFile(path.join(specTaskDir, 'status.json'), specStatus);
+
+        await checkAndRoute('spec_review', ['task-spec']);
+        const updatedSpec = readStatus('task-spec');
+        assert.equal(updatedSpec.phases.spec_review?.status, 'done');
+        assert.equal(updatedSpec.phases.spec_review?.verdict, 'sanctioned');
+        assert.equal(updatedSpec.phases.spec?.status, 'done');
     });
 });
 

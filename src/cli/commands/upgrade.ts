@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { basename, dirname, join, relative, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
+import { taskTemplateOverrideRoot } from '../../task/index.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -103,6 +104,51 @@ function printDocsRefsCutoverWarning(cutoverWarnings: string[], check: boolean):
     }
 }
 
+export function printStaleOverrideNudge(staleOverrides: string[], check: boolean): void {
+    if (staleOverrides.length === 0) return;
+    console.log(`Heads-up: canon templates ${check ? 'that would be changed by this upgrade' : 'changed by this upgrade'} have customized task-template overrides that ${check ? 'would not be auto-updated' : 'were not auto-updated'}:`);
+    console.log('  These override files were NOT updated automatically; review them manually:');
+    for (const overridePath of staleOverrides) {
+        const name = basename(overridePath);
+        console.log(`  ↻ ${overridePath}`);
+        console.log(`    diff .canon/templates/${name} ${overridePath}`);
+    }
+    console.log('');
+}
+
+type WriteOp = { rel: string; projectPath: string; content: string };
+
+function getTaskTemplateBasenames(): string[] {
+    return CANON_OWNED
+        .filter(rel => rel.startsWith('.canon/templates/'))
+        .map(rel => basename(rel));
+}
+
+function getStaleOverrides(cwd: string, changedOps: ReadonlyArray<WriteOp>): string[] {
+    const changedByRel = new Map(changedOps.map(op => [op.rel, op.content]));
+    if (changedByRel.size === 0) return [];
+
+    const templateBasenames = getTaskTemplateBasenames();
+    const overrideRootAbs = resolve(cwd, taskTemplateOverrideRoot());
+    const staleOverrides: string[] = [];
+
+    for (const name of templateBasenames) {
+        const canonRel = `.canon/templates/${name}`;
+        const newTemplateContent = changedByRel.get(canonRel);
+        if (newTemplateContent === undefined) continue;
+
+        const overridePathAbs = join(overrideRootAbs, name);
+        if (!existsSync(overridePathAbs)) continue;
+
+        const overrideContent = readFileSync(overridePathAbs, 'utf8');
+        if (overrideContent === newTemplateContent) continue;
+
+        staleOverrides.push(relative(cwd, overridePathAbs));
+    }
+
+    return staleOverrides;
+}
+
 export interface UpgradeResult {
     /** Files actually written this run. Empty under --check, or when dirty targets refused. */
     upgraded: string[];
@@ -119,6 +165,8 @@ export interface UpgradeResult {
     /** Pre-split docs-refs checkers overwritten this run whose adopter should
      *  migrate inline customizations into docs-refs-config.mjs. */
     cutoverWarnings: string[];
+    /** Task-template overrides that differ from canon templates changed by this upgrade run. */
+    staleOverrides: string[];
 }
 
 /**
@@ -155,7 +203,6 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     // Compute the would-write content for every managed file. Don't write yet —
     // we need the full would-change list to (a) report under --check, and (b)
     // refuse the whole operation if any target is dirty without --force.
-    type WriteOp = { rel: string; projectPath: string; content: string };
     const pending: WriteOp[] = [];
 
     // --- Delimited files (AGENTS.md, CLAUDE.md) ---
@@ -323,17 +370,25 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
 
     if (options.check) {
         // Dry-run: report what would change, including dirty conflicts.
+        const staleOverrides = getStaleOverrides(cwd, clean);
         for (const op of clean) wouldUpgrade.push(op.rel);
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides };
     }
 
     if (dirty.length > 0 && !options.force) {
         // Refuse: don't write ANY pending op. Report the dirty list so the
         // caller can surface it and the operator can decide.
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides: [] };
     }
+
+    // Compare the canon task templates actually written by this run against
+    // the project's override root. Under --force that includes dirty writes;
+    // otherwise it's just the clean subset. If the run refused above, the
+    // changed set is empty and we returned staleOverrides: [].
+    const reportedWrites = options.force ? pending : clean;
+    const staleOverrides = getStaleOverrides(cwd, reportedWrites);
 
     // Write — every pending op when --force, else only the clean ones (no
     // dirty since the early-return above already covered that path).
@@ -344,7 +399,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         upgraded.push(op.rel);
     }
 
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides };
 }
 
 export function parseUpgradeArgs(args: string[]): UpgradeOptions {
@@ -363,7 +418,7 @@ export function parseUpgradeArgs(args: string[]): UpgradeOptions {
 export function upgradeCmd(args: string[]): void {
     const options = parseUpgradeArgs(args);
     const result = runUpgrade(process.cwd(), packageDir, options);
-    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings } = result;
+    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides } = result;
 
     console.log('\ncanon upgrade' + (options.check ? ' --check' : '') + '\n');
 
@@ -376,6 +431,9 @@ export function upgradeCmd(args: string[]): void {
         }
         if (cutoverWarnings.length > 0) {
             printDocsRefsCutoverWarning(cutoverWarnings, true);
+        }
+        if (staleOverrides.length > 0) {
+            printStaleOverrideNudge(staleOverrides, true);
         }
         if (dirtyRefused.length > 0) {
             console.log('Would refuse (dirty in git — pass --force to overwrite):');
@@ -445,6 +503,9 @@ export function upgradeCmd(args: string[]): void {
     }
     if (cutoverWarnings.length > 0) {
         printDocsRefsCutoverWarning(cutoverWarnings, false);
+    }
+    if (staleOverrides.length > 0) {
+        printStaleOverrideNudge(staleOverrides, false);
     }
     if (unchanged.length > 0) {
         console.log('Already up to date:');

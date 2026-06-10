@@ -16,6 +16,7 @@ import {
     promptSpecRevision,
     promptSpecReview,
 } from '../scripts/run-task/prompts/index.js';
+import { runClaude } from '../scripts/run-task/agents/claude.js';
 import type { PipelineState, StatusJson, TaskContext } from '../scripts/run-task/types.js';
 
 const TASK_ID = 'test-pf-001';
@@ -582,4 +583,33 @@ void test('promptQa bundle ignores prTemplate — bundles skip pr-body.md', () =
     const withoutTemplate = promptQa(bundleState);
     assert.equal(withTemplate, withoutTemplate, 'bundle QA prompt must not change when a PR template is passed');
     assert.ok(!withTemplate.includes('Fill this section'), 'PR template content must not appear in bundle QA prompt');
+});
+
+void test('interactive runClaude omits --max-budget-usd', { concurrency: false }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-claude-args-'));
+    const binDir = path.join(tempDir, 'bin');
+    const argsFile = path.join(tempDir, 'claude-args.txt');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, 'claude'), [
+        '#!/bin/sh',
+        'set -eu',
+        'printf "%s\\n" "$@" > "$FAKE_CLAUDE_ARGS_FILE"',
+        'exit 0',
+        '',
+    ].join('\n'), { mode: 0o755 });
+
+    const originalPath = process.env.PATH ?? '';
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    let args = '';
+    try {
+        await runClaude('interactive prompt', true, null, 'opus', 'high', '20.00', undefined, tempDir);
+        args = fs.readFileSync(argsFile, 'utf8');
+    } finally {
+        process.env.PATH = originalPath;
+        delete process.env.FAKE_CLAUDE_ARGS_FILE;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+    assert.doesNotMatch(args, /--max-budget-usd/);
+    assert.match(args, /--model\nopus\n--effort\nhigh/);
 });

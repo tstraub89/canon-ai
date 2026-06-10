@@ -25,7 +25,7 @@ export async function runQaPhase(
     for (const t of tasks) taskPhase(t.taskId, 'qa', 'in_progress');
     const cfg = getClaudeConfig('qa', tasks);
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptQa(state, resolvedPrTemplate), interactive, null, cfg.model, cfg.effort, {
+    const result = await runClaude(promptQa(state, resolvedPrTemplate), interactive, null, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'qa',
         iteration: tasks[0].status.phases.qa?.iterations_current_loop

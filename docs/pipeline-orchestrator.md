@@ -89,7 +89,7 @@ Multiple IDs = bundle mode (see below).
 | `--interactive` | `-I` | Open interactive agent sessions instead of non-interactive. |
 | `--push` | — | Push the task branch to remote at `human_review`. |
 | `--pr` | — | Push + create a draft PR at `human_review`; prefers QA-drafted `tasks/<id>/pr-body.md` for single-task PRs, with a soft fallback. |
-| `--reroute` | — | Reset a task from `human_review` back into the post-review fix path. Full-tier tasks re-enter at `spec_review`; fast-tier tasks re-enter at `implement`. |
+| `--reroute` | — | Reset a task from `human_review`, or from a `code_review` block with a `spec_gap` verdict, back into the post-review fix path. Full-tier tasks re-enter at `spec_review`; fast-tier tasks re-enter at `implement`. |
 | `--ship` | — | Squash-merge any open PR for the task branch (via `gh pr merge --squash --delete-branch`), pull the base, tear down the worktree, archive `tasks/<id>/` to `_archive/`, and clean up local branches. If the PR was already merged externally, picks up at the cleanup step. |
 | `--allow-divergent-base` | — | At `--push`, `--pr`, and `--ship`, bypass only the commit-divergence block when local `<base>` has commits not yet on `origin/<base>`. It does not bypass the file-allow-list base-drift gate; use `--force` for that. |
 | `--dry-run` | — | Print the planned phases, agents, model, and effort without spawning an LLM. |
@@ -112,7 +112,7 @@ canon task <subcommand> [args]
 | `list` | — | Print all tasks and their current pipeline phase. |
 | `status` | `<id>` | Print full `status.json` detail for a task. |
 | `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
-| `accept` | `<id...> <phase> [--force]` | Operator escape hatch for the case where work has been manually committed outside the pipeline and `canon run` keeps re-running auto-commit against the already-landed commit. Marks the phase done AND sets `phases.<phase>.operator_accepted: true` so the post-phase dispatch (auto-commit for implement) is skipped on subsequent runs. Today only `implement` is supported. Accepts multiple task IDs for bundle mode — the handoff coverage check unions every task's handoff against one `baseRef..HEAD` diff, so siblings don't cross-reject. All tasks must share `base_branch` and working tree. Guards: prior phases complete, clean source tree, reachable `base_branch`, non-empty `baseRef..HEAD`, no malformed handoff Changes rows, and handoff coverage matches the diff. `--force` bypasses the accept-time guards, but downstream code_review preflight may still reject malformed or mismatched handoffs. |
+| `accept` | `<id...> <phase> [--reason "<text>"] [--force]` | Operator accept supports `implement`, `spec_review`, and `code_review`. For `implement`, it is the escape hatch for already-committed work: it marks implement done and sets `operator_accepted` so post-implement auto-commit is skipped when the recorded HEAD still matches. For `spec_review` and `code_review`, `--reason` is required; accept writes a `sanctioned` verdict for non-advancing review verdicts, preserves already-advancing verdicts in a blocked bundle, records `operator_accepted*`, and appends the audit reason to `notes.md`. Review accept intentionally skips the implement-only diff/handoff guards. |
 | `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`. |
 | `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
 
@@ -167,7 +167,7 @@ Claude writes QA summary → Human tests
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
-**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the bundle blocks for human spec amendment.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the whole bundle blocks until the operator chooses fix (`canon run <ids> --reroute` after amending `spec.md`) or bless (`canon task accept <ids> code_review --reason "<why>"`).
 
 **One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
 
@@ -178,8 +178,8 @@ Set in `status.json` at task creation:
 | Field | Values | Purpose |
 |---|---|---|
 | `task_size` | `S \| M \| L \| XL` | Drives Codex model + effort selection and the pipeline tier. S is fast-tier; M+ runs the full pipeline (including Codex spec review). |
-| `delicate` | `true \| false` | Forces the XL bucket (full Codex model, xhigh implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
-| `human_spec_gate` | `true \| false` | Pauses the pipeline after `spec_review` for human review before planning (default: `true`). |
+| `delicate` | `true \| false` | Forces the XL bucket (full Codex model, high implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
+| `human_spec_gate` | `true \| false` | **Single-use latch**, not a persistent toggle. `true` arms a one-time halt after `spec_review`, before planning (default: `true`). The orchestrator flips it to `false` *at the moment it halts* — so `false` means "the gate already fired (or was pre-cleared)," not "review was skipped." See [Spec gate is a single-use latch](#spec-gate-is-a-single-use-latch). |
 | `worktree` | `true \| false` | Opt-in worktree isolation (default: absent/false). See Worktree Isolation below. |
 | `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `canon task new` from the current git checkout at task creation. |
 
@@ -209,9 +209,9 @@ Codex model and effort scale with task size:
 | Phase | S | M | L | XL / delicate |
 |---|---|---|---|---|
 | `spec_review` | — (skipped) | mini / medium | mini / high | full / high |
-| `implement`   | mini / medium | mini / high | mini / high | full / xhigh |
+| `implement`   | mini / medium | mini / high | mini / high | full / high |
 
-Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work.
+Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. XL/delicate implement runs at `high`, not `xhigh`: GPT-5.5 tends to overthink at `xhigh` with open-ended tool access (cost without quality gain). Raise via env only if eval shows under-reasoning.
 
 ## Environment Variables
 
@@ -221,10 +221,10 @@ Claude is tuned for correctness — Opus on phases where false negatives cascade
 |---|---|---|
 | `CLAUDE_MODEL_SPEC` | `opus` | Spec phase (foundational; cascades into every downstream phase). |
 | `CLAUDE_MODEL_PLAN` | `sonnet` | Plan phase (structured translation of spec → steps). |
-| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for S/M (checklist-shaped AC verification). |
-| `CLAUDE_MODEL_REVIEW_LARGE` | `opus` | Code review for L/XL/delicate (lifecycle/state-machine reasoning where Sonnet was missing bugs Codex caught post-PR). |
+| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for S/M/L (Sonnet 4.6 matches the prior Opus flagship on long-horizon / lifecycle / state-machine bug detection — re-baselined 2026-06; L was Opus on Sonnet 4.5). |
+| `CLAUDE_MODEL_REVIEW_LARGE` | `opus` | Code review for XL/delicate only — the highest-blast-radius tier where the subtlest cross-file bugs warrant Opus. |
 | `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
-| `CLAUDE_BUDGET` | `5.00` | Max spend per Claude phase (USD). |
+| `CLAUDE_BUDGET` | _(size-aware)_ | Max spend per Claude phase (USD). Unset → tiered by effective size: S/M `5.00`, L `10.00`, XL/delicate `20.00`. Set → flat cap for all phases (e.g. `CLAUDE_BUDGET=20.00` overrides the tier). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
 
 Codex model overrides:
@@ -297,6 +297,22 @@ For renames, both the old path and the new path must appear in the spec's `### A
 
 For projects that version their releases, changelog and version bump remain a manual human + Claude step; projects that don't version skip it.
 
+## Spec gate is a single-use latch
+
+`human_spec_gate` confuses operators because it looks like a persistent on/off setting and isn't. It is a **one-shot latch the orchestrator consumes the first time the pipeline reaches the gate.**
+
+The flip to `false` *is the gate firing* — it happens at the halt, **before** the human has reviewed, not after. Concretely, when the pipeline reaches the gate point with the latch armed, the orchestrator does three things in one step: (1) sets `human_spec_gate = false`, (2) prints the `✋ SPEC GATE` banner, (3) `process.exit(0)`. The reason it burns the latch *at* the halt is so the **next** `canon run <id>` — the one the human types after approving the spec — passes straight through instead of halting on the same gate forever.
+
+Where the gate fires by tier:
+
+- **Fast tier (S, non-delicate)**: at `spec_review` phase entry. (In practice the operator usually pre-clears it to `false` when writing the plan, because the human's conversational spec approval *is* the gate — so the runtime halt is often already consumed before the pipeline starts.)
+- **Full tier (M/L/XL/delicate)**: after Codex `spec_review` completes, before planning.
+- **`--full-send`**: pre-clears the latch to `false` at launch, so the gate never fires.
+
+So when you inspect `status.json` mid-pipeline and see `human_spec_gate: false`, read it as **"the gate already fired (or was pre-cleared) — review was *not* skipped"**, not "the halt was lost." There is no separate "gate satisfied" field; the consumed latch *is* the record that the gate fired. Re-running `canon run <id>` after the banner is the intended next move — it does not re-arm or re-fire the gate.
+
+**Bundle rule**: the gate skip is all-or-nothing. One task in the bundle with the latch still armed re-engages the halt for the whole invocation; `--full-send` must apply to every task in the bundle to skip it.
+
 ## Phase Routing + Auto-Block
 
 After `spec_review` or `code_review`, the orchestrator checks the verdict.
@@ -305,8 +321,8 @@ After `spec_review` or `code_review`, the orchestrator checks the verdict.
 |---|---|---|
 | `spec_review` | `changes_requested` | Loop back to `spec` automatically, except reroute-amendment reviews block for human revision. |
 | `code_review` | `changes_requested` / `needs_re_review` | Loop back to `implement` automatically. |
-| `code_review` | `spec_gap` | Block `code_review` with an escalation for human spec amendment; do not route to `implement` or `qa`. |
-| `spec_review` / `code_review` | `approved` / `approved_with_nits` | Continue to the next phase. |
+| `code_review` | `spec_gap` | Block the whole `code_review` bundle with an escalation. Fix path: amend `spec.md` and run `canon run <ids> --reroute`. Bless path: `canon task accept <ids> code_review --reason "<why>"`. |
+| `spec_review` / `code_review` | `approved` / `approved_with_nits` / `sanctioned` | Continue to the next phase. `sanctioned` is status-only and written by `canon task accept`, not by review artifacts. |
 
 **Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
 
@@ -385,11 +401,11 @@ The Stage 1 AC table is redone on round 2+. Earlier AC tables were snapshots of 
 
 ## Human Reroute
 
-If the human rejects at `human_review`, use `--reroute` to resume the pipeline against amended requirements. Reroute sets `phases.implement.rerouted = true` so later reroute prompts read `spec.md` for new Amendment sections, compare against prior artifacts, and update only the delta.
+If the human rejects at `human_review`, or code review blocks with `spec_gap`, use `--reroute` to resume the pipeline against amended requirements. Reroute sets `phases.implement.rerouted = true` so later reroute prompts read `spec.md` for new Amendment sections, compare against prior artifacts, and update only the delta.
 
 Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the active task directory** as an Amendment section. If a worktree exists for the task, edit the worktree copy; edit REPO_ROOT only before the task has a worktree. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract.
 
-Full-tier reroute (any M/L/XL task or any `delicate` task) re-enters at the same review altitude as the original spec: `human_review` → `spec_review` → `plan` → `implement`. Codex reviews the amendment in the context of the previously approved ACs and prior `spec-review.md`, without auditing `handoff.md`, `review.md`, or `done.md`. If the amendment is approved, the pipeline flows through to `plan` without re-arming the human spec gate; Claude appends a reroute plan section (`## Reroute Plan` or `## Reroute Plan Round N`) to `plan.md`; Codex then implements from the amendment plus that reroute plan.
+Full-tier reroute (any M/L/XL task or any `delicate` task) re-enters at the same review altitude as the original spec: `human_review` or `code_review` `spec_gap` → `spec_review` → `plan` → `implement`. Codex reviews the amendment in the context of the previously approved ACs and prior `spec-review.md`, without auditing `handoff.md`, `review.md`, or `done.md`. If the amendment is approved, the pipeline flows through to `plan` without re-arming the human spec gate; Claude appends a reroute plan section (`## Reroute Plan` or `## Reroute Plan Round N`) to `plan.md`; Codex then implements from the amendment plus that reroute plan.
 
 If Codex returns `changes_requested` on a full-tier reroute amendment, the pipeline blocks to the human instead of routing to pipeline-Claude spec revision. The block names the rejected task's `spec.md` and `spec-review.md`; revise the amendment in `spec.md`, then re-run the normal command:
 
@@ -413,7 +429,7 @@ canon run <id> --reroute
 canon run <id> --step --expect implement
 ```
 
-The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation.
+The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation. Do not create Amendment sections for the bless path; `canon task accept ... --reason` records `sanctioned` without changing `spec.md` or `reroute_count`.
 
 ## Shipping & Post-Merge Reconciliation
 
@@ -423,7 +439,7 @@ The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amend
 
 `--ship` runs in this order: (1) verify local `<base>` has no commits ahead of `origin/<base>` unless `--allow-divergent-base` is passed, (2) merge any open PR for the task branch via `gh pr merge --squash --delete-branch`, (3) pull or fast-forward the base branch when needed, (4) run any project-specific post-merge hook under `.canon/hooks/`, (5) prove the task's merge before local branch deletion, (6) archive `tasks/<id>/` to `tasks/_archive/<id>/`, (7) `git worktree remove --force` if a worktree was active, (8) clean up local branches. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
 
-**Forge-proof deletion gate**: before deleting any local task branch, `--ship` requires positive merge evidence. When `pr.number` is recorded in `status.json` by the `--pr` path, proof requires the pinned PR to be `MERGED`, the PR `baseRefName` to match the task's `base_branch`, and the local task-branch tip to be an ancestor of, or equal to, the PR `headRefOid`. Legacy tasks without `pr.number` use a base-filtered merged-PR branch lookup, still requiring the local tip to be ancestor-or-equal to the PR head. If the PR head object cannot be materialized locally, proof is unestablished and `--ship` fails closed. If the local task branch is already absent, no proof is required because there is no local branch deletion left to protect. `--force` does not bypass this proof gate; the failure message names the manual recovery path.
+**Forge-proof deletion gate**: before deleting any local task branch, `--ship` requires positive merge evidence. When the `--pr` path has run, the PR number is stored in a gitignored task-local sidecar (`tasks/<id>/.pr-number`); proof requires the pinned PR to be `MERGED`, the PR `baseRefName` to match the task's `base_branch`, and the local task-branch tip to be an ancestor of, or equal to, the PR `headRefOid`. When the sidecar is absent (tasks created before v1.11, or a worktree rebuilt without `--pr`), `--ship` falls back to a base-filtered merged-PR branch lookup, still requiring the local tip to be ancestor-or-equal to the PR head. If the PR head object cannot be materialized locally, proof is unestablished and `--ship` fails closed. If the local task branch is already absent, no proof is required because there is no local branch deletion left to protect. `--force` does not bypass this proof gate; the failure message names the manual recovery path.
 
 **Ungated fast-forward**: when no PR was merged in the current run and the local base is strictly behind `origin/<base>`, `assertLocalBaseInSyncWithOrigin()` fast-forwards with `git pull --ff-only`. The fast-forward is non-destructive and is not treated as merge proof; the deletion gate still runs afterward.
 

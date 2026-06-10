@@ -68,7 +68,7 @@ Full-send mode is the explicit opt-in for "spec to draft PR with no human interr
 - The mode is recorded in `status.json.full_send`, which future human-interrupt gates should honor by convention.
 - Bundle semantics: full-send applies per-task. To skip the spec gate for a bundle, every task in the invocation must have `full_send: true`. A single non-full-send task in the bundle re-engages the gate for all.
 
-**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review `changes_requested`, the whole bundle reroutes to implement. On code review `spec_gap`, the bundle halts for human spec amendment instead of rerouting to implement.
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks are processed together per phase (one agent session each). The tier is determined by the most complex task — any M/L/XL/delicate pulls the entire bundle to full tier. On code review `changes_requested`, the whole bundle reroutes to implement. On code review `spec_gap`, the whole bundle blocks until the operator chooses a recovery path: amend the spec and run `canon run <ids> --reroute`, or sanction the review with `canon task accept <ids> code_review --reason "<why>"`.
 
 **Conversational spec authorship**: Specs for emergent tasks are often written conversationally with Claude rather than through the pipeline's spec phase. Manually mark spec (and plan if written together) as done in `status.json`, then run the pipeline — it picks up from the current phase.
 
@@ -120,6 +120,8 @@ The artifact templates carry a comment block at the bottom showing the expected 
 - **Perfect revert** (file no longer appears in `git diff base...HEAD`): delete it from all prior iteration Changes tables in `handoff.md` and do not add it to the current one. The pre-flight check validates the aggregate union against the final diff; a net-zero file left in any Changes table is a false `handoff→diff` error.
 - **Imperfect revert** (file still appears in the diff, e.g. a trailing newline remains): add it to the current iteration's Changes table with "Reverted to original (describe residual diff)". Leaving a changed file out of all Changes tables is a `diff→handoff` error.
 
+**Rerouted and revised tasks: the pre-flight diff is cumulative.** The verifier checks the union of all Changes tables against `git diff <base>...HEAD` — every commit since task creation, including files committed by *earlier phases* (spec_review doc edits, prior implement rounds). An implementer who enumerates only this round's edits will omit those files and trip a pre-flight rejection citing paths they never touched. Before submitting a handoff on a rerouted or revised task, run `git diff <base>...HEAD --name-only` and confirm every listed path is covered by at least one Changes-table row.
+
 **Referencing deleted (or not-yet-created) files in artifacts.** `docs-refs-check` scans `handoff.md` / `review.md` / `done.md` (but not `spec.md` / `plan.md` / `notes.md`) and flags a backtick path-ref to a file that does not exist — *including one this task deleted* — so a deleted path is **never** written in backticks in these files. The non-backtick form depends on **where** it sits:
 
 - **`handoff.md` Changes-table first column** — `[path](path)` markdown-link **only**. That cell is also parsed by the diff↔handoff reconciler (`parseHandoffPathCell`), which accepts a backtick-path or a markdown-link but **not** bare prose; backticks are out (docs-refs-check), so the markdown-link is the only form that passes both.
@@ -139,7 +141,9 @@ canon task new <TASK-ID> <title>               # Create task from templates
 canon task list                                # List all tasks with current phase
 canon task status <TASK-ID>                    # Show full task status
 canon task phase <TASK-ID> <phase> <status>    # Update phase status
-canon task accept <TASK-ID> <phase>            # Operator escape hatch: mark phase done + skip auto-commit on next run
+canon task accept <TASK-ID> implement          # Operator escape hatch: mark implement done + skip auto-commit on next run
+canon task accept <TASK-ID...> spec_review --reason "<why>"  # Sanction a spec-review verdict with audit trail
+canon task accept <TASK-ID...> code_review --reason "<why>"  # Sanction a code-review verdict with audit trail
 ```
 
 ### Commit Ownership
@@ -225,7 +229,7 @@ The pipeline-spawned `code_review` Claude session is a **synthesis foreman**, no
 - **Anchored lens**: applies canon's normal Stage 1 AC-compliance gate, Stage 2 code-quality review, and test-integrity checks using the spec, handoff, and diff.
 - **Cold lens**: reads the diff without spec, AC, handoff rationale, or canon context to catch bugs the spec-anchored pass may miss.
 
-The foreman deduplicates the lens findings, drops cold findings that the spec shows are intended, classifies surviving findings as `code-bug` or `spec-gap`, writes the single `review.md`, and sets one verdict. `changes_requested` routes back to Codex implementation. `spec_gap` means the code cannot fix the issue because the spec is missing or wrong; the phase is blocked with an escalation for the human to amend the spec and re-run.
+The foreman deduplicates the lens findings, drops cold findings that the spec shows are intended, classifies surviving findings as `code-bug` or `spec-gap`, writes the single `review.md`, and sets one verdict. `changes_requested` routes back to Codex implementation. `spec_gap` means the code cannot fix the issue because the spec is missing or wrong; the phase is blocked with an escalation. The operator then chooses fix vs. bless: fix by adding the required `## Amendment` section and running `canon run <ids> --reroute` so full-tier tasks re-enter `spec_review` and `plan`; bless by running `canon task accept <ids> code_review --reason "<why>"`, which records a `sanctioned` verdict and appends an audit line to `notes.md`.
 
 ## Human Escalation Contract
 

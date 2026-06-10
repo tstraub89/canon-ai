@@ -124,7 +124,7 @@ function resolveProjectName() {
 }
 var config = {
   projectName: resolveProjectName(),
-  claudeBudget: process.env.CLAUDE_BUDGET ?? "5.00",
+  claudeBudget: process.env.CLAUDE_BUDGET ?? null,
   claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
   claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
@@ -355,7 +355,8 @@ var CANON_END_LINE_RE = /^[ \t]*# canon:end[ \t]*(?:\r?\n|$)/gm;
 var CANON_RUNTIME_GITIGNORE_PATTERNS = [
   "tasks/**/.canon-pid",
   "tasks/**/.canon-run.log",
-  "tasks/**/.heartbeat.json"
+  "tasks/**/.heartbeat.json",
+  "tasks/**/.pr-number"
 ];
 var CANON_GITIGNORE_BLOCK = [
   "# canon:start",
@@ -608,7 +609,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.10.2";
+  const installedVersion = "1.11.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -1034,7 +1035,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.10.2";
+  const version = "1.11.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -2588,7 +2589,7 @@ function parseDiffNameStatus(stdout) {
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
-var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap"]);
+var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -2602,7 +2603,7 @@ function usage() {
     "  list",
     "  status <TASK-ID>",
     "  phase <TASK-ID> <phase> <status> [verdict]",
-    "  accept <TASK-ID...> <phase> [--force]",
+    '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]',
     "  reset-spec-review <TASK-ID>",
     "  post-merge-sync [<branch>]"
   ].join("\n");
@@ -2752,10 +2753,10 @@ function taskNew(args2) {
   }
   fs9.mkdirSync(taskDir, { recursive: true });
   const overrideRoot = taskTemplateOverrideRoot();
-  for (const basename of listTemplateFiles()) {
-    const override = path10.join(overrideRoot, basename);
-    const source = fs9.existsSync(override) ? override : path10.join(templatesRoot(), basename);
-    copyTemplateFile(source, path10.join(taskDir, basename), id, title);
+  for (const basename2 of listTemplateFiles()) {
+    const override = path10.join(overrideRoot, basename2);
+    const source = fs9.existsSync(override) ? override : path10.join(templatesRoot(), basename2);
+    copyTemplateFile(source, path10.join(taskDir, basename2), id, title);
   }
   const statusPath = path10.join(taskDir, "status.json");
   const status = readJsonFile(statusPath);
@@ -2861,10 +2862,15 @@ function assertValidVerdict(phase, verdict) {
     throw new Error("Error: verdict is only valid for spec_review and code_review phases");
   }
   if (!VALID_VERDICTS.has(verdict)) {
-    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap`);
+    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap, sanctioned`);
   }
   if (verdict === "spec_gap" && phase !== "code_review") {
     throw new Error(`Error: verdict 'spec_gap' is only valid for the code_review phase, not '${phase}'.`);
+  }
+  if (verdict === "sanctioned") {
+    throw new Error(
+      `Error: verdict 'sanctioned' cannot be set via \`canon task phase\`. Use \`canon task accept <id> ${phase} --reason "<why>"\` instead so operator_accepted audit fields and notes.md are written.`
+    );
   }
 }
 function priorIncompletePhases(status, phase) {
@@ -2939,7 +2945,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   if (REVIEW_PHASES.has(phaseArg)) {
     updateReviewCounters(entry, verdictArg);
   }
-  if (phaseArg === "implement" && previousStatus === "done" && statusArg !== "done") {
+  if ((phaseArg === "implement" || phaseArg === "spec_review" || phaseArg === "code_review") && previousStatus === "done" && statusArg !== "done") {
     delete entry.operator_accepted;
     delete entry.operator_accepted_sha;
     delete entry.operator_accepted_at;
@@ -2952,13 +2958,13 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   }
 }
 function taskAccept(ids, phaseArg, options = {}) {
-  if (ids.length === 0) throw new Error("Error: usage: canon task accept <TASK-ID...> <phase> [--force]");
-  if (!phaseArg) throw new Error("Error: phase required (currently only `implement` is supported)");
+  if (ids.length === 0) throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
+  if (!phaseArg) throw new Error("Error: phase required (implement, spec_review, or code_review)");
   for (const id of ids) validateTaskId(id);
   assertValidPhase(phaseArg);
-  if (phaseArg !== "implement") {
+  if (phaseArg !== "implement" && phaseArg !== "spec_review" && phaseArg !== "code_review") {
     throw new Error(
-      `Error: 'canon task accept' currently only supports the implement phase. Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
+      `Error: 'canon task accept' supports implement, spec_review, and code_review phases. Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
     );
   }
   const ctxByTask = /* @__PURE__ */ new Map();
@@ -3000,6 +3006,126 @@ function taskAccept(ids, phaseArg, options = {}) {
         `Error: bundled accept requires all tasks to share a working tree. Task '${ids[0]}' resolves to ${gitCwdRaw} but task '${ctx.id}' resolves to ${expectedRaw}. Run accept once per worktree.`
       );
     }
+  }
+  if (phaseArg === "spec_review" || phaseArg === "code_review") {
+    const reason = options.reason;
+    if (!reason?.trim()) {
+      throw new Error(
+        `Error: --reason "<text>" is required when accepting ${phaseArg}. Use it to record why the review verdict is being sanctioned.`
+      );
+    }
+    if (!options.force) {
+      for (const ctx of ctxByTask.values()) {
+        const blocked = priorIncompletePhases(ctx.status, phaseArg);
+        if (blocked.length > 0) {
+          throw new Error(`Error: cannot accept ${phaseArg} for '${ctx.id}' \u2014 prior phases not done: ${blocked.join(",")}`);
+        }
+      }
+    }
+    const baseBranches = /* @__PURE__ */ new Set();
+    for (const ctx of ctxByTask.values()) {
+      const b = (ctx.status.base_branch ?? "").trim();
+      if (!b) throw new Error(`Error: status.json for '${ctx.id}' is missing base_branch \u2014 cannot accept a bundled review phase.`);
+      baseBranches.add(b);
+    }
+    if (baseBranches.size > 1) {
+      throw new Error(
+        `Error: bundled accept requires all tasks to share base_branch. Got: ${[...baseBranches].join(", ")}. Accept one bundle at a time.`
+      );
+    }
+    const headRevParse2 = runGit(["rev-parse", "HEAD"], { cwd: gitCwd });
+    if (headRevParse2.error || headRevParse2.status !== 0) {
+      const stderr = (headRevParse2.stderr ?? "").trim() || "unknown error";
+      throw new Error(
+        `Error: failed to read HEAD from ${gitCwd} (${stderr}). Cannot record operator_accepted_sha for ${phaseArg}; verify the working tree has a HEAD, then re-run.`
+      );
+    }
+    const sharedSha2 = (headRevParse2.stdout ?? "").trim();
+    if (!sharedSha2) {
+      throw new Error(`Error: \`git rev-parse HEAD\` from ${gitCwd} returned an empty string; refusing to accept without a usable SHA.`);
+    }
+    const originalSnapshots2 = /* @__PURE__ */ new Map();
+    for (const ctx of ctxByTask.values()) {
+      try {
+        originalSnapshots2.set(ctx.statusPath, fs9.readFileSync(ctx.statusPath, "utf8"));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
+      }
+    }
+    const advancingVerdicts = /* @__PURE__ */ new Set(["approved", "approved_with_nits"]);
+    const completedWrites2 = [];
+    try {
+      for (const ctx of ctxByTask.values()) {
+        const reviewEntry = ensurePhaseEntry(ctx.status, phaseArg);
+        const currentVerdict = reviewEntry.verdict ?? "";
+        if (!advancingVerdicts.has(currentVerdict)) {
+          reviewEntry.verdict = "sanctioned";
+          reviewEntry.operator_accepted = true;
+          reviewEntry.operator_accepted_at = today();
+          reviewEntry.operator_accepted_sha = sharedSha2;
+        } else {
+          delete reviewEntry.operator_accepted;
+          delete reviewEntry.operator_accepted_at;
+          delete reviewEntry.operator_accepted_sha;
+        }
+        reviewEntry.status = "done";
+        ctx.status.updated = today();
+        writeStatusAtomic(ctx.statusPath, ctx.status);
+        completedWrites2.push(ctx.statusPath);
+      }
+    } catch (error) {
+      const rollbackErrors = [];
+      for (const filePath of completedWrites2) {
+        const original = originalSnapshots2.get(filePath);
+        if (original === void 0) continue;
+        try {
+          const tmpFile = `${filePath}.rollback.tmp`;
+          fs9.writeFileSync(tmpFile, original, "utf8");
+          fs9.renameSync(tmpFile, filePath);
+        } catch (rollbackErr) {
+          const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+          rollbackErrors.push(`    ${filePath}: ${message}`);
+        }
+      }
+      const originalMessage = error instanceof Error ? error.message : String(error);
+      if (rollbackErrors.length > 0) {
+        throw new Error(
+          `Error: bundled review accept failed mid-write AND rollback also failed.
+  Original error: ${originalMessage}
+  Rollback failures:
+${rollbackErrors.join("\n")}`
+        );
+      }
+      throw new Error(`Error: bundled review accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
+    }
+    for (const ctx of ctxByTask.values()) {
+      const notesPath = path10.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+      const entry = ctx.status.phases[phaseArg];
+      const sanctioned = entry?.verdict === "sanctioned";
+      const bundleNote = ids.length > 1 ? ` Bundle: ${ids.join(", ")}.` : "";
+      const noteLine = `[${today()}] Operator accepted ${phaseArg} via \`canon task accept\` \u2014 ${sanctioned ? "sanctioned (agent verdict overridden)" : "unblocked (advancing verdict preserved)"}. Reason: ${reason}.${bundleNote}`;
+      try {
+        if (fs9.existsSync(notesPath)) {
+          fs9.appendFileSync(notesPath, `
+${noteLine}
+`, "utf8");
+        } else {
+          fs9.writeFileSync(notesPath, `${noteLine}
+`, "utf8");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Warning: failed to log to notes.md for ${ctx.id}: ${message}`);
+      }
+    }
+    const label2 = ids.length === 1 ? ids[0] : `[${ids.join(", ")}]`;
+    const nextPhase = phaseArg === "spec_review" ? "plan" : "qa";
+    console.log(
+      `Accepted ${label2}: ${phaseArg} \u2192 done.
+  Next phase: ${nextPhase}. Run \`canon run ${ids.join(" ")}\` to continue.`
+    );
+    return;
   }
   if (!options.force) {
     for (const ctx of ctxByTask.values()) {
@@ -3408,13 +3534,24 @@ function taskCmd(args2) {
         break;
       case "accept": {
         const force = rest.includes("--force");
-        const positional = rest.filter((arg) => arg !== "--force");
+        let reason;
+        const positional = [];
+        for (let i = 0; i < rest.length; i += 1) {
+          const arg = rest[i];
+          if (arg === "--force") continue;
+          if (arg === "--reason") {
+            reason = rest[i + 1];
+            i += 1;
+            continue;
+          }
+          positional.push(arg);
+        }
         if (positional.length < 2) {
-          throw new Error("Error: usage: canon task accept <TASK-ID...> <phase> [--force]");
+          throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
         }
         const acceptPhase = positional[positional.length - 1];
         const acceptIds = positional.slice(0, -1);
-        taskAccept(acceptIds, acceptPhase, { force });
+        taskAccept(acceptIds, acceptPhase, { force, reason });
         break;
       }
       case "reset-spec-review":
@@ -3485,7 +3622,7 @@ function updateCmd(_args) {
 // src/cli/commands/upgrade.ts
 import { existsSync as existsSync5, readFileSync as readFileSync3, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
 import { fileURLToPath as fileURLToPath5 } from "url";
-import { dirname as dirname4, join as join5 } from "path";
+import { basename, dirname as dirname4, join as join5, relative as relative2, resolve } from "path";
 import { spawnSync as spawnSync8 } from "child_process";
 
 // src/lib/canon-owned.ts
@@ -3553,6 +3690,38 @@ function printDocsRefsCutoverWarning(cutoverWarnings, check) {
     console.log("    git diff HEAD -- scripts/docs-refs-check.mjs      # what changed");
     console.log("    git show HEAD:scripts/docs-refs-check.mjs         # the pre-upgrade checker\n");
   }
+}
+function printStaleOverrideNudge(staleOverrides, check) {
+  if (staleOverrides.length === 0) return;
+  console.log(`Heads-up: canon templates ${check ? "that would be changed by this upgrade" : "changed by this upgrade"} have customized task-template overrides that ${check ? "would not be auto-updated" : "were not auto-updated"}:`);
+  console.log("  These override files were NOT updated automatically; review them manually:");
+  for (const overridePath of staleOverrides) {
+    const name = basename(overridePath);
+    console.log(`  \u21BB ${overridePath}`);
+    console.log(`    diff .canon/templates/${name} ${overridePath}`);
+  }
+  console.log("");
+}
+function getTaskTemplateBasenames() {
+  return CANON_OWNED.filter((rel) => rel.startsWith(".canon/templates/")).map((rel) => basename(rel));
+}
+function getStaleOverrides(cwd, changedOps) {
+  const changedByRel = new Map(changedOps.map((op) => [op.rel, op.content]));
+  if (changedByRel.size === 0) return [];
+  const templateBasenames = getTaskTemplateBasenames();
+  const overrideRootAbs = resolve(cwd, taskTemplateOverrideRoot());
+  const staleOverrides = [];
+  for (const name of templateBasenames) {
+    const canonRel = `.canon/templates/${name}`;
+    const newTemplateContent = changedByRel.get(canonRel);
+    if (newTemplateContent === void 0) continue;
+    const overridePathAbs = join5(overrideRootAbs, name);
+    if (!existsSync5(overridePathAbs)) continue;
+    const overrideContent = readFileSync3(overridePathAbs, "utf8");
+    if (overrideContent === newTemplateContent) continue;
+    staleOverrides.push(relative2(cwd, overridePathAbs));
+  }
+  return staleOverrides;
 }
 function isPathDirty(cwd, relPath) {
   const result = spawnSync8("git", ["status", "--porcelain", "--", relPath], {
@@ -3660,7 +3829,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.10.2";
+  const newVersion = "1.11.0";
   const currentVersion = existsSync5(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -3683,21 +3852,24 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     else clean.push(op);
   }
   if (options.check) {
+    const staleOverrides2 = getStaleOverrides(cwd, clean);
     for (const op of clean) wouldUpgrade.push(op.rel);
     for (const op of dirty) dirtyRefused.push(op.rel);
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides: staleOverrides2 };
   }
   if (dirty.length > 0 && !options.force) {
     for (const op of dirty) dirtyRefused.push(op.rel);
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides: [] };
   }
+  const reportedWrites = options.force ? pending : clean;
+  const staleOverrides = getStaleOverrides(cwd, reportedWrites);
   const toWrite = options.force ? pending : clean;
   for (const op of toWrite) {
     mkdirSync2(dirname4(op.projectPath), { recursive: true });
     writeFileSync2(op.projectPath, op.content);
     upgraded.push(op.rel);
   }
-  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings };
+  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides };
 }
 function parseUpgradeArgs(args2) {
   const options = {};
@@ -3714,7 +3886,7 @@ function parseUpgradeArgs(args2) {
 function upgradeCmd(args2) {
   const options = parseUpgradeArgs(args2);
   const result = runUpgrade(process.cwd(), packageDir4, options);
-  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings } = result;
+  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides } = result;
   console.log("\ncanon upgrade" + (options.check ? " --check" : "") + "\n");
   if (options.check) {
     if (wouldUpgrade.length > 0) {
@@ -3724,6 +3896,9 @@ function upgradeCmd(args2) {
     }
     if (cutoverWarnings.length > 0) {
       printDocsRefsCutoverWarning(cutoverWarnings, true);
+    }
+    if (staleOverrides.length > 0) {
+      printStaleOverrideNudge(staleOverrides, true);
     }
     if (dirtyRefused.length > 0) {
       console.log("Would refuse (dirty in git \u2014 pass --force to overwrite):");
@@ -3787,6 +3962,9 @@ function upgradeCmd(args2) {
   }
   if (cutoverWarnings.length > 0) {
     printDocsRefsCutoverWarning(cutoverWarnings, false);
+  }
+  if (staleOverrides.length > 0) {
+    printStaleOverrideNudge(staleOverrides, false);
   }
   if (unchanged.length > 0) {
     console.log("Already up to date:");
@@ -3858,8 +4036,11 @@ canon task subcommands:
                             phases:   spec | spec_review | plan | implement |
                                       code_review | qa | human_review
                             status:   pending | in_progress | done | changes_requested | blocked
-                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review | spec_gap
-                                      (verdict applies to spec_review and code_review only)
+                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review | spec_gap | sanctioned
+                                      (verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)
+  accept <id...> <phase> [--reason "<text>"] [--force]
+                          Accept implement, or sanction spec_review/code_review with an audit reason.
+                          --reason is required for spec_review and code_review.
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.
   post-merge-sync [<branch>]
@@ -3904,7 +4085,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.10.2");
+  console.log("1.11.0");
 }
 switch (command) {
   case "doctor":

@@ -11,7 +11,7 @@ import type {
 
 export const PHASE_ORDER = ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review'] as const;
 export const _PHASE_STATUS_VALUES = ['pending', 'in_progress', 'done', 'changes_requested', 'blocked'] as const;
-export const _VERDICT_VALUES = ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap'] as const;
+export const _VERDICT_VALUES = ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap', 'sanctioned'] as const;
 
 export type Phase = (typeof PHASE_ORDER)[number];
 export type PhaseStatus = (typeof _PHASE_STATUS_VALUES)[number];

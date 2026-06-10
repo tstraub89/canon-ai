@@ -36,7 +36,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 | **Plan** | The implementation steps Claude lays out after spec approval. References specific files and existing patterns. |
 | **Handoff** | The artifact Codex writes after implementing — what files changed, what ACs were met, what validation outcomes are. The reviewer reads this alongside the diff. |
 | **Review** | Two-stage code review by Claude. Stage 1 verifies spec compliance (gate); Stage 2 assesses code quality (only if Stage 1 passes). |
-| **Verdict** | The review outcome: `approved`, `approved_with_nits`, `changes_requested`, or `needs_re_review`. |
+| **Verdict** | The review outcome: `approved`, `approved_with_nits`, `changes_requested`, `needs_re_review`, `spec_gap` (blocks for operator action — see below), or `sanctioned` (operator override via `canon task accept --reason`). |
 | **Done** | The QA artifact Claude writes after review passes — plain-English summary, files changed, test plan for the human. |
 | **Tier** | The level of orchestrator effort applied. Fast tier (S non-delicate) collapses spec+plan and skips Codex spec review. Full tier (M/L/XL or any delicate) runs the complete workflow. |
 | **Task size** | `S` (trivial), `M` (default, contained), `L` (substantial), `XL` (large or sensitive). Drives tier, model, effort, and loop caps via `pipeline-policy.ts`. |

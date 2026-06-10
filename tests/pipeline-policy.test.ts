@@ -23,6 +23,7 @@ const TEST_CONFIG: PolicyConfig = {
     codexModelMini: 'mini',
     codexModelFull: 'full',
     maxReviewLoops: null,
+    claudeBudget: null,
 };
 
 const s = (task_size: TaskSize, delicate = false): PolicyInput => ({ task_size, delicate });
@@ -90,6 +91,35 @@ void test('policy: MAX_REVIEW_LOOPS=0 is a valid (suicidal) override', () => {
     assert.equal(p.maxReviewLoops, 0);
 });
 
+// ── CLAUDE_BUDGET env override / tiered defaults ──────────────────────────
+
+type BudgetRow = { name: string; tasks: PolicyInput[]; expected: string };
+
+const BUDGET_TABLE: BudgetRow[] = [
+    { name: 'S non-delicate', tasks: [s('S')], expected: '5.00' },
+    { name: 'M non-delicate', tasks: [s('M')], expected: '5.00' },
+    { name: 'L non-delicate', tasks: [s('L')], expected: '10.00' },
+    { name: 'XL non-delicate', tasks: [s('XL')], expected: '20.00' },
+    { name: 'M delicate', tasks: [s('M', true)], expected: '20.00' },
+];
+
+for (const row of BUDGET_TABLE) {
+    void test(`claude budget: ${row.name} → ${row.expected} when CLAUDE_BUDGET unset`, () => {
+        const p = getPipelinePolicy(row.tasks, TEST_CONFIG);
+        assert.equal(p.claude('spec').budget, row.expected);
+        assert.equal(p.claude('qa').budget, row.expected);
+    });
+}
+
+void test('claude budget: CLAUDE_BUDGET flat override wins for every effective size', () => {
+    const cfg: PolicyConfig = { ...TEST_CONFIG, claudeBudget: '20.00' };
+    for (const row of BUDGET_TABLE) {
+        const p = getPipelinePolicy(row.tasks, cfg);
+        assert.equal(p.claude('spec').budget, '20.00', row.name);
+        assert.equal(p.claude('code_review').budget, '20.00', row.name);
+    }
+});
+
 // ── Codex model/effort matrix (phase × effectiveSize) ──────────────────────
 
 type CodexRow = {
@@ -108,7 +138,7 @@ const CODEX_MATRIX: CodexRow[] = [
     { phase: 'implement',   size: 'S',  expected: { model: 'mini', effort: 'medium' } },
     { phase: 'implement',   size: 'M',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'implement',   size: 'L',  expected: { model: 'mini', effort: 'high' } },
-    { phase: 'implement',   size: 'XL', expected: { model: 'full', effort: 'xhigh' } },
+    { phase: 'implement',   size: 'XL', expected: { model: 'full', effort: 'high' } },  // re-baselined 2026-06: was xhigh (GPT-5.5 overthinks at xhigh w/ open-ended tools)
 ];
 
 for (const row of CODEX_MATRIX) {
@@ -120,7 +150,7 @@ for (const row of CODEX_MATRIX) {
 
 void test('codex matrix: delicate M uses XL row (effective size)', () => {
     const p = getPipelinePolicy([s('M', true)], TEST_CONFIG);
-    assert.deepEqual(p.codex('implement'), { model: 'full', effort: 'xhigh' });
+    assert.deepEqual(p.codex('implement'), { model: 'full', effort: 'high' });
     assert.deepEqual(p.codex('spec_review'), { model: 'full', effort: 'high' });
 });
 
@@ -128,8 +158,8 @@ void test('codex matrix: delicate M uses XL row (effective size)', () => {
 //
 // Most Claude phases use one model across all sizes — varying effort, not
 // model — so we pin them at a representative size (M). code_review is the
-// exception: it splits model by size (small for S/M, large for L/XL) so the
-// matrix below enumerates every size.
+// exception: it splits model by size (Sonnet for S/M/L, Opus for XL/delicate)
+// so the matrix below enumerates every size.
 
 type ClaudeRow = { phase: ClaudePhase; expected: { model: string; effort: string } };
 const CLAUDE_TABLE: ClaudeRow[] = [
@@ -141,16 +171,16 @@ const CLAUDE_TABLE: ClaudeRow[] = [
 for (const row of CLAUDE_TABLE) {
     void test(`claude model: ${row.phase} → ${row.expected.model}/${row.expected.effort}`, () => {
         const p = getPipelinePolicy([s('M')], TEST_CONFIG);
-        assert.deepEqual(p.claude(row.phase), row.expected);
+        assert.deepEqual(p.claude(row.phase), { ...row.expected, budget: '5.00' });
     });
 }
 
-type CodeReviewRow = { size: TaskSize; expected: { model: string; effort: string } };
+type CodeReviewRow = { size: TaskSize; expected: { model: string; effort: string; budget: string } };
 const CODE_REVIEW_TABLE: CodeReviewRow[] = [
-    { size: 'S',  expected: { model: 'sonnet', effort: 'medium' } },
-    { size: 'M',  expected: { model: 'sonnet', effort: 'high'   } },
-    { size: 'L',  expected: { model: 'opus',   effort: 'high'   } },
-    { size: 'XL', expected: { model: 'opus',   effort: 'xhigh'  } },
+    { size: 'S',  expected: { model: 'sonnet', effort: 'medium', budget: '5.00' } },
+    { size: 'M',  expected: { model: 'sonnet', effort: 'high',   budget: '5.00' } },
+    { size: 'L',  expected: { model: 'sonnet', effort: 'high',   budget: '10.00' } },  // re-baselined 2026-06: L → Sonnet 4.6
+    { size: 'XL', expected: { model: 'opus',   effort: 'xhigh',  budget: '20.00' } },
 ];
 
 for (const row of CODE_REVIEW_TABLE) {
@@ -162,7 +192,7 @@ for (const row of CODE_REVIEW_TABLE) {
 
 void test('claude model: delicate M code_review uses XL slot (large model + xhigh)', () => {
     const p = getPipelinePolicy([s('M', true)], TEST_CONFIG);
-    assert.deepEqual(p.claude('code_review'), { model: 'opus', effort: 'xhigh' });
+    assert.deepEqual(p.claude('code_review'), { model: 'opus', effort: 'xhigh', budget: '20.00' });
 });
 
 // ── Standalone helpers (detectTier, isPlanCombined, size helpers) ──────────
@@ -209,5 +239,5 @@ void test('policy: empty task list falls back to S/fast tier', () => {
     assert.equal(p.tier, 'fast');
     assert.equal(p.nominalSize, 'S');
     assert.equal(p.effectiveSize, 'S');
-    assert.deepEqual(p.claude('spec'), { model: 'opus', effort: 'medium' });
+    assert.deepEqual(p.claude('spec'), { model: 'opus', effort: 'medium', budget: '5.00' });
 });

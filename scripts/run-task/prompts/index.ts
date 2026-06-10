@@ -455,7 +455,7 @@ export function promptCodeReview(
             `- \`${t.taskId}\` -> read the Iteration ${priorIteration} section of \`tasks/${t.taskId}/handoff.md\` that addresses review round ${priorIteration}`
         ).join('\n');
     const tightenLine = roundN >= 3
-        ? `**Round ${roundN} discipline.** Findings must be \`correctness bug\` or \`spec gap\` only - no \`optional cleanup/nit\` and no wording-only changes. We are tightening, not exploring. If your only finding is a wording preference, approve.`
+        ? `**Round ${roundN} synthesis discipline.** This tightens YOUR synthesis, not the lenses. Do NOT pass "only report high-severity" down to the lenses — they stay high-recall and report everything, as their charters instruct (a literal-following model that's told to self-censor suppresses real bugs, not just nits). At synthesis: drop \`optional cleanup/nit\` and wording-only findings from the verdict — fold or omit them. Only \`correctness bug\` and \`spec gap\` drive the verdict now. If after filtering your only finding is a wording preference, approve.`
         : '';
 
     return render('code-review-foreman.md', {

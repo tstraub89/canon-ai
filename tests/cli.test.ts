@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, runUpgrade } from '../src/cli/commands/upgrade.js';
+import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, printStaleOverrideNudge, runUpgrade } from '../src/cli/commands/upgrade.js';
 import { detectInstallType } from '../src/cli/commands/update.js';
 import { scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
@@ -1034,6 +1034,320 @@ void test('runUpgrade: task template unchanged → not in upgraded', () => {
             assert.ok(unchanged.includes(rel));
         });
     });
+});
+
+// ── runUpgrade staleOverrides ───────────────────────────────────────────────
+
+function setupTemplateUpgrade(
+    projectDir: string,
+    pkgDir: string,
+    name: string,
+    { oldContent, newContent }: { oldContent: string; newContent: string },
+): string {
+    const rel = `.canon/templates/${name}`;
+    const tmplPath = path.join(pkgDir, 'templates', rel);
+    fs.mkdirSync(path.dirname(tmplPath), { recursive: true });
+    fs.writeFileSync(tmplPath, newContent);
+
+    const projPath = path.join(projectDir, rel);
+    fs.mkdirSync(path.dirname(projPath), { recursive: true });
+    fs.writeFileSync(projPath, oldContent);
+
+    writeCurrentCanonVersion(projectDir);
+    return rel;
+}
+
+function captureConsoleLog(fn: () => void): string[] {
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = ((...args: unknown[]) => {
+        lines.push(args.map(String).join(' '));
+    }) as typeof console.log;
+    try {
+        fn();
+    } finally {
+        console.log = originalLog;
+    }
+    return lines;
+}
+
+void test('runUpgrade staleOverrides: drift guard uses CANON_OWNED template basenames', () => {
+    const expected = CANON_OWNED
+        .filter(entry => entry.startsWith('.canon/templates/'))
+        .map(entry => path.basename(entry));
+
+    assert.equal(new Set(expected).size, expected.length);
+    assert.ok(expected.length > 0, 'CANON_OWNED must include at least one task template');
+    assert.ok(expected.includes('spec.md'));
+    assert.ok(expected.includes('plan.md'));
+});
+
+void test('runUpgrade staleOverrides: differing override under default root is listed', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# old canon spec\n',
+                newContent: '# new canon spec\n',
+            });
+
+            const overrideRel = path.join('tasks', '_templates', 'spec.md');
+            const overridePath = path.join(projectDir, overrideRel);
+            fs.mkdirSync(path.dirname(overridePath), { recursive: true });
+            fs.writeFileSync(overridePath, '# custom spec\n');
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.upgraded.includes(rel));
+            assert.deepEqual(result.wouldUpgrade, []);
+            assert.ok(result.staleOverrides.includes(overrideRel));
+            assert.equal(fs.readFileSync(path.join(projectDir, rel), 'utf8'), '# new canon spec\n');
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: unchanged canon template does not nudge a differing override', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# same canon spec\n',
+                newContent: '# same canon spec\n',
+            });
+
+            const overrideRel = path.join('tasks', '_templates', 'spec.md');
+            const overridePath = path.join(projectDir, overrideRel);
+            fs.mkdirSync(path.dirname(overridePath), { recursive: true });
+            fs.writeFileSync(overridePath, '# custom spec\n');
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.unchanged.includes(rel));
+            assert.ok(!result.upgraded.includes(rel));
+            assert.deepEqual(result.staleOverrides, []);
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: identical override content is suppressed', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# old canon spec\n',
+                newContent: '# new canon spec\n',
+            });
+
+            const overrideRel = path.join('tasks', '_templates', 'spec.md');
+            const overridePath = path.join(projectDir, overrideRel);
+            fs.mkdirSync(path.dirname(overridePath), { recursive: true });
+            fs.writeFileSync(overridePath, '# new canon spec\n');
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.upgraded.includes(rel));
+            assert.deepEqual(result.staleOverrides, []);
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: --check uses wouldUpgrade and does not write', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# old canon spec\n',
+                newContent: '# new canon spec\n',
+            });
+
+            const overrideRel = path.join('tasks', '_templates', 'spec.md');
+            const overridePath = path.join(projectDir, overrideRel);
+            fs.mkdirSync(path.dirname(overridePath), { recursive: true });
+            fs.writeFileSync(overridePath, '# custom spec\n');
+
+            const result = runUpgrade(projectDir, pkgDir, { check: true });
+
+            assert.deepEqual(result.upgraded, []);
+            assert.ok(result.wouldUpgrade.includes(rel));
+            assert.ok(result.staleOverrides.includes(overrideRel));
+            assert.equal(fs.readFileSync(path.join(projectDir, rel), 'utf8'), '# old canon spec\n');
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: dirty-refusal keeps nudge empty when the template itself is dirty', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# tracked canon spec\n',
+                newContent: '# new canon spec\n',
+            });
+
+            const overrideRel = path.join('tasks', '_templates', 'spec.md');
+            const overridePath = path.join(projectDir, overrideRel);
+            fs.mkdirSync(path.dirname(overridePath), { recursive: true });
+            fs.writeFileSync(overridePath, '# custom spec\n');
+
+            gitAddCommit(projectDir, 'seed tracked template');
+            fs.writeFileSync(path.join(projectDir, rel), '# dirty local spec\n');
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.ok(result.dirtyRefused.includes(rel));
+            assert.deepEqual(result.staleOverrides, []);
+            assert.equal(fs.readFileSync(path.join(projectDir, rel), 'utf8'), '# dirty local spec\n');
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: mixed dirty-refusal keeps nudge empty even when a clean template would have changed', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+
+            const cleanRel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# tracked canon spec\n',
+                newContent: '# new canon spec\n',
+            });
+            const dirtyRel = setupTemplateUpgrade(projectDir, pkgDir, 'plan.md', {
+                oldContent: '# tracked canon plan\n',
+                newContent: '# new canon plan\n',
+            });
+
+            const overrideRel = path.join('tasks', '_templates', 'spec.md');
+            const overridePath = path.join(projectDir, overrideRel);
+            fs.mkdirSync(path.dirname(overridePath), { recursive: true });
+            fs.writeFileSync(overridePath, '# custom spec\n');
+
+            gitAddCommit(projectDir, 'seed tracked templates');
+            fs.writeFileSync(path.join(projectDir, dirtyRel), '# dirty local plan\n');
+
+            const result = runUpgrade(projectDir, pkgDir);
+
+            assert.deepEqual(result.upgraded, []);
+            assert.deepEqual(result.wouldUpgrade, []);
+            assert.ok(result.dirtyRefused.includes(dirtyRel));
+            assert.ok(!result.dirtyRefused.includes(cleanRel));
+            assert.deepEqual(result.staleOverrides, []);
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: --force lists a stale override for a dirty canon template that was written', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            gitInit(projectDir);
+
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# tracked canon spec\n',
+                newContent: '# force-written canon spec\n',
+            });
+
+            const overrideRel = path.join('tasks', '_templates', 'spec.md');
+            const overridePath = path.join(projectDir, overrideRel);
+            fs.mkdirSync(path.dirname(overridePath), { recursive: true });
+            fs.writeFileSync(overridePath, '# custom spec\n');
+
+            gitAddCommit(projectDir, 'seed tracked template');
+            fs.writeFileSync(path.join(projectDir, rel), '# dirty local spec\n');
+
+            const result = runUpgrade(projectDir, pkgDir, { force: true });
+
+            assert.ok(result.upgraded.includes(rel));
+            assert.ok(result.staleOverrides.includes(overrideRel));
+            assert.equal(fs.readFileSync(path.join(projectDir, rel), 'utf8'), '# force-written canon spec\n');
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: empty when override root is absent', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# old canon spec\n',
+                newContent: '# new canon spec\n',
+            });
+
+            const result = runUpgrade(projectDir, pkgDir);
+            assert.ok(result.upgraded.includes(rel));
+            assert.deepEqual(result.staleOverrides, []);
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: stray files under the override root are ignored', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                oldContent: '# old canon spec\n',
+                newContent: '# new canon spec\n',
+            });
+
+            const strayRoot = path.join(projectDir, 'tasks', '_templates');
+            fs.mkdirSync(strayRoot, { recursive: true });
+            fs.writeFileSync(path.join(strayRoot, 'random.txt'), 'not a template');
+
+            const result = runUpgrade(projectDir, pkgDir);
+            assert.ok(result.upgraded.includes(rel));
+            assert.deepEqual(result.staleOverrides, []);
+        });
+    });
+});
+
+void test('runUpgrade staleOverrides: honors CANON_TASKS_DIR_OVERRIDE and ignores the default root', () => {
+    withTempDir(projectDir => {
+        withTempDir(pkgDir => {
+            const prev = process.env.CANON_TASKS_DIR_OVERRIDE;
+            try {
+                const rel = setupTemplateUpgrade(projectDir, pkgDir, 'spec.md', {
+                    oldContent: '# old canon spec\n',
+                    newContent: '# new canon spec\n',
+                });
+
+                const customTasksRoot = path.join(projectDir, 'custom-tasks');
+                const customOverrideRel = path.join('custom-tasks', '_templates', 'spec.md');
+                const customOverridePath = path.join(projectDir, customOverrideRel);
+                fs.mkdirSync(path.dirname(customOverridePath), { recursive: true });
+                fs.writeFileSync(customOverridePath, '# custom spec\n');
+
+                const defaultOverrideRel = path.join('tasks', '_templates', 'spec.md');
+                const defaultOverridePath = path.join(projectDir, defaultOverrideRel);
+                fs.mkdirSync(path.dirname(defaultOverridePath), { recursive: true });
+                fs.writeFileSync(defaultOverridePath, '# default root spec\n');
+
+                process.env.CANON_TASKS_DIR_OVERRIDE = customTasksRoot;
+
+                const result = runUpgrade(projectDir, pkgDir);
+
+                assert.ok(result.upgraded.includes(rel));
+                assert.ok(result.staleOverrides.includes(customOverrideRel));
+                assert.ok(!result.staleOverrides.includes(defaultOverrideRel));
+            } finally {
+                if (prev === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+                else process.env.CANON_TASKS_DIR_OVERRIDE = prev;
+            }
+        });
+    });
+});
+
+void test('printStaleOverrideNudge: emits the override reminder and is empty for no overrides', () => {
+    const overrideRel = path.join('tasks', '_templates', 'spec.md');
+    const lines = captureConsoleLog(() => {
+        printStaleOverrideNudge([overrideRel], false);
+    });
+    assert.equal(lines[0], 'Heads-up: canon templates changed by this upgrade have customized task-template overrides that were not auto-updated:');
+    assert.ok(lines.some(line => line.includes('NOT updated automatically')));
+    assert.ok(lines.some(line => line.includes(overrideRel)));
+    assert.ok(lines.some(line => line.includes('diff .canon/templates/spec.md tasks/_templates/spec.md')));
+
+    const dryRunLines = captureConsoleLog(() => {
+        printStaleOverrideNudge([overrideRel], true);
+    });
+    assert.equal(dryRunLines[0], 'Heads-up: canon templates that would be changed by this upgrade have customized task-template overrides that would not be auto-updated:');
+    assert.ok(dryRunLines.some(line => line.includes(overrideRel)));
+
+    const emptyLines = captureConsoleLog(() => {
+        printStaleOverrideNudge([], false);
+    });
+    assert.deepEqual(emptyLines, []);
 });
 
 // ── runUpgrade .gitignore block sync ─────────────────────────────────────────

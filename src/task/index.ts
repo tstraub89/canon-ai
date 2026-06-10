@@ -16,7 +16,7 @@ import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type Status
 
 const VALID_PHASES = new Set<string>(PHASE_ORDER);
 const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
-const VALID_VERDICTS = new Set<string>(['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap']);
+export const VALID_VERDICTS = new Set<string>(['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap', 'sanctioned']);
 const REVIEW_PHASES = new Set<string>(['spec_review', 'code_review']);
 
 type GitResult = SpawnSyncReturns<string>;
@@ -34,7 +34,7 @@ function usage(): string {
         '  list',
         '  status <TASK-ID>',
         '  phase <TASK-ID> <phase> <status> [verdict]',
-        '  accept <TASK-ID...> <phase> [--force]',
+        '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]',
         '  reset-spec-review <TASK-ID>',
         '  post-merge-sync [<branch>]',
     ].join('\n');
@@ -78,7 +78,7 @@ function templatesRoot(): string {
     return path.join(process.cwd(), '.canon', 'templates');
 }
 
-function taskTemplateOverrideRoot(): string {
+export function taskTemplateOverrideRoot(): string {
     return path.join(tasksRoot(), '_templates');
 }
 
@@ -341,7 +341,7 @@ function assertValidVerdict(phase: Phase, verdict: string | undefined): asserts 
         throw new Error('Error: verdict is only valid for spec_review and code_review phases');
     }
     if (!VALID_VERDICTS.has(verdict)) {
-        throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap`);
+        throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap, sanctioned`);
     }
     // spec_gap is a code_review-only verdict: it means "the implementation is
     // correct but the spec is wrong," which halts for human amendment. On
@@ -351,6 +351,12 @@ function assertValidVerdict(phase: Phase, verdict: string | undefined): asserts 
     // halting. Reject it at the boundary.
     if (verdict === 'spec_gap' && phase !== 'code_review') {
         throw new Error(`Error: verdict 'spec_gap' is only valid for the code_review phase, not '${phase}'.`);
+    }
+    if (verdict === 'sanctioned') {
+        throw new Error(
+            `Error: verdict 'sanctioned' cannot be set via \`canon task phase\`. ` +
+            `Use \`canon task accept <id> ${phase} --reason "<why>"\` instead so operator_accepted audit fields and notes.md are written.`
+        );
     }
 }
 
@@ -440,12 +446,14 @@ export function taskPhase(id: string, phaseArg: string, statusArg: string, verdi
     if (REVIEW_PHASES.has(phaseArg)) {
         updateReviewCounters(entry, verdictArg);
     }
-    // Any manual move of implement away from `done` invalidates a prior
-    // `canon task accept` — the recorded SHA belongs to a discarded iteration.
-    // Without this, an operator who runs `canon task phase <id> implement pending`
-    // (or `changes_requested`) after an accept would still have the next
-    // dispatch skip auto-commit against fresh implement work.
-    if (phaseArg === 'implement' && previousStatus === 'done' && statusArg !== 'done') {
+    // Any manual reopen of an operator-accepted phase invalidates the prior
+    // accept. For implement, the accepted SHA belongs to a discarded iteration;
+    // for review phases, a stale sanction must not mask the next agent verdict.
+    if (
+        (phaseArg === 'implement' || phaseArg === 'spec_review' || phaseArg === 'code_review') &&
+        previousStatus === 'done' &&
+        statusArg !== 'done'
+    ) {
         delete entry.operator_accepted;
         delete entry.operator_accepted_sha;
         delete entry.operator_accepted_at;
@@ -548,15 +556,15 @@ export function taskPhasePreflightRejected(id: string, phaseArg: string): void {
  * own coverage rule). Bypass the guards with `--force` when recovering from
  * a fundamentally broken state.
  */
-export function taskAccept(ids: readonly string[], phaseArg: string, options: { force?: boolean } = {}): void {
-    if (ids.length === 0) throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--force]');
-    if (!phaseArg) throw new Error('Error: phase required (currently only `implement` is supported)');
+export function taskAccept(ids: readonly string[], phaseArg: string, options: { force?: boolean; reason?: string } = {}): void {
+    if (ids.length === 0) throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
+    if (!phaseArg) throw new Error('Error: phase required (implement, spec_review, or code_review)');
     for (const id of ids) validateTaskId(id);
     assertValidPhase(phaseArg);
 
-    if (phaseArg !== 'implement') {
+    if (phaseArg !== 'implement' && phaseArg !== 'spec_review' && phaseArg !== 'code_review') {
         throw new Error(
-            `Error: 'canon task accept' currently only supports the implement phase. ` +
+            `Error: 'canon task accept' supports implement, spec_review, and code_review phases. ` +
             `Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
         );
     }
@@ -638,6 +646,136 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
                 `Run accept once per worktree.`
             );
         }
+    }
+
+    if (phaseArg === 'spec_review' || phaseArg === 'code_review') {
+        const reason = options.reason;
+        if (!reason?.trim()) {
+            throw new Error(
+                `Error: --reason "<text>" is required when accepting ${phaseArg}. ` +
+                `Use it to record why the review verdict is being sanctioned.`
+            );
+        }
+
+        if (!options.force) {
+            for (const ctx of ctxByTask.values()) {
+                const blocked = priorIncompletePhases(ctx.status, phaseArg);
+                if (blocked.length > 0) {
+                    throw new Error(`Error: cannot accept ${phaseArg} for '${ctx.id}' — prior phases not done: ${blocked.join(',')}`);
+                }
+            }
+        }
+
+        const baseBranches = new Set<string>();
+        for (const ctx of ctxByTask.values()) {
+            const b = (ctx.status.base_branch ?? '').trim();
+            if (!b) throw new Error(`Error: status.json for '${ctx.id}' is missing base_branch — cannot accept a bundled review phase.`);
+            baseBranches.add(b);
+        }
+        if (baseBranches.size > 1) {
+            throw new Error(
+                `Error: bundled accept requires all tasks to share base_branch. ` +
+                `Got: ${[...baseBranches].join(', ')}. Accept one bundle at a time.`
+            );
+        }
+
+        const headRevParse = runGit(['rev-parse', 'HEAD'], { cwd: gitCwd });
+        if (headRevParse.error || headRevParse.status !== 0) {
+            const stderr = (headRevParse.stderr ?? '').trim() || 'unknown error';
+            throw new Error(
+                `Error: failed to read HEAD from ${gitCwd} (${stderr}). ` +
+                `Cannot record operator_accepted_sha for ${phaseArg}; verify the working tree has a HEAD, then re-run.`
+            );
+        }
+        const sharedSha = (headRevParse.stdout ?? '').trim();
+        if (!sharedSha) {
+            throw new Error(`Error: \`git rev-parse HEAD\` from ${gitCwd} returned an empty string; refusing to accept without a usable SHA.`);
+        }
+
+        const originalSnapshots = new Map<string, string>();
+        for (const ctx of ctxByTask.values()) {
+            try {
+                originalSnapshots.set(ctx.statusPath, fs.readFileSync(ctx.statusPath, 'utf8'));
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
+            }
+        }
+
+        const advancingVerdicts = new Set<string>(['approved', 'approved_with_nits']);
+        const completedWrites: string[] = [];
+        try {
+            for (const ctx of ctxByTask.values()) {
+                const reviewEntry = ensurePhaseEntry(ctx.status, phaseArg);
+                const currentVerdict = reviewEntry.verdict ?? '';
+                if (!advancingVerdicts.has(currentVerdict)) {
+                    reviewEntry.verdict = 'sanctioned';
+                    reviewEntry.operator_accepted = true;
+                    reviewEntry.operator_accepted_at = today();
+                    reviewEntry.operator_accepted_sha = sharedSha;
+                } else {
+                    delete reviewEntry.operator_accepted;
+                    delete reviewEntry.operator_accepted_at;
+                    delete reviewEntry.operator_accepted_sha;
+                }
+                reviewEntry.status = 'done';
+                ctx.status.updated = today();
+                writeStatusAtomic(ctx.statusPath, ctx.status);
+                completedWrites.push(ctx.statusPath);
+            }
+        } catch (error) {
+            const rollbackErrors: string[] = [];
+            for (const filePath of completedWrites) {
+                const original = originalSnapshots.get(filePath);
+                if (original === undefined) continue;
+                try {
+                    const tmpFile = `${filePath}.rollback.tmp`;
+                    fs.writeFileSync(tmpFile, original, 'utf8');
+                    fs.renameSync(tmpFile, filePath);
+                } catch (rollbackErr) {
+                    const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+                    rollbackErrors.push(`    ${filePath}: ${message}`);
+                }
+            }
+            const originalMessage = error instanceof Error ? error.message : String(error);
+            if (rollbackErrors.length > 0) {
+                throw new Error(
+                    `Error: bundled review accept failed mid-write AND rollback also failed.\n` +
+                    `  Original error: ${originalMessage}\n` +
+                    `  Rollback failures:\n${rollbackErrors.join('\n')}`
+                );
+            }
+            throw new Error(`Error: bundled review accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
+        }
+
+        for (const ctx of ctxByTask.values()) {
+            const notesPath = path.join(taskDirForCwd(ctx.taskCwd, ctx.id), 'notes.md');
+            const entry = ctx.status.phases[phaseArg];
+            const sanctioned = entry?.verdict === 'sanctioned';
+            const bundleNote = ids.length > 1 ? ` Bundle: ${ids.join(', ')}.` : '';
+            const noteLine =
+                `[${today()}] Operator accepted ${phaseArg} via \`canon task accept\` — ` +
+                `${sanctioned ? 'sanctioned (agent verdict overridden)' : 'unblocked (advancing verdict preserved)'}. ` +
+                `Reason: ${reason}.${bundleNote}`;
+            try {
+                if (fs.existsSync(notesPath)) {
+                    fs.appendFileSync(notesPath, `\n${noteLine}\n`, 'utf8');
+                } else {
+                    fs.writeFileSync(notesPath, `${noteLine}\n`, 'utf8');
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.error(`Warning: failed to log to notes.md for ${ctx.id}: ${message}`);
+            }
+        }
+
+        const label = ids.length === 1 ? ids[0] : `[${ids.join(', ')}]`;
+        const nextPhase = phaseArg === 'spec_review' ? 'plan' : 'qa';
+        console.log(
+            `Accepted ${label}: ${phaseArg} → done.` +
+            `\n  Next phase: ${nextPhase}. Run \`canon run ${ids.join(' ')}\` to continue.`
+        );
+        return;
     }
 
     if (!options.force) {
@@ -1207,14 +1345,25 @@ export function taskCmd(args: string[]): void {
                 break;
             case 'accept': {
                 const force = rest.includes('--force');
-                const positional = rest.filter(arg => arg !== '--force');
+                let reason: string | undefined;
+                const positional: string[] = [];
+                for (let i = 0; i < rest.length; i += 1) {
+                    const arg = rest[i];
+                    if (arg === '--force') continue;
+                    if (arg === '--reason') {
+                        reason = rest[i + 1];
+                        i += 1;
+                        continue;
+                    }
+                    positional.push(arg);
+                }
                 if (positional.length < 2) {
-                    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--force]');
+                    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
                 }
                 // Last positional arg is the phase; everything before is a task ID.
                 const acceptPhase = positional[positional.length - 1];
                 const acceptIds = positional.slice(0, -1);
-                taskAccept(acceptIds, acceptPhase, { force });
+                taskAccept(acceptIds, acceptPhase, { force, reason });
                 break;
             }
             case 'reset-spec-review':

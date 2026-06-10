@@ -291,7 +291,7 @@ function resolveProjectName() {
 }
 var config = {
   projectName: resolveProjectName(),
-  claudeBudget: process.env.CLAUDE_BUDGET ?? "5.00",
+  claudeBudget: process.env.CLAUDE_BUDGET ?? null,
   claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
   claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
@@ -383,7 +383,7 @@ import path3 from "path";
 // scripts/run-task/types.ts
 var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
 var _PHASE_STATUS_VALUES = ["pending", "in_progress", "done", "changes_requested", "blocked"];
-var _VERDICT_VALUES = ["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap"];
+var _VERDICT_VALUES = ["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"];
 function isPhaseStatus(value) {
   return typeof value === "string" && _PHASE_STATUS_VALUES.includes(value);
 }
@@ -422,6 +422,22 @@ function taskDirFor(taskId) {
     return path3.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
   }
   return path3.join(resolveTaskCwd(taskId), "tasks", taskId);
+}
+function isOrphanedWorktreeState(taskId) {
+  const worktreesRoot = effectiveWorktreesRoot();
+  const directWorktree = path3.join(worktreesRoot, taskId);
+  const directStatus = path3.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs3.existsSync(directStatus)) return false;
+  const statusPath = path3.join(taskDirForRepoRoot(taskId), "status.json");
+  try {
+    const parsed = JSON.parse(fs3.readFileSync(statusPath, "utf8"));
+    if (parsed.worktree !== true) return false;
+    const branch = parsed.branch?.trim() ?? "";
+    if (!branch) return false;
+    return findExistingWorktreeForBranch(branch) === null;
+  } catch {
+    return false;
+  }
 }
 function resolveTaskCwd(taskId) {
   const worktreesRoot = effectiveWorktreesRoot();
@@ -918,19 +934,6 @@ function ensureBranch(taskIds, options = {}) {
   }
   info(`Branch recorded: ${resolvedBranch}`);
 }
-function ensureCheckedOutBaseBranch(taskIds) {
-  const baseBranch = getBaseBranch(taskIds);
-  const current = getCurrentBranch();
-  if (current === baseBranch) return baseBranch;
-  if (!branchExistsLocally(baseBranch)) {
-    die(
-      `Task bundle targets base branch '${baseBranch}', but the current checkout is '${current}' and '${baseBranch}' is not available locally. Check out the declared base branch first or fetch it, then re-run.`
-    );
-  }
-  info(`Switching from '${current}' to base branch '${baseBranch}' before shipping...`);
-  git("checkout", baseBranch);
-  return baseBranch;
-}
 function verifyBranch(taskIds) {
   const status = readStatus(taskIds[0]);
   if (!status.branch) return;
@@ -993,6 +996,12 @@ function getTreeDriftFiles(baseRef, cwd) {
 
 // scripts/pipeline-policy.ts
 var SIZE_ORDER = ["S", "M", "L", "XL"];
+var BUDGET_BY_SIZE = {
+  S: "5.00",
+  M: "5.00",
+  L: "10.00",
+  XL: "20.00"
+};
 function maxSize(tasks) {
   let max = "S";
   for (const t of tasks) {
@@ -1003,6 +1012,9 @@ function maxSize(tasks) {
 }
 function anyDelicate(tasks) {
   return tasks.some((t) => t.delicate ?? false);
+}
+function resolveBudget(effectiveSize, claudeBudget) {
+  return claudeBudget ?? BUDGET_BY_SIZE[effectiveSize];
 }
 function detectTier(tasks) {
   return tasks.some((t) => (t.task_size ?? "M") !== "S" || (t.delicate ?? false)) ? "full" : "fast";
@@ -1032,7 +1044,7 @@ function codexMatrix(config3) {
       S: { model: config3.codexModelMini, effort: "medium" },
       M: { model: config3.codexModelMini, effort: "high" },
       L: { model: config3.codexModelMini, effort: "high" },
-      XL: { model: config3.codexModelFull, effort: "xhigh" }
+      XL: { model: config3.codexModelFull, effort: "high" }
     }
   };
 }
@@ -1074,7 +1086,7 @@ function claudeMatrix(config3) {
   const codeReviewMatrix = () => ({
     S: { model: config3.claudeModelReview, effort: "medium" },
     M: { model: config3.claudeModelReview, effort: "high" },
-    L: { model: config3.claudeModelReviewLarge, effort: "high" },
+    L: { model: config3.claudeModelReview, effort: "high" },
     XL: { model: config3.claudeModelReviewLarge, effort: "xhigh" }
   });
   return {
@@ -1092,6 +1104,7 @@ function getPipelinePolicy(tasks, config3) {
   const matrix = codexMatrix(config3);
   const claudeMat = claudeMatrix(config3);
   const maxReviewLoops = config3.maxReviewLoops ?? defaultMaxReviewLoops(nominalSize);
+  const budget = resolveBudget(effectiveSize, config3.claudeBudget);
   return {
     tier,
     nominalSize,
@@ -1099,7 +1112,7 @@ function getPipelinePolicy(tasks, config3) {
     planCombined: tier === "fast",
     maxReviewLoops,
     codex: (phase) => matrix[phase][effectiveSize],
-    claude: (phase) => claudeMat[phase][effectiveSize]
+    claude: (phase) => ({ ...claudeMat[phase][effectiveSize], budget })
   };
 }
 
@@ -1112,7 +1125,8 @@ var config2 = {
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.4-mini",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.5",
-  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null
+  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+  claudeBudget: process.env.CLAUDE_BUDGET ?? null
 };
 function policyConfig() {
   return {
@@ -1123,7 +1137,8 @@ function policyConfig() {
     claudeModelQa: config2.claudeModelQa,
     codexModelMini: config2.codexModelMini,
     codexModelFull: config2.codexModelFull,
-    maxReviewLoops: config2.maxReviewLoops
+    maxReviewLoops: config2.maxReviewLoops,
+    claudeBudget: config2.claudeBudget
   };
 }
 function toPolicyInputs(tasks) {
@@ -1371,9 +1386,9 @@ function runInteractiveClaude(args, cwd) {
     });
   });
 }
-async function runClaude(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT) {
+async function runClaude(prompt, interactive, resumeId, model, effort, budget, metricsContext, cwd = REPO_ROOT) {
   info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : "Calling Claude Code...");
-  info(`Model: ${model} | Effort: ${effort}`);
+  info(interactive ? `Model: ${model} | Effort: ${effort} | Budget: uncapped (interactive)` : `Model: ${model} | Effort: ${effort} | Budget: ${budget}`);
   const startMs = Date.now();
   let status = "ok";
   let tokens;
@@ -1418,7 +1433,7 @@ async function runClaude(prompt, interactive, resumeId, model, effort, metricsCo
         "--add-dir",
         REPO_ROOT,
         "--max-budget-usd",
-        config.claudeBudget,
+        budget,
         "--dangerously-skip-permissions",
         "--output-format",
         "stream-json",
@@ -3312,7 +3327,7 @@ function renderTemplate(template, view) {
 }
 
 // scripts/run-task/prompts/templates/code-review-foreman.md
-var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nYour job is to spawn two review lenses as isolated sub-agents, collect their findings, adjudicate using the spec (which you hold and the cold lens does not), then write one `review.md` and set the verdict.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. Both lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give both lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Foreman Protocol\n\n### 1. Spawn Lenses In Parallel\n\nUse the Task tool to spawn both lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nDo not let either lens see the other lens's output.\n\n### 2. Adjudicate\n\nUse the two lens outputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\n1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record \"flagged by both lenses.\"\n2. Cold-vs-spec reconciliation: if a cold finding is explained as intended by the spec, drop it and record `Dismissed (cold): <finding> - <spec reason>` in `review.md`.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Only optional nits or cleanup -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the spec reason.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
+var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nYour job is to spawn two review lenses as isolated sub-agents, collect their findings, adjudicate using the spec (which you hold and the cold lens does not), then write one `review.md` and set the verdict.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. Both lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give both lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Foreman Protocol\n\n### 1. Spawn Lenses In Parallel\n\nUse the Task tool to spawn both lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nDo not let either lens see the other lens's output.\n\n### 2. Adjudicate\n\nUse the two lens outputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record \"flagged by both lenses.\" A finding flagged by both lenses is higher-confidence regardless of either lens's self-tag.\n2. Cold-vs-spec reconciliation: if a cold finding is explained as intended by the spec, drop it and record `Dismissed (cold): <finding> - <spec reason>` in `review.md`.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Only optional nits or cleanup -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the spec reason.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement.md
 var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md and the matrix in AGENTS.md. Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
@@ -3652,7 +3667,7 @@ function promptCodeReview(state, baseBranch, scopedDiff = null) {
   ).join("\n") : tasks.map(
     (t) => `- \`${t.taskId}\` -> read the Iteration ${priorIteration} section of \`tasks/${t.taskId}/handoff.md\` that addresses review round ${priorIteration}`
   ).join("\n");
-  const tightenLine = roundN >= 3 ? `**Round ${roundN} discipline.** Findings must be \`correctness bug\` or \`spec gap\` only - no \`optional cleanup/nit\` and no wording-only changes. We are tightening, not exploring. If your only finding is a wording preference, approve.` : "";
+  const tightenLine = roundN >= 3 ? `**Round ${roundN} synthesis discipline.** This tightens YOUR synthesis, not the lenses. Do NOT pass "only report high-severity" down to the lenses \u2014 they stay high-recall and report everything, as their charters instruct (a literal-following model that's told to self-censor suppresses real bugs, not just nits). At synthesis: drop \`optional cleanup/nit\` and wording-only findings from the verdict \u2014 fold or omit them. Only \`correctness bug\` and \`spec gap\` drive the verdict now. If after filtering your only finding is a wording preference, approve.` : "";
   return render3("code-review-foreman.md", {
     projectName: config.projectName,
     startup: CLAUDE_STARTUP,
@@ -3762,7 +3777,7 @@ function refreshCanonSnapshotsAtPaths(statusFilePaths, options = {}) {
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
-var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap"]);
+var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -3826,10 +3841,15 @@ function assertValidVerdict(phase, verdict) {
     throw new Error("Error: verdict is only valid for spec_review and code_review phases");
   }
   if (!VALID_VERDICTS.has(verdict)) {
-    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap`);
+    throw new Error(`Error: invalid verdict '${verdict}'. Must be one of: approved, approved_with_nits, changes_requested, needs_re_review, spec_gap, sanctioned`);
   }
   if (verdict === "spec_gap" && phase !== "code_review") {
     throw new Error(`Error: verdict 'spec_gap' is only valid for the code_review phase, not '${phase}'.`);
+  }
+  if (verdict === "sanctioned") {
+    throw new Error(
+      `Error: verdict 'sanctioned' cannot be set via \`canon task phase\`. Use \`canon task accept <id> ${phase} --reason "<why>"\` instead so operator_accepted audit fields and notes.md are written.`
+    );
   }
 }
 function priorIncompletePhases(status, phase) {
@@ -3904,7 +3924,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   if (REVIEW_PHASES.has(phaseArg)) {
     updateReviewCounters(entry, verdictArg);
   }
-  if (phaseArg === "implement" && previousStatus === "done" && statusArg !== "done") {
+  if ((phaseArg === "implement" || phaseArg === "spec_review" || phaseArg === "code_review") && previousStatus === "done" && statusArg !== "done") {
     delete entry.operator_accepted;
     delete entry.operator_accepted_sha;
     delete entry.operator_accepted_at;
@@ -4159,7 +4179,7 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
   const cfg = getClaudeConfig("code_review", tasks);
   const reviewResumeId = maxIter > 0 ? resumeId : null;
   const scopedDiff = getScopedDiff(baseBranch, activeCwd);
-  const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, {
+  const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
     taskId: taskIds.join("+"),
     phase: "code_review",
     iteration: maxIter,
@@ -4363,7 +4383,7 @@ async function runPlanPhase(state, interactive) {
   for (const t of tasks) taskPhase(t.taskId, "plan", "in_progress");
   const cfg = getClaudeConfig("plan", tasks);
   const activeCwd = getActiveCwd(taskIds);
-  const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, {
+  const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, cfg.budget, {
     taskId: taskIds.join("+"),
     phase: "plan",
     iteration: tasks[0].status.phases.plan?.iterations_current_loop ?? tasks[0].status.phases.plan?.iterations ?? 0,
@@ -4395,7 +4415,7 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
   for (const t of tasks) taskPhase(t.taskId, "qa", "in_progress");
   const cfg = getClaudeConfig("qa", tasks);
   const activeCwd = getActiveCwd(taskIds);
-  const result = await runClaude(promptQa(state, resolvedPrTemplate), interactive, null, cfg.model, cfg.effort, {
+  const result = await runClaude(promptQa(state, resolvedPrTemplate), interactive, null, cfg.model, cfg.effort, cfg.budget, {
     taskId: taskIds.join("+"),
     phase: "qa",
     iteration: tasks[0].status.phases.qa?.iterations_current_loop ?? tasks[0].status.phases.qa?.iterations ?? 0,
@@ -4430,7 +4450,7 @@ async function runSpecPhase(state, interactive, resumeId) {
     for (const t of tasks) taskPhase(t.taskId, "spec", "in_progress");
     const cfg2 = getClaudeConfig("spec", tasks);
     const activeCwd2 = getActiveCwd(taskIds);
-    const result2 = await runClaude(promptSpecRevision(state), interactive, resumeId, cfg2.model, cfg2.effort, {
+    const result2 = await runClaude(promptSpecRevision(state), interactive, resumeId, cfg2.model, cfg2.effort, cfg2.budget, {
       taskId: taskIds.join("+"),
       phase: "spec",
       iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0,
@@ -4443,7 +4463,7 @@ async function runSpecPhase(state, interactive, resumeId) {
   for (const t of tasks) taskPhase(t.taskId, "spec", "in_progress");
   const cfg = getClaudeConfig("spec", tasks);
   const activeCwd = getActiveCwd(taskIds);
-  const result = await runClaude(promptSpec(state), interactive, null, cfg.model, cfg.effort, {
+  const result = await runClaude(promptSpec(state), interactive, null, cfg.model, cfg.effort, cfg.budget, {
     taskId: taskIds.join("+"),
     phase: "spec",
     iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0,
@@ -5179,34 +5199,19 @@ function createDraftPRForTask(taskIds, branchName) {
 function formatExistingPRMessage(prNum, prUrl) {
   return `Existing draft PR: #${prNum} (${prUrl})`;
 }
-function recordPinnedPRNumber(taskIds, prNum, branchName, cwd) {
-  let anyChanged = false;
+function sidecarPathFor(taskId, taskDir = taskDirFor2(taskId)) {
+  return path17.join(taskDir, ".pr-number");
+}
+function recordPinnedPRNumber(taskIds, prNum) {
+  const alreadyPinned = taskIds.every((taskId) => readSidecarPRNumber(taskId) === prNum);
+  if (alreadyPinned) return;
   for (const taskId of taskIds) {
-    const status = readStatus(taskId);
-    if (readPinnedPrNumber(status) === prNum) continue;
-    status.pr = { number: prNum };
-    writeStatus(taskId, status);
-    anyChanged = true;
-  }
-  if (!anyChanged) return;
-  for (const taskId of taskIds) {
-    const relStatusPath = path17.join("tasks", taskId, "status.json");
-    const addResult = gitSafeAt2(cwd, "add", "--", relStatusPath);
-    if (!addResult.ok) {
-      die2(`Failed to stage ${relStatusPath} after recording PR #${prNum}: ${addResult.stderr || "unknown error"}`);
-    }
-  }
-  const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(", ");
-  const commitResult = gitSafeAt2(cwd, "commit", "-m", `chore: record pr.number for ${label}`);
-  if (!commitResult.ok) {
-    die2(`Failed to commit pr.number recording for ${label}: ${commitResult.stderr || "unknown error"}`);
-  }
-  const pushResult = gitSafeAt2(cwd, "push", "origin", branchName);
-  if (!pushResult.ok) {
-    die2(`Failed to push pr.number recording for ${label}: ${pushResult.stderr || "unknown error"}`);
+    const sidecarPath = sidecarPathFor(taskId);
+    fs16.mkdirSync(path17.dirname(sidecarPath), { recursive: true });
+    fs16.writeFileSync(sidecarPath, String(prNum), "utf8");
   }
 }
-function reportOrCreatePR(taskIds, branchName, cwd) {
+function reportOrCreatePR(taskIds, branchName) {
   if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
   const baseBranch = getBaseBranch(taskIds);
   const openPR = findOpenPRNumber(branchName, baseBranch);
@@ -5227,7 +5232,7 @@ function reportOrCreatePR(taskIds, branchName, cwd) {
       prNum = createdPR;
     }
   }
-  recordPinnedPRNumber(taskIds, prNum, branchName, cwd);
+  recordPinnedPRNumber(taskIds, prNum);
 }
 function parseOriginRepoSlug(remoteUrl) {
   const match = remoteUrl.trim().match(/github\.com[:/](.+?)(?:\.git)?$/);
@@ -5418,7 +5423,7 @@ Bypass with --force if you've verified the drift is intentional.`
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
       }
-      if (createPR) reportOrCreatePR(taskIds, branchName2, cwd);
+      if (createPR) reportOrCreatePR(taskIds, branchName2);
       return;
     }
   }
@@ -5498,7 +5503,7 @@ If this is a source or test file, it should have been committed during the imple
   if (!pushResult.ok) {
     die2(`Human review push failed: ${pushResult.stderr || "unknown error"}`);
   }
-  if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
+  if (createPR) reportOrCreatePR(taskIds, branchName);
 }
 function printDryRunPlan(state) {
   const { tasks } = state;
@@ -5559,32 +5564,32 @@ function resolveTaskBranchName(taskId) {
   }
   return `task/${taskId}`;
 }
-function assertTaskBranchPushed(taskId) {
-  const branchName = resolveTaskBranchName(taskId);
-  if (!branchExistsLocally(branchName)) return;
-  gitSafe("fetch", "origin", branchName);
-  const remoteRefResult = gitSafe("rev-parse", "--verify", `origin/${branchName}`);
+function assertTaskBranchPushed(taskId, branchName) {
+  const resolvedBranchName = branchName ?? resolveTaskBranchName(taskId);
+  if (!branchExistsLocally(resolvedBranchName)) return;
+  gitSafe("fetch", "origin", resolvedBranchName);
+  const remoteRefResult = gitSafe("rev-parse", "--verify", `origin/${resolvedBranchName}`);
   if (!remoteRefResult.ok) {
     warn2(
-      `origin/${branchName} not found (${remoteRefResult.stderr.trim() || "unknown"}). Continuing \u2014 assuming the remote branch was deleted by an earlier merge. If you have unpushed work on local ${branchName} you wanted to ship, abort with Ctrl+C and push it now.`
+      `origin/${resolvedBranchName} not found (${remoteRefResult.stderr.trim() || "unknown"}). Continuing \u2014 assuming the remote branch was deleted by an earlier merge. If you have unpushed work on local ${resolvedBranchName} you wanted to ship, abort with Ctrl+C and push it now.`
     );
     return;
   }
-  const aheadResult = gitSafe("rev-list", "--count", `origin/${branchName}..${branchName}`);
+  const aheadResult = gitSafe("rev-list", "--count", `origin/${resolvedBranchName}..${resolvedBranchName}`);
   if (!aheadResult.ok) {
-    warn2(`Could not compute ${branchName} vs origin/${branchName} divergence: ${aheadResult.stderr}. Skipping push-verify.`);
+    warn2(`Could not compute ${resolvedBranchName} vs origin/${resolvedBranchName} divergence: ${aheadResult.stderr}. Skipping push-verify.`);
     return;
   }
   const ahead = Number.parseInt(aheadResult.stdout.trim(), 10);
   if (Number.isNaN(ahead) || ahead === 0) return;
-  const localSha = gitSafe("rev-parse", branchName).stdout.trim();
-  const remoteSha = gitSafe("rev-parse", `origin/${branchName}`).stdout.trim();
+  const localSha = gitSafe("rev-parse", resolvedBranchName).stdout.trim();
+  const remoteSha = gitSafe("rev-parse", `origin/${resolvedBranchName}`).stdout.trim();
   die(
-    `--ship aborted: local ${branchName} has ${ahead} commit${ahead === 1 ? "" : "s"} not on origin.
-  Local HEAD: ${localSha.slice(0, 7)} | origin/${branchName}: ${remoteSha.slice(0, 7)}
+    `--ship aborted: local ${resolvedBranchName} has ${ahead} commit${ahead === 1 ? "" : "s"} not on origin.
+  Local HEAD: ${localSha.slice(0, 7)} | origin/${resolvedBranchName}: ${remoteSha.slice(0, 7)}
   Pushing first prevents work loss \u2014 --ship destroys the local branch after merging the PR,
   so unpushed commits would be unreachable. Push:
-    git push origin ${branchName}
+    git push origin ${resolvedBranchName}
   Then re-run --ship.`
   );
 }
@@ -5658,18 +5663,22 @@ function getPRBaseRefName(prNum) {
   const ref = result.stdout.trim();
   return ref || null;
 }
-function readPinnedPrNumber(status) {
-  const pr = status.pr;
-  if (typeof pr !== "object" || pr === null) return null;
-  const num = pr.number;
-  if (typeof num !== "number" || !Number.isFinite(num) || !Number.isInteger(num) || num <= 0) {
+function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
+  const sidecarPath = sidecarPathFor(taskId, taskDir);
+  let raw;
+  try {
+    raw = fs16.readFileSync(sidecarPath, "utf8").trim();
+  } catch {
     return null;
   }
+  if (!/^\d+$/.test(raw)) return null;
+  const num = Number.parseInt(raw, 10);
+  if (!Number.isFinite(num) || !Number.isInteger(num) || num <= 0) return null;
   return num;
 }
-function resolveProofPRNumberForPrefetch(status, branchName, baseBranch) {
+function resolveProofPRNumberForPrefetch(taskId, branchName, baseBranch, taskCwd) {
   if (!ghAvailable) return null;
-  const pinnedPrNum = readPinnedPrNumber(status);
+  const pinnedPrNum = readSidecarPRNumber(taskId, path17.join(taskCwd, "tasks", taskId));
   if (pinnedPrNum !== null) return pinnedPrNum;
   return findOpenPRNumber(branchName, baseBranch) ?? findMergedPRNumber(branchName, baseBranch);
 }
@@ -5699,8 +5708,8 @@ function establishPRHeadAncestryProof(cwd, prNum, prHead, localTip) {
   }
   return { proven: true };
 }
-function establishMergeProof(status, branchName, localTip, baseBranch, cwd, prefetchedHeads) {
-  const pinnedPrNum = readPinnedPrNumber(status);
+function establishMergeProof(taskId, branchName, localTip, baseBranch, cwd, prefetchedHeads) {
+  const pinnedPrNum = readSidecarPRNumber(taskId, path17.join(cwd, "tasks", taskId));
   if (ghAvailable && pinnedPrNum !== null) {
     if (!isPRMerged(pinnedPrNum)) {
       return { proven: false, reason: `Pinned PR #${pinnedPrNum} is not in MERGED state.` };
@@ -5849,16 +5858,55 @@ function rewriteArchivedTaskRefs(taskIds) {
   }
 }
 function shipTasks(taskIds) {
+  const resolveShipCwd = (taskId) => {
+    const tasksDirOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+    if (tasksDirOverride) {
+      return path17.dirname(tasksDirOverride);
+    }
+    if (isOrphanedWorktreeState(taskId)) return REPO_ROOT2;
+    return path17.dirname(path17.dirname(taskDirFor2(taskId)));
+  };
+  const taskStatuses = /* @__PURE__ */ new Map();
+  const readShipStatus = (taskId) => {
+    const taskCwd = resolveShipCwd(taskId);
+    const candidates = [
+      path17.join(taskCwd, "tasks", taskId, "status.json"),
+      path17.join(taskCwd, taskId, "status.json"),
+      path17.join(taskDirForRepoRoot2(taskId), "status.json")
+    ];
+    for (const candidate of candidates) {
+      if (fs16.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
+    }
+    const snapshot = taskStatuses.get(taskId);
+    if (snapshot) return snapshot;
+    return readStatusFromPath(candidates[0], taskId);
+  };
+  const readShipBranchName = (taskId) => {
+    const branch = readShipStatus(taskId).branch;
+    return branch && branch.trim() ? branch.trim() : `task/${taskId}`;
+  };
+  const baseBranches = /* @__PURE__ */ new Set();
   for (const taskId of taskIds) {
-    const currentPhase = getCurrentPhase(readStatus(taskId));
+    const status = readShipStatus(taskId);
+    const declared = status.base_branch?.trim() ?? "";
+    baseBranches.add(declared || getDefaultBaseBranch());
+  }
+  if (baseBranches.size > 1) {
+    die(
+      `Bundle base_branch mismatch: tasks have different base branches (${[...baseBranches].join(", ")}). All tasks in a bundle must target the same base. Edit status.json to align before invoking.`
+    );
+  }
+  const baseBranch = [...baseBranches][0];
+  for (const taskId of taskIds) {
+    const currentPhase = getCurrentPhase(readShipStatus(taskId));
     if (currentPhase !== "human_review" && currentPhase !== "complete") {
       die(`--ship requires tasks at human_review or complete. '${taskId}' is at: ${currentPhase}`);
     }
   }
   for (const taskId of taskIds) {
-    const currentPhase = getCurrentPhase(readStatus(taskId));
+    const currentPhase = getCurrentPhase(readShipStatus(taskId));
     if (currentPhase !== "human_review") continue;
-    const taskCwd = getActiveCwd([taskId], { tolerateMissingWorktree: true });
+    const taskCwd = resolveShipCwd(taskId);
     const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path17.join(taskCwd, "tasks");
     const gateResult = checkPhaseGate(
       taskId,
@@ -5871,18 +5919,17 @@ function shipTasks(taskIds) {
     }
   }
   for (const taskId of taskIds) {
-    assertTaskBranchPushed(taskId);
+    assertTaskBranchPushed(taskId, readShipBranchName(taskId));
   }
-  const baseBranch = getBaseBranch(taskIds);
   const taskSnapshots = /* @__PURE__ */ new Map();
   const branchByTaskId = /* @__PURE__ */ new Map();
   for (const taskId of taskIds) {
-    const status = readStatus(taskId);
-    const branch = resolveTaskBranchName(taskId);
+    const status = readShipStatus(taskId);
+    const branch = readShipBranchName(taskId);
+    taskStatuses.set(taskId, status);
     taskSnapshots.set(taskId, {
       branch,
-      worktree: status.worktree === true,
-      statusForProof: status
+      worktree: status.worktree === true
     });
     branchByTaskId.set(taskId, branch);
   }
@@ -5897,7 +5944,20 @@ function shipTasks(taskIds) {
       gitSafe("checkout", "HEAD", "--", ...presentSharedDocs);
     }
   }
-  ensureCheckedOutBaseBranch(taskIds);
+  const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path17.join("tasks", taskId, "status.json"));
+  if (orphanedStatusPaths.length > 0) {
+    gitSafe("checkout", "HEAD", "--", ...orphanedStatusPaths);
+  }
+  const currentBaseCheckout = getCurrentBranch();
+  if (currentBaseCheckout !== baseBranch) {
+    if (!branchExistsLocally(baseBranch)) {
+      die(
+        `Task bundle targets base branch '${baseBranch}', but the current checkout is '${currentBaseCheckout}' and '${baseBranch}' is not available locally. Check out the declared base branch first or fetch it, then re-run.`
+      );
+    }
+    info(`Switching from '${currentBaseCheckout}' to base branch '${baseBranch}' before shipping...`);
+    git("checkout", baseBranch);
+  }
   const shipBaseDivergenceResult = verifyBaseDivergence(baseBranch, REPO_ROOT2);
   if (!shipBaseDivergenceResult.ok) {
     die(`--ship aborted: git error checking base divergence: ${shipBaseDivergenceResult.stderr || "unknown error"}`);
@@ -5912,16 +5972,16 @@ function shipTasks(taskIds) {
   }
   const prefetchedPRHeads = /* @__PURE__ */ new Map();
   for (const taskId of taskIds) {
-    const { branch: branchName, worktree: hasWorktree, statusForProof } = taskSnapshot(taskId);
+    const { branch: branchName } = taskSnapshot(taskId);
     if (!branchExistsLocally(branchName)) continue;
-    const prNum = resolveProofPRNumberForPrefetch(statusForProof, branchName, baseBranch);
+    const activeCwd = resolveShipCwd(taskId);
+    const prNum = resolveProofPRNumberForPrefetch(taskId, branchName, baseBranch, activeCwd);
     if (prNum === null || prefetchedPRHeads.has(prNum)) continue;
     const prHead = getMergedPRHeadSha(prNum);
     if (prHead === null) {
       prefetchedPRHeads.set(prNum, null);
       continue;
     }
-    const activeCwd = hasWorktree ? getActiveCwd([taskId], { tolerateMissingWorktree: true }) : REPO_ROOT2;
     prefetchedPRHeads.set(prNum, materializePRHead(activeCwd, prNum, prHead) ? prHead : null);
   }
   const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
@@ -5935,18 +5995,13 @@ function shipTasks(taskIds) {
   for (const taskId of taskIds) {
     const branchName = taskSnapshot(taskId).branch;
     if (!branchExistsLocally(branchName)) continue;
-    const activeCwd = taskSnapshot(taskId).worktree ? getActiveCwd([taskId], { tolerateMissingWorktree: true }) : REPO_ROOT2;
+    const activeCwd = resolveShipCwd(taskId);
     const tipResult = gitSafeAt(activeCwd, "rev-parse", branchName);
     if (!tipResult.ok || !tipResult.stdout.trim()) {
       proofFailures.push({ taskId, reason: `Could not resolve local tip for ${branchName}.` });
       continue;
     }
-    let taskStatus = taskSnapshot(taskId).statusForProof;
-    try {
-      taskStatus = readStatus(taskId);
-    } catch {
-    }
-    const proof = establishMergeProof(taskStatus, branchName, tipResult.stdout.trim(), baseBranch, activeCwd, prefetchedPRHeads);
+    const proof = establishMergeProof(taskId, branchName, tipResult.stdout.trim(), baseBranch, activeCwd, prefetchedPRHeads);
     if (!proof.proven) proofFailures.push({ taskId, reason: proof.reason });
   }
   if (proofFailures.length > 0) {
@@ -5967,7 +6022,7 @@ Recovery:
   const localBranchesToDelete = [];
   for (const taskId of taskIds) {
     const { worktree: hasWorktree } = taskSnapshot(taskId);
-    const status = readStatus(taskId);
+    const status = readShipStatus(taskId);
     if (hasWorktree) teardownWorktree(taskId);
     status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const humanReview = status.phases.human_review;
@@ -6002,11 +6057,24 @@ Recovery:
   process.exit(0);
 }
 function rerouteFromHumanReview(taskIds) {
-  for (const taskId of taskIds) {
-    const currentPhase = getCurrentPhase(readStatus(taskId));
-    if (currentPhase !== "human_review") {
-      die(`--reroute requires all tasks to be at human_review. '${taskId}' is at: ${currentPhase}`);
-    }
+  const entryStatuses = taskIds.map((taskId) => ({ taskId, status: readStatus(taskId) }));
+  const allAtHumanReview = entryStatuses.every(({ status }) => getCurrentPhase(status) === "human_review");
+  const allCodeReviewBlocked = entryStatuses.every(({ status }) => {
+    const codeReview = status.phases.code_review;
+    return getCurrentPhase(status) === "code_review" && codeReview?.status === "blocked";
+  });
+  const someSpecGap = entryStatuses.some(({ status }) => getVerdict(status, "code_review") === "spec_gap");
+  const isSpecGapReroute = allCodeReviewBlocked && someSpecGap;
+  if (!allAtHumanReview && !isSpecGapReroute) {
+    const summary = entryStatuses.map(({ taskId, status }) => {
+      const currentPhase = getCurrentPhase(status);
+      const verdict = getVerdict(status, "code_review") || "none";
+      const codeReviewStatus = status.phases.code_review?.status ?? "missing";
+      return `'${taskId}': ${currentPhase} (code_review ${codeReviewStatus}, verdict ${verdict})`;
+    }).join(", ");
+    die(
+      `--reroute requires either all tasks at human_review, or all tasks at code_review blocked with at least one spec_gap verdict. Current state: ${summary}`
+    );
   }
   const amendmentFailures = [];
   for (const taskId of taskIds) {
@@ -6048,7 +6116,8 @@ function rerouteFromHumanReview(taskIds) {
   const rerouteStatuses = taskIds.map(readStatus);
   const reroutableTier = detectTier2(rerouteStatuses);
   const isFullTierReroute = reroutableTier === "full";
-  info(isFullTierReroute ? "Rerouting: human_review \u2192 spec_review (resetting spec_review, plan, implement, code_review, qa)" : "Rerouting: human_review \u2192 implement (resetting implement, code_review, qa)");
+  const rerouteSource = isSpecGapReroute ? "code_review spec_gap" : "human_review";
+  info(isFullTierReroute ? `Rerouting: ${rerouteSource} \u2192 spec_review (resetting spec_review, plan, implement, code_review, qa)` : `Rerouting: ${rerouteSource} \u2192 implement (resetting implement, code_review, qa)`);
   let clearedFullSend = false;
   for (const taskId of taskIds) {
     const status = readStatus(taskId);
@@ -6058,7 +6127,7 @@ function rerouteFromHumanReview(taskIds) {
       implement.status = "pending";
       implement.rerouted = true;
       implement.reroute_count = (implement.reroute_count ?? 0) + 1;
-      clearImplementOperatorAcceptance(implement);
+      clearPhaseOperatorAcceptance(implement);
     }
     const codeReview = status.phases.code_review;
     if (codeReview) {
@@ -6067,6 +6136,7 @@ function rerouteFromHumanReview(taskIds) {
       codeReview.iterations_current_loop = 0;
       codeReview.iterations = 0;
       codeReview.preflight_rejections_current_loop = 0;
+      clearPhaseOperatorAcceptance(codeReview);
     }
     const qa = status.phases.qa;
     if (qa) qa.status = "pending";
@@ -6079,6 +6149,7 @@ function rerouteFromHumanReview(taskIds) {
         specReview.verdict = "";
         specReview.iterations_current_loop = 0;
         specReview.iterations = 0;
+        clearPhaseOperatorAcceptance(specReview);
       }
       const plan = status.phases.plan;
       if (plan) plan.status = "pending";
@@ -6107,18 +6178,18 @@ function rerouteFromHumanReview(taskIds) {
   info("   Amendment section with the new requirements. For worktree-backed tasks, edit the worktree copy;");
   info("   edit REPO_ROOT only before a worktree exists. review.md alone is not sufficient \u2014 Codex reads spec.md as the contract.");
 }
-function clearImplementOperatorAcceptance(implement) {
-  if (!implement) return;
-  delete implement.operator_accepted;
-  delete implement.operator_accepted_sha;
-  delete implement.operator_accepted_at;
+function clearPhaseOperatorAcceptance(entry) {
+  if (!entry) return;
+  delete entry.operator_accepted;
+  delete entry.operator_accepted_sha;
+  delete entry.operator_accepted_at;
 }
 function routeBackTo(taskIds, targetPhase) {
   const targetIdx = PHASE_ORDER2.indexOf(targetPhase);
   for (const taskId of taskIds) {
     const status = readStatus(taskId);
     if (targetIdx <= PHASE_ORDER2.indexOf("implement")) {
-      clearImplementOperatorAcceptance(status.phases.implement);
+      clearPhaseOperatorAcceptance(status.phases.implement);
     }
     for (let i = targetIdx; i < PHASE_ORDER2.length; i += 1) {
       const phaseEntry = status.phases[PHASE_ORDER2[i]];
@@ -6127,6 +6198,7 @@ function routeBackTo(taskIds, targetPhase) {
         if (Object.hasOwn(phaseEntry, "verdict")) {
           phaseEntry.verdict = "";
         }
+        clearPhaseOperatorAcceptance(phaseEntry);
       }
     }
     writeStatus(taskId, status);
@@ -6400,7 +6472,7 @@ async function retryAgentForPhase(taskId, phase, evidenceNote) {
       status
     }];
     const cfg = getClaudeConfig(phase, retryTasks);
-    await runClaude(prompt, false, sessionId, cfg.model, cfg.effort, void 0, retryCwd);
+    await runClaude(prompt, false, sessionId, cfg.model, cfg.effort, cfg.budget, void 0, retryCwd);
   }
   return getPhaseStatus(readStatus(taskId), phase) === "done" ? "done" : "drift";
 }
@@ -6516,7 +6588,9 @@ async function checkAndRoute(phase, taskIds) {
       const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], "code_review") === "spec_gap");
       if (specGapIds.length > 0) {
         const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
-        const reason = `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(", ")}. The implementation cannot resolve this because the root cause is the spec. Review tasks/<id>/review.md for the specific spec problem, amend the spec, reset code_review to pending, and re-run.`;
+        const reason = `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(", ")}. The implementation cannot resolve this \u2014 the root cause is in the spec. Recovery options (both operate on the full blocked bundle [${taskIds.join(" ")}]):
+  FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(" ")} --reroute
+  BLESS: canon task accept ${taskIds.join(" ")} code_review --reason "<why>"`;
         console.log("");
         console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
         console.log("  \u270B  SPEC GAP \u2014 Code review surfaced a spec problem.");
@@ -6525,12 +6599,16 @@ async function checkAndRoute(phase, taskIds) {
         console.log("  implementation bug. Review the findings:");
         for (const id of specGapIds) console.log(`    tasks/${id}/review.md`);
         console.log("");
-        console.log("  To resume after human triage:");
+        console.log("  Two recovery options:");
+        console.log("");
+        console.log("  FIX  \u2014 Amend the spec and re-run the full review chain:");
         for (const id of specGapIds) {
-          console.log(`    # Amend tasks/${id}/spec.md`);
-          console.log(`    canon task phase ${id} code_review pending`);
+          console.log(`    # Edit tasks/${id}/spec.md \u2014 add a ## Amendment section`);
         }
-        console.log(`    canon run ${taskIds.join(" ")}`);
+        console.log(`    canon run ${taskIds.join(" ")} --reroute`);
+        console.log("");
+        console.log("  BLESS \u2014 Sanction the gap as acceptable (adds an audit trail):");
+        console.log(`    canon task accept ${taskIds.join(" ")} code_review --reason "<why this gap is acceptable>"`);
         console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
         console.log("");
         autoBlockPhase(taskIds, "code_review", maxIter, reason);
@@ -6566,7 +6644,9 @@ function checkDeps(taskIds, skipAgentDeps = false) {
   }
   for (const taskId of taskIds) {
     validateTaskId(taskId);
-    if (!fs16.existsSync(statusFileFor(taskId))) {
+    const repoRootStatusFile = path17.join(REPO_ROOT2, "tasks", taskId, "status.json");
+    const statusFile = cliArgs.ship && fs16.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
+    if (!fs16.existsSync(statusFile)) {
       die(`No status.json at tasks/${taskId}/status.json \u2014 run canon task new ${taskId} first`);
     }
   }
@@ -6595,7 +6675,10 @@ async function main() {
   checkDeps(cliArgs.taskIds, skipAgentDeps);
   const earlyHeartbeatTaskIds = cliArgs.taskIds;
   let heartbeatStarted = false;
-  const earlyHeartbeatResolver = (id) => path17.dirname(statusFileFor(id));
+  const earlyHeartbeatResolver = (id) => {
+    const repoRootStatusFile = path17.join(REPO_ROOT2, "tasks", id, "status.json");
+    return path17.dirname(cliArgs.ship && fs16.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
+  };
   if (process.env.CANON_DETACHED === "1" && earlyHeartbeatTaskIds.length > 0) {
     bootHeartbeatWithHooks(earlyHeartbeatTaskIds, earlyHeartbeatResolver);
     heartbeatStarted = true;
@@ -6610,6 +6693,7 @@ async function main() {
   }
   if (cliArgs.ship) {
     shipTasks(cliArgs.taskIds);
+    return;
   }
   if (cliArgs.reroute) {
     rerouteFromHumanReview(cliArgs.taskIds);

@@ -20,7 +20,7 @@ export async function runSpecPhase(
         for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
         const cfg = getClaudeConfig('spec', tasks);
         const activeCwd = getActiveCwd(taskIds);
-        const result = await runClaude(promptSpecRevision(state), interactive, resumeId, cfg.model, cfg.effort, {
+        const result = await runClaude(promptSpecRevision(state), interactive, resumeId, cfg.model, cfg.effort, cfg.budget, {
             taskId: taskIds.join('+'),
             phase: 'spec',
             iteration: tasks[0].status.phases.spec?.iterations_current_loop
@@ -36,7 +36,7 @@ export async function runSpecPhase(
     for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
     const cfg = getClaudeConfig('spec', tasks);
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptSpec(state), interactive, null, cfg.model, cfg.effort, {
+    const result = await runClaude(promptSpec(state), interactive, null, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'spec',
         iteration: tasks[0].status.phases.spec?.iterations_current_loop

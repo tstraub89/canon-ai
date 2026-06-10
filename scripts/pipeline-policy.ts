@@ -12,6 +12,7 @@ export type PipelineTier = 'fast' | 'full';
 export type CodexPhase = 'spec_review' | 'implement';
 export type ClaudePhase = 'spec' | 'plan' | 'code_review' | 'qa';
 export type CodexModelConfig = { model: string; effort: string };
+type ClaudeMatrixConfig = { model: string; effort: string };
 
 // Minimal shape the policy needs. StatusJson and TaskContext.status both
 // satisfy this — callers don't have to reshape their data.
@@ -26,12 +27,15 @@ export type PolicyConfig = {
     claudeModelSpec: string;
     claudeModelPlan: string;
     claudeModelReview: string;
-    // Code-review model for L/XL/delicate. Sonnet at xhigh kept missing
-    // lifecycle/state-machine bugs that Codex CLI review caught at PR open
-    // (buffer-arming-on-failure class, project-switch flushes, etc.).
-    // Bumping the model — not just effort — closes the Claude/Codex tier
-    // asymmetry: Codex implement already runs `codexModelFull` on XL; Claude
-    // review was still on `claudeModelReview` regardless of size.
+    // Code-review model for XL/delicate only (re-baselined 2026-06; was
+    // L/XL/delicate). History: on Sonnet 4.5, Sonnet-at-xhigh missed
+    // lifecycle/state-machine bugs Codex CLI review caught at PR open
+    // (buffer-arming-on-failure class, project-switch flushes, etc.), so L+
+    // ran Opus. Sonnet 4.6 closed that long-horizon gap (matches the prior
+    // Opus flagship on long-horizon coding per vendor + practitioner eval), so
+    // L review returned to Sonnet. Opus is now reserved for XL/delicate, where
+    // the subtlest cross-file bugs and the highest blast radius remain worth
+    // the cost.
     claudeModelReviewLarge: string;
     claudeModelQa: string;
     codexModelMini: string;
@@ -39,9 +43,10 @@ export type PolicyConfig = {
     // null → use size-aware default (2 for S/M, 3 for L/XL). A number here
     // (from MAX_REVIEW_LOOPS env var) applies uniformly across all sizes.
     maxReviewLoops: number | null;
+    claudeBudget: string | null;
 };
 
-export type ClaudeModelConfig = { model: string; effort: string };
+export type ClaudeModelConfig = { model: string; effort: string; budget: string };
 
 export type PipelinePolicy = {
     tier: PipelineTier;
@@ -61,6 +66,12 @@ export type PipelinePolicy = {
 };
 
 const SIZE_ORDER: readonly TaskSize[] = ['S', 'M', 'L', 'XL'];
+const BUDGET_BY_SIZE: Record<TaskSize, string> = {
+    S: '5.00',
+    M: '5.00',
+    L: '10.00',
+    XL: '20.00',
+};
 
 function maxSize(tasks: readonly PolicyInput[]): TaskSize {
     let max: TaskSize = 'S';
@@ -73,6 +84,10 @@ function maxSize(tasks: readonly PolicyInput[]): TaskSize {
 
 function anyDelicate(tasks: readonly PolicyInput[]): boolean {
     return tasks.some(t => t.delicate ?? false);
+}
+
+function resolveBudget(effectiveSize: TaskSize, claudeBudget: string | null): string {
+    return claudeBudget ?? BUDGET_BY_SIZE[effectiveSize];
 }
 
 // Fast tier: S only, non-delicate. Full tier: anything else — any M/L/XL,
@@ -118,7 +133,11 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                L; effort scales with size. XL/delicate needs full-model
     //                shape-checking because that's where expensive mistakes lurk.
     //   implement:   mini through L. S gets medium effort (token savings on
-    //                trivial changes). XL/delicate: full model at xhigh.
+    //                trivial changes). XL/delicate: full model at high. Not
+    //                xhigh — GPT-5.5 tends to overthink at xhigh with open-ended
+    //                tool access (cost without quality gain), and canon's thesis
+    //                is token discipline over reflexive max-effort. Raise via
+    //                env only if eval shows under-reasoning on delicate work.
     //
     // The `S` row under spec_review is unused in practice (S fast tier skips
     // Codex spec review entirely) but kept for completeness and testability.
@@ -133,7 +152,7 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
             S:  { model: config.codexModelMini, effort: 'medium' },
             M:  { model: config.codexModelMini, effort: 'high' },
             L:  { model: config.codexModelMini, effort: 'high' },
-            XL: { model: config.codexModelFull, effort: 'xhigh' },
+            XL: { model: config.codexModelFull, effort: 'high' },
         },
     };
 }
@@ -151,8 +170,8 @@ function claudeModelFor(config: PolicyConfig, phase: ClaudePhase): string {
     }
 }
 
-function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize, ClaudeModelConfig>> {
-    const buildHigh = (phase: ClaudePhase, xlEffort = 'xhigh'): Record<TaskSize, ClaudeModelConfig> => {
+function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize, ClaudeMatrixConfig>> {
+    const buildHigh = (phase: ClaudePhase, xlEffort = 'xhigh'): Record<TaskSize, ClaudeMatrixConfig> => {
         const model = claudeModelFor(config, phase);
         return {
             S:  { model, effort: 'medium' },
@@ -161,7 +180,7 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
             XL: { model, effort: xlEffort },
         };
     };
-    const buildMedium = (phase: ClaudePhase): Record<TaskSize, ClaudeModelConfig> => {
+    const buildMedium = (phase: ClaudePhase): Record<TaskSize, ClaudeMatrixConfig> => {
         const model = claudeModelFor(config, phase);
         return {
             S:  { model, effort: 'medium' },
@@ -170,15 +189,18 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
             XL: { model, effort: 'high' },
         };
     };
-    // code_review splits model by size: small (Sonnet) for S/M where the
-    // work is checklist-shaped AC verification; large (Opus) for L/XL/delicate
-    // where lifecycle/state-machine reasoning is what catches the bugs Codex
-    // CLI review was finding post-PR. Delicate promotes to XL effective size,
-    // so it picks up the large model automatically.
-    const codeReviewMatrix = (): Record<TaskSize, ClaudeModelConfig> => ({
+    // code_review splits model by size: Sonnet (claudeModelReview) handles
+    // S/M/L; Opus (claudeModelReviewLarge) is reserved for XL/delicate.
+    // Re-baselined 2026-06 for the Sonnet 4.6 generation — Sonnet 4.6 matches
+    // the prior Opus flagship on long-horizon / lifecycle / state-machine bug
+    // detection (the class that forced the earlier L→Opus bump on Sonnet 4.5),
+    // so L review drops back to Sonnet. XL/delicate stays on Opus, where the
+    // most subtle cross-file bugs and the highest blast radius live. Delicate
+    // promotes to XL effective size, so it picks up Opus automatically.
+    const codeReviewMatrix = (): Record<TaskSize, ClaudeMatrixConfig> => ({
         S:  { model: config.claudeModelReview,      effort: 'medium' },
         M:  { model: config.claudeModelReview,      effort: 'high' },
-        L:  { model: config.claudeModelReviewLarge, effort: 'high' },
+        L:  { model: config.claudeModelReview,      effort: 'high' },
         XL: { model: config.claudeModelReviewLarge, effort: 'xhigh' },
     });
     return {
@@ -199,6 +221,7 @@ export function getPipelinePolicy(
     const matrix = codexMatrix(config);
     const claudeMat = claudeMatrix(config);
     const maxReviewLoops = config.maxReviewLoops ?? defaultMaxReviewLoops(nominalSize);
+    const budget = resolveBudget(effectiveSize, config.claudeBudget);
     return {
         tier,
         nominalSize,
@@ -206,6 +229,6 @@ export function getPipelinePolicy(
         planCombined: tier === 'fast',
         maxReviewLoops,
         codex: (phase) => matrix[phase][effectiveSize],
-        claude: (phase) => claudeMat[phase][effectiveSize],
+        claude: (phase) => ({ ...claudeMat[phase][effectiveSize], budget }),
     };
 }

@@ -36,7 +36,11 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     gitIn(localDir, 'config', 'user.name', 'Test User');
     gitIn(localDir, 'checkout', '-b', 'main');
     fs.writeFileSync(path.join(localDir, 'README.md'), '# fixture\n', 'utf8');
-    fs.writeFileSync(path.join(localDir, '.gitignore'), 'tasks/**/.canon-pid\ntasks/**/.heartbeat.json\n', 'utf8');
+    fs.writeFileSync(
+        path.join(localDir, '.gitignore'),
+        'tasks/**/.canon-pid\ntasks/**/.canon-run.log\ntasks/**/.heartbeat.json\ntasks/**/.pr-number\n',
+        'utf8',
+    );
     gitIn(localDir, 'add', 'README.md', '.gitignore');
     gitIn(localDir, 'commit', '-m', 'initial');
     gitIn(localDir, 'push', '-u', 'origin', 'main');
@@ -200,7 +204,7 @@ function runCanon(cwd: string, args: readonly string[], fakeTools: string, env: 
     };
 }
 
-function makeStatus(taskId: string, branch: string, prNumber?: unknown): Record<string, unknown> {
+function makeStatus(taskId: string, branch: string): Record<string, unknown> {
     const status: Record<string, unknown> = {
         id: taskId,
         title: taskId,
@@ -224,7 +228,6 @@ function makeStatus(taskId: string, branch: string, prNumber?: unknown): Record<
         escalations: [],
         sessions: {},
     };
-    if (prNumber !== undefined) status.pr = { number: prNumber };
     return status;
 }
 
@@ -234,6 +237,10 @@ function makeHumanReviewStatus(taskId: string, branch: string): Record<string, u
     const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
     phases.human_review = { status: 'pending', agent: 'human' };
     return status;
+}
+
+function writePrNumberSidecar(repoDir: string, taskId: string, prNumber: unknown): void {
+    fs.writeFileSync(path.join(repoDir, 'tasks', taskId, '.pr-number'), String(prNumber), 'utf8');
 }
 
 function writeTaskFiles(repoDir: string, taskId: string, status: Record<string, unknown>): void {
@@ -336,9 +343,12 @@ function prepareShipFixture(
     gitIn(localDir, 'checkout', '-b', branch);
     const statuses: Record<string, Record<string, unknown>> = {};
     for (const taskId of taskIds) {
-        const status = makeStatus(taskId, branch, options.prNumbers?.[taskId]);
+        const status = makeStatus(taskId, branch);
         statuses[taskId] = status;
         writeTaskFiles(localDir, taskId, status);
+        if (options.prNumbers?.[taskId] !== undefined) {
+            writePrNumberSidecar(localDir, taskId, options.prNumbers[taskId]);
+        }
     }
     gitIn(localDir, 'add', 'tasks');
     gitIn(localDir, 'commit', '-m', 'add task artifacts');
@@ -365,6 +375,90 @@ function prepareShipFixture(
     return { localDir, originDir, branch, tip, prHead, fakeTools };
 }
 
+function prepareSharedWorktreeShipFixture(
+    dir: string,
+    taskIds: readonly [string, string],
+    options: {
+        secondaryRepoBaseBranch?: string;
+        prNumber: number;
+    },
+): { localDir: string; branch: string; tip: string; fakeTools: string } {
+    const { localDir } = makeGitFixture(dir);
+    const fakeTools = path.join(dir, 'fake-tools');
+    setupFakeTools(fakeTools);
+
+    const branch = `task/${taskIds[0]}`;
+    const worktreeDir = path.join(dir, 'worktrees', taskIds[0]);
+    gitIn(localDir, 'worktree', 'add', worktreeDir, '-b', branch, 'main');
+
+    const primaryStatus = makeStatus(taskIds[0], branch);
+    primaryStatus.base_branch = 'main';
+    primaryStatus.worktree = true;
+    writeTaskFiles(localDir, taskIds[0], primaryStatus);
+    writeTaskFiles(worktreeDir, taskIds[0], primaryStatus);
+    writePrNumberSidecar(worktreeDir, taskIds[0], options.prNumber);
+
+    const secondaryWorktreeStatus = makeStatus(taskIds[1], branch);
+    secondaryWorktreeStatus.base_branch = 'main';
+    secondaryWorktreeStatus.worktree = true;
+    writeTaskFiles(worktreeDir, taskIds[1], secondaryWorktreeStatus);
+    writePrNumberSidecar(worktreeDir, taskIds[1], options.prNumber);
+
+    const secondaryRepoStatus = makeStatus(taskIds[1], branch);
+    secondaryRepoStatus.base_branch = options.secondaryRepoBaseBranch ?? 'release/v1';
+    secondaryRepoStatus.worktree = true;
+    writeTaskFiles(localDir, taskIds[1], secondaryRepoStatus);
+
+    gitIn(worktreeDir, 'add', 'tasks');
+    gitIn(worktreeDir, 'commit', '-m', 'add shared worktree task artifacts');
+    gitIn(worktreeDir, 'push', '-u', 'origin', branch);
+    const tip = gitIn(worktreeDir, 'rev-parse', branch);
+
+    return { localDir, branch, tip, fakeTools };
+}
+
+function prepareShipOverrideFixture(
+    dir: string,
+    taskId: string,
+    options: {
+        repoBaseBranch?: string;
+        overrideBaseBranch?: string;
+        prNumber: number;
+    },
+): { localDir: string; branch: string; tip: string; fakeTools: string; tasksRoot: string } {
+    const { localDir, originDir } = makeGitFixture(dir);
+    const fakeTools = path.join(dir, 'fake-tools');
+    setupFakeTools(fakeTools);
+
+    const branch = `task/${taskId}`;
+    gitIn(localDir, 'checkout', '-b', branch);
+
+    const repoStatus = makeStatus(taskId, branch);
+    repoStatus.base_branch = options.repoBaseBranch ?? 'release/v1';
+    repoStatus.worktree = false;
+    writeTaskFiles(localDir, taskId, repoStatus);
+    writePrNumberSidecar(localDir, taskId, options.prNumber);
+
+    gitIn(localDir, 'add', 'tasks');
+    gitIn(localDir, 'commit', '-m', 'add override task artifacts');
+    gitIn(localDir, 'push', '-u', 'origin', branch);
+    const tip = gitIn(localDir, 'rev-parse', branch);
+
+    const overrideDir = path.join(dir, 'override');
+    const tasksRoot = path.join(overrideDir, 'tasks');
+    execFileSync('git', ['clone', originDir, overrideDir], { stdio: 'ignore' });
+    gitIn(overrideDir, 'config', 'user.email', 'test@example.com');
+    gitIn(overrideDir, 'config', 'user.name', 'Test User');
+    gitIn(overrideDir, 'checkout', '-b', branch, `origin/${branch}`);
+    const overrideStatus = makeStatus(taskId, branch);
+    overrideStatus.base_branch = options.overrideBaseBranch ?? 'main';
+    overrideStatus.worktree = false;
+    writeTaskFiles(overrideDir, taskId, overrideStatus);
+    writePrNumberSidecar(overrideDir, taskId, options.prNumber);
+
+    return { localDir, branch, tip, fakeTools, tasksRoot };
+}
+
 function expectArchivedAndDeleted(repoDir: string, taskId: string, branch: string): void {
     assert.ok(fs.existsSync(path.join(repoDir, 'tasks', '_archive', taskId)));
     assert.ok(!fs.existsSync(path.join(repoDir, 'tasks', taskId)));
@@ -377,7 +471,7 @@ function expectTaskAndBranchSurvive(repoDir: string, taskId: string, branch: str
     assert.doesNotThrow(() => gitIn(repoDir, 'cat-file', '-e', `${branch}:tasks/${taskId}/status.json`));
 }
 
-void test('--pr pins pr.number on create path and leaves status clean', () => {
+void test('--pr writes the sidecar on create path and leaves status clean', () => {
     withTempDir('run-task-ship-pr-create-', dir => {
         const { localDir } = makeGitFixture(dir);
         const fakeTools = path.join(dir, 'fake-tools');
@@ -393,10 +487,34 @@ void test('--pr pins pr.number on create path and leaves status clean', () => {
         });
 
         assert.equal(result.status, 0, result.stderr);
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '101');
         const status = readStatusFile(localDir, taskId) as { pr?: { number?: number } };
-        assert.equal(status.pr?.number, 101);
+        assert.equal(status.pr, undefined);
         assert.equal(gitIn(localDir, 'status', '--porcelain'), '');
-        assert.match(gitIn(localDir, 'log', '--oneline', '-2'), /record pr\.number/);
+        assert.equal(gitIn(localDir, 'log', '--format=%s', '-1'), `chore: add task artifacts for ${taskId}`);
+        assert.equal(gitIn(localDir, 'log', '--format=%s', '--grep=record pr.number'), '');
+        assert.doesNotMatch(gitIn(localDir, 'log', '--format=%s', '-1'), /\[skip ci\]/);
+    });
+});
+
+void test('--push keeps the artifacts commit unmarked', () => {
+    withTempDir('run-task-ship-push-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const fakeTools = path.join(dir, 'fake-tools');
+        setupFakeTools(fakeTools);
+        const taskId = 'ship-push';
+        const branch = `task/${taskId}`;
+        gitIn(localDir, 'checkout', '-b', branch);
+        writeTaskFiles(localDir, taskId, makeHumanReviewStatus(taskId, branch));
+
+        const result = runCanon(localDir, [taskId, '--push'], fakeTools);
+
+        assert.equal(result.status, 0, result.stderr);
+        const status = readStatusFile(localDir, taskId) as { pr?: { number?: number } };
+        assert.equal(status.pr, undefined);
+        assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, '.pr-number')), false);
+        assert.equal(gitIn(localDir, 'status', '--porcelain'), '');
+        assert.doesNotMatch(gitIn(localDir, 'log', '--format=%s', '-1'), /\[skip ci\]/);
     });
 });
 
@@ -418,13 +536,43 @@ void test('--pr pins existing PR number and exits clean on re-run', () => {
         };
         const first = runCanon(localDir, [taskId, '--pr'], fakeTools, env);
         assert.equal(first.status, 0, first.stderr);
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '77');
         assert.equal(gitIn(localDir, 'status', '--porcelain'), '');
 
         const second = runCanon(localDir, [taskId, '--pr'], fakeTools, env);
         assert.equal(second.status, 0, second.stderr);
-        const status = readStatusFile(localDir, taskId) as { pr?: { number?: number } };
-        assert.equal(status.pr?.number, 77);
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '77');
         assert.equal(gitIn(localDir, 'status', '--porcelain'), '');
+        assert.doesNotMatch(gitIn(localDir, 'log', '--format=%s', '-1'), /\[skip ci\]/);
+    });
+});
+
+void test('--pr dirty path with already-pinned open PR keeps the head unmarked', () => {
+    withTempDir('run-task-ship-pr-pinned-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const fakeTools = path.join(dir, 'fake-tools');
+        setupFakeTools(fakeTools);
+        const taskId = 'ship-pr-pinned';
+        const branch = `task/${taskId}`;
+        gitIn(localDir, 'checkout', '-b', branch);
+        writeTaskFiles(localDir, taskId, makeHumanReviewStatus(taskId, branch));
+        writePrNumberSidecar(localDir, taskId, 77);
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', 'seed pinned PR');
+        gitIn(localDir, 'push', '-u', 'origin', branch);
+        fs.appendFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), '\nlocal dirty change\n', 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--pr'], fakeTools, {
+            FAKE_GH_OPEN_PR_NUMBER: '77',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_PR_URL: 'https://github.com/example/repo/pull/77',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '77');
+        assert.equal(gitIn(localDir, 'status', '--porcelain'), '');
+        assert.doesNotMatch(gitIn(localDir, 'log', '--format=%s', '-1'), /\[skip ci\]/);
     });
 });
 
@@ -449,7 +597,8 @@ void test('--pr pins bundle PR number to every task', () => {
         assert.equal(result.status, 0, result.stderr);
         for (const taskId of taskIds) {
             const status = readStatusFile(localDir, taskId) as { pr?: { number?: number } };
-            assert.equal(status.pr?.number, 88);
+            assert.equal(status.pr, undefined);
+            assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '88');
         }
     });
 });
@@ -460,6 +609,7 @@ void test('--ship proves pinned merged PR, fast-forwards, archives, and deletes 
         const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
             prNumbers: { [taskId]: 101 },
         });
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '101');
 
         const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
             FAKE_GH_PR_STATE: 'MERGED',
@@ -628,18 +778,94 @@ void test('--ship bundle proof is all-or-nothing', () => {
     });
 });
 
-void test('--ship malformed pr field fails closed instead of trusting the cast', () => {
+void test('--ship malformed sidecar fails closed instead of trusting the cast', () => {
     withTempDir('run-task-ship-malformed-pr-', dir => {
         const taskId = 'ship-malformed-pr';
         const { localDir, branch, fakeTools } = prepareShipFixture(dir, [taskId], {
             prNumbers: { [taskId]: 'not-a-number' },
         });
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), 'not-a-number');
 
         const result = runCanon(localDir, [taskId, '--ship'], fakeTools);
 
         assert.notEqual(result.status, 0);
         assert.match(result.stderr, /merge proof could not be established/);
         expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+
+void test('--ship orphaned worktree state reads the sidecar without crashing', () => {
+    withTempDir('run-task-ship-orphaned-worktree-', dir => {
+        const taskId = 'ship-orphaned-worktree';
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 109 },
+        });
+        const statusPath = path.join(localDir, 'tasks', taskId, 'status.json');
+        const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Record<string, unknown>;
+        status.worktree = true;
+        fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+    });
+});
+
+void test('--ship bundle secondary resolves to the shared worktree, not REPO_ROOT', () => {
+    withTempDir('run-task-ship-shared-worktree-', dir => {
+        const taskIds = ['ship-shared-primary', 'ship-shared-secondary'];
+        const { localDir, branch, tip, fakeTools } = prepareSharedWorktreeShipFixture(dir, taskIds as [string, string], {
+            prNumber: 210,
+            secondaryRepoBaseBranch: 'release/v1',
+        });
+
+        const result = runCanon(localDir, [...taskIds, '--ship'], fakeTools, {
+            FAKE_GH_OPEN_PR_NUMBER: '210',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_PR_URL: 'https://github.com/example/repo/pull/210',
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        for (const taskId of taskIds) {
+            assert.ok(fs.existsSync(path.join(localDir, 'tasks', '_archive', taskId)));
+            assert.ok(!fs.existsSync(path.join(localDir, 'tasks', taskId)));
+        }
+    });
+});
+
+void test('--ship honors CANON_TASKS_DIR_OVERRIDE when resolving ship cwd', () => {
+    withTempDir('run-task-ship-override-cwd-', dir => {
+        const taskId = 'ship-override-cwd';
+        const { localDir, branch, tip, fakeTools, tasksRoot } = prepareShipOverrideFixture(dir, taskId, {
+            prNumber: 211,
+            repoBaseBranch: 'release/v1',
+            overrideBaseBranch: 'main',
+        });
+
+        assert.equal(readStatusFile(localDir, taskId).base_branch, 'release/v1');
+        assert.equal(readStatusFile(path.dirname(tasksRoot), taskId).base_branch, 'main');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GH_OPEN_PR_NUMBER: '211',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_PR_URL: 'https://github.com/example/repo/pull/211',
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
     });
 });
 

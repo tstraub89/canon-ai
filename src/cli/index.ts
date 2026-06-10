@@ -53,8 +53,11 @@ canon task subcommands:
                             phases:   spec | spec_review | plan | implement |
                                       code_review | qa | human_review
                             status:   pending | in_progress | done | changes_requested | blocked
-                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review | spec_gap
-                                      (verdict applies to spec_review and code_review only)
+                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review | spec_gap | sanctioned
+                                      (verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)
+  accept <id...> <phase> [--reason "<text>"] [--force]
+                          Accept implement, or sanction spec_review/code_review with an audit reason.
+                          --reason is required for spec_review and code_review.
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.
   post-merge-sync [<branch>]

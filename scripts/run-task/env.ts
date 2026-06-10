@@ -121,7 +121,7 @@ export function resolveProjectName(): string {
 
 export const config = {
     projectName: resolveProjectName(),
-    claudeBudget: process.env.CLAUDE_BUDGET ?? '5.00',
+    claudeBudget: process.env.CLAUDE_BUDGET ?? null,
     claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? 'opus',
     claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? 'sonnet',
     claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? 'sonnet',
