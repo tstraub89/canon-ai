@@ -679,6 +679,20 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
             );
         }
 
+        const verdictlessTasks = [...ctxByTask.values()]
+            .filter(ctx => !(ctx.status.phases[phaseArg]?.verdict ?? '').trim())
+            .map(ctx => ctx.id);
+        if (verdictlessTasks.length > 0) {
+            const taskList = verdictlessTasks.join(', ');
+            const message =
+                `Error: cannot accept ${phaseArg} for [${taskList}] - no review verdict exists to sanction. ` +
+                `Run the review first, or pass --force to override.`;
+            if (!options.force) throw new Error(message);
+            for (const id of verdictlessTasks) {
+                console.error(`Warning: --force bypass: ${id} has no ${phaseArg} verdict; sanctioning anyway.`);
+            }
+        }
+
         const headRevParse = runGit(['rev-parse', 'HEAD'], { cwd: gitCwd });
         if (headRevParse.error || headRevParse.status !== 0) {
             const stderr = (headRevParse.stderr ?? '').trim() || 'unknown error';

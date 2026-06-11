@@ -171,6 +171,10 @@ function normalize(value: string): string {
     return value.replaceAll(REPO_ROOT, '<REPO_ROOT>');
 }
 
+function outputLineFor(output: string, taskId: string): string {
+    return output.split('\n').find(line => line.includes(`\`${taskId}\``)) ?? '';
+}
+
 function recordOrAssert(key: string, actual: string): void {
     if (process.env.UPDATE_GOLDENS === '1') {
         goldens[key] = actual;
@@ -310,6 +314,77 @@ void test('promptSpecReview and promptPlan reroute bundle lines preserve per-tas
     assert.match(planOutput, /test-pf-001.*reroute round 1.*`## Reroute Plan`/);
     assert.match(planOutput, /test-pf-004.*reroute round 2.*`## Reroute Plan Round 2`/);
 });
+
+void test('reroute prompts mark reroute_exempt siblings exempt instead of directing them at an Amendment', () => {
+    const gapTask = makeReroutedTask(TASK_ID, 1);
+    const exemptId = 'test-pf-005';
+    const exemptTask = makeReroutedTask(exemptId, 1, 'Approved sibling riding the bundle');
+    const exemptImpl = exemptTask.status.phases.implement as {
+        reroute_exempt?: boolean;
+        reroute_exempt_prior_verdict?: string;
+    };
+    exemptImpl.reroute_exempt = true;
+    exemptImpl.reroute_exempt_prior_verdict = 'approved';
+    const exemptDir = path.join(tmpRoot, exemptId);
+    fs.mkdirSync(exemptDir, { recursive: true });
+    fs.writeFileSync(path.join(exemptDir, 'status.json'), JSON.stringify(exemptTask.status, null, 2));
+    const state: PipelineState = { tasks: [gapTask, exemptTask], tier: 'full', isBundle: true };
+
+    const specReviewOutput = normalize(promptSpecReview(state));
+    assert.match(specReviewOutput, /test-pf-001.*reroute round 1.*`## Amendment`/);
+    assert.match(specReviewOutput, /test-pf-005.*EXEMPT from this reroute's amendment/);
+    assert.doesNotMatch(specReviewOutput, /test-pf-005.*review `## Amendment`/);
+    // The template's global per-task steps must defer to the EXEMPT lines,
+    // not unconditionally direct the reviewer at an Amendment heading.
+    assert.match(specReviewOutput, /EXCEPT tasks whose line above marks them EXEMPT/);
+
+    const planOutput = normalize(promptPlan(state));
+    assert.match(planOutput, /test-pf-001.*`## Reroute Plan`/);
+    assert.match(planOutput, /test-pf-005.*EXEMPT from this reroute's amendment/);
+    assert.doesNotMatch(planOutput, /test-pf-005.*append `## Reroute Plan/);
+    assert.match(planOutput, /EXCEPT tasks whose line above marks them EXEMPT/);
+
+    const implementOutput = normalize(promptImplementReroute(state, false, [], 'main'));
+    assert.match(implementOutput, /test-pf-001.*entering reroute round 1.*`## Amendment`/);
+    assert.match(implementOutput, /test-pf-005.*EXEMPT from this reroute's amendment/);
+    assert.doesNotMatch(implementOutput, /test-pf-005.*Locate `## Amendment/);
+    assert.match(implementOutput, /If a task's line above marks it EXEMPT, skip steps 1-2/);
+});
+
+for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
+    void test(`reroute prompts preserve ${priorVerdict} findings for exempt failing siblings`, () => {
+        const gapTask = makeReroutedTask(TASK_ID, 1);
+        const exemptId = `test-pf-failing-${priorVerdict.replaceAll('_', '-')}`;
+        const exemptTask = makeReroutedTask(exemptId, 1, 'Failing sibling riding the bundle');
+        exemptTask.status.phases.code_review = phase('claude', { status: 'pending', verdict: '' });
+        const exemptImpl = exemptTask.status.phases.implement as {
+            reroute_exempt?: boolean;
+            reroute_exempt_prior_verdict?: string;
+        };
+        exemptImpl.reroute_exempt = true;
+        exemptImpl.reroute_exempt_prior_verdict = priorVerdict;
+        const exemptDir = path.join(tmpRoot, exemptId);
+        fs.mkdirSync(exemptDir, { recursive: true });
+        fs.writeFileSync(path.join(exemptDir, 'status.json'), JSON.stringify(exemptTask.status, null, 2));
+        fs.writeFileSync(path.join(exemptDir, 'review.md'), reviewTemplate);
+        const state: PipelineState = { tasks: [gapTask, exemptTask], tier: 'full', isBundle: true };
+
+        const specReviewLine = outputLineFor(normalize(promptSpecReview(state)), exemptId);
+        assert.match(specReviewLine, new RegExp(priorVerdict));
+        assert.match(specReviewLine, /review\.md/);
+        assert.doesNotMatch(specReviewLine, /approved/i);
+
+        const planLine = outputLineFor(normalize(promptPlan(state)), exemptId);
+        assert.match(planLine, new RegExp(priorVerdict));
+        assert.doesNotMatch(planLine, /approved/i);
+
+        const implementLine = outputLineFor(normalize(promptImplementReroute(state, false, [], 'main')), exemptId);
+        assert.match(implementLine, new RegExp(priorVerdict));
+        assert.match(implementLine, /review\.md/);
+        assert.match(implementLine, /address ALL findings/);
+        assert.doesNotMatch(implementLine, /approved/i);
+    });
+}
 
 void test('promptImplement_fresh', () => {
     const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));

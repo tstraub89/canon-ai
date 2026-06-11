@@ -1,5 +1,5 @@
 import { REPO_ROOT } from '../env.js';
-import { info, warn } from '../cli.js';
+import { info, setExitReason, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
 import { runCommandOrDie } from '../git.js';
 import { toResumePrompt } from '../prompts/helpers.js';
@@ -85,9 +85,22 @@ export async function runCodex(
             process.stdout.write(`${displayChunks.join('\n\n')}\n`);
         }
 
-        if (result.spawnError) { console.error(result.spawnError.message); status = 'failed'; process.exit(1); }
-        if (result.stalled) { status = 'failed'; process.exit(1); }
-        if (result.signal) { status = 'failed'; process.exit(1); }
+        if (result.spawnError) {
+            console.error(result.spawnError.message);
+            status = 'failed';
+            setExitReason(`codex session spawn error: ${result.spawnError.message}`);
+            process.exit(1);
+        }
+        if (result.stalled) {
+            status = 'failed';
+            setExitReason('codex session stalled');
+            process.exit(1);
+        }
+        if (result.signal) {
+            status = 'failed';
+            setExitReason(`codex session received signal ${result.signal}`);
+            process.exit(1);
+        }
 
         if (result.exitCode !== 0) {
             status = 'failed';

@@ -525,7 +525,7 @@ void test('rerouteFromHumanReview rejects non-spec-gap code_review and off-phase
     });
 });
 
-void test('rerouteFromHumanReview reroutes whole mixed spec_gap bundle and clears every code_review verdict', () => {
+void test('rerouteFromHumanReview reroutes mixed spec_gap bundle when only gap task is amended', () => {
     withTempDir('reroute-preflight-spec-gap-bundle-', dir => {
         initGitRepo(dir);
         const tasksRoot = path.join(dir, 'tasks');
@@ -537,8 +537,9 @@ void test('rerouteFromHumanReview reroutes whole mixed spec_gap bundle and clear
         for (const [taskId, status] of Object.entries(statuses)) {
             writeTaskStatus(tasksRoot, taskId, status);
             writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
-            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nBundle fix.\n');
         }
+        writeSpec(path.join(worktreesRoot, 'task-a'), 'task-a', '# Spec\n\n## Amendment\n\nBundle fix.\n');
+        writeSpec(path.join(worktreesRoot, 'task-b'), 'task-b', '# Spec\n\nNo amendment needed for approved sibling.\n');
 
         const result = runReroute(dir, ['task-a', 'task-b'], false);
 
@@ -547,6 +548,7 @@ void test('rerouteFromHumanReview reroutes whole mixed spec_gap bundle and clear
             const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
                 status?: string;
                 phases?: {
+                    implement?: { reroute_exempt?: boolean; reroute_exempt_prior_verdict?: string };
                     code_review?: {
                         status?: string;
                         verdict?: string;
@@ -562,9 +564,52 @@ void test('rerouteFromHumanReview reroutes whole mixed spec_gap bundle and clear
             assert.equal(updated.phases?.code_review?.iterations_current_loop, 0);
             assert.equal(updated.phases?.code_review?.iterations, 0);
             assert.equal(updated.phases?.code_review?.preflight_rejections_current_loop, 0);
+            assert.equal(updated.phases?.implement?.reroute_exempt, taskId === 'task-b' ? true : undefined);
+            assert.equal(updated.phases?.implement?.reroute_exempt_prior_verdict, taskId === 'task-b' ? 'approved' : undefined);
         }
     });
 });
+
+for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
+    void test(`rerouteFromHumanReview preserves ${priorVerdict} verdict for exempt failing sibling`, () => {
+        withTempDir(`reroute-preflight-failing-sibling-${priorVerdict}-`, dir => {
+            initGitRepo(dir);
+            const tasksRoot = path.join(dir, 'tasks');
+            const worktreesRoot = path.join(dir, 'worktrees');
+            const statuses = {
+                'task-a': makeCodeReviewBlockedStatus('task-a', 'task/task-a', 'spec_gap'),
+                'task-b': makeCodeReviewBlockedStatus('task-b', 'task/task-b', priorVerdict),
+            };
+            for (const [taskId, status] of Object.entries(statuses)) {
+                writeTaskStatus(tasksRoot, taskId, status);
+                writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            }
+            writeSpec(path.join(worktreesRoot, 'task-a'), 'task-a', '# Spec\n\n## Amendment\n\nBundle fix.\n');
+            writeSpec(path.join(worktreesRoot, 'task-b'), 'task-b', '# Spec\n\nNo amendment needed for failing non-gap sibling.\n');
+
+            const result = runReroute(dir, ['task-a', 'task-b'], false);
+
+            assert.equal(result.status, 0, result.stderr);
+            const updatedA = readStatus(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a') as {
+                phases?: { implement?: { reroute_exempt?: boolean; reroute_exempt_prior_verdict?: string } };
+            };
+            const updatedB = readStatus(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b') as {
+                status?: string;
+                phases?: {
+                    implement?: { reroute_exempt?: boolean; reroute_exempt_prior_verdict?: string };
+                    code_review?: { status?: string; verdict?: string };
+                };
+            };
+            assert.equal(updatedA.phases?.implement?.reroute_exempt, undefined);
+            assert.equal(updatedA.phases?.implement?.reroute_exempt_prior_verdict, undefined);
+            assert.equal(updatedB.status, 'spec_review');
+            assert.equal(updatedB.phases?.implement?.reroute_exempt, true);
+            assert.equal(updatedB.phases?.implement?.reroute_exempt_prior_verdict, priorVerdict);
+            assert.equal(updatedB.phases?.code_review?.status, 'pending');
+            assert.equal(updatedB.phases?.code_review?.verdict, '');
+        });
+    });
+}
 
 void test('rerouteFromHumanReview full-tier resets spec_review and plan, preserves monotonic counters, and clears stale spec_review session', () => {
     withTempDir('reroute-preflight-full-tier-reset-', dir => {
@@ -1034,6 +1079,53 @@ void test('rerouteFromHumanReview enforces the round-2 heading and accepts the s
     });
 });
 
+void test('rerouteFromHumanReview second spec_gap reroute requires round-2 headings for amended and previously exempt tasks', () => {
+    withTempDir('reroute-preflight-mixed-round-two-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const statuses = {
+            'task-a': makeCodeReviewBlockedStatus('task-a', 'task/task-a', 'spec_gap', {
+                implement: { reroute_count: 1, rerouted: true },
+            }),
+            'task-b': makeCodeReviewBlockedStatus('task-b', 'task/task-b', 'spec_gap', {
+                implement: { reroute_count: 1, rerouted: true, reroute_exempt: true },
+            }),
+        };
+        for (const [taskId, status] of Object.entries(statuses)) {
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        }
+        writeSpec(path.join(worktreesRoot, 'task-a'), 'task-a', [
+            '# Spec',
+            '',
+            '## Amendment',
+            '',
+            'Round 1 amendment only.',
+            '',
+        ].join('\n'));
+        writeSpec(path.join(worktreesRoot, 'task-b'), 'task-b', [
+            '# Spec',
+            '',
+            'No amendment headings have ever been added for task B.',
+            '',
+        ].join('\n'));
+        const beforeA = fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'status.json'), 'utf8');
+        const beforeB = fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b', 'status.json'), 'utf8');
+
+        const result = runReroute(dir, ['task-a', 'task-b'], false);
+
+        assert.notEqual(result.status, 0);
+        for (const taskId of ['task-a', 'task-b']) {
+            assert.match(result.stderr, new RegExp(`${taskId}:[\\s\\S]*required round: 2[\\s\\S]*expected heading: ## Amendment Round 2`));
+        }
+        assert.match(result.stderr, /task-a:[\s\S]*found `## Amendment`/);
+        assert.match(result.stderr, /task-b:[\s\S]*no `## Amendment Round 2` heading found/);
+        assert.equal(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'status.json'), 'utf8'), beforeA);
+        assert.equal(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b', 'status.json'), 'utf8'), beforeB);
+    });
+});
+
 // ── Amendment 1: round-aware reroute evidence gates (P1/P2) ──────────────────
 
 void test('sliceRerouteRoundSection matches only the round-specific section', () => {
@@ -1086,6 +1178,31 @@ void test('checkRerouteEvidence is the shared reroute-evidence invariant', () =>
 
     // Not a reroute → caller uses first-pass logic.
     assert.deepEqual(checkRerouteEvidence('spec_review', '## Amendment Review\n- [x] **Approved**\n', firstPass), { reroute: false });
+    assert.deepEqual(
+        checkRerouteEvidence('spec_review', '## Verdict\n- [x] **Approved**\n', {
+            phases: { implement: { rerouted: true, reroute_count: 1, reroute_exempt: true } },
+        }),
+        { reroute: false },
+    );
+    assert.deepEqual(
+        checkRerouteEvidence('plan', '# Plan\n\n## Steps\n1. unchanged\n', {
+            phases: { implement: { rerouted: true, reroute_count: 1, reroute_exempt: true } },
+        }),
+        { reroute: false },
+    );
+    assert.deepEqual(
+        checkRerouteEvidence('spec_review', '## Verdict\n- [x] **Approved**\n', {
+            phases: {
+                implement: {
+                    rerouted: true,
+                    reroute_count: 1,
+                    reroute_exempt: true,
+                    reroute_exempt_prior_verdict: 'changes_requested',
+                },
+            },
+        }),
+        { reroute: false },
+    );
 
     // Reroute but reroute_count missing/invalid → fail closed (R4 P2).
     let r = checkRerouteEvidence('spec_review', '## Amendment Review\n- [x] **Approved**\n', reroute(undefined));

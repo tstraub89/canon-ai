@@ -7,7 +7,7 @@ A human rerouted this task after human review. The original spec was already rev
 {{{roundBanner}}}Tasks with amendments to review:
 {{{taskLines}}}
 
-**Amendment review scope** (for each task):
+**Amendment review scope** (for each task — EXCEPT tasks whose line above marks them EXEMPT: those have no amendment and require no review work this round; do not request changes for a missing Amendment heading on them):
 1. Read `tasks/<id>/spec.md` from your current directory. Locate the exact amendment heading named above: `## Amendment` for round 1, or `## Amendment Round N` for round 2+.
 2. Read `tasks/<id>/spec-review.md` so you know what was already reviewed and do not re-raise settled findings.
 3. Review the amendment itself: is it implementable as written, are ACs verifiable, and are edge cases handled?

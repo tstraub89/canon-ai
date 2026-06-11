@@ -267,3 +267,55 @@ void test('SIGINT to orchestrator kills tracked streamProcess children', async (
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
+
+// Graceful signal stops (canon stop / Ctrl-C / kill) re-raise the signal with
+// Node's default action, which bypasses 'exit' handlers — the exit marker must
+// be written from the shutdown-hook path before the re-raise, or graceful
+// stops become indistinguishable from SIGKILL/OOM in .canon-run.log.
+void test('SIGTERM shutdown writes exactly one exit marker before the re-raise', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-signal-marker-'));
+    const harnessPath = path.join(root, 'harness.mjs');
+    const signalsUrl = new URL('../scripts/run-task/signals.ts', import.meta.url).href;
+    const cliUrl = new URL('../scripts/run-task/cli.ts', import.meta.url).href;
+    fs.writeFileSync(harnessPath, [
+        `const signals = await import(${JSON.stringify(signalsUrl)});`,
+        `const cli = await import(${JSON.stringify(cliUrl)});`,
+        'cli.registerExitHandlers();',
+        'signals.registerShutdownHook(sig => cli.writeSignalExitMarker(sig));',
+        'setTimeout(() => {}, 5000);',
+        '',
+    ].join('\n'), 'utf8');
+
+    const stderrChunks: string[] = [];
+    const child = spawn(process.execPath, [
+        '--import', MD_LOADER,
+        '--import', TSX_LOADER,
+        harnessPath,
+    ], {
+        cwd: REPO_ROOT,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => { stderrChunks.push(chunk); });
+
+    try {
+        // Let the harness register its handlers before signaling.
+        await delay(700);
+        child.kill('SIGTERM');
+        // 'close', not 'exit': exit can fire while stderr pipe data is still
+        // in flight, intermittently losing the marker line (Codex P1 on #156).
+        const [code, signal] = await once(child, 'close') as [number | null, NodeJS.Signals | null];
+        const stderr = stderrChunks.join('');
+        // Native signal-termination semantics preserved (re-raise, not exit code).
+        assert.equal(code, null, stderr);
+        assert.equal(signal, 'SIGTERM', stderr);
+        const markers = stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+        assert.equal(markers.length, 1, stderr);
+        assert.match(markers[0] ?? '', /code=signal:SIGTERM/);
+        assert.match(markers[0] ?? '', /terminated by SIGTERM/);
+    } finally {
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});

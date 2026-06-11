@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { REPO_ROOT } from '../env.js';
-import { info, warn } from '../cli.js';
+import { info, setExitReason, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
 import { toResumePrompt } from '../prompts/helpers.js';
 import { formatLiveTick, streamProcess } from './stream.js';
@@ -89,6 +89,7 @@ export async function runClaude(
             const exitCode = await runInteractiveClaude(args, cwd);
             if (exitCode !== 0) {
                 status = 'failed';
+                setExitReason(`claude interactive session exited ${exitCode}`);
                 process.exit(exitCode);
             }
             return {
@@ -184,14 +185,28 @@ export async function runClaude(
 
             if (processedText) process.stdout.write(processedText);
 
-            if (result.spawnError) { console.error(result.spawnError.message); status = 'failed'; process.exit(1); }
-            if (result.stalled) { status = 'failed'; process.exit(1); }
+            if (result.spawnError) {
+                console.error(result.spawnError.message);
+                status = 'failed';
+                setExitReason(`claude session spawn error: ${result.spawnError.message}`);
+                process.exit(1);
+            }
+            if (result.stalled) {
+                status = 'failed';
+                setExitReason('claude session stalled');
+                process.exit(1);
+            }
             if (typeof result.exitCode === 'number' && result.exitCode !== 0) {
                 printClaudeTooOldHint(result.capturedStderr);
                 status = 'failed';
+                setExitReason(`claude session exited ${result.exitCode} (possible budget exhaustion — see CLAUDE_BUDGET)`);
                 process.exit(result.exitCode);
             }
-            if (result.signal) { status = 'failed'; process.exit(1); }
+            if (result.signal) {
+                status = 'failed';
+                setExitReason(`claude session received signal ${result.signal}`);
+                process.exit(1);
+            }
 
             return {
                 resumeNotFound: false,

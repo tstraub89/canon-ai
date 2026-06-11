@@ -470,3 +470,17 @@
 | 2026-06-10T04:07:20.054Z | v1.11-harness-cleanup | implement | codex | gpt-5.4-mini | 3 | 1088.4s | 94639533 | ok |
 | 2026-06-10T04:29:18.591Z | v1.11-harness-cleanup | code_review | claude | sonnet | 3 | 845.5s | 1177551 | ok |
 | 2026-06-10T04:34:29.954Z | v1.11-harness-cleanup | qa | claude | sonnet | 0 | 311.4s | 1300743 | ok |
+| 2026-06-10T18:17:13.143Z | recovery-surface-hardening | spec_review | codex | gpt-5.5 | 0 | 197.7s | 1338455 | ok |
+| 2026-06-10T18:23:23.051Z | recovery-surface-hardening | plan | claude | sonnet | 0 | 369.9s | 1111840 | ok |
+| 2026-06-10T18:31:45.278Z | recovery-surface-hardening | implement | codex | gpt-5.5 | 0 | 501.3s | 4436543 | ok |
+| 2026-06-10T18:40:39.743Z | recovery-surface-hardening | code_review | claude | opus | 0 | 534.0s | 798426 | ok |
+| 2026-06-10T18:43:58.179Z | recovery-surface-hardening | qa | claude | sonnet | 0 | 198.4s | 855847 | ok |
+| 2026-06-11T09:42:51.563Z | recovery-surface-hardening | spec_review | codex | gpt-5.5 | 0 | 113.6s | 606341 | ok |
+| 2026-06-11T09:54:11.293Z | recovery-surface-hardening | spec_review | codex | gpt-5.5 | 1 | 67.6s | 1322938 | ok |
+| 2026-06-11T09:57:07.244Z | recovery-surface-hardening | plan | claude | sonnet | 0 | 175.9s | 816765 | ok |
+| 2026-06-11T10:04:26.719Z | recovery-surface-hardening | implement | codex | gpt-5.5 | 0 | 439.4s | 9477291 | ok |
+| 2026-06-11T10:12:14.293Z | recovery-surface-hardening | code_review | claude | opus | 0 | 466.9s | 1361631 | ok |
+| 2026-06-11T10:16:42.067Z | recovery-surface-hardening | qa | claude | sonnet | 0 | 267.8s | 648575 | ok |
+| 2026-06-10T18:41:28.663Z | implement-done-evidence-guard+orchestrator-exit-logging | implement | codex | gpt-5.4-mini | 0 | 1645.3s | 24712448 | ok |
+| 2026-06-10T18:52:59.977Z | implement-done-evidence-guard+orchestrator-exit-logging | code_review | claude | sonnet | 0 | 690.6s | 1172356 | ok |
+| 2026-06-10T18:56:59.336Z | implement-done-evidence-guard+orchestrator-exit-logging | qa | claude | sonnet | 0 | 239.3s | 1526334 | ok |

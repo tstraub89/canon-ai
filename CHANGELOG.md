@@ -2,6 +2,15 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.11.1] — 2026-06-11
+
+### Fixed
+
+- **`canon task accept` can no longer sanction a review that never ran.** For `spec_review`/`code_review`, accepting a task whose phase has no recorded verdict now refuses with an actionable message before mutating any state — bundle-atomic, naming the verdict-less task(s). `--force` remains the explicit bypass (an infrastructure-halted block carries no verdict and intentionally requires it); blocked reviews with a real verdict sanction exactly as before.
+- **Mixed-bundle spec_gap recovery now works as documented.** Following the recovery banner — amend only the gap task's spec — no longer aborts `--reroute` on an approved sibling: the `## Amendment` requirement is scoped to `spec_gap` tasks on the spec_gap entry point (the human_review reroute still requires amendments from every task). Exempt siblings ride the bundle without amendment artifacts at any downstream gate, with collision-free round numbering for later reroutes. Exemption is verdict-aware: an approved sibling is re-verified for shared behavior only, while a sibling blocked with `changes_requested`/`needs_re_review` keeps its review findings binding — the reroute prompts direct the implementer at its existing `review.md` instead of calling it approved.
+- **A status-claimed `implement: done` is honored only with real handoff evidence.** If the implementer died after marking the phase done but before finishing `handoff.md` (or a fresh `canon run` encounters that stale state), the orchestrator now treats the task as not-done and routes it through the existing recovery flow — session preserved, one-shot resume retry — instead of advancing and wedging at auto-commit with a hand-edit of `status.json` as the only way out. "Retry succeeded" is only logged when evidence actually passes, and deletion-only implements count git-tracked deletions as evidence.
+- **Every orchestrator exit now writes a final, grep-able marker line to the run log** — `■ orchestrator exit code=<N> [reason=…] at <timestamp>` — covering agent-CLI failures (with a budget-exhaustion hint on Claude non-zero exits), `die()` including pre-boot argument/dependency failures, phase auto-blocks, uncaught exceptions/rejections, and graceful signal stops (`canon stop`, Ctrl-C). Multi-line reasons collapse to one line. A run log that ends without a marker now reliably means an un-catchable kill (SIGKILL/OOM), which the heartbeat + `canon doctor` staleness check still covers. The larger no-`process.exit`-in-agent-wrappers refactor remains scheduled for v1.12.
+
 ## [1.11.0] — 2026-06-10
 
 ### Added

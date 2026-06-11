@@ -1,6 +1,101 @@
+import fs from 'node:fs';
+
 import type { CliArgs } from './types.js';
 
+let exitReason: string | null = null;
+let exitHandlersRegistered = false;
+let markerWritten = false;
+const originalProcessExit = process.exit.bind(process);
+
+function describeExitReason(reason: unknown): string {
+    if (reason instanceof Error) {
+        return reason.message || reason.name;
+    }
+    return String(reason);
+}
+
+function writeExitMarker(code: number | string): void {
+    // One marker per process exit. The signal shutdown path writes its marker
+    // before the re-raise (Node's default signal action skips 'exit' handlers,
+    // but if the signal is somehow caught after all, this prevents a double).
+    if (markerWritten) return;
+    markerWritten = true;
+    const timestamp = new Date().toISOString();
+    // Multi-line die() messages (auto-commit aborts, phase-mismatch banners)
+    // must not split the marker across physical log lines — the marker's
+    // contract is one grep-able line per exit.
+    const reason = (exitReason ?? 'unspecified').replace(/\s*\r?\n\s*/g, ' · ').trim();
+    const line = `■ orchestrator exit code=${code} [reason=${reason}] at ${timestamp}\n`;
+    try {
+        fs.writeSync(2, line);
+    } catch {
+        try {
+            process.stderr.write(line);
+        } catch {
+            /* last-resort marker write failed */
+        }
+    }
+}
+
+export function setExitReason(reason: string): void {
+    exitReason = reason;
+}
+
+// Signal-driven shutdown (canon stop, Ctrl-C, kill) re-raises the signal with
+// Node's default action after cleanup, which terminates the process WITHOUT
+// running 'exit' handlers — so the marker must be written from the shutdown
+// hook before the re-raise. Registered via registerShutdownHook in main()
+// (signals.ts stays leaf-pure; cli.ts stays dependency-free).
+export function writeSignalExitMarker(sig: NodeJS.Signals | undefined): void {
+    const name = sig ?? 'unknown signal';
+    setExitReason(`terminated by ${name} (graceful shutdown — canon stop / Ctrl-C / kill)`);
+    writeExitMarker(`signal:${name}`);
+}
+
+export function registerExitHandlers(): void {
+    if (exitHandlersRegistered) return;
+    exitHandlersRegistered = true;
+
+    exitReason = null;
+
+    const patchedProcessExit: typeof process.exit = (code?: number | string): never => {
+        if (exitReason === null) {
+            exitReason = `process.exit code=${String(code ?? 0)}`;
+        }
+        return originalProcessExit(code);
+    };
+    process.exit = patchedProcessExit;
+
+    process.on('exit', code => {
+        writeExitMarker(code);
+        exitReason = null;
+    });
+
+    process.on('uncaughtException', err => {
+        setExitReason(`uncaught exception: ${describeExitReason(err)}`);
+        const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+        try {
+            fs.writeSync(2, `${message}\n`);
+        } catch {
+            process.stderr.write(`${message}\n`);
+        }
+        process.exit(1);
+    });
+
+    process.on('unhandledRejection', reason => {
+        setExitReason(`unhandled rejection: ${describeExitReason(reason)}`);
+        const message = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+        try {
+            fs.writeSync(2, `${message}\n`);
+        } catch {
+            process.stderr.write(`${message}\n`);
+        }
+        process.exit(1);
+    });
+}
+
 export function die(message: string): never {
+    setExitReason(message);
     console.error(`❌ ${message}`);
     process.exit(1);
 }
@@ -67,10 +162,12 @@ export function printUsage(): void {
 export function parseArgs(argv: string[]): CliArgs {
     if (argv.length === 0) {
         printUsage();
+        setExitReason('usage requested: no TASK-ID provided');
         process.exit(1);
     }
     if (argv[0] === '--help') {
         printUsage();
+        setExitReason('help requested');
         process.exit(0);
     }
 

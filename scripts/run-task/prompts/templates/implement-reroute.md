@@ -12,6 +12,7 @@ Tasks with amended specs:
 {{{groundingRule}}}
 
 **How to approach this:**
+0. If a task's line above marks it EXEMPT, skip steps 1-2 for that task entirely — its spec has NO Amendment section and its plan has NO Reroute Plan section, by design. For exempt tasks, follow the task-specific line above: approved siblings only need shared-behavior re-verification, while siblings with prior review findings must still address those findings.
 1. For each task above, read `tasks/<id>/spec.md` from your current working directory (the worktree). REPO_ROOT's copy is the pre-implement scaffold and does NOT contain operator amendments. Locate the exact heading named in its entry — `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.
 2. Check `tasks/<id>/plan.md` for `## Reroute Plan` (round 1) or `## Reroute Plan Round N` (N = that task's reroute round). If present, use that section as the delta guide. If absent (fast-tier reroute with no conversational reroute plan), read the base plan for orientation.
 3. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment — it was written before the amendment existed.

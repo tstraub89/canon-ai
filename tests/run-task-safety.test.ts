@@ -53,6 +53,10 @@ function setupFakeGit(scriptDir: string): void {
         '  cat "$FAKE_GIT_CURRENT_BRANCH"',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "HEAD" ]; then',
+        '  if [ -n "${FAKE_GIT_HEAD_SHA:-}" ]; then printf "%s\\n" "$FAKE_GIT_HEAD_SHA"; else printf "%s\\n" "abc123"; fi',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--verify" ] && [ "${3:-}" = "origin/$FAKE_GIT_REMOTE_BRANCH" ]; then',
         '  if [ "${FAKE_GIT_REMOTE_EXISTS:-1}" = "1" ]; then exit 0; fi',
         '  exit 1',
@@ -79,6 +83,14 @@ function setupFakeGit(scriptDir: string): void {
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "add" ]; then',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "ls-files" ] && [ "${2:-}" = "--deleted" ]; then',
+        '  if [ -n "${FAKE_GIT_DELETED_FILES:-}" ]; then printf "%s\\n" "$FAKE_GIT_DELETED_FILES"; fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "ls-files" ] && [ "${2:-}" = "--error-unmatch" ]; then',
+        '  if [ "${FAKE_GIT_LS_FILES_FAIL:-}" = "1" ]; then exit 1; fi',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "status" ] && [ "${2:-}" = "--porcelain=v1" ]; then',
@@ -126,6 +138,10 @@ function setupFakeGit(scriptDir: string): void {
         '    exit 1',
         '  fi',
         '  if [ -n "${FAKE_GIT_UNPUSHED_BASE_COMMITS:-}" ]; then printf "%s\\n" "$FAKE_GIT_UNPUSHED_BASE_COMMITS"; fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "log" ]; then',
+        '  if [ -n "${FAKE_GIT_LOG_OUTPUT:-}" ]; then printf "%s\\n" "$FAKE_GIT_LOG_OUTPUT"; fi',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "rev-list" ] && [ "${2:-}" = "--count" ] && [ "${3:-}" = "HEAD..origin/${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
@@ -527,6 +543,42 @@ function runHumanReviewCommit(
 
 function combinedOutput(result: { stderr: string; stdout: string }): string {
     return `${result.stdout}\n${result.stderr}`;
+}
+
+function writeImplementEvidenceFixture(tasksRoot: string, taskId: string, handoffChanges: readonly string[]): void {
+    fs.mkdirSync(path.join(tasksRoot, taskId), { recursive: true });
+    fs.writeFileSync(path.join(tasksRoot, taskId, 'spec.md'), [
+        `# Spec: ${taskId}`,
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `package.json` | fixture source file |',
+        '',
+        '## Validation Required',
+        '',
+        '- [x] lint',
+        '',
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(tasksRoot, taskId, 'handoff.md'), [
+        `# Implementation Handoff: ${taskId}`,
+        '',
+        '## Changes',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        ...handoffChanges.map(cell => `| ${cell} | fixture change |`),
+        '',
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `lint` | Pass | ok |',
+        '',
+    ].join('\n'), 'utf8');
 }
 
 function writeApprovedSpecReview(tasksRoot: string, taskId: string): void {
@@ -3448,6 +3500,589 @@ void test('checkAndRoute blocks code_review on spec_gap without advancing qa', (
         assert.equal(updated.escalations?.[0]?.phase, 'code_review');
         assert.match(updated.escalations?.[0]?.reason ?? '', /spec_gap/);
     });
+});
+
+void test('checkAndRoute revalidates implement done evidence before recovery and preserves sessions on a failed retry', () => {
+    withTempDir('implement-evidence-retry-fail-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+        writeImplementEvidenceFixture(tasksRoot, 'task-a', ['`package.json`']);
+        writeExecutable(fakeBins, 'codex', [
+            'set -eu',
+            'tasks_root="${CANON_TASKS_DIR_OVERRIDE:-tasks}"',
+            'task_dir="$tasks_root/task-a"',
+            'mkdir -p "$task_dir"',
+            'cat > "$task_dir/status.json" <<\'EOF\'',
+            '{',
+            '  "id": "task-a",',
+            '  "title": "task-a",',
+            '  "base_branch": "main",',
+            '  "branch": "task/task-a",',
+            '  "worktree": false,',
+            '  "status": "implement",',
+            '  "sessions": { "codex": "resume-1234567890" },',
+            '  "phases": {',
+            '    "spec": { "status": "done", "agent": "claude" },',
+            '    "spec_review": { "status": "done", "agent": "codex", "verdict": "approved" },',
+            '    "plan": { "status": "done", "agent": "claude" },',
+            '    "implement": { "status": "done", "agent": "codex" },',
+            '    "code_review": { "status": "pending", "agent": "claude", "verdict": "" },',
+            '    "qa": { "status": "pending", "agent": "claude" },',
+            '    "human_review": { "status": "pending", "agent": "human" }',
+            '  }',
+            '}',
+            'EOF',
+            'exit 0',
+        ]);
+
+        const taskId = 'task-a';
+        writeImplementEvidenceFixture(tasksRoot, taskId, []);
+        writeTaskStatus(tasksRoot, taskId, {
+            id: taskId,
+            title: taskId,
+            base_branch: 'main',
+            branch: 'task/task-a',
+            worktree: false,
+            status: 'implement',
+            sessions: { codex: 'resume-1234567890' },
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            '(async () => {',
+            `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_LOG_OUTPUT: 'abc123',
+        });
+
+        assert.equal(result.status, 2, result.stderr);
+        assert.match(result.stderr, /Evidence insufficient for 'task-a' implement: handoff\.md Changes table is empty/);
+        assert.match(result.stderr, /Retry completed but handoff evidence is still missing\/invalid: handoff\.md Changes table is empty/);
+        assert.match(result.stderr, /Re-run `canon run task-a` to resume the session\./);
+        assert.doesNotMatch(result.stderr, /Retry succeeded/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            sessions?: { codex?: string };
+            phases?: { implement?: { status?: string } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'in_progress');
+        assert.equal(updated.sessions?.codex, 'resume-1234567890');
+    });
+});
+
+void test('checkAndRoute honors valid implement evidence and proceeds without a retry', () => {
+    withTempDir('implement-evidence-valid-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const taskId = 'task-a';
+        writeImplementEvidenceFixture(tasksRoot, taskId, ['`package.json`']);
+        writeTaskStatus(tasksRoot, taskId, {
+            id: taskId,
+            title: taskId,
+            base_branch: 'main',
+            branch: 'task/task-a',
+            worktree: false,
+            sessions: { codex: 'resume-1234567890' },
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            '(async () => {',
+            `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_LOG_OUTPUT: 'abc123',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { implement?: { status?: string } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'done');
+        assert.doesNotMatch(result.stderr, /Retry/);
+    });
+});
+
+void test('checkAndRoute honors deletion-only implement evidence (listed file absent but git-tracked deletion)', () => {
+    withTempDir('implement-evidence-deletion-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const taskId = 'task-a';
+        // The handoff's only Changes entry is a file that does NOT exist on
+        // disk — it was deleted by the implement. The gate must accept the
+        // git-tracked deletion as evidence instead of wedging the phase.
+        writeImplementEvidenceFixture(tasksRoot, taskId, ['`src/legacy-module.ts`']);
+        writeTaskStatus(tasksRoot, taskId, {
+            id: taskId,
+            title: taskId,
+            base_branch: 'main',
+            branch: 'task/task-a',
+            worktree: false,
+            sessions: { codex: 'resume-1234567890' },
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            '(async () => {',
+            `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_LOG_OUTPUT: 'abc123',
+            FAKE_GIT_DELETED_FILES: 'src/legacy-module.ts',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { implement?: { status?: string } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'done');
+        assert.doesNotMatch(result.stderr, /Retry/);
+    });
+});
+
+void test('checkAndRoute logs Retry succeeded when implement retry produces valid evidence', () => {
+    withTempDir('implement-evidence-retry-success-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+        writeImplementEvidenceFixture(tasksRoot, 'task-a', ['`package.json`']);
+        writeExecutable(fakeBins, 'codex', [
+            'set -eu',
+            'tasks_root="${CANON_TASKS_DIR_OVERRIDE:-tasks}"',
+            'task_dir="$tasks_root/task-a"',
+            'mkdir -p "$task_dir"',
+            'cat > "$task_dir/status.json" <<\'EOF\'',
+            '{',
+            '  "id": "task-a",',
+            '  "title": "task-a",',
+            '  "base_branch": "main",',
+            '  "branch": "task/task-a",',
+            '  "worktree": false,',
+            '  "status": "implement",',
+            '  "sessions": { "codex": "resume-1234567890" },',
+            '  "phases": {',
+            '    "spec": { "status": "done", "agent": "claude" },',
+            '    "spec_review": { "status": "done", "agent": "codex", "verdict": "approved" },',
+            '    "plan": { "status": "done", "agent": "claude" },',
+            '    "implement": { "status": "done", "agent": "codex" },',
+            '    "code_review": { "status": "pending", "agent": "claude", "verdict": "" },',
+            '    "qa": { "status": "pending", "agent": "claude" },',
+            '    "human_review": { "status": "pending", "agent": "human" }',
+            '  }',
+            '}',
+            'EOF',
+            'cat > "$task_dir/handoff.md" <<\'EOF\'',
+            '# Implementation Handoff: task-a',
+            '',
+            '## Changes',
+            '',
+            '| File | Change |',
+            '|---|---|',
+            '| `package.json` | retry evidence |',
+            '',
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `lint` | Pass | ok |',
+            'EOF',
+            'exit 0',
+        ]);
+
+        const taskId = 'task-a';
+        writeImplementEvidenceFixture(tasksRoot, taskId, []);
+        writeTaskStatus(tasksRoot, taskId, {
+            id: taskId,
+            title: taskId,
+            base_branch: 'main',
+            branch: 'task/task-a',
+            worktree: false,
+            sessions: { codex: 'resume-1234567890' },
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            '(async () => {',
+            `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_LOG_OUTPUT: 'abc123',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /Retry succeeded — 'task-a' implement is now done\./);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { implement?: { status?: string } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'done');
+    });
+});
+
+void test('main writes one exit marker with code=0 and an ISO timestamp on a successful single-phase run', () => {
+    withTempDir('orchestrator-exit-success-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+        writeImplementEvidenceFixture(tasksRoot, 'task-a', ['`package.json`']);
+        writeExecutable(fakeBins, 'codex', [
+            'set -eu',
+            'tasks_root="${CANON_TASKS_DIR_OVERRIDE:-tasks}"',
+            'task_dir="$tasks_root/task-a"',
+            'mkdir -p "$task_dir"',
+            'cat > "$task_dir/handoff.md" <<\'EOF\'',
+            '# Implementation Handoff: task-a',
+            '',
+            '## Changes',
+            '',
+            '| File | Change |',
+            '|---|---|',
+            '| `package.json` | success evidence |',
+            '',
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `lint` | Pass | ok |',
+            'EOF',
+            'cat > "$task_dir/status.json" <<\'EOF\'',
+            '{',
+            '  "id": "task-a",',
+            '  "title": "task-a",',
+            '  "base_branch": "main",',
+            '  "branch": "task/task-a",',
+            '  "worktree": false,',
+            '  "status": "implement",',
+            '  "sessions": { "codex": "resume-1234567890" },',
+            '  "phases": {',
+            '    "spec": { "status": "done", "agent": "claude" },',
+            '    "spec_review": { "status": "done", "agent": "codex", "verdict": "approved" },',
+            '    "plan": { "status": "done", "agent": "claude" },',
+            '    "implement": { "status": "done", "agent": "codex" },',
+            '    "code_review": { "status": "pending", "agent": "claude", "verdict": "" },',
+            '    "qa": { "status": "pending", "agent": "claude" },',
+            '    "human_review": { "status": "pending", "agent": "human" }',
+            '  }',
+            '}',
+            'EOF',
+            'exit 0',
+        ]);
+
+        const taskId = 'task-a';
+        writeTaskStatus(tasksRoot, taskId, {
+            id: taskId,
+            title: taskId,
+            base_branch: 'main',
+            branch: 'task/task-a',
+            worktree: false,
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'in_progress', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'task-a', '--step'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_LOG_OUTPUT: 'abc123',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const markers = result.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+        assert.equal(markers.length, 1, result.stderr);
+        assert.match(markers[0] ?? '', /code=0/);
+        assert.match(markers[0] ?? '', /at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    });
+});
+
+void test('main die exits write a marker whose reason contains the die message', () => {
+    withTempDir('orchestrator-exit-die-', dir => {
+        // Stub agent CLIs so checkDeps passes on machines without them (CI):
+        // the die under test must be the invalid-task-id one, not a deps die.
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        writeExecutable(fakeBins, 'claude', ['exit 0']);
+        writeExecutable(fakeBins, 'codex', ['exit 0']);
+
+        const result = runNodeInline([
+            "import { main } from './scripts/run-task/main.ts';",
+            "process.argv = ['node', 'canon', 'BadID'];",
+            "main().catch(err => { console.error(err); process.exit(1); });",
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeBins}:${process.env.PATH ?? ''}`,
+        });
+
+        assert.equal(result.status, 1, result.stderr);
+        const markers = result.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+        assert.equal(markers.length, 1, result.stderr);
+        assert.match(markers[0] ?? '', /code=1/);
+        assert.match(markers[0] ?? '', /Invalid task ID 'BadID'/);
+    });
+});
+
+void test('multi-line exit reasons collapse to a single marker line', () => {
+    const result = runNodeInline([
+        "import { registerExitHandlers, setExitReason } from './scripts/run-task/cli.js';",
+        'registerExitHandlers();',
+        "setExitReason('first line\\nsecond line\\nthird line');",
+        'process.exit(1);',
+    ].join('\n'), {
+        ...process.env,
+    });
+
+    assert.equal(result.status, 1, result.stderr);
+    const markers = result.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+    assert.equal(markers.length, 1, result.stderr);
+    assert.match(markers[0] ?? '', /code=1/);
+    assert.match(markers[0] ?? '', /reason=first line · second line · third line/);
+    assert.match(markers[0] ?? '', /at \d{4}-\d{2}-\d{2}T/);
+});
+
+void test('Claude failure ladders set exit reasons and Codex non-zero exits do not exit by themselves', () => {
+    withTempDir('orchestrator-exit-agents-', dir => {
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+
+        writeExecutable(fakeBins, 'claude', ['exit 1']);
+        const claudeResult = runNodeInline([
+            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+            "import { runClaude } from './scripts/run-task/agents/claude.js';",
+            'registerExitHandlers();',
+            '(async () => {',
+            "  await runClaude('prompt', false, null, 'model', 'effort', '10', undefined, process.cwd());",
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        });
+        assert.equal(claudeResult.status, 1, claudeResult.stderr);
+        const claudeMarkers = claudeResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+        assert.equal(claudeMarkers.length, 1, claudeResult.stderr);
+        assert.match(claudeMarkers[0] ?? '', /code=1/);
+        assert.match(claudeMarkers[0] ?? '', /claude session exited 1/);
+
+        const codexSpawnErrorDir = path.join(dir, 'codex-spawn-error-bin');
+        fs.mkdirSync(codexSpawnErrorDir, { recursive: true });
+        const spawnErrorResult = runNodeInline([
+            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            'registerExitHandlers();',
+            '(async () => {',
+            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: codexSpawnErrorDir,
+        });
+        assert.equal(spawnErrorResult.status, 1, spawnErrorResult.stderr);
+        const spawnMarkers = spawnErrorResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+        assert.equal(spawnMarkers.length, 1, spawnErrorResult.stderr);
+        assert.match(spawnMarkers[0] ?? '', /codex session spawn error:/);
+
+        writeExecutable(fakeBins, 'codex', ['exit 1']);
+        const codexNoExitResult = runNodeInline([
+            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            'registerExitHandlers();',
+            '(async () => {',
+            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            "  console.log('after-runCodex');",
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        });
+        assert.equal(codexNoExitResult.status, 0, codexNoExitResult.stderr);
+        assert.match(codexNoExitResult.stdout, /after-runCodex/);
+        assert.doesNotMatch(codexNoExitResult.stderr, /codex session exited 1/);
+        assert.doesNotMatch(codexNoExitResult.stderr, /code=1/);
+
+        writeExecutable(fakeBins, 'codex', ['sleep 2']);
+        const stallResult = runNodeInline([
+            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            'registerExitHandlers();',
+            '(async () => {',
+            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            PIPELINE_STALL_TIMEOUT_MS: '1',
+        });
+        assert.equal(stallResult.status, 1, stallResult.stderr);
+        const stallMarkers = stallResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+        assert.equal(stallMarkers.length, 1, stallResult.stderr);
+        assert.match(stallMarkers[0] ?? '', /codex session stalled/);
+
+        writeExecutable(fakeBins, 'codex', ['kill -TERM $$']);
+        const signalResult = runNodeInline([
+            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            'registerExitHandlers();',
+            '(async () => {',
+            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        });
+        assert.equal(signalResult.status, 1, signalResult.stderr);
+        const signalMarkers = signalResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+        assert.equal(signalMarkers.length, 1, signalResult.stderr);
+        assert.match(signalMarkers[0] ?? '', /codex session received signal SIGTERM/);
+    });
+});
+
+void test('uncaught exceptions and unhandled rejections write one exit marker and exit 1', () => {
+    const uncaughtResult = runNodeInline([
+        "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+        'registerExitHandlers();',
+        "setTimeout(() => { throw new Error('boom'); }, 0);",
+        'await new Promise(() => {});',
+    ].join('\n'), {
+        ...process.env,
+    });
+    assert.equal(uncaughtResult.status, 1, uncaughtResult.stderr);
+    const uncaughtMarkers = uncaughtResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+    assert.equal(uncaughtMarkers.length, 1, uncaughtResult.stderr);
+    assert.match(uncaughtMarkers[0] ?? '', /code=1/);
+    assert.match(uncaughtResult.stderr, /Error: boom/);
+    assert.match(uncaughtResult.stderr, /at .*:/);
+
+    const rejectionResult = runNodeInline([
+        "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+        'registerExitHandlers();',
+        "setTimeout(() => { Promise.reject(new Error('oops')); }, 0);",
+        'await new Promise(() => {});',
+    ].join('\n'), {
+        ...process.env,
+    });
+    assert.equal(rejectionResult.status, 1, rejectionResult.stderr);
+    const rejectionMarkers = rejectionResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
+    assert.equal(rejectionMarkers.length, 1, rejectionResult.stderr);
+    assert.match(rejectionMarkers[0] ?? '', /code=1/);
+    assert.match(rejectionResult.stderr, /Error: oops/);
+    assert.match(rejectionResult.stderr, /at .*:/);
 });
 
 void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {

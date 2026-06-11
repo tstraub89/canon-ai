@@ -7,7 +7,7 @@ The spec was amended after human review and Codex has reviewed the amendment. Yo
 {{{roundBanner}}}Amendment review verdicts:
 {{{verdictLines}}}
 
-For each task:
+For each task — EXCEPT tasks whose line above marks them EXEMPT (those have no amendment; skip every step below for them and append NO Reroute Plan section to their plan.md):
 1. Read `tasks/<id>/spec.md` from your current directory, including the amendment for the round listed above.
 2. Read `tasks/<id>/plan.md` to understand the prior plan.
 3. Read `tasks/<id>/handoff.md` to understand what Codex previously shipped.

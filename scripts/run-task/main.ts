@@ -2158,6 +2158,10 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     }> = [];
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
+        const codeReviewVerdict = getVerdict(status, 'code_review');
+        if (isSpecGapReroute && codeReviewVerdict !== 'spec_gap') {
+            continue;
+        }
         const requiredRound = (status.phases.implement?.reroute_count ?? 0) + 1;
         const result = splitValidation.verifyRerouteAmendment(taskId, requiredRound);
         if (!result.amended) {
@@ -2209,6 +2213,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
         // reroutes, implement for fast-tier reroutes).
         const implement = status.phases.implement;
         if (implement) {
+            const currentCodeReviewVerdict = getVerdict(status, 'code_review');
             implement.status = 'pending';
             // implement.rerouted is set on reroute entry and intentionally not
             // cleared. Dispatch correctness relies on the invariant that, at
@@ -2223,6 +2228,17 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             // marker so session-resumed Codex can't confuse a new reroute with a duplicate
             // of a prior one — the static prompt text is otherwise identical each round.
             implement.reroute_count = (implement.reroute_count ?? 0) + 1;
+            const rerouteState = implement as PhaseEntry & {
+                reroute_exempt?: boolean;
+                reroute_exempt_prior_verdict?: string;
+            };
+            if (isSpecGapReroute && currentCodeReviewVerdict !== 'spec_gap') {
+                rerouteState.reroute_exempt = true;
+                rerouteState.reroute_exempt_prior_verdict = currentCodeReviewVerdict;
+            } else {
+                delete rerouteState.reroute_exempt;
+                delete rerouteState.reroute_exempt_prior_verdict;
+            }
             clearPhaseOperatorAcceptance(implement);
         }
         const codeReview = status.phases.code_review;
@@ -2284,8 +2300,8 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     if (clearedFullSend) {
         splitCli.info('⚠ full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with \'canon run --full-send <id>\' if you\'re confident.');
     }
-    splitCli.info('⚠  Before invoking the pipeline: ensure tasks/<id>/spec.md in the active task directory has an');
-    splitCli.info('   Amendment section with the new requirements. For worktree-backed tasks, edit the worktree copy;');
+    splitCli.info('⚠  Before invoking the pipeline: ensure every task that needs amended requirements has an');
+    splitCli.info('   Amendment section in tasks/<id>/spec.md in the active task directory. For worktree-backed tasks, edit the worktree copy;');
     splitCli.info('   edit REPO_ROOT only before a worktree exists. review.md alone is not sufficient — Codex reads spec.md as the contract.');
 }
 
@@ -2499,68 +2515,102 @@ function readArtifact(taskId: string, name: string): string | null {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
 }
 
+function checkImplementEvidence(taskId: string): EvidenceResult {
+    // Four gates before auto-advancing (each rules out a different false-positive):
+    //  1. handoff.md Changes table is non-empty (basic sanity)
+    //  2. no malformed rows — wildcards, combined paths, unfilled placeholders
+    //     each fail downstream in autoCommitCode anyway, but failing here lets
+    //     the one-shot retry surface the cell-level error to Codex instead of
+    //     letting the phase auto-advance and then die at auto-commit.
+    //  3. validateHandoff passes — same rule Claude's code review applies:
+    //     Validation Outcomes table has no Fail and AC Coverage is present.
+    //     Catches "Codex wrote a draft handoff before validation actually passed".
+    //  4. at least one listed file exists on disk — catches phantom/hallucinated
+    //     filenames in the Changes table.
+    const { files, malformed } = splitValidation.parseHandoffChangesRows(taskId);
+    if (files.length === 0 && malformed.length === 0) {
+        return { advanced: false, note: 'handoff.md Changes table is empty' };
+    }
+    if (malformed.length > 0) {
+        const sample = malformed.slice(0, 3).map(m => `'${m.cell}': ${m.reason}`).join('; ');
+        const tail = malformed.length > 3 ? ` (+${malformed.length - 3} more)` : '';
+        return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
+    }
+    const issues = splitValidation.validateHandoffAgainstSpec(
+        path.join(taskDirFor(taskId), 'spec.md'),
+        path.join(taskDirFor(taskId), 'handoff.md'),
+    );
+    if (issues.length > 0) return { advanced: false, note: `handoff.md validation failed: ${issues.join('; ')}` };
+    const checkRoots = [REPO_ROOT];
+    const sForEvidence = splitState.readStatus(taskId);
+    if (sForEvidence.worktree === true) {
+        const wt = splitWorktree.worktreePath(taskId);
+        if (fs.existsSync(wt)) checkRoots.push(wt);
+    }
+    // Gitignored handoff entries (build-generated artifacts) are exempt
+    // from the "exists on disk" check — they may not have been built yet
+    // and don't represent real source changes anyway. Pre-filter so a
+    // handoff of `[src/generator.ts, public/sitemap.xml]` advances on
+    // the strength of the script existing, ignoring the artifact.
+    // But a handoff containing ONLY gitignored entries has no real
+    // source evidence — refuse to advance, same as zero-existing.
+    //
+    // Resolve gitignore from the active worktree (last-pushed checkRoot)
+    // when present; branch-local `.gitignore` rules don't exist in the
+    // supervising checkout. Falls back to REPO_ROOT for non-worktree tasks.
+    const ignoreCwd = checkRoots[checkRoots.length - 1];
+    const gitIgnored = splitGit.filterGitIgnoredPaths(files, ignoreCwd);
+    const verifiableFiles = files.filter(f => !gitIgnored.has(f));
+    if (verifiableFiles.length === 0) {
+        return {
+            advanced: false,
+            note: `handoff.md lists ${files.length} file(s) but all are gitignored — at least one tracked source file is required as evidence`,
+        };
+    }
+    const existingFiles = verifiableFiles.filter(f =>
+        checkRoots.some(root => fs.existsSync(path.join(root, f)))
+    );
+    if (existingFiles.length === 0) {
+        // Deletion-only implements are legitimate: a listed file that is
+        // absent from disk but known to git as a deletion (uncommitted
+        // working-tree delete, or already deleted by a commit on the task
+        // branch) is real evidence, same as an existing file. Without this,
+        // a deletion-only handoff can never pass the gate — the retry
+        // re-deletes nothing and the phase wedges (autoCommitCode already
+        // handles deletions; this pre-check must not be stricter).
+        const evidenceCwd = checkRoots[checkRoots.length - 1];
+        const deletedInWorkingTree = new Set(
+            splitGit.gitSafeAt(evidenceCwd, 'ls-files', '--deleted').stdout
+                .split('\n').map(l => l.trim()).filter(Boolean),
+        );
+        const baseBranch = sForEvidence.base_branch || splitGit.getDefaultBaseBranch();
+        const committedDiff = splitGit.gitSafeAt(
+            evidenceCwd, 'diff', '--name-status', `${baseBranch}...HEAD`,
+        );
+        const deletedInCommits = new Set(
+            committedDiff.stdout.split('\n')
+                .filter(l => l.startsWith('D'))
+                .map(l => l.split('\t')[1]?.trim())
+                .filter((p): p is string => Boolean(p)),
+        );
+        const deletedFiles = verifiableFiles.filter(f =>
+            deletedInWorkingTree.has(f) || deletedInCommits.has(f),
+        );
+        if (deletedFiles.length === 0) {
+            return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk or are git-tracked deletions` };
+        }
+        return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${deletedFiles.length} verified as git-tracked deletions, ${gitIgnored.size} gitignored), validation clean` };
+    }
+    return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk, ${gitIgnored.size} gitignored), validation clean` };
+}
+
 export function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult {
     switch (phase) {
         case 'implement': {
-            // Four gates before auto-advancing (each rules out a different false-positive):
-            //  1. handoff.md Changes table is non-empty (basic sanity)
-            //  2. no malformed rows — wildcards, combined paths, unfilled placeholders
-            //     each fail downstream in autoCommitCode anyway, but failing here lets
-            //     the one-shot retry surface the cell-level error to Codex instead of
-            //     letting the phase auto-advance and then die at auto-commit.
-            //  3. validateHandoff passes — same rule Claude's code review applies:
-            //     Validation Outcomes table has no Fail and AC Coverage is present.
-            //     Catches "Codex wrote a draft handoff before validation actually passed".
-            //  4. at least one listed file exists on disk — catches phantom/hallucinated
-            //     filenames in the Changes table.
-            const { files, malformed } = splitValidation.parseHandoffChangesRows(taskId);
-            if (files.length === 0 && malformed.length === 0) {
-                return { advanced: false, note: 'handoff.md Changes table is empty' };
-            }
-            if (malformed.length > 0) {
-                const sample = malformed.slice(0, 3).map(m => `'${m.cell}': ${m.reason}`).join('; ');
-                const tail = malformed.length > 3 ? ` (+${malformed.length - 3} more)` : '';
-                return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
-            }
-            const issues = splitValidation.validateHandoffAgainstSpec(
-                path.join(taskDirFor(taskId), 'spec.md'),
-                path.join(taskDirFor(taskId), 'handoff.md'),
-            );
-            if (issues.length > 0) return { advanced: false, note: `handoff.md validation failed: ${issues.join('; ')}` };
-            const checkRoots = [REPO_ROOT];
-            const sForEvidence = splitState.readStatus(taskId);
-            if (sForEvidence.worktree === true) {
-                const wt = splitWorktree.worktreePath(taskId);
-                if (fs.existsSync(wt)) checkRoots.push(wt);
-            }
-            // Gitignored handoff entries (build-generated artifacts) are exempt
-            // from the "exists on disk" check — they may not have been built yet
-            // and don't represent real source changes anyway. Pre-filter so a
-            // handoff of `[src/generator.ts, public/sitemap.xml]` advances on
-            // the strength of the script existing, ignoring the artifact.
-            // But a handoff containing ONLY gitignored entries has no real
-            // source evidence — refuse to advance, same as zero-existing.
-            //
-            // Resolve gitignore from the active worktree (last-pushed checkRoot)
-            // when present; branch-local `.gitignore` rules don't exist in the
-            // supervising checkout. Falls back to REPO_ROOT for non-worktree tasks.
-            const ignoreCwd = checkRoots[checkRoots.length - 1];
-            const gitIgnored = splitGit.filterGitIgnoredPaths(files, ignoreCwd);
-            const verifiableFiles = files.filter(f => !gitIgnored.has(f));
-            if (verifiableFiles.length === 0) {
-                return {
-                    advanced: false,
-                    note: `handoff.md lists ${files.length} file(s) but all are gitignored — at least one tracked source file is required as evidence`,
-                };
-            }
-            const existingFiles = verifiableFiles.filter(f =>
-                checkRoots.some(root => fs.existsSync(path.join(root, f)))
-            );
-            if (existingFiles.length === 0) {
-                return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk` };
-            }
+            const evidence = checkImplementEvidence(taskId);
+            if (!evidence.advanced) return evidence;
             taskPhase(taskId, 'implement', 'done');
-            return { advanced: true, note: `handoff.md lists ${files.length} file(s) (${existingFiles.length} verified on disk, ${gitIgnored.size} gitignored), validation clean` };
+            return evidence;
         }
         case 'code_review': {
             const content = readArtifact(taskId, 'review.md');
@@ -2720,6 +2770,14 @@ async function recoverPhaseForTask(taskId: string, phase: Phase, initialStatus: 
     const retry = await retryAgentForPhase(taskId, phase, evidence.note);
     if (retry === 'no_session') return false;
     if (retry === 'done') {
+        if (phase === 'implement') {
+            const postRetryEvidence = checkImplementEvidence(taskId);
+            if (!postRetryEvidence.advanced) {
+                taskPhase(taskId, 'implement', 'in_progress');
+                warn(`Retry completed but handoff evidence is still missing/invalid: ${postRetryEvidence.note}`);
+                return false;
+            }
+        }
         warn(`Retry succeeded — '${taskId}' ${phase} is now done.`);
         return true;
     }
@@ -2744,6 +2802,20 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
     // evidence-based auto-advance, then a one-shot retry, before bailing.
     for (let i = 0; i < taskIds.length; i += 1) {
         const phaseStatus = getPhaseStatus(statuses[i], phase);
+        if (phase === 'implement' && phaseStatus === 'done') {
+            const evidence = checkImplementEvidence(taskIds[i]);
+            if (!evidence.advanced) {
+                warn(`Codex marked implement done but handoff.md evidence is missing/invalid: ${evidence.note}. Re-run \`canon run ${taskIds[i]}\` to resume the session.`);
+                taskPhase(taskIds[i], 'implement', 'in_progress');
+                statuses[i] = splitState.readStatus(taskIds[i]);
+                const recovered = await recoverPhaseForTask(taskIds[i], phase, phaseStatus);
+                if (!recovered) {
+                    warn(`Phase '${phase}' did not reach 'done' for '${taskIds[i]}'. Stopping for human review.`);
+                    process.exit(2);
+                }
+                continue;
+            }
+        }
         if (phaseStatus !== 'done') {
             if (lastCodexExitStatus !== 0) {
                 warn(`Codex exited with status ${lastCodexExitStatus} and '${phase}' was not completed for '${taskIds[i]}'.`);
@@ -2974,6 +3046,11 @@ function bootHeartbeatWithHooks(
 }
 
 export async function main(): Promise<void> {
+    splitCli.registerExitHandlers();
+    // Signal-driven shutdown re-raises with Node's default action, which
+    // bypasses 'exit' handlers — the marker must be written from the
+    // shutdown-hook path before the re-raise (Codex PR #156 finding).
+    registerShutdownHook(sig => splitCli.writeSignalExitMarker(sig));
     // Mark all child processes as orchestrator-driven so .githooks/pre-commit
     // and .githooks/pre-push know to skip — the orchestrator already runs
     // validation per phase and re-running it on every auto-commit is waste.

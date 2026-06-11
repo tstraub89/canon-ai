@@ -66,6 +66,8 @@ Do not hand-roll a poll loop (`canon task status` + `grep` + `sleep`) — use `c
 
 Point-in-time health check. Reports active orchestrators, stale heartbeats, and worktree state. Does not block.
 
+Every orchestrator exit writes a final `■ orchestrator exit code=<N> [reason=<reason>] at <timestamp>` line to `.canon-run.log`. A log that ends without this line means the process was killed un-catchably (SIGKILL/OOM) — its absence is itself a diagnostic signal.
+
 ### `canon stop <id>`
 
 Gracefully terminate a detached run. Sends SIGTERM then SIGKILL if needed. Self-heals stale `.canon-pid` / `.heartbeat.json` when the orchestrator is already dead.
@@ -167,7 +169,7 @@ Claude writes QA summary → Human tests
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
-**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the whole bundle blocks until the operator chooses fix (`canon run <ids> --reroute` after amending `spec.md`) or bless (`canon task accept <ids> code_review --reason "<why>"`).
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the whole bundle blocks until the operator chooses fix (`canon run <ids> --reroute` after amending the `spec_gap` task specs) or bless (`canon task accept <ids> code_review --reason "<why>"`).
 
 **One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
 
@@ -321,8 +323,8 @@ After `spec_review` or `code_review`, the orchestrator checks the verdict.
 |---|---|---|
 | `spec_review` | `changes_requested` | Loop back to `spec` automatically, except reroute-amendment reviews block for human revision. |
 | `code_review` | `changes_requested` / `needs_re_review` | Loop back to `implement` automatically. |
-| `code_review` | `spec_gap` | Block the whole `code_review` bundle with an escalation. Fix path: amend `spec.md` and run `canon run <ids> --reroute`. Bless path: `canon task accept <ids> code_review --reason "<why>"`. |
-| `spec_review` / `code_review` | `approved` / `approved_with_nits` / `sanctioned` | Continue to the next phase. `sanctioned` is status-only and written by `canon task accept`, not by review artifacts. |
+| `code_review` | `spec_gap` | Block the whole `code_review` bundle with an escalation. Fix path: amend the `spec_gap` task specs and run `canon run <ids> --reroute`. Bless path: `canon task accept <ids> code_review --reason "<why>"`. |
+| `spec_review` / `code_review` | `approved` / `approved_with_nits` / `sanctioned` | Continue to the next phase. `sanctioned` is status-only and written by `canon task accept`, not by review artifacts; `canon task accept` refuses a review phase with no recorded verdict unless `--force` is passed. |
 
 **Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
 
@@ -403,7 +405,7 @@ The Stage 1 AC table is redone on round 2+. Earlier AC tables were snapshots of 
 
 If the human rejects at `human_review`, or code review blocks with `spec_gap`, use `--reroute` to resume the pipeline against amended requirements. Reroute sets `phases.implement.rerouted = true` so later reroute prompts read `spec.md` for new Amendment sections, compare against prior artifacts, and update only the delta.
 
-Before rerouting, write the new requirements into **`tasks/<id>/spec.md` in the active task directory** as an Amendment section. If a worktree exists for the task, edit the worktree copy; edit REPO_ROOT only before the task has a worktree. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract.
+Before rerouting from `human_review`, write the new requirements into **`tasks/<id>/spec.md` in the active task directory** for every task as an Amendment section. Before rerouting from a `code_review` `spec_gap` block, only the tasks with a `spec_gap` verdict need an Amendment section; approved or other non-gap siblings in the same bundle do not. If a worktree exists for the task, edit the worktree copy; edit REPO_ROOT only before the task has a worktree. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract.
 
 Full-tier reroute (any M/L/XL task or any `delicate` task) re-enters at the same review altitude as the original spec: `human_review` or `code_review` `spec_gap` → `spec_review` → `plan` → `implement`. Codex reviews the amendment in the context of the previously approved ACs and prior `spec-review.md`, without auditing `handoff.md`, `review.md`, or `done.md`. If the amendment is approved, the pipeline flows through to `plan` without re-arming the human spec gate; Claude appends a reroute plan section (`## Reroute Plan` or `## Reroute Plan Round N`) to `plan.md`; Codex then implements from the amendment plus that reroute plan.
 
@@ -429,7 +431,7 @@ canon run <id> --reroute
 canon run <id> --step --expect implement
 ```
 
-The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation. Do not create Amendment sections for the bless path; `canon task accept ... --reason` records `sanctioned` without changing `spec.md` or `reroute_count`.
+The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any required task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation. Do not create Amendment sections for the bless path; `canon task accept ... --reason` records `sanctioned` without changing `spec.md` or `reroute_count`.
 
 ## Shipping & Post-Merge Reconciliation
 

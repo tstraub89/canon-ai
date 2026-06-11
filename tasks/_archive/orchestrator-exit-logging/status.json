@@ -1,0 +1,74 @@
+{
+  "id": "orchestrator-exit-logging",
+  "title": "Durable exit/crash log line for every orchestrator death",
+  "status": "complete",
+  "created": "2026-06-10",
+  "updated": "2026-06-11",
+  "branch": "",
+  "base_branch": "release/v1.11.1",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "29852da415b712961d4e903a9441bb4831e176a1",
+    "orchestrator_commit": "29852da415b712961d4e903a9441bb4831e176a1",
+    "codex_cli": "codex-cli 0.139.0",
+    "claude_code": "2.1.170 (Claude Code)"
+  },
+  "task_size": "S",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr": "optional: { number: <PR number> } - set by --pr, read by --ship for forge-proof merge verification. Absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex": "019eb2bd-cba3-70f3-bfc0-3e88e2904bc7",
+    "claude_review": "c74b9211-6947-432c-9d53-27025e8591cb"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review | spec_gap | sanctioned",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
+}

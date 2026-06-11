@@ -262,6 +262,8 @@ export function checkRerouteEvidence(phase: Phase, artifactContent: string, stat
         return { reroute: true, ok: false, reason: 'cannot determine reroute state — status.phases.implement.rerouted is present but not a boolean' };
     }
     if (rerouted !== true) return { reroute: false }; // first-pass (signal absent or false)
+    const rerouteExempt = (impl as { reroute_exempt?: unknown }).reroute_exempt;
+    if (rerouteExempt === true) return { reroute: false };
     const round = (impl as { reroute_count?: unknown }).reroute_count;
     // rerouteFromHumanReview always increments reroute_count to >= 1 before any
     // phase dispatch, so a rerouted task with a missing/zero/non-numeric round is an

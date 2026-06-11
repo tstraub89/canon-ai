@@ -7,7 +7,7 @@ import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, build
 import { taskDirFor } from '../state.js';
 import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
-import type { PipelineState } from '../types.js';
+import type { PipelineState, TaskContext } from '../types.js';
 import codeReviewForemanTemplate from './templates/code-review-foreman.md';
 import implementTemplate from './templates/implement.md';
 import implementRerouteTemplate from './templates/implement-reroute.md';
@@ -119,6 +119,32 @@ export function promptSpecRevision(state: PipelineState): string {
     });
 }
 
+// A spec_gap-entry reroute exempts non-gap bundle siblings from amending
+// (rerouteFromHumanReview sets implement.reroute_exempt). The evidence gates
+// already treat exempt tasks as first-pass; the reroute prompts must mirror
+// that and not direct agents at an Amendment section that doesn't exist. The
+// prior verdict controls whether the exempt task rides as approved or still
+// has binding review findings to address during implementation.
+type RerouteExemptInfo =
+    | { exempt: false }
+    | { exempt: true; priorVerdict: string };
+
+function getRerouteExemptInfo(t: TaskContext): RerouteExemptInfo {
+    const impl = t.status.phases.implement as {
+        reroute_exempt?: unknown;
+        reroute_exempt_prior_verdict?: unknown;
+    } | undefined;
+    if (impl?.reroute_exempt !== true) return { exempt: false };
+    const priorVerdict = typeof impl.reroute_exempt_prior_verdict === 'string'
+        ? impl.reroute_exempt_prior_verdict
+        : 'approved';
+    return { exempt: true, priorVerdict };
+}
+
+function isAdvancingPriorVerdict(verdict: string): boolean {
+    return verdict === 'approved' || verdict === 'approved_with_nits';
+}
+
 export function promptSpecReview(state: PipelineState): string {
     const { tasks, tier } = state;
     const isReroute = tasks.some(t => t.status.phases.implement?.rerouted === true);
@@ -133,6 +159,13 @@ export function promptSpecReview(state: PipelineState): string {
             })()
             : '**This is a reroute amendment review for a bundle.** Each task has its own round; use the per-task heading below.\n\n';
         const taskLines = tasks.map(t => {
+            const exemptInfo = getRerouteExemptInfo(t);
+            if (exemptInfo.exempt) {
+                if (isAdvancingPriorVerdict(exemptInfo.priorVerdict)) {
+                    return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from this reroute's amendment (its prior code review approved; it rides the bundle). There is NO Amendment section in tasks/${t.taskId}/spec.md and none is required — review the spec as-is under first-pass rules.`;
+                }
+                return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from amendment (verdict was \`${exemptInfo.priorVerdict}\`; spec was not amended). No Amendment section exists — review the spec as-is under first-pass rules. Prior review findings in tasks/${t.taskId}/review.md remain binding; do NOT describe this task as passing.`;
+            }
             const expectedHeading = t.rerouteCount <= 1
                 ? '`## Amendment`'
                 : `\`## Amendment Round ${t.rerouteCount}\``;
@@ -181,6 +214,13 @@ export function promptPlan(state: PipelineState): string {
             })()
             : '**Bundle reroute.** Each task has its own round; use the per-task lines below for the exact section heading.\n\n';
         const verdictLines = tasks.map(t => {
+            const exemptInfo = getRerouteExemptInfo(t);
+            if (exemptInfo.exempt) {
+                if (isAdvancingPriorVerdict(exemptInfo.priorVerdict)) {
+                    return `- \`${t.taskId}\`: EXEMPT from this reroute's amendment (no Amendment section exists; prior code review approved). Do NOT append a Reroute Plan section for this task — its existing plan.md stands. Touch it only if a sibling's amendment changes shared behavior.`;
+                }
+                return `- \`${t.taskId}\`: EXEMPT from amendment (verdict was \`${exemptInfo.priorVerdict}\`; spec unchanged). Do NOT append a Reroute Plan section for this task. Prior review findings remain binding and will be re-evaluated at code review.`;
+            }
             const planHeading = t.rerouteCount <= 1
                 ? '`## Reroute Plan`'
                 : `\`## Reroute Plan Round ${t.rerouteCount}\``;
@@ -352,6 +392,13 @@ export function promptImplementReroute(
     // round 2+ uses `## Amendment Round N` where N === t.rerouteCount (the
     // post-increment value already reflects the round being entered).
     const taskLines = tasks.map(t => {
+        const exemptInfo = getRerouteExemptInfo(t);
+        if (exemptInfo.exempt) {
+            if (isAdvancingPriorVerdict(exemptInfo.priorVerdict)) {
+                return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from this reroute's amendment: its spec was NOT amended (prior code review approved this task; it rides the bundle while a sibling's spec gap is fixed). Do NOT look for an Amendment section in tasks/${t.taskId}/spec.md. Re-verify this task only where a sibling's amendment changes shared behavior. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
+            }
+            return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from amendment (verdict was \`${exemptInfo.priorVerdict}\`). There is no Amendment section in tasks/${t.taskId}/spec.md. Your prior review findings at tasks/${t.taskId}/review.md remain binding — read that file and address ALL findings from the most recent review round before submitting. Do NOT treat this task as passing. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
+        }
         const expectedHeading = t.rerouteCount <= 1
             ? '`## Amendment`'
             : `\`## Amendment Round ${t.rerouteCount}\``;
