@@ -2,6 +2,21 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.12.0] — 2026-06-12
+
+### Added
+
+- **`canon task reset-code-review <id>` — a safe, helper-driven recovery from a `code_review` auto-block.** It archives the prior `review.md`, zeroes the current-loop counters, clears the stale verdict, and re-derives the top-level status (the `code_review` analogue of `reset-spec-review`). The auto-block recovery message now points operators at this command instead of telling them to hand-edit `status.json`.
+
+### Fixed
+
+- **The worktree is clean when `human_review` opens.** QA-phase output (task artifacts, review notes, QA summary, pr-body draft, and any managed-doc edits) is now committed in a single `chore: QA artifacts for <id>` commit at the QA→`human_review` boundary instead of staying uncommitted until `--pr` — so `--reroute` and base-drift rebases run against a clean tree.
+- **`canon run --pr` sets the upstream tracking ref on the pushed task branch.** `git push` was bare, leaving the local branch with no configured upstream. Now `git status` shows the branch up to date with `origin/<branch>`, and bare `git pull` / `git push` work without spelling out the remote and branch. Re-running `--pr` stays idempotent.
+
+### Removed
+
+- **The unenforced "branch is current with `origin/<base>`" checkbox is gone from the handoff template.** Nothing parsed it; it attested to branch sync the orchestrator already owns (and the implementer can't touch `.git`), and satisfying it with a mid-task rebase would corrupt the baseline the reviewer diffs against.
+
 ## [1.11.2] — 2026-06-11
 
 ### Fixed

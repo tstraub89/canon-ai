@@ -616,7 +616,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.11.2";
+  const installedVersion = "1.12.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -1042,7 +1042,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.11.2";
+  const version = "1.12.0";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -2614,6 +2614,7 @@ function usage() {
     "  phase <TASK-ID> <phase> <status> [verdict]",
     '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]',
     "  reset-spec-review <TASK-ID>",
+    "  reset-code-review <TASK-ID>",
     "  post-merge-sync [<branch>]"
   ].join("\n");
 }
@@ -3350,6 +3351,42 @@ function taskResetSpecReview(id) {
   writeStatusAtomic(statusPath, status);
   console.log(`Reset ${id}: spec \u2192 done, spec_review \u2192 pending (iter=0, verdict cleared, claude_spec session dropped)`);
 }
+function taskResetCodeReview(id) {
+  if (!id) throw new Error("Error: usage: canon task reset-code-review <TASK-ID>");
+  validateTaskId(id);
+  const taskCwd = resolveTaskCwd(id);
+  const taskDir = taskDirForCwd(taskCwd, id);
+  const statusPath = path10.join(taskDir, "status.json");
+  if (!fs10.existsSync(statusPath)) {
+    throw new Error(`Error: no status.json at ${statusPath}`);
+  }
+  const status = readJsonFile(statusPath);
+  const currentPhase = deriveTopLevelStatus(status);
+  if (currentPhase !== "code_review") {
+    throw new Error(`Error: reset-code-review only operates on tasks currently at code_review. Current phase: ${currentPhase}.`);
+  }
+  const reviewPath = path10.join(taskDir, "review.md");
+  if (fs10.existsSync(reviewPath)) {
+    let n = 1;
+    while (fs10.existsSync(path10.join(taskDir, `review-prior-${n}.md`))) n += 1;
+    fs10.renameSync(reviewPath, path10.join(taskDir, `review-prior-${n}.md`));
+    console.log(`Archived prior review.md \u2192 review-prior-${n}.md`);
+  }
+  const codeReview = ensurePhaseEntry(status, "code_review");
+  codeReview.status = "pending";
+  codeReview.iterations_current_loop = 0;
+  codeReview.iterations = 0;
+  codeReview.preflight_rejections_current_loop = 0;
+  codeReview.verdict = "";
+  if (status.sessions && Object.hasOwn(status.sessions, "claude_review")) {
+    delete status.sessions.claude_review;
+  }
+  status.updated = today();
+  writeStatusAtomic(statusPath, status);
+  console.log(
+    `Reset ${id}: code_review \u2192 pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
+  );
+}
 function ensureGitAvailable() {
   const result = spawnSync6("git", ["--version"], { stdio: "ignore" });
   if (result.error || result.status !== 0) {
@@ -3574,6 +3611,9 @@ function taskCmd(args2) {
       }
       case "reset-spec-review":
         taskResetSpecReview(rest[0] ?? "");
+        break;
+      case "reset-code-review":
+        taskResetCodeReview(rest[0] ?? "");
         break;
       case "post-merge-sync":
         taskPostMergeSync(rest[0]);
@@ -3849,7 +3889,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.11.2";
+  const newVersion = "1.12.0";
   const currentVersion = existsSync5(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -4063,6 +4103,8 @@ canon task subcommands:
                           --reason is required for spec_review and code_review.
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.
+  reset-code-review <id>  Clear state for a fresh code-review pass after an auto-block.
+                          Zeroes loop counters, clears verdict, archives prior review.md.
   post-merge-sync [<branch>]
                           After a squash-merge PR lands, reconcile local branch with origin.
                           Hard-resets if the only divergence is pipeline telemetry; refuses
@@ -4105,7 +4147,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.11.2");
+  console.log("1.12.0");
 }
 switch (command) {
   case "doctor":

@@ -10,6 +10,7 @@ import { REPO_ROOT } from '../scripts/run-task/env.js';
 import {
     buildHumanReviewStagePaths,
     classifyMergeOutcome,
+    commitQaArtifacts,
     enableFullSend,
     findPullRequestTemplate,
     formatCompleteStateBanner,
@@ -20,6 +21,7 @@ import {
 import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
 import { commitArchiveChanges } from '../scripts/run-task/main.js';
 import { resolveTaskCwd } from '../scripts/run-task/state.js';
+import { PIPELINE_MANAGED_DOCS } from '../scripts/run-task/worktree.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -121,6 +123,22 @@ function setupFakeGit(scriptDir: string): void {
         '    printf "%s\\n" "commit failed" >&2',
         '    exit 1',
         '  fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "push" ] && [ "${FAKE_GIT_FAIL_PUSH:-}" = "1" ]; then',
+        '  printf "%s\\n" "${FAKE_GIT_FAIL_PUSH_ERROR:-push failed}" >&2',
+        '  exit 1',
+        'fi',
+        'if [ "${1:-}" = "push" ] && [ "${2:-}" = "-u" ] && [ "${3:-}" = "origin" ] && [ "${4:-}" = "${FAKE_GIT_BASE_BRANCH:-}" ]; then',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "push" ] && [ "${2:-}" = "--set-upstream" ] && [ "${3:-}" = "origin" ] && [ "${4:-}" = "${FAKE_GIT_BASE_BRANCH:-}" ]; then',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "push" ] && [ "${2:-}" = "-u" ] && [ "${3:-}" = "origin" ] && [ "${4:-}" = "${FAKE_GIT_TASK_BRANCH:-}" ]; then',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "push" ] && [ "${2:-}" = "--set-upstream" ] && [ "${3:-}" = "origin" ] && [ "${4:-}" = "${FAKE_GIT_TASK_BRANCH:-}" ]; then',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-}" ]; then',
@@ -543,6 +561,14 @@ function runHumanReviewCommit(
 
 function combinedOutput(result: { stderr: string; stdout: string }): string {
     return `${result.stdout}\n${result.stderr}`;
+}
+
+function writeQaArtifacts(repoDir: string, taskId: string): void {
+    const taskDir = path.join(repoDir, 'tasks', taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    for (const fileName of ['handoff.md', 'review.md', 'done.md', 'notes.md', 'status.json']) {
+        fs.writeFileSync(path.join(taskDir, fileName), `${taskId} ${fileName}\n`, 'utf8');
+    }
 }
 
 function writeImplementEvidenceFixture(tasksRoot: string, taskId: string, handoffChanges: readonly string[]): void {
@@ -1303,6 +1329,122 @@ void test('buildHumanReviewStagePaths includes only task artifacts, telemetry, a
     ]);
 });
 
+void test('buildHumanReviewStagePaths with full managed-doc set includes only dirty QA-end paths', () => {
+    const paths = buildHumanReviewStagePaths(['task-a'], new Set(PIPELINE_MANAGED_DOCS), [
+        {
+            raw: ' M tasks/task-a/done.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['tasks/task-a/done.md'],
+        },
+        {
+            raw: ' M tasks/task-a/pr-body.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['tasks/task-a/pr-body.md'],
+        },
+        {
+            raw: ' M docs/codebase-map.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/codebase-map.md'],
+        },
+        {
+            raw: ' M docs/lessons-learned.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/lessons-learned.md'],
+        },
+    ]);
+
+    assert.ok(paths.includes('tasks/task-a'));
+    assert.ok(paths.includes('docs/codebase-map.md'));
+    assert.ok(paths.includes('docs/lessons-learned.md'));
+    assert.ok(!paths.includes('docs/decisions.md'), 'non-dirty managed docs must not be staged from a hardcoded root list');
+});
+
+void test('buildHumanReviewStagePaths stages a QA-touched managed doc absent from Affected Files', () => {
+    const paths = buildHumanReviewStagePaths(['task-b'], new Set(PIPELINE_MANAGED_DOCS), [
+        {
+            raw: ' M docs/decisions.md',
+            indexStatus: ' ',
+            worktreeStatus: 'M',
+            paths: ['docs/decisions.md'],
+        },
+    ]);
+
+    assert.deepEqual(paths, ['docs/decisions.md']);
+});
+
+void test('commitQaArtifacts commits task artifacts, telemetry, and managed docs from the active worktree', () => {
+    withTempDir('run-task-qa-end-real-git-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        writeQaArtifacts(localDir, 'task-a');
+        fs.mkdirSync(path.join(localDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'docs', 'codebase-map.md'), 'qa doc freshness\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'docs', 'lessons-learned.md'), 'qa telemetry\n', 'utf8');
+
+        commitQaArtifacts(['task-a'], localDir);
+
+        const status = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.equal(status, '');
+        const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        }).trim();
+        assert.equal(subject, 'chore: QA artifacts for task-a');
+    });
+});
+
+void test('commitQaArtifacts uses a bundle commit subject naming every task id', () => {
+    withTempDir('run-task-qa-end-bundle-real-git-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        writeQaArtifacts(localDir, 'task-a');
+        writeQaArtifacts(localDir, 'task-b');
+
+        commitQaArtifacts(['task-a', 'task-b'], localDir);
+
+        const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        }).trim();
+        assert.equal(subject, 'chore: QA artifacts for task-a, task-b');
+    });
+});
+
+void test('commitQaArtifacts rejects dirty files outside the QA-end allowlist', () => {
+    withTempDir('run-task-qa-end-outside-allowlist-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+
+        const result = runNodeInline([
+            "import { commitQaArtifacts } from './scripts/run-task/main.ts';",
+            `commitQaArtifacts(['task-a'], ${JSON.stringify(dir)});`,
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: path.join(dir, 'current-branch.txt'),
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_STATUS_OUTPUT: ' M src/late-edit.ts',
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /QA-end commit aborted: working tree has dirty files outside the QA-end allowlist/);
+    });
+});
+
 void test('taskDirFor returns REPO_ROOT task dir before a worktree branch is recorded', () => {
     withTempDir('run-task-state-pre-impl-', dir => {
         const { localDir } = makeGitFixture(dir);
@@ -1830,7 +1972,7 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
         // matches HEAD (new local commits after the PR was opened would be
         // silently dropped without this push).
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
-        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run on PR-exists branch');
+        assert.match(gitLog, /^push -u origin task\/task-a$/m, 'push must run on PR-exists branch');
     });
 });
 
@@ -1875,7 +2017,7 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stderr, /PR body fallback \(pr-body\.md not found\) — falling back to repo PR template or --fill/);
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
-        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run before falling back to the repo template');
+        assert.match(gitLog, /^push -u origin task\/task-a$/m, 'push must run before falling back to the repo template');
         const ghLog = fs.readFileSync(path.join(dir, 'gh.log'), 'utf8');
         assert.match(ghLog, /pr create .*--body-file .*pull_request_template\.md/m);
     });
@@ -1921,7 +2063,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
         // Codex P1 on release PR #82: see complete-phase test above for full
         // rationale — push must run even when an open PR is detected.
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
-        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run on PR-exists branch');
+        assert.match(gitLog, /^push -u origin task\/task-a$/m, 'push must run on PR-exists branch');
     });
 });
 
@@ -2026,7 +2168,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
         // before the PR-exists branch returns.
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
         assert.match(gitLog, /^commit /m, 'commit must run on dirty-tree path');
-        assert.match(gitLog, /^push origin task\/task-a$/m, 'push must run on dirty-tree path');
+        assert.match(gitLog, /^push -u origin task\/task-a$/m, 'push must run on dirty-tree path');
     });
 });
 
@@ -2397,7 +2539,7 @@ void test('commitHumanReviewFiles(createPR = false) pushes without opening a PR'
         assert.equal(result.status, 0, result.stderr);
 
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
-        assert.match(gitLog, /^push origin task\/task-a$/m);
+        assert.match(gitLog, /^push -u origin task\/task-a$/m);
         assert.equal(fs.existsSync(ghLogPath), false);
     });
 });
@@ -2453,10 +2595,28 @@ void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree re
         assert.equal(result.status, 0, result.stderr);
 
         const gitLog = fs.readFileSync(gitLogPath, 'utf8');
-        assert.match(gitLog, /^push origin task\/task-a$/m);
+        assert.match(gitLog, /^push -u origin task\/task-a$/m);
         const ghLog = fs.readFileSync(ghLogPath, 'utf8');
         assert.match(ghLog, /^pr list /m);
         assert.match(ghLog, /^pr create /m);
+    });
+});
+
+void test('commitHumanReviewFiles preserves the push-failure die message', () => {
+    withTempDir('run-task-commit-push-fail-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/handoff.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/handoff.md',
+            FAKE_GIT_FAIL_PUSH: '1',
+            FAKE_GIT_FAIL_PUSH_ERROR: 'simulated push failure',
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Human review push failed: simulated push failure/);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^push -u origin task\/task-a$/m);
     });
 });
 
@@ -2590,7 +2750,7 @@ void test('main --full-send --force advances to draft PR and marks human_review 
         assert.equal(updated.phases?.human_review?.status, 'done');
 
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
-        assert.match(gitLog, /^push origin task\/task-a$/m);
+        assert.match(gitLog, /^push -u origin task\/task-a$/m);
         assert.match(gitLog, /^rev-parse --abbrev-ref HEAD$/m);
         assert.ok(fs.existsSync(prStateFile));
     });
@@ -2999,7 +3159,7 @@ void test('commitHumanReviewFiles base-drift gate warns and proceeds with --forc
         assert.match(output, /docs\/BACKLOG\.md/);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
         assert.match(gitLog, /^commit /m);
-        assert.match(gitLog, /^push origin task\/task-a$/m);
+        assert.match(gitLog, /^push -u origin task\/task-a$/m);
     });
 });
 
@@ -3366,7 +3526,7 @@ void test('main full-send tail fails closed when draft PR creation fails', () =>
         assert.equal(updated.phases?.human_review?.status, 'pending');
 
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
-        assert.match(gitLog, /^push origin task\/task-a$/m);
+        assert.match(gitLog, /^push -u origin task\/task-a$/m);
     });
 });
 
@@ -3442,6 +3602,120 @@ void test('main --reroute clears full_send', () => {
         assert.equal(updated.phases?.code_review?.status, 'pending');
         assert.equal(updated.phases?.qa?.status, 'pending');
         assert.equal(updated.phases?.human_review?.status, 'pending');
+    });
+});
+
+void test('checkAndRoute commits QA artifacts for every task in a completed QA bundle', () => {
+    withTempDir('run-task-qa-bundle-commit-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        for (const taskId of ['task-a', 'task-b']) {
+            const status = makeCompleteStatus(taskId, 'task/task-a');
+            const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+            phases.qa = { status: 'done', agent: 'claude' };
+            phases.human_review = { status: 'pending', agent: 'human' };
+            writeTaskStatus(tasksRoot, taskId, status);
+        }
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+        const gitLogPath = path.join(dir, 'git.log');
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            '(async () => {',
+            "  await checkAndRoute('qa', ['task-a', 'task-b']);",
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: gitLogPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_STATUS_OUTPUT: [
+                ' M tasks/task-a/done.md',
+                ' M tasks/task-b/review.md',
+                ' M docs/codebase-map.md',
+            ].join('\n'),
+            FAKE_GIT_DIFF_OUTPUT: [
+                'tasks/task-a/done.md',
+                'tasks/task-b/review.md',
+                'docs/codebase-map.md',
+            ].join('\n'),
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const gitLog = fs.readFileSync(gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- tasks\/task-a$/m);
+        assert.match(gitLog, /^add -A -- tasks\/task-b$/m);
+        assert.match(gitLog, /^add -A -- docs\/codebase-map\.md$/m);
+        assert.match(gitLog, /^commit -m chore: QA artifacts for task-a, task-b$/m);
+        assert.doesNotMatch(gitLog, /^push /m);
+    });
+});
+
+void test('checkAndRoute commits QA artifacts after evidence-advancing qa to done', () => {
+    withTempDir('run-task-qa-evidence-commit-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const taskId = 'task-a';
+        const status = makeCompleteStatus(taskId, 'task/task-a');
+        const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
+        phases.qa = { status: 'in_progress', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+        writeTaskStatus(tasksRoot, taskId, status);
+        const taskDir = path.join(tasksRoot, taskId);
+        fs.writeFileSync(path.join(taskDir, 'done.md'), '# QA Summary: task-a\n\nReady.\n', 'utf8');
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+        const gitLogPath = path.join(dir, 'git.log');
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            '(async () => {',
+            `  await checkAndRoute('qa', [${JSON.stringify(taskId)}]);`,
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: gitLogPath,
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+            FAKE_GIT_REMOTE_EXISTS: '1',
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+            FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /Auto-advanced 'qa' for 'task-a'/);
+        const updated = JSON.parse(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8')) as {
+            phases?: { qa?: { status?: string } };
+        };
+        assert.equal(updated.phases?.qa?.status, 'done');
+        const gitLog = fs.readFileSync(gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- tasks\/task-a$/m);
+        assert.match(gitLog, /^commit -m chore: QA artifacts for task-a$/m);
+        assert.doesNotMatch(gitLog, /^push /m);
     });
 });
 

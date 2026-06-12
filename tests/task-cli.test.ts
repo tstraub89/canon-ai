@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetSpecReview, taskStatus } from '../src/task/index.js';
+import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskStatus } from '../src/task/index.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
 
 const WORKSPACE_ROOT = process.cwd();
@@ -454,6 +454,71 @@ void test('task reset-spec-review archives prior review and resets loop-local fi
         assert.equal(updated.sessions?.claude_spec, undefined);
         assert.equal(fs.existsSync(path.join(taskDir, 'spec-review-prior-1.md')), true);
         assert.throws(() => taskResetSpecReview('missing-reset'), /no status\.json/);
+    });
+});
+
+void test('task reset-code-review archives prior review, resets loop-local fields incl. legacy iterations alias, and preserves iterations_total', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-task', makeStatus('reset-cr-task', {
+            status: 'code_review',
+            phases: {
+                ...makeStatus('reset-cr-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: {
+                    status: 'blocked',
+                    agent: 'claude',
+                    verdict: 'changes_requested',
+                    iterations: 4,
+                    iterations_current_loop: 3,
+                    iterations_total: 6,
+                    changes_requested_total: 2,
+                    preflight_rejections_current_loop: 2,
+                    auto_block_count: 1,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+            sessions: { claude_review: 'old-review-session' },
+        }));
+        fs.writeFileSync(path.join(taskDir, 'review.md'), '# Review\nold content\n', 'utf8');
+
+        captureStdout(() => taskCmd(['reset-code-review', 'reset-cr-task']));
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.code_review?.status, 'pending');
+        assert.equal(updated.phases.code_review?.iterations, 0);
+        assert.equal(updated.phases.code_review?.iterations_current_loop, 0);
+        assert.equal(updated.phases.code_review?.iterations_total, 6);
+        assert.equal(updated.phases.code_review?.preflight_rejections_current_loop, 0);
+        assert.equal(updated.phases.code_review?.verdict, '');
+        assert.equal(updated.status, 'code_review');
+        assert.equal(updated.sessions?.claude_review, undefined);
+        assert.equal(fs.existsSync(path.join(taskDir, 'review-prior-1.md')), true);
+        assert.equal(fs.existsSync(path.join(taskDir, 'review.md')), false);
+        assert.throws(() => taskResetCodeReview(''), /usage: canon task reset-code-review <TASK-ID>/);
+        assert.throws(() => taskResetCodeReview('missing-reset-cr'), /no status\.json/);
+    });
+});
+
+void test('task reset-code-review rejects non-code_review tasks', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-wrong-phase', makeStatus('reset-cr-wrong-phase', {
+            phases: {
+                ...makeStatus('reset-cr-wrong-phase').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'done', agent: 'claude', verdict: 'approved', iterations: 5, iterations_current_loop: 0, iterations_total: 5, changes_requested_total: 0, auto_block_count: 0 },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        }));
+
+        assert.throws(() => taskResetCodeReview('reset-cr-wrong-phase'), /only operates on tasks currently at code_review/);
+        assert.equal(readStatusFile(taskDir).phases.code_review?.status, 'done');
     });
 });
 
@@ -1497,6 +1562,95 @@ void test('task phase routes to the task worktree status.json', () => {
         assert.equal(mainStatus.phases.spec?.status, 'pending');
         assert.equal(worktreeStatus.phases.spec?.status, 'done');
         assert.equal(worktreeStatus.status, 'spec_review');
+    });
+});
+
+void test('task reset-code-review routes to the task worktree status.json', () => {
+    withTempDir('task-worktree-reset-cr-', root => {
+        const repo = path.join(root, 'repo');
+        const worktreesRoot = path.join(root, 'worktrees');
+        const worktree = path.join(worktreesRoot, 'worktree-reset-cr');
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        git(root, ['init', '-b', 'main', repo]);
+        git(repo, ['config', 'user.email', 'test@example.com']);
+        git(repo, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n', 'utf8');
+        git(repo, ['add', 'README.md']);
+        git(repo, ['commit', '-m', 'init']);
+        git(repo, ['worktree', 'add', '-b', 'task/worktree-reset-cr', worktree, 'main']);
+
+        const mainTaskDir = path.join(repo, 'tasks', 'worktree-reset-cr');
+        const worktreeTaskDir = path.join(worktree, 'tasks', 'worktree-reset-cr');
+        fs.mkdirSync(mainTaskDir, { recursive: true });
+        fs.mkdirSync(worktreeTaskDir, { recursive: true });
+        fs.writeFileSync(path.join(mainTaskDir, 'status.json'), `${JSON.stringify(makeStatus('worktree-reset-cr', {
+            branch: 'task/worktree-reset-cr',
+            worktree: true,
+            status: 'code_review',
+            phases: {
+                ...makeStatus('worktree-reset-cr').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: {
+                    status: 'blocked',
+                    agent: 'claude',
+                    verdict: 'changes_requested',
+                    iterations: 3,
+                    iterations_current_loop: 2,
+                    iterations_total: 5,
+                    changes_requested_total: 2,
+                    preflight_rejections_current_loop: 1,
+                    auto_block_count: 1,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        }), null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(makeStatus('worktree-reset-cr', {
+            branch: 'task/worktree-reset-cr',
+            worktree: true,
+            status: 'code_review',
+            phases: {
+                ...makeStatus('worktree-reset-cr').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: {
+                    status: 'blocked',
+                    agent: 'claude',
+                    verdict: 'changes_requested',
+                    iterations: 3,
+                    iterations_current_loop: 2,
+                    iterations_total: 5,
+                    changes_requested_total: 2,
+                    preflight_rejections_current_loop: 1,
+                    auto_block_count: 1,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+            sessions: { claude_review: 'worktree-session' },
+        }), null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'review.md'), '# Review\nworktree\n', 'utf8');
+
+        const result = runTaskCmd(repo, ['reset-code-review', 'worktree-reset-cr'], {
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            CANON_SKIP_PHASE_GATE: '1',
+        });
+        assert.equal(result.status, 0, result.stderr);
+
+        const mainStatus = readStatusFile(mainTaskDir);
+        const worktreeStatus = readStatusFile(worktreeTaskDir);
+        assert.equal(mainStatus.phases.code_review?.status, 'blocked');
+        assert.equal(mainStatus.phases.code_review?.iterations_current_loop, 2);
+        assert.equal(worktreeStatus.phases.code_review?.status, 'pending');
+        assert.equal(worktreeStatus.phases.code_review?.iterations_current_loop, 0);
+        assert.equal(worktreeStatus.phases.code_review?.preflight_rejections_current_loop, 0);
+        assert.equal(worktreeStatus.sessions?.claude_review, undefined);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review-prior-1.md')), true);
     });
 });
 

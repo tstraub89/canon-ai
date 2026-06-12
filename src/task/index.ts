@@ -36,6 +36,7 @@ function usage(): string {
         '  phase <TASK-ID> <phase> <status> [verdict]',
         '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]',
         '  reset-spec-review <TASK-ID>',
+        '  reset-code-review <TASK-ID>',
         '  post-merge-sync [<branch>]',
     ].join('\n');
 }
@@ -1045,6 +1046,51 @@ export function taskResetSpecReview(id: string): void {
     console.log(`Reset ${id}: spec → done, spec_review → pending (iter=0, verdict cleared, claude_spec session dropped)`);
 }
 
+export function taskResetCodeReview(id: string): void {
+    if (!id) throw new Error('Error: usage: canon task reset-code-review <TASK-ID>');
+    validateTaskId(id);
+    const taskCwd = resolveTaskCwd(id);
+    const taskDir = taskDirForCwd(taskCwd, id);
+    const statusPath = path.join(taskDir, 'status.json');
+    if (!fs.existsSync(statusPath)) {
+        throw new Error(`Error: no status.json at ${statusPath}`);
+    }
+
+    const status = readJsonFile<StatusJson>(statusPath);
+    const currentPhase = deriveTopLevelStatus(status);
+    if (currentPhase !== 'code_review') {
+        throw new Error(`Error: reset-code-review only operates on tasks currently at code_review. Current phase: ${currentPhase}.`);
+    }
+
+    const reviewPath = path.join(taskDir, 'review.md');
+    if (fs.existsSync(reviewPath)) {
+        let n = 1;
+        while (fs.existsSync(path.join(taskDir, `review-prior-${n}.md`))) n += 1;
+        fs.renameSync(reviewPath, path.join(taskDir, `review-prior-${n}.md`));
+        console.log(`Archived prior review.md → review-prior-${n}.md`);
+    }
+
+    const codeReview = ensurePhaseEntry(status, 'code_review');
+    codeReview.status = 'pending';
+    codeReview.iterations_current_loop = 0;
+    // `iterations` is the legacy alias for the current-loop counter (mirrors
+    // `iterations_current_loop`); `iterations_total` is the lifetime audit field.
+    // Reset the alias too — back-compat / external readers consume `iterations`,
+    // and leaving it stale would still show the loop as round-N. Matches the
+    // reroute reset (main.ts) and taskResetSpecReview. Preserve `iterations_total`.
+    codeReview.iterations = 0;
+    codeReview.preflight_rejections_current_loop = 0;
+    codeReview.verdict = '';
+    if (status.sessions && Object.hasOwn(status.sessions, 'claude_review')) {
+        delete status.sessions.claude_review;
+    }
+    status.updated = today();
+    writeStatusAtomic(statusPath, status);
+    console.log(
+        `Reset ${id}: code_review → pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
+    );
+}
+
 function ensureGitAvailable(): void {
     const result = spawnSync('git', ['--version'], { stdio: 'ignore' });
     if (result.error || result.status !== 0) {
@@ -1382,6 +1428,9 @@ export function taskCmd(args: string[]): void {
             }
             case 'reset-spec-review':
                 taskResetSpecReview(rest[0] ?? '');
+                break;
+            case 'reset-code-review':
+                taskResetCodeReview(rest[0] ?? '');
                 break;
             case 'post-merge-sync':
                 taskPostMergeSync(rest[0]);

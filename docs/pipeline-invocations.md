@@ -484,3 +484,16 @@
 | 2026-06-10T18:41:28.663Z | implement-done-evidence-guard+orchestrator-exit-logging | implement | codex | gpt-5.4-mini | 0 | 1645.3s | 24712448 | ok |
 | 2026-06-10T18:52:59.977Z | implement-done-evidence-guard+orchestrator-exit-logging | code_review | claude | sonnet | 0 | 690.6s | 1172356 | ok |
 | 2026-06-10T18:56:59.336Z | implement-done-evidence-guard+orchestrator-exit-logging | qa | claude | sonnet | 0 | 239.3s | 1526334 | ok |
+| 2026-06-12T02:48:35.997Z | qa-end-commit | spec_review | codex | gpt-5.5 | 0 | 160.4s | 1045944 | ok |
+| 2026-06-12T02:56:43.947Z | qa-end-commit | spec | claude | opus | 0 | 487.9s | 1734513 | ok |
+| 2026-06-12T03:07:06.174Z | qa-end-commit | plan | claude | sonnet | 0 | 381.1s | 1832281 | ok |
+| 2026-06-12T02:54:52.598Z | push-upstream-tracking | implement | codex | gpt-5.4-mini | 0 | 532.8s | 7068688 | ok |
+| 2026-06-12T03:04:53.042Z | push-upstream-tracking | code_review | claude | sonnet | 0 | 599.9s | 880312 | ok |
+| 2026-06-12T03:07:41.872Z | push-upstream-tracking | qa | claude | sonnet | 0 | 168.8s | 851003 | ok |
+| 2026-06-12T03:15:02.537Z | code-review-counter-reset-helper | implement | codex | gpt-5.4-mini | 0 | 352.5s | 3949849 | ok |
+| 2026-06-12T03:21:10.331Z | code-review-counter-reset-helper | implement | codex | gpt-5.4-mini | 0 | 367.2s | 5340077 | ok |
+| 2026-06-12T03:30:30.790Z | code-review-counter-reset-helper | code_review | claude | sonnet | 0 | 559.7s | 470467 | ok |
+| 2026-06-12T03:33:38.609Z | code-review-counter-reset-helper | qa | claude | sonnet | 0 | 187.8s | 891368 | ok |
+| 2026-06-12T05:10:38.849Z | qa-end-commit | implement | codex | gpt-5.5 | 0 | 534.0s | 5835257 | ok |
+| 2026-06-12T05:20:32.030Z | qa-end-commit | code_review | claude | opus | 0 | 592.6s | 717523 | ok |
+| 2026-06-12T05:24:30.041Z | qa-end-commit | qa | claude | sonnet | 0 | 238.0s | 1613599 | ok |

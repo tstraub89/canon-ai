@@ -91,6 +91,21 @@ void test('findUncoveredTrackedChanges catches staged-only source changes outsid
     assert.deepEqual(uncovered, ['M  src/unrelated.ts']);
 });
 
+void test('findUncoveredTrackedChanges flags a dirty managed doc absent from handoff', () => {
+    const status =
+        ' M docs/codebase-map.md\n' +
+        ' M src/feature.ts\n';
+
+    const uncovered = findUncoveredTrackedChanges(status, new Set(['src/feature.ts']));
+
+    // Managed docs are NOT bypassed by the implement-phase reconciler — only
+    // tasks/ and telemetry are. An implement-authored managed-doc edit not in
+    // handoff.md must surface (abort the auto-commit) so it isn't committed
+    // unreviewed. QA's own docs-freshness edits are handled separately, at the
+    // QA-end commit.
+    assert.deepEqual(uncovered, [' M docs/codebase-map.md']);
+});
+
 void test('findUncoveredTrackedChanges requires both sides of a rename to be in handoff', () => {
     const status = 'R  src/old.ts -> src/new.ts\n';
 

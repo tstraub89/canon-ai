@@ -233,10 +233,8 @@ export async function runCodeReviewPhase(
             `another implementation pass. If repeated failures were all pre-flight, ` +
             `the handoff format itself may be wrong (e.g., Validation Outcomes rows ` +
             `using prose labels instead of backticked check keys). To resume after ` +
-            `fixing: set phases.code_review.status = "pending", ` +
-            `phases.code_review.iterations_current_loop = 0, and ` +
-            `phases.code_review.preflight_rejections_current_loop = 0 in status.json, ` +
-            `then re-run the pipeline.`;
+            `fixing: run \`canon task reset-code-review <id>\` to archive the prior review, ` +
+            `clear the loop-local counters, and re-derive status.json, then re-run the pipeline.`;
         warn(reason);
         autoBlockPhase(taskIds, 'code_review', worstTask.combined, reason);
         process.exit(2);
@@ -272,8 +270,8 @@ export async function runCodeReviewPhase(
                 `Code review pre-flight found only blocked validation rows for task(s) ${preflightFailed.map(f => f.taskId).join(', ')}. ` +
                 `Infrastructure was unavailable, and re-implementation cannot resolve it. ` +
                 `Human triage required. To resume after infrastructure is restored: update the affected ` +
-                `handoff.md Validation Outcomes rows, set phases.code_review.status = "pending" for all ` +
-                `bundle tasks in status.json, and re-run the pipeline.`;
+                `handoff.md Validation Outcomes rows, run \`canon task reset-code-review <id>\` for each ` +
+                `bundle task that needs recovery, and re-run the pipeline.`;
             warn(reason);
             autoBlockPhase(taskIds, 'code_review', worstTask.combined, reason);
             process.exit(2);

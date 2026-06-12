@@ -497,24 +497,41 @@ void test('--pr writes the sidecar on create path and leaves status clean', () =
     });
 });
 
-void test('--push keeps the artifacts commit unmarked', () => {
-    withTempDir('run-task-ship-push-', dir => {
+void test('--pr keeps the artifacts commit unmarked, sets upstream tracking, and reruns cleanly', () => {
+    withTempDir('run-task-ship-pr-tracking-', dir => {
         const { localDir } = makeGitFixture(dir);
         const fakeTools = path.join(dir, 'fake-tools');
         setupFakeTools(fakeTools);
-        const taskId = 'ship-push';
+        const taskId = 'ship-pr-tracking';
         const branch = `task/${taskId}`;
         gitIn(localDir, 'checkout', '-b', branch);
         writeTaskFiles(localDir, taskId, makeHumanReviewStatus(taskId, branch));
 
-        const result = runCanon(localDir, [taskId, '--push'], fakeTools);
+        const first = runCanon(localDir, [taskId, '--pr'], fakeTools, {
+            FAKE_GH_STATE_FILE: path.join(dir, 'gh-state.txt'),
+            FAKE_GH_CREATE_NUMBER: '101',
+            FAKE_GH_CREATE_URL: 'https://github.com/example/repo/pull/101',
+        });
 
-        assert.equal(result.status, 0, result.stderr);
+        assert.equal(first.status, 0, first.stderr);
         const status = readStatusFile(localDir, taskId) as { pr?: { number?: number } };
         assert.equal(status.pr, undefined);
-        assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, '.pr-number')), false);
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '101');
+        assert.equal(gitIn(localDir, 'rev-parse', '--abbrev-ref', `${branch}@{upstream}`), `origin/${branch}`);
+        assert.match(gitIn(localDir, 'status', '-sb'), new RegExp(`^## ${branch}\\.{3}origin/${branch}$`, 'm'));
         assert.equal(gitIn(localDir, 'status', '--porcelain'), '');
         assert.doesNotMatch(gitIn(localDir, 'log', '--format=%s', '-1'), /\[skip ci\]/);
+
+        const second = runCanon(localDir, [taskId, '--pr'], fakeTools, {
+            FAKE_GH_STATE_FILE: path.join(dir, 'gh-state.txt'),
+            FAKE_GH_CREATE_NUMBER: '101',
+            FAKE_GH_CREATE_URL: 'https://github.com/example/repo/pull/101',
+        });
+
+        assert.equal(second.status, 0, second.stderr);
+        assert.equal(gitIn(localDir, 'rev-parse', '--abbrev-ref', `${branch}@{upstream}`), `origin/${branch}`);
+        assert.match(gitIn(localDir, 'status', '-sb'), new RegExp(`^## ${branch}\\.{3}origin/${branch}$`, 'm'));
+        assert.equal(gitIn(localDir, 'status', '--porcelain'), '');
     });
 });
 

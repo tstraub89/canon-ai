@@ -60,6 +60,8 @@ canon task subcommands:
                           --reason is required for spec_review and code_review.
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.
+  reset-code-review <id>  Clear state for a fresh code-review pass after an auto-block.
+                          Zeroes loop counters, clears verdict, archives prior review.md.
   post-merge-sync [<branch>]
                           After a squash-merge PR lands, reconcile local branch with origin.
                           Hard-resets if the only divergence is pipeline telemetry; refuses

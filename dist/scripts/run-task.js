@@ -4256,7 +4256,7 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
   const worstTask = perTaskCombined.reduce((worst, curr) => curr.combined > worst.combined ? curr : worst, perTaskCombined[0]);
   const codeReviewLoopCap = getMaxReviewLoops(tasks);
   if (worstTask.combined >= codeReviewLoopCap) {
-    const reason = `Code review hit ${worstTask.combined} attempts in a row for task ${worstTask.taskId} (${worstTask.real} reviewer rounds + ${worstTask.preflight} pre-flight rejections; limit: ${codeReviewLoopCap}). Pipeline auto-blocked. Read tasks/<id>/review.md \u2014 if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To resume after fixing: set phases.code_review.status = "pending", phases.code_review.iterations_current_loop = 0, and phases.code_review.preflight_rejections_current_loop = 0 in status.json, then re-run the pipeline.`;
+    const reason = `Code review hit ${worstTask.combined} attempts in a row for task ${worstTask.taskId} (${worstTask.real} reviewer rounds + ${worstTask.preflight} pre-flight rejections; limit: ${codeReviewLoopCap}). Pipeline auto-blocked. Read tasks/<id>/review.md \u2014 if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To resume after fixing: run \`canon task reset-code-review <id>\` to archive the prior review, clear the loop-local counters, and re-derive status.json, then re-run the pipeline.`;
     warn(reason);
     autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
     process.exit(2);
@@ -4279,7 +4279,7 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
     }
     writePreflightReviewArtifacts(tasks, preflightFailed, route);
     if (route === "auto_block") {
-      const reason = `Code review pre-flight found only blocked validation rows for task(s) ${preflightFailed.map((f) => f.taskId).join(", ")}. Infrastructure was unavailable, and re-implementation cannot resolve it. Human triage required. To resume after infrastructure is restored: update the affected handoff.md Validation Outcomes rows, set phases.code_review.status = "pending" for all bundle tasks in status.json, and re-run the pipeline.`;
+      const reason = `Code review pre-flight found only blocked validation rows for task(s) ${preflightFailed.map((f) => f.taskId).join(", ")}. Infrastructure was unavailable, and re-implementation cannot resolve it. Human triage required. To resume after infrastructure is restored: update the affected handoff.md Validation Outcomes rows, run \`canon task reset-code-review <id>\` for each bundle task that needs recovery, and re-run the pipeline.`;
       warn(reason);
       autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
       process.exit(2);
@@ -5291,6 +5291,65 @@ function resolveQaPrBody(taskIds, activeCwd) {
     reason: fs17.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
   };
 }
+function commitQaArtifacts(taskIds, cwd) {
+  const affectedManagedDocs = new Set(PIPELINE_MANAGED_DOCS);
+  const dirtyResult = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall");
+  if (!dirtyResult.ok) {
+    die2(`QA-end commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || "unknown error"}`);
+  }
+  const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
+  if (dirtyEntries.length === 0) return;
+  const unexpected = dirtyEntries.filter(
+    (entry) => !entry.paths.every((filePath) => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))
+  );
+  if (unexpected.length > 0) {
+    die2(
+      `QA-end commit aborted: working tree has dirty files outside the QA-end allowlist.
+` + unexpected.map((entry) => `  ${entry.raw}`).join("\n") + `
+The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and all PIPELINE_MANAGED_DOCS.
+Source or test edits must be committed during the implement phase, not left dirty at QA-end.`
+    );
+  }
+  const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries));
+  if (stagePaths.size === 0) return;
+  const stagedBefore = gitSafeAt2(cwd, "diff", "--cached", "--name-only");
+  if (!stagedBefore.ok) {
+    die2(`QA-end commit aborted: could not inspect staged files: ${stagedBefore.stderr || "unknown error"}`);
+  }
+  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+  if (stagedBeforeUnexpected.length > 0) {
+    die2(
+      `QA-end commit aborted: staged files outside the QA-end allowlist:
+` + stagedBeforeUnexpected.map((filePath) => `    ${filePath}`).join("\n")
+    );
+  }
+  for (const relPath of stagePaths) {
+    const addResult = gitSafeAt2(cwd, "add", "-A", "--", relPath);
+    if (!addResult.ok) {
+      die2(`QA-end commit aborted: failed to stage ${relPath}: ${addResult.stderr || "unknown error"}`);
+    }
+  }
+  const stagedResult = gitSafeAt2(cwd, "diff", "--cached", "--name-only");
+  if (!stagedResult.ok) {
+    die2(`QA-end commit aborted: could not inspect staged files after add: ${stagedResult.stderr || "unknown error"}`);
+  }
+  const stagedNames = stagedResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (stagedNames.length === 0) return;
+  const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+  if (stagedUnexpected.length > 0) {
+    die2(
+      `QA-end commit aborted: staged files escaped the QA-end allowlist:
+` + stagedUnexpected.map((filePath) => `    ${filePath}`).join("\n")
+    );
+  }
+  const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(", ");
+  const commitMessage = `chore: QA artifacts for ${label}`;
+  const commitResult = gitSafeAt2(cwd, "commit", "-m", commitMessage);
+  if (!commitResult.ok) {
+    die2(`QA-end commit aborted: ${commitResult.stderr || "unknown error"}`);
+  }
+  info2(`Committed QA artifacts: ${commitMessage}`);
+}
 function createDraftPRForTask(taskIds, branchName) {
   if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
   const baseBranch = getBaseBranch2(taskIds);
@@ -5558,7 +5617,7 @@ Bypass with --force if you've verified the drift is intentional.`
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
       info2(`Clean tree. Pushing ${branchName2}...`);
-      const pushResult2 = gitSafeAt2(cwd, "push", "origin", branchName2);
+      const pushResult2 = gitSafeAt2(cwd, "push", "-u", "origin", branchName2);
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
       }
@@ -5638,7 +5697,7 @@ If this is a source or test file, it should have been committed during the imple
   }
   info2(`Committed human_review artifacts on ${branchName}: ${commitMessage}`);
   info2(`Pushing ${branchName}...`);
-  const pushResult = gitSafeAt2(cwd, "push", "origin", branchName);
+  const pushResult = gitSafeAt2(cwd, "push", "-u", "origin", branchName);
   if (!pushResult.ok) {
     die2(`Human review push failed: ${pushResult.stderr || "unknown error"}`);
   }
@@ -6823,6 +6882,9 @@ async function checkAndRoute(phase, taskIds) {
       }
       return;
     }
+    case "qa":
+      commitQaArtifacts(taskIds, getActiveCwd(taskIds));
+      return;
     default:
       return;
   }

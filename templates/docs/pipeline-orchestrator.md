@@ -118,6 +118,7 @@ canon task <subcommand> [args]
 | `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
 | `accept` | `<id...> <phase> [--reason "<text>"] [--force]` | Operator accept supports `implement`, `spec_review`, and `code_review`. For `implement`, it is the escape hatch for already-committed work: it marks implement done and sets `operator_accepted` so post-implement auto-commit is skipped when the recorded HEAD still matches. For `spec_review` and `code_review`, `--reason` is required; accept writes a `sanctioned` verdict for non-advancing review verdicts, preserves already-advancing verdicts in a blocked bundle, records `operator_accepted*`, and appends the audit reason to `notes.md`. Review accept intentionally skips the implement-only diff/handoff guards. |
 | `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`, and drops the stored `sessions.claude_spec` ID so the next pass runs against a fresh Claude spec session. |
+| `reset-code-review` | `<id>` | Clear router-relevant state for a fresh code-review pass after an auto-block. Zeroes the loop-local review counters, clears verdict, archives the prior `review.md`, and drops the stored `sessions.claude_review` ID so the next pass runs against a fresh Claude review session. |
 | `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
 
 ### Common patterns
@@ -285,6 +286,8 @@ Every task carries a provenance snapshot in `status.json.canon`. `canon task new
 
 **Auto-commit**: After implement passes validation, the orchestrator auto-commits source files listed in `handoff.md`'s Changes table — including `### Changes` tables in `## Iteration N` sections (files introduced in later review rounds are valid). If any non-task source files remain dirty after staging, the commit is aborted and the pipeline stops for manual intervention. `handoff.md` must list every changed file including both sides of renames. Specs with a missing or empty `## Validation Required` section are rejected at this gate — handoff validation cannot be bypassed by omitting the section.
 
+When `qa.status` reaches `done`, the orchestrator commits QA artifacts before stopping at `human_review`. The QA-end commit stages the bundled `tasks/<id>/` directories plus any dirty `PIPELINE_TELEMETRY_FILES` or `PIPELINE_MANAGED_DOCS` in the active checkout, with subject `chore: QA artifacts for <task-id>` (bundles list every task id). This commit does not push or create a PR. It leaves the worktree clean for `--reroute`, avoids the `--pr` rebase stash/pop dance, and makes post-QA task state durable against local history surgery. The residual implement-to-first-QA window remains: code_review iterations before the first successful QA still have uncommitted phase artifacts.
+
 At `human_review` with `--push` or `--pr`, the orchestrator auto-commits a scoped allow-list before pushing:
 
 - **`tasks/<id>/`** — task artifacts (spec, plan, handoff, review, done, pr-body, notes).
@@ -341,6 +344,8 @@ If the human authorizes more iterations, override via env var rather than hand-e
 ```bash
 MAX_REVIEW_LOOPS=5 canon run <id> --step
 ```
+
+If a `code_review` task auto-blocks and you need to reset the loop counters instead of raising the cap, use `canon task reset-code-review <id>`.
 
 ## Session Resumption
 

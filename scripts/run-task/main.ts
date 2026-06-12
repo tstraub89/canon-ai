@@ -762,6 +762,79 @@ export function resolveQaPrBody(taskIds: readonly string[], activeCwd: string): 
     };
 }
 
+export function commitQaArtifacts(taskIds: string[], cwd: string): void {
+    const affectedManagedDocs = new Set<string>(splitWorktree.PIPELINE_MANAGED_DOCS);
+
+    const dirtyResult = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+    if (!dirtyResult.ok) {
+        die(`QA-end commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || 'unknown error'}`);
+    }
+
+    const dirtyEntries = splitGit.parsePorcelainEntries(dirtyResult.stdout);
+    if (dirtyEntries.length === 0) return;
+
+    const unexpected = dirtyEntries.filter(entry =>
+        !entry.paths.every(filePath => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))
+    );
+    if (unexpected.length > 0) {
+        die(
+            `QA-end commit aborted: working tree has dirty files outside the QA-end allowlist.\n` +
+            unexpected.map(entry => `  ${entry.raw}`).join('\n') + '\n' +
+            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and all PIPELINE_MANAGED_DOCS.\n` +
+            `Source or test edits must be committed during the implement phase, not left dirty at QA-end.`
+        );
+    }
+
+    const stagePaths = new Set(buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries));
+    if (stagePaths.size === 0) return;
+
+    const stagedBefore = gitSafeAt(cwd, 'diff', '--cached', '--name-only');
+    if (!stagedBefore.ok) {
+        die(`QA-end commit aborted: could not inspect staged files: ${stagedBefore.stderr || 'unknown error'}`);
+    }
+    const stagedBeforeUnexpected = stagedBefore.stdout
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+    if (stagedBeforeUnexpected.length > 0) {
+        die(
+            `QA-end commit aborted: staged files outside the QA-end allowlist:\n` +
+            stagedBeforeUnexpected.map(filePath => `    ${filePath}`).join('\n')
+        );
+    }
+
+    for (const relPath of stagePaths) {
+        const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath);
+        if (!addResult.ok) {
+            die(`QA-end commit aborted: failed to stage ${relPath}: ${addResult.stderr || 'unknown error'}`);
+        }
+    }
+
+    const stagedResult = gitSafeAt(cwd, 'diff', '--cached', '--name-only');
+    if (!stagedResult.ok) {
+        die(`QA-end commit aborted: could not inspect staged files after add: ${stagedResult.stderr || 'unknown error'}`);
+    }
+    const stagedNames = stagedResult.stdout.split('\n').map(line => line.trim()).filter(Boolean);
+    if (stagedNames.length === 0) return;
+    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+    if (stagedUnexpected.length > 0) {
+        die(
+            `QA-end commit aborted: staged files escaped the QA-end allowlist:\n` +
+            stagedUnexpected.map(filePath => `    ${filePath}`).join('\n')
+        );
+    }
+
+    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
+    const commitMessage = `chore: QA artifacts for ${label}`;
+    const commitResult = gitSafeAt(cwd, 'commit', '-m', commitMessage);
+    if (!commitResult.ok) {
+        die(`QA-end commit aborted: ${commitResult.stderr || 'unknown error'}`);
+    }
+
+    info(`Committed QA artifacts: ${commitMessage}`);
+}
+
 function createDraftPRForTask(taskIds: string[], branchName: string): void {
     if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
     const baseBranch = getBaseBranch(taskIds);
@@ -1114,7 +1187,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
             // PR is NOT a guarantee that origin matches HEAD).
             // (Spec ACs 1+3, complete-state banner contract; PR #75 iter 2.)
             info(`Clean tree. Pushing ${branchName}...`);
-            const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
+            const pushResult = gitSafeAt(cwd, 'push', '-u', 'origin', branchName);
             if (!pushResult.ok) {
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
@@ -1212,7 +1285,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
 
     info(`Committed human_review artifacts on ${branchName}: ${commitMessage}`);
     info(`Pushing ${branchName}...`);
-    const pushResult = gitSafeAt(cwd, 'push', 'origin', branchName);
+    const pushResult = gitSafeAt(cwd, 'push', '-u', 'origin', branchName);
     if (!pushResult.ok) {
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
@@ -2962,6 +3035,10 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             }
             return;
         }
+
+        case 'qa':
+            commitQaArtifacts(taskIds, splitWorktree.getActiveCwd(taskIds));
+            return;
 
         default:
             return;

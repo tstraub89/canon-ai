@@ -80,7 +80,6 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 - [ ] All spec ACs met (see AC Coverage table above)
 - [ ] All applicable validation checks pass (no failures)
 - [ ] All deviations from plan documented with rationale
-- [ ] Branch is current with `origin/<base>`
 
 ---
 
