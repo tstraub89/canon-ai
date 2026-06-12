@@ -616,7 +616,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "1.11.1";
+  const installedVersion = "1.11.2";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -1042,7 +1042,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "1.11.1";
+  const version = "1.11.2";
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -3648,7 +3648,9 @@ var CANON_OWNED = [
   ".canon/README.md",
   ".claude/skills/canon-init/SKILL.md",
   ".claude/skills/canon-spec/SKILL.md",
+  ".claude/skills/canon-init/write-guide.md",
   ".claude/skills/canon-pipeline/SKILL.md",
+  ".claude/skills/canon-pipeline/recovery.md",
   ".claude/skills/canon-status/SKILL.md",
   ".claude/skills/canon-changelog/SKILL.md",
   ".claude/skills/canon-review/SKILL.md",
@@ -3847,7 +3849,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "1.11.1";
+  const newVersion = "1.11.2";
   const currentVersion = existsSync5(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -4103,7 +4105,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("1.11.1");
+  console.log("1.11.2");
 }
 switch (command) {
   case "doctor":

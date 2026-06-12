@@ -4,15 +4,40 @@ import path from 'node:path';
 import { info, warn } from '../cli.js';
 import { getCodexConfig, getMaxReviewLoops, isPlanCombined } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
-import { autoBlockPhase, resolveTaskCwd, writeStatus } from '../state.js';
+import { autoBlockPhase, resolveTaskCwd, taskDirFor, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
-import { isTemplateUnfilled } from '../validation.js';
+import { extractCheckedVerdict, isTemplateUnfilled } from '../validation.js';
 import { getActiveCwd } from '../worktree.js';
 import { taskPhase } from '../../../src/task/index.js';
 
 export function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
     autoBlockPhase(taskIds, 'spec_review', iterationCount, reason);
+}
+
+// The phase gate (checkPhaseGate) requires spec-review.md to carry a checked
+// verdict matching the one being recorded. Fast tier skips Codex spec review —
+// the human's conversational approval IS the verdict — so record it in the
+// artifact before advancing, rather than bypassing the gate. No-op when the
+// operator already recorded a verdict; a missing artifact is left for the
+// gate to report.
+function recordFastTierSpecApproval(taskId: string): void {
+    const artifactPath = path.join(taskDirFor(taskId), 'spec-review.md');
+    let content: string;
+    try {
+        content = fs.readFileSync(artifactPath, 'utf8');
+    } catch {
+        return;
+    }
+    if (extractCheckedVerdict(content)) return;
+    const checked = content.replace(/^- \[ \] (\*\*Approved\*\*)/m, '- [x] $1');
+    const note = '\n> Fast tier: Codex spec review skipped — human conversational spec approval recorded by the orchestrator.\n';
+    fs.writeFileSync(
+        artifactPath,
+        (checked !== content
+            ? checked
+            : `${content}\n## Verdict\n\n- [x] **Approved** — fast tier human approval\n`) + note,
+    );
 }
 
 export async function runSpecReviewPhase(
@@ -53,6 +78,7 @@ export async function runSpecReviewPhase(
         }
         info('Fast tier: auto-advancing spec_review and plan (written during spec phase).');
         for (const t of tasks) {
+            recordFastTierSpecApproval(t.taskId);
             taskPhase(t.taskId, 'spec_review', 'done', 'approved');
             if (isPlanCombined(t.status)) {
                 taskPhase(t.taskId, 'plan', 'done');

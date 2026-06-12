@@ -2,6 +2,20 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.11.2] — 2026-06-11
+
+### Fixed
+
+- **Fast-tier auto-advance no longer trips its own phase gate.** The orchestrator's fast-tier `spec_review` auto-advance (and the documented operator command `canon task phase <id> spec_review done approved`) failed with "no checked verdict checkbox" because nothing ever wrote to the stub `spec-review.md`. The orchestrator now records the human's conversational approval in the artifact (checked **Approved** box + provenance note) before advancing, keeping the gate intact; CLAUDE.md and the `canon-spec` skill document the same step for the operator path.
+- **`/canon-pipeline` and `/canon-init` no longer ship dead links.** `canon-pipeline/recovery.md` (the snag-recovery runbook) and `canon-init/write-guide.md` (the Phase 4 doc-writing guide) are now in `CANON_OWNED` and reach adopters via `init`/`upgrade`. The `canon-init` permission-allowlist step also inlines the recommended block instead of pointing at canon's own README, which adopters don't have.
+- **Docs accuracy pass over the delivered surface**, verified claim-by-claim against the implementation: `AGENTS.md` no longer claims XL/delicate implement runs at `xhigh` (it runs at `high`, deliberately); `--ship`'s teardown/archive ordering is stated correctly (worktree teardown before archive); worktree isolation is documented as the scaffolded default (`canon task new` writes `worktree: true`; only an absent field falls back to main-checkout mode); the `canon run` flags table gains the missing `--force` and `--full-send` rows; the env-var table gains `CANON_WORKTREES_ROOT`, `CANON_PR_BODY`, `MAX_CONTEXT_BYTES`, and `CANON_NO_DETACH`; the auto-detach note now says one-shot modes (`--step`, `--pr`, `--push`, `--reroute`, `--ship`) stay foreground; the `human_review` allow-list documents the directory-form (`dist/`) carve-out; auto-block docs cover the pre-flight-rejection counter; and the `status.json` template's `_pr` comment points at the real `.pr-number` sidecar mechanism.
+- **Stale skill runbooks corrected.** `/canon-pipeline`'s ship section described the pre-v1.9 external-merge flow (now: `--ship` merges itself — don't merge manually) and its reroute section omitted the mandatory `## Amendment` heading and full-tier `spec_review` re-entry; `/canon-status` now reads live task state via `canon task status` instead of stale REPO_ROOT `status.json` copies; `/canon-spec`'s S-size heuristic matches the sizing table (1–3 files); the fixed 1.4.x `--ship` ENOENT limitation is removed from recovery.md.
+
+### Changed
+
+- **`review.md` template drops the "Needs re-review" verdict checkbox.** The verdict was routed and counted identically to `changes_requested` everywhere, so the menu offered two names for one behavior. The parser still accepts `needs_re_review` from existing artifacts.
+- **`done.md` template gains the "Proposed Changelog" section** the QA prompt requires and `/canon-changelog` consumes, so the structure no longer depends solely on prompt compliance.
+
 ## [1.11.1] — 2026-06-11
 
 ### Fixed

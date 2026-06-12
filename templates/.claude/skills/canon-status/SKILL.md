@@ -20,7 +20,7 @@ canon task list 2>/dev/null || echo "(no tasks)"
 
 ## Instructions
 
-Use Glob to find all `tasks/*/status.json` files — skip `tasks/_archive/`. Read each one.
+Use Glob on `tasks/*/status.json` only to discover task IDs — skip `tasks/_archive/`. Then get each task's state with `canon task status <id>`, **not** by reading the REPO_ROOT file: for worktree tasks past plan, the REPO_ROOT copy is the stale pre-implement scaffold, and `canon task status` routes to the live worktree copy automatically.
 
 Produce a status report with the sections below. **Omit any section that has no entries.** Don't show empty headers.
 

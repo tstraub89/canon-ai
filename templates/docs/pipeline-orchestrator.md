@@ -18,7 +18,7 @@ If you find yourself wanting Codex as operator, use Claude Code instead and lean
 
 ## Monitoring detached runs
 
-`canon run` **auto-detaches** whenever stdout is not a TTY — always true inside Claude Code's Bash tool, CI, and piped invocations. The parent prints a PID + log path and exits in ~1s; the real pipeline runs on in a separate process group so it survives harness pgroup-kills on session resume. Use `canon watch` to re-attach.
+A full-auto `canon run` **auto-detaches** whenever stdout is not a TTY — always true inside Claude Code's Bash tool, CI, and piped invocations. The parent prints a PID + log path and exits in ~1s; the real pipeline runs on in a separate process group so it survives harness pgroup-kills on session resume. Use `canon watch` to re-attach. One-shot and stepped modes stay in the foreground regardless of TTY: `--step`, `--expect`, `--push`, `--pr`, `--reroute`, and `--ship` all run synchronously (a foreground `--step` runs a full LLM phase before returning — no `canon watch` needed). `CANON_NO_DETACH=1` suppresses detaching entirely.
 
 ### `canon watch <id>`
 
@@ -48,7 +48,7 @@ state=human_review reason=checkpoint phase=qa→human_review verdict=approved pi
 
 Keys: `state`, `reason` (always); `phase`, `verdict`, `pid` when applicable. All progress (attach line, phase transitions, heartbeat-age ticks, `--follow` log stream) goes to **stderr**; stdout carries only this one line.
 
-If the resolver detects a live `.canon-pid` / `heartbeat.pid` disagreement, `watch` exits `2` with `reason=ambiguous_pid` and a stderr diagnostic naming both pids instead of guessing which process to attach to.
+If the resolver detects a live disagreement between `.canon-pid` and the pid recorded in `.heartbeat.json`, `watch` exits `2` with `reason=ambiguous_pid` and a stderr diagnostic naming both pids instead of guessing which process to attach to.
 
 **Flags:**
 
@@ -95,6 +95,8 @@ Multiple IDs = bundle mode (see below).
 | `--ship` | — | Squash-merge any open PR for the task branch (via `gh pr merge --squash --delete-branch`), pull the base, tear down the worktree, archive `tasks/<id>/` to `_archive/`, and clean up local branches. If the PR was already merged externally, picks up at the cleanup step. |
 | `--allow-divergent-base` | — | At `--push`, `--pr`, and `--ship`, bypass only the commit-divergence block when local `<base>` has commits not yet on `origin/<base>`. It does not bypass the file-allow-list base-drift gate; use `--force` for that. |
 | `--dry-run` | — | Print the planned phases, agents, model, and effort without spawning an LLM. |
+| `--full-send` | — | Pre-clear the human spec gate and auto-open the draft PR at `human_review` — no interrupts. On a `delicate` task, requires `--force`. Mutually exclusive with `--reroute` in one invocation. |
+| `--force` | — | Bypass operator-confirmation gates after you've verified the situation: reroute amendment-heading pre-flight, base-drift file allow-list, the dirty-REPO_ROOT guard before first worktree creation, and `--full-send` on delicate. It does **not** bypass the forge-proof merge gate or diff-computation failures. |
 
 **Default is full auto** — without `--step`, the pipeline runs all phases to completion (or to the next human gate).
 
@@ -115,7 +117,7 @@ canon task <subcommand> [args]
 | `status` | `<id>` | Print full `status.json` detail for a task. |
 | `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
 | `accept` | `<id...> <phase> [--reason "<text>"] [--force]` | Operator accept supports `implement`, `spec_review`, and `code_review`. For `implement`, it is the escape hatch for already-committed work: it marks implement done and sets `operator_accepted` so post-implement auto-commit is skipped when the recorded HEAD still matches. For `spec_review` and `code_review`, `--reason` is required; accept writes a `sanctioned` verdict for non-advancing review verdicts, preserves already-advancing verdicts in a blocked bundle, records `operator_accepted*`, and appends the audit reason to `notes.md`. Review accept intentionally skips the implement-only diff/handoff guards. |
-| `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`. |
+| `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`, and drops the stored `sessions.claude_spec` ID so the next pass runs against a fresh Claude spec session. |
 | `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
 
 ### Common patterns
@@ -182,7 +184,7 @@ Set in `status.json` at task creation:
 | `task_size` | `S \| M \| L \| XL` | Drives Codex model + effort selection and the pipeline tier. S is fast-tier; M+ runs the full pipeline (including Codex spec review). |
 | `delicate` | `true \| false` | Forces the XL bucket (full Codex model, high implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | **Single-use latch**, not a persistent toggle. `true` arms a one-time halt after `spec_review`, before planning (default: `true`). The orchestrator flips it to `false` *at the moment it halts* — so `false` means "the gate already fired (or was pre-cleared)," not "review was skipped." See [Spec gate is a single-use latch](#spec-gate-is-a-single-use-latch). |
-| `worktree` | `true \| false` | Opt-in worktree isolation (default: absent/false). See Worktree Isolation below. |
+| `worktree` | `true \| false` | Worktree isolation. `canon task new` scaffolds this to `true`, so worktree mode is the effective default for every scaffolded task — set it to `false` to opt out and run in the main checkout. The orchestrator treats an *absent* field as `false`, but that fallback only applies to hand-rolled `status.json` files. See Worktree Isolation below. |
 | `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `canon task new` from the current git checkout at task creation. |
 
 ### Task sizing guide
@@ -228,6 +230,10 @@ Claude is tuned for correctness — Opus on phases where false negatives cascade
 | `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
 | `CLAUDE_BUDGET` | _(size-aware)_ | Max spend per Claude phase (USD). Unset → tiered by effective size: S/M `5.00`, L `10.00`, XL/delicate `20.00`. Set → flat cap for all phases (e.g. `CLAUDE_BUDGET=20.00` overrides the tier). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
+| `CANON_WORKTREES_ROOT` | `../dev-worktrees` | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |
+| `CANON_PR_BODY` | _(unset)_ | Literal PR body for `--pr`, overriding the normal resolution chain. Supports `$LABEL` and `$TITLE` placeholders. |
+| `MAX_CONTEXT_BYTES` | `65536` | Byte cap on the spec + Affected Files preload injected into Codex's implement prompt. |
+| `CANON_NO_DETACH` | _(unset)_ | Set to `1` to keep full-auto runs in the foreground (no auto-detach). |
 
 Codex model overrides:
 
@@ -246,13 +252,13 @@ your CLI exposes rather than changing the orchestrator contract.
 
 ## Worktree Isolation
 
-Set `"worktree": true` in `status.json` to run implement, code_review, qa, and reroute-time spec_review/plan phases in a git worktree sibling directory rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree.
+With `"worktree": true` in `status.json` — the scaffolded default from `canon task new` — implement, code_review, qa, and reroute-time spec_review/plan phases run in a git worktree sibling directory rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree. Set the field to `false` to opt out and run those phases in the main checkout (canon still creates the `task/<id>` branch there itself).
 
-**Layout**: `../dev-worktrees/<task-id>/` (sibling of the repo root, not a subdirectory).
+**Layout**: `../dev-worktrees/<task-id>/` (sibling of the repo root, not a subdirectory). The root is configurable via `CANON_WORKTREES_ROOT`.
 
 **Main repo stays on its base**: In worktree mode, the orchestrator creates the `task/<id>` branch directly in the worktree. The main repo never checks out the task branch.
 
-**Scaffold-to-base before worktree creation**: On the first `implement` phase call (when no task branch exists yet), the orchestrator commits the task scaffold — `spec.md`, `plan.md`, `status.json`, and the empty `handoff.md` / `review.md` / `done.md` / `notes.md` templates — to the base branch with message `task(<id>): commit artifacts pre-pipeline`. If `PIPELINE_TELEMETRY_FILES` are dirty, a sibling commit follows: `chore: absorb pre-implement telemetry into scaffold for <id>`. Then `ensureBranch` creates the `task/<id>` branch from base, so the new worktree inherits the scaffold via its initial checkout. Without this, the worktree would boot from a base branch that has no `tasks/<id>/` and pipeline phases would have nothing to read. On re-runs of `implement` (reroutes, review iterations) the worktree already exists and the scaffold-to-base commit is skipped — re-committing it would create divergent commits that fight with the task branch's evolved artifacts at PR-merge time.
+**Scaffold-to-base before worktree creation**: On the first `implement` phase call (when no task branch exists yet), the orchestrator commits the full `tasks/<id>/` scaffold — every artifact stub plus `status.json` — to the base branch with message `task(<id>): commit artifacts pre-pipeline`. If `PIPELINE_TELEMETRY_FILES` are dirty, a sibling commit follows: `chore: absorb pre-implement telemetry into scaffold for <id>`. Then `ensureBranch` creates the `task/<id>` branch from base, so the new worktree inherits the scaffold via its initial checkout. Without this, the worktree would boot from a base branch that has no `tasks/<id>/` and pipeline phases would have nothing to read. On re-runs of `implement` (reroutes, review iterations) the worktree already exists and the scaffold-to-base commit is skipped — re-committing it would create divergent commits that fight with the task branch's evolved artifacts at PR-merge time.
 
 **Dirty source guard before first worktree**: Before the first worktree is created, the orchestrator inspects `REPO_ROOT` with `git status --porcelain=v1 -uall`. Dirtiness under `tasks/` and `PIPELINE_TELEMETRY_FILES` is allowed because canon owns those scaffold/telemetry paths. Any tracked or untracked source path outside that allow-list aborts worktree creation: commit or stash intentional edits before starting, or rerun with `--force` if the new task should intentionally start from `base_branch` without those local edits.
 
@@ -260,7 +266,7 @@ Set `"worktree": true` in `status.json` to run implement, code_review, qa, and r
 
 **Project-level resources**: REPO_ROOT remains canonical for managed docs, `scripts/`, `src/`, root agent files, and other project-level files. Their cross-worktree coordination is separate from task-state resolution.
 
-**Teardown**: `--ship` calls `git worktree remove --force` after archiving the task directory.
+**Teardown**: `--ship` calls `git worktree remove --force` *before* archiving the task directory — teardown comes first so the archive write targets the main checkout.
 
 **Bundle constraint**: All tasks in a bundle must agree on `worktree`.
 
@@ -289,7 +295,7 @@ The `--pr` body resolution order is `CANON_PR_BODY` → populated `tasks/<id>/pr
 
 If a dirty file falls outside this union, the pipeline dies with an actionable message describing the allow-list, suggesting either adding the file to `spec.md '### Affected Files'` (for managed docs) or reverting with `git checkout HEAD -- <path>` (for source/test files that should have been committed in the implement phase).
 
-Non-managed Affected Files entries (source files, test files, fixtures) do not enter the `human_review` allow-list. The Affected Files carve-out at `human_review` is restricted to `PIPELINE_MANAGED_DOCS` only.
+Non-managed Affected Files entries (source files, test files, fixtures) do not enter the `human_review` allow-list as individual files — those belong to the implement phase's auto-commit. Two carve-outs do apply at `human_review`: `PIPELINE_MANAGED_DOCS` entries listed in Affected Files, and **directory-form entries** (a path ending in `/`, e.g. `dist/`) — any dirty file under such a prefix is staged, which is the mechanism for build-generated artifacts regenerated late in the pipeline.
 
 When a managed doc is committed via the Affected Files allow-list, an advisory warning fires per file inviting the operator to `git diff HEAD -- <path>` to verify the content before `--ship` (residual guard against same-file sibling-pipeline overlap).
 
@@ -326,7 +332,7 @@ After `spec_review` or `code_review`, the orchestrator checks the verdict.
 | `code_review` | `spec_gap` | Block the whole `code_review` bundle with an escalation. Fix path: amend the `spec_gap` task specs and run `canon run <ids> --reroute`. Bless path: `canon task accept <ids> code_review --reason "<why>"`. |
 | `spec_review` / `code_review` | `approved` / `approved_with_nits` / `sanctioned` | Continue to the next phase. `sanctioned` is status-only and written by `canon task accept`, not by review artifacts; `canon task accept` refuses a review phase with no recorded verdict unless `--force` is passed. |
 
-**Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
+**Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. For code review the cap check is the **sum** of `iterations_current_loop` and `preflight_rejections_current_loop` — handoffs bounced by the deterministic pre-flight gate count toward the same budget, and recovery requires resetting both counters (the block message says which). Separately, a pre-flight where every blocker is a `blocked` validation row auto-blocks immediately without consuming loop budget. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
 
 **`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a test outside the task's Affected Files, Codex may record `Fail – unrelated` in the Validation Outcomes table instead of blocking on a bare `Fail`. The orchestrator accepts this state only when the Notes column contains a specific file reference (a path, file extension, or `file:line`); vague notes are rejected. The code-review prompt instructs Claude to assess whether the explanation is credible and the failure is genuinely out of scope.
 
@@ -338,7 +344,7 @@ MAX_REVIEW_LOOPS=5 canon run <id> --step
 
 ## Session Resumption
 
-The orchestrator resumes agent sessions across phases instead of spawning fresh ones. After each phase, the session ID is discovered and stored in `status.json` under one of four slots: `sessions.claude_spec`, `sessions.claude_review`, `sessions.codex`, or `sessions.codex_spec_review` (Codex spec review uses its own slot so it never clobbers the implement session). Subsequent phases for the same agent pass `--resume <id>` (Claude) or `codex exec resume <id>` (Codex), preserving conversation context and skipping doc re-reads.
+The orchestrator resumes agent sessions across phases instead of spawning fresh ones — for the phases that participate in a resumption cluster. Plan and QA sessions are intentionally one-offs (never stored), and code-review round 1 always starts fresh even when a prior `claude_review` session exists; only round 2+ resumes it. For participating phases, the session ID is discovered and stored in `status.json` under one of four slots: `sessions.claude_spec`, `sessions.claude_review`, `sessions.codex`, or `sessions.codex_spec_review` (Codex spec review uses its own slot so it never clobbers the implement session). Subsequent phases for the same agent pass `--resume <id>` (Claude) or `codex exec resume <id>` (Codex), preserving conversation context and skipping doc re-reads.
 
 **Stale Claude session auto-recovery**: A stored Claude session ID can go stale (long usage-limit gaps, workstation rotation, aggressive `~/.claude/projects/` pruning). When `claude --resume <id>` can't find the session, the orchestrator detects the pattern and retries once with a fresh session and the full original prompt.
 
@@ -439,7 +445,7 @@ The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amend
 
 **Note on merge strategy**: `--ship` uses `gh pr merge --squash` as canon's default merge strategy. Projects that use rebase-merge or merge-commit should handle the merge outside canon, then run `--ship` afterward so it can detect the merged PR and proceed with cleanup.
 
-`--ship` runs in this order: (1) verify local `<base>` has no commits ahead of `origin/<base>` unless `--allow-divergent-base` is passed, (2) merge any open PR for the task branch via `gh pr merge --squash --delete-branch`, (3) pull or fast-forward the base branch when needed, (4) run any project-specific post-merge hook under `.canon/hooks/`, (5) prove the task's merge before local branch deletion, (6) archive `tasks/<id>/` to `tasks/_archive/<id>/`, (7) `git worktree remove --force` if a worktree was active, (8) clean up local branches. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
+`--ship` runs in this order: (1) verify local `<base>` has no commits ahead of `origin/<base>` unless `--allow-divergent-base` is passed, (2) merge any open PR for the task branch via `gh pr merge --squash --delete-branch`, (3) pull or fast-forward the base branch when needed, (4) run any project-specific post-merge hook under `.canon/hooks/`, (5) prove the task's merge before local branch deletion, (6) `git worktree remove --force` if a worktree was active, (7) archive `tasks/<id>/` to `tasks/_archive/<id>/` in the main checkout, (8) clean up local branches. **`--ship` fails closed if `handoff.md` is missing** — a task cannot be archived without validation evidence. Similarly, closing `human_review` without a `handoff.md` present fails with an explicit error rather than silently succeeding.
 
 **Forge-proof deletion gate**: before deleting any local task branch, `--ship` requires positive merge evidence. When the `--pr` path has run, the PR number is stored in a gitignored task-local sidecar (`tasks/<id>/.pr-number`); proof requires the pinned PR to be `MERGED`, the PR `baseRefName` to match the task's `base_branch`, and the local task-branch tip to be an ancestor of, or equal to, the PR `headRefOid`. When the sidecar is absent (tasks created before v1.11, or a worktree rebuilt without `--pr`), `--ship` falls back to a base-filtered merged-PR branch lookup, still requiring the local tip to be ancestor-or-equal to the PR head. If the PR head object cannot be materialized locally, proof is unestablished and `--ship` fails closed. If the local task branch is already absent, no proof is required because there is no local branch deletion left to protect. `--force` does not bypass this proof gate; the failure message names the manual recovery path.
 

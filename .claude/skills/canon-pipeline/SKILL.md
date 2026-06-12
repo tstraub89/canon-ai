@@ -71,21 +71,22 @@ canon run <task-id> --pr
 
 Pushes the task branch and opens a draft PR via `gh pr create` targeting `base_branch` from `status.json`. After it runs, read `tasks/<id>/handoff.md` and verify the auto-generated PR body matches actual scope — rewrite via `gh pr edit <num> --body-file ...` if code-review iterations expanded scope beyond the initial handoff.
 
-### 4. Ship a merged task
+### 4. Ship an approved task
 
-After the PR squash-merges:
+After the PR is marked ready and approved — do **not** merge it manually:
 
 ```bash
-canon task post-merge-sync              # reconcile local branch with origin
-canon run <task-id> --ship              # archive, delete task branch, push base branch
+canon run <task-id> --ship              # squash-merge the PR, pull base, tear down worktree, archive, clean up branches
 ```
 
-If the task targeted a release branch (`base_branch` in `status.json`), `--ship` archives there — not main.
+`--ship` runs `gh pr merge --squash --delete-branch` itself, then pulls/fast-forwards the base branch, proves the merge (forge-proof gate) before deleting any local task branch, tears down the worktree, and archives `tasks/<id>/`. If the PR was already merged externally, `--ship` detects that and picks up at cleanup — and `canon task post-merge-sync` exists as a recovery helper if the local base has diverged after an external squash-merge, not as a standard pre-ship step.
 
-`--ship` requires the task to be at `human_review`. If it refuses with "task is at: code_review" (or similar), the squash-merge captured a pre-progression `status.json`. Advance the phases manually — artifacts are on disk, so this is paperwork:
+If the task targeted a release branch (`base_branch` in `status.json`), `--ship` merges and archives there — not main.
+
+`--ship` requires the task to be at `human_review` (or `complete`). If it refuses with "task is at: code_review" (or similar), the squash-merge captured a pre-progression `status.json`. Advance the phases manually — artifacts are on disk, so this is paperwork. Use the verdict actually checked in `tasks/<task-id>/review.md` (`approved` or `approved_with_nits`) — the phase gate rejects a verdict that doesn't match the artifact:
 
 ```bash
-canon task phase <task-id> code_review done approved_with_nits
+canon task phase <task-id> code_review done <verdict-from-review.md>
 canon task phase <task-id> qa done
 canon run <task-id> --ship
 ```
@@ -116,18 +117,24 @@ canon run <task-id> --ship
 
 ### 6. Reroute after human rejection
 
-If the user rejects at `human_review`:
-1. Write rejection feedback into `spec.md` as an Amendment section (or into a note for small tweaks).
-2. Reroute resets implement/code_review/qa to pending and flags Codex to read the amended spec:
+`--reroute` is allowed from `human_review` and from a `code_review` block with a `spec_gap` verdict.
+
+1. Write the new requirements into `spec.md` as an Amendment section — **required**, not optional: the reroute pre-flight gate aborts unless the heading `## Amendment` (round 1) or `## Amendment Round N` (round 2+) exists. A note elsewhere doesn't count. Edit the worktree copy if a worktree exists.
+2. Reroute re-enters at the tier's review altitude:
    ```bash
    canon run <task-id> --reroute
+   # Full tier (M/L/XL/delicate) re-enters at spec_review — amendment gets reviewed, plan refreshed:
+   canon run <task-id> --step --expect spec_review
+   # Fast tier (S, non-delicate) re-enters directly at implement:
+   canon run <task-id> --step --expect implement
    ```
+3. If the amendment review blocks with `changes_requested`, revise the Amendment section and re-run plain `canon run <task-id>` — **not** `--reroute` (that would start a new reroute round).
 
 ---
 
 ## Snag recovery
 
-When the pipeline gets stuck — auto-block on a review loop, phase mismatch, `--ship` refusing, branch divergence after squash-merge, parallel-task artifact conflicts, agent auth 401, or `--ship` ENOENT on non-worktree tasks — see [recovery.md](recovery.md). Each scenario has a documented diagnosis and fix.
+When the pipeline gets stuck — auto-block on a review loop, phase mismatch, `--ship` refusing, branch divergence after squash-merge, parallel-task artifact conflicts, or agent auth 401 — see [recovery.md](recovery.md). Each scenario has a documented diagnosis and fix.
 
 ## Pre-flight checklist before `--pr` or `--ship`
 

@@ -34,6 +34,13 @@ List any unresolved `human_pending` validation checks from handoff.md. If none r
 - (none / `Check name` — why it requires human verification)
 - Acknowledged: (only if waiving or deferring a pending human check)
 
+## Proposed Changelog
+
+Apply the project's changelog scope (AGENTS.md §"Release Rules") and the "would a user notice" test. If nothing qualifies, write: no user-facing change — omit from changelog.
+
+- (proposed bullet(s), in the changelog's voice)
+- Proposed version bump: patch / minor / major — brief rationale
+
 ## Decisions Made
 
 Any choices that were made during implementation that you should be aware of.

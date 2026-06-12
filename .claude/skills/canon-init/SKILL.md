@@ -121,7 +121,31 @@ By default, Claude Code prompts on every `git`, `gh`, `codex`, and `canon` subpr
 2. If anything's missing, ask the project owner: *"Want me to add canon's recommended permission allowlist to `.claude/settings.json`? I'll preserve your existing entries."*
 3. If yes:
    - Read `.claude/settings.json` if it exists (or start from `{}`).
-   - Merge canon's recommended entries into `permissions.allow` — see the project README "Skip the permission prompts" section for the full block. Preserve all existing entries; only add what's missing.
+   - Merge canon's recommended entries into `permissions.allow` — the full block is below. Preserve all existing entries; only add what's missing.
+
+     ```json
+     {
+       "permissions": {
+         "allow": [
+           "Bash(git *)", "Bash(gh *)", "Bash(sed *)", "Bash(awk *)",
+           "Bash(ls *)", "Bash(find *)", "Bash(fd *)", "Bash(cat *)",
+           "Bash(head *)", "Bash(tail *)", "Bash(grep *)", "Bash(rg *)",
+           "Bash(wc *)", "Bash(echo *)", "Bash(tr *)", "Bash(xargs *)",
+           "Bash(tee *)", "Bash(jq *)",
+           "Bash(npm run *)", "Bash(npm test)", "Bash(npm test *)",
+           "Bash(npm audit)", "Bash(npm audit *)", "Bash(npm ci)", "Bash(npm ci *)",
+           "Bash(npx canon *)", "Bash(npx tsc *)", "Bash(canon *)", "Bash(codex *)",
+           "Skill(canon-init)", "Skill(canon-spec)", "Skill(canon-spec:*)",
+           "Skill(canon-pipeline)", "Skill(canon-pipeline:*)",
+           "Skill(canon-status)", "Skill(canon-status:*)",
+           "Skill(canon-changelog)", "Skill(canon-changelog:*)",
+           "Skill(canon-review)", "Skill(canon-review:*)"
+         ]
+       }
+     }
+     ```
+
+     The shell-tool entries are for pipeline composition (e.g. `cat foo.json | jq '.bar'`), not raw file reads — built-in Read/Glob/Grep stay preferred.
    - Write back with 2-space indentation.
 4. If no, skip — canon works without it; every `canon run` will just prompt per subprocess.
 

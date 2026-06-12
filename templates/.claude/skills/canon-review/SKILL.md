@@ -25,7 +25,7 @@ Don't use for already-committed code review (use `codex review --uncommitted` fo
 
 The task ID is `$ARGUMENTS`. If empty, stop: usage is `/canon-review <task-id>`.
 
-Verify `tasks/<id>/spec.md` exists and is filled out (no `<placeholder>` text or "TBD" / "Met / Partial / Not met" rows). If it's still a template, stop and say so.
+Verify `tasks/<id>/spec.md` exists and is filled out (no `<placeholder>` text or "TBD" stubs). If it's still a template, stop and say so.
 
 Read into context:
 - `tasks/<id>/spec.md` (the artifact under review)

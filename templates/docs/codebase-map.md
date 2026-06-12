@@ -95,5 +95,5 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 |---|---|---|
 | Workflow source of truth | `AGENTS.md` | All agents follow this |
 | Claude instructions | `CLAUDE.md` | Architect + reviewer context |
-| Agent permissions | .claude/settings.local.json | Allowlisted commands |
+| Agent permissions | .claude/settings.json | Allowlisted commands (committed, team-shared; personal overrides go in gitignored .claude/settings.local.json) |
 | Task artifacts | `tasks/` | Per-task specs, plans, reviews |

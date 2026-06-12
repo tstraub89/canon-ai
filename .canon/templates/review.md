@@ -83,7 +83,6 @@ One paragraph: overall code quality of the implementation.
 - [ ] **Approved** — ship as-is
 - [ ] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Needs re-review** — significant changes expected; re-review (both stages) after iteration
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
 ---
@@ -123,7 +122,6 @@ Re-fill this table with every AC from spec.md against the latest code. Earlier A
 - [ ] Approved
 - [ ] Approved with nits
 - [ ] Changes requested
-- [ ] Needs re-review
 - [ ] Spec gap
 
 > Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.

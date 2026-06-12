@@ -32,7 +32,7 @@ Stop points marked **⛔ STOP** require explicit approval before continuing.
 
 Read before doing anything else:
 
-- `AGENTS.md` — workflow rules, validation matrix, sizing guide
+- `AGENTS.md` — workflow rules, validation matrix (the sizing table lives in `docs/pipeline-orchestrator.md`)
 - `CLAUDE.md` — your role and spec authorship guidelines
 - `docs/product-context.md` — project context, user flows, delicate surfaces
 - `docs/decisions.md` — settled decisions (check for conflicts)
@@ -68,7 +68,7 @@ Before grilling, detect full-send intent from `$ARGUMENTS`: if it contains an ex
 `Full-send mode detected. I'll grill, write the spec, and run the pipeline through to a draft PR without further interrupts.`
 
 Assess task size from the description and exploration findings:
-- **S**: 1–2 files, clearly bounded, low uncertainty
+- **S**: 1–3 files, clearly bounded, low uncertainty
 - **M**: several files, well-understood approach, < 1 day
 - **L**: cross-cutting, significant refactor, or meaningful uncertainty
 - **XL**: architecture change, high uncertainty, multiple systems
@@ -151,12 +151,15 @@ Self-check before presenting:
 
 **S tasks:**
 1. Write `tasks/TASK-ID/plan.md` using `.canon/templates/plan.md` as structure.
-2. Update `status.json` phases:
-   - `phases.spec.status: "done"`
-   - `phases.spec_review: { "status": "done", "agent": "claude", "verdict": "approved" }`
-   - `phases.plan.status: "done"`
-   - `human_spec_gate: false`
-3. Invoke the pipeline:
+2. Record the human's approval in `tasks/TASK-ID/spec-review.md`: check the **Approved** box and add a one-line note ("Fast tier — human conversational spec approval; Codex spec review skipped"). The phase gate reads this artifact before letting `spec_review` advance.
+3. Advance the phases with the helpers (they rederive the top-level `status` pointer):
+   ```bash
+   canon task phase TASK-ID spec done
+   canon task phase TASK-ID spec_review done approved
+   canon task phase TASK-ID plan done
+   ```
+   Then set `human_spec_gate: false` in `status.json` (already cleared by the human's conversational approval).
+4. Invoke the pipeline:
    ```bash
    canon run TASK-ID
    ```
@@ -183,5 +186,5 @@ canon run --full-send [--force] TASK-ID
 - `/canon-review` — adversarial pre-pipeline review of the spec. Recommended for M/L/XL or delicate tasks before invoking the pipeline.
 - `/canon-pipeline` — drive the pipeline after spec approval.
 - `/canon-status` — check what other canon tasks are in flight before committing to scope.
-- `AGENTS.md` — workflow rules, sizing guide, validation matrix.
+- `AGENTS.md` — workflow rules, validation matrix; `docs/pipeline-orchestrator.md` — sizing guide.
 - `CLAUDE.md` — spec authorship guidelines.

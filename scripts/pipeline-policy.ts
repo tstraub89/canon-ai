@@ -40,7 +40,7 @@ export type PolicyConfig = {
     claudeModelQa: string;
     codexModelMini: string;
     codexModelFull: string;
-    // null → use size-aware default (2 for S/M, 3 for L/XL). A number here
+    // null → use size-aware default (3 for S/M, 5 for L/XL). A number here
     // (from MAX_REVIEW_LOOPS env var) applies uniformly across all sizes.
     maxReviewLoops: number | null;
     claudeBudget: string | null;

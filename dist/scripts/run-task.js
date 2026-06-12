@@ -4596,6 +4596,26 @@ import path15 from "path";
 function autoBlockSpecReview(taskIds, iterationCount, reason) {
   autoBlockPhase(taskIds, "spec_review", iterationCount, reason);
 }
+function recordFastTierSpecApproval(taskId) {
+  const artifactPath = path15.join(taskDirFor(taskId), "spec-review.md");
+  let content;
+  try {
+    content = fs15.readFileSync(artifactPath, "utf8");
+  } catch {
+    return;
+  }
+  if (extractCheckedVerdict(content)) return;
+  const checked = content.replace(/^- \[ \] (\*\*Approved\*\*)/m, "- [x] $1");
+  const note = "\n> Fast tier: Codex spec review skipped \u2014 human conversational spec approval recorded by the orchestrator.\n";
+  fs15.writeFileSync(
+    artifactPath,
+    (checked !== content ? checked : `${content}
+## Verdict
+
+- [x] **Approved** \u2014 fast tier human approval
+`) + note
+  );
+}
 async function runSpecReviewPhase(state, interactive, resumeId) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
@@ -4627,6 +4647,7 @@ async function runSpecReviewPhase(state, interactive, resumeId) {
     }
     info("Fast tier: auto-advancing spec_review and plan (written during spec phase).");
     for (const t of tasks) {
+      recordFastTierSpecApproval(t.taskId);
       taskPhase(t.taskId, "spec_review", "done", "approved");
       if (isPlanCombined2(t.status)) {
         taskPhase(t.taskId, "plan", "done");

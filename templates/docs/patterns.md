@@ -80,7 +80,7 @@ Each entry should be a short paragraph (3–8 lines) with this shape:
 
 > **Short imperative title naming the rule, not the bug.** *(Title is the lesson — a future reader scanning headings should learn the rule from titles alone.)*
 > 
-> The actual rule, then the failure mode it prevents (specific incident or class of bug), then the concrete prevention (what to grep for, what to verify, where the canonical example lives). Reference symbols/files via the `` `SYMBOL` in `path/file.ts` `` form so `npm run docs-refs-check` can validate them.
+> The actual rule, then the failure mode it prevents (specific incident or class of bug), then the concrete prevention (what to grep for, what to verify, where the canonical example lives). Reference symbols/files via the `` `SYMBOL` in `path/file.ts` `` form so the docs-refs checker (`scripts/docs-refs-check.mjs`, shipped by canon; wire it to a script runner if your project has one) can validate them.
 
 ### Example pitfall
 

@@ -18,7 +18,7 @@
   "human_spec_gate": true,
   "full_send": false,
   "worktree": true,
-  "_pr": "optional: { number: <PR number> } - set by --pr, read by --ship for forge-proof merge verification. Absence is valid (legacy/pre-PR state).",
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
   "phases": {
     "spec": { "status": "pending", "agent": "claude" },
     "spec_review": {
@@ -49,6 +49,6 @@
   "escalations": [],
   "sessions": {},
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
-  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review | spec_gap | sanctioned",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See AGENTS.md Full-send mode."
 }
