@@ -497,3 +497,15 @@
 | 2026-06-12T05:10:38.849Z | qa-end-commit | implement | codex | gpt-5.5 | 0 | 534.0s | 5835257 | ok |
 | 2026-06-12T05:20:32.030Z | qa-end-commit | code_review | claude | opus | 0 | 592.6s | 717523 | ok |
 | 2026-06-12T05:24:30.041Z | qa-end-commit | qa | claude | sonnet | 0 | 238.0s | 1613599 | ok |
+| 2026-06-13T03:57:32.253Z | docs-refs-validate-cited-paths | implement | codex | gpt-5.4-mini | 0 | 264.7s | 3130521 | ok |
+| 2026-06-13T04:03:51.719Z | docs-refs-validate-cited-paths | code_review | claude | sonnet | 0 | 325.9s | 449217 | ok |
+| 2026-06-13T04:06:04.867Z | docs-refs-validate-cited-paths | qa | claude | sonnet | 0 | 133.1s | 716094 | ok |
+| 2026-06-13T18:45:52.003Z | docs-refs-validate-cited-paths | implement | codex | gpt-5.4-mini | 0 | 695.5s | 14661750 | ok |
+| 2026-06-13T21:54:23.961Z | docs-refs-validate-cited-paths | code_review | claude | sonnet | 0 | 360.9s | 470007 | ok |
+| 2026-06-13T21:57:52.460Z | docs-refs-validate-cited-paths | qa | claude | sonnet | 0 | 208.5s | 857951 | ok |
+| 2026-06-14T03:44:57.452Z | docs-refs-validate-cited-paths | implement | codex | gpt-5.4-mini | 0 | 186.0s | 18205576 | ok |
+| 2026-06-14T04:51:12.808Z | docs-refs-validate-cited-paths | code_review | claude | sonnet | 0 | 440.3s | 743123 | ok |
+| 2026-06-14T04:52:40.639Z | docs-refs-validate-cited-paths | qa | claude | sonnet | 0 | 87.8s | 473222 | ok |
+| 2026-06-14T05:20:30.827Z | docs-refs-validate-cited-paths | implement | codex | gpt-5.4-mini | 0 | 251.5s | 22143581 | ok |
+| 2026-06-14T05:32:03.165Z | docs-refs-validate-cited-paths | code_review | claude | sonnet | 0 | 691.8s | 1049726 | ok |
+| 2026-06-14T05:35:50.931Z | docs-refs-validate-cited-paths | qa | claude | sonnet | 0 | 227.8s | 1045472 | ok |

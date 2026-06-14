@@ -106,6 +106,44 @@ void test('line-citation refs: ascii hyphen, en-dash, and em-dash all pass', () 
     );
 });
 
+void test('line-citation refs: comma-list citation on an existing file passes', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/comma-list-ok.md',
+                'See `scripts/fixture-target.ts:151,254`.\n',
+            );
+            writeFile(root, 'scripts/fixture-target.ts', 'export const fixtureTarget = true;\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('line-citation refs: missing file reports the full cited ref text', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/comma-list-missing.md',
+                'See `src/does-not-exist.ts:151,254`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/comma-list-missing.md',
+                    line: 1,
+                    ref: '`src/does-not-exist.ts:151,254`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
 void test('symbol-in-file refs: symbol present passes', () => {
     makeTempRepo(
         root => {
@@ -714,6 +752,27 @@ void test('gitignored target paths are skipped (no finding when target is gitign
     );
 });
 
+void test('gitignored target paths are skipped when a symlinked 128-causer appears in the same fixture', () => {
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', 'docs/real/ignored.md\n');
+            fs.mkdirSync(path.join(root, 'docs', 'real'), { recursive: true });
+            fs.mkdirSync(path.join(root, 'content'), { recursive: true });
+            fs.writeFileSync(path.join(root, 'content', 'through-symlink.md'), '# Symlink target\n');
+            fs.symlinkSync(path.join(root, 'content'), path.join(root, 'docs', 'link'), 'dir');
+            writeFile(
+                root,
+                'docs/gitignored-line-cited-ref.md',
+                'See `docs/link/through-symlink.md` and `docs/real/ignored.md:151,254`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
 void test('gitignored skip survives parent-relative anchor links elsewhere in the repo', () => {
     // Regression for Codex review on this change: `../AGENTS.md` from a
     // nested doc gets fed raw into `git check-ignore`, which exits 128
@@ -799,6 +858,65 @@ void test('gitignored markdown source files are skipped from scanning (self-anch
             assert.deepEqual(runChecks(root), []);
         },
     );
+});
+
+void test('gitignored markdown source files with spaces are still skipped from scanning', () => {
+    // Regression for Amendment Round 2: the source-file gitignore pass
+    // must still accept real path names with spaces. If it shares the
+    // candidate-only poison filter, this gitignored source file would
+    // be dropped from ignoredSources and scanned locally.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', 'docs/generated report.md\n');
+            writeFile(
+                root,
+                'docs/generated report.md',
+                '# Generated Report\n\n[link](#missing-anchor)\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored target paths with spaces are skipped when the citation is in a scanned doc', () => {
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', 'docs/has space.md\n');
+            writeFile(
+                root,
+                'docs/space-cited-ref.md',
+                'See `docs/has space.md:151,254`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('gitignored skip degrades to no-skip outside a git repo', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-refs-check-no-repo-'));
+    try {
+        writeFile(
+            root,
+            'docs/no-repo.md',
+            'See `.claude/settings.local.json:151,254`.\n',
+        );
+        assert.deepEqual(runChecks(root), [
+            {
+                file: 'docs/no-repo.md',
+                line: 1,
+                ref: '`.claude/settings.local.json:151,254`',
+                reason: 'missing file',
+            },
+        ]);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 });
 
 void test('gitignored skip applies to relative anchor-link paths (./gitignored.md#anchor)', () => {

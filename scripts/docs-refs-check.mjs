@@ -274,6 +274,12 @@ function isLineCitationTarget(target) {
     return /(?::\d+(?:[-–—]\d+)?)$/.test(target) || /#L\d+(?:[-–—]L\d+)?$/.test(target);
 }
 
+function stripLineCitation(target) {
+    return target
+        .replace(/:\d+(?:[-–—]\d+)?(?:,\d+(?:[-–—]\d+)?)*$/, '')
+        .replace(/#L\d+(?:[-–—]L?\d+)?(?:,L?\d+(?:[-–—]L?\d+)?)*$/, '');
+}
+
 // `templates/` markdown is intentionally scanned — those files ship to
 // adopters via `canon upgrade`, so broken refs there would propagate
 // silently. Three exempt classes, each by named purpose (not by filename
@@ -350,9 +356,12 @@ function collectGitIgnoredTargets(repoRoot, candidateTargets) {
     //     `` `/canon-pipeline` ``, etc.) on purpose.
     //   - `./foo`, http(s) URLs: not gitignore-checkable.
     // Such refs can never be gitignored matches anyway; skipping them
-    // here keeps the rest of the batch live so the .gitignored skip
-    // actually works in CI.
+    // here keeps the batch on repo-relative candidates only. Any
+    // remaining 128s are isolated by bisection below.
     const safe = [...candidateTargets].filter(target =>
+        target.length > 0 &&
+        target !== '.' &&
+        target !== '..' &&
         !target.startsWith('./') &&
         !target.startsWith('../') &&
         !target.startsWith('/') &&
@@ -360,16 +369,40 @@ function collectGitIgnoredTargets(repoRoot, candidateTargets) {
         !target.startsWith('https://'),
     );
     if (safe.length === 0) return new Set();
-    const result = spawnSync('git', ['check-ignore', '--stdin', '-z'], {
+
+    const workTreeCheck = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
         cwd: repoRoot,
-        input: `${safe.join('\0')}\0`,
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
     });
-    if (result.error || (result.status !== 0 && result.status !== 1)) {
+    if (workTreeCheck.error || workTreeCheck.status !== 0) {
         return new Set();
     }
-    return new Set((result.stdout ?? '').split('\0').filter(p => p.length > 0));
+
+    function runGitCheckIgnoreBatch(targets) {
+        if (targets.length === 0) return new Set();
+        const result = spawnSync('git', ['check-ignore', '--stdin', '-z'], {
+            cwd: repoRoot,
+            input: `${targets.join('\0')}\0`,
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        if (result.error) return new Set();
+        if (result.status === 0 || result.status === 1) {
+            return new Set((result.stdout ?? '').split('\0').filter(p => p.length > 0));
+        }
+        if (result.status === 128) {
+            if (targets.length === 1) return new Set();
+            const mid = Math.floor(targets.length / 2);
+            const left = runGitCheckIgnoreBatch(targets.slice(0, mid));
+            const right = runGitCheckIgnoreBatch(targets.slice(mid));
+            for (const entry of right) left.add(entry);
+            return left;
+        }
+        return new Set();
+    }
+
+    return runGitCheckIgnoreBatch(safe);
 }
 
 function collectCandidateTargetPaths(markdownFiles, repoRoot, skipPaths) {
@@ -388,7 +421,7 @@ function collectCandidateTargetPaths(markdownFiles, repoRoot, skipPaths) {
             }
             if (inFence) continue;
             for (const match of line.matchAll(/`([^`]+)`(?!\s+in\s+`|\s+§")/g)) {
-                targets.add(match[1]);
+                targets.add(stripLineCitation(match[1]));
             }
             for (const match of line.matchAll(/`([^`]+)`\s+in\s+`([^`]+)`/g)) {
                 targets.add(match[2]);
@@ -483,9 +516,8 @@ function findBrokenRefs(repoRoot, options = {}) {
 
             for (const match of line.matchAll(/`([^`]+)`(?!\s+in\s+`|\s+§")/g)) {
                 const refText = match[0];
-                const target = match[1];
+                const target = stripLineCitation(match[1]);
 
-                if (isLineCitationTarget(target)) continue;
                 if (!target.includes('/') && path.extname(target) === '') continue;
                 if (isPlaceholderTarget(target)) continue;
                 const topLevel = target.split('/')[0];
