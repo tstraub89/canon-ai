@@ -67,12 +67,6 @@ Even when a test fixture's orchestrator phase does no staging, `autoCommitCode()
 
 The orchestrator's exit marker is written from a `process.on('exit')` handler. Node `exit` handlers only fire on natural exits (explicit `process.exit`, unhandled exception exit, end of event loop) — they do not fire when the process is forcibly killed (SIGKILL, test runner teardown that kills the child). When writing subprocess-pattern tests for exit-marker behavior, crash handlers, or any code that relies on `exit` event firing: ensure the fixture lets the process reach a natural exit after the failure path runs. A fixture that calls `process.kill(pid, 'SIGKILL')` or that the test runner forcibly terminates will produce flaky or absent marker output and non-deterministic assertions.
 
-### Use `FAKE_GH_STATE_FILE` (not `FAKE_GH_PR_STATE_FILE`) to share PR state between `--pr` reruns in ship tests
-
-*(2026-06-12, source: push-upstream-tracking)*
-
-`tests/run-task-ship.test.ts`'s fake `gh` helper persists created PR state via the env var `FAKE_GH_STATE_FILE`, not `FAKE_GH_PR_STATE_FILE`. Using the wrong variable makes the second `--pr` invocation (the idempotency run) behave as if no PR exists — it tries to create a new one and the fixture fails in a way that looks like a PR creation bug rather than a test wiring issue. When writing any `run-task-ship.test.ts` fixture that exercises a `--pr` rerun or reads previously-pinned PR state across two orchestrator invocations, set `FAKE_GH_STATE_FILE` in the fixture env. Grep for `FAKE_GH_STATE_FILE` in the existing ship tests to see the correct wiring pattern.
-
 ### When a git batch subprocess can exit 128, isolate the bad input via bisection — not token-shape filtering
 
 *(2026-06-14, source: docs-refs-validate-cited-paths)*
@@ -90,10 +84,4 @@ When a task edits any canon-managed doc in `docs/` (e.g. `docs/pipeline-orchestr
 *(2026-06-12, source: qa-end-commit)*
 
 `humanReviewAllowedPath` (and `verifyBaseDrift`) automatically union all `PIPELINE_MANAGED_DOCS` into the allowed set once `qa.status === 'done'`. A spec that writes an AC of the form "a QA-touched managed doc absent from spec Affected Files must abort the commit" inverts the real invariant — such a doc is *committed*, not flagged. This caused an AC-10 inversion caught in spec_review round 1 and required the AC to be rewritten before implementation. When writing any spec that reasons about which files are allowed at the QA-end or `--pr`-push gate, check `humanReviewAllowedPath` in `scripts/run-task/main.ts` (≈ line 652) and `verifyBaseDrift`'s QA-done auto-allowlist block in `scripts/run-task/validation.ts` (≈ line 1430) before asserting allow-list scope — the gate already unions managed docs unconditionally at `qa.status === 'done'`.
-
-### Filter git check-ignore batches to path-shaped tokens only
-
-*(2026-06-13, source: docs-refs-validate-cited-paths)*
-
-Any tool that collects backtick tokens from docs and pipes them into `git check-ignore --stdin` must drop non-path tokens (flags like `--force`, command snippets like `npm run lint`, whitespace-bearing strings) before the batch. A single malformed token causes `git check-ignore` to exit 128, and callers that treat a non-zero exit as "nothing is gitignored" silently disable the entire gitignore-skip for that run. This was latent in `collectGitIgnoredTargets` (`scripts/docs-refs-check.mjs`) because the bug was masked by an earlier short-circuit; expanding what reached the gitignore gate made the failure load-bearing. Prevention: at any `git check-ignore --stdin` call site, filter to tokens that look like paths (non-empty, no leading `-`, no whitespace/control characters) before batching. The fix lives in `collectGitIgnoredTargets` in `scripts/docs-refs-check.mjs`.
 
