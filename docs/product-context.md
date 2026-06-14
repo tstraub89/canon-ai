@@ -88,7 +88,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 (See `scripts/pipeline-policy.ts` for the authoritative matrix; this is the human-readable summary.)
 
 - **Fast tier**: `S` non-delicate. Spec+plan in one Claude session. Codex spec review skipped (human gate replaces it). Lower model effort.
-- **Full tier**: anything `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Higher model effort scaling with size; XL/delicate uses the full Codex model at `xhigh` effort.
+- **Full tier**: anything `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Higher model effort scaling with size; XL/delicate uses the full Codex model at `high` effort (re-baselined from `xhigh` in 1.11.0 — GPT-5.5 overthinks at `xhigh` with open-ended tools; see `docs/decisions.md` §"Model-generation re-baseline (2026-06)"). Claude's `code_review` for XL/delicate stays Opus at `xhigh`.
 
 ### `delicate` flag — project-specific domains
 
