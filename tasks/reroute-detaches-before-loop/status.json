@@ -1,15 +1,15 @@
 {
   "id": "reroute-detaches-before-loop",
   "title": "Detach --reroute before the phase loop so rerouted runs survive harness kills",
-  "status": "plan",
+  "status": "implement",
   "created": "2026-06-14",
   "updated": "2026-06-14",
   "branch": "",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "1163dd3f10afaae7442a70e007a6493215a6194f",
-    "orchestrator_commit": "1163dd3f10afaae7442a70e007a6493215a6194f",
+    "upstream_commit": "e51b2b53564671ed7e372fad1256b89a4e8a0627",
+    "orchestrator_commit": "e51b2b53564671ed7e372fad1256b89a4e8a0627",
     "codex_cli": "codex-cli 0.139.0",
     "claude_code": "2.1.177 (Claude Code)"
   },
@@ -36,7 +36,7 @@
       "preflight_rejections_current_loop": 0
     },
     "plan": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "implement": {
