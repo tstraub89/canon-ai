@@ -1,15 +1,15 @@
 {
   "id": "reroute-detaches-before-loop",
   "title": "Detach --reroute before the phase loop so rerouted runs survive harness kills",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-14",
   "updated": "2026-06-14",
-  "branch": "",
+  "branch": "task/reroute-detaches-before-loop",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "e51b2b53564671ed7e372fad1256b89a4e8a0627",
-    "orchestrator_commit": "e51b2b53564671ed7e372fad1256b89a4e8a0627",
+    "upstream_commit": "6914eb820d60e90e55be9a5e765a204f24d4a6d5",
+    "orchestrator_commit": "6914eb820d60e90e55be9a5e765a204f24d4a6d5",
     "codex_cli": "codex-cli 0.139.0",
     "claude_code": "2.1.177 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -64,7 +65,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "019ec74b-1dbf-7221-b0f0-5a265e3f48db"
+    "codex_spec_review": "019ec74b-1dbf-7221-b0f0-5a265e3f48db",
+    "codex": "019ec763-f718-78d2-b103-4a7fb617aaa6",
+    "claude_review": "bf45f478-adbc-4f8a-bca1-33d307f99be2"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

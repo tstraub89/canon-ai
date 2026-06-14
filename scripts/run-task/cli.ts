@@ -246,3 +246,7 @@ export function validateTaskId(id: string): void {
         die(`Invalid task ID '${id}'. Must not contain '..'.`);
     }
 }
+
+export function isSynchronousMode(args: Partial<CliArgs>): boolean {
+    return !!(args.pr || args.push || args.ship || args.step || args.expectPhase != null);
+}

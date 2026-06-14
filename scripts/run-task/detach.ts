@@ -121,8 +121,8 @@ export interface DetachAndExitOptions {
  *   - shouldAutoDetach() returned true.
  *   - All CLI validation has already passed in the parent — once we detach,
  *     any error becomes invisible to the operator (it lands in the log file
- *     only). Detach AFTER argument parsing, dependency checks, ship/reroute
- *     one-shots, and pipeline-state validation.
+ *     only). Detach AFTER argument parsing, dependency checks, ship one-shots,
+ *     reroute reset/validation, and pipeline-state validation.
  *
  * Post-conditions:
  *   - Returns `never`: the parent process has called exit(0).
@@ -174,7 +174,19 @@ export function detachAndExit(options: DetachAndExitOptions): never {
     // — the child's own console.log/console.error appends to the run log.
     // detached: true → setsid() on POSIX, new session/pgroup. The harness's
     // pgroup-kill cannot reach across this boundary.
-    const args = options.argv.slice(1); // [scriptPath, ...userArgs]
+    // The parent has already applied the reroute reset before reaching the
+    // detach gate. If the child re-executes with --reroute still present, it
+    // repeats the reset and dies because the task is no longer at the
+    // pre-reroute phase.
+    //
+    // Why strip the flag rather than guard the reset on CANON_DETACHED: that
+    // env var is inherited by EVERY subprocess the orchestrator spawns (agent
+    // runners, test children), so a `process.env.CANON_DETACHED !== '1'` guard
+    // on the reset would also suppress it in those nested main() contexts — not
+    // just in this detached child. Stripping --reroute here is scoped precisely
+    // to the re-exec child this function creates. Do not "simplify" back to an
+    // env guard.
+    const args = options.argv.slice(1).filter(arg => arg !== '--reroute'); // [scriptPath, ...userArgs]
     const child = spawnFn(execPath, args, {
         detached: true,
         stdio: ['ignore', logFd, logFd],

@@ -18,7 +18,7 @@ If you find yourself wanting Codex as operator, use Claude Code instead and lean
 
 ## Monitoring detached runs
 
-A full-auto `canon run` **auto-detaches** whenever stdout is not a TTY — always true inside Claude Code's Bash tool, CI, and piped invocations. The parent prints a PID + log path and exits in ~1s; the real pipeline runs on in a separate process group so it survives harness pgroup-kills on session resume. Use `canon watch` to re-attach. One-shot and stepped modes stay in the foreground regardless of TTY: `--step`, `--expect`, `--push`, `--pr`, `--reroute`, and `--ship` all run synchronously (a foreground `--step` runs a full LLM phase before returning — no `canon watch` needed). `CANON_NO_DETACH=1` suppresses detaching entirely.
+A full-auto `canon run` **auto-detaches** whenever stdout is not a TTY — always true inside Claude Code's Bash tool, CI, and piped invocations. The parent prints a PID + log path and exits in ~1s; the real pipeline runs on in a separate process group so it survives harness pgroup-kills on session resume. Use `canon watch` to re-attach. One-shot and stepped modes stay in the foreground regardless of TTY: `--step`, `--expect`, `--push`, `--pr`, and `--ship` all run synchronously (a foreground `--step` runs a full LLM phase before returning — no `canon watch` needed). Bare `--reroute` auto-detaches like a plain `canon run`; monitor it with `canon watch`. `CANON_NO_DETACH=1` suppresses detaching entirely.
 
 ### `canon watch <id>`
 
@@ -430,16 +430,14 @@ Do **not** re-run with `--reroute` after this block. `--reroute` starts a new re
 
 Fast-tier reroute is unchanged mechanically: S, non-delicate tasks re-enter directly at `implement`. Operators may optionally append a conversational `## Reroute Plan` section to `plan.md` before rerouting; implement-reroute reads it when present and falls back to the base plan when absent.
 
-Stepped runs must expect the tier-specific re-entry phase:
+Bare `--reroute` auto-detaches and runs the complete rerouted pipeline in the background. Stepped foreground reroutes must combine `--reroute`, `--step`, and the tier-specific expected re-entry phase in a single invocation:
 
 ```bash
 # Full tier
-canon run <id> --reroute
-canon run <id> --step --expect spec_review
+canon run <id> --reroute --step --expect spec_review
 
 # Fast tier
-canon run <id> --reroute
-canon run <id> --step --expect implement
+canon run <id> --reroute --step --expect implement
 ```
 
 The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amendment` heading, while round 2+ requires `## Amendment Round N` where `N` matches the reroute being entered. The orchestrator pre-flights `spec.md` before mutating `status.json`; if any required task is missing the required heading, the bundle aborts and the error names the task, the expected heading, and the reason. `--force` bypasses the gate and emits one warning per failing task, which is the escape hatch when you intentionally want Codex to re-implement against the existing spec. Legacy variants like `Follow-up` and `Post-review` are no longer accepted. This exists because an operator once rerouted without amending `spec.md`, Codex re-implemented against unchanged requirements, and the same bug shipped again; the stricter label only becomes necessary once multiple amendment rounds need disambiguation. Do not create Amendment sections for the bless path; `canon task accept ... --reason` records `sanctioned` without changing `spec.md` or `reroute_count`.

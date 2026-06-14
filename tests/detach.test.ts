@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { isSynchronousMode } from '../scripts/run-task/cli.js';
 import {
     DETACH_CHILD_FLAG,
     DETACH_DISABLE_FLAG,
@@ -54,6 +55,28 @@ void test('shouldAutoDetach: CANON_NO_DETACH wins over !TTY', () => {
         }),
         false,
     );
+});
+
+// ── synchronous-mode predicate ──────────────────────────────────────────────
+
+void test('isSynchronousMode: bare reroute is not synchronous', () => {
+    assert.equal(isSynchronousMode({ reroute: true }), false);
+});
+
+void test('isSynchronousMode: pr, push, ship, step, and expectPhase are synchronous', () => {
+    assert.equal(isSynchronousMode({ pr: true }), true);
+    assert.equal(isSynchronousMode({ push: true }), true);
+    assert.equal(isSynchronousMode({ ship: true }), true);
+    assert.equal(isSynchronousMode({ step: true }), true);
+    assert.equal(isSynchronousMode({ expectPhase: 'spec_review' }), true);
+});
+
+void test('isSynchronousMode: step dominates reroute', () => {
+    assert.equal(isSynchronousMode({ reroute: true, step: true }), true);
+});
+
+void test('isSynchronousMode: bare args are not synchronous', () => {
+    assert.equal(isSynchronousMode({}), false);
 });
 
 // ── detachAndExit ────────────────────────────────────────────────────────────
@@ -153,6 +176,61 @@ void test('detachAndExit: opens the log file in the primary task dir', () => {
         // The log file must exist (opened for append by detachAndExit).
         const logPath = path.join(root, 'tasks', 'primary', '.canon-run.log');
         assert.ok(fs.existsSync(logPath), '.canon-run.log must exist after detachAndExit');
+    });
+});
+
+void test('detachAndExit: strips --reroute from the detached child argv', () => {
+    withTempDir((root) => {
+        const fake = makeSpawnFake(88);
+        detachAndExit({
+            taskIds: ['primary'],
+            resolveTaskDir: (id) => path.join(root, 'tasks', id),
+            argv: ['node', 'run-task.js', 'primary', '--reroute'],
+            spawnImpl: fake.spawnImpl,
+            exit: (() => undefined as never),
+            stdoutWrite: () => undefined,
+            stderrWrite: () => undefined,
+        });
+
+        assert.deepEqual(fake.last().args.argv, ['run-task.js', 'primary']);
+        assert.equal(fake.last().args.env[DETACH_CHILD_FLAG], '1');
+    });
+});
+
+void test('detachAndExit: forwards a normal (no --reroute) argv unchanged', () => {
+    withTempDir((root) => {
+        const fake = makeSpawnFake(89);
+        detachAndExit({
+            taskIds: ['primary'],
+            resolveTaskDir: (id) => path.join(root, 'tasks', id),
+            argv: ['node', 'run-task.js', 'primary'],
+            spawnImpl: fake.spawnImpl,
+            exit: (() => undefined as never),
+            stdoutWrite: () => undefined,
+            stderrWrite: () => undefined,
+        });
+
+        // The filter must be a no-op when --reroute is absent — guards against
+        // an over-eager future filter dropping unrelated args.
+        assert.deepEqual(fake.last().args.argv, ['run-task.js', 'primary']);
+    });
+});
+
+void test('detachAndExit: strips --reroute regardless of position and count', () => {
+    withTempDir((root) => {
+        const fake = makeSpawnFake(90);
+        detachAndExit({
+            taskIds: ['primary'],
+            resolveTaskDir: (id) => path.join(root, 'tasks', id),
+            argv: ['node', 'run-task.js', '--reroute', 'primary', '--reroute'],
+            spawnImpl: fake.spawnImpl,
+            exit: (() => undefined as never),
+            stdoutWrite: () => undefined,
+            stderrWrite: () => undefined,
+        });
+
+        // Mid-argv and duplicate occurrences are both removed; other args kept.
+        assert.deepEqual(fake.last().args.argv, ['run-task.js', 'primary']);
     });
 });
 

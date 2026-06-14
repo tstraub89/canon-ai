@@ -278,6 +278,9 @@ function validateTaskId(id) {
     die(`Invalid task ID '${id}'. Must not contain '..'.`);
   }
 }
+function isSynchronousMode(args) {
+  return !!(args.pr || args.push || args.ship || args.step || args.expectPhase != null);
+}
 
 // scripts/run-task/git.ts
 import { spawnSync as spawnSync3 } from "child_process";
@@ -4752,7 +4755,7 @@ function detachAndExit(options) {
 `);
     return exit(1);
   }
-  const args = options.argv.slice(1);
+  const args = options.argv.slice(1).filter((arg) => arg !== "--reroute");
   const child = spawnFn(execPath, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -6375,19 +6378,19 @@ function rerouteFromHumanReview(taskIds) {
     writeStatus(taskId, status);
   }
   if (isFullTierReroute) {
-    info("Status reset. Pipeline will resume from spec_review, then plan, then implement.");
-    info("Stepped reroute now expects spec_review: use --step --expect spec_review.");
+    info("Status reset. This run resumes the rerouted pipeline from spec_review \u2192 plan \u2192 implement.");
   } else {
-    info("Status reset. Pipeline will resume from implement phase with amended-spec context.");
+    info("Status reset. This run resumes the rerouted pipeline from the implement phase with amended-spec context.");
     info("Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.");
   }
   info("");
   if (clearedFullSend) {
     info("\u26A0 full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with 'canon run --full-send <id>' if you're confident.");
   }
-  info("\u26A0  Before invoking the pipeline: ensure every task that needs amended requirements has an");
-  info("   Amendment section in tasks/<id>/spec.md in the active task directory. For worktree-backed tasks, edit the worktree copy;");
-  info("   edit REPO_ROOT only before a worktree exists. review.md alone is not sufficient \u2014 Codex reads spec.md as the contract.");
+  info("This run resumes the pipeline now \u2014 auto-detached when non-interactive (monitor with `canon watch <id>`).");
+  info("Do not start a second `canon run` on this task while it is active. To advance one phase at a time,");
+  const stepPhase = isFullTierReroute ? "spec_review" : "implement";
+  info(`combine the flags in this one command: \`canon run <id> --reroute --step --expect ${stepPhase}\`.`);
 }
 function clearPhaseOperatorAcceptance(entry) {
   if (!entry) return;
@@ -6974,8 +6977,7 @@ async function main() {
   refreshCanonSnapshotsAtPaths(taskIds.map(statusFileFor));
   const initialState = buildPipelineState(taskIds);
   const heartbeatDirResolver = (id) => path17.dirname(statusFileFor(id));
-  const isSynchronousMode = cliArgs.pr || cliArgs.push || cliArgs.reroute || cliArgs.ship || cliArgs.step || cliArgs.expectPhase != null;
-  if (!isSynchronousMode && shouldAutoDetach()) {
+  if (!isSynchronousMode(cliArgs) && shouldAutoDetach()) {
     detachAndExit({
       taskIds,
       resolveTaskDir: heartbeatDirResolver,

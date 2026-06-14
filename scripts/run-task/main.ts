@@ -2363,19 +2363,25 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
         splitState.writeStatus(taskId, status);
     }
     if (isFullTierReroute) {
-        splitCli.info('Status reset. Pipeline will resume from spec_review, then plan, then implement.');
-        splitCli.info('Stepped reroute now expects spec_review: use --step --expect spec_review.');
+        splitCli.info('Status reset. This run resumes the rerouted pipeline from spec_review → plan → implement.');
     } else {
-        splitCli.info('Status reset. Pipeline will resume from implement phase with amended-spec context.');
+        splitCli.info('Status reset. This run resumes the rerouted pipeline from the implement phase with amended-spec context.');
         splitCli.info('Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.');
     }
     splitCli.info('');
     if (clearedFullSend) {
         splitCli.info('⚠ full_send cleared. Reroutes indicate the prior result needed correction; re-engage at human_review to verify the fix before another PR opens. Re-enable with \'canon run --full-send <id>\' if you\'re confident.');
     }
-    splitCli.info('⚠  Before invoking the pipeline: ensure every task that needs amended requirements has an');
-    splitCli.info('   Amendment section in tasks/<id>/spec.md in the active task directory. For worktree-backed tasks, edit the worktree copy;');
-    splitCli.info('   edit REPO_ROOT only before a worktree exists. review.md alone is not sufficient — Codex reads spec.md as the contract.');
+    // This same invocation drives the rerouted pipeline — bare --reroute auto-detaches
+    // when non-interactive (the phase loop continues in the detached child). Do NOT
+    // launch a second `canon run` on this task while it is active: two orchestrators on
+    // one worktree corrupt each other's git state. The amendment (if any) was already
+    // validated above; it lives in tasks/<id>/spec.md (the worktree copy for
+    // worktree-backed tasks) — review.md alone is not the contract.
+    splitCli.info('This run resumes the pipeline now — auto-detached when non-interactive (monitor with `canon watch <id>`).');
+    splitCli.info('Do not start a second `canon run` on this task while it is active. To advance one phase at a time,');
+    const stepPhase = isFullTierReroute ? 'spec_review' : 'implement';
+    splitCli.info(`combine the flags in this one command: \`canon run <id> --reroute --step --expect ${stepPhase}\`.`);
 }
 
 function clearPhaseOperatorAcceptance(entry: PhaseEntry | undefined): void {
@@ -3215,8 +3221,8 @@ export async function main(): Promise<void> {
     // Only detach when entering the long-running phase loop. Synchronous
     // control modes stay foreground so the operator gets the exit status
     // they're waiting on:
-    //   - --pr / --push / --reroute / --ship — one-shot operations,
-    //     complete in seconds, operator wants the result inline.
+    //   - --pr / --push / --ship — one-shot operations, complete in
+    //     seconds, operator wants the result inline.
     //   - --step — runs one phase then exits with a status that signals
     //     "phase advanced" (0) or "phase didn't advance / sub-agent
     //     failed" (1). Backgrounding would make scripts/operators see
@@ -3228,17 +3234,22 @@ export async function main(): Promise<void> {
     //     prevent. (Codex PR #112 P2 finding.)
     //   - --dry-run — exits even earlier (line ~2451) so this branch is
     //     unreachable for it; kept in the predicate defensively.
+    // --reroute alone DETACHES: rerouteFromHumanReview() (above) runs in the
+    // parent to print the reset banner and validate the amendment, then the
+    // parent detaches and the child inherits the rerouted pipeline from the
+    // new phase. Both tiers enter the long-running loop: fast-tier runs
+    // implement -> code_review -> qa; full-tier runs spec_review -> plan ->
+    // implement -> ... Neither resets-and-exits. Use `canon watch <id>` after
+    // a bare `--reroute` to follow progress.
+    //
+    // --reroute --step stays foreground because --step is in the synchronous
+    // set. That is the stepped escape hatch:
+    //   Full tier: canon run <id> --reroute --step --expect spec_review
+    //   Fast tier: canon run <id> --reroute --step --expect implement
     //
     // See scripts/run-task/detach.ts and docs/BACKLOG.md "Orchestrator dies
     // silently in background mode" for the failure-mode story.
-    const isSynchronousMode =
-        cliArgs.pr ||
-        cliArgs.push ||
-        cliArgs.reroute ||
-        cliArgs.ship ||
-        cliArgs.step ||
-        cliArgs.expectPhase != null;
-    if (!isSynchronousMode && shouldAutoDetach()) {
+    if (!splitCli.isSynchronousMode(cliArgs) && shouldAutoDetach()) {
         detachAndExit({
             taskIds,
             resolveTaskDir: heartbeatDirResolver,

@@ -511,3 +511,6 @@
 | 2026-06-14T05:35:50.931Z | docs-refs-validate-cited-paths | qa | claude | sonnet | 0 | 227.8s | 1045472 | ok |
 | 2026-06-14T18:03:24.266Z | reroute-detaches-before-loop | spec_review | codex | gpt-5.5 | 0 | 155.7s | 1109527 | ok |
 | 2026-06-14T18:27:56.404Z | reroute-detaches-before-loop | plan | claude | sonnet | 0 | 382.3s | 1236524 | ok |
+| 2026-06-14T18:37:56.070Z | reroute-detaches-before-loop | implement | codex | gpt-5.5 | 0 | 598.9s | 5608497 | ok |
+| 2026-06-14T18:44:23.791Z | reroute-detaches-before-loop | code_review | claude | opus | 0 | 387.1s | 679935 | ok |
+| 2026-06-14T18:48:44.216Z | reroute-detaches-before-loop | qa | claude | sonnet | 0 | 260.4s | 2062887 | ok |
