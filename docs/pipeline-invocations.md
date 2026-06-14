@@ -509,3 +509,5 @@
 | 2026-06-14T05:20:30.827Z | docs-refs-validate-cited-paths | implement | codex | gpt-5.4-mini | 0 | 251.5s | 22143581 | ok |
 | 2026-06-14T05:32:03.165Z | docs-refs-validate-cited-paths | code_review | claude | sonnet | 0 | 691.8s | 1049726 | ok |
 | 2026-06-14T05:35:50.931Z | docs-refs-validate-cited-paths | qa | claude | sonnet | 0 | 227.8s | 1045472 | ok |
+| 2026-06-14T18:03:24.266Z | reroute-detaches-before-loop | spec_review | codex | gpt-5.5 | 0 | 155.7s | 1109527 | ok |
+| 2026-06-14T18:27:56.404Z | reroute-detaches-before-loop | plan | claude | sonnet | 0 | 382.3s | 1236524 | ok |
