@@ -1,7 +1,7 @@
 {
   "id": "reroute-detaches-before-loop",
   "title": "Detach --reroute before the phase loop so rerouted runs survive harness kills",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-14",
   "updated": "2026-06-14",
   "branch": "task/reroute-detaches-before-loop",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
