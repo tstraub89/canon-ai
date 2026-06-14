@@ -2,6 +2,14 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [1.12.1] — 2026-06-14
+
+### Fixed
+
+- **`canon run <id> --reroute` now auto-detaches**, so rerouted pipelines survive operator-session kills, SSH disconnects, and harness process-group kills. Previously, bare `--reroute` ran the phase loop in the foreground and was orphaned on any parent kill — each orphan required a manual `canon run` recovery. The reset banner and invalid-reroute errors still print inline before detaching; monitor the rerouted run with `canon watch`. The stepped escape hatch is now a single combined command: `canon run <id> --reroute --step --expect <phase>` (full tier: `spec_review`; fast tier: `implement`). The previously-documented two-command sequence is removed — it would otherwise launch two orchestrators on one worktree.
+- **`docs-refs-check` now validates the base file path of line-cited backtick refs.** Previously any ref with a line-citation suffix (`:151`, `:10-20`, `#L10-L20`, `:151,254`, etc.) bypassed the missing-file check entirely — adding line numbers made a ref *less* validated. The citation suffix is now stripped and the base path is checked, so a misspelled path stays visible even with line numbers. Comma-list citations (`:151,254`) that previously triggered false-positive "missing file" errors on legitimate refs now pass when the base file exists.
+- **`docs-refs-check` gitignore-skip is resilient to unprocessable paths in the candidate batch.** A path that causes `git check-ignore` to exit 128 (e.g., one traversing a symlinked directory) previously disabled gitignore-skip for the *entire* run — silently reporting every gitignored ref as "missing file." The batch now bisects on exit 128, isolating the unprocessable path without affecting its siblings.
+
 ## [1.12.0] — 2026-06-12
 
 ### Added

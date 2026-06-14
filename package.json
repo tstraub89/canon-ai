@@ -1,6 +1,6 @@
 {
   "name": "canon-ai",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "type": "module",
   "description": "A spec-first, multi-agent coding pipeline you drop into any repo. The law your agents work under.",
   "engines": {
