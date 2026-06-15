@@ -111,9 +111,7 @@ Templates live in `.canon/templates/` (managed by canon — do not edit directly
 - **Codex appends** a new `## Iteration N — addressing review round N-1` section to `handoff.md` near the bottom (above any final checklist). Earlier iterations stay untouched as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation outcomes.
 - **Claude appends** a new `## Round N — verifying iteration N-1's response to round N-1` section to `review.md`. Re-fill the Stage 1 AC table every round: every AC from `spec.md` appears with current Met / Partial / Not Met status against the latest code. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer. Cross-reference prior findings to the refreshed AC table and include any NEW issues introduced by the iteration.
 
-The orchestrator's slim resumed-session prompts on round 2+ depend on this convention: they point the agent at the latest section as the scope of the current iteration, rather than re-injecting the full task framing. If an agent rewrites instead of appending, the cumulative record is lost and the slim-prompt mechanism degrades to a fresh full re-prompt.
-
-The artifact templates carry a comment block at the bottom showing the expected per-round shape so the convention survives even when prompts are slim.
+Round 2+ resumed-session prompts depend on this: they scope the agent to the latest section instead of re-injecting full task framing, so **appending (not rewriting) is mandatory** — a rewrite loses the cumulative record and degrades the slim prompt to a full re-prompt. (Artifact templates carry a bottom comment block showing the per-round shape.)
 
 **Reverting a file during iteration.** `git restore` is blocked in the sandbox. For a byte-perfect revert to the task baseline, use `git show origin/<base-branch>:<path>` (read-only git, always allowed) and write the output to the file — this avoids residual diffs like trailing newlines.
 
@@ -126,8 +124,6 @@ The artifact templates carry a comment block at the bottom showing the expected 
 
 - **`handoff.md` Changes-table first column** — `[path](path)` markdown-link **only**. That cell is also parsed by the diff↔handoff reconciler (`parseHandoffPathCell`), which accepts a backtick-path or a markdown-link but **not** bare prose; backticks are out (docs-refs-check), so the markdown-link is the only form that passes both.
 - **Free prose** (`review.md`, `done.md`, handoff text outside the table) — `[path](path)` or bare prose; only backticks fail.
-
-(Aside: a bare top-level filename like `` `FOO.md` `` slips past `docs-refs-check` while `` `templates/FOO.md` `` trips it — don't lean on that asymmetry.)
 
 ### Pipeline Orchestrator
 
@@ -148,25 +144,20 @@ canon task accept <TASK-ID...> code_review --reason "<why>"  # Sanction a code-r
 
 ### Commit Ownership
 
-The pipeline produces three categories of changes. Each has a clear owner:
+Three change categories, each with a clear owner (orchestrator auto-commit mechanics in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md) §Worktree Isolation and §Auto-Branch + Auto-Commit). The table is the summary; the facts it can't hold:
 
-1. **Code changes**: Codex writes the files during implement. The orchestrator commits them after implement passes Codex-reported static validation and before code_review. Commit message: `<task title> [<TASK-ID>]`.
-
-2. **Task artifacts** (`tasks/TASK-ID/`): The orchestrator commits these in two automatic stages, not one — see [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md) §Worktree Isolation and §Auto-Branch + Auto-Commit for the mechanics.
-   - **Pre-implement → base branch**: Before the first `implement` phase runs, the orchestrator commits the full `tasks/<TASK-ID>/` scaffold (every artifact stub plus `status.json`) to the base branch with message `task(<TASK-ID>): commit artifacts pre-pipeline`. If `PIPELINE_TELEMETRY_FILES` are dirty at that point, a sibling commit follows: `chore: absorb pre-implement telemetry into scaffold for <TASK-ID>`. In worktree mode (the default), this is what lets the new worktree inherit the scaffold via its initial branch checkout — without it, the worktree boots from a base branch that has no `tasks/<id>/` and the pipeline has nothing to read. On re-runs of `implement` (reroutes, review iterations) the worktree already exists and this commit is skipped.
-   - **At `--push` / `--pr` → task branch**: When the operator runs `canon run <id> --push` or `--pr` at `human_review`, the orchestrator auto-commits the evolved artifacts (`handoff.md`, `review.md`, `done.md`, `pr-body.md`, final `status.json`, `notes.md`), telemetry rows, and managed docs (any `PIPELINE_MANAGED_DOCS` entry the spec's `### Affected Files` lists — and, once `qa.status === 'done'`, any `PIPELINE_MANAGED_DOCS` entry regardless of Affected Files, since QA's Docs Freshness step can correct stale references in protected docs the spec author didn't predict). Full allow-list in `docs/pipeline-orchestrator.md` §Auto-Branch + Auto-Commit. These return to the base branch via `--ship`'s squash-merge.
-
-3. **Changelog + version bump** *(for projects that version)*: A separate release step after human_review, done collaboratively by the human and Claude per project policy. Not automated by the pipeline. See Release Rules below.
-
-**Who commits when** (summary):
+- **Code changes** commit message `<task title> [<TASK-ID>]` (after Codex static validation passes, before `code_review`).
+- **Pre-implement scaffold** commit `task(<TASK-ID>): commit artifacts pre-pipeline`; if telemetry is dirty a sibling `chore: absorb pre-implement telemetry into scaffold for <TASK-ID>` follows. Skipped on `implement` re-runs (worktree already exists).
+- **`--push`/`--pr` managed-docs allow-list**: any `PIPELINE_MANAGED_DOCS` entry the spec's `### Affected Files` lists — plus *every* such entry once `qa.status === 'done'` (QA's Docs Freshness can fix stale refs the author didn't predict). Artifacts return to base via `--ship`'s squash-merge.
+- **Changelog + version bump** *(projects that version)*: a separate human + Claude release step after human_review, not pipeline-automated — see Release Rules.
 
 | When | What | Who |
 |---|---|---|
 | Before first `implement` phase | Task scaffold (`tasks/<id>/` + dirty telemetry) → base branch | Orchestrator (auto) |
 | After implement passes static validation | Code changes → task branch | Orchestrator (auto) |
-| At `--push` / `--pr` (human_review) | Final task artifacts + telemetry + managed docs (per rule 2 allow-list) → task branch | Orchestrator (auto) |
+| At `--push` / `--pr` (human_review) | Final task artifacts + telemetry + managed docs → task branch | Orchestrator (auto) |
 | At `--ship` | Squash-merge task branch → base | Orchestrator (auto, via `gh pr merge`) |
-| Before PR / merge | Changelog + version bump (per project policy; skip if the project doesn't version) | Human + Claude |
+| Before PR / merge | Changelog + version bump (per project policy; skip if unversioned) | Human + Claude |
 
 ### Spec Lifecycle
 
@@ -214,22 +205,13 @@ The code is the source of truth for anything derivable from code: numbers, thres
 
 ## Roles (Summary)
 
-See `CLAUDE.md` for full Claude guidance (spec authorship, code review rules, QA format). Codex guidance (implementation rules, handoff format, spec review approach) lives in `AGENTS.md` and the orchestrator's injected prompt.
-
-**Claude**: Writes specs and plans, runs code review as a synthesis foreman over anchored and cold lenses, writes QA summaries. Does not review its own specs.
-**Codex**: Reviews Claude's specs (full tier), implements, writes handoffs. Does not review its own code.
-**Human**: Product decisions, priority, final behavioral testing.
+See `CLAUDE.md` for full Claude guidance (spec authorship, code review, QA). Codex guidance (implementation, handoff format, spec review) lives in `AGENTS.md` and the orchestrator's injected prompt. Per-agent roles and the *no agent reviews its own output* rule are in §Agents above.
 
 If Claude and Codex disagree on approach, escalate to the human with a clear summary of each side's rationale.
 
 ### Code Review Responsibilities
 
-The pipeline-spawned `code_review` Claude session is a **synthesis foreman**, not a single direct reviewer. It spawns two isolated lenses:
-
-- **Anchored lens**: applies canon's normal Stage 1 AC-compliance gate, Stage 2 code-quality review, and test-integrity checks using the spec, handoff, and diff.
-- **Cold lens**: reads the diff without spec, AC, handoff rationale, or canon context to catch bugs the spec-anchored pass may miss.
-
-The foreman deduplicates the lens findings, drops cold findings that the spec shows are intended, classifies surviving findings as `code-bug` or `spec-gap`, writes the single `review.md`, and sets one verdict. `changes_requested` routes back to Codex implementation. `spec_gap` means the code cannot fix the issue because the spec is missing or wrong; the phase is blocked with an escalation. The operator then chooses fix vs. bless: fix by adding the required `## Amendment` section and running `canon run <ids> --reroute` so full-tier tasks re-enter `spec_review` and `plan`; bless by running `canon task accept <ids> code_review --reason "<why>"`, which records a `sanctioned` verdict and appends an audit line to `notes.md`.
+The pipeline-spawned `code_review` Claude session is a **synthesis foreman**: it spawns two isolated lenses — an **anchored** lens (Stage 1 AC-compliance gate + Stage 2 quality + test-integrity, using spec/handoff/diff) and a **cold** lens (diff only, no spec/canon context) — then deduplicates, drops cold findings the spec shows are intended, classifies survivors `code-bug` or `spec-gap`, writes the single `review.md`, and sets one verdict. `changes_requested` routes back to Codex. `spec_gap` means the code can't fix it (spec missing/wrong) → phase blocked with an escalation; the operator chooses **fix** (add `## Amendment`, `canon run <ids> --reroute` → full-tier re-enters `spec_review` + `plan`) or **bless** (`canon task accept <ids> code_review --reason "<why>"` → records `sanctioned` + appends an audit line to `notes.md`).
 
 ## Human Escalation Contract
 
@@ -303,8 +285,6 @@ The rules below are canon-supplied universals — they apply to every project ca
 > 1. **Falsify the hypothesis on paper first.** Reason about whether the proposed mechanism can actually produce the observed symptom. A timing, latency, or ordering argument often kills a plausible story before a line of code is written.
 > 2. **Reproduce the mechanism deterministically.** Fault injection, a forced race, or a targeted repro — so the failure has been observed happening *for the reason being claimed*, not merely "it stopped happening after the change."
 > 3. **Each role owns a checkpoint.** The spec author states the *verified* mechanism (not a guess) in *Problem*. The spec reviewer (Codex) challenges the premise — does the proposed fix address a confirmed root cause, or an unconfirmed hypothesis? An unverified mechanism is a Shape Check concern. The implementer reproduces before fixing and reports the repro in the handoff.
-
-**Canonical case**: a Smart Fill e2e flake (an "Analyze Library" button stuck, never reaching "✓ Library Analyzed") was first "fixed" with a React cancellation-guard against an out-of-order async-resolution hypothesis — which a latency argument falsified (the runs that read "not analyzed" short-circuit fast and fire *early*, so they cannot resolve last and clobber a later run). Fault injection — forcing the analysis worker to drop one photo — revealed the real cause: a dropped-photo silent-skip, where a worker error / null blob / exception decremented the pending counter *without* recording a result or scheduling a retry, leaving the photo permanently uncached. The cancellation guard closed a near-unreachable race and missed the actual flake; the whole task had to be re-scoped.
 
 ### Parsing Structured Input
 
