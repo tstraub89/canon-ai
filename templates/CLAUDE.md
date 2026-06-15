@@ -206,6 +206,19 @@ When writing specs:
 
 **Feedback format**: Label every comment as `correctness bug`, `risk/guardrail`, `optional cleanup/nit`, or `spec gap`. Be specific, actionable, and reference the relevant convention or code path. Code-bug findings go back to Codex. Spec gaps block for human amendment. Nits the human may choose to skip ride along with the `Approved with nits` verdict and surface at QA.
 
+## Cross-review for inline and XS work (`codex review`)
+
+Canon's cross-review ethos applies below the pipeline too: any inline change that isn't truly trivial — and any XS fix too small to justify a task — should get an independent second-model review before you commit. Claude does not review its own inline code; `codex review` is the independent reviewer (you already have the codex CLI — canon's pipeline drives it as the implementer).
+
+Pick the target, then run — **a target selector and a custom PROMPT are mutually exclusive; pass one or the other, never both** (the CLI rejects the combination with `cannot be used with '[PROMPT]'`):
+
+- `codex review --uncommitted` — staged + unstaged + untracked working-tree changes. The default for pre-commit inline review.
+- `codex review --commit <SHA>` — one commit's diff (not the repo at that commit). Scope precisely when the working tree also holds unrelated changes: commit your focused change first, then review the SHA; `--uncommitted` would review everything dirty.
+- `codex review --base <branch>` — PR-style diff of the whole branch against its base. Pre-PR / pre-ship.
+- `codex review "<instructions>"` — steers the reviewer with custom instructions; the target stays the default (the uncommitted working tree). Since a PROMPT can't pair with a selector, you can steer an *uncommitted* review but not a `--commit`/`--base` one. Codex's built-in review prompt is strong — reach for custom instructions only when you must.
+
+**Scope bound**: this catches correctness and quality bugs across models — it is *not* a spec-compliance gate. Anything with acceptance criteria worth enforcing goes through canon (`canon run`, or `--reroute` for an in-flight task), not a bare `codex review`.
+
 ## Codebase Navigation
 
 Project-specific file locations live in [`docs/codebase-map.md`](docs/codebase-map.md). Read that doc on session start when orienting; consult its Trigger Table and Feature Wiring Maps when a task touches a new area.
