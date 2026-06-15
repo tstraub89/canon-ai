@@ -159,7 +159,7 @@ jobs:
             exit 1
           fi
           # Reject the "unreleased" placeholder — release-process.md requires
-          # a real date before the dev → main PR opens.
+          # a real date before the release PR opens.
           if printf '%s' "$HEADER" | grep -qi 'unreleased'; then
             echo "::error::CHANGELOG block for $VERSION still says 'unreleased' — replace with the real release date"
             exit 1

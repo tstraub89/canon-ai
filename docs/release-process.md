@@ -2,117 +2,83 @@
 
 This document covers the **mechanics** of cutting a canon-ai release. For the **policy** (what counts as patch / minor / major, who authorizes bumps, changelog scope), see [`decisions.md`](decisions.md) §"Versioning and release policy".
 
+> **Note**: this is canon-ai's *own* release process. Canon prescribes **no** release model to adopters — see [`decisions.md`](decisions.md) §"Canon prescribes no release model to adopters". Adopters pick their own model (trunk, release-branch, tag-from-main, none); the recipes live in the `/canon-pipeline` skill. This doc is one concrete instance, not a template.
+
 ## Branch model
 
-canon-ai uses **release-branch-per-version**:
+canon-ai uses **trunk-based release-from-`main`**:
 
-- **Task branches** → PR to the active `release/v<version>` branch.
-- **`release/v<version>`** is temporary. One per release (`release/v1.4`, `release/v1.5`, `release/v1.5.1`, `release/v1.5.2`, `release/v2.0`). The branch is named for the specific version it ships — minor releases drop the patch suffix (`release/v1.5` ships 1.5.0), patch releases use the full version (`release/v1.5.2` ships 1.5.2). Major bumps follow the minor naming (`release/v2.0` ships 2.0.0).
-- **`release/v<version>` → `main` PR** is the release boundary. The version was already bumped when the branch was created (see "Creating a new release branch" below) — this PR only flips the active CHANGELOG block's `unreleased` → the release date. The squash-merge to `main` triggers auto-release.
-- **`main`** is the published state. Tags and GitHub releases live on `main`.
-- **Release branches are deleted on merge** (the repo's PR settings + canon's `--ship` flow handle this automatically). No persistent integration branch to keep in sync.
+- **`main` is the trunk.** Task work accumulates on `main` directly — there are no `release/v<version>` branches.
+- **Task branches** → PR to `main`. `canon task new` auto-detects `base_branch: main` from the checkout; the orchestrator's `--pr` / `--ship` target it. (This is the default `base_branch`; nothing special to set.)
+- **A release is cut when you decide there's enough on `main` to ship**, not on a fixed branch cadence. Accumulate tasks, then cut.
+- **Cutting a release is a single version-bump commit on `main`** (bump + lockfile + `dist/` + CHANGELOG finalize), landed via a small PR. The squash-merge to `main` triggers auto-release.
+- **`main` is the published state.** Tags and GitHub releases live on `main`, created automatically by `auto-release.yml` from the version-bump commit.
 
-There is no direct-to-`main` path. Hotfixes follow the same flow — branch off `main`, accumulate the patch, PR back.
+There is no persistent integration branch and no release-boundary PR between two long-lived branches. Hotfixes are just another task on `main`, released whenever you next cut.
 
-> **History**: Through 1.3.x, canon-ai used a persistent `dev` integration branch. That model required an extra "reset `dev` to `origin/main` after each squash-merge" operator step (the squash collapsed `dev`'s history into one new commit on `main`, leaving `dev`'s old history redundant and producing `CONFLICTING` next PRs). 1.4.0 switched to release-branch-per-version — the release-branch model canon-ai uses and recommends to adopters.
+> **History**: Through 1.3.x canon-ai used a persistent `dev` integration branch; 1.4.0–1.12.1 used **release-branch-per-version** (one temporary `release/v<version>` per release, PR'd to `main`). As of 1.12.x the project switched to **trunk-based release-from-`main`**: the orchestrator was already release-model-agnostic (`base_branch` drives everything), v1.12.1 was in practice cut as a one-off bump-PR on `main`, and the release-branch ceremony added a branch lifecycle without a corresponding benefit at canon-ai's scale. The auto-release workflow and the CHANGELOG-date CI gate are version-keyed, so they work identically under either model.
 
-## Triggering a release
+## Accumulating task work
 
-The product owner says something like "ship v1.4.0" or "let's do a patch":
-
-1. **Decide tier** (patch / minor / major) per [`decisions.md`](decisions.md) §"Versioning and release policy". Confirm with the product owner if it's anything but patch.
-2. **Identify or create the release branch** (next section).
-3. **Accumulate task work** on the release branch until the scope is complete.
-4. **Ship** by opening `release/vMAJ.MIN` → `main` PR and squash-merging.
-
-## Creating a new release branch
-
-The version is bumped **immediately at branch creation** (not deferred to the release PR) so `package.json` / `.canon/version` / `canon --version` always reflect the in-flight version — you can tell at a glance which release a checkout is working toward, and accumulating tasks never have to re-decide a tier the branch already pins.
-
-When starting work on a new release of any tier:
+Tasks branch off `main` and PR back to `main` — the normal canon flow, no special setup:
 
 ```bash
-# Make sure local main matches origin.
-git checkout main && git pull origin main && git status --porcelain
+git checkout main && git pull origin main
+# canon task new auto-detects base_branch: main from the checkout
+canon task new <id> "Title"
+canon run <id>
+```
 
-# Create the release branch off main. Branch name follows the version:
-#   - Minor or major:  release/v1.4   (ships 1.4.0)
-#   - Patch:           release/v1.5.2 (ships 1.5.2)
-git checkout -b release/v1.4 main
+As each task ships (`--ship` squash-merges it to `main`), add its bullet to the **`## [Unreleased]`** block in `CHANGELOG.md` with `/canon-changelog <task-id>` — **single-task append, which works from any branch including `main`** (the skill's `| Any | single task ID |` mode). Do it while the task is fresh, before its `tasks/<id>/done.md` is archived. The in-flight block stays **version-less** (`## [Unreleased]`, Keep-a-Changelog form) — the version isn't decided until you cut, so don't pin it early.
+
+> The skill's *empty-sweep* in-progress-append auto-detection is scoped to a release/working branch, not the default branch — so during accumulation on `main` use the per-task `/canon-changelog <task-id>` form above (single-task append, supported on any branch). Finalization happens later on the short-lived release branch (see "Cutting a release"), where the skill's finalize mode applies normally. Closing the default-branch empty-sweep gap is a backlogged `canon-changelog` refinement.
+
+The version in `package.json` / `.canon/version` / `canon --version` reflects the **last published** release during accumulation. It is bumped at cut time (next section), not while accumulating.
+
+## Cutting a release
+
+When there's enough on `main` to ship, decide the tier (patch / minor / major) per [`decisions.md`](decisions.md) §"Versioning and release policy" — confirm with the product owner for anything but a patch. Then make the release commit on a short-lived branch off `main` and PR it:
+
+```bash
+git checkout main && git pull origin main && git status --porcelain
+git checkout -b release-vX.Y.Z main   # short-lived; just carries the bump commit
 
 # Bump versions atomically. Use npm version + the lockfile refresh, never sed
 # (the 1.1.3 picocolors bug shipped from a too-broad sed substitution).
-npm version 1.4.0 --no-git-tag-version
+npm version X.Y.Z --no-git-tag-version
 npm install --package-lock-only
 
-# Sync .canon/version. The auto-release workflow asserts package.json's
-# version equals .canon/version and dies if they diverge.
-echo "1.4.0" > .canon/version
+# Sync .canon/version. auto-release.yml asserts package.json's version equals
+# .canon/version and dies if they diverge.
+echo "X.Y.Z" > .canon/version
 
-# Rebuild dist/. The version string is baked into dist/cli/index.js at
-# four call sites (doctor's checkCanonVersion, init's writeCanonVersion,
-# runUpgrade, printVersion). CI runs `git diff --exit-code -- dist/` on
-# every PR onto the release branch and fails until dist matches the new
-# version — so rebuild AS PART OF the version-bump commit, atomic with
-# package.json. Don't skip this even if dist looks clean locally: a
-# fresh `tsup` run may reorder output non-deterministically and a later
-# task PR will produce the spurious dist diff anyway.
+# Rebuild dist/. The version string is baked into dist/cli/index.js at four
+# call sites (doctor's checkCanonVersion, init's writeCanonVersion, runUpgrade,
+# printVersion). CI runs `git diff --exit-code -- dist/` on every PR to main and
+# fails until dist matches the new version — rebuild AS PART OF the bump commit,
+# atomic with package.json. Don't skip even if dist looks clean locally: a fresh
+# tsup run may reorder output and a later PR will produce the spurious diff anyway.
 npm run build
 ```
 
-Add the CHANGELOG block manually — the existing format is `## [<version>] — <date|unreleased>`:
+Finalize the CHANGELOG with `/canon-changelog finalize` — you're on the short-lived `release-vX.Y.Z` branch (a release/working branch), so the skill's finalize mode applies normally: it renames the `## [Unreleased]` block to `## [X.Y.Z] — YYYY-MM-DD` and inserts a fresh empty `## [Unreleased]` above it (Keep-a-Changelog convention). CI enforces the date: a PR to `main` whose target version block still says `unreleased`/`Unreleased` fails the "Verify CHANGELOG date" step.
 
-```markdown
-## [1.4.0] — unreleased
-
-<!-- Bullets land here as tasks ship. Replace "unreleased" with the real date when opening the release PR. -->
-```
-
-Commit and push:
+Verify the lockfile, commit, and open the release PR:
 
 ```bash
+# Only the two root "version" lines should change. Any transitive node_modules/*
+# version line is the picocolors-style corruption repeating.
+git diff -- package-lock.json | grep '"version"'
+
 git add package.json package-lock.json .canon/version dist/ CHANGELOG.md
-git commit -m "chore: initialize release/v1.4 (version 1.4.0)"
-git push -u origin release/v1.4
+git commit -m "chore: release X.Y.Z"
+git push -u origin release-vX.Y.Z
+gh pr create --base main --head release-vX.Y.Z --title "Release vX.Y.Z: <short theme>"
 ```
 
-## Patch release on an existing minor
+**Wait for both**: (a) CI green on the PR, (b) Codex's post-PR review. CI green alone is not sufficient — the 1.1.3 picocolors bug was caught by Codex's PR review, not CI. Then **squash-merge** (repo settings enforce squash-only; the short-lived branch is deleted on merge). A release commit is operator-authored, so `gh pr merge --squash --delete-branch` is fine here.
 
-For a patch release on a minor that already shipped (e.g., 1.5.2 after 1.5.1 has been published and `release/v1.5.1` was deleted on merge), branch off main and name the branch for the specific patch version:
-
-```bash
-# Start fresh off the current main (which has the 1.5.1 squash).
-git checkout main && git pull origin main
-git checkout -b release/v1.5.2 main
-```
-
-Bump to the patch version (`1.5.2`), `npm run build` (same reason as the minor/major flow above — the bumped version string lives in `dist/cli/index.js`), add a new `## [1.5.2] — unreleased` block at the top of CHANGELOG, commit (`package.json package-lock.json .canon/version dist/ CHANGELOG.md`), push, accumulate fixes.
-
-## Accumulating task work on the release branch
-
-Tasks branch off the active `release/v<version>` and PR back to it. Use `canon run` for the full pipeline; the orchestrator picks up `base_branch` from `status.json` (`canon task new` auto-detects this from the current checkout, so being on the release branch when creating tasks is enough).
-
-As each task ships, append a bullet to the active `## [<version>] — unreleased` block in `CHANGELOG.md`.
-
-## Shipping `release/v<version>` → `main`
-
-When the release scope is complete:
-
-1. **Replace `unreleased` with the date.** Edit the active CHANGELOG block's header to read `## [1.4.0] — 2026-MM-DD`. Commit and push. CI enforces this: a PR to `main` with `unreleased` still in the block fails the "Verify CHANGELOG date" step before it can merge.
-2. **Verify the lockfile.** `git diff main..release/v1.4 -- package-lock.json | grep '"version"'` should show only the two root `"version"` lines changing. Any transitive `node_modules/*` version line is the picocolors-style corruption repeating.
-3. **Open the release PR:**
-   ```bash
-   gh pr create --base main --head release/v1.4 --title "Release v1.4.0: <short theme>"
-   ```
-4. **Wait for both**: (a) CI green on the PR, (b) Codex's post-PR review. CI green alone is not sufficient — the 1.1.3 picocolors bug was caught by Codex's PR review, not CI.
-5. **Squash-merge the PR.** The repo's PR settings enforce squash-only with PR title → squash commit subject and PR body → message. The release branch is deleted as part of the merge.
-6. **Auto-release fires.** The workflow tags + publishes `v1.4.0`.
-
-No "reset" step. The release branch is gone; the next release branches fresh from main.
-
-## Hotfixes
-
-Same flow as the patch-release section above: branch off `main`, bump the patch version, accumulate the fix(es), PR back, squash-merge. No exceptions — release-branch-per-version is what makes hotfixes safe (each release has its own branch with its own version-bump commit; no shared integration state to corrupt).
+**Auto-release fires** on the push to `main`: it tags + publishes `vX.Y.Z` from the version-bump commit. No manual `git tag` / `gh release create`, and no "reset" step — the short-lived branch is gone and the next release branches fresh from `main`.
 
 ## Auto-release workflow
 
@@ -121,9 +87,9 @@ Implemented in `.github/workflows/auto-release.yml`. Triggered on push to `main`
 1. Reads `package.json` `version`.
 2. Asserts `.canon/version` matches — fails the workflow if they diverge.
 3. Verifies lockfile integrity (regenerates `package-lock.json` via `npm install --package-lock-only` and diffs against the checked-in file). Catches stale lockfiles + the 1.1.3 picocolors-style transitive corruption.
-4. Identifies the version-bump commit by blaming `package.json`'s `version` line. This SHA — not the SHA of whatever push triggered the run — is what gets tagged. Self-heal retry on a later push still tags the correct commit.
-5. Checks whether the GitHub release for `v<version>` already exists — exits silently if so. Gating on the release object (not the tag) lets a prior run that created the tag but failed before publishing the release self-heal on the next push.
-6. Extracts the `## [<version>] — <date>` CHANGELOG block **from the bump SHA's tree** (not the workflow's checkout) — when scope lands after the bump commit, the workflow's HEAD describes a different tree than the SHA being tagged, and reading from HEAD produces release notes that advertise fixes not in the tagged code (this was the 1.3.0 mismatch). Fails if the block is missing or still has the `unreleased` placeholder.
+4. Identifies the version-bump commit by blaming `package.json`'s `version` line. This SHA — not the SHA of whatever push triggered the run — is what gets tagged. A self-heal retry on a later push still tags the correct commit.
+5. Checks whether the GitHub release for `v<version>` already exists — exits silently if so. Gating on the release object (not the tag) lets a prior run that created the tag but failed before publishing the release self-heal on the next push. This idempotency is also what makes accumulating further task commits on `main` after a bump safe: subsequent pushes don't re-release an already-published version.
+6. Extracts the `## [<version>] — <date>` CHANGELOG block **from the bump SHA's tree** (not the workflow's checkout) — when scope lands after the bump commit, the workflow's HEAD describes a different tree than the SHA being tagged, and reading from HEAD produces release notes that advertise fixes not in the tagged code (the 1.3.0 mismatch). Fails if the block is missing or still has the `unreleased` placeholder.
 7. Creates the tag + GitHub release with the extracted body, targeting the version-bump commit.
 8. **Post-publish verification**: re-extracts the CHANGELOG block from the published tag and diffs it byte-for-byte against the uploaded release notes. Fails if they disagree (regression guard for the 1.3.0 tag/notes mismatch).
 
@@ -149,4 +115,5 @@ gh release create v<new-version> --target "$BUMP_SHA" \
 ## Related references
 
 - [`decisions.md`](decisions.md) §"Versioning and release policy" — what counts as patch / minor / major, who authorizes, changelog scope.
+- [`decisions.md`](decisions.md) §"Canon prescribes no release model to adopters" — why this doc is canon-ai-specific and not shipped to adopters.
 - [`../CHANGELOG.md`](../CHANGELOG.md) — historical release incidents (1.1.2 lockfile sync, 1.1.3 picocolors lockfile, 1.3.0/1.3.1 tag/notes mismatch recovery, 1.3.2 cleanup).

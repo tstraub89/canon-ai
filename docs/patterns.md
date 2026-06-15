@@ -116,17 +116,6 @@ When working on canon-ai's harness, `delicate: true` should be set for any task 
 
 The architectural decision (see `docs/decisions.md` "File-based handoffs between phases") makes resumability and observability load-bearing. Adding in-memory state that bridges phase boundaries — even seemingly innocuous things like "remember the validation result so we don't recompute it" — breaks both. New cross-phase state goes in a file under `tasks/<id>/` with a documented schema in `.canon/templates/`.
 
-### Release-merge `dev` → `main` via PR; cherry-pick for out-of-band fixes.
-
-Since v1.0.0, `main` is the published `canon-ai` npm package and `dev` is the staging branch — both carry the same canon-ai content shape, so they no longer structurally diverge the way the pre-v1 template/dev split did. **Normal release flow**: open a PR from `dev` → `main` with the version bump and `CHANGELOG.md` entry; merge it. The release-merge is the supported path; raw `git merge dev` on `main` works too but a PR is preferred for review/CI hygiene.
-
-**Cherry-pick is still the right tool for out-of-band fixes** that need to land on one branch ahead of the next release-merge — e.g., a hotfix authored on `main` that should also be on `dev` so it doesn't regress on the next merge, or a fix authored on `dev` that needs to land on `main` for an urgent patch release without sweeping in unrelated in-flight work.
-
-When a single change needs both branches outside a release:
-1. Author on whichever branch is convenient.
-2. `git cherry-pick <SHA>` to the other branch.
-3. Push both.
-
 ### Use `--name-status`, not `--name-only`, when building path sets from `git diff`
 
 When parsing `git diff -M` output to build a set of changed paths, use `--name-status` instead of `--name-only`. With `--name-only`, rename detection is active but only the post-image path is emitted — the pre-image path is silently suppressed. Any code that checks "is this path in the diff" will false-negative on the pre-image of a renamed file. With `--name-status`, rename lines appear as `R<score>\told\tnew`; expand both sides into the path set. Canonical implementation: `verifyHandoffAgainstDiffFromData()` in `scripts/run-task/validation.ts`.

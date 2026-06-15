@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     # `paths-ignore` doesn't support re-includes, so we use `paths` with
     # negative globs to opt out of doc / task paths AND a final positive
     # entry to re-include `tasks/_templates/**` — template changes affect

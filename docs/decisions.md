@@ -122,7 +122,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 **Decision**: canon-ai uses SemVer with strict bump-tier definitions; agent authorization scales with bump tier; `CHANGELOG.md` lives on `main` and ships with the published `canon-ai` npm package.
 
-**Why**: SemVer is well-understood and matches user expectations for what to expect from a version bump. Tying agent authorization to bump tier means agents can ship low-risk fixes autonomously while breaking changes always involve a human — the bumps that matter most for adopters are gated. Shipping the changelog with the package gives adopters a single in-tree record of what changed between versions they install. (Pre-v1.0.0, the changelog lived only on `dev` because `main` was a portable template; that distinction is gone now that `main` is the release branch.)
+**Why**: SemVer is well-understood and matches user expectations for what to expect from a version bump. Tying agent authorization to bump tier means agents can ship low-risk fixes autonomously while breaking changes always involve a human — the bumps that matter most for adopters are gated. Shipping the changelog with the package gives adopters a single in-tree record of what changed between versions they install. (Pre-v1.0.0, the changelog lived only on `dev` because `main` was a portable template; that distinction is gone now that releases are cut from `main` — see [`release-process.md`](release-process.md) for canon-ai's current trunk-based release flow.)
 
 **Rule**:
 

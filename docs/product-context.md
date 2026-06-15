@@ -78,10 +78,10 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 ### Flow 4: Self-improvement (canon-on-canon)
 
-1. canon-ai's own `dev` branch is the staging/work-in-progress branch for pipeline improvements.
-2. Tasks that modify the orchestrator (`scripts/run-task/`, `pipeline-policy.ts`, templates, `AGENTS.md`) run through canon-ai's own pipeline on `dev`, with worktree isolation so the supervising orchestrator is shielded from edits to itself mid-run.
+1. canon-ai develops **trunk-based on `main`** — task work accumulates there directly; there are no `dev` or `release/v*` branches.
+2. Tasks that modify the orchestrator (`scripts/run-task/`, `pipeline-policy.ts`, templates, `AGENTS.md`) branch off `main` and run through canon-ai's own pipeline, with worktree isolation so the supervising orchestrator is shielded from edits to itself mid-run.
 3. Trivial tweaks (≤ ~10 lines, no logic change) may still be inline; non-trivial changes go through the full pipeline.
-4. Releases merge `dev` → `main` with a version bump and `CHANGELOG.md` entry. `main` is the published `canon-ai` npm package — what adopters get when they `npm install`.
+4. A release is cut by landing a version-bump commit on `main` via a short-lived release PR, when there's enough to ship (see `docs/release-process.md`). `main` is the published `canon-ai` npm package — what adopters get when they `npm install`.
 
 ## Tiers, Sizes, and Authorization
 
@@ -110,8 +110,8 @@ Adopters of canon-ai add their own project-specific delicate domains to this lis
 ## Business Rules
 
 - **Repo visibility**: canon-ai is a private GitHub repository. The `canon-ai` npm package ships from `main`. Future open-source release would be a separate decision.
-- **Branch policy**: `dev` is the work-in-progress branch where pipeline improvements land first; `main` is the release branch and the source of the published `canon-ai` npm package. Releases merge `dev` → `main` with a version bump and `CHANGELOG.md` entry. Cross-branch sync still uses cherry-pick for canon-supplied changes outside a release (see `docs/patterns.md`).
-- **Changelog**: `CHANGELOG.md` lives on both branches and ships with the package. Audience is canon-ai contributors and adopters who want to know what changed between versions. Format follows Keep a Changelog conventions.
+- **Branch policy**: canon-ai is **trunk-based** — task work accumulates on `main` (the source of the published `canon-ai` npm package), and a release is cut from `main` via a version-bump commit when there's enough to ship (see `docs/release-process.md`). There are no `dev` or `release/v*` branches.
+- **Changelog**: `CHANGELOG.md` lives on `main` and ships with the package. Audience is canon-ai contributors and adopters who want to know what changed between versions. Format follows Keep a Changelog conventions.
 - **License**: Proprietary (`LICENSE` file at repo root). Reconsidered when/if a public release happens.
 
 ## Voice & Tone
@@ -124,7 +124,7 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 
 ## Roadmap (Brief)
 
-- **Current state**: v1.9.1 is the latest published release (2026-06-04); v1.10.0 is in progress on `release/v1.10`. canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
+- **Current state**: canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Development is trunk-based on `main`; releases are cut from `main` (see `docs/release-process.md`). Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
 - **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Multi-agent cold review shipped in v1.10.0 (`code_review` now runs as a foreman over anchored + cold lenses).
 - **Future**: Additional agent-CLI adapters (Gemini, Aider). Public release decision.
 

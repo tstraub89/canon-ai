@@ -2,6 +2,8 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [Unreleased]
+
 ## [1.12.1] — 2026-06-14
 
 ### Fixed
