@@ -1,7 +1,7 @@
 {
   "id": "release-agnostic-adopter-guidance",
   "title": "Make canon's adopter-facing release guidance model-agnostic",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-14",
   "updated": "2026-06-15",
   "branch": "task/release-agnostic-adopter-guidance",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
