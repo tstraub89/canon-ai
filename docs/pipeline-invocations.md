@@ -514,3 +514,5 @@
 | 2026-06-14T18:37:56.070Z | reroute-detaches-before-loop | implement | codex | gpt-5.5 | 0 | 598.9s | 5608497 | ok |
 | 2026-06-14T18:44:23.791Z | reroute-detaches-before-loop | code_review | claude | opus | 0 | 387.1s | 679935 | ok |
 | 2026-06-14T18:48:44.216Z | reroute-detaches-before-loop | qa | claude | sonnet | 0 | 260.4s | 2062887 | ok |
+| 2026-06-14T23:51:10.431Z | release-agnostic-adopter-guidance | spec_review | codex | gpt-5.4-mini | 0 | 143.3s | 736931 | ok |
+| 2026-06-15T01:26:53.154Z | release-agnostic-adopter-guidance | plan | claude | sonnet | 0 | 264.3s | 608780 | ok |
