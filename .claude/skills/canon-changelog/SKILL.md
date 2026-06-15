@@ -19,7 +19,12 @@ git log --oneline -12
 
 - **Version** — Read the project's version source if it has one (canon-ai uses `package.json` → `version`).
 - **CHANGELOG state** — Read `CHANGELOG.md`: note the heading format it actually uses and whether an in-progress / unreleased block is present. If `CHANGELOG.md` is missing, stop and create it (see *Prerequisites*).
-- **Base branch** (for "commits ahead") — `main` / `release/*` → base `main`; `task/*` → its upstream (`git rev-parse --abbrev-ref @{upstream}`), falling back to `main` if no upstream is set (fresh task branches often have none). Then `git log --oneline <base>..HEAD` for the ahead-list.
+- **Base for the "commits ahead" range** — identify the point the unreleased work sits on top of, by where you're running. Never use the branch's own tracking ref (`@{upstream}`): once pushed it's `origin/<branch>` and yields an empty range. The base depends on context:
+  - **On a task branch**: the current task's `base_branch` (from its `status.json`) — the authoritative per-task base, correct for any release model.
+  - **On a release/working branch aggregating toward the mainline** (in-progress append / finalize): the project's default branch (`main`/`master`), or the documented release base if it differs.
+  - **On the default branch drafting a fresh release**: bound at the **last released point** — the most recent release tag, if the project tags releases. If it doesn't tag (or this is the first release), there's no precise boundary derivable from the CHANGELOG alone: list the available history and rely on the **Phase 4 confirmation step** to settle the set rather than a computed range. Don't use the default branch itself as the base (`main..HEAD` on `main` is an empty range).
+
+  Then list the commits in the chosen range (`git log --oneline <base>..HEAD`, or the full log when there's no lower bound) to extract task IDs — using only the commands this skill permits.
 
 ---
 
@@ -165,7 +170,7 @@ Wait for approval. The user may adjust wording or version. Incorporate edits, th
 
 **In-progress append mode** (release branch):
 1. Append bullets under the matching category heading from the project's existing CHANGELOG (derived in Mode detection). Create a new category heading only if the file already uses that category type.
-2. Do NOT touch the project's version files — version was bumped when the release branch was initialized.
+2. Do NOT touch the project's version files — when the version is bumped (at branch creation, at finalize, or not at all) depends on your project's versioning policy; defer to your `decisions.md §Versioning and Release Policy` or your release doc.
 
 **Single-task append**: same as the relevant branch mode, but for one bullet only.
 

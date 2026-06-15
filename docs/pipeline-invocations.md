@@ -516,3 +516,6 @@
 | 2026-06-14T18:48:44.216Z | reroute-detaches-before-loop | qa | claude | sonnet | 0 | 260.4s | 2062887 | ok |
 | 2026-06-14T23:51:10.431Z | release-agnostic-adopter-guidance | spec_review | codex | gpt-5.4-mini | 0 | 143.3s | 736931 | ok |
 | 2026-06-15T01:26:53.154Z | release-agnostic-adopter-guidance | plan | claude | sonnet | 0 | 264.3s | 608780 | ok |
+| 2026-06-15T01:35:45.493Z | release-agnostic-adopter-guidance | implement | codex | gpt-5.4-mini | 0 | 531.3s | 3457948 | ok |
+| 2026-06-15T01:45:09.815Z | release-agnostic-adopter-guidance | code_review | claude | sonnet | 0 | 563.7s | 456238 | ok |
+| 2026-06-15T01:48:14.811Z | release-agnostic-adopter-guidance | qa | claude | sonnet | 0 | 185.0s | 1099475 | ok |

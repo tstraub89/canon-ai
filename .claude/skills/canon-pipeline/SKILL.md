@@ -1,6 +1,6 @@
 ---
 name: canon-pipeline
-description: Use when an existing canon task needs the pipeline driven forward — invoking `canon run`, advancing a single phase, opening the draft PR, shipping a merged task, or recovering from a snag (auto-block hit, phase mismatch, post-merge branch divergence, agent auth failure). Also for release branch operations: hotfix absorption, finalize-and-ship. Don't use to author a new spec (use `/canon-spec`) or check pipeline status (use `/canon-status`).
+description: Use when an existing canon task needs the pipeline driven forward — invoking `canon run`, advancing a single phase, opening the draft PR, shipping a merged task, or recovering from a snag (auto-block hit, phase mismatch, post-merge branch divergence, agent auth failure). Also for release and shipping operations: finalization, hotfix absorption, and any release model (release-branch, trunk, tag, or no-versioning). Don't use to author a new spec (use `/canon-spec`) or check pipeline status (use `/canon-status`).
 allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(git *) Bash(gh *)
 effort: medium
 ---
@@ -91,29 +91,57 @@ canon task phase <task-id> qa done
 canon run <task-id> --ship
 ```
 
-### 5. Release branches
+### 5. Release and shipping operations
 
-**This is canon's recommended, optional release-branch model.** Some projects release differently (for example, tag from `main`, use no separate release branch, or don't version at all). Adapt these steps to your project's release setup; anything that mentions CHANGELOG format or versioning policy defers to your project conventions.
+Canon's `--pr` / `--ship` / `base_branch` mechanics are **model-neutral**. The `base_branch` field is recorded in `status.json` **per task** at creation, so a single repository may use different release models for different task surfaces — pick the model that matches the work at hand.
 
-**"Let's start vX.Y":** Release-branch initialization is a **manual operator procedure** — this skill does **not** run it. For canon-ai, the init steps use `npm version`, `npm install --package-lock-only`, `npm run build`, and edits to `.canon/version` + `CHANGELOG.md`; other projects may initialize release branches differently. All of that is outside this skill's command scope (`canon`/`git`/`gh` + read/search only). What this skill does:
-1. Verify main is clean and in sync: `canon task post-merge-sync` if needed.
-2. Direct the operator to your project's release-branch initialization steps to run themselves (or in a context with the needed permissions). Do not claim the skill initialized the branch.
-3. Once the operator reports `release/vX.Y` is up, resume here for task creation on it.
+**Hybrid repos are first-class**: a project with one surface on versioned release branches and another shipping straight to the main line can use different `base_branch` values per task with no global setting. Canon supports all shapes because the per-task `base_branch` is the only release-model knob the orchestrator reads.
 
-**Creating a task on a release branch:** run `canon task new <id> "Title"` while checked out on `release/vX.Y`. The helper auto-detects the current branch and writes `base_branch: release/vX.Y`. Don't pass `--base` — auto-detect is the load-bearing convention.
-
-**Creating a task for a release branch while NOT checked out on it:** check if `release/vX.Y` exists before acting. If yes, warn about uncommitted changes, switch to it, pull, then create the task. If no, ask: "release/vX.Y hasn't been initialized yet — want me to walk you through the steps to initialize a release branch for your project?"
-
-**Hotfixes during a release cycle:** hotfixes go directly to main. After the hotfix lands, proactively offer: "Release branch `release/vX.Y` will need to absorb this — want me to merge main into it?"
-
-**"Let's ship vX.Y":**
-1. Verify all vX.Y task PRs are merged to `release/vX.Y`.
-2. Finalize the CHANGELOG unreleased block — use the `canon-changelog` skill in finalize mode (`/canon-changelog finalize`); it handles both version-carrying and version-less headings in your project's own format.
-3. Commit and push.
-4. Open the release PR: `gh pr create --base main --head release/vX.Y --title "vX.Y: <theme>"`.
-5. After merge: `canon task post-merge-sync` on main, then tag and create a GitHub release.
+**Authority pointer**: For every recipe below, your project's own `decisions.md §Versioning and Release Policy` (and/or your project's release doc) is the source of truth for version numbers, changelog policy, branch strategy, and tag conventions. Canon provides mechanics; your project's policy provides decisions.
 
 **Always check working tree state before branch operations.** If `git status --porcelain` is non-empty, surface it and ask before proceeding. Never blow away uncommitted work.
+
+---
+
+#### Recipe: release-branch-per-version
+
+One release branch per version (`release/vX.Y`). Tasks land on the release branch; a merge PR ships the whole release to the default branch.
+
+1. Check out `release/vX.Y` (initialize it per your project's release doc if it doesn't exist yet — this skill does not run initialization commands).
+2. `canon task new <id> "Title"` — auto-detects `base_branch: release/vX.Y`.
+3. Run the pipeline normally. `--ship` merges the task to `release/vX.Y`.
+4. **Hotfixes during a release cycle**: hotfixes go directly to the default branch. After the hotfix lands, offer: "Release branch `release/vX.Y` will need to absorb this — want me to merge the default branch into it?"
+5. **Finalize**: once all vX.Y tasks are merged, use `/canon-changelog finalize` to stamp the unreleased block with today's date.
+6. **Ship the release**: `gh pr create --base <default-branch> --head release/vX.Y --title "vX.Y: <theme>"`. After merge, `canon task post-merge-sync` on the default branch. Tag and GitHub release steps live in your project's release doc.
+
+---
+
+#### Recipe: trunk-from-main
+
+All tasks target the project's default branch (`main` or `master`). No separate release branch.
+
+1. `canon task new <id> "Title"` while on the default branch — auto-detects `base_branch: main` (or `master`).
+2. Run the pipeline normally. `--ship` merges the task directly to the default branch.
+3. Version bumps, changelog entries, and tags are handled on the default branch per your project's versioning policy — not prescribed by canon.
+
+---
+
+#### Recipe: tag-from-main
+
+Tasks land on the default branch; releases are marked with a tag rather than a release branch.
+
+1. Same as trunk-from-main for task targeting and pipeline execution.
+2. After the desired set of tasks ships, create a tag from the default branch per your project's tag convention. Canon does not manage tag creation or GitHub release publication — those belong to your project's release doc.
+
+---
+
+#### Recipe: no versioning
+
+Tasks land on the default branch; no version numbers, no CHANGELOG, no tags.
+
+1. `canon task new <id> "Title"` on the default branch.
+2. Run the pipeline. `--ship` merges to the default branch.
+3. Skip all versioning, changelog, and tagging steps. Use `/canon-changelog` only if and when your project adopts a CHANGELOG.
 
 ### 6. Reroute after human rejection
 

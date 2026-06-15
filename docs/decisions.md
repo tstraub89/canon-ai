@@ -120,7 +120,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ## Versioning and release policy
 
-**Decision**: canon-ai uses SemVer with strict bump-tier definitions; agent authorization scales with bump tier; `CHANGELOG.md` lives on both `dev` and `main` and ships with the published `canon-ai` npm package.
+**Decision**: canon-ai uses SemVer with strict bump-tier definitions; agent authorization scales with bump tier; `CHANGELOG.md` lives on `main` and ships with the published `canon-ai` npm package.
 
 **Why**: SemVer is well-understood and matches user expectations for what to expect from a version bump. Tying agent authorization to bump tier means agents can ship low-risk fixes autonomously while breaking changes always involve a human — the bumps that matter most for adopters are gated. Shipping the changelog with the package gives adopters a single in-tree record of what changed between versions they install. (Pre-v1.0.0, the changelog lived only on `dev` because `main` was a portable template; that distinction is gone now that `main` is the release branch.)
 
@@ -139,12 +139,24 @@ Decisions can be reopened, but only with **strong justification and human approv
   - **Major**: human-only. If a task introduces a breaking change that the spec didn't flag, raise it during QA before shipping.
 
 - **Changelog audience and scope**:
-  - `CHANGELOG.md` lives on both `dev` and `main` and ships with the published `canon-ai` npm package.
+  - `CHANGELOG.md` lives on `main` and ships with the published `canon-ai` npm package.
   - Audience is canon-ai contributors and adopters who want to know what changed between versions they install or upgrade to.
   - Format follows Keep a Changelog conventions.
   - The repo is currently private; the package is published from `main`. A future public release would not change the changelog model — `CHANGELOG.md` stays in-tree.
 
 - **Release mechanics**: How to actually execute a release (version bump commands, lockfile refresh, tag-and-publish flow, hotfix path, auto-release workflow) lives in [`release-process.md`](release-process.md). That doc is the source of truth for *how*; this entry is the source of truth for *what counts as a bump and who authorizes it*. Notable rule from `release-process.md`: never use `sed` to bump versions in `package.json` or `package-lock.json` — use `npm version --no-git-tag-version` + `npm install --package-lock-only`. The 1.1.3 picocolors lockfile incident was caused by exactly that footgun.
+
+---
+
+## Canon prescribes no release model to adopters
+
+**Decision**: Canon's adopter-facing guidance prescribes no specific release model. The `--pr` / `--ship` / `base_branch` mechanics are model-neutral by design. Adopters may use release-branch-per-version, trunk-from-main, tag-from-main, no versioning, or any hybrid — canon supports all of them because `base_branch` is recorded **per task** in `status.json` at creation.
+
+**Why**: The alternative — shipping one concrete model as "the" canon workflow — produced recurring scope creep: prescriptive release-branch language crept back into adopter-facing surfaces multiple times because nothing pinned the stance. The orchestrator has been model-agnostic in code (`getBaseBranch()` in `scripts/run-task/git.ts` reads `base_branch` from `status.json` with no hardcoded `dev`/`release/` assumption) since before v1.0.0; the guidance lagged. Recording the stance as a settled decision is the anti-regression guard.
+
+The per-task `base_branch` also makes hybrid repos first-class: a project that ships one surface via release branches and another straight to `main` can use canon for both — it just records the appropriate `base_branch` when creating each task.
+
+**Rule**: Adopter-facing guidance — the skill files, every `CANON_OWNED` doc (e.g. `docs/pipeline-orchestrator.md`), and the delimited `AGENTS.md` / `CLAUDE.md` (see `CANON_OWNED` and `DELIMITED` in `src/lib/canon-owned.ts`) — must not present any single release model as required or as the canon default. When giving a worked example, label it as one common shape and name the authority pointer (the adopter's own `decisions.md §Versioning and Release Policy` and/or their release doc). Do not re-introduce unconditional release-branch framing in shipped surfaces; if a release-model-specific step is genuinely needed, scope it within a named recipe or a conditional clause.
 
 ---
 

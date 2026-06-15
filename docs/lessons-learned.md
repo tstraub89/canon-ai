@@ -85,6 +85,12 @@ When a task edits any canon-managed doc in `docs/` (e.g. `docs/pipeline-orchestr
 
 `humanReviewAllowedPath` (and `verifyBaseDrift`) automatically union all `PIPELINE_MANAGED_DOCS` into the allowed set once `qa.status === 'done'`. A spec that writes an AC of the form "a QA-touched managed doc absent from spec Affected Files must abort the commit" inverts the real invariant — such a doc is *committed*, not flagged. This caused an AC-10 inversion caught in spec_review round 1 and required the AC to be rewritten before implementation. When writing any spec that reasons about which files are allowed at the QA-end or `--pr`-push gate, check `humanReviewAllowedPath` in `scripts/run-task/main.ts` (≈ line 652) and `verifyBaseDrift`'s QA-done auto-allowlist block in `scripts/run-task/validation.ts` (≈ line 1430) before asserting allow-list scope — the gate already unions managed docs unconditionally at `qa.status === 'done'`.
 
+### Use pathspec excludes, not --exclude-dir, in git grep inventory scans
+
+*(2026-06-14, source: release-agnostic-adopter-guidance)*
+
+`git grep` does not accept `--exclude-dir`; the flag is silently ignored or causes an error depending on the git version. Use pathspec excludes instead: `git grep -n -e '<term>' -- . ':(exclude)node_modules' ':(exclude)dist' ':(exclude)tasks' ':(exclude).git'`. Any spec AC that calls for a `git grep` inventory scan (e.g. AC-1 model-presuming-term inventory) should either supply the exact command with pathspec excludes or note that the implementer must discover the correct exclusion syntax for the repo. The `--exclude-dir` trap is silent — the scan appears to succeed but includes `node_modules/` hits, polluting the disposition table with non-shipped surface entries.
+
 ### Strip flags from the re-exec child argv rather than using an inherited env var to skip per-re-exec behavior
 
 *(2026-06-14, source: reroute-detaches-before-loop)*

@@ -14,74 +14,73 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+
+All applicable checks passed: lint, type-check, full test suite (867/0/1), sync-templates:check, docs-refs-check. `npm run build` is deferred_by_spec with a valid citation (skills/docs are not bundled into `dist/`).
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: inventory gate | Met | Nine `git grep` commands covering all spec-listed terms. All shipped-surface hits carry dispositions (`reframed` or `intentionally-conditional` with a one-line reason). `docs/pipeline-orchestrator.md` is correctly identified as CANON_OWNED and classified `intentionally-conditional` (its release-branch references are CLI flag examples, not prescriptive defaults). Non-shipped hits are listed without disposition as required. |
+| AC-2: recipe menu | Met | §5 now titled "Release and shipping operations" contains four distinct labeled recipes: release-branch-per-version, trunk-from-main, tag-from-main, no versioning. None is labeled or positioned as the default/recommended/required model. |
+| AC-3: per-task / hybrid framing | Met | `canon-pipeline/SKILL.md` preamble explicitly states `base_branch` is recorded per task and that hybrid repos can use different models across surfaces. Both required elements are present. |
+| AC-4: authority pointer | Met | Global preamble at line 100 says "for every recipe below, your project's own `decisions.md §Versioning and Release Policy` (and/or your project's release doc) is the source of truth." This explicitly covers all four recipes. The no-versioning recipe lacks an individual per-recipe pointer, but the global preamble's "for every recipe below" framing satisfies the functional requirement. |
+| AC-5: frontmatter | Met | Skill description now reads: "Also for release and shipping operations: finalization, hotfix absorption, and any release model (release-branch, trunk, tag, or no-versioning)." Release-branch is listed as one of four equal options, not the defining purpose. |
+| AC-6: changelog skill — neutralize, don't redesign | Met | Exactly two lines changed in `canon-changelog/SKILL.md`. (a) Base-branch heuristic replaced with generic upstream-derived logic that also honors `status.json`'s `base_branch` field. (b) "version was bumped when the release branch was initialized" replaced with a conditional deferral to project versioning policy. No other behavioral clauses changed. |
+| AC-7: decision record | Met | New entry "Canon prescribes no release model to adopters" added with Decision, Why, and Rule sections. Stale `CHANGELOG.md lives on both dev and main` wording removed in two places. Surviving `dev` references are accurate historical parentheticals only. |
+| AC-8: diff scope guard | Met | Diff touches only the four skill files (root + templates mirrors), `docs/decisions.md`, and task artifacts under `tasks/release-agnostic-adopter-guidance/`. No `scripts/`, `src/`, `dist/`, `AGENTS.md`, `CLAUDE.md`, or `docs/release-process.md` paths appear. |
+| AC-9: templates mirror invariant | Met | `npm run sync-templates:check` passed. Both root and mirror paths appear in the handoff Changes table. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected — `docs/release-process.md`, `AGENTS.md`, `CLAUDE.md`, orchestrator source, and `CHANGELOG.md` are untouched. Confirmed by diff inspection.
+- [x] Known Risks addressed — recipe-drift mitigation (thin recipes, authority-pointer pattern) is present; over-editing mitigation (AC-6 scope-bound) is enforced; inventory under-coverage mitigation (AC-1 re-run) is documented.
+- [x] Human Test Plan is satisfiable — the four recipes cover each test persona (trunk-only adopter, tag-from-main adopter, hybrid adopter, adopter confirming no single model is imposed).
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Clean documentation-only implementation. The strategy is correct: neutralize exactly the two named release-branch assumptions in canon-changelog, rewrite §5 of canon-pipeline into a model-neutral core plus four recipes, and lock the stance with a decision record. The prose is clear, internally consistent within each changed surface, and the recipe structure is appropriately thin. All findings from both lenses are nits.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+None.
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+**R-1** (`risk/guardrail` — cold lens) `.claude/skills/canon-changelog/SKILL.md` line 22 — The new base-branch derivation says "If the task's `status.json` is readable and has a `base_branch` field, that takes precedence over the git-derived upstream." The instruction does not specify how to locate the `status.json` (which task directory to look in) when invoked outside a well-known task context. The soft "if readable" hedge limits blast radius — a skill agent that can't locate the file simply falls back to git-derived upstream — but an agent could also read the wrong file in a multi-task repo. Not a regression from the old text (which gave no `status.json` guidance at all), and AC-6 scoped this change to neutralizing the heuristic generically. Low blocking risk; flagged as a known limitation worth tightening in a follow-up.
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
+**N-1** (`optional cleanup/nit` — both lenses) `.claude/skills/canon-pipeline/SKILL.md` — The "Always check working tree state before branch operations" guard appears verbatim twice in §5: once in the preamble (before the first recipe) and once after the no-versioning recipe. The second copy was preserved from the original §5 closing position while a new copy was added to the preamble. Either the trailing copy (after no-versioning) should be removed, or the preamble copy should be removed. The preamble position is more effective because it applies before any recipe is followed.
 
-(none / list items)
+**N-2** (`optional cleanup/nit` — anchored lens) `docs/decisions.md` new Rule section — The Rule enumerates adopter-facing surfaces as "skill files, `AGENTS.md`, `CLAUDE.md`" but omits `docs/pipeline-orchestrator.md`, which is also CANON_OWNED and ships to adopters. The enumeration is underspecified on scope. Could be tightened to "skill files and all CANON_OWNED docs" or could list pipeline-orchestrator.md explicitly.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+None.
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped because the spec shows the behavior is intended. Include the spec reason.
-
-(none / list items)
+- **`decisions.md §Versioning and Release Policy` pointer misleads adopters** (cold lens, medium confidence): dismissed. The authority pointer in the skill directs adopters to *their own* `decisions.md §Versioning and Release Policy`, not to canon-ai's decisions.md. An adopter's own `decisions.md` is where they record their release policy — the pointer is correct. The cold lens confused the referent (adopter's document) with the source (canon-ai's document).
+- **`getBaseBranch()` in `scripts/run-task/git.ts` unverifiable** (cold lens, low confidence): dismissed. Low-confidence claim about an internal doc's accuracy; not a behavioral issue in shipped guidance.
+- **`finalize` not in canon-changelog argument hint** (cold lens, low confidence): dismissed. The hint is `[optional: version override e.g. 1.5.0, or single task ID to add one bullet]`; `finalize` is the mode trigger. This is a pre-existing documentation gap in the changelog skill's frontmatter, not introduced by this task and out of AC-6 scope.
+- **Pre-existing "In-progress append mode (release branch)" label inconsistency** (anchored lens): dismissed as pre-existing. The mode-detection table uses the agnostic label "Active release/working branch" while Phase 5 still says "(release branch)." This gap pre-dates this task; AC-6 explicitly scoped the edit to two named spots, and this label is not one of them.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
