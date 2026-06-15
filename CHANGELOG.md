@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Canon's adopter-facing release guidance is now model-agnostic.** The `/canon-pipeline` skill's release-and-shipping section is rewritten from a single release-branch-per-version walkthrough into a model-neutral core plus four named recipes — *release-branch-per-version*, *trunk-from-main*, *tag-from-main*, and *no versioning* — each deferring to your own release policy doc as the source of truth. It now states explicitly that `base_branch` is per-task, so one repository may mix release models across surfaces. The `/canon-changelog` skill's base-detection and finalize notes are updated to match (no longer assuming release-branch as the only model).
+
 ## [1.12.1] — 2026-06-14
 
 ### Fixed
