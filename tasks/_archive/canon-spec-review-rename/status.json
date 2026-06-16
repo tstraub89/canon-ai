@@ -1,7 +1,7 @@
 {
   "id": "canon-spec-review-rename",
   "title": "Rename canon-review skill to canon-spec-review",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-16",
   "updated": "2026-06-16",
   "branch": "task/canon-spec-review-rename",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
