@@ -51,7 +51,8 @@ Mechanics (exact edit order, whether to `git mv` vs delete+create, etc.) are def
 
 | File | Change |
 |---|---|
-| `.claude/skills/canon-review/SKILL.md` | Rename dir → `.claude/skills/canon-spec-review/`; update the 5 name occurrences (frontmatter `name`, `description` trigger, H1, usage line, report header) to `canon-spec-review` / `/canon-spec-review`. |
+| `.claude/skills/canon-spec-review/SKILL.md` | New (renamed) skill — the 5 name occurrences (frontmatter `name`, `description` trigger, H1, usage line, report header) read `canon-spec-review` / `/canon-spec-review`. (Rename-to side.) |
+| `.claude/skills/canon-review/SKILL.md` | Old skill removed. (Rename-from side — both sides of the rename are listed for the base-drift gate.) |
 | `.claude/skills/canon-init/SKILL.md` | Update the grant snippet it tells adopters to paste (`Skill(canon-review)` / `Skill(canon-review:*)`) → `canon-spec-review` forms (root copy only). No prose `/canon-review` cross-link in this file. |
 | `.claude/skills/canon-pipeline/SKILL.md` | Update `/canon-review` cross-link → `/canon-spec-review` (root copy only). |
 | `.claude/skills/canon-spec/SKILL.md` | Update `/canon-review` cross-link → `/canon-spec-review` (root copy only). |
@@ -62,7 +63,8 @@ Mechanics (exact edit order, whether to `git mv` vs delete+create, etc.) are def
 | `README.md` | Allowlist JSON block grants → `canon-spec-review` forms (lockstep with `RECOMMENDED_ALLOW`); skill-catalog table row + installed-skills prose → `/canon-spec-review`. |
 | `tests/cli.test.ts` | Update the seven-skill list (the "all skills present" test) to `canon-spec-review`; the README↔`RECOMMENDED_ALLOW` deepEqual test passes once README + `RECOMMENDED_ALLOW` both carry the new grants. |
 | `.claude/settings.json` | canon-ai-local operator grants `Skill(canon-review)` / `:*` → new forms (hygiene; not shipped). |
-| `docs/decisions.md`, `docs/BACKLOG.md` | Update forward-looking `/canon-review` prose references. |
+| `docs/decisions.md` | Update forward-looking `/canon-review` prose reference. |
+| `docs/BACKLOG.md` | Update forward-looking `/canon-review` prose references. |
 | `CHANGELOG.md` | **Add** an `[Unreleased]` entry (rename + adopter "remove the old dir" guidance). Do not edit existing entries. |
 
 **Generated artifacts** (the implementer does **not** hand-edit these — `npm run build` / the sync hook regenerate them — but each is in the branch diff, so it **must** appear in `handoff.md`'s Changes table or the diff↔handoff reconciler and the `--pr` base-drift gate will reject the push). Every CANON_OWNED root edited above mirrors into `templates/` by path; the renamed skill also leaves a now-orphaned old mirror dir that the sync does **not** prune, so it is removed explicitly:

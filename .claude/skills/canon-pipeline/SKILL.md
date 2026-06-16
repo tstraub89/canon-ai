@@ -183,6 +183,6 @@ If any are missing post-pipeline, manually advance or fix before `--pr` / `--shi
 - `CLAUDE.md` — Claude phase-specific guidance.
 - `/canon-status` — read task state and get recommended next action.
 - `/canon-spec` — author a new task spec.
-- `/canon-review` — adversarial pre-pipeline spec review before invoking the pipeline.
+- `/canon-spec-review` — adversarial pre-pipeline spec review before invoking the pipeline.
 - `/canon-changelog` — draft release notes from completed tasks.
 - `/canon-init` — fill canon scaffold docs on a fresh project.

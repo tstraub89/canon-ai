@@ -183,7 +183,7 @@ canon run --full-send [--force] TASK-ID
 
 ## Related
 
-- `/canon-review` — adversarial pre-pipeline review of the spec. Recommended for M/L/XL or delicate tasks before invoking the pipeline.
+- `/canon-spec-review` — adversarial pre-pipeline review of the spec. Recommended for M/L/XL or delicate tasks before invoking the pipeline.
 - `/canon-pipeline` — drive the pipeline after spec approval.
 - `/canon-status` — check what other canon tasks are in flight before committing to scope.
 - `AGENTS.md` — workflow rules, validation matrix; `docs/pipeline-orchestrator.md` — sizing guide.

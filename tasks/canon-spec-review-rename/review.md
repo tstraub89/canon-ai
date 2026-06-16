@@ -14,74 +14,72 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+
+All six required checks passed (lint, type-check, test, build, sync-templates:check, docs-refs-check). E2E marked `deferred_by_spec` with a valid spec citation. The AC-6 ambiguity note in the handoff (pre-commit worktree shows the expected `dist/` rename diff until the orchestrator stages the commit) is consistent with the normal pipeline flow; the bundle was regenerated from source and the diff is limited to the expected rename outputs.
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: Skill renamed at source | Pass | `.claude/skills/canon-spec-review/SKILL.md` exists with `name: canon-spec-review`; frontmatter, H1, usage line, and report header all updated; `.claude/skills/canon-review/` absent from git tree. |
+| AC-2: Manifest + templates mirror | Pass | `src/lib/canon-owned.ts` line 10 lists `.claude/skills/canon-spec-review/SKILL.md`; `templates/.claude/skills/canon-spec-review/SKILL.md` exists; old `templates/.claude/skills/canon-review/` absent from git tree; `sync-templates:check` passes. |
+| AC-3: doctor presence check | Pass | `doctor.ts:251` `skillNames` contains `canon-spec-review`; `tests/cli.test.ts:408` "all seven skills present → pass" fixture updated; no `canon-review` in `src/` or `tests/`. |
+| AC-4: Permission grant lockstep | Pass | `doctor.ts:78-79` `RECOMMENDED_ALLOW` has `Skill(canon-spec-review)` / `Skill(canon-spec-review:*)`; README allowlist block matches; `cli.test.ts` deepEqual test passes. |
+| AC-5: README user-facing refs | Pass | README catalog row (line 113) and installed-skills prose read `/canon-spec-review`; `grep README canon-review` returns 0. |
+| AC-6: dist rebuilt | Pass | `dist/cli/index.js` contains `canon-spec-review` in `RECOMMENDED_ALLOW`, `skillNames`, and `CANON_OWNED`; old name absent; bundle regenerated via `npm run build`. |
+| AC-7: Shipped cross-references | Pass | `canon-pipeline`, `canon-spec`, `canon-status` SKILL.md and `docs/pipeline-orchestrator.md` (3 refs) all updated; `grep .claude/skills/ canon-review` and `grep docs/pipeline-orchestrator.md canon-review` return 0. |
+| AC-8: Forward-looking dev docs + local settings | Pass | `docs/decisions.md`, `docs/BACKLOG.md`, and `.claude/settings.json` all updated; `grep` for `canon-review` in each returns 0. |
+| AC-9: Structural grep gate | Pass | `git grep -n 'canon-review'` hits only: `CHANGELOG.md` (historical + new adopter-guidance entry) and `tasks/canon-spec-review-rename/**`. No matches outside the allow-list. |
+| AC-10: Adopter guidance in CHANGELOG | Pass | `CHANGELOG.md` `[Unreleased]` entry records the rename, notes behavior is unchanged, and directs adopters to remove `.claude/skills/canon-review/` after `canon upgrade` with the caveat that upgrade does not prune it. |
+| AC-11: Full validation green | Pass | All six required checks pass per handoff. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected — no deletion logic added to `canon upgrade`; no CHANGELOG history rewritten; `tasks/_archive/**` untouched; SKILL.md content only changed where the old name literally appears
+- [x] Known Risks addressed — README↔RECOMMENDED_ALLOW lockstep verified by test; dist rebuilt from source; orphaned templates mirror `git rm`'d; generated paths all declared in handoff Changes table
+- [x] Human Test Plan is satisfiable — the renamed skill dir exists; `canon doctor` will report it present; CHANGELOG guidance is unambiguous
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Clean rename across all load-bearing surfaces: source (`doctor.ts`, `canon-owned.ts`), compiled dist, live skill (rename + 5 name-occurrence edits), templates mirror (new + orphan removed), four sibling cross-links, three orchestrator-doc references, README prose and allowlist block, dev docs, and local settings. All derived artifacts regenerated by tooling. No behavior changes; no structural risk.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
+- **Pre-existing weak regex in negative test** — `tests/cli.test.ts:432` uses `/canon-spec/` to assert the missing-skills warning includes a skill name. This regex matches both `canon-spec` (the spec-authoring skill) and `canon-spec-review` (the renamed skill); it cannot distinguish them. The test was not changed by this PR and represents a pre-existing under-specification — it is not a regression. A tighter pattern (e.g., `/canon-spec-review/`) would make the assertion unambiguous. Low severity; the test still correctly exercises the warning path. *(Flagged by cold lens; not flagged by anchored lens as it predates this diff.)*
 
-(none / list items)
+- **Empty untracked dir residue** — After the git rename, an empty `.claude/skills/canon-review/` directory (and its `templates/` counterpart) remains on the local filesystem as a git-untracked artifact. It does not affect CI, adopters, or the shipped bundle — git does not track empty directories. Minor working-tree residue. *(Flagged by both lenses.)*
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped because the spec shows the behavior is intended. Include the spec reason.
-
-(none / list items)
+- **Dismissed (cold, spec-intended):** "No `canon doctor` warning for stale old skill directory" — The spec §Decision explicitly chose documentation-only migration: "we handle this with documentation only (a CHANGELOG entry telling adopters to remove the old dir) — we do NOT add deletion logic to `canon upgrade`." The same design intent governs doctor: adding a stale-dir detection check would contradict the explicit non-goal of keeping `canon upgrade` additive-only. Dismissed.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 

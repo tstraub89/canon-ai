@@ -6,6 +6,8 @@
 
 ### Changed
 
+- **The pre-pipeline spec review skill is renamed `/canon-spec-review` (was `/canon-review`).** The new name aligns with the pipeline phase it pre-empts (`spec_review`) and disambiguates it from the sibling `/canon-inline-review` skill (code-diff review). Behavior is unchanged: same three-sub-agent fan-out, same BLOCKING / STRONG / NIT report, same read-only advisory output. Existing adopters should remove the stale `.claude/skills/canon-review/` directory after `canon upgrade`; upgrade does not prune it automatically.
+
 - **Canon's adopter-facing release guidance is now model-agnostic.** The `/canon-pipeline` skill's release-and-shipping section is rewritten from a single release-branch-per-version walkthrough into a model-neutral core plus four named recipes — *release-branch-per-version*, *trunk-from-main*, *tag-from-main*, and *no versioning* — each deferring to your own release policy doc as the source of truth. It now states explicitly that `base_branch` is per-task, so one repository may mix release models across surfaces. The `/canon-changelog` skill's base-detection and finalize notes are updated to match (no longer assuming release-branch as the only model).
 
 ## [1.12.1] — 2026-06-14

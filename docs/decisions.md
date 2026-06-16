@@ -175,7 +175,7 @@ _Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
 - **Effort floors** — audited and already adequate: the matrix's `medium` entries are either on Sonnet/tiny diffs or on phase/size combos that don't run (fast-tier spec is conversational); every Opus exploration tier (spec M+, code_review XL) is already `high`/`xhigh`, and code_review L is Sonnet/`high`.
 - **Lens count stays two** (one anchored + one cold). 2026 correlated-error research endorses exactly this: beyond one anchored + one adversarial lens, added reviewers are near-clones (limited recall, more noise). Do not add a third lens.
 
-**Backlogged (separate future minors, each its own spec)**: a test-generation / self-verification phase after implement; confidence-based cascaded reviewer escalation (Sonnet→Opus on low confidence) replacing pure size-based routing; micro-spec decomposition guidance for L/XL; a spec-contradiction lint in `/canon-review`.
+**Backlogged (separate future minors, each its own spec)**: a test-generation / self-verification phase after implement; confidence-based cascaded reviewer escalation (Sonnet→Opus on low confidence) replacing pure size-based routing; micro-spec decomposition guidance for L/XL; a spec-contradiction lint in `/canon-spec-review`.
 
 ---
 

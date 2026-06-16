@@ -1,12 +1,12 @@
 ---
-name: canon-review
-description: Use when a canon task spec is written and the human wants to surface BLOCKING issues before invoking `canon run <id>`. Triggers on "/canon-review", "review the spec", "pre-flight the spec", "what would Codex catch", or before kicking off the pipeline. Useful for any spec with logic — for full-tier (M/L/XL/delicate) it pre-empts Codex spec_review iterations, for fast-tier (S non-delicate) it's the only automated review layer since Codex spec_review auto-approves.
+name: canon-spec-review
+description: Use when a canon task spec is written and the human wants to surface BLOCKING issues before invoking `canon run <id>`. Triggers on "/canon-spec-review", "review the spec", "pre-flight the spec", "what would Codex catch", or before kicking off the pipeline. Useful for any spec with logic — for full-tier (M/L/XL/delicate) it pre-empts Codex spec_review iterations, for fast-tier (S non-delicate) it's the only automated review layer since Codex spec_review auto-approves.
 argument-hint: "<task-id>"
 allowed-tools: Read Glob Grep Bash(canon task list*) Bash(git status*) Agent
 effort: high
 ---
 
-# canon-review
+# canon-spec-review
 
 Previews what Codex's `spec_review` phase would surface — BEFORE `canon run <id>` — by dispatching three parallel sub-agents at the spec from different angles. Returns one inline report; the human revises spec.md or proceeds.
 
@@ -23,7 +23,7 @@ Don't use for already-committed code review (use `codex review --uncommitted` fo
 
 ### 1. Verify inputs
 
-The task ID is `$ARGUMENTS`. If empty, stop: usage is `/canon-review <task-id>`.
+The task ID is `$ARGUMENTS`. If empty, stop: usage is `/canon-spec-review <task-id>`.
 
 Verify `tasks/<id>/spec.md` exists and is filled out (no `<placeholder>` text or "TBD" stubs). If it's still a template, stop and say so.
 
@@ -89,7 +89,7 @@ When all three return:
 Print this inline (do NOT write to a file):
 
 ```markdown
-# /canon-review for `<task-id>`
+# /canon-spec-review for `<task-id>`
 
 **Task**: <title> · **Size**: <S/M/L/XL> · **Delicate**: <yes/no>
 

@@ -506,8 +506,8 @@ var RECOMMENDED_ALLOW = [
   "Skill(canon-status:*)",
   "Skill(canon-changelog)",
   "Skill(canon-changelog:*)",
-  "Skill(canon-review)",
-  "Skill(canon-review:*)",
+  "Skill(canon-spec-review)",
+  "Skill(canon-spec-review:*)",
   "Skill(canon-inline-review)",
   "Skill(canon-inline-review:*)"
 ];
@@ -641,7 +641,7 @@ function checkSkills(cwd) {
       detail: "canon-init skill missing \u2014 run `canon init` or `canon upgrade`"
     };
   }
-  const skillNames = ["canon-spec", "canon-pipeline", "canon-status", "canon-changelog", "canon-review", "canon-inline-review"];
+  const skillNames = ["canon-spec", "canon-pipeline", "canon-status", "canon-changelog", "canon-spec-review", "canon-inline-review"];
   const missing = skillNames.filter((s) => !existsSync(join(cwd, ".claude", "skills", s, "SKILL.md")));
   if (missing.length > 0) {
     return {
@@ -3695,7 +3695,7 @@ var CANON_OWNED = [
   ".claude/skills/canon-pipeline/recovery.md",
   ".claude/skills/canon-status/SKILL.md",
   ".claude/skills/canon-changelog/SKILL.md",
-  ".claude/skills/canon-review/SKILL.md",
+  ".claude/skills/canon-spec-review/SKILL.md",
   ".claude/skills/canon-inline-review/SKILL.md",
   ".claude/agents/code-review-anchored.md",
   ".claude/agents/code-review-cold.md",

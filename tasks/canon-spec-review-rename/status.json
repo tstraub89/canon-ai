@@ -1,15 +1,15 @@
 {
   "id": "canon-spec-review-rename",
   "title": "Rename canon-review skill to canon-spec-review",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-16",
   "updated": "2026-06-16",
-  "branch": "",
+  "branch": "task/canon-spec-review-rename",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "0757e7b575b86e067341bb75507999e757b74280",
-    "orchestrator_commit": "0757e7b575b86e067341bb75507999e757b74280",
+    "upstream_commit": "d9b126c74296b40c93785cd66ea7a709c7178a4b",
+    "orchestrator_commit": "d9b126c74296b40c93785cd66ea7a709c7178a4b",
     "codex_cli": "codex-cli 0.139.0",
     "claude_code": "2.1.177 (Claude Code)"
   },
@@ -40,21 +40,25 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "operator_accepted": true,
+      "operator_accepted_at": "2026-06-16",
+      "operator_accepted_sha": "44753fb303c211dae30c1115a3ebab3904ae40dc"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +69,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "019ece92-f0a4-7fc3-ae62-37edf519140d",
-    "claude_spec": "1953d75b-417d-402c-8af2-239ca021894e"
+    "claude_spec": "1953d75b-417d-402c-8af2-239ca021894e",
+    "codex": "019ecea8-212a-73a0-90d7-b05b308e622a",
+    "claude_review": "4f8ab3a6-33f7-4f42-97a0-1deaa38b2d53"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

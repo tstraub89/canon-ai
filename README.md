@@ -110,7 +110,7 @@ The other installed skills (auto-trigger on natural-language phrases — see eac
 | Skill | When it fires |
 |---|---|
 | `/canon-spec` | Authoring a new task — "let's add X", "start a task for…" |
-| `/canon-review` | Pre-flighting a spec before invoking the pipeline |
+| `/canon-spec-review` | Pre-flighting a spec before invoking the pipeline |
 | `/canon-inline-review` | Independent cross-review of inline or XS changes before commit or PR |
 | `/canon-pipeline` | Driving an existing task forward (`canon run`, `--pr`, `--ship`, recovery) |
 | `/canon-status` | "Where are we?" — surfaces phases and blockers across in-flight tasks |
@@ -174,8 +174,8 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short sh
       "Skill(canon-status:*)",
       "Skill(canon-changelog)",
       "Skill(canon-changelog:*)",
-      "Skill(canon-review)",
-      "Skill(canon-review:*)",
+      "Skill(canon-spec-review)",
+      "Skill(canon-spec-review:*)",
       "Skill(canon-inline-review)",
       "Skill(canon-inline-review:*)"
     ]
@@ -261,7 +261,7 @@ Drop this into any repo and you have:
 - `AGENTS.md` / `CLAUDE.md` — workflow rules and per-agent guidance
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/settings.json` — Claude Code permissions + SessionStart hook
-- Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)
+- Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**

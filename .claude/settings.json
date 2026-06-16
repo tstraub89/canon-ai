@@ -60,8 +60,8 @@
       "Skill(canon-spec:*)",
       "Skill(canon-pipeline)",
       "Skill(canon-pipeline:*)",
-      "Skill(canon-review)",
-      "Skill(canon-review:*)",
+      "Skill(canon-spec-review)",
+      "Skill(canon-spec-review:*)",
       "Skill(canon-inline-review)",
       "Skill(canon-inline-review:*)"
     ],

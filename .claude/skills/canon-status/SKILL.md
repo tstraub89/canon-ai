@@ -99,5 +99,5 @@ Don't pad. If there's nothing to say, don't say it.
 
 - `/canon-spec` — author a new task when status shows the pipeline idle or "needs a next action."
 - `/canon-pipeline` — drive an in-flight task forward.
-- `/canon-review` — pre-flight a spec before invoking the pipeline.
+- `/canon-spec-review` — pre-flight a spec before invoking the pipeline.
 - `/canon-changelog` — draft release notes when status shows shipped tasks.

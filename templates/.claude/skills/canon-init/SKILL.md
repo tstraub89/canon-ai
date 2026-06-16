@@ -139,7 +139,7 @@ By default, Claude Code prompts on every `git`, `gh`, `codex`, and `canon` subpr
            "Skill(canon-pipeline)", "Skill(canon-pipeline:*)",
            "Skill(canon-status)", "Skill(canon-status:*)",
            "Skill(canon-changelog)", "Skill(canon-changelog:*)",
-           "Skill(canon-review)", "Skill(canon-review:*)"
+           "Skill(canon-spec-review)", "Skill(canon-spec-review:*)"
          ]
        }
      }

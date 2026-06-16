@@ -75,8 +75,8 @@ export const RECOMMENDED_ALLOW = [
     'Skill(canon-status:*)',
     'Skill(canon-changelog)',
     'Skill(canon-changelog:*)',
-    'Skill(canon-review)',
-    'Skill(canon-review:*)',
+    'Skill(canon-spec-review)',
+    'Skill(canon-spec-review:*)',
     'Skill(canon-inline-review)',
     'Skill(canon-inline-review:*)',
 ];
@@ -248,7 +248,7 @@ export function checkSkills(cwd: string): Check {
             detail: 'canon-init skill missing — run `canon init` or `canon upgrade`',
         };
     }
-    const skillNames = ['canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-review', 'canon-inline-review'];
+    const skillNames = ['canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review'];
     const missing = skillNames.filter(s => !existsSync(join(cwd, '.claude', 'skills', s, 'SKILL.md')));
     if (missing.length > 0) {
         return {
