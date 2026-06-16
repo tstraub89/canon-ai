@@ -1,7 +1,7 @@
 {
   "id": "canon-inline-review-skill",
   "title": "Add canon-inline-review cross-review skill",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-15",
   "updated": "2026-06-16",
   "branch": "task/canon-inline-review-skill",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
