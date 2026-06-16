@@ -184,3 +184,49 @@ The pre-commit hook (`sync-canon-templates.mjs --stage`) auto-creates and stages
 - Updates `templates/CLAUDE.md` (because `CLAUDE.md` is in `DELIMITED`)
 
 Run `git status` before committing to confirm the sync hook staged the mirrors. Do not manually edit `templates/`.
+
+---
+
+## Reroute Plan
+
+### Delta
+
+Steps 2–8 of the original plan shipped correctly and are unchanged. The amendment rewrites AC-3's target-selection contract: **intent from context decides**, not git-state inference. Codex's prior SKILL.md encodes the old contract (including a "Both uncommitted changes and unpushed commits present" detection case that requires `git log @{u}..HEAD`). Only `.claude/skills/canon-inline-review/SKILL.md` needs updating.
+
+**Step R1 — Rewrite the target-selection contract in `.claude/skills/canon-inline-review/SKILL.md`**
+
+Replace the entire "Target-selection contract" section with the new AC-3 procedure:
+
+**(a) Determine intent from operator request + conversation + `$ARGUMENTS`:**
+- Commit SHA / "last commit" / "HEAD" / `HEAD~N` reference → resolve to a SHA via `git rev-parse <ref>` or `git log -1 --format=%H <ref>`, then use `--commit <SHA>`.
+- Branch name / "whole branch" / "pre-PR" → use `--base <branch>` (resolve the default branch via `git symbolic-ref refs/remotes/origin/HEAD --short | sed 's|origin/||'`, fall back to `main`).
+- Custom steering text (not a target selector) → use as positional `PROMPT`; the target defaults to the uncommitted tree.
+- No signal from (a) → proceed to (b).
+
+**(b) One git check, as a no-op guard only**: run `git status --porcelain`. If the resolved target is `--uncommitted` and the tree is clean, do not run an empty review — reconcile from context or ask via `AskUserQuestion`.
+
+**(c) No git-state intent inference**: no ahead-check, no `git log @{u}..HEAD`, no `git log <base>..HEAD` committed-work detection.
+
+**(d) Genuine ambiguity → `AskUserQuestion`, not a guess.**
+
+**(e) State the chosen target and its scope before running. Then run.**
+
+**Step R2 — Harden the invocation in `.claude/skills/canon-inline-review/SKILL.md`**
+
+In the "Running the review" section, add `--sandbox read-only` to all example invocations (e.g., `codex review --uncommitted --sandbox read-only`). `--ephemeral` is optional; do not add it unless the skill body already references it.
+
+**Verify after both steps**:
+- `grep -E 'git log.*\.\.HEAD|git log.*@\{u\}' .claude/skills/canon-inline-review/SKILL.md` returns empty (no committed-work detection remains).
+- The SKILL.md "Target-selection contract" states (a)–(e) and does not reference unpushed-commits detection.
+
+The `templates/.claude/skills/canon-inline-review/SKILL.md` mirror is auto-synced by the pre-commit hook — do not edit it manually.
+
+**Step R3 — Re-run validation**
+
+Same suite as Step 8:
+1. `npm run lint`
+2. `npm run type-check`
+3. `npm test`
+4. `npm run docs-refs-check`
+5. `npm run build` — regenerate and commit `dist/`
+6. `npm run sync-templates:check`

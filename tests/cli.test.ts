@@ -403,9 +403,9 @@ void test('EXPECTED_TEMPLATES covers every canon-owned .canon/templates entry', 
 
 // ── checkSkills ──────────────────────────────────────────────────────────────
 
-void test('checkSkills: all six skills present → pass', () => {
+void test('checkSkills: all seven skills present → pass', () => {
     withTempDir(dir => {
-        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-review']) {
+        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-review', 'canon-inline-review']) {
             const skillDir = path.join(dir, '.claude', 'skills', skill);
             fs.mkdirSync(skillDir, { recursive: true });
             fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '');
@@ -433,6 +433,7 @@ void test('checkSkills: canon-init present but all operational skills missing �
         assert.match(check.detail ?? '', /canon-pipeline/);
         assert.match(check.detail ?? '', /canon-status/);
         assert.match(check.detail ?? '', /canon-changelog/);
+        assert.match(check.detail ?? '', /canon-inline-review/);
     });
 });
 
@@ -2244,7 +2245,7 @@ void test('README Prerequisites Claude Code floor matches MIN_CLAUDE_VERSION (Co
     // load-bearing), CI must catch a README that still advertises the old
     // floor. Adopters seeing contradictory floors is exactly the adopter-
     // perspective friction this batch was meant to close.
-    const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const readme = fs.readFileSync(path.join(WORKTREE_ROOT, 'README.md'), 'utf8');
     const match = readme.match(/Claude Code \(≥ (\d+)\.(\d+)\.(\d+)\)/);
     assert.ok(match, 'README Prerequisites line "Claude Code (≥ X.Y.Z)" not found');
     const [, major, minor, patch] = match;
@@ -2256,7 +2257,7 @@ void test('README Prerequisites Claude Code floor matches MIN_CLAUDE_VERSION (Co
 });
 
 void test('README "Skip the permission prompts" allowlist matches RECOMMENDED_ALLOW', () => {
-    const readme = fs.readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8');
+    const readme = fs.readFileSync(path.join(WORKTREE_ROOT, 'README.md'), 'utf8');
     const blockMatch = readme.match(
         /### Skip the permission prompts[\s\S]*?```json\n([\s\S]*?)\n```/,
     );

@@ -525,3 +525,11 @@
 | 2026-06-15T07:18:28.643Z | canon-inline-review-skill | spec | claude | opus | 0 | 431.9s | 1549749 | ok |
 | 2026-06-15T07:20:20.033Z | canon-inline-review-skill | spec_review | codex | gpt-5.4-mini | 2 | 111.4s | 2584927 | ok |
 | 2026-06-15T15:45:58.609Z | canon-inline-review-skill | plan | claude | sonnet | 0 | 263.5s | 923228 | ok |
+| 2026-06-15T15:58:23.230Z | canon-inline-review-skill | implement | codex | gpt-5.4-mini | 0 | 743.9s | 7845951 | ok |
+| 2026-06-15T16:07:58.217Z | canon-inline-review-skill | code_review | claude | sonnet | 0 | 574.4s | 464068 | ok |
+| 2026-06-15T16:11:34.506Z | canon-inline-review-skill | qa | claude | sonnet | 0 | 216.3s | 1111619 | ok |
+| 2026-06-16T00:43:11.062Z | canon-inline-review-skill | spec_review | codex | gpt-5.4-mini | 0 | 47.7s | 234985 | ok |
+| 2026-06-16T00:44:39.297Z | canon-inline-review-skill | plan | claude | sonnet | 0 | 88.2s | 265063 | ok |
+| 2026-06-16T00:53:41.632Z | canon-inline-review-skill | implement | codex | gpt-5.4-mini | 0 | 542.3s | 12569151 | ok |
+| 2026-06-16T01:02:36.138Z | canon-inline-review-skill | code_review | claude | sonnet | 0 | 533.9s | 568472 | ok |
+| 2026-06-16T01:05:28.429Z | canon-inline-review-skill | qa | claude | sonnet | 0 | 172.3s | 795563 | ok |

@@ -33,3 +33,9 @@ No concerns.
 - [ ] **Approved** — spec is implementable as written
 - [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
+
+## Amendment Review
+
+- [x] **Approved**
+
+> Findings: no new blocking issues. The amendment makes AC-3 explicit about operator-intent-driven target selection, removes git-state inference as an intent source, and preserves the prior scope bound and flag-source-of-truth constraints without contradiction.

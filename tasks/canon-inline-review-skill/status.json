@@ -1,15 +1,15 @@
 {
   "id": "canon-inline-review-skill",
   "title": "Add canon-inline-review cross-review skill",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-15",
-  "updated": "2026-06-15",
-  "branch": "",
+  "updated": "2026-06-16",
+  "branch": "task/canon-inline-review-skill",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "c18df8b7bae15bfb8e4c82f851f44cb5e8eecb81",
-    "orchestrator_commit": "c18df8b7bae15bfb8e4c82f851f44cb5e8eecb81",
+    "upstream_commit": "b0a133abf5696ea2d0424f8c6b12b7427af5b939",
+    "orchestrator_commit": "b0a133abf5696ea2d0424f8c6b12b7427af5b939",
     "codex_cli": "codex-cli 0.139.0",
     "claude_code": "2.1.177 (Claude Code)"
   },
@@ -27,10 +27,10 @@
     "spec_review": {
       "status": "done",
       "agent": "codex",
-      "verdict": "approved_with_nits",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 3,
+      "iterations_total": 4,
       "changes_requested_total": 2,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
@@ -40,21 +40,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 2,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -64,8 +67,10 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "019eca17-8636-71d1-857d-894a5da57346",
-    "claude_spec": "ee3bd005-a46d-435f-af58-6b92a191610a"
+    "claude_spec": "ee3bd005-a46d-435f-af58-6b92a191610a",
+    "codex": "019ecbf6-0a53-7d41-bbfd-e87f7dbb9fc2",
+    "claude_review": "3cd26fc0-4998-4831-a5a6-4c4118be1cd6",
+    "codex_spec_review": "019ecde1-214f-74f1-8d2e-66dfe19afbce"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
