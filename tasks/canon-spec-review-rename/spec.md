@@ -1,7 +1,7 @@
 # Spec: canon-spec-review-rename — Rename canon-review skill to canon-spec-review
 
 > Written by: Claude | Review by: Codex
-> Status: draft | reviewed | approved | implemented
+> Status: revised — addresses spec_review round-2 BLOCKING finding (Affected Files now enumerates the sync-generated `templates/` mirror paths)
 
 ## Problem
 
@@ -33,7 +33,7 @@ Checklist of verifiable outcomes. Each item must be testable.
 - [ ] **AC-4 — Permission grant lockstep**: `doctor.ts` `RECOMMENDED_ALLOW` contains `Skill(canon-spec-review)` and `Skill(canon-spec-review:*)` (old forms absent); the README "Skip the permission prompts" allowlist block contains the same two grants. Verify: the `cli.test.ts` test that does a sorted `deepEqual` of the README allowlist block against `RECOMMENDED_ALLOW` passes.
 - [ ] **AC-5 — README user-facing refs**: README prose that tells adopters to run the command (the skill catalog table row and the installed-skills list) reads `/canon-spec-review`. Verify: `grep` of README for `canon-review` returns 0 (the allowlist block is covered by AC-4).
 - [ ] **AC-6 — dist rebuilt**: `dist/cli/index.js` is regenerated via `npm run build` so its bundled `RECOMMENDED_ALLOW`, `skillNames`, and `CANON_OWNED` entries reflect `canon-spec-review`. Verify: `git diff --exit-code -- dist/` is clean after build (the CI dist-drift gate passes).
-- [ ] **AC-7 — Shipped cross-references**: Sibling shipped skills that cross-link the command (`canon-init`, `canon-pipeline`, `canon-spec`, `canon-status`) and the shipped doc `docs/pipeline-orchestrator.md` reference `/canon-spec-review`. The `canon-init` grant snippet it tells adopters to paste lists `Skill(canon-spec-review)` / `:*`. Edit the **root** copies only; the sync hook regenerates the `templates/` mirrors. Verify: grep of `.claude/skills/` and `docs/pipeline-orchestrator.md` for `canon-review` returns 0.
+- [ ] **AC-7 — Shipped cross-references**: The sibling shipped skills that cross-link the command in prose (`canon-pipeline`, `canon-spec`, `canon-status`) and the shipped doc `docs/pipeline-orchestrator.md` (3 references) read `/canon-spec-review`; the `canon-init` grant snippet it tells adopters to paste lists `Skill(canon-spec-review)` / `Skill(canon-spec-review:*)` (canon-init has no prose cross-link). Edit the **root** copies only; the sync hook regenerates the `templates/` mirrors. Verify: grep of `.claude/skills/` and `docs/pipeline-orchestrator.md` for `canon-review` returns 0.
 - [ ] **AC-8 — Forward-looking dev docs + local settings**: `docs/decisions.md` and `docs/BACKLOG.md` prose references are updated to `canon-spec-review`; canon-ai's own `.claude/settings.json` grants are updated to the new forms (hygiene — this file is canon-ai-local and not shipped). Verify: grep of these files for `canon-review` returns 0.
 - [ ] **AC-9 — Structural grep gate (the replacement is complete)**: After the task, `git grep -n 'canon-review'` returns matches **only** under this explicit allow-list, and nowhere else: `CHANGELOG.md` (historical entries + the new adopter-guidance entry), `tasks/_archive/**` (archived audit trail), and `tasks/canon-spec-review-rename/**` (this task's own artifacts). Any hit outside the allow-list = fail. (Allow-list derived from a full `git grep` of the current tree, not the Affected Files table.)
 - [ ] **AC-10 — Adopter guidance in CHANGELOG**: `CHANGELOG.md` gains a `[Unreleased]` entry that (a) records the `canon-review` → `canon-spec-review` rename and (b) tells existing adopters to remove the now-stale `.claude/skills/canon-review/` directory after `canon upgrade`, noting that `canon upgrade` does not prune it.
@@ -47,22 +47,40 @@ Mechanics (exact edit order, whether to `git mv` vs delete+create, etc.) are def
 
 | File | Change |
 |---|---|
+**Hand-edited sources** (the implementer types these):
+
+| File | Change |
+|---|---|
 | `.claude/skills/canon-review/SKILL.md` | Rename dir → `.claude/skills/canon-spec-review/`; update the 5 name occurrences (frontmatter `name`, `description` trigger, H1, usage line, report header) to `canon-spec-review` / `/canon-spec-review`. |
-| `templates/.claude/skills/canon-review/SKILL.md` | Remove the old mirror dir (`git rm`); new mirror `templates/.claude/skills/canon-spec-review/SKILL.md` is regenerated + staged by the sync hook. |
+| `.claude/skills/canon-init/SKILL.md` | Update the grant snippet it tells adopters to paste (`Skill(canon-review)` / `Skill(canon-review:*)`) → `canon-spec-review` forms (root copy only). No prose `/canon-review` cross-link in this file. |
+| `.claude/skills/canon-pipeline/SKILL.md` | Update `/canon-review` cross-link → `/canon-spec-review` (root copy only). |
+| `.claude/skills/canon-spec/SKILL.md` | Update `/canon-review` cross-link → `/canon-spec-review` (root copy only). |
+| `.claude/skills/canon-status/SKILL.md` | Update `/canon-review` cross-link → `/canon-spec-review` (root copy only). |
+| `docs/pipeline-orchestrator.md` | Update the 3 `/canon-review` references → `/canon-spec-review` (root copy only; this doc is canon-managed). |
 | `src/lib/canon-owned.ts` | `CANON_OWNED`: `.claude/skills/canon-review/SKILL.md` → `.claude/skills/canon-spec-review/SKILL.md`. |
 | `src/cli/commands/doctor.ts` | `checkSkills` `skillNames`: `canon-review` → `canon-spec-review`. `RECOMMENDED_ALLOW`: `Skill(canon-review)` / `Skill(canon-review:*)` → `canon-spec-review` forms. |
 | `README.md` | Allowlist JSON block grants → `canon-spec-review` forms (lockstep with `RECOMMENDED_ALLOW`); skill-catalog table row + installed-skills prose → `/canon-spec-review`. |
 | `tests/cli.test.ts` | Update the seven-skill list (the "all skills present" test) to `canon-spec-review`; the README↔`RECOMMENDED_ALLOW` deepEqual test passes once README + `RECOMMENDED_ALLOW` both carry the new grants. |
-| `dist/cli/index.js` | Regenerated by `npm run build` (do not hand-edit) — bundles `doctor.ts` + `canon-owned.ts`. Listed here so the `--pr` base-drift gate accepts it. |
 | `.claude/settings.json` | canon-ai-local operator grants `Skill(canon-review)` / `:*` → new forms (hygiene; not shipped). |
-| `.claude/skills/{canon-init,canon-pipeline,canon-spec,canon-status}/SKILL.md` | Update `/canon-review` cross-links + the `canon-init` grant snippet to `canon-spec-review` (root copies only; mirrors auto-synced). |
-| `docs/pipeline-orchestrator.md` | Update the 3 `/canon-review` references (root copy only; mirror auto-synced; this doc is canon-managed). |
 | `docs/decisions.md`, `docs/BACKLOG.md` | Update forward-looking `/canon-review` prose references. |
 | `CHANGELOG.md` | **Add** an `[Unreleased]` entry (rename + adopter "remove the old dir" guidance). Do not edit existing entries. |
 
+**Generated artifacts** (the implementer does **not** hand-edit these — `npm run build` / the sync hook regenerate them — but each is in the branch diff, so it **must** appear in `handoff.md`'s Changes table or the diff↔handoff reconciler and the `--pr` base-drift gate will reject the push). Every CANON_OWNED root edited above mirrors into `templates/` by path; the renamed skill also leaves a now-orphaned old mirror dir that the sync does **not** prune, so it is removed explicitly:
+
+| File | Change |
+|---|---|
+| `dist/cli/index.js` | Regenerated by `npm run build` — bundles `doctor.ts` + `canon-owned.ts`. |
+| `templates/.claude/skills/canon-review/SKILL.md` | **Removed** (`git rm`) — orphaned old mirror; sync copies by path and does not prune. |
+| `templates/.claude/skills/canon-spec-review/SKILL.md` | **New** mirror of the renamed root skill — regenerated + staged by the sync hook. |
+| `templates/.claude/skills/canon-init/SKILL.md` | Re-synced from its edited root (cross-link + grant snippet). |
+| `templates/.claude/skills/canon-pipeline/SKILL.md` | Re-synced from its edited root (cross-link). |
+| `templates/.claude/skills/canon-spec/SKILL.md` | Re-synced from its edited root (cross-link). |
+| `templates/.claude/skills/canon-status/SKILL.md` | Re-synced from its edited root (cross-link). |
+| `templates/docs/pipeline-orchestrator.md` | Re-synced from its edited root (3 references). |
+
 ### Interaction Dependencies
 
-- **Templates-mirror sync**: the root→`templates/` sync (`npm run sync-templates`, pre-commit hook) regenerates mirrors for canon-owned files **by path** — it does not delete orphaned dirs, so the old `templates/.claude/skills/canon-review/` must be removed explicitly (AC-2).
+- **Templates-mirror sync**: the root→`templates/` sync (`npm run sync-templates`, pre-commit hook) regenerates mirrors for canon-owned files **by path** — it does not delete orphaned dirs, so the old `templates/.claude/skills/canon-review/` must be removed explicitly (AC-2). Every CANON_OWNED root edited (the renamed skill + the 4 sibling skills + `docs/pipeline-orchestrator.md`) produces a corresponding `templates/` diff path. These are sync-generated, **not** hand-edited, but they land in `git diff <base>...HEAD`, so each must appear in `handoff.md`'s Changes table — the diff↔handoff reconciler validates the union of Changes tables against the full diff and the `--pr` base-drift gate rejects any undeclared path. They are enumerated in the *Generated artifacts* table above for exactly this reason.
 - **README ↔ RECOMMENDED_ALLOW lockstep** is enforced by a `deepEqual` test (AC-4) — both must change in the same commit.
 - **dist drift gate** (CI `git diff --exit-code -- dist/`) requires the rebuild (AC-6).
 - Nothing dispatches the skill programmatically (no orchestrator code, no `.canon/` or `.claude/agents/` configs) — the only "runtime" effects are `canon upgrade` shipping, `canon doctor` presence/grant checks, and the CI drift/lockstep tests.
@@ -93,6 +111,7 @@ None.
 - **README ↔ RECOMMENDED_ALLOW deepEqual lockstep** is the easiest trip: update both grants in the same change or the `cli.test.ts` test fails.
 - **dist drift**: forgetting `npm run build` (or hand-editing `dist/`) fails CI. Rebuild from source; don't edit the bundle.
 - **Orphaned templates mirror dir** *within canon-ai's own repo*: the sync hook writes the new mirror but won't delete `templates/.claude/skills/canon-review/`; it must be `git rm`'d (AC-2), or the repo ships two skill dirs.
+- **Undeclared generated paths in the handoff**: the 6 sync-regenerated `templates/` paths + `dist/cli/index.js` are produced by tooling, not typed by hand — easy to omit from `handoff.md`. The diff↔handoff reconciler and the `--pr` base-drift gate both reject a diff path missing from the Changes table; the *Generated artifacts* table above is the authoritative list to copy into the handoff.
 - **Over-broad grep replace**: a blind find/replace of `canon-review` would corrupt CHANGELOG history and archived audit artifacts. The replacement must respect the AC-9 allow-list (CHANGELOG history, `tasks/_archive/**`, this task's own dir).
 - **Adopter orphan (accepted, documented)**: existing adopters keep a stale `canon-review/` skill until they manually remove it per the CHANGELOG note. This is the chosen trade-off, not a defect.
 
