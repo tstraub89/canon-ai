@@ -4,11 +4,19 @@
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-06-16
+
+### Added
+
+- **`/canon-inline-review` — a Claude Code skill for an independent second-model cross-review of below-pipeline work.** For non-trivial inline edits and XS fixes too small for a full canon task, it runs `codex review` (Claude never self-reviews its own inline code) and reports findings inline. The review target comes from operator intent — the request, the conversation, and `$ARGUMENTS` map to `--commit <SHA>` / `--base <branch>` / `--uncommitted` / a steering prompt — rather than being inferred from git state, with a no-op guard for a clean tree and an `AskUserQuestion` fallback when genuinely ambiguous. Ships to adopters via `canon upgrade`.
+
 ### Changed
 
 - **The pre-pipeline spec review skill is renamed `/canon-spec-review` (was `/canon-review`).** The new name aligns with the pipeline phase it pre-empts (`spec_review`) and disambiguates it from the sibling `/canon-inline-review` skill (code-diff review). Behavior is unchanged: same three-sub-agent fan-out, same BLOCKING / STRONG / NIT report, same read-only advisory output. Existing adopters should remove the stale `.claude/skills/canon-review/` directory after `canon upgrade`; upgrade does not prune it automatically.
 
 - **Canon's adopter-facing release guidance is now model-agnostic.** The `/canon-pipeline` skill's release-and-shipping section is rewritten from a single release-branch-per-version walkthrough into a model-neutral core plus four named recipes — *release-branch-per-version*, *trunk-from-main*, *tag-from-main*, and *no versioning* — each deferring to your own release policy doc as the source of truth. It now states explicitly that `base_branch` is per-task, so one repository may mix release models across surfaces. The `/canon-changelog` skill's base-detection and finalize notes are updated to match (no longer assuming release-branch as the only model).
+
+- **Shipped `CLAUDE.md` and `AGENTS.md` slimmed without dropping guardrails.** Deduplication, removed war-story tails, and mechanics rerouted to doc pointers; `AGENTS.md` is back under Codex's 32 KiB `project_doc_max_bytes` cap, so its tail reliably reaches Codex again. Ships to adopters via `canon upgrade`.
 
 ## [1.12.1] — 2026-06-14
 
