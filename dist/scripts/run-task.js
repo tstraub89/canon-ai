@@ -455,6 +455,36 @@ function tickAllHeartbeats() {
     handle.tick();
   }
 }
+function readHeartbeatStatus(taskDir) {
+  const file = path2.join(taskDir, HEARTBEAT_FILENAME);
+  let raw;
+  try {
+    raw = fs3.readFileSync(file, "utf8");
+  } catch (error) {
+    const err = error;
+    if (err.code === "ENOENT") return { kind: "missing" };
+    return { kind: "unreadable", reason: err.message ?? String(error) };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { kind: "corrupt", reason: `invalid JSON: ${message}` };
+  }
+  if (parsed === null || typeof parsed !== "object" || typeof parsed.pid !== "number" || typeof parsed.started_at_ms !== "number" || typeof parsed.last_update_ms !== "number" || !Array.isArray(parsed.task_ids)) {
+    return { kind: "corrupt", reason: "wrong shape \u2014 missing or mistyped required fields" };
+  }
+  return { kind: "found", record: parsed };
+}
+function readHeartbeat(taskDir) {
+  const result = readHeartbeatStatus(taskDir);
+  return result.kind === "found" ? result.record : null;
+}
+function isHeartbeatStale(record, now = Date.now()) {
+  if (!record) return true;
+  return now - record.last_update_ms > HEARTBEAT_STALE_AFTER_MS;
+}
 
 // scripts/run-task/state.ts
 import fs4 from "fs";
@@ -4811,6 +4841,16 @@ Detached canon run.
   child.unref();
   return exit(0);
 }
+function readCanonPid(taskDir) {
+  const file = path16.join(taskDir, PID_FILENAME);
+  try {
+    const raw = fs16.readFileSync(file, "utf8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
 function removeCanonPid(taskDir) {
   try {
     fs16.unlinkSync(path16.join(taskDir, PID_FILENAME));
@@ -4877,6 +4917,41 @@ function getIterations(status) {
 }
 function getTitle(status) {
   return status.title ?? "(untitled)";
+}
+function guardConcurrentRun(taskIds, resolveTaskDir, dieImpl = die2) {
+  for (const taskId of taskIds) {
+    let taskDir;
+    try {
+      taskDir = resolveTaskDir(taskId);
+    } catch {
+      continue;
+    }
+    const pid = readCanonPid(taskDir);
+    if (pid !== null && pid !== process.pid) {
+      let alive = false;
+      try {
+        process.kill(pid, 0);
+        alive = true;
+      } catch {
+      }
+      if (alive) {
+        dieImpl(
+          `Task '${taskId}' is already running (PID ${pid}).
+  Stop:  canon stop ${taskId}
+  Watch: canon watch ${taskId}`
+        );
+      }
+    }
+    const hb = readHeartbeat(taskDir);
+    if (hb !== null && !isHeartbeatStale(hb) && hb.pid !== process.pid) {
+      const ageSec = Math.round((Date.now() - hb.last_update_ms) / 1e3);
+      dieImpl(
+        `Task '${taskId}' appears to have a live orchestrator (PID ${hb.pid}, heartbeat ${ageSec}s ago).
+  Stop:  canon stop ${taskId}
+  Watch: canon watch ${taskId}`
+      );
+    }
+  }
 }
 function buildPipelineState(taskIds) {
   const statuses = taskIds.map(readStatus);
@@ -6945,6 +7020,9 @@ async function main() {
     const repoRootStatusFile = path17.join(REPO_ROOT2, "tasks", id, "status.json");
     return path17.dirname(cliArgs.ship && fs17.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
   };
+  if (!cliArgs.ship && !cliArgs.dryRun) {
+    guardConcurrentRun(cliArgs.taskIds, earlyHeartbeatResolver);
+  }
   if (process.env.CANON_DETACHED === "1" && earlyHeartbeatTaskIds.length > 0) {
     bootHeartbeatWithHooks(earlyHeartbeatTaskIds, earlyHeartbeatResolver);
     heartbeatStarted = true;

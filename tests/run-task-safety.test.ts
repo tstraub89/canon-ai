@@ -15,6 +15,7 @@ import {
     findPullRequestTemplate,
     formatCompleteStateBanner,
     formatExistingPRMessage,
+    guardConcurrentRun,
     resolveCanonPrBody,
     resolveQaPrBody,
 } from '../scripts/run-task/main.js';
@@ -4374,5 +4375,87 @@ void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
         assert.equal(fs.existsSync(telemetryFile), true);
         const contents = fs.readFileSync(telemetryFile, 'utf8');
         assert.match(contents, /metrics-override/);
+    });
+});
+
+// ── guardConcurrentRun ──────────────────────────────────────────────────────
+
+function makeGuardResolver(rootDir: string) {
+    return (id: string) => path.join(rootDir, 'tasks', id);
+}
+
+function captureDie(): { msg: string | null; fn: (m: string) => never } {
+    const capture: { msg: string | null; fn: (m: string) => never } = {
+        msg: null,
+        fn: (m: string): never => { capture.msg = m; throw new Error(m); },
+    };
+    return capture;
+}
+
+function writeFreshHeartbeat(taskDir: string, pid: number): void {
+    const now = Date.now();
+    const hb = { pid, started_at_ms: now - 5_000, last_update_ms: now - 500, task_ids: ['task-1'] };
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, '.heartbeat.json'), JSON.stringify(hb, null, 2), 'utf8');
+}
+
+void test('guardConcurrentRun: passes through when task dir is empty', () => {
+    withTempDir('guard-empty-', dir => {
+        const { fn } = captureDie();
+        assert.doesNotThrow(() => guardConcurrentRun(['t1'], makeGuardResolver(dir), fn));
+    });
+});
+
+void test('guardConcurrentRun: passes through when .canon-pid points to dead PID', () => {
+    withTempDir('guard-dead-pid-', dir => {
+        const taskDir = path.join(dir, 'tasks', 't1');
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, '.canon-pid'), '99999999\n', 'utf8');
+        const { fn } = captureDie();
+        assert.doesNotThrow(() => guardConcurrentRun(['t1'], makeGuardResolver(dir), fn));
+    });
+});
+
+void test('guardConcurrentRun: passes through when .canon-pid matches own PID', () => {
+    withTempDir('guard-self-pid-', dir => {
+        const taskDir = path.join(dir, 'tasks', 't1');
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, '.canon-pid'), `${process.pid}\n`, 'utf8');
+        const { fn } = captureDie();
+        assert.doesNotThrow(() => guardConcurrentRun(['t1'], makeGuardResolver(dir), fn));
+    });
+});
+
+void test('guardConcurrentRun: dies when fresh heartbeat has foreign PID', () => {
+    withTempDir('guard-fresh-hb-', dir => {
+        const taskDir = path.join(dir, 'tasks', 't1');
+        writeFreshHeartbeat(taskDir, 12345);
+        const c = captureDie();
+        assert.throws(() => guardConcurrentRun(['t1'], makeGuardResolver(dir), c.fn));
+        assert.ok(c.msg !== null, 'dieImpl should have been called');
+        assert.match(c.msg, /t1/);
+        assert.match(c.msg, /12345/);
+        assert.match(c.msg, /canon stop/);
+    });
+});
+
+void test('guardConcurrentRun: passes through when heartbeat is stale', () => {
+    withTempDir('guard-stale-hb-', dir => {
+        const taskDir = path.join(dir, 'tasks', 't1');
+        const staleMs = Date.now() - 300_000;
+        const hb = { pid: 12345, started_at_ms: staleMs, last_update_ms: staleMs, task_ids: ['t1'] };
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, '.heartbeat.json'), JSON.stringify(hb, null, 2), 'utf8');
+        const { fn } = captureDie();
+        assert.doesNotThrow(() => guardConcurrentRun(['t1'], makeGuardResolver(dir), fn));
+    });
+});
+
+void test('guardConcurrentRun: passes through when heartbeat PID matches own PID', () => {
+    withTempDir('guard-self-hb-', dir => {
+        const taskDir = path.join(dir, 'tasks', 't1');
+        writeFreshHeartbeat(taskDir, process.pid);
+        const { fn } = captureDie();
+        assert.doesNotThrow(() => guardConcurrentRun(['t1'], makeGuardResolver(dir), fn));
     });
 });

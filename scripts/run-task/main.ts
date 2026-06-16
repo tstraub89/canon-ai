@@ -19,8 +19,8 @@ import * as splitValidation from './validation.js';
 import * as splitClaude from './agents/claude.js';
 import * as splitCodex from './agents/codex.js';
 import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
-import { detachAndExit, removeCanonPid, shouldAutoDetach } from './detach.js';
-import { startHeartbeat, stopAllHeartbeats } from './heartbeat.js';
+import { detachAndExit, readCanonPid, removeCanonPid, shouldAutoDetach } from './detach.js';
+import { isHeartbeatStale, readHeartbeat, startHeartbeat, stopAllHeartbeats } from './heartbeat.js';
 import { registerShutdownHook } from './signals.js';
 import { taskPhase } from '../../src/task/index.js';
 
@@ -152,6 +152,54 @@ function getIterations(status: StatusJson): number {
 
 function getTitle(status: StatusJson): string {
     return status.title ?? '(untitled)';
+}
+
+// ── Concurrent-run guard ───────────────────────────────────────────────────
+
+/**
+ * Die if any task already has a live orchestrator. Checks .canon-pid first
+ * (written by the detaching parent before the child starts) then the
+ * heartbeat (covers TTY/foreground mode where no .canon-pid is written).
+ * Both signals skip our own PID so a detached child doesn't block itself.
+ * Exported for unit tests; the default dieImpl is the module-level die().
+ */
+export function guardConcurrentRun(
+    taskIds: string[],
+    resolveTaskDir: (id: string) => string,
+    dieImpl: (msg: string) => never = die,
+): void {
+    for (const taskId of taskIds) {
+        let taskDir: string;
+        try {
+            taskDir = resolveTaskDir(taskId);
+        } catch {
+            continue;
+        }
+
+        const pid = readCanonPid(taskDir);
+        if (pid !== null && pid !== process.pid) {
+            let alive = false;
+            try { process.kill(pid, 0); alive = true; } catch { /* ESRCH: gone */ }
+            if (alive) {
+                dieImpl(
+                    `Task '${taskId}' is already running (PID ${pid}).\n` +
+                    `  Stop:  canon stop ${taskId}\n` +
+                    `  Watch: canon watch ${taskId}`,
+                );
+            }
+        }
+
+        const hb = readHeartbeat(taskDir);
+        if (hb !== null && !isHeartbeatStale(hb) && hb.pid !== process.pid) {
+            const ageSec = Math.round((Date.now() - hb.last_update_ms) / 1000);
+            dieImpl(
+                `Task '${taskId}' appears to have a live orchestrator` +
+                ` (PID ${hb.pid}, heartbeat ${ageSec}s ago).\n` +
+                `  Stop:  canon stop ${taskId}\n` +
+                `  Watch: canon watch ${taskId}`,
+            );
+        }
+    }
 }
 
 // ── Pipeline state builder ─────────────────────────────────────────────────
@@ -3171,6 +3219,22 @@ export async function main(): Promise<void> {
             ? repoRootStatusFile
             : splitState.statusFileFor(id));
     };
+    // Block a second concurrent run on the same task(s). Placed before the
+    // early-heartbeat write so we never overwrite a live run's signal before
+    // we've had a chance to detect it.
+    // --ship: terminal one-shot that never enters the pipeline loop.
+    // --dry-run: read-only inspection; must be allowed through even when a
+    //   pipeline is already running (blocking it would hide useful context).
+    // Race note: this is a read-only preflight. Two invocations that start
+    // within the same Node-boot window (~200ms) can both pass before either
+    // writes a runtime file. Closing that window requires OS-level file
+    // locking (O_EXCL on .canon-pid before the spawn) — deferred; the window
+    // is too narrow to hit in manual operation and the guard covers the common
+    // "accidentally launched twice" scenario completely.
+    if (!cliArgs.ship && !cliArgs.dryRun) {
+        guardConcurrentRun(cliArgs.taskIds, earlyHeartbeatResolver);
+    }
+
     if (process.env.CANON_DETACHED === '1' && earlyHeartbeatTaskIds.length > 0) {
         bootHeartbeatWithHooks(earlyHeartbeatTaskIds, earlyHeartbeatResolver);
         heartbeatStarted = true;

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`canon run` now blocks if the same task already has a live orchestrator.** At startup, before writing any runtime files, the orchestrator checks `.canon-pid` (written by the detaching parent) and `.heartbeat.json` (written by the child) for each task. If either points to a live foreign process the run dies with a clear message naming the PID and the `canon stop` / `canon watch` commands. The self-PID check ensures a detached child never blocks itself. `--ship` is exempt (terminal one-shot); `--dry-run` is exempt (read-only inspection that should be allowed through even during a live run). The residual simultaneous-start race (<200ms Node boot window) is documented in `docs/BACKLOG.md`; it doesn't affect the operator use case (accidentally launching a second run after the first is established).
+
 ## [1.13.0] — 2026-06-16
 
 ### Added
