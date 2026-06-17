@@ -4,9 +4,15 @@
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-06-17
+
 ### Added
 
 - **`canon run` now blocks if the same task already has a live orchestrator.** At startup, before writing any runtime files, the orchestrator checks `.canon-pid` (written by the detaching parent) and `.heartbeat.json` (written by the child) for each task. If either points to a live foreign process the run dies with a clear message naming the PID and the `canon stop` / `canon watch` commands. The self-PID check ensures a detached child never blocks itself. `--ship` is exempt (terminal one-shot); `--dry-run` is exempt (read-only inspection that should be allowed through even during a live run). The residual simultaneous-start race (<200ms Node boot window) is documented in `docs/BACKLOG.md`; it doesn't affect the operator use case (accidentally launching a second run after the first is established).
+
+### Fixed
+
+- **`/canon-inline-review` now keeps your steering when reviewing the uncommitted tree.** Asking for an inline review *and* telling it what to look for (e.g. "watch for stale-closure risk") previously ran a generic cold review with the steering silently dropped — the skill treated the review target and the steering instruction as mutually exclusive. It now passes your steering as the review prompt (which already targets the uncommitted tree), so a steered uncommitted review does what you asked. Ships to adopters via `canon upgrade`.
 
 ## [1.13.0] — 2026-06-16
 
