@@ -82,7 +82,7 @@ Goal: check these spec-quality rules:
 (7) **Known Risks** — names actual failure modes for the trickiest ACs.
 (8) **Symbols in ACs exist** — for any named function or symbol, has the author grepped for it and verified the return shape matches the spec's assumed data contract?
 
-Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or re-verify symbols / return shapes (Agent B's job — Agent C trusts that ACs reference symbols Agent B is verifying).
+Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or independently re-verify symbols against the codebase (Agent B's job). Check (8) is a spec-quality audit — did the *author* do the grep + return-shape verification before writing the AC — not a re-run of Agent B's ground-truth pass.
 
 Output: the format above. If nothing's missing, return exactly `- [NO FINDINGS]`.
 

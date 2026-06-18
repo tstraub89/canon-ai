@@ -46,7 +46,7 @@ If the project has a `## Release Rules` section, use it for audience and user-fa
 
 ### When sources are absent
 
-**No `docs/decisions.md §"Versioning and Release Policy"`**: proceed using the existing CHANGELOG's own style for format, `docs/decisions.md §"Versioning and release policy"` for propose-only behavior discipline when present (canon general rules: agents don't auto-bump; QA proposes entry only; version bump is a separate commit; no major surprises), and audience inferred from the existing CHANGELOG. After finishing, include a one-time note in the response: "(Tip: add a `## Versioning and Release Policy` section to `docs/decisions.md` for richer audience and scope guidance.)" Do not block.
+**No `docs/decisions.md §"Versioning and release policy"`**: proceed using the existing CHANGELOG's own style for format, `docs/decisions.md §"Versioning and release policy"` for propose-only behavior discipline when present (canon general rules: agents don't auto-bump; QA proposes entry only; version bump is a separate commit; no major surprises), and audience inferred from the existing CHANGELOG. After finishing, include a one-time note in the response: "(Tip: add a `## Versioning and release policy` section to `docs/decisions.md` for richer audience and scope guidance.)" Do not block.
 
 **No existing `CHANGELOG.md` format to match**: if `docs/decisions.md §Versioning` specifies a format, use that. Otherwise propose Keep a Changelog as the starting point. Surface the proposed default to the human and ask for confirmation before creating or rewriting the file.
 

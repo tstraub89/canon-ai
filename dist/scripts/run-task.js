@@ -3688,7 +3688,7 @@ function promptImplementResume(state) {
     "The code changes are already complete in the working tree.",
     "",
     "Your only remaining tasks:",
-    "1. Run the project's validation commands (see the Validation Matrix in `implement.md` and each spec's \"Validation Required\" section) and record results.",
+    `1. Run the project's validation commands (see the change-type \u2192 check-category validation matrix included below and each spec's "Validation Required" section) and record results.`,
     "2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, validation outcomes).",
     "3. Run canon task to mark implement done for each task.",
     "",

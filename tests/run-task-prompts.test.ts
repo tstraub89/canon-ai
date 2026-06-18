@@ -699,9 +699,15 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     assert.match(specRevJit, /Name effects to DELETE/);
     assert.match(specRevJit, /Prefer positive or structural assertions/);
 
-    for (const token of ['auth', 'billing', 'privacy', 'destructive', 'schema', 'analytics']) {
-        assert.ok(specJit.includes(token), `spec.md missing escalation trigger: ${token}`);
-        assert.ok(specRevJit.includes(token), `spec-revision.md missing escalation trigger: ${token}`);
+    for (const phrase of [
+        'auth, billing / payments',
+        'privacy / data handling',
+        'destructive operations',
+        'schema / data-model migrations',
+        'analytics-event changes',
+    ]) {
+        assert.ok(specJit.includes(phrase), `spec.md missing escalation trigger: ${phrase}`);
+        assert.ok(specRevJit.includes(phrase), `spec-revision.md missing escalation trigger: ${phrase}`);
     }
 
     const canonSpec = readRepoFile('.claude/skills/canon-spec/SKILL.md');
