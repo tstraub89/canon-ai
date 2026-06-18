@@ -135,7 +135,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 - **Agent authorization**:
   - **Patch**: agents may bump the version and commit the changelog edit autonomously.
-  - **Minor**: agents propose the bump tier during the release/changelog step (for example, via `/canon-changelog`); QA contributes changelog entry text only. The human reviews before the changelog/version-bump commit lands.
+  - **Minor**: the release/changelog step (for example, via `/canon-changelog`) — **not the QA phase** — proposes the bump tier; QA contributes changelog entry text only. The human reviews before the changelog/version-bump commit lands.
   - **Major**: human-only. If a task introduces a breaking change that the spec didn't flag, raise it during QA before shipping.
 
 - **Changelog audience and scope**:
