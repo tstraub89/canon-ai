@@ -170,6 +170,7 @@ Exact prose, ordering within each destination, and whether a rule lands in the f
 | `scripts/run-task/prompts/templates/spec-revision.md` | Inject spec-writing rules of thumb |
 | `scripts/run-task/prompts/templates/code-review-foreman.md` | Add code-review rules of thumb (foreman-scoped) |
 | `scripts/run-task/prompts/helpers.ts` | Add communication-norms + git-workflow lines to `CODEX_STARTUP`/`CLAUDE_STARTUP`; rewire "read AGENTS.md" wording |
+| `scripts/run-task/prompts/index.ts` | Rewire `promptImplementResume()`'s hardcoded "Validation Matrix in AGENTS.md" reference to the inlined copy (implement deviation — required for AC-3; approved in code_review, both lenses confirmed string-only) |
 | `.claude/agents/code-review-anchored.md` | Add code-review rules relevant to the anchored lens |
 | `.claude/agents/code-review-cold.md` | Add only diff-relevant rules (keep cold lens spec-blind) |
 | `.claude/skills/canon-spec/SKILL.md` | Inline spec-writing rules of thumb; rewire dangling AGENTS.md/CLAUDE.md refs |
@@ -257,3 +258,46 @@ None. No `status.json` schema, type, or persistent-shape changes.
 - [x] Known Risks covers failure modes for the trickiest ACs
 - [x] Human Test Plan uses product language only (no code, no file names) — uses phase/behavior language a canon operator reads
 - [x] Validation Required has at least one entry marked `- [x]`
+
+---
+
+## Amendment
+
+Three findings from the PR-level review of #174 (Codex ×2 P2, CodeRabbit ×1 nit), all verified against the worktree. None changes the task's shape; each **completes or reconciles** a relocation the in-pipeline review passed but the PR review caught. AC-6 still holds — `AGENTS.md` / `CLAUDE.md` stay unchanged; these are template / skill edits only.
+
+### Problem (amendment)
+
+- **A1 — `spec.md` / `spec-revision.md` omit the escalation triggers (AC-2 gap).** AC-2 required the Human Escalation Contract's "escalate" awareness to reach spec authoring via the `canon-spec` skill **and** the `spec.md` / `spec-revision.md` templates. Only the skill half landed; the templates carry the spec-writing rules but no escalate-trigger language. After the vacate, `runSpecPhase()` renders `spec.md` directly, so the pipeline spec session would lose "stop and ask on sensitive changes." (Verified: grep of the `spec.md` template finds zero escalation-trigger language.)
+- **A2 — `qa.md` contradicts itself on the version bump (relocation defect).** The newly inlined Release Rule (`qa.md` ≈line 15) says QA proposes "a draft changelog entry text only — not the version number," but a later instruction (≈line 20) still asks QA for a "Proposed version bump per the project's SemVer interpretation." Contradictory guidance; `done.md` proposing "1.15.0 minor" is the contradiction in practice.
+- **A3 — `canon-changelog` skill description capitalization (nit).** The `description:` frontmatter cites `§"Versioning and Release Policy"` (title case); the actual `docs/decisions.md` heading and the skill body use `"Versioning and release policy"` (lowercase).
+
+### Amendment Acceptance Criteria
+
+- [ ] **AC-A1 (escalation triggers reach the spec templates):** `scripts/run-task/prompts/templates/spec.md` **and** `spec-revision.md` each carry the escalate-trigger list — the sensitive-surface categories that warrant human escalation: **auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes**. Scoped as spec-author awareness ("flag these as delicate / call them out in the spec; the human spec gate is where such tasks stop"), **not** a verbatim dump of the full Escalation Contract (keeps AC-8 scoping intact). Verify: grep each template for the trigger terms (`auth`, `billing`, `privacy`, `destructive`, `schema`, `analytics`) — all six present in both, and the AC-11 test asserts each. The `implement.md` mid-implement path and `qa.md` "notify" list (already landed under AC-2) are unchanged.
+- [ ] **AC-A2 (QA proposes changelog entry text only; version/bump is the release step's job — reconciled across all surfaces):** Human policy decision (2026-06-18): the QA phase proposes the changelog **entry text** (genuinely useful, keep it) but does **not** propose, suggest, choose, or finalize the version number or bump tier — that is owned by the separate release/changelog step (e.g. the `canon-changelog` skill) and the human. Reconcile every affected surface so none contradicts:
+  - **`qa.md`** — keep the inlined Release Rule ("entry text only — not the version number"); **remove** the contradictory "Proposed version bump per SemVer" ask (≈line 20).
+  - **`.canon/templates/done.md`** — keep the changelog entry-text proposal; **remove** the "Proposed version" field from its changelog/QA section.
+  - **`docs/decisions.md` §"Versioning and release policy"** — reconcile the **Agent authorization** tiers so the bump-tier proposal is owned by the release/changelog step, not QA/`done.md`: change "**Minor**: agents propose the bump in `done.md` (draft changelog entry)" so the bump tier is proposed at the release step and reviewed by the human, with QA contributing only the changelog entry text. (Patch/Major tier structure unchanged.) This removes the rule-#2-vs-authorization contradiction at the source.
+  - **`AGENTS.md` / `CLAUDE.md` are NOT touched** — the shipped non-negotiable Rule #2 already says "QA proposes entry text only, not the version/bump tier," which matches this decision. **AC-6 holds.**
+  Verify (reviewer-confirmed): no surface (`qa.md`, `.canon/templates/done.md`, `docs/decisions.md`) asks QA to propose/choose/suggest a version or bump tier; the changelog **entry-text** proposal remains; `docs/decisions.md`'s authorization tier no longer assigns the bump proposal to QA/`done.md`; and `git diff … -- AGENTS.md CLAUDE.md` stays empty.
+- [ ] **AC-A3 (changelog skill description capitalization):** `.claude/skills/canon-changelog/SKILL.md` `description:` frontmatter uses `§"Versioning and release policy"` (lowercase "release"), matching the `docs/decisions.md` heading and the skill body. Verify: grep the description line for `Versioning and release policy`.
+
+### Affected Files (amendment)
+
+| File | Change |
+|---|---|
+| `scripts/run-task/prompts/templates/spec.md` | Add escalate-trigger list (AC-A1) |
+| `scripts/run-task/prompts/templates/spec-revision.md` | Add escalate-trigger list (AC-A1) |
+| `scripts/run-task/prompts/templates/qa.md` | Remove the "Proposed version bump" ask (≈line 20); QA proposes changelog entry text only, per the non-negotiable Release Rule (AC-A2) |
+| `.canon/templates/done.md` | Remove the "Proposed version" field from the changelog section; keep the changelog entry-text proposal (AC-A2) |
+| `docs/decisions.md` | Reconcile §"Versioning and release policy" Agent-authorization tiers: the bump-tier proposal is owned by the release/changelog step, not QA/`done.md`; QA contributes changelog entry text only (AC-A2). (This is in addition to the base spec's new JIT decision entry.) |
+| `templates/.canon/templates/done.md` | Mirror of the done.md change (pre-commit sync) |
+| `.claude/skills/canon-changelog/SKILL.md` | Lowercase "release policy" in `description:` (AC-A3) |
+| `templates/.claude/skills/canon-changelog/SKILL.md` | Mirror (pre-commit sync) |
+| `tests/run-task-prompts.test.ts` | Extend AC-11 presence-token assertions to cover the escalate-trigger tokens in `spec.md` / `spec-revision.md` (AC-A1) |
+| `tests/run-task-prompts.golden.json` | Regenerate (prompt output changed) |
+| `dist/scripts/run-task.js` | Build artifact — regenerated (the edited prompt templates inline into it) |
+
+### Validation Required (amendment)
+
+Same matrix as the base spec: `npm run lint`, `npm run type-check`, `npm test` (incl. golden + AC-11), `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`.

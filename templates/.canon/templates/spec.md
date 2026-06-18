@@ -45,7 +45,19 @@ Any changes to shared types, schemas, or persistent data shape. "None" if no cha
 
 ## Validation Required
 
-Which checks apply (from `AGENTS.md` validation matrix). Edit the list below to match the checks defined for this project.
+Universal change-type → check-category matrix (project command bindings are in `docs/architecture.md` §Validation):
+
+| Change Type | Required Check Categories |
+|---|---|
+| Most changes | Linting, type checking, unit tests |
+| Docs references | Docs references |
+| Routes / config / build | Full build |
+| UI / interaction changes | End-to-end tests |
+| Content / SEO / metadata | Prerender / sitemap / feed regeneration |
+| Schema / migration | Migration runner + manual review |
+| Cross-platform | Subset of the above on each platform |
+
+Mark applicable checks with `- [x]` (replace `<...>` with the project's actual commands from `docs/architecture.md` §Validation):
 
 - [ ] `<lint>`
 - [ ] `<type-check>`
@@ -55,7 +67,7 @@ Which checks apply (from `AGENTS.md` validation matrix). Edit the list below to 
 
 ## Docs Impact
 
-Which protected docs (see `AGENTS.md` "Docs Freshness") might need updating if this task ships? "None" if this is a bug fix or internal-only change.
+Five protected docs (`docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/product-context.md`). Name any that might go stale if this task ships — this is a heads-up, not a change; the actual update happens at QA. "None" if this is a bug fix or internal-only change.
 
 ## Known Risks
 

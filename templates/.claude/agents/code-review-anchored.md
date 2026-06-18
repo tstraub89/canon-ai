@@ -29,6 +29,12 @@ Find correctness bugs, risk/guardrail issues, optional cleanup/nits, and spec ga
 
 Report every issue you find, including ones you are uncertain about or consider low-severity. Do not filter for importance or confidence here — the foreman does that downstream. Tag each Stage 2 finding with both a severity and a confidence so the foreman can rank and filter. Coverage is your job; filtering is not.
 
+## Code-Review Rules of Thumb (Anchored Lens)
+
+- **Verify handoff claims by running `git diff HEAD -- <file>`**: the auto-commit step can silently drop edits not in the handoff Changes table — don't trust the handoff claim; diff the working tree to confirm fixes landed.
+- **Delicate-task review must audit cross-cutting guards at every mutation entry point**: when a `delicate: true` task refactors a state/data layer, explicitly verify that auth, gating, and payment guards still hold at every mutation chokepoint — not just at the call sites the spec called out.
+- **Don't infer one git invariant from another**: `git status --porcelain` empty ≠ origin matches HEAD; `origin/<branch>` exists ≠ origin matches HEAD. Do the actual check directly, not a proxy.
+
 ## Return Format
 
 Return structured text for the foreman:

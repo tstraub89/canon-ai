@@ -722,3 +722,124 @@ Steps 1–20 are independent of each other (disjoint files). Steps 21–23 must 
 ## Rollback Plan
 
 All changes are additive content insertions or text replacements in markdown/TypeScript files — no schema changes, no new files, no orchestrator logic changes. Revert is `git revert <sha>` or reset to base. No data migration concerns; no persistent state changes.
+
+---
+
+## Reroute Plan
+
+### Delta
+
+The base spec (Steps 1–23 above) is fully implemented and shipped. This section covers only the three-finding amendment (AC-A1, AC-A2, AC-A3). Steps 1–23 still apply and are not repeated.
+
+---
+
+#### Step R1 — `scripts/run-task/prompts/templates/spec.md`: add escalation triggers (AC-A1)
+
+File: `scripts/run-task/prompts/templates/spec.md`
+
+In the **Spec-writing rules of thumb** block added by Step 5, append an escalation-trigger bullet immediately before the `{{{selfCheck}}}` block (after the existing rules-of-thumb bullets):
+
+```markdown
+- **Sensitive-surface escalation** — flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.
+```
+
+Presence tokens required: `auth`, `billing`, `privacy`, `destructive`, `schema`, `analytics` — all six must appear verbatim.
+
+---
+
+#### Step R2 — `scripts/run-task/prompts/templates/spec-revision.md`: add escalation triggers (AC-A1)
+
+File: `scripts/run-task/prompts/templates/spec-revision.md`
+
+In the **Spec-writing rules of thumb** block added by Step 5, append the identical escalation-trigger bullet from Step R1. Same six tokens required.
+
+---
+
+#### Step R3 — `scripts/run-task/prompts/templates/qa.md`: remove version-bump ask (AC-A2)
+
+File: `scripts/run-task/prompts/templates/qa.md`
+
+The base implementation added (Step 4 Edit A) a Release Rules block containing: `"(2) The QA step proposes a draft changelog entry text only — not the version number."` This non-negotiable rule is correct.
+
+The contradiction is a **separate line** (~line 20 in the original file, now shifted) that asks the QA agent for a "Proposed version bump per the project's SemVer interpretation." Locate and remove that line. The changelog **entry-text** proposal must remain — only the version-bump ask is removed.
+
+After the edit, `qa.md` must not contain any instruction to propose, suggest, or choose a version number or bump tier.
+
+---
+
+#### Step R4 — `.canon/templates/done.md`: remove Proposed version field (AC-A2)
+
+File: `.canon/templates/done.md`
+
+The scaffold's changelog/QA section contains a `**Proposed version**` (or `Proposed version bump`) field. Remove that field while keeping the changelog entry-text proposal. The done.md scaffold must not ask the author to fill in a version number.
+
+---
+
+#### Step R5 — `docs/decisions.md`: reconcile Minor bump ownership (AC-A2)
+
+File: `docs/decisions.md`
+
+In §"Versioning and release policy", find the **Agent authorization** tiers. The current Minor entry reads approximately: "**Minor**: agents propose the bump in `done.md` (draft changelog entry)." This contradicts the new rule that QA proposes entry text only.
+
+Change the Minor tier so the bump-tier decision is owned by the release/changelog step (e.g., the `canon-changelog` skill + human), not by QA / `done.md`. Retain the Patch and Major tier language unless it also assigns bump proposals to QA. After the edit, no authorization tier in this section should direct QA or `done.md` to propose a version or bump tier.
+
+---
+
+#### Step R6 — `.claude/skills/canon-changelog/SKILL.md`: fix description capitalization (AC-A3)
+
+File: `.claude/skills/canon-changelog/SKILL.md`
+
+In the YAML frontmatter `description:` line, the reference currently reads `§"Versioning and Release Policy"` (title-case "Release"). Change to `§"Versioning and release policy"` (lowercase "release"), matching the actual `docs/decisions.md` heading and the skill body.
+
+Verify: `grep` the description line for `Versioning and release policy` (lowercase).
+
+---
+
+#### Step R7 — `tests/run-task-prompts.test.ts`: extend AC-11 for escalation triggers (AC-A1)
+
+File: `tests/run-task-prompts.test.ts`
+
+In the AC-11 structural test block added by Step 21, after the existing `specJit` and `specRevJit` presence-token assertions, add assertions for all six escalation-trigger tokens in both templates:
+
+```typescript
+// AC-A1: escalation triggers present in both spec JIT templates
+for (const token of ['auth', 'billing', 'privacy', 'destructive', 'schema', 'analytics']) {
+    assert.match(specJit, new RegExp(token), `spec.md missing escalation trigger: ${token}`);
+    assert.match(specRevJit, new RegExp(token), `spec-revision.md missing escalation trigger: ${token}`);
+}
+```
+
+---
+
+#### Step R8 — Template mirrors (AC-7)
+
+The pre-commit hook auto-syncs all `templates/` mirrors from root canon-managed files. The following mirrors will be regenerated automatically on commit; both root and mirror must appear in the handoff Changes table:
+
+- `templates/.canon/templates/done.md` (mirror of Step R4)
+- `templates/.claude/skills/canon-changelog/SKILL.md` (mirror of Step R6)
+
+`scripts/run-task/prompts/templates/` files have no `templates/` mirrors (they are not `CANON_OWNED` agent/skill charters) — no action needed for Steps R1–R3.
+
+---
+
+#### Step R9 — Regenerate golden fixture, validate, build
+
+Same sequence as Step 22:
+
+1. `UPDATE_GOLDENS=1 npm test` — regenerate golden fixture after Steps R1–R2 template edits.
+2. `npm test` — verify all tests pass including the extended AC-11 assertions.
+3. `npm run lint`
+4. `npm run type-check`
+5. `npm run sync-templates:check`
+6. `npm run docs-refs-check`
+7. `npm run build` — regenerate `dist/scripts/run-task.js`; commit updated `dist/` alongside source.
+
+---
+
+#### Step R10 — Verify AC-6 still holds
+
+```bash
+git diff <base>...HEAD -- AGENTS.md CLAUDE.md templates/AGENTS.md templates/CLAUDE.md
+```
+
+Expected: empty. None of the amendment files touch these paths.

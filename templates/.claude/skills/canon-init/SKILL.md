@@ -178,5 +178,5 @@ Then print a summary:
 - `/canon-spec` — author the first task once scaffold docs are filled.
 - `/canon-status` — verify the project's task state.
 - `/canon-pipeline` — once a task exists, drive it through the pipeline.
-- `AGENTS.md` — workflow rules; the `## Release Rules` section governs how `/canon-changelog` calibrates.
+- `AGENTS.md` — workflow rules (read at Phase 0). Release Rules now inline in `qa.md`; `/canon-changelog` reads `docs/decisions.md` §"Versioning and release policy" for project scope.
 - `docs/pipeline-orchestrator.md` — pipeline internals for when tasks are running.

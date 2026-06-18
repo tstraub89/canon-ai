@@ -32,6 +32,15 @@ For each task:
 {{/hasPreflightFindings}}
 
 Spec ACs remain binding. If the review identifies a dropped AC, restore it.
+
+**Iteration rules:**
+
+- **Reverting a file**: For a byte-perfect revert to the task baseline, use `git show origin/<base-branch>:<path>` (read-only git, always allowed) and write the output to the file.
+  - *Perfect revert* (file no longer in `git diff base...HEAD`): delete it from all prior iteration Changes tables in `handoff.md`.
+  - *Imperfect revert* (trailing newline or other residual remains): add it to the current iteration's Changes table with "Reverted to original (describe residual diff)".
+- **Referencing deleted (or not-yet-created) files in artifacts**: `docs-refs-check` flags a backtick path-ref to a file that does not exist. Referencing deleted paths in the handoff Changes-table first column must use `[path](path)` markdown-link form only — backtick form fails both checks.
+- **Rerouted / revised tasks — the pre-flight diff is cumulative**: the verifier checks the union of all Changes tables against `git diff <base>...HEAD`. Before submitting, run `git diff <base>...HEAD --name-only` and confirm every listed path is covered by at least one Changes-table row across ALL iterations.
+
 Append to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).
 
 When done, run:

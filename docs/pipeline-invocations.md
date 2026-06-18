@@ -550,3 +550,13 @@
 | 2026-06-17T19:30:09.714Z | relocate-rules-to-prompts | spec | claude | opus | 0 | 532.5s | 2293353 | ok |
 | 2026-06-18T03:24:37.339Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 3 | 31.5s | 5514972 | ok |
 | 2026-06-18T03:38:02.454Z | relocate-rules-to-prompts | plan | claude | sonnet | 0 | 746.7s | 1610193 | ok |
+| 2026-06-18T03:48:21.439Z | relocate-rules-to-prompts | implement | codex | gpt-5.5 | 0 | 617.9s | 5896663 | ok |
+| 2026-06-18T03:56:44.946Z | relocate-rules-to-prompts | code_review | claude | opus | 0 | 502.7s | 989721 | ok |
+| 2026-06-18T04:01:33.203Z | relocate-rules-to-prompts | qa | claude | sonnet | 0 | 288.3s | 1204559 | ok |
+| 2026-06-18T06:04:44.463Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 0 | 157.1s | 970159 | ok |
+| 2026-06-18T06:09:08.570Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 1 | 92.7s | 1599412 | ok |
+| 2026-06-18T06:18:48.799Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 2 | 50.3s | 2304678 | ok |
+| 2026-06-18T06:20:11.608Z | relocate-rules-to-prompts | plan | claude | sonnet | 0 | 82.8s | 476207 | ok |
+| 2026-06-18T06:28:39.652Z | relocate-rules-to-prompts | implement | codex | gpt-5.5 | 0 | 508.0s | 8612370 | ok |
+| 2026-06-18T06:37:35.072Z | relocate-rules-to-prompts | code_review | claude | opus | 0 | 534.4s | 1172652 | ok |
+| 2026-06-18T06:43:45.004Z | relocate-rules-to-prompts | qa | claude | sonnet | 0 | 369.9s | 1301846 | ok |

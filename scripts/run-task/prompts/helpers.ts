@@ -6,7 +6,8 @@ export const CLAUDE_STARTUP =
     'Skim docs/lessons-learned.md for entries relevant to your task area.\n' +
     'Read docs/architecture.md if the task touches core data flow or state management.\n' +
     'Read docs/product-context.md if the task touches user-visible behavior or Pro features.\n' +
-    'Skip docs/decisions.md unless the task involves explicit UX tradeoffs.';
+    'Skip docs/decisions.md unless the task involves explicit UX tradeoffs.\n' +
+    'Communication: tone is project taste; honest signal is canon discipline — surface real disagreement rather than yielding to politeness.';
 
 export const CODEX_STARTUP =
     'Read AGENTS.md, docs/patterns.md, and docs/codebase-map.md before starting.\n' +
@@ -17,7 +18,10 @@ export const CODEX_STARTUP =
     '\n' +
     'Git ownership: the pipeline orchestrator handles staging, committing, and pushing — do NOT run `git add`, `git commit`, or `git push`. Edit files in the working tree only; the orchestrator reads `git status` after your session and stages every file listed in handoff.md\'s Changes table. Read-only git is fine (`git status`, `git diff`, `git log`, `git show`).\n' +
     '\n' +
-    'If a code review claims a file is "missing from the commit" or "staged but not committed," that is a pipeline-orchestration issue, not an implementation issue. Record it as a Blocker in handoff.md with the `[pipeline]` label and do not retry `git add`/`git commit` to recover — the sandbox blocks `.git` writes by design, and the orchestrator owns the recovery path.';
+    'If a code review claims a file is "missing from the commit" or "staged but not committed," that is a pipeline-orchestration issue, not an implementation issue. Record it as a Blocker in handoff.md with the `[pipeline]` label and do not retry `git add`/`git commit` to recover — the sandbox blocks `.git` writes by design, and the orchestrator owns the recovery path.\n' +
+    '\n' +
+    'Communication: tone is project taste; honest signal is canon discipline — surface real disagreement rather than yielding to politeness.\n' +
+    'Branch sync (non-pipeline sessions): `git fetch origin && git pull --rebase origin <branch>` before starting work. If `origin/<base>` is ahead, sync and rerun local validation before PR handoff. If `<base>` moves during review, resync and rerun validation. In pipeline sessions the orchestrator manages branch state — read the worktree state as-is; do not run pull/push.';
 
 export const QA_STARTUP =
     'Read CHANGELOG.md for voice and version reference.\n' +

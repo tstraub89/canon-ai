@@ -14,7 +14,7 @@ Grounding rule: if a finding depends on code, a symbol, or a validation result, 
 
 **First, a strategic read of the spec itself — shape before implementability.** Ask:
 - Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)
-- For a bug or flake fix: has the targeted root cause been *verified by reproducing the mechanism* (deterministically — fault injection, forced race, targeted repro)? A paper argument can rule out a wrong hypothesis but doesn't by itself verify the real cause, so a fix on an unreproduced mechanism may just be the first plausible story that fit the symptom. An unverified mechanism is a blocking Shape Check concern. (See AGENTS.md §"Diagnose Before You Fix".)
+- For a bug or flake fix: has the targeted root cause been *verified by reproducing the mechanism* (deterministically — fault injection, forced race, targeted repro)? A paper argument can rule out a wrong hypothesis but doesn't by itself verify the real cause, so a fix on an unreproduced mechanism may just be the first plausible story that fit the symptom. An unverified mechanism is a blocking Shape Check concern. Each role owns a checkpoint: the spec author states the *verified* mechanism in *Problem*; the reviewer (Codex) challenges whether the proposed fix addresses a confirmed root cause; the implementer reproduces before fixing and reports the repro in the handoff.
 - Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)
 - Is there a materially simpler solution that changes the shape of the work?
 - Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)
@@ -36,6 +36,8 @@ Review plan.md for each task as well — flag if the approach is unsound.{{/comb
 - `approved` — no findings worth noting.
 
 **Batch related nits.** If you have multiple non-blocking observations, include them all in one `approved_with_nits` verdict rather than raising one per round.
+
+**Cross-review rule**: No agent reviews its own output. Claude writes specs → Codex reviews specs. Codex writes code → Claude reviews code.
 
 If you encounter surprising codebase behavior, append to tasks/<id>/notes.md (prefix: [spec_review]).
 

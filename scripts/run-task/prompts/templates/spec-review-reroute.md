@@ -17,6 +17,10 @@ A human rerouted this task after human review. The original spec was already rev
 
 Grounding rule: if a finding depends on a symbol or file, re-open it before claiming it exists.
 
+**Cross-review rule**: No agent reviews its own output. Claude writes specs → Codex reviews specs. Codex writes code → Claude reviews code.
+
+**Diagnose before you fix — 3-role checkpoint**: For any amendment addressing a bug or flake fix, each role owns a checkpoint: the spec author states the *verified* mechanism in *Problem*; the reviewer challenges whether the proposed fix addresses a confirmed root cause; the implementer reproduces before fixing. An unverified mechanism is a blocking Shape Check concern.
+
 **Verdict rules** (same as normal spec review):
 - `changes_requested` — one or more blocking findings. The human must revise the amendment and re-run.
 - `approved_with_nits` — no blockers; non-blocking observations only. Loop exits immediately.

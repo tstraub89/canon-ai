@@ -12,12 +12,12 @@ For each task:
    - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.
    - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.
 3. Include a **Proposed Changelog** section in done.md:
-   - Read AGENTS.md §"Release Rules" for the project's changelog audience and SemVer interpretation before writing. Apply the project's defined scope.
+   - **Canon release rules (non-negotiable)**: (1) Agents do not bump versions or land changelog edits without explicit scope authorization. (2) The QA step proposes a draft changelog entry text only — not the version number. (3) Changelog + version bump are committed separately from code changes (when a project versions its releases). (4) No major versioning surprises: if a task introduces a breaking change the spec didn't flag, raise it before shipping.
+   - Read `docs/decisions.md` §"Versioning and release policy" for this project's changelog scope and SemVer interpretation.
    - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.
    - Apply the "would a user notice" test to every candidate bullet (or the project's equivalent scope test): if a candidate falls outside the project's defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change — omit from changelog") rather than inventing a bullet.
    - Implementation mechanics belong in the "What Changed" section above — not in the proposed changelog.
-   - Proposed version bump per the project's SemVer interpretation, with brief rationale.
-   The human finalizes both.
+   The human finalizes the changelog entry.
 4. **For single tasks only — use the Write tool** to create `tasks/<id>/pr-body.md` — the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work.
    {{#prTemplate}}
    The repo has this PR template. Fill every section with specifics from what shipped. Keep the headings; replace every placeholder:
@@ -45,7 +45,30 @@ For each task:
 After writing all done.md files:
 - Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md / AGENTS.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
 - Append one row per task to docs/task-quality-log.md (see that file for column definitions).
-- **Docs freshness**: scan the protected docs in AGENTS.md (architecture.md, codebase-map.md, patterns.md, product-context.md, decisions.md) for references that {{docsScope}} *contradicts* — a renamed symbol, a moved file, a behavior this task changed — and correct those stale references. That is the only edit QA makes to permanent docs. Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries — promotion is the human sweep, not Docs freshness.
+
+**Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):
+- [ ] Version correct (per project policy; skip if unversioned)
+- [ ] Changelog updated if needed (per project policy; skip if unversioned)
+- [ ] PR body current
+- [ ] Final CI/CD checks green
+- [ ] Final diff matches spec intent
+
+**Output Format for Human** — `done.md` must contain:
+1. One-paragraph plain-English summary
+2. Files changed
+3. How to test (product-level steps, not code)
+4. Test results table
+5. Decisions made during implementation
+6. Open questions needing human input
+
+**Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently — reference the symbol or path; do not restate the value.
+
+**Commit Ownership** — three change categories:
+- Code changes → task branch, committed by the orchestrator after Codex static validation.
+- Pre-implement scaffold → base branch, committed by the orchestrator before first implement.
+- Changelog + version bump (if versioned) → separate commit, human + Claude, after human_review.
+
+- **Docs freshness — Two-checkpoint**: scan the five protected docs (`docs/architecture.md`, `docs/codebase-map.md`, `docs/patterns.md`, `docs/product-context.md`, `docs/decisions.md`) for references that {{docsScope}} *contradicts* — a renamed symbol, a moved file, a behavior this task changed — and correct those stale references. That is the only edit QA makes to permanent docs. Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries — promotion is the human sweep, not Docs freshness.
 - **Buffer signal** (not an action): after appending, if docs/lessons-learned.md now holds more than ~15 entries, add one line to this task's done.md — `Maintenance: lessons-learned.md has N entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").` Do not perform the sweep yourself.
 
 When done, run (use the Bash tool — do not just output the command as text):

@@ -31,7 +31,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Orchestrator loop, phase dispatch, auto-commit, reroute | `scripts/run-task/main.ts` | Core control flow and phase-aware switches |
 | Per-phase handlers | `scripts/run-task/phases/*.ts` | One file per phase (`spec`, `spec_review`, `plan`, `implement`, `code_review`, `qa`) |
 | Agent runners | `scripts/run-task/agents/*.ts` | Shared subprocess wrappers for Claude and Codex |
-| Prompt builders and templates | `scripts/run-task/prompts/index.ts`, `scripts/run-task/prompts/templates/*.md` | Data prep + Mustache rendering |
+| Prompt builders and templates | `scripts/run-task/prompts/index.ts`, `scripts/run-task/prompts/templates/*.md` | Data prep + Mustache rendering; phase templates carry JIT operating rules for their consumers |
 | CLI parsing and logging | `scripts/run-task/cli.ts` | Args, usage, `die` / `info` / `warn` |
 | State I/O and session storage | `scripts/run-task/state.ts` | `status.json`, derived status, task/worktree path helpers; exports `validateStatus` and `readStatusFromPath` |
 | Shared run-context resolver | `scripts/run-task/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
@@ -72,9 +72,12 @@ Supporting modules consumed by `scripts/run-task/main.ts` and the phase handlers
 | Canon snapshot | `scripts/run-task/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
 | Markdown table parser | `scripts/run-task/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |
 | Prompt rendering | `scripts/run-task/prompts/render.ts` | Mustache rendering with LLM-safe escape-disable; consumed by `scripts/run-task/prompts/index.ts` |
-| Prompt startup constants | `scripts/run-task/prompts/helpers.ts` | `CLAUDE_STARTUP`, `CODEX_STARTUP` strings injected into every agent prompt |
+| Prompt startup constants | `scripts/run-task/prompts/helpers.ts` | `CLAUDE_STARTUP`, `CODEX_STARTUP` strings injected into every agent prompt; includes communication norms and Codex git-workflow guidance |
 | Agent stream handler | `scripts/run-task/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
 | Canon-managed files whitelist | `src/lib/canon-owned.ts` | `CANON_OWNED` and `DELIMITED` lists — authoritative source for which files `canon upgrade` controls |
+
+Prompt-template content notes:
+- `scripts/run-task/prompts/templates/qa.md` carries Docs Freshness two-checkpoint guidance, Handoff Validation, Release Rules, Code-is-Canonical, and Commit Ownership inline.
 
 ## Task Lifecycle Artifacts
 
@@ -88,7 +91,7 @@ Every task lives in `tasks/<TASK-ID>/`. Templates live in `.canon/templates/`.
 | Plan template | `.canon/templates/plan.md` | Claude (after spec approval) |
 | Implementation handoff template | `.canon/templates/handoff.md` | Codex |
 | Code review template (2-stage) | `.canon/templates/review.md` | Claude |
-| QA / human-facing summary template | `.canon/templates/done.md` | Claude |
+| QA / human-facing summary template | `.canon/templates/done.md` | Claude; changelog scope points at `docs/decisions.md` |
 | QA / outward-facing PR body template | `.canon/templates/pr-body.md` | Claude |
 | Per-task scratchpad | `.canon/templates/notes.md` | Any agent, any phase |
 

@@ -660,6 +660,105 @@ void test('promptQa bundle ignores prTemplate — bundles skip pr-body.md', () =
     assert.ok(!withTemplate.includes('Fill this section'), 'PR template content must not appear in bundle QA prompt');
 });
 
+void test('AC-11 — structural relocation: presence tokens appear in destinations, absence tokens do not bleed', () => {
+    const worktreeRoot = process.cwd();
+    function readRepoFile(relPath: string): string {
+        return fs.readFileSync(path.join(worktreeRoot, relPath), 'utf8');
+    }
+
+    const impl = readRepoFile('scripts/run-task/prompts/templates/implement.md');
+    assert.match(impl, /ship the safer guarded behavior first/);
+    assert.match(impl, /No unauthorized new abstractions/);
+    assert.match(impl, /No incidental dependency changes/);
+    assert.match(impl, /Suppressing a lint or type error is a last resort/);
+    assert.match(impl, /Parse cell-by-cell with explicit rejection/);
+    assert.match(impl, /Migration runner \+ manual review/);
+
+    const implRev = readRepoFile('scripts/run-task/prompts/templates/implement-revisions.md');
+    assert.match(implRev, /git show origin\//);
+    assert.match(implRev, /the pre-flight diff is cumulative/);
+    assert.match(implRev, /Referencing deleted/);
+
+    const specRevTpl = readRepoFile('scripts/run-task/prompts/templates/spec-review.md');
+    assert.match(specRevTpl, /No agent reviews its own output/);
+    assert.match(specRevTpl, /Each role owns a checkpoint/);
+
+    const qa = readRepoFile('scripts/run-task/prompts/templates/qa.md');
+    assert.match(qa, /Agents do not bump versions/);
+    assert.match(qa, /Handoff Validation/);
+    assert.match(qa, /One-paragraph plain-English summary/);
+    assert.match(qa, /Two-checkpoint/);
+    assert.match(qa, /Code is Canonical/);
+    assert.match(qa, /Commit Ownership/);
+
+    const specJit = readRepoFile('scripts/run-task/prompts/templates/spec.md');
+    assert.match(specJit, /Name effects to DELETE/);
+    assert.match(specJit, /Prefer positive or structural assertions/);
+
+    const specRevJit = readRepoFile('scripts/run-task/prompts/templates/spec-revision.md');
+    assert.match(specRevJit, /Name effects to DELETE/);
+    assert.match(specRevJit, /Prefer positive or structural assertions/);
+
+    for (const token of ['auth', 'billing', 'privacy', 'destructive', 'schema', 'analytics']) {
+        assert.ok(specJit.includes(token), `spec.md missing escalation trigger: ${token}`);
+        assert.ok(specRevJit.includes(token), `spec-revision.md missing escalation trigger: ${token}`);
+    }
+
+    const canonSpec = readRepoFile('.claude/skills/canon-spec/SKILL.md');
+    assert.match(canonSpec, /Name effects to DELETE/);
+    assert.match(canonSpec, /Prefer positive or structural assertions/);
+
+    const canonSpecReview = readRepoFile('.claude/skills/canon-spec-review/SKILL.md');
+    assert.match(canonSpecReview, /Name effects to DELETE/);
+    assert.match(canonSpecReview, /Prefer positive or structural assertions/);
+
+    const helpers = readRepoFile('scripts/run-task/prompts/helpers.ts');
+    assert.match(helpers, /honest signal is canon/);
+    assert.match(helpers, /pull --rebase/);
+
+    const scaffoldSpec = readRepoFile('.canon/templates/spec.md');
+    assert.match(scaffoldSpec, /Migration runner \+ manual review/);
+    assert.match(scaffoldSpec, /heads-up, not a change/);
+
+    assert.doesNotMatch(specJit, /task baseline/);
+    assert.doesNotMatch(specJit, /git -C/);
+    assert.doesNotMatch(specRevJit, /task baseline/);
+    assert.doesNotMatch(specRevJit, /git -C/);
+    assert.doesNotMatch(specRevTpl, /task baseline/);
+    assert.doesNotMatch(specRevTpl, /git -C/);
+
+    const foreman = readRepoFile('scripts/run-task/prompts/templates/code-review-foreman.md');
+    assert.doesNotMatch(foreman, /Name effects to DELETE/);
+    assert.doesNotMatch(foreman, /Prefer positive or structural assertions/);
+
+    const anchored = readRepoFile('.claude/agents/code-review-anchored.md');
+    assert.doesNotMatch(anchored, /Name effects to DELETE/);
+    assert.doesNotMatch(anchored, /Prefer positive or structural assertions/);
+
+    const cold = readRepoFile('.claude/agents/code-review-cold.md');
+    assert.doesNotMatch(cold, /Name effects to DELETE/);
+    assert.doesNotMatch(cold, /Prefer positive or structural assertions/);
+
+    const scaffoldDir = path.join(worktreeRoot, '.canon/templates');
+    const walk = (dir: string): string[] => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        return entries.flatMap(e =>
+            e.isDirectory()
+                ? walk(path.join(dir, e.name))
+                : [path.join(dir, e.name)],
+        );
+    };
+    for (const filePath of walk(scaffoldDir)) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const rel = path.relative(worktreeRoot, filePath);
+        assert.doesNotMatch(
+            content,
+            /AGENTS\.md|CLAUDE\.md/,
+            `Scaffold ${rel} still references AGENTS.md or CLAUDE.md`,
+        );
+    }
+});
+
 void test('interactive runClaude omits --max-budget-usd', { concurrency: false }, async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-claude-args-'));
     const binDir = path.join(tempDir, 'bin');

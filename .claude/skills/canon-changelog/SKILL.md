@@ -1,6 +1,6 @@
 ---
 name: canon-changelog
-description: Use when the human asks to draft release notes, update CHANGELOG.md, or add entries for shipped tasks — phrases like "draft the changelog", "write release notes", "add a bullet for <task>", "finalize the release", "we're shipping vX.Y", or explicit `/canon-changelog` invocation. Auto-detects fresh release vs. in-progress unreleased block vs. finalization mode from branch + CHANGELOG state. Requires CHANGELOG.md to be present; treats docs/decisions.md §"Versioning and Release Policy" as an optional policy layer when present.
+description: Use when the human asks to draft release notes, update CHANGELOG.md, or add entries for shipped tasks — phrases like "draft the changelog", "write release notes", "add a bullet for <task>", "finalize the release", "we're shipping vX.Y", or explicit `/canon-changelog` invocation. Auto-detects fresh release vs. in-progress unreleased block vs. finalization mode from branch + CHANGELOG state. Requires CHANGELOG.md to be present; treats docs/decisions.md §"Versioning and release policy" as an optional policy layer when present.
 argument-hint: "[optional: version override e.g. 1.5.0, or single task ID to add one bullet]"
 allowed-tools: Read Glob Grep Write Edit Bash(git log *) Bash(git diff *) Bash(git status *) Bash(git branch *) Bash(git rev-parse *) Bash(git add *) Bash(git commit *)
 effort: medium
@@ -46,7 +46,7 @@ If the project has a `## Release Rules` section, use it for audience and user-fa
 
 ### When sources are absent
 
-**No `docs/decisions.md §"Versioning and Release Policy"`**: proceed using the existing CHANGELOG's own style for format, `AGENTS.md §"Release Rules"` for propose-only behavior discipline, and audience inferred from the existing CHANGELOG. After finishing, include a one-time note in the response: "(Tip: add a `## Versioning and Release Policy` section to `docs/decisions.md` for richer audience and scope guidance.)" Do not block.
+**No `docs/decisions.md §"Versioning and Release Policy"`**: proceed using the existing CHANGELOG's own style for format, `docs/decisions.md §"Versioning and release policy"` for propose-only behavior discipline when present (canon general rules: agents don't auto-bump; QA proposes entry only; version bump is a separate commit; no major surprises), and audience inferred from the existing CHANGELOG. After finishing, include a one-time note in the response: "(Tip: add a `## Versioning and Release Policy` section to `docs/decisions.md` for richer audience and scope guidance.)" Do not block.
 
 **No existing `CHANGELOG.md` format to match**: if `docs/decisions.md §Versioning` specifies a format, use that. Otherwise propose Keep a Changelog as the starting point. Surface the proposed default to the human and ask for confirmation before creating or rewriting the file.
 
@@ -103,7 +103,7 @@ Build a per-task record: task ID, title, raw changelog source, one-sentence user
 
 ### Phase 3 — Synthesize
 
-Read `AGENTS.md §"Release Rules"` if present and the top of `CHANGELOG.md` before writing. If `docs/decisions.md` exists and has a `## Versioning and Release Policy` section (or similar heading), read it now and use its tier/audience/scope guidance to calibrate the version-bump proposal and audience framing before falling back to the generic heuristics below. If the release-rules section is missing, use `docs/product-context.md` for context and proceed. Calibrate your voice and scope against recent entries.
+Read `docs/decisions.md` §"Versioning and release policy" if present (project changelog scope, SemVer tier, and audience) and the top of `CHANGELOG.md` before writing. If that policy is missing, use `docs/product-context.md` for context and proceed. Calibrate your voice and scope against recent entries.
 
 Before drafting bullets, look at the full working set as one release, not a list of tasks:
 
@@ -115,7 +115,7 @@ Before drafting bullets, look at the full working set as one release, not a list
 
 **Find pre-release iterations**: if a feature debuts in this release and a later task in the same release cycle refines it before the release ships, fold the refinement into the feature bullet. Users only see the shipped version. *Test: did any prior iteration reach users? If no, fold.*
 
-**Find non-entries**: apply your project's "would a user notice" test (from `AGENTS.md §"Release Rules"` if present, otherwise infer from `CHANGELOG.md` and `docs/product-context.md`). Omit: pure refactors, test changes, pipeline infra, dev tooling, lint cleanup, invisible implementation details. List skipped tasks explicitly in Phase 4 so the human can see your omit decisions.
+**Find non-entries**: apply your project's "would a user notice" test (from `docs/decisions.md §"Versioning and release policy"` if present, otherwise infer from `CHANGELOG.md` and `docs/product-context.md`). Omit: pure refactors, test changes, pipeline infra, dev tooling, lint cleanup, invisible implementation details. List skipped tasks explicitly in Phase 4 so the human can see your omit decisions.
 
 **Bullet format** — match your project's existing CHANGELOG exactly:
 > *Example only (canon-ai's bracketed form). Match your project's actual title, version-heading, and category style — including emoji categories — per the formatting rules below.*
@@ -223,4 +223,4 @@ Confirm the commit hash. Stop. Do not push. Tell the user: "When ready, run `git
 
 - `/canon-status` — confirm what's in flight or recently shipped before drafting.
 - `/canon-pipeline` — for hotfix absorption and finalize-ship operations.
-- `AGENTS.md` §"Release Rules" — optional policy layer this skill consults when present.
+- `docs/decisions.md` §"Versioning and release policy" — project changelog scope and SemVer interpretation. Canon's general release rules (propose-only, separate bump commit, no major surprises) are inlined in `qa.md`.

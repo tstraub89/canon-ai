@@ -36,10 +36,9 @@ List any unresolved `human_pending` validation checks from handoff.md. If none r
 
 ## Proposed Changelog
 
-Apply the project's changelog scope (AGENTS.md §"Release Rules") and the "would a user notice" test. If nothing qualifies, write: no user-facing change — omit from changelog.
+Apply the project's changelog scope (`docs/decisions.md` §"Versioning and release policy") and the "would a user notice" test. If nothing qualifies, write: no user-facing change — omit from changelog.
 
 - (proposed bullet(s), in the changelog's voice)
-- Proposed version bump: patch / minor / major — brief rationale
 
 ## Decisions Made
 

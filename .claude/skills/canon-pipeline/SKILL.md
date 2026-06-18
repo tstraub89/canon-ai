@@ -178,9 +178,8 @@ If any are missing post-pipeline, manually advance or fix before `--pr` / `--shi
 
 ## Related
 
-- `docs/pipeline-orchestrator.md` — orchestrator internals (model matrix, env vars, worktree, session resumption).
-- `AGENTS.md` — workflow rules, roles, escalation, validation matrix, git/release.
-- `CLAUDE.md` — Claude phase-specific guidance.
+- `docs/pipeline-orchestrator.md` — orchestrator internals, model matrix, reroute, ship mechanics (the primary reference for this skill).
+- `CLAUDE.md` — operator context (phases, spec authorship, code-review rules of thumb).
 - `/canon-status` — read task state and get recommended next action.
 - `/canon-spec` — author a new task spec.
 - `/canon-spec-review` — adversarial pre-pipeline spec review before invoking the pipeline.

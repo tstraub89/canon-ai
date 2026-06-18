@@ -70,9 +70,17 @@ This angle catches the highest-value class: "spec assumes X exists in Y but it's
 
 #### Agent C — Spec-quality completeness
 
-Subagent type: `general-purpose`. Scope: "Audit against canon's spec-writing rules of thumb from CLAUDE.md."
+Subagent type: `general-purpose`. Scope: "Audit against canon's spec-writing rules of thumb."
 
-Goal: check (1) effects to DELETE are named explicitly, not just effects to add; (2) Affected Files lists files that change vs. files only read for context; (3) Validation Required section is present AND has at least one `- [x]` checked entry (or a checked "None — <reason>" entry as the explicit no-validation case). Two Agent C failures here: the section is missing entirely, OR the section exists but has zero `- [x]` entries (all `- [ ]` placeholders). Mixed lists with some `- [x]` and some `- [ ]` are accepted — the handoff validator only blocks when zero entries are checked; (4) Non-goals rule out the most tempting scope expansions; (5) Human Test Plan uses product language not code; (6) Known Risks names actual failure modes for the trickiest ACs.
+Goal: check these spec-quality rules:
+(1) **Name effects to DELETE** — when a change supersedes prior code, is it framed as a single replacement, not separate add/remove bullets?
+(2) **Prefer positive or structural assertions** — are load-bearing "must not" constraints backed by a grep AC or positive reframe, not just prose negation?
+(3) **Affected Files** — files that will *change* are listed; files only read for context are not.
+(4) **Validation Required** — section present AND has at least one `- [x]` checked entry (or an explicit checked "None — <reason>"). A section with zero `[x]` entries is a failing check.
+(5) **Non-goals** — rule out the most tempting scope expansions.
+(6) **Human Test Plan** — product language only; no code, no file paths.
+(7) **Known Risks** — names actual failure modes for the trickiest ACs.
+(8) **Symbols in ACs exist** — for any named function or symbol, has the author grepped for it and verified the return shape matches the spec's assumed data contract?
 
 Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or re-verify symbols / return shapes (Agent B's job — Agent C trusts that ACs reference symbols Agent B is verifying).
 
@@ -137,4 +145,4 @@ If an agent returned `[NO FINDINGS]`, say so under its section. Don't pad. If al
 
 - `/canon-spec` — where the spec under review came from.
 - `/canon-pipeline` — invoke `canon run <id>` after BLOCKING findings are addressed.
-- `CLAUDE.md` §"Spec Authorship Guidelines" — the rules of thumb Agent C audits against.
+- `CLAUDE.md` — operator context; Agent C's rules of thumb are listed in this skill above.

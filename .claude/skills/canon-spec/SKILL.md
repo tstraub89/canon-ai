@@ -32,8 +32,8 @@ Stop points marked **⛔ STOP** require explicit approval before continuing.
 
 Read before doing anything else:
 
-- `AGENTS.md` — workflow rules, validation matrix (the sizing table lives in `docs/pipeline-orchestrator.md`)
-- `CLAUDE.md` — your role and spec authorship guidelines
+- `AGENTS.md` — project/operator context if present; the Validation Matrix is inline in `.canon/templates/spec.md` and `implement.md` (the sizing table lives in `docs/pipeline-orchestrator.md`)
+- `CLAUDE.md` — your role and operator-facing context (spec-writing rules of thumb are in this skill's Phase 5 self-check below)
 - `docs/product-context.md` — project context, user flows, delicate surfaces
 - `docs/decisions.md` — settled decisions (check for conflicts)
 - `docs/patterns.md` — implementation patterns and known pitfalls
@@ -143,6 +143,14 @@ Self-check before presenting:
 - [ ] Non-Goals rules out the most tempting scope expansions — back load-bearing exclusions with a positive scope-bound or grep AC, not prose "NOT" alone
 - [ ] Symbols named in ACs actually exist in the codebase — grep-verify before presenting
 
+**Spec-writing rules of thumb** (apply when writing ACs and structure):
+- **Name effects to DELETE**: frame supersession as replacement ("replace `oldFn` with `newFn`; `oldFn` must not exist after"), not separate add/remove bullets.
+- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe.
+- **Symbols in ACs must exist** — grep for every named function or symbol; verify return shape matches the spec's assumed data contract.
+- **Behavioral contracts, not mechanics** — ACs describe observable behavior; defer implementation mechanics to plan/implement.
+- **At ≥3 spec_review iterations, label each round**: *edge-fine-tune* (missed path, single validator) or *scope-expansion* (new sub-problem). If scope-expansion, redesign rather than iterate.
+- **Refactor specs need hard structural caps**: size cap, explicit deletion expectations per symbol, grep AC for disappeared symbols.
+
 **⛔ STOP — present the spec and wait for approval.**
 
 ---
@@ -186,5 +194,5 @@ canon run --full-send [--force] TASK-ID
 - `/canon-spec-review` — adversarial pre-pipeline review of the spec. Recommended for M/L/XL or delicate tasks before invoking the pipeline.
 - `/canon-pipeline` — drive the pipeline after spec approval.
 - `/canon-status` — check what other canon tasks are in flight before committing to scope.
-- `AGENTS.md` — workflow rules, validation matrix; `docs/pipeline-orchestrator.md` — sizing guide.
-- `CLAUDE.md` — spec authorship guidelines.
+- `docs/pipeline-orchestrator.md` — pipeline internals, sizing guide, model/effort matrix. The Validation Matrix is now inline in `implement.md` and in `.canon/templates/spec.md`.
+- `CLAUDE.md` — operator context; spec-writing rules of thumb are in this skill above.

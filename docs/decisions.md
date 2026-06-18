@@ -135,7 +135,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 - **Agent authorization**:
   - **Patch**: agents may bump the version and commit the changelog edit autonomously.
-  - **Minor**: agents propose the bump in `done.md` (draft changelog entry); the human reviews before the changelog/version-bump commit lands.
+  - **Minor**: agents propose the bump tier during the release/changelog step (for example, via `/canon-changelog`); QA contributes changelog entry text only. The human reviews before the changelog/version-bump commit lands.
   - **Major**: human-only. If a task introduces a breaking change that the spec didn't flag, raise it during QA before shipping.
 
 - **Changelog audience and scope**:
@@ -275,3 +275,13 @@ What the orchestrator does uniquely (and these stand): routes between phases and
 **Why**: A cold review pass (a reviewer reading the diff with no spec anchor) catches a class of lifecycle/state-machine/consistency bugs that spec-anchored Claude `code_review` structurally misses — the empirical case is strong (`tasks/_archive/codex-code-review-phase/evidence-codex-vs-claude.md`: across 173 Codex PR findings, 0 false positives and ~76% sat off-AC). But the head-to-head also found Codex and cold-Claude are *complementary, not substitutes*, and that the highest-value marginal add is a **cold-Claude in-pipeline pass**: it reuses the in-loop model (no new dependency) and needs no external review provider, whereas a Codex phase binds canon to one provider that not every adopter runs and that is async + rate-limited on PRs. Archiving keeps the Codex-phase design available for an adopter who lacks any external cold-review source. This refines, not reverses, the [[Two distinct agents]] decision — the goal is still no-self-review independence; the open question is which second reviewer, and the answer is now "a cold-context Claude pass" by default.
 
 **Rule**: Don't build the opt-in Codex code-review phase without fresh human direction. New cold-review work targets a multi-agent Claude pass. Cold-Claude is higher-recall but noisier (lower precision) than Codex, so any cold-Claude review phase must carry an adjudication/precision layer (the adjudication design in the archived spec largely carries over). If reviving the Codex phase for an adopter, drive from `tasks/_archive/codex-code-review-phase/spec.md`, not the stale `task/codex-code-review-phase` branch.
+
+---
+
+## JIT rule delivery: canon rules injected per phase, not ambient auto-loaded
+
+**Decision**: Canon's operating rules are delivered just-in-time per consuming phase via injected prompt templates (`implement.md`, `qa.md`, `spec-review.md`, etc.), agent charters (`.claude/agents/`), and skills (`.claude/skills/`) — not via ambient auto-load of `AGENTS.md` / `CLAUDE.md` in every pipeline session.
+
+**Why**: Previously, every phase auto-loaded all rules through `AGENTS.md` / `CLAUDE.md`. That meant code-review lenses carried spec-writing guidance they never use, and the implement prompt carried QA rules. Scoping each rule to the specific phase that consumes it shrinks each phase's prompt to its own job and reduces cross-rule attention dilution.
+
+**Rule**: Pipeline-facing operating rules need a surviving JIT home in the consuming phase's prompt, charter, or skill. `AGENTS.md` / `CLAUDE.md` may still exist as operator-facing context and project additions, but they must not be the sole home for a rule required by a pipeline phase. The vacate task removes the now-redundant canon-block copies.

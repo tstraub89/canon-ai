@@ -129,9 +129,9 @@ Task-scoped state is worktree-canonical once a task reaches implement: `tasks/<i
 
 ## Validation
 
-`AGENTS.md` §"Validation Matrix" defines the canon-supplied **categories** of check that apply to different change types. The bindings below say what each category means concretely for canon-ai.
+The bindings below say what each category means concretely for canon-ai. The universal change-type → check-category matrix (which *categories* apply to which change types) is inlined in `implement.md` and in `.canon/templates/spec.md` "Validation Required".
 
-| Category (from AGENTS.md) | canon-ai binding |
+| Category | canon-ai binding |
 |---|---|
 | Linting | `npm run lint` (= `eslint scripts/ tests/ src/`) — required for all changes |
 | Type checking | `npm run type-check` (= `tsc -p tsconfig.json --noEmit`) |
