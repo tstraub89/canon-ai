@@ -14,74 +14,71 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+
+All five required checks (lint, type-check, test, build, docs-refs-check) recorded Pass. E2E correctly marked `not_configured` with justification (no UI surface).
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: single-source constant | Pass | `RECOMMENDED_NUDGE` exported from `src/cli/commands/doctor.ts:88`; 3-line orientation text joined by `\n`; imported and used in the drift test. |
+| AC-2: loose warn-only doctor check | Pass | `checkCanonDiscoveryNudge` at `doctor.ts:209` uses `/canon/i` substring test; returns `warn` when neither file mentions canon, `pass` when either does; no `fail` return path exists. |
+| AC-3: advisory surfaces recommendation | Pass | Warn `detail` at `doctor.ts:224` is `` `add this to CLAUDE.md:\n${RECOMMENDED_NUDGE}` ``; test asserts presence of `CLAUDE.md`, `/canon/i`, and `This project uses canon`. |
+| AC-4: README documents it | Pass | README lines 131–139 contain the `### Discovery nudge (recommended)` subsection with the fenced text block. |
+| AC-5: drift test | Pass | `tests/cli.test.ts:2320` extracts the fenced block and asserts equality to `RECOMMENDED_NUDGE`; regex and trim logic verified against actual README content. |
+| AC-6: recommend-only — no adopter-file writes | Pass | `git diff main...HEAD -- src/cli/commands/init.ts templates/CLAUDE.md templates/AGENTS.md` is empty; no `writeFile`/`appendFile` in `doctor.ts`; read-only test verifies file contents unchanged after check. |
+| AC-7: build artifact current | Pass | `dist/cli/index.js` in the diff; on-disk file confirmed correct (lines 948–950: `checkAgentFile AGENTS.md`, `checkAgentFile CLAUDE.md`, `checkCanonDiscoveryNudge`). |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected — no changes to `init.ts`, `templates/CLAUDE.md`, or `templates/AGENTS.md`
+- [x] Known Risks addressed — alarm-fatigue risk mitigated by `/canon/i` loose check; scope-creep risk blocked by AC-6; pre-C no-op risk documented in spec and accepted
+- [x] Human Test Plan is satisfiable — doctor invocation in a canon repo (passes) and a non-canon directory (warns) are both verifiable with the shipped CLI
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Clean, minimal implementation that mirrors the `RECOMMENDED_ALLOW` pattern precisely. The constant, check function, README subsection, and drift test are well-coordinated. The logic is simple and correct; the read-only invariant is validated by the test. No correctness bugs or risk items.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- **`tests/cli.test.ts:362`** — The "either file → pass" fixture only covers the AGENTS.md-has-canon case; the CLAUDE.md-alone path (the first element in the `['CLAUDE.md', 'AGENTS.md']` array) is not directly exercised. The `.some()` logic is symmetric so this isn't a correctness gap, but a two-fixture version would close the coverage hole. Flagged by both lenses; low severity. (Anchored + Cold)
+- **`tests/cli.test.ts`** — No fixture for the neither-file-exists path (`existsSync` returns false for both → `warn`). The `existsSync` guard makes this safe, but the path is untested. Low severity. (Cold)
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped because the spec shows the behavior is intended. Include the spec reason.
-
-(none / list items)
+- **Dismissed (cold): `/canon/i` matches "canonical"** — The spec explicitly accepts this: "A case-insensitive `canon` match also matches 'canonical' — an accepted false-*pass*; under-warning is the safe direction." (spec §Known Risks)
+- **Dismissed (cold): dist duplication — two `checkAgentFile(cwd, "AGENTS.md")` in context lines** — Verified false alarm. Actual `dist/cli/index.js` on disk has the correct sequence: `checkAgentFile AGENTS.md`, `checkAgentFile CLAUDE.md`, `checkCanonDiscoveryNudge` (lines 948–950). The diff fed to the cold lens contained misleading context lines.
+- **Dismissed (cold): `path` variable shadow** — `doctor.ts` imports `path` as destructured `{ join, sep as pathSep }`, not a namespace import. The local `const path = join(cwd, filename)` inside the `.some()` callback has no real name collision. The bundler renamed it `path11` as a precaution but no module-level shadowing risk exists.
+- **Dismissed (cold): warn `detail` doesn't assert full `RECOMMENDED_NUDGE` verbatim** — The three spot-check assertions (`CLAUDE.md`, `/canon/i`, `This project uses canon`) are sufficient for the AC-3 verification requirement. Full verbatim assertion is the drift test's job (AC-5).
+- **Dismissed (cold): only checks `CLAUDE.md` and `AGENTS.md`, not other agent files** — Specced behavior: AC-2 explicitly names `CLAUDE.md` and `AGENTS.md` as the targets.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 

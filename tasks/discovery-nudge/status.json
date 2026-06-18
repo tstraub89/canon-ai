@@ -1,15 +1,15 @@
 {
   "id": "discovery-nudge",
   "title": "Discovery nudge — recommend the canon orientation line via doctor + README",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-18",
   "updated": "2026-06-18",
-  "branch": "",
+  "branch": "task/discovery-nudge",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "9492773e0a7ee2b721b8558eed13efdbb1b5d0f9",
-    "orchestrator_commit": "9492773e0a7ee2b721b8558eed13efdbb1b5d0f9",
+    "upstream_commit": "2f36c1a65042bbc537785078602ed939f7c426f1",
+    "orchestrator_commit": "2f36c1a65042bbc537785078602ed939f7c426f1",
     "codex_cli": "codex-cli 0.140.0",
     "claude_code": "2.1.181 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -63,7 +64,10 @@
     }
   },
   "escalations": [],
-  "sessions": {},
+  "sessions": {
+    "codex": "019edbb6-e1f9-70c2-b972-d7815668420f",
+    "claude_review": "80af6c8f-0180-463d-b8aa-0a7c5a8c87f3"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."

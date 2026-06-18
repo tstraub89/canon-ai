@@ -23,6 +23,7 @@ import {
     checkTemplates,
     checkSkills,
     checkCanonVersion,
+    checkCanonDiscoveryNudge,
     checkLocalSettingsGitignored,
     checkRuntimeFilesGitignored,
     checkRecommendedPermissions,
@@ -32,6 +33,7 @@ import {
     parseCodexProjectTrust,
     MIN_CLAUDE_VERSION,
     RECOMMENDED_ALLOW,
+    RECOMMENDED_NUDGE,
 } from '../src/cli/commands/doctor.js';
 import { CANON_OWNED } from '../src/lib/canon-owned.js';
 import { HEARTBEAT_STALE_AFTER_MS } from '../scripts/run-task/heartbeat.js';
@@ -331,6 +333,37 @@ void test('checkAgentFile: present with start but missing end → warn', () => {
     withTempDir(dir => {
         fs.writeFileSync(path.join(dir, 'CLAUDE.md'), `${CANON_START}\ncontent\n`);
         assert.equal(checkAgentFile(dir, 'CLAUDE.md').status, 'warn');
+    });
+});
+
+// ── checkCanonDiscoveryNudge ───────────────────────────────────────────────
+
+void test('checkCanonDiscoveryNudge: neither file mentions canon → warn and leaves files unchanged', () => {
+    withTempDir(dir => {
+        const claudePath = path.join(dir, 'CLAUDE.md');
+        const agentsPath = path.join(dir, 'AGENTS.md');
+        fs.writeFileSync(claudePath, 'Project instructions.\n');
+        fs.writeFileSync(agentsPath, 'Agent instructions.\n');
+
+        const beforeClaude = fs.readFileSync(claudePath, 'utf8');
+        const beforeAgents = fs.readFileSync(agentsPath, 'utf8');
+
+        const check = checkCanonDiscoveryNudge(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /CLAUDE\.md/);
+        assert.match(check.detail ?? '', /canon/i);
+        assert.match(check.detail ?? '', /This project uses canon/);
+
+        assert.equal(fs.readFileSync(claudePath, 'utf8'), beforeClaude);
+        assert.equal(fs.readFileSync(agentsPath, 'utf8'), beforeAgents);
+    });
+});
+
+void test('checkCanonDiscoveryNudge: either file mentioning canon → pass', () => {
+    withTempDir(dir => {
+        fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'Project instructions.\n');
+        fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'This repo uses canon for task orchestration.\n');
+        assert.equal(checkCanonDiscoveryNudge(dir).status, 'pass');
     });
 });
 
@@ -2281,6 +2314,19 @@ void test('README "Skip the permission prompts" allowlist matches RECOMMENDED_AL
         [...allowStrings].sort(),
         [...RECOMMENDED_ALLOW].sort(),
         'README allowlist drifted from RECOMMENDED_ALLOW (src/cli/commands/doctor.ts)',
+    );
+});
+
+void test('README discovery nudge matches RECOMMENDED_NUDGE', () => {
+    const readme = fs.readFileSync(path.join(WORKTREE_ROOT, 'README.md'), 'utf8');
+    const blockMatch = readme.match(
+        /### Discovery nudge \(recommended\)[\s\S]*?```text\n([\s\S]*?)\n```/,
+    );
+    assert.ok(blockMatch, 'README discovery nudge text block not found');
+    assert.equal(
+        blockMatch[1].trim(),
+        RECOMMENDED_NUDGE,
+        'README discovery nudge drifted from RECOMMENDED_NUDGE (src/cli/commands/doctor.ts)',
     );
 });
 

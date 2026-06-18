@@ -81,6 +81,16 @@ export const RECOMMENDED_ALLOW = [
     'Skill(canon-inline-review:*)',
 ];
 
+// Canon's recommended discovery nudge for adopter CLAUDE.md files.
+// Kept in sync with README's "Discovery nudge" block — the
+// `README "Discovery nudge" text matches RECOMMENDED_NUDGE` test in
+// tests/cli.test.ts will fail CI if these drift apart.
+export const RECOMMENDED_NUDGE = [
+    'This project uses canon, a spec-first multi-agent pipeline.',
+    'Route new features / fixes / refactors through the canon skills.',
+    'Start with `/canon-spec` rather than implementing directly.',
+].join('\n');
+
 export const MIN_CLAUDE_VERSION = { major: 2, minor: 1, patch: 72 };
 
 export interface ParsedClaudeVersion {
@@ -194,6 +204,25 @@ export function checkAgentFile(cwd: string, filename: string): Check {
         return { label: filename, status: 'warn', detail: 'no canon delimiters — run `canon init` to add them' };
     }
     return { label: filename, status: 'pass' };
+}
+
+export function checkCanonDiscoveryNudge(cwd: string): Check {
+    const filenames = ['CLAUDE.md', 'AGENTS.md'];
+    const mentionsCanon = filenames.some(filename => {
+        const path = join(cwd, filename);
+        if (!existsSync(path)) return false;
+        return /canon/i.test(readFileSync(path, 'utf8'));
+    });
+
+    if (mentionsCanon) {
+        return { label: 'canon discovery nudge', status: 'pass' };
+    }
+
+    return {
+        label: 'canon discovery nudge',
+        status: 'warn',
+        detail: `add this to CLAUDE.md:\n${RECOMMENDED_NUDGE}`,
+    };
 }
 
 export function checkCodexMdDeprecated(cwd: string): Check | null {
@@ -639,6 +668,7 @@ export function doctorCmd(_args: string[]): void {
     const canonChecks: Check[] = [
         checkAgentFile(cwd, 'AGENTS.md'),
         checkAgentFile(cwd, 'CLAUDE.md'),
+        checkCanonDiscoveryNudge(cwd),
         ...(codexDeprecated ? [codexDeprecated] : []),
         checkTemplates(cwd),
         checkCanonVersion(cwd),

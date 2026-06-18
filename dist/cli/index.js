@@ -511,6 +511,11 @@ var RECOMMENDED_ALLOW = [
   "Skill(canon-inline-review)",
   "Skill(canon-inline-review:*)"
 ];
+var RECOMMENDED_NUDGE = [
+  "This project uses canon, a spec-first multi-agent pipeline.",
+  "Route new features / fixes / refactors through the canon skills.",
+  "Start with `/canon-spec` rather than implementing directly."
+].join("\n");
 var MIN_CLAUDE_VERSION = { major: 2, minor: 1, patch: 72 };
 function parseClaudeVersion(raw) {
   const match = raw.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
@@ -592,6 +597,23 @@ function checkAgentFile(cwd, filename) {
     return { label: filename, status: "warn", detail: "no canon delimiters \u2014 run `canon init` to add them" };
   }
   return { label: filename, status: "pass" };
+}
+function checkCanonDiscoveryNudge(cwd) {
+  const filenames = ["CLAUDE.md", "AGENTS.md"];
+  const mentionsCanon = filenames.some((filename) => {
+    const path11 = join(cwd, filename);
+    if (!existsSync(path11)) return false;
+    return /canon/i.test(readFileSync(path11, "utf8"));
+  });
+  if (mentionsCanon) {
+    return { label: "canon discovery nudge", status: "pass" };
+  }
+  return {
+    label: "canon discovery nudge",
+    status: "warn",
+    detail: `add this to CLAUDE.md:
+${RECOMMENDED_NUDGE}`
+  };
 }
 function checkCodexMdDeprecated(cwd) {
   if (!existsSync(join(cwd, "CODEX.md"))) return null;
@@ -925,6 +947,7 @@ function doctorCmd(_args) {
   const canonChecks = [
     checkAgentFile(cwd, "AGENTS.md"),
     checkAgentFile(cwd, "CLAUDE.md"),
+    checkCanonDiscoveryNudge(cwd),
     ...codexDeprecated ? [codexDeprecated] : [],
     checkTemplates(cwd),
     checkCanonVersion(cwd),

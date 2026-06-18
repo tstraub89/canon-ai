@@ -128,6 +128,16 @@ canon run my-first-feature
 
 Run `canon doctor` after install to verify your environment — it checks Node/git/Claude Code/Codex versions, codex project trust, allowlist coverage, and that any local Claude settings file is gitignored.
 
+### Discovery nudge (recommended)
+
+If this repo uses canon, add the following to `CLAUDE.md`:
+
+```text
+This project uses canon, a spec-first multi-agent pipeline.
+Route new features / fixes / refactors through the canon skills.
+Start with `/canon-spec` rather than implementing directly.
+```
+
 ### Skip the permission prompts (optional)
 
 Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short shell pipelines for inspecting task state (`cat tasks/X/status.json | jq '.phases'`). To avoid a Claude Code permission prompt on every step, drop these into `.claude/settings.json` under `permissions.allow`:

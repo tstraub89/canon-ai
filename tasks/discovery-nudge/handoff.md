@@ -12,6 +12,12 @@
 
 | File | What Changed |
 |---|---|
+| `src/cli/commands/doctor.ts` | Added exported `RECOMMENDED_NUDGE`; added `checkCanonDiscoveryNudge(cwd)` as a loose, warn-only canon-presence check over `CLAUDE.md` and `AGENTS.md`; registered it in the `Canon setup` doctor checks. |
+| `README.md` | Added a short `Discovery nudge (recommended)` subsection near adoption/setup that shows the recommended canon orientation line in a fenced text block. |
+| `tests/cli.test.ts` | Added doctor-check coverage for warn/pass/read-only behavior and a README drift test that compares the documented nudge text to `RECOMMENDED_NUDGE`. |
+| `dist/cli/index.js` | Regenerated via `npm run build` so the shipped CLI bundle reflects the new doctor check and README drift constant. |
+| `tasks/discovery-nudge/handoff.md` | Wrote the implementation handoff, including AC coverage, validation results, and the current diff footprint. |
+| `tasks/discovery-nudge/status.json` | Task-state metadata updated during the implementation pass; remains part of the branch diff that the orchestrator will carry forward. |
 
 ## Canon Governance
 
@@ -27,7 +33,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Followed the spec’s recommend-only pattern rather than seeding any adopter files. `doctor.ts` now has one exported source-of-truth constant and one advisory check that only looks for a case-insensitive `canon` mention in either agent file, which keeps the warning soft enough to avoid alarm fatigue while still surfacing the orientation line after Task C removes the managed canon block. The README mirrors the constant exactly, and the test suite locks the two together so the text cannot drift silently.
 
 ## Deviations from Plan
 
@@ -35,7 +41,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | Implementation matched the plan. | None |
 
 ## AC Coverage
 
@@ -43,17 +49,23 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: single-source constant | Met | `RECOMMENDED_NUDGE` is exported from `src/cli/commands/doctor.ts` and used by both the doctor warning and the README drift test. |
+| AC-2: loose warn-only doctor check | Met | `checkCanonDiscoveryNudge(cwd)` returns `warn` only when neither file mentions canon, `pass` when either file does, and never returns `fail`. |
+| AC-3: advisory surfaces the recommendation | Met | The warning detail includes `RECOMMENDED_NUDGE` text and tells the operator to add it to `CLAUDE.md`. |
+| AC-4: README documents it | Met | `README.md` now has a `Discovery nudge (recommended)` subsection with the recommended line. |
+| AC-5: drift test | Met | `tests/cli.test.ts` compares the README text block to `RECOMMENDED_NUDGE`. |
+| AC-6: recommend-only, no adopter-file writes | Met | `git diff --name-only -- src/cli/commands/init.ts templates/CLAUDE.md templates/AGENTS.md` is empty, and the new doctor check is read-only. |
+| AC-7: build artifact current | Met | `npm run build` regenerated `dist/cli/index.js`; the diff contains the expected bundle update for the shipped CLI. |
 
 ## Edge Cases Considered
 
-- ...
+- Either agent file can independently satisfy the doctor check, which avoids a false warning when one file mentions canon and the other does not.
+- The warning uses a substring match instead of an exact phrase match so rewording the orientation line does not create alarm fatigue.
+- The read-only test checks file contents before and after the doctor call so an accidental write would be visible.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -73,13 +85,18 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | eslint completed cleanly. |
+| `npm run type-check` | Pass | `tsc -p tsconfig.json --noEmit` completed cleanly. |
+| `npm test` | Pass | Full suite passed, including the new doctor and README drift tests. |
+| `npm run build` | Pass | Rebuilt the CLI bundle; `dist/cli/index.js` was regenerated. |
+| `npm run docs-refs-check` | Pass | README references were clean. |
+| E2E — N/A | not_configured | No UI surface in scope. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 

@@ -560,3 +560,6 @@
 | 2026-06-18T06:28:39.652Z | relocate-rules-to-prompts | implement | codex | gpt-5.5 | 0 | 508.0s | 8612370 | ok |
 | 2026-06-18T06:37:35.072Z | relocate-rules-to-prompts | code_review | claude | opus | 0 | 534.4s | 1172652 | ok |
 | 2026-06-18T06:43:45.004Z | relocate-rules-to-prompts | qa | claude | sonnet | 0 | 369.9s | 1301846 | ok |
+| 2026-06-18T17:15:12.725Z | discovery-nudge | implement | codex | gpt-5.4-mini | 0 | 257.7s | 1877425 | ok |
+| 2026-06-18T17:21:25.110Z | discovery-nudge | code_review | claude | sonnet | 0 | 371.8s | 547775 | ok |
+| 2026-06-18T17:24:21.281Z | discovery-nudge | qa | claude | sonnet | 0 | 176.2s | 968873 | ok |
