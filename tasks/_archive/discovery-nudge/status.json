@@ -1,7 +1,7 @@
 {
   "id": "discovery-nudge",
   "title": "Discovery nudge — recommend the canon orientation line via doctor + README",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-18",
   "updated": "2026-06-18",
   "branch": "task/discovery-nudge",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
