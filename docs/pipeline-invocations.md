@@ -542,3 +542,11 @@
 | 2026-06-16T04:27:25.181Z | canon-spec-review-rename | implement | codex | gpt-5.4-mini | 0 | 460.2s | 5251655 | ok |
 | 2026-06-16T05:10:55.198Z | canon-spec-review-rename | code_review | claude | sonnet | 0 | 427.3s | 458215 | ok |
 | 2026-06-16T05:14:44.918Z | canon-spec-review-rename | qa | claude | sonnet | 0 | 229.7s | 854000 | ok |
+| 2026-06-17T19:02:07.737Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 0 | 374.2s | 1337305 | ok |
+| 2026-06-17T19:09:04.641Z | relocate-rules-to-prompts | spec | claude | opus | 0 | 416.9s | 2329359 | ok |
+| 2026-06-17T19:10:45.729Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 1 | 101.1s | 2574349 | ok |
+| 2026-06-17T19:19:23.807Z | relocate-rules-to-prompts | spec | claude | opus | 0 | 518.1s | 1605930 | ok |
+| 2026-06-17T19:21:17.227Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 2 | 113.4s | 3919958 | ok |
+| 2026-06-17T19:30:09.714Z | relocate-rules-to-prompts | spec | claude | opus | 0 | 532.5s | 2293353 | ok |
+| 2026-06-18T03:24:37.339Z | relocate-rules-to-prompts | spec_review | codex | gpt-5.5 | 3 | 31.5s | 5514972 | ok |
+| 2026-06-18T03:38:02.454Z | relocate-rules-to-prompts | plan | claude | sonnet | 0 | 746.7s | 1610193 | ok |
