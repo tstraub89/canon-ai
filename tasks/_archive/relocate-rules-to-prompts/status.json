@@ -1,7 +1,7 @@
 {
   "id": "relocate-rules-to-prompts",
   "title": "Relocate sole-homed canon rules into per-phase prompts and skills",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-17",
   "updated": "2026-06-18",
   "branch": "task/relocate-rules-to-prompts",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
