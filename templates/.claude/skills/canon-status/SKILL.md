@@ -10,8 +10,8 @@ effort: low
 ```!
 echo "Branch:"
 git branch --show-current 2>/dev/null
-echo "Commits ahead of upstream:"
-git rev-list @{u}..HEAD --count 2>/dev/null || echo '?'
+echo "Unpushed commits:"
+git rev-list --count HEAD --not --remotes 2>/dev/null
 echo ""
 canon task list 2>/dev/null || echo "(no tasks)"
 ```
