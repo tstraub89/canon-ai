@@ -563,3 +563,9 @@
 | 2026-06-18T17:15:12.725Z | discovery-nudge | implement | codex | gpt-5.4-mini | 0 | 257.7s | 1877425 | ok |
 | 2026-06-18T17:21:25.110Z | discovery-nudge | code_review | claude | sonnet | 0 | 371.8s | 547775 | ok |
 | 2026-06-18T17:24:21.281Z | discovery-nudge | qa | claude | sonnet | 0 | 176.2s | 968873 | ok |
+| 2026-06-19T01:51:29.686Z | vacate-adopter-md | spec_review | codex | gpt-5.5 | 0 | 249.6s | 1849206 | ok |
+| 2026-06-19T02:02:31.839Z | vacate-adopter-md | spec | claude | opus | 0 | 662.1s | 3483626 | ok |
+| 2026-06-19T02:05:30.837Z | vacate-adopter-md | spec_review | codex | gpt-5.5 | 1 | 179.0s | 3828782 | ok |
+| 2026-06-19T02:09:42.569Z | vacate-adopter-md | spec | claude | opus | 0 | 251.7s | 1235837 | ok |
+| 2026-06-19T02:11:30.095Z | vacate-adopter-md | spec_review | codex | gpt-5.5 | 2 | 107.5s | 5642090 | ok |
+| 2026-06-19T02:28:56.080Z | vacate-adopter-md | plan | claude | sonnet | 0 | 694.9s | 1682695 | ok |
