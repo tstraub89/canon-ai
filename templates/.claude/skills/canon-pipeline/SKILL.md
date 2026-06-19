@@ -47,6 +47,8 @@ canon run <task-id>
 
 Add `--step --expect <phase>` if you want one phase at a time with a guard. Add `MAX_REVIEW_LOOPS=N` when the default loop cap is too low for a complex spec.
 
+**What happens after `canon run` (full-tier, no `--full-send`):** the pipeline runs Codex `spec_review` *first*, then **halts at the human spec gate after Codex approves the spec** (before `plan`). `human_spec_gate` is a single-use latch that fires *after* `spec_review`, never before it — so seeing the run go straight into `spec_review` with the gate still `true` is correct, not a skipped gate. Review `spec.md` + `spec-review.md`, then re-run `canon run <id>` to pass the gate into `plan`. **Under `--full-send` there is no halt:** the gate is pre-cleared, so the pipeline flows `spec_review → plan → … → draft PR` uninterrupted (on a `delicate` task `--full-send` also needs `--force`). (Fast-tier without full-send: the gate sits at `spec_review` entry and is usually pre-cleared during plan-writing. Full mechanics: `docs/pipeline-orchestrator.md` §"Spec gate is a single-use latch".)
+
 **Pre-flight before kicking off:**
 - Working tree is clean — commit or stash any pending edits. The orchestrator auto-commits task artifacts but will not touch source files outside `handoff.md`'s Changes table.
 - `tasks/<id>/status.json`: `task_size`, `delicate`, `human_spec_gate`, `worktree` set correctly.
