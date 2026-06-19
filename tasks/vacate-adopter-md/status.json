@@ -1,0 +1,69 @@
+{
+  "id": "vacate-adopter-md",
+  "title": "Vacate canon-managed content from adopter CLAUDE.md/AGENTS.md; slim canon-ai's own",
+  "status": "spec_review",
+  "created": "2026-06-19",
+  "updated": "2026-06-19",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "a889ef7d1809ac5ff561acedbe257f1677dd7ed5",
+    "orchestrator_commit": "a889ef7d1809ac5ff561acedbe257f1677dd7ed5",
+    "codex_cli": "codex-cli 0.140.0",
+    "claude_code": "2.1.181 (Claude Code)"
+  },
+  "task_size": "XL",
+  "delicate": true,
+  "human_spec_gate": true,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "pending",
+      "agent": "codex",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "plan": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {},
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}
