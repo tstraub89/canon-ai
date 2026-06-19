@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`canon doctor` now nudges toward a canon orientation line when neither `CLAUDE.md` nor `AGENTS.md` mentions canon.** A warn-only check (case-insensitive substring test, never `fail`) surfaces the recommended orientation line so agents discover canon on session start; it passes silently when either file already mentions canon. The recommended text is exported as `RECOMMENDED_NUDGE` (mirroring the existing `RECOMMENDED_ALLOW`), documented in a new README subsection, and drift-tested so the README and the constant can't diverge. Canon never writes the nudge into adopter files — `init`, `upgrade`, and templates are untouched. Part of the program to vacate canon-managed content from adopter `CLAUDE.md` / `AGENTS.md`; it becomes the discovery backstop once the managed block is removed. ([#175](https://github.com/tstraub89/canon-ai/pull/175))
+
+### Changed
+
+- **Sole-homed pipeline rules relocated from the `AGENTS.md` / `CLAUDE.md` canon blocks into the per-phase surfaces that consume them.** ~22 operating rules that previously lived only in the broadcast MD blocks now travel with the prompt template, agent charter, startup constant, or skill for the phase that uses them — each phase carries only its own rules instead of receiving all of them. `canon task new` scaffolds are now self-contained (`spec.md` inlines the validation matrix and protected-docs list; `done.md` / `status.json` point at surviving project docs rather than `AGENTS.md`), and a structural test greps presence/absence tokens and sweeps `.canon/templates/` so a dropped rule or cross-phase bleed can't slip back in. `AGENTS.md` and `CLAUDE.md` are unchanged — the rules are now dual-homed; the single-source cleanup is the follow-on vacate task. Ships to adopters via `canon upgrade`. ([#174](https://github.com/tstraub89/canon-ai/pull/174))
+
+### Fixed
+
+- **`/canon-status`'s commit-count header no longer trips the permission gate.** The header's `` ```! `` block counted commits with `git rev-list @{u}..HEAD --count` (the form 1.9.0 switched to), but the `@{u}` brace pattern doesn't match the skill's `Bash(git rev-list *)` allow-rule — the Bash permission matcher treats `{…}` specially — so the line was gated/denied instead of running, and the `|| echo '?'` fallback couldn't rescue it. It now uses the brace-free `git rev-list --count HEAD --not --remotes`, which matches the allow-rule, prints `0` when nothing is ahead (no `|| echo` fallback needed), and is more robust than `@{u}` (which errors with no upstream configured). The label is now "Unpushed commits:" to match the `--not --remotes` semantics. Ships to adopters via `canon upgrade`.
+- **The QA phase no longer proposes a version number or bump tier in its changelog draft.** The QA prompt asked for changelog *entry text only*, but the prohibition was buried and a `docs/decisions.md` line ("agents propose the bump tier") gave agents a clause to rationalize past it — a real QA run proposed "1.15.0 minor" in `done.md`. The negative is now pointed and attached to the Proposed Changelog instruction, and bump-tier selection is scoped to the release/changelog step, not QA. Ships to adopters via `canon upgrade`.
+- **`/canon-pipeline` now states the full-tier human spec gate fires *after* `spec_review` approves (before `plan`), not before `spec_review`.** The operator-facing skill where pipeline-driving knowledge belongs now documents the actual halt point. Ships to adopters via `canon upgrade`.
+
 ## [1.14.0] — 2026-06-17
 
 ### Added
