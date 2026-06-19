@@ -6,20 +6,15 @@
 
 > Strategic read of the spec itself — does it solve the right problem in the right shape? **Silence is the default**; only write here if something is actually off. A concern here is the lead reason for a `changes_requested` verdict.
 
-- Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)
-- Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)
-- Is there a materially simpler solution that changes the shape of the work?
-- Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)
-
-(no concerns / list items)
+(no concerns)
 
 ## Feasibility Check
 
 Does the spec's approach work against the actual codebase?
 
-- [ ] Affected files exist and contain what the spec assumes
-- [ ] Proposed patterns are consistent with existing conventions
-- [ ] No conflicts with existing functionality
+- [x] Affected files exist, or are new/deleted/generated exactly as the spec describes
+- [x] Proposed patterns are consistent with existing conventions
+- [x] No conflicts with existing functionality
 
 ## Issues Found
 
@@ -27,22 +22,24 @@ Does the spec's approach work against the actual codebase?
 
 > Things the spec gets wrong about the current codebase.
 
-(none / list items)
+(none)
 
 ### Missing Edge Cases
 
 > Scenarios the spec doesn't account for.
 
-(none / list items)
+- **Non-blocking nit — clarify migration-tool malformed/missing-file behavior in the plan.** AC-8 covers "both markers present" and "markers absent" (`tasks/vacate-adopter-md/spec.md:51`), but it does not explicitly say what happens when only one marker is present, or when one of `CLAUDE.md` / `AGENTS.md` is missing. The obvious safe defaults are: missing file = reported no-op, partial marker pair = non-zero refusal with no write. Capture that in the plan/tests so the tool cannot silently ignore or corrupt a malformed legacy block.
+
+- **Non-blocking nit — scope AC-4's grep check before implementation.** AC-4 says `git grep` should find no code path that reads `templates/CLAUDE.md` / `templates/AGENTS.md` by name (`tasks/vacate-adopter-md/spec.md:47`), while AC-2 intentionally keeps fixture-based delimited-merge tests in `tests/cli.test.ts` and `tests/sync-canon-templates.test.ts` (`tasks/vacate-adopter-md/spec.md:45`, `:111-112`). The current test suite hardcodes `templates/AGENTS.md` in those fixture tests. Either rename those fixtures to a neutral future-delimited path during the test update, or make the grep pathspec production-code-only so AC-4 does not become a false failure.
 
 ### Type Safety / Interface Gaps
 
 > Type mismatches, missing interfaces, or signature errors.
 
-(none / list items)
+(none)
 
 ## Verdict
 
 - [ ] **Approved** — spec is implementable as written
-- [ ] **Approved with nits** — implementable, but noting observations for plan phase
+- [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
