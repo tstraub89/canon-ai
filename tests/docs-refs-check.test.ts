@@ -122,6 +122,45 @@ void test('line-citation refs: comma-list citation on an existing file passes', 
     );
 });
 
+void test('line-citation refs: approximate-line hedge (~N) is stripped before path validation', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/hedge-ok.md',
+                [
+                    'Single: `scripts/fixture-target.ts:~140`.',
+                    'Range: `scripts/fixture-target.ts:~140-160`.',
+                    'Hedged range end: `scripts/fixture-target.ts:~140-~160`.',
+                    '',
+                ].join('\n'),
+            );
+            writeFile(root, 'scripts/fixture-target.ts', 'export const fixtureTarget = true;\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('line-citation refs: hedged ref to a missing file reports the full cited ref text', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/hedge-missing.md', 'See `src/does-not-exist.ts:~140`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/hedge-missing.md',
+                    line: 1,
+                    ref: '`src/does-not-exist.ts:~140`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
 void test('line-citation refs: missing file reports the full cited ref text', () => {
     makeTempRepo(
         root => {

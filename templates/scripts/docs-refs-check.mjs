@@ -270,13 +270,17 @@ function isAllowedAnchorLinkPath(target, validDirs) {
     return isAllowedDocTarget(target, validDirs);
 }
 
+// The optional `~` after the colon tolerates the "approximate line"
+// hedge operators write (e.g., `src/foo.ts:~140`). Line numbers in prose
+// drift, so the hedge is honest; the suffix is stripped before path
+// validation either way, so accepting it costs the check nothing.
 function isLineCitationTarget(target) {
-    return /(?::\d+(?:[-–—]\d+)?)$/.test(target) || /#L\d+(?:[-–—]L\d+)?$/.test(target);
+    return /(?::~?\d+(?:[-–—]~?\d+)?)$/.test(target) || /#L\d+(?:[-–—]L\d+)?$/.test(target);
 }
 
 function stripLineCitation(target) {
     return target
-        .replace(/:\d+(?:[-–—]\d+)?(?:,\d+(?:[-–—]\d+)?)*$/, '')
+        .replace(/:~?\d+(?:[-–—]~?\d+)?(?:,~?\d+(?:[-–—]~?\d+)?)*$/, '')
         .replace(/#L\d+(?:[-–—]L?\d+)?(?:,L?\d+(?:[-–—]L?\d+)?)*$/, '');
 }
 
