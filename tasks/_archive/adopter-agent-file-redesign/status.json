@@ -1,7 +1,7 @@
 {
   "id": "adopter-agent-file-redesign",
   "title": "Agent files come from built-in /init; canon stops referencing and generating them",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-20",
   "updated": "2026-06-20",
   "branch": "task/adopter-agent-file-redesign",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
