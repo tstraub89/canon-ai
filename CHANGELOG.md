@@ -4,13 +4,22 @@
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-06-20
+
+> **Breaking (adopters):** Canon no longer ships or manages a canon-owned content block in your `AGENTS.md` / `CLAUDE.md`. On `canon upgrade` the managed block is removed and these files become fully adopter-owned — canon does not create, modify, or read them. Canon's operating rules now arrive just-in-time through the per-phase prompt templates, agent charters, and `/canon-*` skills; generate your agent files with the tool-native `/init` (Claude Code's `/init` → `CLAUDE.md`, Codex's init → `AGENTS.md`). `canon doctor` guides the transition.
+
 ### Added
 
 - **`canon doctor` now nudges toward a canon orientation line when neither `CLAUDE.md` nor `AGENTS.md` mentions canon.** A warn-only check (case-insensitive substring test, never `fail`) surfaces the recommended orientation line so agents discover canon on session start; it passes silently when either file already mentions canon. The recommended text is exported as `RECOMMENDED_NUDGE` (mirroring the existing `RECOMMENDED_ALLOW`), documented in a new README subsection, and drift-tested so the README and the constant can't diverge. Canon never writes the nudge into adopter files — `init`, `upgrade`, and templates are untouched. Part of the program to vacate canon-managed content from adopter `CLAUDE.md` / `AGENTS.md`; it becomes the discovery backstop once the managed block is removed. ([#175](https://github.com/tstraub89/canon-ai/pull/175))
 
 ### Changed
 
+- **Canon's docs, skills, and prompts no longer reference, read, or generate `AGENTS.md` / `CLAUDE.md` — agent files come from the tool-native `/init`.** Each agent already auto-loads its own file (Claude Code → `CLAUDE.md`, Codex → `AGENTS.md`), so canon's instructional references were dead weight and are stripped from the docs, the `/canon-*` skills, and the pipeline prompts. `/canon-init` is now scoped to the `docs/` knowledge corpus only and no longer claims to generate agent files; the built-in `/init` produces them as high-level overviews. `canon doctor` gained a warn-only advisory — suggest `/init` when neither file exists, suggest the discovery nudge when one exists without mentioning canon (it never fails). The README recommends generating agent files via `/init` and documents the optional `CLAUDE.md` = `@AGENTS.md` consolidation, which converges both auto-loaded agents on one shared overview while keeping Claude-only operator norms out of Codex's context. canon-ai dogfoods the result. Ships to adopters via `canon upgrade`. ([#177](https://github.com/tstraub89/canon-ai/pull/177))
 - **Sole-homed pipeline rules relocated from the `AGENTS.md` / `CLAUDE.md` canon blocks into the per-phase surfaces that consume them.** ~22 operating rules that previously lived only in the broadcast MD blocks now travel with the prompt template, agent charter, startup constant, or skill for the phase that uses them — each phase carries only its own rules instead of receiving all of them. `canon task new` scaffolds are now self-contained (`spec.md` inlines the validation matrix and protected-docs list; `done.md` / `status.json` point at surviving project docs rather than `AGENTS.md`), and a structural test greps presence/absence tokens and sweeps `.canon/templates/` so a dropped rule or cross-phase bleed can't slip back in. `AGENTS.md` and `CLAUDE.md` are unchanged — the rules are now dual-homed; the single-source cleanup is the follow-on vacate task. Ships to adopters via `canon upgrade`. ([#174](https://github.com/tstraub89/canon-ai/pull/174))
+
+### Removed
+
+- **The canon-owned content block is no longer shipped into adopter `AGENTS.md` / `CLAUDE.md`.** Canon ships zero managed content into adopter agent files; the operating rules once broadcast into those blocks now travel just-in-time with the per-phase prompt templates, agent charters, startup constants, and `/canon-*` skills (completing the relocation begun in #174). On `canon upgrade` the managed block is removed and the files become fully adopter-owned — canon does not create, modify, or read them. A recommend-only `canon doctor` discovery nudge is the backstop so fresh sessions still learn a repo uses canon. ([#176](https://github.com/tstraub89/canon-ai/pull/176))
 
 ### Fixed
 
