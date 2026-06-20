@@ -8,14 +8,14 @@
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "9fe1b166c90c40a7ef37ad5877cbf00d693ea1fe",
-    "orchestrator_commit": "9fe1b166c90c40a7ef37ad5877cbf00d693ea1fe",
+    "upstream_commit": "9c725d5893df02e632bce482903c418445f99955",
+    "orchestrator_commit": "9c725d5893df02e632bce482903c418445f99955",
     "codex_cli": "codex-cli 0.141.0",
     "claude_code": "2.1.183 (Claude Code)"
   },
   "task_size": "L",
   "delicate": false,
-  "human_spec_gate": true,
+  "human_spec_gate": false,
   "full_send": false,
   "worktree": true,
   "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
@@ -30,7 +30,7 @@
       "verdict": "",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 5,
+      "iterations_total": 6,
       "changes_requested_total": 5,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
