@@ -150,7 +150,7 @@ The bindings below say what each category means concretely for canon-ai. The uni
 
 CI is configured via `.github/workflows/ci.yml`.
 
-**Triggers**: push to `main`, plus all pull requests (the `pull_request` trigger has no branch filter). The path filters opt out of doc/task paths, then re-include the canon-managed root files that need `sync-templates:check` and docs refs validation (`AGENTS.md`, `CLAUDE.md`, `docs/pipeline-orchestrator.md`).
+**Triggers**: push to `main`, plus all pull requests (the `pull_request` trigger has no branch filter). The path filters opt out of doc/task paths, then re-include root operator docs (`AGENTS.md`, `CLAUDE.md`). They also re-include canon-owned docs that should still run validation (`docs/pipeline-orchestrator.md`).
 
 **Matrix**: Node 24.x only.
 

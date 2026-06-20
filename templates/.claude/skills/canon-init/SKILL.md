@@ -17,11 +17,12 @@ Follow these phases in order. Do not skip or combine phases.
 
 ## Phase 0 — Check for existing canon files
 
-CLAUDE.md is already loaded. Before doing anything else:
+Before doing anything else:
 
+- If `CLAUDE.md` exists and is not already loaded in the current session, read it.
 - If `AGENTS.md` exists, read it.
 
-For each file, scan for content **below** the `<!-- canon:end -->` delimiter. That content is project-specific and must be preserved. Note what you find — you'll need it in Phase 4.
+Read each file as adopter-owned project context. The whole file is adopter content; canon does not insert or manage a block. Note any team conventions, terminology, or pitfalls you find — you'll need them in Phase 4.
 
 ---
 
@@ -109,7 +110,7 @@ Topics to cover — skip any that the codebase already answered:
 
 Write every stub doc with real, project-specific content. No placeholders. No "TBD". If you realize you're missing information for a section mid-write, ask one targeted question before writing that section.
 
-For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/lessons-learned.md`, plus the merge protocol for `AGENTS.md` / `CLAUDE.md` — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
+For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/lessons-learned.md`, plus how to use adopter-owned agent files as context — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
 
 ---
 
@@ -158,7 +159,7 @@ This is purely ergonomics. The committed `.claude/settings.json` is project-leve
 Stage all written docs (and `.claude/settings.json` if Phase 5 modified it):
 
 ```bash
-git add docs/ AGENTS.md CLAUDE.md 2>/dev/null
+git add docs/ 2>/dev/null
 [ -f .claude/settings.json ] && git add .claude/settings.json
 git status --short
 ```
@@ -178,5 +179,5 @@ Then print a summary:
 - `/canon-spec` — author the first task once scaffold docs are filled.
 - `/canon-status` — verify the project's task state.
 - `/canon-pipeline` — once a task exists, drive it through the pipeline.
-- `AGENTS.md` — workflow rules (read at Phase 0). Release Rules now inline in `qa.md`; `/canon-changelog` reads `docs/decisions.md` §"Versioning and release policy" for project scope.
+- `AGENTS.md` / `CLAUDE.md` — adopter-owned operator context when present (read at Phase 0).
 - `docs/pipeline-orchestrator.md` — pipeline internals for when tasks are running.

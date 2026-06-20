@@ -43,7 +43,7 @@ For each task:
    Skip this step entirely for bundle tasks — per-task bodies are not combined for bundle PRs.
 
 After writing all done.md files:
-- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md / AGENTS.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
+- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
 - Append one row per task to docs/task-quality-log.md (see that file for column definitions).
 
 **Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):

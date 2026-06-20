@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, printStaleOverrideNudge, runUpgrade } from '../src/cli/commands/upgrade.js';
 import { detectInstallType } from '../src/cli/commands/update.js';
-import { scaffoldTemplates } from '../src/cli/commands/init.js';
+import { existingAgentFilesNoticeLines, hasExistingAgentFiles, scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
     CANON_GITIGNORE_BLOCK,
     CANON_RUNTIME_GITIGNORE_PATTERNS,
@@ -17,7 +17,6 @@ import {
 import {
     checkActiveOrchestrators,
     checkNodeVersion,
-    checkAgentFile,
     checkCodexMdDeprecated,
     EXPECTED_TEMPLATES,
     checkTemplates,
@@ -302,40 +301,6 @@ void test('checkClaudeVersion: exports the fixed minimum version', () => {
     assert.deepEqual(MIN_CLAUDE_VERSION, { major: 2, minor: 1, patch: 72 });
 });
 
-// ── checkAgentFile ───────────────────────────────────────────────────────────
-
-void test('checkAgentFile: missing file → fail with run canon init hint', () => {
-    withTempDir(dir => {
-        const check = checkAgentFile(dir, 'CLAUDE.md');
-        assert.equal(check.status, 'fail');
-        assert.match(check.detail ?? '', /canon init/);
-    });
-});
-
-void test('checkAgentFile: present with both delimiters → pass', () => {
-    withTempDir(dir => {
-        fs.writeFileSync(path.join(dir, 'CLAUDE.md'),
-            `${CANON_START}\ncontent\n${CANON_END}\nproject tail\n`);
-        assert.equal(checkAgentFile(dir, 'CLAUDE.md').status, 'pass');
-    });
-});
-
-void test('checkAgentFile: present but no canon delimiters → warn', () => {
-    withTempDir(dir => {
-        fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '# CLAUDE.md\n\nPlain content.\n');
-        const check = checkAgentFile(dir, 'CLAUDE.md');
-        assert.equal(check.status, 'warn');
-        assert.match(check.detail ?? '', /delimiter/i);
-    });
-});
-
-void test('checkAgentFile: present with start but missing end → warn', () => {
-    withTempDir(dir => {
-        fs.writeFileSync(path.join(dir, 'CLAUDE.md'), `${CANON_START}\ncontent\n`);
-        assert.equal(checkAgentFile(dir, 'CLAUDE.md').status, 'warn');
-    });
-});
-
 // ── checkCanonDiscoveryNudge ───────────────────────────────────────────────
 
 void test('checkCanonDiscoveryNudge: neither file mentions canon → warn and leaves files unchanged', () => {
@@ -364,6 +329,14 @@ void test('checkCanonDiscoveryNudge: either file mentioning canon → pass', () 
         fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'Project instructions.\n');
         fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'This repo uses canon for task orchestration.\n');
         assert.equal(checkCanonDiscoveryNudge(dir).status, 'pass');
+    });
+});
+
+void test('doctor canon setup: absent AGENTS.md and CLAUDE.md produce warning nudge, not fail', () => {
+    withTempDir(dir => {
+        const check = checkCanonDiscoveryNudge(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /CLAUDE\.md/);
     });
 });
 
@@ -818,6 +791,19 @@ void test('scaffoldTemplates: fresh directory — all templates copied', () => {
     });
 });
 
+void test('init: real templates create neither CLAUDE.md nor AGENTS.md', () => {
+    withTempDir(projectDir => {
+        const { scaffolded, skipped } = scaffoldTemplates(projectDir, path.join(WORKTREE_ROOT, 'templates'));
+
+        assert.equal(fs.existsSync(path.join(projectDir, 'CLAUDE.md')), false);
+        assert.equal(fs.existsSync(path.join(projectDir, 'AGENTS.md')), false);
+        assert.equal(scaffolded.includes('CLAUDE.md'), false);
+        assert.equal(scaffolded.includes('AGENTS.md'), false);
+        assert.equal(skipped.includes('CLAUDE.md'), false);
+        assert.equal(skipped.includes('AGENTS.md'), false);
+    });
+});
+
 void test('scaffoldTemplates: existing files skipped, new ones copied', () => {
     withTempDir(projectDir => {
         withTempDir(srcDir => {
@@ -856,21 +842,35 @@ void test('scaffoldTemplates: nested directories created automatically', () => {
     });
 });
 
+void test('init: existing agent files are detected directly and notice has no merge protocol', () => {
+    withTempDir(projectDir => {
+        assert.equal(hasExistingAgentFiles(projectDir), false);
+
+        fs.writeFileSync(path.join(projectDir, 'AGENTS.md'), 'project-owned agent instructions\n');
+        assert.equal(hasExistingAgentFiles(projectDir), true);
+
+        const notice = existingAgentFilesNoticeLines().join('\n');
+        assert.match(notice, /existing AGENTS\.md \/ CLAUDE\.md detected/);
+        assert.match(notice, /project context/);
+        assert.match(notice, /adopter-owned/);
+        assert.doesNotMatch(notice, /merge protocol/i);
+    });
+});
+
 // ── runUpgrade ───────────────────────────────────────────────────────────────
 
-void test('runUpgrade: merges CLAUDE.md — new canon block, project tail preserved', () => {
+void test('runUpgrade: CLAUDE.md and AGENTS.md ignored after DELIMITED is empty', () => {
     withTempDir(projectDir => {
         withTempDir(pkgDir => {
-            // Template: new canon block
-            const templateContent = `${CANON_START}\nnew canon content\n${CANON_END}\n`;
             const tmplDir = path.join(pkgDir, 'templates');
             fs.mkdirSync(tmplDir, { recursive: true });
-            fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), templateContent);
+            fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), `${CANON_START}\ntemplate\n${CANON_END}\n`);
+            fs.writeFileSync(path.join(tmplDir, 'AGENTS.md'), `${CANON_START}\ntemplate\n${CANON_END}\n`);
 
-            // Project: old canon block + project tail
-            const projectTail = '\n\n## My Project Section\n\nCustom content here.\n';
-            fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'),
-                `${CANON_START}\nold canon content\n${CANON_END}\n${projectTail}`);
+            const claudeContent = '# CLAUDE\n\nProject-owned content.\n';
+            const agentsContent = '# AGENTS\n\nProject-owned content.\n';
+            fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), claudeContent);
+            fs.writeFileSync(path.join(projectDir, 'AGENTS.md'), agentsContent);
 
             // Stamp a version so version bump doesn't appear in upgraded
             const canonDir = path.join(projectDir, '.canon');
@@ -878,64 +878,13 @@ void test('runUpgrade: merges CLAUDE.md — new canon block, project tail preser
             const ver = process.env['CANON_VERSION'] ?? 'dev';
             fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
 
-            const { upgraded, unchanged, skipped } = runUpgrade(projectDir, pkgDir);
+            const { upgraded, skipped } = runUpgrade(projectDir, pkgDir);
 
-            assert.ok(upgraded.includes('CLAUDE.md'), 'CLAUDE.md should be upgraded');
-            const result = fs.readFileSync(path.join(projectDir, 'CLAUDE.md'), 'utf8');
-            assert.ok(result.includes('new canon content'), 'new content should be present');
-            assert.ok(!result.includes('old canon content'), 'old content should be gone');
-            assert.ok(result.includes('## My Project Section'), 'project tail should be preserved');
-            assert.ok(!unchanged.includes('CLAUDE.md'));
-            assert.ok(!skipped.includes('CLAUDE.md'));
-        });
-    });
-});
-
-void test('runUpgrade: unchanged file not written — reported as unchanged', () => {
-    withTempDir(projectDir => {
-        withTempDir(pkgDir => {
-            const content = `${CANON_START}\ncontent\n${CANON_END}\n\nproject tail\n`;
-            const tmplDir = path.join(pkgDir, 'templates');
-            fs.mkdirSync(tmplDir, { recursive: true });
-            fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'), content);
-            fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), content);
-
-            const canonDir = path.join(projectDir, '.canon');
-            fs.mkdirSync(canonDir, { recursive: true });
-            const ver = process.env['CANON_VERSION'] ?? 'dev';
-            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
-
-            const { upgraded, unchanged } = runUpgrade(projectDir, pkgDir);
-
-            assert.ok(!upgraded.includes('CLAUDE.md'));
-            assert.ok(unchanged.includes('CLAUDE.md'));
-        });
-    });
-});
-
-void test('runUpgrade: project file without delimiters → skipped with message', () => {
-    withTempDir(projectDir => {
-        withTempDir(pkgDir => {
-            const tmplDir = path.join(pkgDir, 'templates');
-            fs.mkdirSync(tmplDir, { recursive: true });
-            fs.writeFileSync(path.join(tmplDir, 'CLAUDE.md'),
-                `${CANON_START}\nnew\n${CANON_END}\n`);
-            // Project file has no delimiters
-            fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), '# CLAUDE\n\nPlain content.\n');
-
-            const canonDir = path.join(projectDir, '.canon');
-            fs.mkdirSync(canonDir, { recursive: true });
-            const ver = process.env['CANON_VERSION'] ?? 'dev';
-            fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
-
-            const { skipped } = runUpgrade(projectDir, pkgDir);
-
-            assert.ok(skipped.some(s => s.includes('CLAUDE.md') && s.includes('delimiter')));
-            // File should be unchanged
-            assert.equal(
-                fs.readFileSync(path.join(projectDir, 'CLAUDE.md'), 'utf8'),
-                '# CLAUDE\n\nPlain content.\n',
-            );
+            assert.equal(upgraded.includes('CLAUDE.md'), false);
+            assert.equal(upgraded.includes('AGENTS.md'), false);
+            assert.equal(skipped.some(s => s.includes('CLAUDE.md') || s.includes('AGENTS.md')), false);
+            assert.equal(fs.readFileSync(path.join(projectDir, 'CLAUDE.md'), 'utf8'), claudeContent);
+            assert.equal(fs.readFileSync(path.join(projectDir, 'AGENTS.md'), 'utf8'), agentsContent);
         });
     });
 });
@@ -2245,31 +2194,6 @@ void test('runUpgrade: untracked dirty status does NOT trigger refusal', () => {
     });
 });
 
-// ── runUpgrade against real templates ────────────────────────────────────────
-
-void test('runUpgrade: real templates dir produces valid merged CLAUDE.md', () => {
-    const realTemplatesParent = REPO_ROOT;
-    withTempDir(projectDir => {
-        // Seed project with a CLAUDE.md that has delimiters and a project tail
-        const projectTail = '\n\n## Adopter Section\n\nCustom docs.\n';
-        const seedContent = `${CANON_START}\nplaceholder\n${CANON_END}\n${projectTail}`;
-        fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), seedContent);
-
-        const canonDir = path.join(projectDir, '.canon');
-        fs.mkdirSync(canonDir, { recursive: true });
-        const ver = process.env['CANON_VERSION'] ?? 'dev';
-        fs.writeFileSync(path.join(canonDir, 'version'), `${ver}\n`);
-
-        const { upgraded } = runUpgrade(projectDir, realTemplatesParent);
-
-        assert.ok(upgraded.includes('CLAUDE.md'), 'CLAUDE.md should be upgraded from real template');
-        const result = fs.readFileSync(path.join(projectDir, 'CLAUDE.md'), 'utf8');
-        assert.ok(result.includes(CANON_START), 'result has canon start');
-        assert.ok(result.includes(CANON_END), 'result has canon end');
-        assert.ok(result.includes('## Adopter Section'), 'project tail preserved');
-    });
-});
-
 // ── README / doctor allowlist drift ──────────────────────────────────────────
 
 void test('README Prerequisites Claude Code floor matches MIN_CLAUDE_VERSION (Codex P2 on release PR #82 audit)', () => {
@@ -2347,8 +2271,6 @@ const OPERATIONAL_DOCS = [
     'AGENTS.md',
     'CLAUDE.md',
     'docs/pipeline-orchestrator.md',
-    'templates/AGENTS.md',
-    'templates/CLAUDE.md',
     'templates/docs/pipeline-orchestrator.md',
 ];
 
@@ -2394,8 +2316,6 @@ type CanonDevTokens = {
 // every adopter via `npm install canon-ai`.
 const ADOPTER_SHIPPED_PATHS = [
     'templates/.gitignore',
-    'templates/AGENTS.md',
-    'templates/CLAUDE.md',
     'templates/.canon/templates/spec.md',
     'templates/.canon/templates/plan.md',
     'templates/.canon/templates/handoff.md',
@@ -2405,14 +2325,8 @@ const ADOPTER_SHIPPED_PATHS = [
     'templates/.canon/templates/notes.md',
     'templates/.canon/templates/spec-review.md',
     'templates/.canon/templates/status.json',
-    // Root CANON_OWNED files (canon-ai-dev's own dogfood copies of the
-    // templates/ versions, kept in parallel per the canon-delimited-files
-    // memory). Scanned to catch the case where the root copy drifts and
-    // accumulates dev-specifics that templates/ doesn't have — that's the
-    // exact leak shape that produced 1.4.0's `release/v1.4` slip in
-    // CLAUDE.md.
-    'AGENTS.md',
-    'CLAUDE.md',
+    // Root AGENTS.md / CLAUDE.md are now adopter-owned and are not shipped
+    // through canon init/upgrade.
     // Bundled dist/ ships in the canon-ai npm package (per package.json
     // `files`). Bundled JS may include string literals from source — a
     // banned token making it into a source-file string would land in

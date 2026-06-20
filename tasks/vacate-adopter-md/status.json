@@ -1,17 +1,17 @@
 {
   "id": "vacate-adopter-md",
   "title": "Vacate canon-managed content from adopter CLAUDE.md/AGENTS.md; slim canon-ai's own",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-19",
-  "updated": "2026-06-19",
-  "branch": "",
+  "updated": "2026-06-20",
+  "branch": "task/vacate-adopter-md",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "38c7140740222c2bffa3b966020e2450db8d64f0",
-    "orchestrator_commit": "38c7140740222c2bffa3b966020e2450db8d64f0",
-    "codex_cli": "codex-cli 0.140.0",
-    "claude_code": "2.1.181 (Claude Code)"
+    "upstream_commit": "8c1d2ab8554568a8cc2871fc9849270fbc9021a0",
+    "orchestrator_commit": "8c1d2ab8554568a8cc2871fc9849270fbc9021a0",
+    "codex_cli": "codex-cli 0.141.0",
+    "claude_code": "2.1.183 (Claude Code)"
   },
   "task_size": "XL",
   "delicate": true,
@@ -27,10 +27,10 @@
     "spec_review": {
       "status": "done",
       "agent": "codex",
-      "verdict": "approved_with_nits",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 3,
+      "iterations_total": 4,
       "changes_requested_total": 2,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
@@ -40,21 +40,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -64,8 +67,10 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "019edd8f-abe2-7553-8830-e88a49b16794",
-    "claude_spec": "bb4cc441-2d65-417e-b6aa-5320fd880ac0"
+    "claude_spec": "bb4cc441-2d65-417e-b6aa-5320fd880ac0",
+    "codex": "019eddb6-ddb4-7111-aa35-c9e0fd0cbdc7",
+    "claude_review": "4f7d8c2f-23d2-415a-9309-99b0d203b2e6",
+    "codex_spec_review": "019ee25e-5c5d-7502-9db9-4e33383a83f4"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

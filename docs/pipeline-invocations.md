@@ -569,3 +569,15 @@
 | 2026-06-19T02:09:42.569Z | vacate-adopter-md | spec | claude | opus | 0 | 251.7s | 1235837 | ok |
 | 2026-06-19T02:11:30.095Z | vacate-adopter-md | spec_review | codex | gpt-5.5 | 2 | 107.5s | 5642090 | ok |
 | 2026-06-19T02:28:56.080Z | vacate-adopter-md | plan | claude | sonnet | 0 | 694.9s | 1682695 | ok |
+| 2026-06-19T02:48:34.261Z | vacate-adopter-md | implement | codex | gpt-5.5 | 0 | 1105.0s | - | failed |
+| 2026-06-19T02:50:58.589Z | vacate-adopter-md | implement | codex | gpt-5.5 | 0 | 3.0s | - | failed |
+| 2026-06-19T02:57:03.333Z | vacate-adopter-md | implement | codex | gpt-5.5 | 0 | 99.6s | 9852268 | ok |
+| 2026-06-19T03:11:39.009Z | vacate-adopter-md | code_review | claude | opus | 0 | 874.9s | 1491152 | ok |
+| 2026-06-19T03:14:55.277Z | vacate-adopter-md | implement | codex | gpt-5.5 | 1 | 196.2s | 12188380 | ok |
+| 2026-06-19T03:22:31.072Z | vacate-adopter-md | code_review | claude | opus | 1 | 454.9s | 1575957 | ok |
+| 2026-06-19T03:29:28.019Z | vacate-adopter-md | qa | claude | sonnet | 0 | 416.9s | 1223708 | ok |
+| 2026-06-20T00:12:33.375Z | vacate-adopter-md | spec_review | codex | gpt-5.5 | 0 | 58.8s | 304564 | ok |
+| 2026-06-20T00:14:32.282Z | vacate-adopter-md | plan | claude | sonnet | 0 | 118.9s | 600542 | ok |
+| 2026-06-20T00:20:10.577Z | vacate-adopter-md | implement | codex | gpt-5.5 | 0 | 338.2s | 15017394 | ok |
+| 2026-06-20T00:32:07.785Z | vacate-adopter-md | code_review | claude | opus | 0 | 716.3s | 2242843 | ok |
+| 2026-06-20T00:43:55.241Z | vacate-adopter-md | qa | claude | sonnet | 0 | 707.4s | 1496505 | ok |

@@ -17,8 +17,8 @@ export interface UpgradeOptions {
     noStage?: boolean;
 }
 
-const CANON_END = '<!-- canon:end -->';
-const CANON_START_RE = /<!-- canon:start[^>]* -->/;
+export const CANON_END = '<!-- canon:end -->';
+export const CANON_START_RE = /<!-- canon:start[^>]* -->/;
 
 // Header-only sync: canon owns the header (intro + table column definitions);
 // adopter owns the rows below the table separator. Used for telemetry files
@@ -205,8 +205,9 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     // refuse the whole operation if any target is dirty without --force.
     const pending: WriteOp[] = [];
 
-    // --- Delimited files (AGENTS.md, CLAUDE.md) ---
-    for (const rel of DELIMITED) {
+    // --- Delimited files ---
+    const delimitedFiles: readonly string[] = DELIMITED;
+    for (const rel of delimitedFiles) {
         const projectPath = join(cwd, rel);
         const templatePath = join(pkgDir, 'templates', rel);
 

@@ -115,3 +115,21 @@ When a spec edits any canon-managed file (anything in `CANON_OWNED` or `DELIMITE
 
 In a linked-worktree pipeline run, `REPO_ROOT` (and any constant derived from it) resolves to the supervising checkout — not the task's active worktree. A structural test that reads template or prompt files via `path.join(REPO_ROOT, 'scripts/...')` will silently read the pre-task copy and miss the edits the current task made. The fix: build file paths from `process.cwd()` in any test that validates files the current task is editing. `process.cwd()` resolves to the active worktree's root for test processes launched by the orchestrator. Contrast with the prior lesson (*Tests that validate worktree-local files must read from WORKTREE_ROOT, not REPO_ROOT*): that lesson covers runtime code using an env var; this one covers test code using a constant. Either way, the rule is the same — `REPO_ROOT` is the wrong anchor for files a task in a linked worktree edits. Concrete case: `tests/run-task-prompts.test.ts` AC-11 structural assertions (presence tokens, absence tokens, scaffold sweep) intentionally use `process.cwd()` so they validate the edited checkout.
 
+### Include shipped scaffold templates in ownership-change reference sweeps
+
+*(2026-06-18, source: vacate-adopter-md)*
+
+When a task removes ownership of a file type (e.g., deleting adopter agent templates), stale references survive not only in the explicitly listed root docs and skills but also in shipped scaffold templates (`templates/docs/*.md`), which `docs-refs-check` validates in fixture repos. A reference sweep spec'd as "root docs + skills" misses these mirrors: the checker runs over the full tree including `templates/`, so any stale authority claim in a scaffold template produces a broken ref during implementation. Extend any AC-13-style ownership-change sweep to include `templates/docs/` files — run the grep or `docs-refs-check` over the full tree (including `templates/`) and audit each scaffold mirror for references to the affected file type. Concrete case: deleting [templates/AGENTS.md](templates/AGENTS.md) and [templates/CLAUDE.md](templates/CLAUDE.md) left stale root-agent-file authority claims in `templates/docs/architecture.md`, `templates/docs/decisions.md`, `templates/docs/product-context.md`, and `templates/docs/codebase-map.md` — none were in the original Affected Files list and required updates documented as a handoff deviation.
+
+### Write-safety guards must fail closed when the underlying probe errors
+
+*(2026-06-19, source: vacate-adopter-md)*
+
+When a guard gates destructive writes based on an external probe (e.g., `git status`, a network check, a filesystem stat), a probe error must be treated the same as a "dirty" result — not as "clean." A guard that fails open when the probe itself errors becomes a bypass rather than a safety net. Concrete case: `tools/strip-canon-block.mjs`'s dirty-tree check initially treated a non-zero `git status` exit as "unknown → allow write"; code review caught this and the guard was changed to refuse on any probe failure. Prevention: every new write-safety guard should have a test case where the underlying probe fails (e.g., `git` unavailable or exits non-zero), and the expected outcome is refusal, not permission.
+
+### When a spec removes scaffolding of a file type, explicitly re-scope doctor checks and CI smoke assertions
+
+*(2026-06-19, source: vacate-adopter-md)*
+
+If a task stops canon from scaffolding a file (e.g., deleting a template so `canon init` no longer creates it), any `canon doctor` check or CI smoke assertion that hard-fails on that file's absence must also be updated — otherwise a fresh repo satisfies the new init behavior but immediately fails doctor or CI. The connection is not obvious in the spec draft: the "stop scaffolding" AC and the "update doctor/CI" ACs are independent and both required. For `vacate-adopter-md`, AC-5 (`init` no longer creates the files) needed AC-16 (remove `checkAgentFile` presence-fail from `doctor.ts`) and AC-17 (drop `test -f` from CI smoke) — all three were surfaced in spec_review, not in the initial draft. When writing a spec that removes a scaffolded file, grep `doctor.ts` for any `checkAgentFile`-style presence check and grep CI config for `test -f <filename>`, and add ACs to remove or re-scope them.
+

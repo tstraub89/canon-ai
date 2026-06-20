@@ -44,7 +44,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ## Versioning and release policy
 
-> **TODO[canon]: Fill in this entry for your project. AGENTS.md §"Release Rules" points here for project-specific versioning policy. Adopters MUST fill this — canon's Release Rules are non-negotiable but they leave SemVer interpretation, agent authorization, and changelog audience to each project.**
+> **TODO[canon]: Fill in this entry for your project. Canon's release prompts read this section for project-specific versioning policy. Adopters MUST fill this — canon's release discipline is non-negotiable but leaves SemVer interpretation, agent authorization, and changelog audience to each project.**
 
 **Decision**: *(one sentence)*
 

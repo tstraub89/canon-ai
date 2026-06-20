@@ -18,6 +18,18 @@ const templatesDir = join(packageDir, 'templates');
 
 const AGENT_FILES = new Set(['AGENTS.md', 'CLAUDE.md']);
 
+export function hasExistingAgentFiles(cwd: string): boolean {
+    return [...AGENT_FILES].some(f => existsSync(join(cwd, f)));
+}
+
+export function existingAgentFilesNoticeLines(): string[] {
+    return [
+        '\nNote: existing AGENTS.md / CLAUDE.md detected — the grill',
+        'will read them as project context. They are adopter-owned;',
+        'canon does not insert or merge a managed block into them.',
+    ];
+}
+
 function walkDir(dir: string, base: string = dir): string[] {
     const results: string[] = [];
     for (const entry of readdirSync(dir)) {
@@ -101,9 +113,9 @@ export function initCmd(_args: string[]): void {
 
     writeCanonVersion(cwd);
 
-    const hasExistingAgentFiles = skipped.some(f => AGENT_FILES.has(f));
+    const detectedExistingAgentFiles = hasExistingAgentFiles(cwd);
     console.log('');
-    launchGrill(cwd, hasExistingAgentFiles);
+    launchGrill(cwd, detectedExistingAgentFiles);
 }
 
 function writeCanonVersion(cwd: string): void {
@@ -149,8 +161,7 @@ function launchGrill(cwd: string, hasExistingAgentFiles: boolean): void {
     console.log('Claude will read your codebase, confirm its inferences, and ask targeted');
     console.log('questions to fill all docs in one pass.');
     if (hasExistingAgentFiles) {
-        console.log('\nNote: existing AGENTS.md / CLAUDE.md detected — the grill');
-        console.log('will run the merge protocol on them automatically.');
+        for (const line of existingAgentFilesNoticeLines()) console.log(line);
     }
     console.log('');
 }

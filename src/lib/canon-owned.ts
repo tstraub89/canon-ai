@@ -25,4 +25,4 @@ export const CANON_OWNED = [
     'scripts/docs-refs-check.mjs.d.ts',
 ] as const;
 
-export const DELIMITED = ['AGENTS.md', 'CLAUDE.md'] as const;
+export const DELIMITED = [] as const;

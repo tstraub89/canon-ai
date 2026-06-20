@@ -61,9 +61,9 @@ Anything that would change if you migrated to a different framework belongs here
 
 ## Validation
 
-> **TODO[canon]: Bind the [AGENTS.md Validation Matrix](../AGENTS.md#validation-matrix) categories to your project's actual commands. One row per category; mark N/A with rationale where a category doesn't apply.**
+> **TODO[canon]: Bind canon's validation categories to your project's actual commands. One row per category; mark N/A with rationale where a category doesn't apply.**
 
-| Category (from AGENTS.md) | Project binding |
+| Category | Project binding |
 |---|---|
 | Linting | `<command>` |
 | Type checking | `<command>` |

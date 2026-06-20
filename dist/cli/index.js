@@ -449,8 +449,6 @@ function checkDepForFlag(flag) {
 }
 
 // src/cli/commands/doctor.ts
-var CANON_END = "<!-- canon:end -->";
-var CANON_START_RE = /<!-- canon:start[^>]* -->/;
 var EXPECTED_TEMPLATES = [
   "spec.md",
   "plan.md",
@@ -586,17 +584,6 @@ function checkClaudeVersion(runner = defaultClaudeVersionRunner) {
     };
   }
   return { label, status: "pass" };
-}
-function checkAgentFile(cwd, filename) {
-  const path11 = join(cwd, filename);
-  if (!existsSync(path11)) {
-    return { label: filename, status: "fail", detail: "missing \u2014 run `canon init`" };
-  }
-  const content = readFileSync(path11, "utf8");
-  if (!CANON_START_RE.test(content) || !content.includes(CANON_END)) {
-    return { label: filename, status: "warn", detail: "no canon delimiters \u2014 run `canon init` to add them" };
-  }
-  return { label: filename, status: "pass" };
 }
 function checkCanonDiscoveryNudge(cwd) {
   const filenames = ["CLAUDE.md", "AGENTS.md"];
@@ -945,8 +932,6 @@ function doctorCmd(_args) {
   ];
   const codexDeprecated = checkCodexMdDeprecated(cwd);
   const canonChecks = [
-    checkAgentFile(cwd, "AGENTS.md"),
-    checkAgentFile(cwd, "CLAUDE.md"),
     checkCanonDiscoveryNudge(cwd),
     ...codexDeprecated ? [codexDeprecated] : [],
     checkTemplates(cwd),
@@ -1003,6 +988,16 @@ import { dirname, join as join2, relative } from "path";
 var packageDir = join2(dirname(fileURLToPath2(import.meta.url)), "../..");
 var templatesDir = join2(packageDir, "templates");
 var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md"]);
+function hasExistingAgentFiles(cwd) {
+  return [...AGENT_FILES].some((f) => existsSync2(join2(cwd, f)));
+}
+function existingAgentFilesNoticeLines() {
+  return [
+    "\nNote: existing AGENTS.md / CLAUDE.md detected \u2014 the grill",
+    "will read them as project context. They are adopter-owned;",
+    "canon does not insert or merge a managed block into them."
+  ];
+}
 function walkDir(dir, base = dir) {
   const results = [];
   for (const entry of readdirSync2(dir)) {
@@ -1061,9 +1056,9 @@ function initCmd(_args) {
     console.log("  canon run <id> --pr     # push + open draft PR");
   }
   writeCanonVersion(cwd);
-  const hasExistingAgentFiles = skipped.some((f) => AGENT_FILES.has(f));
+  const detectedExistingAgentFiles = hasExistingAgentFiles(cwd);
   console.log("");
-  launchGrill(cwd, hasExistingAgentFiles);
+  launchGrill(cwd, detectedExistingAgentFiles);
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
@@ -1071,7 +1066,7 @@ function writeCanonVersion(cwd) {
   mkdirSync(dirname(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
-function launchGrill(cwd, hasExistingAgentFiles) {
+function launchGrill(cwd, hasExistingAgentFiles2) {
   const skillPath = join2(cwd, ".claude", "skills", "canon-init", "SKILL.md");
   if (!existsSync2(skillPath)) {
     console.log("(grill skill not installed \u2014 fill docs manually for now)");
@@ -1082,9 +1077,8 @@ function launchGrill(cwd, hasExistingAgentFiles) {
   console.log("  /canon-init\n");
   console.log("Claude will read your codebase, confirm its inferences, and ask targeted");
   console.log("questions to fill all docs in one pass.");
-  if (hasExistingAgentFiles) {
-    console.log("\nNote: existing AGENTS.md / CLAUDE.md detected \u2014 the grill");
-    console.log("will run the merge protocol on them automatically.");
+  if (hasExistingAgentFiles2) {
+    for (const line of existingAgentFilesNoticeLines()) console.log(line);
   }
   console.log("");
 }
@@ -3735,22 +3729,22 @@ var CANON_OWNED = [
   "scripts/docs-refs-check.mjs",
   "scripts/docs-refs-check.mjs.d.ts"
 ];
-var DELIMITED = ["AGENTS.md", "CLAUDE.md"];
+var DELIMITED = [];
 
 // src/cli/commands/upgrade.ts
 var packageDir4 = join5(dirname4(fileURLToPath5(import.meta.url)), "../..");
-var CANON_END2 = "<!-- canon:end -->";
-var CANON_START_RE2 = /<!-- canon:start[^>]* -->/;
+var CANON_END = "<!-- canon:end -->";
+var CANON_START_RE = /<!-- canon:start[^>]* -->/;
 var HEADER_ONLY_SYNC = [
   "docs/pipeline-invocations.md"
 ];
 function mergeDelimited(templateContent, projectContent) {
-  if (!CANON_START_RE2.test(templateContent)) return null;
-  if (!CANON_START_RE2.test(projectContent)) return null;
-  const templateEnd = templateContent.indexOf(CANON_END2);
-  const projectEnd = projectContent.indexOf(CANON_END2);
+  if (!CANON_START_RE.test(templateContent)) return null;
+  if (!CANON_START_RE.test(projectContent)) return null;
+  const templateEnd = templateContent.indexOf(CANON_END);
+  const projectEnd = projectContent.indexOf(CANON_END);
   if (templateEnd === -1 || projectEnd === -1) return null;
-  return templateContent.slice(0, templateEnd + CANON_END2.length) + projectContent.slice(projectEnd + CANON_END2.length);
+  return templateContent.slice(0, templateEnd + CANON_END.length) + projectContent.slice(projectEnd + CANON_END.length);
 }
 var TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
 function mergeHeaderOnly(templateContent, projectContent) {
@@ -3833,7 +3827,8 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const malformed = [];
   const cutoverWarnings = [];
   const pending = [];
-  for (const rel of DELIMITED) {
+  const delimitedFiles = DELIMITED;
+  for (const rel of delimitedFiles) {
     const projectPath = join5(cwd, rel);
     const templatePath = join5(pkgDir, "templates", rel);
     if (!existsSync5(projectPath) || !existsSync5(templatePath)) {

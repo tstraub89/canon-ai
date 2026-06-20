@@ -393,3 +393,88 @@ Cross-references in `docs/codebase-map.md` that pointed at dropped sections are 
 - The `AGENT_FILES` set in `init.ts` line 19 (`new Set(['AGENTS.md', 'CLAUDE.md'])`) is retained — only the detection mechanism changes from `skipped.some(...)` to `existsSync`.
 - `runUpgrade` stale CLAUDE.md tests (lines ~861–936) construct their own local `tmplDir` — these do not reference the production `templates/` path. Delete them entirely; the `mergeDelimited` function behavior is still covered by the string-fixture unit tests.
 - The `ADOPTER_SHIPPED_PATHS` constant in `cli.test.ts` (~line 2395) uses `existsSync` to skip missing paths — so removing `templates/AGENTS.md`/`templates/CLAUDE.md` from the array is the correct change (not relying on the graceful skip). Do remove them.
+
+---
+
+## Reroute Plan
+
+### Delta
+
+The original implementation (Steps 1–15) is complete. This reroute adds the **amendment delta only**: strip `AGENTS.md`/`CLAUDE.md` read-instructions from the pipeline prompt helpers and add `docs/lessons-learned.md` to canon-ai's own `CLAUDE.md` reading list.
+
+Implement these steps in order; all prior plan steps already shipped and need no revisiting.
+
+---
+
+#### Reroute Step A — `scripts/run-task/prompts/helpers.ts`: drop agent-file read-instructions (AC-A1, AC-A2)
+
+Three targeted edits:
+
+1. **`CLAUDE_STARTUP` (`:5`)**: remove `AGENTS.md` from the opening read list.
+   ```
+   // Before:
+   'Read AGENTS.md and docs/patterns.md before starting.\n' +
+   // After:
+   'Read docs/patterns.md before starting.\n' +
+   ```
+
+2. **`CODEX_STARTUP` (`:13`)**: remove `AGENTS.md` from the opening read list.
+   ```
+   // Before:
+   'Read AGENTS.md, docs/patterns.md, and docs/codebase-map.md before starting.\n' +
+   // After:
+   'Read docs/patterns.md and docs/codebase-map.md before starting.\n' +
+   ```
+
+3. **`toResumePrompt` (`:49`)**: remove `AGENTS.md,` from the parenthetical in the resumed-session banner.
+   ```
+   // Before:
+   'Skip startup boilerplate re-reads (AGENTS.md, architecture docs, etc.)'
+   // After:
+   'Skip startup boilerplate re-reads (architecture docs, etc.)'
+   ```
+
+After editing, run the AC-A2 structural check:
+```
+git grep -nE 'AGENTS\.md|CLAUDE\.md' -- scripts/run-task/prompts/
+```
+Expected: no output.
+
+---
+
+#### Reroute Step B — `CLAUDE.md`: add `docs/lessons-learned.md` to conversational-session reading list (AC-A3)
+
+In the `## Starting a New Session → Conversational Session` reading list (current lines 31–33), add `docs/lessons-learned.md` as a skim-for-any-work entry. The current list:
+
+```markdown
+- Always read: `AGENTS.md`, this file
+- When writing a spec: `docs/product-context.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/codebase-map.md`
+- When orienting or resuming after a gap: `docs/architecture.md` and in-progress tasks under `tasks/`
+```
+
+Add a new bullet between "Always read" and "When writing a spec":
+```markdown
+- Skim for any work: `docs/lessons-learned.md` (recent distilled memory)
+```
+
+The "Always read" bullet is unchanged; the two existing context-conditional bullets remain.
+
+---
+
+#### Reroute Step C — Build, golden regeneration, and full validation (AC-A4)
+
+1. `npm run build` — rebuild `dist/` with the helpers.ts change baked in.
+2. `UPDATE_GOLDENS=1 npm test` — regenerate `tests/run-task-prompts.golden.json` (the helpers change flows into the CLAUDE/CODEX startup prompt snapshots).
+3. `npm test` — full suite must pass.
+4. `npm run lint` — must pass.
+5. `npm run docs-refs-check` — must pass (CLAUDE.md edit adds a docs reference).
+6. `npm run sync-templates:check` — must pass (`CLAUDE.md` is not CANON_OWNED so no template sync needed; confirm no unsynced mirrors).
+
+---
+
+### Notes for implementer (Reroute)
+
+- The three helpers.ts edits are mechanical — do not restructure the constant strings or add conditional logic.
+- `CLAUDE.md` is canon-ai-local after this task (not in `CANON_OWNED`, no `templates/` mirror); edit the root file only.
+- The `QA_STARTUP` constant already reads `docs/lessons-learned.md` (`helpers.ts:28`) — confirm it is untouched.
+- The golden regeneration will update the CLAUDE_STARTUP/CODEX_STARTUP snapshot rows; verify the diff shows only the `AGENTS.md` removal, nothing else.

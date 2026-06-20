@@ -130,7 +130,7 @@ Decisions can be reopened, but only with **strong justification and human approv
   - **Patch**: bug fixes only, no behavior change beyond fixing the bug.
   - **Minor**: new features (new pipeline phase, new validation gate, new template section, new agent capability) without breaking existing usage.
   - **Major**: breaking changes — anything that requires adopters to update their `.canon/templates/`, their `status.json` schema, their workflow expectations, or any canon-supplied policy in a way that breaks existing tasks mid-flight.
-  - **Guidance refinements are patch-eligible**: clarifying, tightening, or adding a rule of thumb / pitfall to *existing* canon guidance docs (`CLAUDE.md`, `AGENTS.md`, `docs/*`) is a patch even though it ships to adopters via `canon upgrade` — it refines guidance rather than adding a capability. A *new template section*, *new managed file*, *new pipeline phase/gate*, or *new agent capability* remains minor. Categorize net-new rules of thumb under `### Added` and edits to existing rules under `### Changed`.
+  - **Guidance refinements are patch-eligible**: clarifying, tightening, or adding a rule of thumb / pitfall to *existing* canon-owned guidance surfaces (`docs/*`, skills, prompts, templates) is a patch even though it ships to adopters via `canon upgrade` — it refines guidance rather than adding a capability. A *new template section*, *new managed file*, *new pipeline phase/gate*, or *new agent capability* remains minor. Categorize net-new rules of thumb under `### Added` and edits to existing rules under `### Changed`.
   - **Changed canon-supplied defaults are minor**: changing the default model or reasoning-effort the matrix selects for a phase/size (what adopters get unless they override an env var) is a **minor** behavior change, not a patch — adopters feel it as different cost/latency/quality even though it doesn't break existing tasks. It is human-authorized (minor) and goes under `### Changed`. (A pure prompt-wording refinement that does not change which model/effort runs stays patch.)
 
 - **Agent authorization**:
@@ -148,6 +148,16 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
+## Canon ships zero owned content into adopter agent files
+
+**Decision**: Adopter `AGENTS.md` and `CLAUDE.md` stay fully project-owned. Canon's reusable workflow rules ship through just-in-time prompt templates, Claude Code skills, task templates, and protected docs instead.
+
+**Why**: The rules that pipeline agents need are delivered at the phase or skill that consumes them. Keeping a multi-hundred-line canon-owned block in every adopter agent file duplicates that context, increases session load, and makes local project guidance harder to scan. A recommend-only discovery nudge is enough for fresh sessions to learn that a repo uses canon without canon owning the file.
+
+**Rule**: `AGENTS.md` and `CLAUDE.md` are not members of `CANON_OWNED` or `DELIMITED` in `src/lib/canon-owned.ts`. `canon init` does not create them; `canon upgrade` does not modify them. If a repo already has them, canon setup reads them as adopter-owned context only.
+
+---
+
 ## Canon prescribes no release model to adopters
 
 **Decision**: Canon's adopter-facing guidance prescribes no specific release model. The `--pr` / `--ship` / `base_branch` mechanics are model-neutral by design. Adopters may use release-branch-per-version, trunk-from-main, tag-from-main, no versioning, or any hybrid — canon supports all of them because `base_branch` is recorded **per task** in `status.json` at creation.
@@ -156,7 +166,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 The per-task `base_branch` also makes hybrid repos first-class: a project that ships one surface via release branches and another straight to `main` can use canon for both — it just records the appropriate `base_branch` when creating each task.
 
-**Rule**: Adopter-facing guidance — the skill files, every `CANON_OWNED` doc (e.g. `docs/pipeline-orchestrator.md`), and the delimited `AGENTS.md` / `CLAUDE.md` (see `CANON_OWNED` and `DELIMITED` in `src/lib/canon-owned.ts`) — must not present any single release model as required or as the canon default. When giving a worked example, label it as one common shape and name the authority pointer (the adopter's own `decisions.md §Versioning and Release Policy` and/or their release doc). Do not re-introduce unconditional release-branch framing in shipped surfaces; if a release-model-specific step is genuinely needed, scope it within a named recipe or a conditional clause.
+**Rule**: Adopter-facing guidance — the skill files, every `CANON_OWNED` doc (e.g. `docs/pipeline-orchestrator.md`), task templates, prompt templates, and other shipped canon-owned surfaces — must not present any single release model as required or as the canon default. When giving a worked example, label it as one common shape and name the authority pointer (the adopter's own `decisions.md §Versioning and Release Policy` and/or their release doc). Do not re-introduce unconditional release-branch framing in shipped surfaces; if a release-model-specific step is genuinely needed, scope it within a named recipe or a conditional clause.
 
 ---
 

@@ -54,8 +54,8 @@ The thesis: LLMs are excellent at writing code and bad at four specific things â
 ### Flow 1: Adopt canon-ai in a new repo (downstream user)
 
 1. Install the package: `npm install -D canon-ai` (or global). This pulls in the `canon` CLI plus bundled templates, skills, and orchestrator scripts.
-2. Run `canon init` in the target repo. It scaffolds `AGENTS.md`, `CLAUDE.md`, `.canon/` (templates, README), and the `docs/` stubs with `TODO[canon]` markers, and installs the `/canon-init` Claude Code skill.
-3. From Claude Code, run `/canon-init`. The skill grills on project context (stack, domain, delicate surfaces, voice) and fills the scaffolded docs with project-specific content.
+2. Run `canon init` in the target repo. It scaffolds `.canon/` (templates, README), the canon-owned skills, and the `docs/` stubs with `TODO[canon]` markers.
+3. From Claude Code, run `/canon-init`. The skill grills on project context (stack, domain, delicate surfaces, voice), reads any pre-existing adopter-owned agent files as context, and fills the scaffolded docs with project-specific content.
 4. Create the first task: `canon task new <id> <title>`. Write a spec conversationally with Claude (or invoke `/spec`).
 5. Run the pipeline: `canon run <id>`.
 

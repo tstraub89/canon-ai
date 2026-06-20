@@ -103,7 +103,9 @@ cd your-project
 canon init
 ```
 
-`canon init` installs a set of Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, and the `docs/` knowledge corpus tailored to your project.
+`canon init` installs the canon task templates and Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the `docs/` knowledge corpus tailored to your project.
+
+`AGENTS.md` and `CLAUDE.md` are adopter-owned. Canon does not scaffold or modify them; if they already exist, `/canon-init` reads them as project context. Add the discovery nudge below when you want future agent sessions to notice canon immediately.
 
 The other installed skills (auto-trigger on natural-language phrases — see each skill's frontmatter for the trigger set):
 
@@ -137,6 +139,10 @@ This project uses canon, a spec-first multi-agent pipeline.
 Route new features / fixes / refactors through the canon skills.
 Start with `/canon-spec` rather than implementing directly.
 ```
+
+### Independent review for inline work
+
+For below-pipeline changes or XS inline work, do not self-review. Use `/canon-inline-review` for an independent cross-review before committing, or `codex review` if you are not running canon.
 
 ### Skip the permission prompts (optional)
 
@@ -216,7 +222,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 | `canon run <id> --ship` | After PR approval: squash-merge, delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
 | `canon stop <id>` | Stop a detached canon run (SIGTERM → SIGKILL after 10s). Waits up to 30s — override via `CANON_STOP_WAIT_MS` — for the orchestrator's first heartbeat to verify the PID before signaling. |
-| `canon upgrade` | Sync vendored files to match installed version. Refuses to overwrite locally-modified managed files unless `--force` is set. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
+| `canon upgrade` | Sync vendored canon-owned files to match the installed version. It does not touch adopter-owned `AGENTS.md` or `CLAUDE.md`. Refuses to overwrite locally-modified canon-owned files unless `--force` is set. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
 | `canon update` | Update the canon-ai package itself |
 
 Full `canon task` subcommand reference is in `docs/pipeline-orchestrator.md`.
@@ -246,13 +252,13 @@ Canon is two products:
 
 ### Layer 1: The Scaffold
 
-The portable structure: orchestration scripts, task templates, agent rules (`AGENTS.md` / `CLAUDE.md`), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs.
+The portable structure: orchestration scripts, task templates, the agent rules (delivered just-in-time through the per-phase prompt templates and `/canon-*` skills), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs. `AGENTS.md` / `CLAUDE.md` are adopter-owned — canon does not ship or modify them.
 
 Drop this into any repo and you have:
 
 - A working multi-agent pipeline that runs spec → review → implement → review → QA without intervention
 - Templates for every artifact the pipeline produces
-- The discipline (low-padding communication norms, two-stage code review, code-is-canonical, etc.) baked into the agent rules
+- The discipline (low-padding communication norms, two-stage code review, code-is-canonical, etc.) carried by the pipeline's per-phase prompts and `/canon-*` skills
 - A knowledge corpus structure (`docs/patterns.md`, `docs/decisions.md`, `docs/codebase-map.md`) you fill in as your project's conventions emerge
 
 ### Layer 2: The Bootstrap CLI
@@ -268,7 +274,7 @@ Drop this into any repo and you have:
 - Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
 - `canon task` lifecycle CLI (new / list / status / phase / accept / reset-spec-review / post-merge-sync), in-process TS.
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
-- `AGENTS.md` / `CLAUDE.md` — workflow rules and per-agent guidance
+- Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`scripts/run-task/prompts/templates/`) and the `/canon-*` skills — not shipped into `AGENTS.md` / `CLAUDE.md` (adopter-owned)
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/settings.json` — Claude Code permissions + SessionStart hook
 - Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)
@@ -276,8 +282,8 @@ Drop this into any repo and you have:
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**
 
-- Validation matrix in `AGENTS.md` (which checks apply to which change types)
-- Implementation Rules sections in `AGENTS.md` (state, styling, perf, testing, gating, assets, analytics — project-specific)
+- Validation command bindings in `docs/architecture.md` §Validation (which commands satisfy each check category — the universal category matrix ships complete in `implement.md` / `.canon/templates/spec.md`)
+- Project-specific implementation conventions (state, styling, perf, testing, gating, assets, analytics) captured in `docs/patterns.md` / `docs/decisions.md` as they emerge (the universal implementation rules ship complete in `implement.md`)
 - All `docs/*.md` content (the templates teach you the format; the substance is yours — partially generated by `/canon-init`)
 
 ❌ **Not in scope for MVP:**

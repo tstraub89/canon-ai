@@ -14,9 +14,6 @@ interface Check {
     detail?: string;
 }
 
-const CANON_END = '<!-- canon:end -->';
-const CANON_START_RE = /<!-- canon:start[^>]* -->/;
-
 export const EXPECTED_TEMPLATES = [
     'spec.md', 'plan.md', 'handoff.md', 'review.md',
     'done.md', 'spec-review.md', 'notes.md', 'status.json', 'pr-body.md',
@@ -192,18 +189,6 @@ export function checkClaudeVersion(runner: ClaudeVersionRunner = defaultClaudeVe
     }
 
     return { label, status: 'pass' };
-}
-
-export function checkAgentFile(cwd: string, filename: string): Check {
-    const path = join(cwd, filename);
-    if (!existsSync(path)) {
-        return { label: filename, status: 'fail', detail: 'missing — run `canon init`' };
-    }
-    const content = readFileSync(path, 'utf8');
-    if (!CANON_START_RE.test(content) || !content.includes(CANON_END)) {
-        return { label: filename, status: 'warn', detail: 'no canon delimiters — run `canon init` to add them' };
-    }
-    return { label: filename, status: 'pass' };
 }
 
 export function checkCanonDiscoveryNudge(cwd: string): Check {
@@ -666,8 +651,6 @@ export function doctorCmd(_args: string[]): void {
 
     const codexDeprecated = checkCodexMdDeprecated(cwd);
     const canonChecks: Check[] = [
-        checkAgentFile(cwd, 'AGENTS.md'),
-        checkAgentFile(cwd, 'CLAUDE.md'),
         checkCanonDiscoveryNudge(cwd),
         ...(codexDeprecated ? [codexDeprecated] : []),
         checkTemplates(cwd),

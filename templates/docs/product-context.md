@@ -43,7 +43,7 @@ Rule of thumb: if a non-engineer (product owner, designer, marketing) needed to 
 
 ## Tiers, Sizes, and Authorization
 
-This section covers how this project uses the canon `task_size` × `delicate` matrix. Canon's general definitions are in [`CLAUDE.md`](../CLAUDE.md) Quick Refs; this section names project-specific surfaces.
+This section covers how this project uses the canon `task_size` × `delicate` matrix. Canon's general definitions live in the pipeline prompts and `docs/pipeline-orchestrator.md`; this section names project-specific surfaces.
 
 ### `delicate` flag — project-specific domains
 

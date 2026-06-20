@@ -2,7 +2,7 @@ import { resolveTaskCwd } from '../state.js';
 import type { TaskContext } from '../types.js';
 
 export const CLAUDE_STARTUP =
-    'Read AGENTS.md and docs/patterns.md before starting.\n' +
+    'Read docs/patterns.md before starting.\n' +
     'Skim docs/lessons-learned.md for entries relevant to your task area.\n' +
     'Read docs/architecture.md if the task touches core data flow or state management.\n' +
     'Read docs/product-context.md if the task touches user-visible behavior or Pro features.\n' +
@@ -10,7 +10,7 @@ export const CLAUDE_STARTUP =
     'Communication: tone is project taste; honest signal is canon discipline — surface real disagreement rather than yielding to politeness.';
 
 export const CODEX_STARTUP =
-    'Read AGENTS.md, docs/patterns.md, and docs/codebase-map.md before starting.\n' +
+    'Read docs/patterns.md and docs/codebase-map.md before starting.\n' +
     'Skim docs/lessons-learned.md for entries relevant to your task area.\n' +
     'Skip docs/decisions.md, docs/product-context.md unless the task explicitly involves product or UX decisions.\n' +
     'Ground every claim in the current file, diff, or artifact before you state it. Do not rely on prior-session memory for code existence, validation results, or completion status.\n' +
@@ -46,5 +46,5 @@ export function toResumePrompt(prompt: string): string {
     for (const block of [CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP]) {
         trimmed = trimmed.replace(`\n\n${block}\n\n`, '\n\n');
     }
-    return `[Resumed session — project context loaded. Skip startup boilerplate re-reads (AGENTS.md, architecture docs, etc.) — re-read any task-specific files explicitly requested in this prompt, then verify the current working tree or artifact before claiming anything is already done.]\n\n${trimmed.trimStart()}`;
+    return `[Resumed session — project context loaded. Skip startup boilerplate re-reads (architecture docs, etc.) — re-read any task-specific files explicitly requested in this prompt, then verify the current working tree or artifact before claiming anything is already done.]\n\n${trimmed.trimStart()}`;
 }

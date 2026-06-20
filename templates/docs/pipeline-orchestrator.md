@@ -4,7 +4,7 @@ Reference for driving canon's pipeline: CLI surface, flags, task-management subc
 
 For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`). For **adversarial pre-pipeline spec review** on M/L/XL or delicate tasks, see `/canon-spec-review`.
 
-`AGENTS.md` is the source of truth for *roles, escalation, implementation rules, validation, git, and release*. This file is the source of truth for *how to operate the pipeline*.
+Canon's phase prompts, skills, and templates deliver reusable roles, implementation rules, validation, git, and release guidance just in time. This file is the source of truth for *how to operate the pipeline*.
 
 ## Operator
 
@@ -292,7 +292,7 @@ At `human_review` with `--push` or `--pr`, the orchestrator auto-commits a scope
 
 - **`tasks/<id>/`** — task artifacts (spec, plan, handoff, review, done, pr-body, notes).
 - **`PIPELINE_TELEMETRY_FILES`** (`docs/lessons-learned.md`, `docs/task-quality-log.md`, `docs/pipeline-invocations.md`) — always auto-committed.
-- **`PIPELINE_MANAGED_DOCS`** (`docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/pipeline-orchestrator.md`, `docs/product-context.md`) — auto-committed when the task's `spec.md` `### Affected Files` table lists the doc. **QA-done widening**: once a task's `qa.status === 'done'`, the allow-list expands to the full `PIPELINE_MANAGED_DOCS` set regardless of Affected Files. QA's Docs Freshness step (`AGENTS.md` §Docs Freshness) corrects stale references in protected docs the spec author couldn't have predicted (codebase-map drift, patterns/pitfalls contradicted by the task's behavior change); widening at QA-done avoids forcing a manual spec backfill before `--pr`. QA does **not** promote lessons-learned entries into these docs — promotion is a human-only sweep; QA only appends to `docs/lessons-learned.md` and corrects stale references in the protected set. Tasks that edit a managed doc *before* QA must still list it in Affected Files.
+- **`PIPELINE_MANAGED_DOCS`** (`docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/pipeline-orchestrator.md`, `docs/product-context.md`) — auto-committed when the task's `spec.md` `### Affected Files` table lists the doc. **QA-done widening**: once a task's `qa.status === 'done'`, the allow-list expands to the full `PIPELINE_MANAGED_DOCS` set regardless of Affected Files. QA's Docs Freshness guidance in the QA prompt corrects stale references in protected docs the spec author couldn't have predicted (codebase-map drift, patterns/pitfalls contradicted by the task's behavior change); widening at QA-done avoids forcing a manual spec backfill before `--pr`. QA does **not** promote lessons-learned entries into these docs — promotion is a human-only sweep; QA only appends to `docs/lessons-learned.md` and corrects stale references in the protected set. Tasks that edit a managed doc *before* QA must still list it in Affected Files.
 
 The `--pr` body resolution order is `CANON_PR_BODY` → populated `tasks/<id>/pr-body.md` (single task only) → repo PR template file → `--fill`. Bundles log that per-task QA bodies are not combined and fall back to the template/`--fill` path in this version.
 
@@ -458,14 +458,14 @@ The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amend
 
 ## Customizing Canon for Your Project
 
-Project-level customization happens at the files canon scaffolded into your repo: `AGENTS.md`, `CLAUDE.md`, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads them on every session start.
+Project-level customization happens in the adopter-owned operator files, when present, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads the project's operator context and protected docs on session start.
 
 Task templates are managed by canon — `canon upgrade` overwrites `.canon/templates/*`. To customize a template for your project without losing your changes on upgrade, copy it to `tasks/_templates/<file>` — `canon task new` checks there first and falls back to `.canon/templates/`.
 
 ## Related References
 
-- `AGENTS.md` — workflow rules, roles, escalation, validation, git/release.
-- `CLAUDE.md` — Claude phase-specific guidance (spec authorship, code review, QA).
+- `AGENTS.md` / `CLAUDE.md` — adopter-owned operator context, when present.
+- Canon skills and prompt templates — reusable phase guidance delivered just in time.
 - `docs/patterns.md` — implementation patterns and Known Pitfalls.
 - `docs/decisions.md` — settled architectural decisions.
 - `/canon-pipeline` — command patterns and snag-recovery flows for operating the pipeline.

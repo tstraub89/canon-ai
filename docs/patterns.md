@@ -9,7 +9,7 @@ This is the project's hard-won implementation knowledge. It has two main section
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
 2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. The orchestrator pre-injects task-relevant pitfalls into Codex's implement prompt; agents still need this file open for spec authorship and code review.
 
-> **Layering rule.** This file is **project-specific** — it holds patterns and pitfalls unique to canon-ai's own internals (or, for adopters, unique to their stack). **Canon-supplied universal rules** (agent discipline, harness behavior, spec/review rules of thumb) live in [`AGENTS.md`](../AGENTS.md) and [`CLAUDE.md`](../CLAUDE.md). If you're tempted to add a rule here that would apply to *every* canon project, it belongs in policy, not patterns.
+> **Layering rule.** This file is **project-specific** — it holds patterns and pitfalls unique to canon-ai's own internals (or, for adopters, unique to their stack). **Canon-supplied universal rules** (agent discipline, harness behavior, spec/review rules of thumb) are delivered just-in-time through skills, per-phase prompt templates, and agent charters. Ambient operator norms specific to canon-ai are in [`CLAUDE.md`](../CLAUDE.md). If you're tempted to add a rule here that would apply to *every* canon project, it belongs in a skill or prompt template, not patterns.
 
 > **canon-ai is a CLI orchestrator.** Patterns here are about modifying canon-ai's own harness internals (orchestrator scripts, templates, validation gates). When dropped into a downstream project, this file is rewritten for that project's stack.
 
@@ -53,7 +53,7 @@ Plus:
 5. `src/task/index.ts` `VALID_PHASES` set and `assertValidPhase()` (so the helper accepts the new phase name)
 6. `.canon/templates/status.json` (add the new phase entry with a default `status` and `agent`)
 7. If the phase has model/effort needs distinct from existing phases: add it to the matrices in `pipeline-policy.ts` and `tests/pipeline-policy.test.ts`
-8. Document in `AGENTS.md` (handoff sequence + workflow diagram) and any agent-specific implications in `CLAUDE.md`
+8. Document in `docs/pipeline-orchestrator.md` (handoff sequence + workflow diagram) and any always-on operator implications in `CLAUDE.md`
 
 **Anti-pattern**: updating only one or two of the switch statements. Missing one produces silent skipping (the orchestrator routes past the phase without running it) or inconsistent routing state.
 
@@ -88,7 +88,7 @@ For breaking changes (renames, type changes), also: add a migration shim that de
 
 ### Lint & Type Safety Policy
 
-> Always-applicable rules. *(Same content lives in `AGENTS.md` for canonical reference; reproduced here for convenience when a contributor is reading patterns mid-task.)*
+> Always-applicable rules. *(Canonical home is the `implement` prompt template (`scripts/run-task/prompts/templates/implement.md`); reproduced here for convenience when a contributor is reading patterns mid-task.)*
 
 Suppressing lint or type errors is a last resort, not a convenience escape hatch. Each suppression hides a diagnostic that exists to catch real bugs.
 
@@ -98,7 +98,7 @@ Suppressing lint or type errors is a last resort, not a convenience escape hatch
 
 ## Known Pitfalls
 
-> Hard-won lessons specific to canon-ai's internals. Universal agent-discipline pitfalls (handoff verification, test discipline, name-effects-to-delete, etc.) live in [`CLAUDE.md`](../CLAUDE.md). Universal harness-behavior pitfalls (don't hand-edit `status.json`, parallel run-task safety, etc.) live in `CLAUDE.md` Quick Refs and the Validation Matrix in [`AGENTS.md`](../AGENTS.md).
+> Hard-won lessons specific to canon-ai's internals. Universal agent-discipline pitfalls (handoff verification, test discipline, name-effects-to-delete, etc.) are delivered just-in-time via the per-phase prompt templates and agent charters. Always-on operator habits live in [`CLAUDE.md`](../CLAUDE.md).
 
 ### Adding a phase that updates only some switch statements is a silent-skip footgun.
 

@@ -18,7 +18,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 
 | What | Where |
 |---|---|
-| Workflow source of truth | `AGENTS.md` |
+| Workflow source of truth | per-phase prompts (`scripts/run-task/prompts/`) + `docs/pipeline-orchestrator.md` |
 | Claude (architect/reviewer) guide | `CLAUDE.md` |
 | Project pitch + adoption guide | `README.md` |
 | Per-task state machine | `.canon/templates/status.json` |
@@ -162,13 +162,13 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > Common changes that touch multiple files. Use as starting checklists, not exhaustive.
 
 **Add a new pipeline phase**:
-> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `src/task/index.ts` (`VALID_PHASES`, `assertValidPhase()`) → `.canon/templates/status.json` → `AGENTS.md` (handoff sequence + workflow diagram) → `docs/pipeline-orchestrator.md`
+> `scripts/pipeline-policy.ts` (if it has model/effort needs) → `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `src/task/index.ts` (`VALID_PHASES`, `assertValidPhase()`) → `.canon/templates/status.json` → `docs/pipeline-orchestrator.md`
 
 **Add a new validation check (handoff or pre-flight gate)**:
 > `scripts/run-task/validation.ts` (or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `.canon/templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)
 
 **Change pipeline tier or sizing rules**:
-> `scripts/pipeline-policy.ts` (the matrix) → `tests/pipeline-policy.test.ts` → `AGENTS.md` (Pipeline Tiers section) → `docs/pipeline-orchestrator.md` (model/effort matrix)
+> `scripts/pipeline-policy.ts` (the matrix) → `tests/pipeline-policy.test.ts` → `docs/pipeline-orchestrator.md` (model/effort matrix + tier/sizing tables)
 
 **Change model selection**:
 > `scripts/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
@@ -177,7 +177,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `scripts/run-task/types.ts` (`Verdict` union) → `src/task/index.ts` (`VALID_VERDICTS` + `assertValidVerdict()` — the runtime validator diverges from the type union by design) → `src/cli/index.ts` (help text) → `scripts/run-task/validation.ts` (`extractCheckedVerdict()` regex) — all four. TypeScript compiles cleanly with only the first; `canon task phase … <new_verdict>` then fails at runtime with "unknown verdict".
 
 **Add a new task-template field or section**:
-> `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → relevant section in `AGENTS.md` (handoff protocol) and `CLAUDE.md` (authorship rules)
+> `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `scripts/run-task/validation.ts`) → per-phase prompt templates in `scripts/run-task/prompts/templates/`
 
 **Add a CLI flag / `CliArgs` field**:
 > `scripts/run-task/types.ts` (the `CliArgs` type) → `scripts/run-task/cli.ts` (parser + usage text) → `tests/run-task-cli.test.ts` (asserts the full parsed-object shape) — all three. Omitting `types.ts` blocks type-check; omitting the test fails the parser-shape snapshot.
@@ -189,7 +189,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 
 | What | Where | Notes |
 |---|---|---|
-| Workflow source of truth | `AGENTS.md` | All agents follow this |
-| Claude instructions | `CLAUDE.md` | Architect + reviewer context |
+| Operator role summary | `AGENTS.md` | Ambient operator context; reusable rules are delivered JIT via skills/prompts |
+| Claude operator guide | `CLAUDE.md` | Ambient Claude context; phase rules are delivered JIT via skills/prompts |
 | Agent permissions | `.claude/settings.json` | Allowlisted commands |
 | Task artifacts | `tasks/` | Per-task specs, plans, reviews |

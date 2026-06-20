@@ -80,7 +80,7 @@ void test('wholesale sync moves root content to templates and stays one-way', ()
     });
 });
 
-void test('delimited sync preserves templates outside-delimiter content and ignores root tail', () => {
+void test('mergeDelimitedForSync: preserves outside-delimiter content and ignores root tail', () => {
     withTempDir(root => {
         seedCanonFixture(root);
         const rootAgents = [
@@ -102,9 +102,6 @@ void test('delimited sync preserves templates outside-delimiter content and igno
             '',
         ].join('\n');
 
-        writeFile(root, 'AGENTS.md', rootAgents);
-        writeFile(root, 'templates/AGENTS.md', templatesAgents);
-
         assert.equal(
             syncCanonTemplates.mergeDelimitedForSync(rootAgents, templatesAgents),
             [
@@ -117,22 +114,6 @@ void test('delimited sync preserves templates outside-delimiter content and igno
                 '',
             ].join('\n'),
         );
-        assert.deepEqual(syncCanonTemplates.checkSync(root), ['templates/AGENTS.md']);
-        assert.deepEqual(syncCanonTemplates.applySync(root), ['templates/AGENTS.md']);
-        assert.equal(
-            fs.readFileSync(path.join(root, 'templates/AGENTS.md'), 'utf8'),
-            [
-                '# AGENTS',
-                '',
-                '<!-- canon:start -->',
-                'root-canon-content',
-                '<!-- canon:end -->',
-                'adopter-tail',
-                '',
-            ].join('\n'),
-        );
-        assert.doesNotMatch(fs.readFileSync(path.join(root, 'templates/AGENTS.md'), 'utf8'), /root-tail/);
-        assert.deepEqual(syncCanonTemplates.checkSync(root), []);
     });
 });
 
@@ -146,23 +127,6 @@ void test('checkSync CLI exits 0 for clean fixtures and 1 for drifted fixtures',
         seedCanonFixture(root);
         writeFile(root, 'docs/pipeline-orchestrator.md', 'same content\n');
         writeFile(root, 'templates/docs/pipeline-orchestrator.md', 'same content\n');
-        writeFile(root, 'AGENTS.md', [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'same',
-            '<!-- canon:end -->',
-            '',
-        ].join('\n'));
-        writeFile(root, 'templates/AGENTS.md', [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'same',
-            '<!-- canon:end -->',
-            '',
-        ].join('\n'));
-
         const clean = runCheckCli(root);
         assert.equal(clean.status, 0, clean.stderr);
         assert.match(clean.stdout, /All canon-managed files in sync/);
@@ -294,24 +258,6 @@ void test('findSyncErrors flags wholesale canon-managed source missing on both s
     });
 });
 
-void test('findSyncErrors flags delimited canon-managed source missing on both sides', () => {
-    withTempDir(root => {
-        // Set up every WHOLESALE_SYNC entry so only the DELIMITED loop produces
-        // errors. The AGENTS.md / CLAUDE.md sources are absent on
-        // both sides; the delimited loop must flag each.
-        for (const wholesalePath of (syncCanonTemplatesRaw as unknown as { WHOLESALE_SYNC: readonly string[] }).WHOLESALE_SYNC) {
-            writeFile(root, wholesalePath, 'placeholder\n');
-            writeFile(root, `templates/${wholesalePath}`, 'placeholder\n');
-        }
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        const delimitedErrors = errors.filter(e => e.startsWith('[delimited]'));
-        assert.ok(delimitedErrors.length > 0, 'expected delimited errors for missing AGENTS/CLAUDE sources');
-        for (const error of delimitedErrors) {
-            assert.match(error, /no source, no mirror|cannot sync/);
-        }
-    });
-});
-
 void test('checkSync CLI exits 1 when a wholesale source is missing but the target exists', () => {
     withTempDir(root => {
         writeFile(root, 'templates/docs/pipeline-orchestrator.md', 'orphaned\n');
@@ -322,59 +268,12 @@ void test('checkSync CLI exits 1 when a wholesale source is missing but the targ
     });
 });
 
-void test('findSyncErrors flags a delimited templates/ file missing canon markers', () => {
-    withTempDir(root => {
-        writeFile(root, 'AGENTS.md', '# AGENTS\n<!-- canon:start -->\nbody\n<!-- canon:end -->\n');
-        writeFile(root, 'templates/AGENTS.md', '# AGENTS\nplain — markers gone\n');
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        assert.ok(
-            errors.some(e => /\[delimited\] templates\/AGENTS\.md is missing canon delimiters/.test(e)),
-            `expected "templates AGENTS missing markers" error; got: ${errors.join(' | ')}`,
-        );
-    });
-});
-
-void test('checkSync CLI exits 1 when a delimited templates/ file is missing canon markers', () => {
-    withTempDir(root => {
-        writeFile(root, 'AGENTS.md', '# AGENTS\n<!-- canon:start -->\nbody\n<!-- canon:end -->\n');
-        writeFile(root, 'templates/AGENTS.md', '# AGENTS\nplain — markers gone\n');
-        const result = runCheckCli(root);
-        assert.equal(result.status, 1, result.stdout);
-        assert.match(result.stderr, /\[delimited\] templates\/AGENTS\.md is missing canon delimiters/);
-        assert.doesNotMatch(result.stdout, /All canon-managed files in sync/);
-    });
-});
-
-void test('findSyncErrors flags a delimited root file missing canon markers', () => {
-    withTempDir(root => {
-        writeFile(root, 'AGENTS.md', '# AGENTS\nplain — markers gone\n');
-        writeFile(root, 'templates/AGENTS.md', '# AGENTS\n<!-- canon:start -->\nbody\n<!-- canon:end -->\n');
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        assert.ok(
-            errors.some(e => /\[delimited\] source AGENTS\.md is missing canon delimiters/.test(e)),
-            `expected "source AGENTS missing markers" error; got: ${errors.join(' | ')}`,
-        );
-    });
-});
-
-void test('findSyncErrors flags a delimited pair where neither side has canon markers', () => {
-    withTempDir(root => {
-        writeFile(root, 'AGENTS.md', '# AGENTS\nno markers here\n');
-        writeFile(root, 'templates/AGENTS.md', '# AGENTS\nno markers here either\n');
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        assert.ok(
-            errors.some(e => /\[delimited\] both AGENTS\.md and templates\/AGENTS\.md are missing canon delimiters/.test(e)),
-            `expected "both AGENTS missing markers" error; got: ${errors.join(' | ')}`,
-        );
-    });
-});
-
 // --- Canon-internal-leak guard ------------------------------------------
 // Backtick refs to canon's orchestrator source (`scripts/run-task/...`)
 // must not appear in canon-managed shipped content — adopter repos don't
 // have those files, and the leak surfaces as broken refs in their
 // `docs-refs-check.mjs` at upgrade time. Pre-1.6.1, four such refs leaked
-// into 1.6.0 (CLAUDE.md and docs/pipeline-orchestrator.md), motivating
+// into 1.6.0 (operator docs and docs/pipeline-orchestrator.md), motivating
 // this guard.
 
 void test('findSyncErrors flags canon-internal leak in a wholesale-synced markdown file', () => {
@@ -395,108 +294,6 @@ void test('findSyncErrors flags canon-internal leak in a wholesale-synced markdo
         assert.ok(
             errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*scripts\/run-task\/main\.ts/.test(e)),
             `expected canon-internal-leak error for docs/pipeline-orchestrator.md; got: ${errors.join(' | ')}`,
-        );
-    });
-});
-
-void test('findSyncErrors flags canon-internal leak inside the canon-delimited region of a DELIMITED file', () => {
-    withTempDir(root => {
-        seedCanonFixture(root);
-        const leaked = [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'body line',
-            'See `scripts/run-task/git.ts` for the auto-commit logic.',
-            '<!-- canon:end -->',
-            'adopter tail',
-            '',
-        ].join('\n');
-        writeFile(root, 'AGENTS.md', leaked);
-        writeFile(root, 'templates/AGENTS.md', leaked);
-
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        // The leak is on file-line 5 (1-indexed). The guard must report
-        // that file-line number, not a region-offset line number.
-        assert.ok(
-            errors.some(e => /\[canon-internal-leak\] AGENTS\.md:5 .*scripts\/run-task\/git\.ts/.test(e)),
-            `expected canon-internal-leak error at AGENTS.md:5; got: ${errors.join(' | ')}`,
-        );
-    });
-});
-
-void test('findSyncErrors does NOT flag canon-internal refs in the ROOT-side outside-delimiter tail of a DELIMITED file', () => {
-    withTempDir(root => {
-        seedCanonFixture(root);
-        // The root-side tail (below canon:end in AGENTS.md / CLAUDE.md at
-        // REPO_ROOT) is canon-ai-dev local-only — never ships.
-        // Refs to canon internals there are fine.
-        const withRootTailLeak = [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'clean body',
-            '<!-- canon:end -->',
-            '',
-            'Maintainer note: see `scripts/run-task/main.ts` for the impl.',
-            '',
-        ].join('\n');
-        const cleanTemplate = [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'clean body',
-            '<!-- canon:end -->',
-            '',
-            'adopter-default tail (clean)',
-            '',
-        ].join('\n');
-        writeFile(root, 'AGENTS.md', withRootTailLeak);
-        writeFile(root, 'templates/AGENTS.md', cleanTemplate);
-
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        const leakErrors = errors.filter(e => e.startsWith('[canon-internal-leak]'));
-        assert.deepEqual(
-            leakErrors,
-            [],
-            `expected no canon-internal-leak errors for root-side tail content; got: ${leakErrors.join(' | ')}`,
-        );
-    });
-});
-
-void test('findSyncErrors flags canon-internal leak in the TEMPLATES-side preserved tail of a DELIMITED file', () => {
-    // Codex P2 finding: the templates-side tail (post canon:end) is what
-    // ships to adopters as their default starting content. A leak there
-    // bypasses the source canon-region scan but still reaches adopters.
-    withTempDir(root => {
-        seedCanonFixture(root);
-        const cleanRoot = [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'clean body',
-            '<!-- canon:end -->',
-            '',
-            'canon-ai-dev maintainer notes (do not ship)',
-            '',
-        ].join('\n');
-        const templateWithTailLeak = [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'clean body',
-            '<!-- canon:end -->',
-            '',
-            'Adopter tail starting content — see `scripts/run-task/main.ts` here.',
-            '',
-        ].join('\n');
-        writeFile(root, 'AGENTS.md', cleanRoot);
-        writeFile(root, 'templates/AGENTS.md', templateWithTailLeak);
-
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        assert.ok(
-            errors.some(e => /\[canon-internal-leak\] templates\/AGENTS\.md:7 .*scripts\/run-task\/main\.ts/.test(e)),
-            `expected canon-internal-leak error at templates/AGENTS.md:7; got: ${errors.join(' | ')}`,
         );
     });
 });
@@ -570,38 +367,6 @@ void test('findSyncErrors does NOT flag refs that resolve outside the repo root'
     });
 });
 
-void test('findSyncErrors flags canon-internal leak in the source tail on first-create of a DELIMITED template', () => {
-    // Codex P1 on the 1.6.1 hotfix-leak diff: when `templates/<file>` is
-    // absent, `buildSyncPlan()` writes the FULL source content (including
-    // the source tail) as the new template's content. Refs to canon
-    // internals in the source tail are legitimate there for canon-ai-dev's
-    // local notes, but they'd ship to adopters as the template's default
-    // tail. The guard must scan the source tail on this first-create path.
-    withTempDir(root => {
-        seedCanonFixture(root);
-        const sourceWithTailLeak = [
-            '# AGENTS',
-            '',
-            '<!-- canon:start -->',
-            'clean canon-managed body',
-            '<!-- canon:end -->',
-            '',
-            'canon-ai-dev maintainer note: see `scripts/run-task/main.ts` for the impl.',
-            '',
-        ].join('\n');
-        writeFile(root, 'AGENTS.md', sourceWithTailLeak);
-        // Remove the seeded templates/AGENTS.md so we hit the first-create
-        // branch.
-        fs.rmSync(path.join(root, 'templates/AGENTS.md'));
-
-        const errors = syncCanonTemplates.findSyncErrors(root);
-        assert.ok(
-            errors.some(e => /\[canon-internal-leak\] AGENTS\.md:7 .*scripts\/run-task\/main\.ts.*source tail would ship/.test(e)),
-            `expected first-create source-tail canon-internal-leak error; got: ${errors.join(' | ')}`,
-        );
-    });
-});
-
 void test('checkSync CLI exits 1 with a canon-internal-leak message when a leak is present', () => {
     withTempDir(root => {
         seedCanonFixture(root);
@@ -616,21 +381,5 @@ void test('checkSync CLI exits 1 with a canon-internal-leak message when a leak 
             /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*scripts\/run-task\/validation\.ts/,
         );
         assert.doesNotMatch(result.stdout, /All canon-managed files in sync/);
-    });
-});
-
-void test('applySync CLI exits 1 (not 0) when errors are present', () => {
-    withTempDir(root => {
-        // Set up a clean wholesale pair AND a broken delimited pair.
-        writeFile(root, 'docs/pipeline-orchestrator.md', 'same\n');
-        writeFile(root, 'templates/docs/pipeline-orchestrator.md', 'same\n');
-        writeFile(root, 'AGENTS.md', '# AGENTS\n<!-- canon:start -->\nbody\n<!-- canon:end -->\n');
-        writeFile(root, 'templates/AGENTS.md', '# AGENTS\nno markers\n');
-
-        const result = spawnSync(tsxBin, [scriptPath, '--apply'], { cwd: root, encoding: 'utf8' });
-        assert.equal(result.status, 1, result.stdout);
-        assert.match(result.stderr, /\[delimited\] templates\/AGENTS\.md is missing canon delimiters/);
-        // The broken file is NOT overwritten (still plain).
-        assert.equal(fs.readFileSync(path.join(root, 'templates/AGENTS.md'), 'utf8'), '# AGENTS\nno markers\n');
     });
 });

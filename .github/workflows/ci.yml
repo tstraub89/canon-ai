@@ -122,8 +122,6 @@ jobs:
             exit 1
           fi
           PATH="$SHIM_DIR" canon init
-          test -f AGENTS.md
-          test -f CLAUDE.md
           test -d .canon/templates
           test -d .claude/skills
           PATH="$SHIM_DIR" canon doctor

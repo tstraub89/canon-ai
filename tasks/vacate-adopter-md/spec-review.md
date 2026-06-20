@@ -43,3 +43,11 @@ Does the spec's approach work against the actual codebase?
 - [ ] **Approved** — spec is implementable as written
 - [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
+
+## Amendment Review
+
+- [x] **Approved**
+- [ ] **Approved with nits**
+- [ ] **Changes requested**
+
+> Findings: None. The amendment is implementable as written: the referenced prompt-helper strings exist in `scripts/run-task/prompts/helpers.ts`, the new structural grep/validation ACs are verifiable, and the added `CLAUDE.md` reading-list requirement is scoped to canon-ai's local operator file. It integrates cleanly with the already-approved spec by superseding the stale startup-constant note and adding the helper/golden/dist impacts to the affected-file and validation scope.

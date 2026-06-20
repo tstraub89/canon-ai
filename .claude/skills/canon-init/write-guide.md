@@ -12,7 +12,7 @@ Rule of thumb: real content for every section that applies; remove the section e
 - `docs/decisions.md` — settled architectural decisions
 - `docs/patterns.md` — implementation patterns and known pitfalls
 - `docs/lessons-learned.md` — accumulating insights
-- Agent config files — merge protocol for `AGENTS.md` / `CLAUDE.md`
+- Agent config files — adopter-owned context
 
 ---
 
@@ -62,13 +62,8 @@ At least 3–5 entries covering major settled decisions: why this stack, why thi
 - Add any lessons surfaced during the grill (confirmed incidents, footguns, past regressions)
 - Leave empty rather than fabricate — this doc grows over time with real tasks
 
-## Agent config files — merge protocol
+## Agent config files — adopter-owned
 
-If any of `AGENTS.md`, `CLAUDE.md` had project-specific content below `<!-- canon:end -->` (noted in Phase 0):
+`AGENTS.md` and `CLAUDE.md` are fully adopter-owned. Canon does not insert or modify a block in either file.
 
-1. For each custom section, classify it:
-   - **Redundant with canon** → drop it (canon handles this structurally)
-   - **Project-specific addition** → keep it below `<!-- canon:end -->`
-   - **Conflict with canon** → surface it to the project owner and wait for a decision before writing
-2. Rewrite the file: canon block unchanged between its delimiters, project additions below `<!-- canon:end -->`.
-3. Never modify content between `<!-- canon:start -->` and `<!-- canon:end -->`.
+If pre-existing files were detected in Phase 0, read them as project context — use what's there to inform the docs you write in Phase 4 (terminology, team conventions, known pitfalls). Do not rewrite or restructure the agent files themselves.
