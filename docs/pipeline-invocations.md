@@ -602,3 +602,7 @@
 | 2026-06-20T14:12:16.258Z | adopter-agent-file-redesign | implement | codex | gpt-5.4-mini | 1 | 229.0s | 27084323 | ok |
 | 2026-06-20T14:16:35.087Z | adopter-agent-file-redesign | code_review | claude | sonnet | 1 | 258.1s | 981545 | ok |
 | 2026-06-20T14:21:50.711Z | adopter-agent-file-redesign | qa | claude | sonnet | 0 | 315.6s | 1423739 | ok |
+| 2026-06-20T23:45:20.162Z | internal-leak-gate-and-matrix-sync | spec_review | codex | gpt-5.4-mini | 0 | 165.2s | 987775 | ok |
+| 2026-06-20T23:46:18.022Z | internal-leak-gate-and-matrix-sync | spec | claude | opus | 0 | 57.9s | 302699 | ok |
+| 2026-06-20T23:47:15.812Z | internal-leak-gate-and-matrix-sync | spec_review | codex | gpt-5.4-mini | 1 | 57.8s | 1415342 | ok |
+| 2026-06-20T23:55:49.340Z | internal-leak-gate-and-matrix-sync | plan | claude | sonnet | 0 | 360.7s | 941696 | ok |
