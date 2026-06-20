@@ -1,7 +1,7 @@
 {
   "id": "vacate-adopter-md",
   "title": "Vacate canon-managed content from adopter CLAUDE.md/AGENTS.md; slim canon-ai's own",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-19",
   "updated": "2026-06-20",
   "branch": "task/vacate-adopter-md",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
