@@ -24,7 +24,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 **Who it's for**: developers who want AI agents to ship correct, on-spec, well-reviewed work without constant babysitting — and who are willing to invest in the discipline (writing clear specs, accumulating lessons, treating canon's docs as enforcement rather than reference).
 
-**The accumulation is the canon.** Each rule in `AGENTS.md`, each pattern in `docs/patterns.md`, each pitfall — they're not documentation, they're *enforcement*. Agents read them at session start. The pipeline injects relevant excerpts into prompts. When a rule is violated and a bug ships, the lesson goes into `lessons-learned.md` and eventually gets promoted into canon, so the next agent can't make the same mistake.
+**The accumulation is the canon.** Each pattern in `docs/patterns.md`, each decision in `docs/decisions.md`, each pitfall — they're not documentation, they're *enforcement*. The pipeline delivers rules just in time through prompts and skills, and agents auto-load their own agent file at session start. When a rule is violated and a bug ships, the lesson goes into `lessons-learned.md` and eventually gets promoted into canon, so the next agent can't make the same mistake.
 
 ## Core Concepts & Terminology
 
@@ -47,7 +47,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 | **Auto-block** | Halting the pipeline when `MAX_REVIEW_LOOPS` is exceeded. Requires manual intervention to resume. |
 | **Conversational Claude** | The Claude session the human chats with directly. Writes specs, invokes the pipeline, monitors progress. Distinct from pipeline Claude sessions, which the orchestrator spawns for plan / review / QA. |
 | **Pipeline Claude** | A Claude session spawned by `run-task.ts` for a specific phase (plan, code_review, qa). Does not interact with the human directly. |
-| **The canon** | The accumulated rules in `AGENTS.md`, `docs/patterns.md`, `docs/decisions.md`, `docs/lessons-learned.md` — the doctrine all agents work under. |
+| **The canon** | The accumulated rules in `docs/patterns.md`, `docs/decisions.md`, `docs/lessons-learned.md` — the doctrine all agents work under. |
 
 ## Primary User Flows
 
@@ -55,7 +55,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 1. Install the package: `npm install -D canon-ai` (or global). This pulls in the `canon` CLI plus bundled templates, skills, and orchestrator scripts.
 2. Run `canon init` in the target repo. It scaffolds `.canon/` (templates, README), the canon-owned skills, and the `docs/` stubs with `TODO[canon]` markers.
-3. From Claude Code, run `/canon-init`. The skill grills on project context (stack, domain, delicate surfaces, voice), reads any pre-existing adopter-owned agent files as context, and fills the scaffolded docs with project-specific content.
+3. From Claude Code, run `/canon-init`. The skill grills on project context (stack, domain, delicate surfaces, voice) and fills the scaffolded `docs/` corpus with project-specific content. If you want agent files, generate them separately with the built-in `/init` in Claude Code or Codex.
 4. Create the first task: `canon task new <id> <title>`. Write a spec conversationally with Claude (or invoke `/spec`).
 5. Run the pipeline: `canon run <id>`.
 
@@ -79,7 +79,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 ### Flow 4: Self-improvement (canon-on-canon)
 
 1. canon-ai develops **trunk-based on `main`** — task work accumulates there directly; there are no `dev` or `release/v*` branches.
-2. Tasks that modify the orchestrator (`scripts/run-task/`, `pipeline-policy.ts`, templates, `AGENTS.md`) branch off `main` and run through canon-ai's own pipeline, with worktree isolation so the supervising orchestrator is shielded from edits to itself mid-run.
+2. Tasks that modify the orchestrator (`scripts/run-task/`, `pipeline-policy.ts`, templates) branch off `main` and run through canon-ai's own pipeline, with worktree isolation so the supervising orchestrator is shielded from edits to itself mid-run.
 3. Trivial tweaks (≤ ~10 lines, no logic change) may still be inline; non-trivial changes go through the full pipeline.
 4. A release is cut by landing a version-bump commit on `main` via a short-lived release PR, when there's enough to ship (see `docs/release-process.md`). `main` is the published `canon-ai` npm package — what adopters get when they `npm install`.
 
@@ -92,7 +92,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 ### `delicate` flag — project-specific domains
 
-Canon's general definition (from `CLAUDE.md`): `delicate: true` is for surfaces where a regression has **unbounded blast radius** — an undetected bug is materially harder to recover from than a normal bug. The list below names the canon-ai-specific surfaces where this applies.
+Canon's general definition: `delicate: true` is for surfaces where a regression has **unbounded blast radius** — an undetected bug is materially harder to recover from than a normal bug. The list below names the canon-ai-specific surfaces where this applies.
 
 - **Orchestrator phase-routing logic** (`scripts/run-task/main.ts`: `PHASE_ORDER`, `runPhase()`, `checkAndRoute()`). A bug here corrupts every task that runs after the change lands.
 - **Auto-commit logic** (`autoCommitCode()`). Wrong files staged, missed handoff entries, or bypassed checks lead to invisible regressions in code review.
@@ -116,7 +116,7 @@ Adopters of canon-ai add their own project-specific delicate domains to this lis
 
 ## Voice & Tone
 
-canon-ai ships an opinionated communication norm for agents. From `AGENTS.md`:
+canon-ai ships an opinionated communication norm for agents. The shared project overview documents it:
 
 > Lead with the finding, not a cushion. Drop non-load-bearing praise — "great work overall, but…" adds noise. Hedge only when uncertainty is real; omit hedging words ("might", "possibly") when it isn't. End at the last substantive sentence; no trailing pleasantries. Disagreement is signal — push back on specs and reviews you disagree with, and say why.
 

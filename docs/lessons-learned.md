@@ -133,3 +133,9 @@ When a guard gates destructive writes based on an external probe (e.g., `git sta
 
 If a task stops canon from scaffolding a file (e.g., deleting a template so `canon init` no longer creates it), any `canon doctor` check or CI smoke assertion that hard-fails on that file's absence must also be updated — otherwise a fresh repo satisfies the new init behavior but immediately fails doctor or CI. The connection is not obvious in the spec draft: the "stop scaffolding" AC and the "update doctor/CI" ACs are independent and both required. For `vacate-adopter-md`, AC-5 (`init` no longer creates the files) needed AC-16 (remove `checkAgentFile` presence-fail from `doctor.ts`) and AC-17 (drop `test -f` from CI smoke) — all three were surfaced in spec_review, not in the initial draft. When writing a spec that removes a scaffolded file, grep `doctor.ts` for any `checkAgentFile`-style presence check and grep CI config for `test -f <filename>`, and add ACs to remove or re-scope them.
 
+### Avoid bare `:N` line-citation suffixes in handoff prose; use `:~N` or omit the number
+
+*(2026-06-20, source: adopter-agent-file-redesign)*
+
+`docs-refs-check` parses any text that looks like `path:N` (or `path:N-M`) as a line-cited file reference and validates the base path. In handoff deviation notes and free-form prose, a bare line citation like `SKILL.md:108` gets picked up as a citation and fails validation if the suffix form trips the parser. The concrete case: an Iteration 2 finding note that included `SKILL.md:108` caused a `docs-refs-check` false failure; removing the suffix fixed it. Prevention: when noting specific line numbers in handoff deviation prose, use the hedged form (`:~108`) — now accepted since the `~` fix shipped — or simply omit the line number from prose. The same applies to any markdown docs that docs-refs-check validates. Bare `:N` in prose looks innocuous but becomes a path assertion the checker must satisfy.
+

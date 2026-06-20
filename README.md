@@ -16,7 +16,7 @@ The goal: make AI coding agents reliably ship correct, on-spec, well-reviewed wo
 
 ![Canon framework](public/canon-framework.webp)
 
-That accumulation is the canon. The rules in `AGENTS.md`, the patterns in `docs/patterns.md`, the decisions in `docs/decisions.md` — they're not documentation, they're *enforcement*. Agents read them at session start. The pipeline injects relevant excerpts into prompts. Spec authorship and code review check against them. When a rule is violated and a bug ships, the lesson goes into `docs/lessons-learned.md` and eventually gets promoted into the canon, so the next agent can't make the same mistake.
+That accumulation is the canon. The protected docs corpus, the phase prompts, and the `/canon-*` skills carry the rules — not adopter agent files. Agents auto-load their own agent file at session start, and canon layers its operating rules just in time through prompts, skills, and docs. When a rule is violated and a bug ships, the lesson goes into `docs/lessons-learned.md` and eventually gets promoted into the canon, so the next agent can't make the same mistake.
 
 ## Why it exists
 
@@ -103,9 +103,19 @@ cd your-project
 canon init
 ```
 
-`canon init` installs the canon task templates and Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the `docs/` knowledge corpus tailored to your project.
+`canon init` installs the canon task templates and Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the `docs/` knowledge corpus tailored to your project. If you want agent files, generate them separately with the built-in `/init` in Claude Code or Codex; those files are adopter-owned and canon does not scaffold, modify, or read them.
 
-`AGENTS.md` and `CLAUDE.md` are adopter-owned. Canon does not scaffold or modify them; if they already exist, `/canon-init` reads them as project context. Add the discovery nudge below when you want future agent sessions to notice canon immediately.
+### Generate your agent files with the built-in `/init`
+
+After setup, generate your agent files with the built-in init command for your tool. Claude Code's `/init` produces `CLAUDE.md`; Codex's init produces `AGENTS.md`. These files are high-level codebase overviews that each agent auto-loads at session start.
+
+Optional consolidation: put the shared overview once in `AGENTS.md` and make `CLAUDE.md` import it with a single line:
+
+```text
+@AGENTS.md
+```
+
+Then append only Claude-specific operator norms below the import. Claude Code expands `@path` imports into context at launch, and Codex auto-loads `AGENTS.md` natively, so both agents converge on one shared overview while operator-only norms stay out of Codex's context.
 
 The other installed skills (auto-trigger on natural-language phrases — see each skill's frontmatter for the trigger set):
 
@@ -252,7 +262,7 @@ Canon is two products:
 
 ### Layer 1: The Scaffold
 
-The portable structure: orchestration scripts, task templates, the agent rules (delivered just-in-time through the per-phase prompt templates and `/canon-*` skills), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs. `AGENTS.md` / `CLAUDE.md` are adopter-owned — canon does not ship or modify them.
+The portable structure: orchestration scripts, task templates, the agent rules (delivered just-in-time through the per-phase prompt templates and `/canon-*` skills), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs. `AGENTS.md` / `CLAUDE.md` are adopter-owned — canon does not ship or modify them, and they come from the built-in `/init` flow rather than `/canon-init`.
 
 Drop this into any repo and you have:
 
@@ -274,11 +284,19 @@ Drop this into any repo and you have:
 - Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
 - `canon task` lifecycle CLI (new / list / status / phase / accept / reset-spec-review / post-merge-sync), in-process TS.
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
-- Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`scripts/run-task/prompts/templates/`) and the `/canon-*` skills — not shipped into `AGENTS.md` / `CLAUDE.md` (adopter-owned)
+- Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`scripts/run-task/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/settings.json` — Claude Code permissions + SessionStart hook
 - Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
+
+## Where to Go Deeper
+
+- `docs/pipeline-orchestrator.md` for orchestrator mechanics, reroute, worktrees, and PR/ship flow.
+- `docs/release-process.md` for release-cut mechanics and branch/version flow.
+- `docs/patterns.md` for implementation pitfalls and load-bearing patterns.
+- `docs/decisions.md` for settled rules and architecture decisions.
+- `docs/codebase-map.md` for file locations and entry points.
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**
 
@@ -302,7 +320,7 @@ Drop this into any repo and you have:
 
 The metaphor matters. A *canon* is a body of accumulated, authoritative work — the texts that define a tradition. It accrues over time. New work is judged against it. Once something is canonical, you don't re-debate it.
 
-That's exactly what `docs/patterns.md`, `docs/decisions.md`, and `AGENTS.md` are. They start small. They grow as the project ships features and absorbs lessons. They become more authoritative over time. And the more authoritative they are, the better the agents perform — because the agents stop having to guess.
+That's exactly what `docs/patterns.md`, `docs/decisions.md`, and the `docs/` knowledge corpus are. They start small. They grow as the project ships features and absorbs lessons. They become more authoritative over time. And the more authoritative they are, the better the agents perform — because the agents stop having to guess.
 
 The implication: **the value of canon compounds with use**. A 6-month-old canon repo on a real project is dramatically more useful than a fresh canon repo on a fresh project.
 

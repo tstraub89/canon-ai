@@ -19,7 +19,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | What | Where |
 |---|---|
 | Workflow source of truth | per-phase prompts (`scripts/run-task/prompts/`) + `docs/pipeline-orchestrator.md` |
-| Claude (architect/reviewer) guide | `CLAUDE.md` |
+| Claude (architect/reviewer) guide | `CLAUDE.md` — auto-loaded by Claude Code; shared overview lives in `AGENTS.md` |
 | Project pitch + adoption guide | `README.md` |
 | Per-task state machine | `.canon/templates/status.json` |
 
@@ -40,7 +40,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Validation gates and diff checks | `scripts/run-task/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
 | `canon stop` command | `src/cli/commands/stop.ts` | Gracefully terminates detached run; SIGTERM → SIGKILL; CASE A–D pid selection |
-| `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, and canon discovery nudge (warns when neither `CLAUDE.md` nor `AGENTS.md` mentions canon) |
+| `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, and canon discovery nudge (warns when neither file exists or neither mentions canon) |
 | Canon runtime `.gitignore` block | `src/lib/canon-block.ts`, `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts`, `src/cli/commands/doctor.ts` | canon manages a `# canon:start`/`# canon:end` block in `.gitignore`; `canon upgrade` refreshes it. |
 | CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()`, top-level `switch` dispatch for all `canon` commands |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
@@ -97,7 +97,7 @@ Every task lives in `tasks/<TASK-ID>/`. Templates live in `.canon/templates/`.
 
 ## Protected Docs (Institutional Memory)
 
-These must stay current — agents read them at session start (per phase rules in `CLAUDE.md`).
+These must stay current — the pipeline reads the protected `docs/*` corpus at session start, and phase-specific rules arrive just in time via prompt templates and skills.
 
 | What | Where | Purpose |
 |---|---|---|

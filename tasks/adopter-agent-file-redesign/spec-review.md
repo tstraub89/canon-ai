@@ -31,3 +31,8 @@ no concerns
 - [x] **Approved** — spec is implementable as written
 - [ ] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
+
+## Amendment Review
+
+- [x] **Approved**
+> Findings: none. The amendment is scoped consistently with the already-approved spec and closes the documented README/AGENTS content gaps without reintroducing the stripped agent-file read/generation framing.

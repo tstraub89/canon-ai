@@ -17,12 +17,7 @@ Follow these phases in order. Do not skip or combine phases.
 
 ## Phase 0 — Check for existing canon files
 
-Before doing anything else:
-
-- If `CLAUDE.md` exists and is not already loaded in the current session, read it.
-- If `AGENTS.md` exists, read it.
-
-Read each file as adopter-owned project context. The whole file is adopter content; canon does not insert or manage a block. Note any team conventions, terminology, or pitfalls you find — you'll need them in Phase 4.
+Before doing anything else, check whether `AGENTS.md` or `CLAUDE.md` exists in the project root. If either is present, note it — they are adopter-owned; canon does not insert, merge, or read managed content into them. Note any team conventions, terminology, or pitfalls you find from the codebase and docs — you'll need them in Phase 4.
 
 ---
 
@@ -110,7 +105,7 @@ Topics to cover — skip any that the codebase already answered:
 
 Write every stub doc with real, project-specific content. No placeholders. No "TBD". If you realize you're missing information for a section mid-write, ask one targeted question before writing that section.
 
-For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/lessons-learned.md`, plus how to use adopter-owned agent files as context — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
+For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, and `docs/lessons-learned.md` — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
 
 ---
 
@@ -179,5 +174,5 @@ Then print a summary:
 - `/canon-spec` — author the first task once scaffold docs are filled.
 - `/canon-status` — verify the project's task state.
 - `/canon-pipeline` — once a task exists, drive it through the pipeline.
-- `AGENTS.md` / `CLAUDE.md` — adopter-owned operator context when present (read at Phase 0).
+- `AGENTS.md` / `CLAUDE.md` — adopter-owned; generate them with the built-in `/init` (Claude Code or Codex) when you don't already have them.
 - `docs/pipeline-orchestrator.md` — pipeline internals for when tasks are running.

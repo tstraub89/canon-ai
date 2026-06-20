@@ -32,12 +32,12 @@ Stop points marked **⛔ STOP** require explicit approval before continuing.
 
 Read before doing anything else:
 
-- `AGENTS.md` — project/operator context if present; the Validation Matrix is inline in `.canon/templates/spec.md` and `implement.md` (the sizing table lives in `docs/pipeline-orchestrator.md`)
-- `CLAUDE.md` — your role and operator-facing context (spec-writing rules of thumb are in this skill's Phase 5 self-check below)
 - `docs/product-context.md` — project context, user flows, delicate surfaces
 - `docs/decisions.md` — settled decisions (check for conflicts)
 - `docs/patterns.md` — implementation patterns and known pitfalls
 - `docs/lessons-learned.md` — insights from past tasks
+
+> The Validation Matrix is inline in `.canon/templates/spec.md` (the sizing table lives in `docs/pipeline-orchestrator.md`).
 
 For the task's area, also read the relevant section of `docs/codebase-map.md`.
 
@@ -194,5 +194,4 @@ canon run --full-send [--force] TASK-ID
 - `/canon-spec-review` — adversarial pre-pipeline review of the spec. Recommended for M/L/XL or delicate tasks before invoking the pipeline.
 - `/canon-pipeline` — drive the pipeline after spec approval.
 - `/canon-status` — check what other canon tasks are in flight before committing to scope.
-- `docs/pipeline-orchestrator.md` — pipeline internals, sizing guide, model/effort matrix. The Validation Matrix is now inline in `implement.md` and in `.canon/templates/spec.md`.
-- `CLAUDE.md` — operator context; spec-writing rules of thumb are in this skill above.
+- `docs/pipeline-orchestrator.md` — pipeline internals, sizing guide, model/effort matrix. The Validation Matrix is now inline in `.canon/templates/spec.md`.

@@ -77,10 +77,19 @@ Get canon out of the agent-file business and dogfood the result.
 | `docs/decisions.md` | AC-9: append the end-state agent-files-via-`/init` decision record **and** correct the existing "Canon ships zero owned content" entry's Rule — replace the trailing "canon setup reads them as adopter-owned context only" sentence with the end-state (built-in `/init` generates them; canon detects-only, never reads). |
 | `src/cli/commands/init.ts` | AC-11: reword `existingAgentFilesNoticeLines()` to drop the read-as-context claim; keep adopter-owned/no-merge wording. `AGENT_FILES`/`hasExistingAgentFiles` unchanged. |
 | `src/cli/commands/doctor.ts` | AC-5: extend `checkCanonDiscoveryNudge` to the two warn states (absent → `/init`; silent → nudge). |
-| `scripts/run-task/cli.ts`, `src/cli/index.ts` | AC-1: repoint the `--reroute` help/usage banners off the now-removed `CLAUDE.md` reroute section to `docs/pipeline-orchestrator.md`. |
-| `.claude/skills/canon-init/SKILL.md`, `.claude/skills/canon-init/write-guide.md` | AC-1/AC-3: strip the Phase-0 "if AGENTS.md/CLAUDE.md exists, read it" lines and any read-instruction; ensure no agent-file generation claim; point to built-in `/init`; keep "adopter-owned" description. |
-| `.claude/skills/canon-spec/SKILL.md`, `.claude/skills/canon-spec-review/SKILL.md`, `.claude/skills/canon-pipeline/SKILL.md` | AC-1: strip the `AGENTS.md`/`CLAUDE.md` load-context + Related refs. |
-| `templates/**` mirrors of the above canon-owned files | AC-8: auto-synced root→mirror (`docs/pipeline-orchestrator.md`, `scripts/docs-refs-check.mjs`, the five skills). Declared here for the `--pr` base-drift gate; do not hand-edit. |
+| `scripts/run-task/cli.ts` | AC-1: repoint the `--reroute` help banner off the now-removed `CLAUDE.md` reroute section to `docs/pipeline-orchestrator.md`. |
+| `src/cli/index.ts` | AC-1: repoint the `--reroute` usage banner off the now-removed `CLAUDE.md` reroute section to `docs/pipeline-orchestrator.md`. |
+| `.claude/skills/canon-init/SKILL.md` | AC-1/AC-3: strip the Phase-0 "if AGENTS.md/CLAUDE.md exists, read it" lines and any read-instruction; ensure no agent-file generation claim; point to built-in `/init`; keep "adopter-owned" description. |
+| `.claude/skills/canon-init/write-guide.md` | AC-1/AC-3: strip any read-instruction; ensure no agent-file generation claim; keep "adopter-owned" description. |
+| `.claude/skills/canon-spec/SKILL.md` | AC-1: strip the `AGENTS.md`/`CLAUDE.md` load-context + Related refs. |
+| `.claude/skills/canon-spec-review/SKILL.md` | AC-1: strip the `CLAUDE.md` Related ref. |
+| `.claude/skills/canon-pipeline/SKILL.md` | AC-1: strip the `CLAUDE.md` Related ref. |
+| `templates/.claude/skills/canon-init/SKILL.md` | AC-8: auto-synced root→mirror; do not hand-edit. |
+| `templates/.claude/skills/canon-init/write-guide.md` | AC-8: auto-synced root→mirror; do not hand-edit. |
+| `templates/.claude/skills/canon-spec/SKILL.md` | AC-8: auto-synced root→mirror; do not hand-edit. |
+| `templates/.claude/skills/canon-spec-review/SKILL.md` | AC-8: auto-synced root→mirror; do not hand-edit. |
+| `templates/.claude/skills/canon-pipeline/SKILL.md` | AC-8: auto-synced root→mirror; do not hand-edit. |
+| `templates/docs/pipeline-orchestrator.md` | AC-8: auto-synced root→mirror; do not hand-edit. |
 | `tests/cli.test.ts` | AC-5/AC-4/AC-11: doctor advisory branch tests; update the init-notice test to the reworded no-read phrasing; keep the RECOMMENDED_NUDGE↔README drift test green. |
 | `dist/` | AC-10: rebuilt artifacts (`doctor`, `init`, CLI-banner source changes are bundled). |
 
@@ -140,3 +149,22 @@ None.
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] Replacement framing, not paired add/remove: strips and reframes are post-conditions over a grep; load-bearing "must not survive" constraints are backed by the AC-1 structural grep and AC-5/AC-11 unit tests, not bare prose
 - [x] Symbols named in ACs exist — `checkCanonDiscoveryNudge`/`RECOMMENDED_NUDGE` (`doctor.ts`), `CANON_OWNED`/`DELIMITED` (`canon-owned.ts`), `AGENT_FILES`/`existingAgentFilesNoticeLines`/`hasExistingAgentFiles` (`init.ts`), the `run-task-prompts` guard, the `cli.test.ts` init-notice test — all verified this session.
+
+---
+
+## Amendment
+
+> **Round 1 — pre-PR cold-review findings.** Before opening the PR, the human ran an independent cold Codex review and a guided fresh-Claude review of the implemented `AGENTS.md`/`README.md`. They surfaced six doc-content gaps. **Note:** one of these (A1) is an existing AC that the pipeline's `code_review` **false-passed** (it marked AC-4 Pass while the `@AGENTS.md` consolidation guidance is in fact absent from `README.md`) — so A1 carries an explicit grep re-verification. The audience-split structure shipped by the baseline is correct and must be preserved; this amendment only fills content gaps.
+
+**Scope:** doc-content only — `AGENTS.md` and `README.md`. Neither is canon-owned (no `templates/` mirror; verified absent from `CANON_OWNED`/`DELIMITED`), so no mirror sync and no `dist/` rebuild result from these edits. No source or behavior changes. The baseline structure — `CLAUDE.md` = `@AGENTS.md` + the four conversational-operator norms; `AGENTS.md` = shared overview — stays exactly as implemented. AC-1's strip post-condition must still hold: the new opener describes canon; it must not (re)introduce any "read `AGENTS.md`/`CLAUDE.md`" instruction or rule-home framing.
+
+Each item below is an added acceptance criterion for this round:
+
+- [ ] **A1 (README `@AGENTS.md` consolidation — closes the AC-4 gap):** `README.md` documents the optional `CLAUDE.md` = `@AGENTS.md` consolidation for adopters who generate both agent files — at the agent-file recommendation (the `canon init` / built-in `/init` guidance, ~line 106) and/or beside the discovery-nudge block. **Verify by grep:** `@AGENTS.md` appears in `README.md` in a consolidation-guidance context (a hit beyond the discovery-nudge `CLAUDE.md` block). This AC was previously false-passed; re-verify explicitly, do not trust a prior Pass.
+- [ ] **A2 (AGENTS.md "what canon is" opener):** Add a 2–3 sentence opener to `AGENTS.md` stating what canon is — a TypeScript/Node CLI (npm package) that scaffolds a Claude + Codex spec-driven pipeline into other repositories, **and dogfoods that pipeline on itself** (canon runs canon on canon — which is why `tasks/`, worktree isolation, and `templates/` mirrors exist). This is the orientation the current "shared project overview" line omits and is load-bearing for the Codex audience, which has no other ambient context. Verify: a fresh reader of `AGENTS.md` alone learns the product, the stack, and the self-hosting fact.
+- [ ] **A3 (re-add the managed-set caveat):** The `Conventions` section's "edit the root copy, run `npm run sync-templates`" guidance must clarify that `AGENTS.md` and `CLAUDE.md` are themselves **not** in the managed set — they have no `templates/` mirror and edits to them need no sync. Restores the caveat the rewrite dropped (which now misleads an agent into a no-op sync). Verify: the caveat is present and correctly scoped (it does not claim either file is canon-owned).
+- [ ] **A4 (stack build/test line):** Add a one-line stack signal to `AGENTS.md` naming the npm commands — `npm run build`, `npm test`, `npm run lint`, `npm run type-check` — so a fresh agent learns the language/build without a docs hop. Detailed validation bindings stay in `docs/architecture.md` (link, don't duplicate).
+- [ ] **A5 (release-process pointer):** Add `docs/release-process.md` to the `Where to Go Deeper` list (release ops is a frequent operator activity and is currently unlinked).
+- [ ] **A6 (CANON_OWNED pointer):** Restore a pointer to `src/lib/canon-owned.ts` as the home of the `CANON_OWNED` / `DELIMITED` split in the `Conventions` section (lost in the convention move; useful to whoever adds a managed file).
+
+**Validation for this round:** `npm run lint`, `npm run type-check`, `npm test`, `npm run docs-refs-check`, `npm run sync-templates:check` all pass (no `dist/` rebuild expected — no source change). Plus the A1 grep check. The A2 opener must not regress AC-1 (re-run the AC-1 strip grep over `AGENTS.md`).

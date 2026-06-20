@@ -193,9 +193,18 @@ export function checkClaudeVersion(runner: ClaudeVersionRunner = defaultClaudeVe
 
 export function checkCanonDiscoveryNudge(cwd: string): Check {
     const filenames = ['CLAUDE.md', 'AGENTS.md'];
-    const mentionsCanon = filenames.some(filename => {
+    const existingFiles = filenames.filter(filename => existsSync(join(cwd, filename)));
+
+    if (existingFiles.length === 0) {
+        return {
+            label: 'canon discovery nudge',
+            status: 'warn',
+            detail: `no AGENTS.md or CLAUDE.md found — run the built-in \`/init\` (Claude Code) or Codex init to generate a high-level project overview, then add this to it:\n${RECOMMENDED_NUDGE}`,
+        };
+    }
+
+    const mentionsCanon = existingFiles.some(filename => {
         const path = join(cwd, filename);
-        if (!existsSync(path)) return false;
         return /canon/i.test(readFileSync(path, 'utf8'));
     });
 

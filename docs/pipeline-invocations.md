@@ -596,3 +596,9 @@
 | 2026-06-20T06:10:27.513Z | adopter-agent-file-redesign | spec | claude | opus | 0 | 102.6s | 463701 | ok |
 | 2026-06-20T06:14:20.673Z | adopter-agent-file-redesign | spec_review | codex | gpt-5.4-mini | 1 | 233.2s | 2932519 | ok |
 | 2026-06-20T06:23:47.773Z | adopter-agent-file-redesign | plan | claude | sonnet | 0 | 567.1s | 1719702 | ok |
+| 2026-06-20T06:56:37.241Z | adopter-agent-file-redesign | implement | codex | gpt-5.4-mini | 1 | 184.3s | 17538262 | ok |
+| 2026-06-20T06:59:38.529Z | adopter-agent-file-redesign | code_review | claude | sonnet | 1 | 180.5s | 775833 | ok |
+| 2026-06-20T07:05:58.155Z | adopter-agent-file-redesign | qa | claude | sonnet | 0 | 379.6s | 1267382 | ok |
+| 2026-06-20T14:12:16.258Z | adopter-agent-file-redesign | implement | codex | gpt-5.4-mini | 1 | 229.0s | 27084323 | ok |
+| 2026-06-20T14:16:35.087Z | adopter-agent-file-redesign | code_review | claude | sonnet | 1 | 258.1s | 981545 | ok |
+| 2026-06-20T14:21:50.711Z | adopter-agent-file-redesign | qa | claude | sonnet | 0 | 315.6s | 1423739 | ok |

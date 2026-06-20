@@ -95,8 +95,8 @@ canon run options:
                           spec_review; fast-tier tasks (S) re-enter at implement.
                           Feedback channel: append a new section to tasks/<id>/spec.md describing
                           what to address. Codex re-reads spec.md only — additions to review.md
-                          or PR comments are NOT consulted on reroute. See CLAUDE.md "Reroute
-                          feedback channel."
+                          or PR comments are NOT consulted on reroute. See docs/pipeline-orchestrator.md
+                          §"Human Reroute."
 
 Global:
   --version           Print canon-ai version

@@ -155,8 +155,8 @@ export function printUsage(): void {
     console.log('                      what to address. Codex re-reads spec.md only — additions to review.md');
     console.log('                      or PR comments are NOT consulted on reroute.');
     console.log('                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`');
-    console.log('                      on round 2+. Bypass with --force. See CLAUDE.md "Reroute feedback');
-    console.log('                      channel."');
+    console.log('                      on round 2+. Bypass with --force. See docs/pipeline-orchestrator.md');
+    console.log('                      §"Human Reroute."');
 }
 
 export function parseArgs(argv: string[]): CliArgs {

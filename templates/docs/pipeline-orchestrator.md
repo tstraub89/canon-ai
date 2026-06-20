@@ -458,7 +458,7 @@ The reroute amendment convention is asymmetric: round 1 accepts a bare `## Amend
 
 ## Customizing Canon for Your Project
 
-Project-level customization happens in the adopter-owned operator files, when present, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads the project's operator context and protected docs on session start.
+Project-level customization happens in the adopter-owned agent files, when present, and the `docs/*` knowledge corpus. Edit those directly to add your project's rules, patterns, and decisions. The pipeline reads the protected `docs/*` corpus on session start and gets phase-specific guidance just in time through prompt templates and skills; it does not read adopter agent files.
 
 Task templates are managed by canon — `canon upgrade` overwrites `.canon/templates/*`. To customize a template for your project without losing your changes on upgrade, copy it to `tasks/_templates/<file>` — `canon task new` checks there first and falls back to `.canon/templates/`.
 

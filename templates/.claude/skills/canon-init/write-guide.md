@@ -64,6 +64,4 @@ At least 3–5 entries covering major settled decisions: why this stack, why thi
 
 ## Agent config files — adopter-owned
 
-`AGENTS.md` and `CLAUDE.md` are fully adopter-owned. Canon does not insert or modify a block in either file.
-
-If pre-existing files were detected in Phase 0, read them as project context — use what's there to inform the docs you write in Phase 4 (terminology, team conventions, known pitfalls). Do not rewrite or restructure the agent files themselves.
+`AGENTS.md` and `CLAUDE.md` are fully adopter-owned. Canon does not insert or modify a block in either file. If you want agent files, generate them with the built-in `/init` in Claude Code or Codex. Do not rewrite or restructure the agent files themselves.

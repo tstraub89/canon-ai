@@ -145,4 +145,3 @@ If an agent returned `[NO FINDINGS]`, say so under its section. Don't pad. If al
 
 - `/canon-spec` — where the spec under review came from.
 - `/canon-pipeline` — invoke `canon run <id>` after BLOCKING findings are addressed.
-- `CLAUDE.md` — operator context; Agent C's rules of thumb are listed in this skill above.

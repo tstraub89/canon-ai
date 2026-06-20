@@ -587,9 +587,17 @@ function checkClaudeVersion(runner = defaultClaudeVersionRunner) {
 }
 function checkCanonDiscoveryNudge(cwd) {
   const filenames = ["CLAUDE.md", "AGENTS.md"];
-  const mentionsCanon = filenames.some((filename) => {
+  const existingFiles = filenames.filter((filename) => existsSync(join(cwd, filename)));
+  if (existingFiles.length === 0) {
+    return {
+      label: "canon discovery nudge",
+      status: "warn",
+      detail: `no AGENTS.md or CLAUDE.md found \u2014 run the built-in \`/init\` (Claude Code) or Codex init to generate a high-level project overview, then add this to it:
+${RECOMMENDED_NUDGE}`
+    };
+  }
+  const mentionsCanon = existingFiles.some((filename) => {
     const path11 = join(cwd, filename);
-    if (!existsSync(path11)) return false;
     return /canon/i.test(readFileSync(path11, "utf8"));
   });
   if (mentionsCanon) {
@@ -993,9 +1001,8 @@ function hasExistingAgentFiles(cwd) {
 }
 function existingAgentFilesNoticeLines() {
   return [
-    "\nNote: existing AGENTS.md / CLAUDE.md detected \u2014 the grill",
-    "will read them as project context. They are adopter-owned;",
-    "canon does not insert or merge a managed block into them."
+    "\nNote: existing AGENTS.md / CLAUDE.md detected \u2014 they are adopter-owned;",
+    "canon does not insert, merge, or read managed content into them."
   ];
 }
 function walkDir(dir, base = dir) {
@@ -4159,8 +4166,8 @@ canon run options:
                           spec_review; fast-tier tasks (S) re-enter at implement.
                           Feedback channel: append a new section to tasks/<id>/spec.md describing
                           what to address. Codex re-reads spec.md only \u2014 additions to review.md
-                          or PR comments are NOT consulted on reroute. See CLAUDE.md "Reroute
-                          feedback channel."
+                          or PR comments are NOT consulted on reroute. See docs/pipeline-orchestrator.md
+                          \xA7"Human Reroute."
 
 Global:
   --version           Print canon-ai version

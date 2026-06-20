@@ -193,8 +193,8 @@ function printUsage() {
   console.log("                      what to address. Codex re-reads spec.md only \u2014 additions to review.md");
   console.log("                      or PR comments are NOT consulted on reroute.");
   console.log("                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`");
-  console.log('                      on round 2+. Bypass with --force. See CLAUDE.md "Reroute feedback');
-  console.log('                      channel."');
+  console.log("                      on round 2+. Bypass with --force. See docs/pipeline-orchestrator.md");
+  console.log('                      \xA7"Human Reroute."');
 }
 function parseArgs(argv) {
   if (argv.length === 0) {

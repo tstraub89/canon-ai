@@ -428,3 +428,63 @@ Also verify AC-7: `git grep -nE "'AGENTS\.md'|'CLAUDE\.md'" -- src/lib/canon-own
 - **Steps 2 and 18 are coupled**: the new warn messages in `checkCanonDiscoveryNudge` must match the assertions in tests. Do not finalize one without the other.
 - **AC-7 structural check**: confirm no CANON_OWNED/DELIMITED addition for AGENTS.md or CLAUDE.md.
 - **`docs-refs-check` may flag the slimmed CLAUDE.md**: any doc that had a `[text](../CLAUDE.md#section)` link to a section that no longer exists will trip the checker. Fix by repointing to `docs/pipeline-orchestrator.md` or the relevant skill.
+
+---
+
+## Reroute Plan
+
+### Context
+
+The amendment (Round 1) fills six content gaps found in independent cold-reviews of the already-shipped `AGENTS.md` and `README.md`. The baseline audience-split structure is correct and must not change. Scope is **doc-content only** — `AGENTS.md` and `README.md`. Neither file is canon-owned (not in `CANON_OWNED`/`DELIMITED`; verified absent from `templates/`), so no mirror sync and no `dist/` rebuild are needed. The AC-1 strip post-condition still applies to any new text added to `AGENTS.md`.
+
+Prior plan Steps 1–20 are complete as implemented. Only the delta below is new work.
+
+### Delta
+
+**Step R1 — A2: Add "what canon is" opener to `AGENTS.md`**
+
+Prepend a 2–3 sentence opener before the existing first heading. It must state: (1) what canon is — a TypeScript/Node CLI (npm package); (2) what it does — scaffolds a Claude + Codex spec-driven pipeline into other repositories; (3) that it dogfoods on itself (canon runs canon on canon — which is why `tasks/`, worktree isolation, and `templates/` mirrors exist). Verify: a fresh reader of `AGENTS.md` alone learns the product, the stack, and the self-hosting fact. Then re-run the AC-1 strip grep over `AGENTS.md` to confirm the new opener introduces no "read `AGENTS.md`/`CLAUDE.md`" instruction or rule-home framing.
+
+**Step R2 — A3: Add managed-set caveat to `Conventions` in `AGENTS.md`**
+
+In the `Conventions` section, after the "edit the root copy, run `npm run sync-templates`" guidance, add a clarifying sentence: `AGENTS.md` and `CLAUDE.md` are **not** in the managed set — they have no `templates/` mirror and edits to them require no sync. The caveat must not claim either file is canon-owned.
+
+**Step R3 — A6: Restore `CANON_OWNED` pointer in `Conventions` in `AGENTS.md`**
+
+In the `Conventions` section, add a pointer to `src/lib/canon-owned.ts` as the home of the `CANON_OWNED` / `DELIMITED` split. This was dropped in the rewrite and is useful to whoever adds a managed file. One sentence or bullet is sufficient.
+
+**Step R4 — A4: Add stack build/test signal to `AGENTS.md`**
+
+Add a one-line stack signal naming the npm commands — `npm run build`, `npm test`, `npm run lint`, `npm run type-check` — so a fresh agent learns the language/build without a docs hop. A natural location is beside the `docs/architecture.md` pointer in "Where to Go Deeper" or in a short standalone paragraph. Do not duplicate the detailed validation bindings from `docs/architecture.md`; one sentence suffices with a link to that doc.
+
+**Step R5 — A5: Add `docs/release-process.md` to "Where to Go Deeper" in `AGENTS.md`**
+
+Add a `docs/release-process.md` entry to the "Where to Go Deeper" doc-pointer map. It is a frequent operator activity and currently unlinked.
+
+**Step R6 — A1: Add `@AGENTS.md` consolidation guidance to `README.md`**
+
+At the agent-file recommendation section in `README.md` (near the built-in `/init` guidance, currently around line 106), add or extend guidance to document the optional `CLAUDE.md` = `@AGENTS.md` consolidation for adopters who generate both agent files. The guidance must explain that `@AGENTS.md` in `CLAUDE.md` causes Claude Code to expand the shared overview into context at launch, while Codex auto-loads `AGENTS.md` natively, so both agents converge on one shared overview. Verify by grep: `@AGENTS.md` appears in `README.md` in a consolidation-guidance context (a hit beyond the discovery-nudge `CLAUDE.md` block). This AC was previously false-passed — re-verify explicitly, do not trust the prior Pass.
+
+**Step R7 — Validate**
+
+Run in order (no `dist/` rebuild needed — no source change):
+
+```bash
+npm run lint
+npm run type-check
+npm test
+npm run docs-refs-check
+npm run sync-templates:check
+```
+
+Then run the A1 grep check:
+```bash
+grep -n '@AGENTS\.md' README.md
+```
+Confirm at least one hit appears in the consolidation-guidance context (not only within the discovery-nudge block).
+
+Then re-run the AC-1 strip grep scoped to the two amended files to confirm no new rule-home or read-instruction framing was introduced:
+```bash
+git grep -nE 'AGENTS\.md|CLAUDE\.md' -- AGENTS.md README.md
+```
+Every surviving line must still map to allow-list categories (a)–(g) from the spec.

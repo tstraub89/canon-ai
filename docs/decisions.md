@@ -154,7 +154,7 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 **Why**: The rules that pipeline agents need are delivered at the phase or skill that consumes them. Keeping a multi-hundred-line canon-owned block in every adopter agent file duplicates that context, increases session load, and makes local project guidance harder to scan. A recommend-only discovery nudge is enough for fresh sessions to learn that a repo uses canon without canon owning the file.
 
-**Rule**: `AGENTS.md` and `CLAUDE.md` are not members of `CANON_OWNED` or `DELIMITED` in `src/lib/canon-owned.ts`. `canon init` does not create them; `canon upgrade` does not modify them. If a repo already has them, canon setup reads them as adopter-owned context only.
+**Rule**: `AGENTS.md` and `CLAUDE.md` are not members of `CANON_OWNED` or `DELIMITED` in `src/lib/canon-owned.ts`. `canon init` does not create them; `canon upgrade` does not modify them. They come from the built-in `/init` (Claude Code's `/init` → `CLAUDE.md`; Codex's init → `AGENTS.md`), not from canon; canon only detects their presence so it can suggest the discovery nudge or the optional `CLAUDE.md` = `@AGENTS.md` consolidation.
 
 ---
 
@@ -295,3 +295,13 @@ What the orchestrator does uniquely (and these stand): routes between phases and
 **Why**: Previously, every phase auto-loaded all rules through `AGENTS.md` / `CLAUDE.md`. That meant code-review lenses carried spec-writing guidance they never use, and the implement prompt carried QA rules. Scoping each rule to the specific phase that consumes it shrinks each phase's prompt to its own job and reduces cross-rule attention dilution.
 
 **Rule**: Pipeline-facing operating rules need a surviving JIT home in the consuming phase's prompt, charter, or skill. `AGENTS.md` / `CLAUDE.md` may still exist as operator-facing context and project additions, but they must not be the sole home for a rule required by a pipeline phase. The vacate task removes the now-redundant canon-block copies.
+
+---
+
+## Agent files come from built-in `/init`, not canon scaffolding
+
+**Decision**: Claude Code's built-in `/init` and Codex's init command generate the adopter's `CLAUDE.md` and `AGENTS.md` as high-level codebase overviews. Canon does not scaffold, modify, or read those files; it only detects them so it can recommend the discovery nudge and the optional `CLAUDE.md` = `@AGENTS.md` consolidation. Adopter agent files remain adopter-owned.
+
+**Why**: Canon already has the `docs/` knowledge corpus and phase-scoped skills/prompts for its own operating rules. Keeping agent-file generation inside the host tool's built-in init flow aligns canon-ai's guidance with what adopters actually get from their agent shell, avoids duplicating the bootstrapping job, and keeps canon's install/bootstrap story focused on the docs corpus it does own.
+
+**Rule**: Do not describe canon as generating or reading adopter agent files. Recommend the built-in `/init` for agent-file creation, keep canon's bootstrap claims scoped to the `docs/` corpus, and treat `AGENTS.md` / `CLAUDE.md` as adopter-owned overviews that may optionally consolidate via `@AGENTS.md`.

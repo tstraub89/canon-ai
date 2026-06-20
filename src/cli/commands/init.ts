@@ -24,9 +24,8 @@ export function hasExistingAgentFiles(cwd: string): boolean {
 
 export function existingAgentFilesNoticeLines(): string[] {
     return [
-        '\nNote: existing AGENTS.md / CLAUDE.md detected — the grill',
-        'will read them as project context. They are adopter-owned;',
-        'canon does not insert or merge a managed block into them.',
+        '\nNote: existing AGENTS.md / CLAUDE.md detected — they are adopter-owned;',
+        'canon does not insert, merge, or read managed content into them.',
     ];
 }
 

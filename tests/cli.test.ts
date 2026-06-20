@@ -303,7 +303,7 @@ void test('checkClaudeVersion: exports the fixed minimum version', () => {
 
 // ── checkCanonDiscoveryNudge ───────────────────────────────────────────────
 
-void test('checkCanonDiscoveryNudge: neither file mentions canon → warn and leaves files unchanged', () => {
+void test('checkCanonDiscoveryNudge: existing files without canon → warn and leaves files unchanged', () => {
     withTempDir(dir => {
         const claudePath = path.join(dir, 'CLAUDE.md');
         const agentsPath = path.join(dir, 'AGENTS.md');
@@ -318,6 +318,7 @@ void test('checkCanonDiscoveryNudge: neither file mentions canon → warn and le
         assert.match(check.detail ?? '', /CLAUDE\.md/);
         assert.match(check.detail ?? '', /canon/i);
         assert.match(check.detail ?? '', /This project uses canon/);
+        assert.doesNotMatch(check.detail ?? '', /built-in `\/init`/);
 
         assert.equal(fs.readFileSync(claudePath, 'utf8'), beforeClaude);
         assert.equal(fs.readFileSync(agentsPath, 'utf8'), beforeAgents);
@@ -332,11 +333,15 @@ void test('checkCanonDiscoveryNudge: either file mentioning canon → pass', () 
     });
 });
 
-void test('doctor canon setup: absent AGENTS.md and CLAUDE.md produce warning nudge, not fail', () => {
+void test('doctor canon setup: absent AGENTS.md and CLAUDE.md warn with init nudge, not fail', () => {
     withTempDir(dir => {
         const check = checkCanonDiscoveryNudge(dir);
         assert.equal(check.status, 'warn');
-        assert.match(check.detail ?? '', /CLAUDE\.md/);
+        assert.match(check.detail ?? '', /built-in `\/init`/);
+        assert.match(check.detail ?? '', /high-level project overview/);
+        assert.doesNotMatch(check.detail ?? '', /add this to CLAUDE\.md/);
+        // The nudge text is printed inline (no dangling "below" pointing at nothing).
+        assert.match(check.detail ?? '', /This project uses canon/);
     });
 });
 
@@ -851,10 +856,43 @@ void test('init: existing agent files are detected directly and notice has no me
 
         const notice = existingAgentFilesNoticeLines().join('\n');
         assert.match(notice, /existing AGENTS\.md \/ CLAUDE\.md detected/);
-        assert.match(notice, /project context/);
         assert.match(notice, /adopter-owned/);
+        assert.match(notice, /does not insert, merge, or read managed content/);
         assert.doesNotMatch(notice, /merge protocol/i);
     });
+});
+
+void test('root AGENTS.md and CLAUDE.md reflect the audience split', () => {
+    const agents = fs.readFileSync(path.join(WORKTREE_ROOT, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /TypeScript\/Node CLI published as an npm package/);
+    assert.match(agents, /scaffolds a Claude \+ Codex spec-driven pipeline into other repositories/);
+    assert.match(agents, /dogfoods that same pipeline on itself/);
+    assert.match(agents, /spec -> spec_review -> plan -> implement -> code_review -> qa -> human_review/);
+    assert.match(agents, /npm run build/);
+    assert.match(agents, /npm test/);
+    assert.match(agents, /npm run lint/);
+    assert.match(agents, /npm run type-check/);
+    assert.match(agents, /Cross-review/);
+    assert.match(agents, /Communication/);
+    assert.match(agents, /`AGENTS\.md` and `CLAUDE\.md` are not part of the managed set/);
+    assert.match(agents, /src\/lib\/canon-owned\.ts/);
+    assert.match(agents, /docs\/release-process\.md/);
+    assert.match(agents, /docs\/pipeline-orchestrator\.md/);
+    assert.match(agents, /docs\/codebase-map\.md/);
+    assert.doesNotMatch(agents, /Always-On Operator Norms/);
+    assert.doesNotMatch(agents, /Ask before committing/);
+    assert.doesNotMatch(agents, /Default to the smallest model/);
+    assert.doesNotMatch(agents, /Do not intervene in full-tier `spec_review` auto-revision/);
+    assert.doesNotMatch(agents, /Never self-review inline work/);
+
+    const claude = fs.readFileSync(path.join(WORKTREE_ROOT, 'CLAUDE.md'), 'utf8');
+    assert.match(claude, /^@AGENTS\.md$/m);
+    assert.match(claude, /## Conversational Operator Norms/);
+    assert.match(claude, /Ask before committing/);
+    assert.match(claude, /Default to the smallest model/);
+    assert.match(claude, /Do not intervene in full-tier `spec_review` auto-revision/);
+    assert.match(claude, /Never self-review inline work/);
+    assert.doesNotMatch(claude, /## Role/);
 });
 
 // ── runUpgrade ───────────────────────────────────────────────────────────────
@@ -2252,6 +2290,20 @@ void test('README discovery nudge matches RECOMMENDED_NUDGE', () => {
         RECOMMENDED_NUDGE,
         'README discovery nudge drifted from RECOMMENDED_NUDGE (src/cli/commands/doctor.ts)',
     );
+});
+
+void test('README agent-file consolidation guidance mentions @AGENTS.md', () => {
+    const readme = fs.readFileSync(path.join(WORKTREE_ROOT, 'README.md'), 'utf8');
+    assert.match(readme, /### Generate your agent files with the built-in `\/init`/);
+    assert.match(readme, /@AGENTS\.md/);
+    assert.match(readme, /Claude Code expands `@path` imports into context at launch/);
+    assert.match(readme, /Codex auto-loads `AGENTS\.md` natively/);
+});
+
+void test('README where-to-go-deeper list includes release-process docs', () => {
+    const readme = fs.readFileSync(path.join(WORKTREE_ROOT, 'README.md'), 'utf8');
+    assert.match(readme, /## Where to Go Deeper/);
+    assert.match(readme, /docs\/release-process\.md/);
 });
 
 // ── Retired-phase drift in shipped docs ──────────────────────────────────────
