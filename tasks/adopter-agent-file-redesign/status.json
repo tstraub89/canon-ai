@@ -1,15 +1,15 @@
 {
   "id": "adopter-agent-file-redesign",
   "title": "Agent files come from built-in /init; canon stops referencing and generating them",
-  "status": "spec",
+  "status": "spec_review",
   "created": "2026-06-20",
   "updated": "2026-06-20",
   "branch": "",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "e01c7e7bac803842e098d13de1892bc3b1806216",
-    "orchestrator_commit": "e01c7e7bac803842e098d13de1892bc3b1806216",
+    "upstream_commit": "9fe1b166c90c40a7ef37ad5877cbf00d693ea1fe",
+    "orchestrator_commit": "9fe1b166c90c40a7ef37ad5877cbf00d693ea1fe",
     "codex_cli": "codex-cli 0.141.0",
     "claude_code": "2.1.183 (Claude Code)"
   },
@@ -30,9 +30,10 @@
       "verdict": "",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 5,
+      "changes_requested_total": 5,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "plan": {
       "status": "pending",

@@ -8,7 +8,7 @@
 The "canon vacates adopter MD" program (Tasks A+B+C, on `main`, unreleased) made `AGENTS.md`/`CLAUDE.md` adopter-owned and stopped shipping managed content into them. But canon is still entangled with these files in three ways that are now redundant or misleading:
 
 1. **Instructional/descriptive references remain** across canon's docs and skills — "read `AGENTS.md`", "operator context in `CLAUDE.md`", and prose that frames them as canon rule-homes. These are dead weight: **each agent auto-loads its own file** (Claude Code → `CLAUDE.md`; Codex → `AGENTS.md`), and the operating rules already arrive just-in-time via prompts/skills (Task A). A reference telling an agent to read a file it already auto-loads is noise; one that points at a rule which has moved is actively wrong.
-2. **`/canon-init` still claims to generate the agent files** (`README.md:106`: "generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, and the `docs/` knowledge corpus"). Post-vacate the skill no longer writes them — agent files are the job of the **tool-native `/init`** (Claude's `/init`, Codex's init), which produces a standard high-level codebase overview.
+2. **`/canon-init` still claims to generate the agent files** (`README.md`: "generates the full canon document set: `AGENTS.md`, `CLAUDE.md`, and the `docs/` knowledge corpus"). Post-vacate the skill no longer writes them — agent files are the job of the **tool-native `/init`** (Claude's `/init`, Codex's init), which produces a standard high-level codebase overview.
 3. **canon-ai's own agent files haven't been settled** into the end-state shape. They should dogfood exactly what an adopter gets: a high-level `/init`-style overview, consolidated so both agents converge on one source.
 
 Leaving this half-done ships an incoherent story: canon tells adopters their agent files are theirs, while canon's own docs still read/reference/generate them as if canon owned them.
@@ -18,62 +18,71 @@ Leaving this half-done ships an incoherent story: canon tells adopters their age
 Get canon out of the agent-file business and dogfood the result.
 
 1. **Agent files are produced by the tool-native `/init`** (Claude `/init` → `CLAUDE.md`; Codex init → `AGENTS.md`) as a high-level codebase overview. Canon does not generate, manage, or instruct agents to read them.
-2. **Strip** canon's instructional/descriptive references to `AGENTS.md`/`CLAUDE.md` from its docs and skills (auto-load + JIT prompts handle delivery). The only references that remain are operational code that *operates* on the files, decision records, tests, README's adopter recommendation, and "adopter-owned, when present" descriptions.
-3. **`/canon-init` is scoped to the `docs/` knowledge corpus only** — it does not claim to generate the agent files. README/skill text that says otherwise is corrected and repointed to the built-in `/init`.
+2. **Strip** canon's instructional/descriptive references to `AGENTS.md`/`CLAUDE.md` from its docs and skills (auto-load + JIT prompts handle delivery). The only references that remain are operational code that *operates* on the files, decision records, tests, README's adopter recommendation, "adopter-owned, when present" descriptions, and accurate operational/CI descriptions that name the files without framing them as rule-homes.
+3. **`/canon-init` is scoped to the `docs/` knowledge corpus only** — it does not claim to generate *or read* the agent files. README/skill text that says otherwise is corrected and repointed to the built-in `/init`.
 4. **README owns the recommendation**: adopters should generate their agent files via the built-in `/init` (Claude and/or Codex), and may consolidate (see below). This is the one human-facing "you should have these" home.
 5. **`canon doctor` advises**: when neither agent file exists → advise running `/init`; when a file exists but neither mentions canon → advise adding the discovery nudge. (Warn-only, never fails.)
 6. **Consolidation**: canon-ai's `CLAUDE.md` becomes a single `@AGENTS.md` import line (Claude Code expands `@path` imports into context at launch), and `AGENTS.md` holds the high-level overview plus canon-ai's own always-on norms. Codex auto-loads `AGENTS.md` natively; Claude auto-loads `CLAUDE.md` which imports `AGENTS.md` — both converge on one source. Consolidation is **recommended to adopters, not mandated.**
 7. **canon-ai dogfoods**: its `AGENTS.md` is rewritten as the high-level overview + its four always-on operator norms; its `CLAUDE.md` is reduced to `@AGENTS.md`.
-8. **Reframe the leftover prose/cells** that imply the agent files are canon rule-homes but that a literal token-grep won't catch (philosophy lines + a trigger-table cell).
+8. **Reframe the leftover prose/cells** that imply the agent files are canon rule-homes (or that canon/the pipeline reads them) but that a literal token-grep won't catch (philosophy lines, getting-started steps, a trigger-table cell).
 
 ## Non-Goals
 
 - **Not re-managing the agent files.** `AGENTS.md`/`CLAUDE.md` stay out of `CANON_OWNED` and `DELIMITED`; built-in `/init` owns generation. (Backed by a structural AC.)
 - **Not mandating consolidation for adopters** — `@AGENTS.md` is a documented option, not a requirement.
 - **Not touching the pipeline prompt layer.** The vacate already removed all agent-file reads from `scripts/run-task/prompts/`; a test guards it (`tests/run-task-prompts.test.ts`). No prompt-template edits, so the prompt golden does not change.
-- **Not touching any delicate orchestrator surface** (routing, auto-commit, validation gates, pipeline policy, status schema).
+- **Not touching any delicate orchestrator surface** (routing, auto-commit, validation gates, pipeline policy, status schema). Any `docs/pipeline-orchestrator.md` and CLI-banner edits are **prose/string-only** — correcting stale read claims and dangling rule-home pointers; no orchestrator code, flag, or behavior changes.
 - **No version bump or CHANGELOG version line.** This folds into the pending 2.0.0 release; QA proposes changelog entry text only.
-- **Not re-sweeping the `templates/docs/*` adopter stubs** that the vacate already corrected — except any residual a strip-grep surfaces (see Known Risks).
+- **Not re-sweeping the `templates/docs/*` adopter stubs** that the vacate already corrected — except any residual the AC-1/AC-2 sweep surfaces.
 
 ## Acceptance Criteria
 
-- [ ] **AC-1 (strip — structural):** After this task, a token grep for `AGENTS\.md|CLAUDE\.md` across canon's shipped + authority surfaces (`src/`, `scripts/`, `.claude/skills/`, `docs/` excluding the historical/log docs, `README.md`, `AGENTS.md`, `CLAUDE.md`, and all `templates/` mirrors; excluding `dist/`, `tasks/`, `CHANGELOG.md`) returns **only allow-listed lines**. The allow-list (built by the reviewer from `git grep` against the tree per the large-removal rule) comprises exactly: (a) operational code that operates on the files — `init.ts` `AGENT_FILES`, `doctor.ts` discovery-nudge check, `docs-refs-check.mjs` root-file scan-list + illustrative comments; (b) `docs/decisions.md` decision records; (c) `README.md` adopter recommendation; (d) test files; (e) "adopter-owned, when present" descriptions; (f) canon-ai's own `CLAUDE.md` = `@AGENTS.md` import and `AGENTS.md` self-reference in its Local Convention note. No "read AGENTS.md/CLAUDE.md" instruction and no "rule X lives in AGENTS.md/CLAUDE.md" claim survives.
-- [ ] **AC-2 (leftover reframe — prose/cells a token-grep misses):** The following sites no longer frame the agent files as canon rule-homes: `README.md:19` and `:305`, `docs/product-context.md:27` and `:50` (philosophy/pitch — reframed to the auto-load + JIT reality, agent files described as adopter-owned overview), and `docs/patterns.md:24` — the Lint/TS trigger-table cell currently reading "*(rule, no canonical file)*" is repointed to its real home `scripts/run-task/prompts/templates/implement.md` (consistent with the `:91` fix already on `main`). Verify by reading each cited line. This enumerated list is best-effort, not provably exhaustive (these framings name no file token, so the AC-1 grep can't catch them); implement re-reads each cited file's surrounding neighborhood and adds any residual rule-home framing surfaced during the AC-1 sweep before `--pr`.
-- [ ] **AC-3 (`/canon-init` scoped to docs corpus):** Neither `.claude/skills/canon-init/SKILL.md`, `.claude/skills/canon-init/write-guide.md`, nor `README.md` claims `/canon-init` generates `AGENTS.md`/`CLAUDE.md`. `README.md:106`'s "generates the full canon document set: AGENTS.md, CLAUDE.md, and the docs/ knowledge corpus" is corrected to the `docs/` corpus only, and points to the built-in `/init` for agent files. The skill's knowledge-corpus generation is otherwise unchanged. Verify: grep the canon-init skill + write-guide + README for any agent-file *generation* claim → none.
+> **Shape note.** The strip is specified as a **structural post-condition over a grep**, not a hand-enumerated list of lines. Implement runs the grep, reframes/strips every non-allow-listed hit, fixes any pointer left dangling by the slimming, and **extends `### Affected Files` with every file it actually touches before `--pr`**. The spec defines the *end state and the allow-list categories*; the grep defines the *work set*. Do not enumerate individual line numbers in any AC.
+
+- [ ] **AC-1 (strip — structural post-condition):** After this task, `git grep -nE 'AGENTS\.md|CLAUDE\.md'` across canon's shipped + authority surfaces — `src/`, `scripts/`, `.claude/skills/`, `docs/` (excluding the historical/log docs: `docs/lessons-learned.md`, `docs/BACKLOG.md`, `docs/task-quality-log.md`, and the dated `docs/*-report.md` / `docs/harness-audit-*.md` retrospectives, plus any `templates/docs/*` mirrors of those), `README.md`, `AGENTS.md`, `CLAUDE.md`, and all `templates/` mirrors; excluding `dist/`, `tasks/`, `CHANGELOG.md` — returns **only lines that fall into the allow-listed categories below**. No "read `AGENTS.md`/`CLAUDE.md`" instruction and no "rule X lives in `AGENTS.md`/`CLAUDE.md`" claim survives in any non-allow-listed line. This includes pointers left dangling by AC-6's slimming of `CLAUDE.md` (e.g. runtime `--reroute` help/usage banners that referenced a now-removed `CLAUDE.md` section): implement repoints them to their real source of truth in `docs/` (the reroute mechanics live in `docs/pipeline-orchestrator.md`). Allow-listed categories (by **kind**, exhaustive — these are the only references that may remain):
+  - **(a) Operational code that operates on the files** — `init.ts`'s `AGENT_FILES` set and scaffold-detection notice, `doctor.ts`'s discovery-nudge check, `docs-refs-check.mjs`'s root-file scan-list and illustrative comments, and the auto-synced `templates/` mirrors of these.
+  - **(b) Decision records** in `docs/decisions.md`.
+  - **(c) README's adopter recommendation** (AC-4) and its adopter-owned framing (AC-3).
+  - **(d) Test files.**
+  - **(e) "Adopter-owned, when present" descriptions** (independent adopter stubs and Related-References lines that describe the files as the adopter's, without instructing a read or claiming a rule lives there).
+  - **(f) canon-ai's own consolidation artifacts** — `CLAUDE.md` = `@AGENTS.md` import and the `AGENTS.md` self-reference in its Local Convention note.
+  - **(g) Accurate operational/CI descriptions** that *name* the files without rule-home framing — e.g. CI path-filter lists that re-include the root operator docs, worktree-visibility notes, and the `canon doctor` behavior summary.
+  - Verify: run the grep over the full tree (root + `templates/`); every surviving hit maps to one of (a)–(g); produce no line that tells an agent to read the files or claims a canon rule is homed in them.
+- [ ] **AC-2 (reframe rule-home framing a token-grep misses):** Some prose frames the agent files as canon rule-homes — or claims canon/the pipeline *reads* them — **without naming an `AGENTS.md`/`CLAUDE.md` token**, so the AC-1 grep cannot catch it. Implement reviews canon's philosophy/pitch prose, getting-started steps, and trigger-table cells across `README.md`, `docs/product-context.md`, `docs/patterns.md`, and `docs/pipeline-orchestrator.md`, and reframes any such claim to the auto-load + JIT reality: agent files are adopter-owned high-level overviews; operating rules arrive just-in-time via prompts/skills; the pipeline reads the protected `docs/*` corpus and JIT prompt/skill guidance on session start, **not** adopter agent files. Illustrative (not exhaustive): `docs/patterns.md`'s Lint/TS trigger-table cell reading "*(rule, no canonical file)*" is repointed to its real home `scripts/run-task/prompts/templates/implement.md` (consistent with the `:91` fix already on `main`). Verify: after the reframe, re-read the philosophy/getting-started/trigger prose in those files and confirm none implies a canon rule-home or a canon/pipeline read of the agent files.
+- [ ] **AC-3 (`/canon-init` scoped to docs corpus):** Neither `.claude/skills/canon-init/SKILL.md`, `.claude/skills/canon-init/write-guide.md`, nor `README.md` claims `/canon-init` **generates** or **reads** `AGENTS.md`/`CLAUDE.md`. README's "generates the full canon document set: AGENTS.md, CLAUDE.md, and the docs/ knowledge corpus" is corrected to the `docs/` corpus only and points to the built-in `/init` for agent files; README's "if they already exist, `/canon-init` reads them as project context" read claim is cut (the skill reads only the `docs/` corpus). The adopter-owned framing ("`AGENTS.md` and `CLAUDE.md` are adopter-owned; canon does not scaffold, modify, or read them") remains (allow-listed under AC-1). The skill's knowledge-corpus generation is otherwise unchanged. Verify: grep the canon-init skill + write-guide + README for any agent-file *generation* or *read-as-context* claim → none.
 - [ ] **AC-4 (README recommendation):** `README.md` recommends adopters generate their agent files via the built-in `/init` (Claude and/or Codex) and documents the optional `CLAUDE.md` = `@AGENTS.md` consolidation. The existing `RECOMMENDED_NUDGE`↔README drift test still passes (or is updated in lockstep if the nudge presentation moves).
 - [ ] **AC-5 (`doctor` advisory):** `checkCanonDiscoveryNudge` (`src/cli/commands/doctor.ts`) distinguishes two warn states: (i) **neither** `CLAUDE.md` nor `AGENTS.md` exists → detail advises running the built-in `/init`; (ii) a file exists but **neither mentions canon** → detail advises adding the nudge. It still returns `pass` when either mentions canon, and **never** returns `fail`. Verify: unit tests in `tests/cli.test.ts` cover both warn branches and the pass case.
 - [ ] **AC-6 (consolidation — canon-ai dogfood):** canon-ai's `CLAUDE.md` consists of the single line `@AGENTS.md` (plus an optional one-line comment). canon-ai's `AGENTS.md` is a high-level overview of canon (what it is, the two roles, the pipeline phases, "route work through the `/canon-*` skills") that retains canon-ai's four always-on operator norms — **commit consent, never self-review inline work, default toward smaller models / lower effort, don't intervene in full-tier `spec_review` auto-revision** — and the communication norm. Detailed operator mechanics (quick refs, reroute mechanics, review charters, commands, PR/CI rules) are **not** reproduced here — they live in the skills and `docs/pipeline-orchestrator.md`. Verify: `CLAUDE.md` is the import line; grep `AGENTS.md` for each of the four named norms + the comms norm; confirm no detailed-mechanics sections remain.
 - [ ] **AC-7 (not re-managed — structural):** `git grep -nE "'AGENTS\.md'|'CLAUDE\.md'" -- src/lib/canon-owned.ts` shows neither file added to `CANON_OWNED` or `DELIMITED`; no code writes or modifies `AGENTS.md`/`CLAUDE.md` (the `doctor` advisory is read-only; `init` does not create them).
-- [ ] **AC-8 (templates mirrors in lockstep):** Every edited canon-owned file's `templates/` mirror reflects the change; `npm run sync-templates:check` passes. (The five canon-init/canon-spec/canon-spec-review/canon-pipeline skills are canon-owned and auto-sync; root docs `patterns.md`/`codebase-map.md`/`product-context.md` are not mirrored pairs — their `templates/docs/*` stubs are independent and out of scope per Non-Goals.)
+- [ ] **AC-8 (templates mirrors in lockstep):** Every edited canon-owned file's `templates/` mirror reflects the change; `npm run sync-templates:check` passes. (The five canon-init/canon-spec/canon-spec-review/canon-pipeline skills and `docs/pipeline-orchestrator.md` / `scripts/docs-refs-check.mjs` are canon-owned and auto-sync root→mirror; root docs `patterns.md`/`codebase-map.md`/`product-context.md` are not mirrored pairs — their `templates/docs/*` stubs are independent.)
 - [ ] **AC-9 (decision record):** `docs/decisions.md` gains an end-state entry recording the agent-files-via-`/init` decision (agent files are tool-native `/init` output, adopter-owned; canon references none; `@AGENTS.md` consolidation recommended).
-- [ ] **AC-10 (build + validation clean):** `dist/` rebuilt for the `doctor` change; `npm run lint`, `npm run type-check`, `npm test`, `npm run docs-refs-check`, `npm run sync-templates:check` all pass. The prompt golden (`tests/run-task-prompts.golden.json`) is unchanged (prompt layer untouched) and the `run-task-prompts` agent-file guard still passes.
+- [ ] **AC-10 (build + validation clean):** `dist/` rebuilt for the `doctor`, `init`, and CLI-banner source changes; `npm run lint`, `npm run type-check`, `npm test`, `npm run docs-refs-check`, `npm run sync-templates:check` all pass. The prompt golden (`tests/run-task-prompts.golden.json`) is unchanged (prompt layer untouched) and the `run-task-prompts` agent-file guard still passes.
+- [ ] **AC-11 (init scaffold notice drops the read claim):** `existingAgentFilesNoticeLines()` (`src/cli/commands/init.ts`) no longer claims the grill / `/canon-init` reads the agent files "as project context" — post-AC-3 the grill is scoped to the `docs/` corpus and does not read them. The notice still detects the files and states they are adopter-owned (canon does not insert, merge, or read managed content into them). `AGENT_FILES` and `hasExistingAgentFiles` are otherwise unchanged. This detection notice is the **one** runtime CLI string that legitimately names `AGENTS.md`/`CLAUDE.md` (an operational detection string, not a rule-home/feedback pointer); it is allow-listed under AC-1(a). Verify: the notice string contains no read-as-context claim; the `tests/cli.test.ts` notice test is updated in lockstep (drops the `/project context/` assertion, asserts the adopter-owned/no-read phrasing, keeps the `does-not-match /merge protocol/i` assertion).
 
 ## Design
 
 ### Affected Files
 
+> This is the **confident starting manifest** (the behavioral-AC targets plus the files we already know carry references). Per the Shape note, implement runs the AC-1 grep over the full tree, strips/reframes every non-allow-listed hit, and **adds any further file it touches to this table before `--pr`** (the base-drift gate reads the final table, not this starting one). Recovery if a file is missed is cheap — add the path and re-run `--pr`, not `--force`.
+
 | File | Change |
 |---|---|
-| `README.md` | AC-3/AC-4/AC-2: cut `:106` agent-file generation claim (→ docs corpus only + point to built-in `/init`); add/Adjust the recommendation to generate agent files via `/init` + document `@AGENTS.md` consolidation; reframe philosophy lines `:19`, `:305`. |
+| `README.md` | AC-3/AC-4/AC-2: cut the `/canon-init` agent-file generation claim (→ docs corpus only + point to built-in `/init`); cut the "`/canon-init` reads them as project context" read claim (keep allow-listed adopter-owned framing); add the recommendation to generate agent files via `/init` + document `@AGENTS.md` consolidation; reframe the philosophy lines. |
 | `AGENTS.md` | AC-6: rewrite as high-level canon overview + canon-ai's four always-on norms + comms norm; drop detailed-mechanics sections (now in skills/docs). |
 | `CLAUDE.md` | AC-6: reduce to the single `@AGENTS.md` import line (+ optional one-line comment). |
-| `docs/patterns.md` | AC-1/AC-2: strip the `CLAUDE.md` operator-pointer refs (`:12`, `:56`, `:62`, `:63`); repoint the `:24` "(rule, no canonical file)" cell to `implement.md`. |
-| `docs/codebase-map.md` | AC-1: strip/repoint the agent-file references in the Entry Points + Agent Config tables to the auto-load/JIT reality (don't reframe rows already correct from the vacate). |
-| `docs/product-context.md` | AC-2: reframe philosophy lines `:27`, `:50` (and the `:119` "From AGENTS.md" citation) off the rule-home framing. |
+| `docs/patterns.md` | AC-1/AC-2: strip/repoint the `CLAUDE.md` operator-pointer refs and quick-reference rows to the auto-load/JIT reality + `docs/pipeline-orchestrator.md`; repoint the "(rule, no canonical file)" trigger-table cell to `implement.md`. |
+| `docs/codebase-map.md` | AC-1/AC-2: strip/repoint the token-bearing agent-file references (Entry-Points + Agent-Config rows, Protected-Docs preamble) to the auto-load/JIT reality; leave accurate operational descriptions (e.g. the `canon doctor` summary) allow-listed and unchanged. |
+| `docs/product-context.md` | AC-2/AC-1: reframe the philosophy/getting-started prose off the rule-home/read framing; strip token-bearing references that frame the files as orchestrator surfaces or rule attributions. |
+| `docs/pipeline-orchestrator.md` | AC-2/AC-1: correct the stale "the pipeline reads the project's operator context" claim → reads the protected `docs/*` corpus + JIT prompt/skill guidance, not adopter agent files; keep allow-listed adopter-owned Related-References line. Doc prose only — no delicate orchestrator surface. |
 | `docs/decisions.md` | AC-9: append the end-state decision record. |
-| `.claude/skills/canon-init/SKILL.md` | AC-1/AC-3: strip the `if AGENTS.md/CLAUDE.md exists, read it` Phase-0 lines; ensure no agent-file generation claim; point to built-in `/init`. |
-| `.claude/skills/canon-init/write-guide.md` | AC-1/AC-3: confirm no agent-file generation; strip any read-instruction; keep "adopter-owned" description. |
-| `.claude/skills/canon-spec/SKILL.md` | AC-1: strip the `AGENTS.md`/`CLAUDE.md` load-context + Related refs. |
-| `.claude/skills/canon-spec-review/SKILL.md` | AC-1: strip the `CLAUDE.md` Related ref. |
-| `.claude/skills/canon-pipeline/SKILL.md` | AC-1: strip the `CLAUDE.md` Related ref. |
-| `templates/.claude/skills/canon-init/SKILL.md` | AC-8: synced mirror of the above. |
-| `templates/.claude/skills/canon-init/write-guide.md` | AC-8: synced mirror. |
-| `templates/.claude/skills/canon-spec/SKILL.md` | AC-8: synced mirror. |
-| `templates/.claude/skills/canon-spec-review/SKILL.md` | AC-8: synced mirror. |
-| `templates/.claude/skills/canon-pipeline/SKILL.md` | AC-8: synced mirror. |
+| `src/cli/commands/init.ts` | AC-11: reword `existingAgentFilesNoticeLines()` to drop the read-as-context claim; keep adopter-owned/no-merge wording. `AGENT_FILES`/`hasExistingAgentFiles` unchanged. |
 | `src/cli/commands/doctor.ts` | AC-5: extend `checkCanonDiscoveryNudge` to the two warn states (absent → `/init`; silent → nudge). |
-| `tests/cli.test.ts` | AC-5/AC-4: doctor advisory branch tests; keep the RECOMMENDED_NUDGE↔README drift test green. |
-| `dist/` | AC-10: rebuilt artifacts (`doctor` source change is bundled). |
+| `scripts/run-task/cli.ts`, `src/cli/index.ts` | AC-1: repoint the `--reroute` help/usage banners off the now-removed `CLAUDE.md` reroute section to `docs/pipeline-orchestrator.md`. |
+| `.claude/skills/canon-init/SKILL.md`, `.claude/skills/canon-init/write-guide.md` | AC-1/AC-3: strip the Phase-0 "if AGENTS.md/CLAUDE.md exists, read it" lines and any read-instruction; ensure no agent-file generation claim; point to built-in `/init`; keep "adopter-owned" description. |
+| `.claude/skills/canon-spec/SKILL.md`, `.claude/skills/canon-spec-review/SKILL.md`, `.claude/skills/canon-pipeline/SKILL.md` | AC-1: strip the `AGENTS.md`/`CLAUDE.md` load-context + Related refs. |
+| `templates/**` mirrors of the above canon-owned files | AC-8: auto-synced root→mirror (`docs/pipeline-orchestrator.md`, `scripts/docs-refs-check.mjs`, the five skills). Declared here for the `--pr` base-drift gate; do not hand-edit. |
+| `tests/cli.test.ts` | AC-5/AC-4/AC-11: doctor advisory branch tests; update the init-notice test to the reworded no-read phrasing; keep the RECOMMENDED_NUDGE↔README drift test green. |
+| `dist/` | AC-10: rebuilt artifacts (`doctor`, `init`, CLI-banner source changes are bundled). |
 
 > Build-generated artifacts: `dist/` is regenerated by `npm run build`; listed in directory form so the `--pr` base-drift gate accepts it. No prompt-template change → `tests/run-task-prompts.golden.json` is NOT regenerated.
 
@@ -81,7 +90,7 @@ Get canon out of the agent-file business and dogfood the result.
 
 - **Built-in `/init` behavior** (Claude Code `/init`, Codex init) is external tooling canon now relies on for agent-file generation — canon documents it but does not implement it. The `@path` import is a Claude Code feature (imports expand into context at launch, recursive to 5 hops); confirmed against Anthropic docs.
 - **`RECOMMENDED_NUDGE`** single-source constant (`doctor.ts`) and its README drift test must stay in lockstep if the nudge presentation changes (AC-4).
-- **Pre-commit sync hook / `sync-templates:check`**: the five canon-owned skills auto-sync root→mirror; do not hand-edit the `templates/` mirrors.
+- **Pre-commit sync hook / `sync-templates:check`**: canon-owned files auto-sync root→mirror; do not hand-edit the `templates/` mirrors.
 
 ### Data Model Changes
 
@@ -92,19 +101,19 @@ None.
 - [x] `lint` (`npm run lint`)
 - [x] `type-check` (`npm run type-check`)
 - [x] `unit tests` (`npm test`) — full suite clean; adds `doctor` advisory branch coverage
-- [x] `build` (`npm run build`) — `doctor` change is bundled into `dist/`
+- [x] `build` (`npm run build`) — `doctor`/`init`/banner changes bundled into `dist/`
 - [x] `docs-refs` (`npm run docs-refs-check`)
 - [x] `sync-templates:check` (`npm run sync-templates:check`) — required for canon-managed edits; AC-8/AC-10 depend on it
 - [ ] `E2E` — N/A: no UI/runtime surface.
 
 ## Docs Impact
 
-- `docs/codebase-map.md`, `docs/product-context.md`, `docs/patterns.md`, `docs/decisions.md` are **directly edited** by this task (in Affected Files), not just at-risk.
-- `docs/architecture.md` — not expected to change; verify it carries no agent-file rule-home framing during the strip sweep.
+- `docs/codebase-map.md`, `docs/product-context.md`, `docs/patterns.md`, `docs/decisions.md`, `docs/pipeline-orchestrator.md` are **directly edited** by this task (in Affected Files), not just at-risk — doc prose only, no delicate orchestrator surface.
+- `docs/architecture.md` — verify during the AC-1 sweep that any agent-file mentions are accurate operational/CI descriptions (allow-listed kind g), not rule-home framing; reframe if not.
 
 ## Known Risks
 
-- **Affected-Files completeness vs. the `--pr` base-drift gate.** A strip-everywhere task risks missing a file; the base-drift gate then rejects `--pr`. Mitigation: spec_review and implement should run the AC-1 grep over the **full** tree (root + `templates/`) and add any surfaced file to Affected Files *before* `--pr`. (Recovery if missed is cheap — add the path and re-run `--pr`, not `--force`.)
+- **Affected-Files completeness vs. the `--pr` base-drift gate.** A strip-everywhere task risks the diff containing a file the table doesn't name. Mitigation is structural, not heroic enumeration: AC-1's post-condition *requires* implement to run the grep over the full tree and extend the table before `--pr`. (Recovery if still missed is cheap — add the path and re-run `--pr`, not `--force`.) This shape is deliberate — the earlier hand-enumerated version diverged across review rounds because the spec tried to own the work set; the grep owns it now.
 - **canon-ai operator self-degradation.** Slimming canon-ai's `AGENTS.md` to a high-level overview must not drop a norm that no skill re-states. AC-6 names the must-survive norms explicitly; the reviewer greps for each. If a norm has no skill/prompt home, it stays in `AGENTS.md`.
 - **`@AGENTS.md` import correctness.** If the single-line `CLAUDE.md` doesn't actually import (typo, wrong path), canon-ai's Claude operator loses its overview silently. Human test plan exercises a real session to confirm the import resolves.
 - **Doctor advisory message drift.** The two new warn details are user-facing strings; keep them asserted in tests so wording changes don't silently regress (AC-5).
@@ -123,9 +132,10 @@ None.
 ## Spec Quality Checklist
 
 - [x] Every AC states exactly how to verify it (not just "it works")
-- [x] Affected Files lists specific files with specific change descriptions
-- [x] Plan steps (fast tier) reference actual function/file names from the codebase — N/A (full tier; pipeline writes the plan). Curation of canon-ai's overview content is explicitly deferred to plan.
-- [x] Known Risks covers failure modes for the trickiest ACs
+- [x] Affected Files lists specific files with specific change descriptions; the strip set is delegated to the AC-1 grep (structural post-condition), not pre-enumerated by line
+- [x] Plan steps (fast tier) reference actual function/file names — N/A (full tier; pipeline writes the plan). Curation of canon-ai's overview content is deferred to plan.
+- [x] Known Risks covers failure modes for the trickiest ACs (base-drift completeness reframed as a structural post-condition after the enumerate-by-hand approach diverged across review rounds)
 - [x] Human Test Plan uses product language only (no code, no file names)
 - [x] Validation Required has at least one entry marked `- [x]`
-- [x] Symbols named in ACs exist — `checkCanonDiscoveryNudge`/`RECOMMENDED_NUDGE` (`doctor.ts`), `CANON_OWNED`/`DELIMITED` (`canon-owned.ts`), `AGENT_FILES` (`init.ts`), the `run-task-prompts` guard, README:106/:19/:305, patterns.md:24, product-context:27/:50 — all verified this session.
+- [x] Replacement framing, not paired add/remove: strips and reframes are post-conditions over a grep; load-bearing "must not survive" constraints are backed by the AC-1 structural grep and AC-5/AC-11 unit tests, not bare prose
+- [x] Symbols named in ACs exist — `checkCanonDiscoveryNudge`/`RECOMMENDED_NUDGE` (`doctor.ts`), `CANON_OWNED`/`DELIMITED` (`canon-owned.ts`), `AGENT_FILES`/`existingAgentFilesNoticeLines`/`hasExistingAgentFiles` (`init.ts`), the `run-task-prompts` guard, the `cli.test.ts` init-notice test — all verified this session.
