@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-06-20
+
+### Fixed
+
+- **`/canon-changelog`'s release-rules guidance no longer contains a broken reference to `qa.md`, a canon-internal file adopters don't have.** The phrase "inlined in `qa.md`" was a bare backtick ref to an internal per-phase prompt template absent from adopter repos — `docs-refs-check` would flag it as a missing file in any upgraded repo. The sentence is reframed to say the release rules are enforced during canon's QA phase, preserving the meaning while removing the invalid reference. Ships to adopters via `canon upgrade`. ([#179](https://github.com/tstraub89/canon-ai/pull/179))
+
 ## [2.0.0] — 2026-06-20
 
 > **Breaking (adopters):** Canon no longer ships or manages a canon-owned content block in your `AGENTS.md` / `CLAUDE.md`. On `canon upgrade` the managed block is removed and these files become fully adopter-owned — canon does not create, modify, or read them. Canon's operating rules now arrive just-in-time through the per-phase prompt templates, agent charters, and `/canon-*` skills; generate your agent files with the tool-native `/init` (Claude Code's `/init` → `CLAUDE.md`, Codex's init → `AGENTS.md`). `canon doctor` guides the transition.
