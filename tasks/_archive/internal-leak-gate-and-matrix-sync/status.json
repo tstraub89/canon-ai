@@ -1,7 +1,7 @@
 {
   "id": "internal-leak-gate-and-matrix-sync",
   "title": "Close internal-leak gate gap, sync Validation Matrix, encode no-internals rule",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-20",
   "updated": "2026-06-21",
   "branch": "task/internal-leak-gate-and-matrix-sync",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
