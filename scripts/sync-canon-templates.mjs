@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path, { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { CANON_GITIGNORE_BLOCK } from '../src/lib/canon-block.ts';
 import { CANON_OWNED, DELIMITED } from '../src/lib/canon-owned.ts';
@@ -23,6 +23,27 @@ const CANON_START_RE = /<!-- canon:start[^>]* -->/;
 // `docs/patterns.md`, `status.json`, etc.) are NOT canon-internal and
 // must not be added here.
 export const CANON_INTERNAL_PATH_PREFIXES = ['scripts/run-task/'];
+
+const CANON_AI_ROOT = path.resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+function readMarkdownBasenames(dir) {
+    if (!existsSync(dir)) return [];
+    // Exclude a subdirectory named `*.md` from the basename set (it would
+    // produce a false-positive leak flag). Use a real statSync rather than
+    // readdirSync({ withFileTypes }) — dirent type metadata is UNKNOWN on
+    // some network/bind mounts, which would collapse the set to empty and
+    // silently drop leak coverage; statSync is reliable everywhere.
+    return readdirSync(dir)
+        .filter(name => name.endsWith('.md') && statSync(join(dir, name)).isFile());
+}
+
+export const INTERNAL_ONLY_TEMPLATE_BASENAMES = new Set(
+    (() => {
+        const internalBasenames = readMarkdownBasenames(join(CANON_AI_ROOT, 'scripts/run-task/prompts/templates'));
+        const canonBasenames = new Set(readMarkdownBasenames(join(CANON_AI_ROOT, '.canon/templates')));
+        return internalBasenames.filter(name => !canonBasenames.has(name));
+    })(),
+);
 
 /**
  * Merge root-owned canon content with the templates-side outside-delimiter tail.
@@ -57,6 +78,9 @@ function isCanonInternalTarget(target, sourceRel) {
     // Canon-ai-dev convention: refs are repo-root-relative
     // (e.g., `scripts/run-task/main.ts` in any doc, at any depth).
     if (CANON_INTERNAL_PATH_PREFIXES.some(prefix => target.startsWith(prefix))) {
+        return true;
+    }
+    if (!target.includes('/') && INTERNAL_ONLY_TEMPLATE_BASENAMES.has(target)) {
         return true;
     }
     // Also normalize source-file-relative refs (e.g., `../scripts/run-task/...`
@@ -120,6 +144,13 @@ function scanRegionForCanonInternalRefs(content, startIdx, endIdx, sourceRel) {
         line: finding.line + leadingLines,
         target: finding.target,
     }));
+}
+
+function describeLeakTarget(target) {
+    if (!target.includes('/') && INTERNAL_ONLY_TEMPLATE_BASENAMES.has(target)) {
+        return `\`${target}\` is an internal-only prompt-template filename — adopters don't have this file; reference the phase name instead of the template filename`;
+    }
+    return `\`${target}\` is canon-internal and must not appear in canon-managed content (adopters don't have this file; ref would break their docs-refs-check at upgrade time)`;
 }
 
 /**
@@ -296,9 +327,7 @@ function buildSyncPlan(repoRoot) {
         if (!existsSync(sourcePath)) continue;
         const content = readFileSync(sourcePath, 'utf8');
         for (const leak of findCanonInternalRefs(content, relPath)) {
-            errors.push(
-                `[canon-internal-leak] ${relPath}:${leak.line} — \`${leak.target}\` is canon-internal and must not appear in canon-managed content (adopters don't have this file; ref would break their docs-refs-check at upgrade time)`,
-            );
+            errors.push(`[canon-internal-leak] ${relPath}:${leak.line} — ${describeLeakTarget(leak.target)}`);
         }
     }
 
@@ -308,9 +337,7 @@ function buildSyncPlan(repoRoot) {
         if (existsSync(sourcePath)) {
             const sourceContent = readFileSync(sourcePath, 'utf8');
             for (const leak of findCanonInternalRefsInDelimitedRegion(sourceContent, relPath)) {
-                errors.push(
-                    `[canon-internal-leak] ${relPath}:${leak.line} — \`${leak.target}\` is canon-internal and must not appear in canon-managed content (adopters don't have this file; ref would break their docs-refs-check at upgrade time)`,
-                );
+                errors.push(`[canon-internal-leak] ${relPath}:${leak.line} — ${describeLeakTarget(leak.target)}`);
             }
         }
         // The templates-side tail (post canon:end) ships verbatim to
@@ -321,9 +348,7 @@ function buildSyncPlan(repoRoot) {
         if (existsSync(targetPath)) {
             const targetContent = readFileSync(targetPath, 'utf8');
             for (const leak of findCanonInternalRefsInDelimitedTail(targetContent, targetRel)) {
-                errors.push(
-                    `[canon-internal-leak] ${targetRel}:${leak.line} — \`${leak.target}\` is canon-internal and must not appear in canon-managed content (adopters don't have this file; ref would break their docs-refs-check at upgrade time)`,
-                );
+                errors.push(`[canon-internal-leak] ${targetRel}:${leak.line} — ${describeLeakTarget(leak.target)}`);
             }
         } else if (existsSync(sourcePath)) {
             // First-create path: `buildSyncPlan` writes the full source
@@ -336,7 +361,7 @@ function buildSyncPlan(repoRoot) {
             const sourceContent = readFileSync(sourcePath, 'utf8');
             for (const leak of findCanonInternalRefsInDelimitedTail(sourceContent, relPath)) {
                 errors.push(
-                    `[canon-internal-leak] ${relPath}:${leak.line} — \`${leak.target}\` in source tail would ship as ${targetRel}'s default tail on first-create (adopters don't have this file; move the ref above \`<!-- canon:end -->\` only if it should be canon-managed, otherwise drop it or create ${targetRel} manually with the desired adopter-default tail)`,
+                    `[canon-internal-leak] ${relPath}:${leak.line} — ${describeLeakTarget(leak.target)}; in the source tail it would ship as ${targetRel}'s default tail on first-create (move the ref above \`<!-- canon:end -->\` only if it should be canon-managed, otherwise drop it or create ${targetRel} manually with the desired adopter-default tail)`,
                 );
             }
         }

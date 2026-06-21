@@ -12,6 +12,14 @@
 
 | File | What Changed |
 |---|---|
+| `scripts/sync-canon-templates.mjs` | Added a computed `INTERNAL_ONLY_TEMPLATE_BASENAMES` set derived from `scripts/run-task/prompts/templates/*.md` minus `.canon/templates/*.md`; bare internal-only basenames now trip `canon-internal-leak`; leak messages share a helper that distinguishes bare template filenames from path refs. |
+| `tests/sync-canon-templates.test.ts` | Added coverage for bare internal-only basename leaks (`qa.md`, `implement.md`), explicit collision exemptions (`spec.md`, `plan.md`, `spec-review.md`), and a seam assertion that `implement.md` is in the derived internal-only set while `spec.md` is not. |
+| `tests/validation-matrix-sync.test.ts` | New drift-guard test extracts the Validation Matrix from `scripts/run-task/prompts/templates/implement.md` and `.canon/templates/spec.md`, asserts both blocks are non-empty, and compares them byte-for-byte. |
+| `.claude/skills/canon-changelog/SKILL.md` | Reframed the release-rules sentence to point at canon's QA phase instead of naming `qa.md`. |
+| `templates/.claude/skills/canon-changelog/SKILL.md` | Synced mirror of the changelog skill update. |
+| `docs/decisions.md` | Added a new decision entry stating shipped guidance must not name orchestration internals and that `scripts/sync-canon-templates.mjs` enforces the rule. |
+| `tasks/internal-leak-gate-and-matrix-sync/notes.md` | Appended an implementation note about the module-load-time derivation of the internal-only basename set. |
+| `tasks/internal-leak-gate-and-matrix-sync/status.json` | Pipeline-managed task metadata now reflects the worktree branch and implement-in-progress phase state. |
 
 ## Canon Governance
 
@@ -27,7 +35,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Extended the leak gate so canon-managed markdown catches bare references to canon-internal prompt-template basenames that adopters do not have, while preserving the existing full-path, relative-path, code-fence, and repo-escape behavior. Added a direct drift test for the universal Validation Matrix so the duplicated tables in `implement.md` and `.canon/templates/spec.md` cannot silently diverge. Reframed the changelog guidance and added a durable decision entry so the rule is explicit in shipped guidance and backed by the executable leak gate.
 
 ## Deviations from Plan
 
@@ -35,7 +43,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| _(none)_ | | |
 
 ## AC Coverage
 
@@ -43,17 +51,25 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: `scripts/sync-canon-templates.mjs`'s leak check flags a backtick reference to a bare internal-only prompt-template basename (no path component) inside any scanned canon-managed markdown file. | Met | Covered by `scripts/sync-canon-templates.mjs:27-39,71-92,140-167,309-355` and `tests/sync-canon-templates.test.ts:303-334`. |
+| AC-2: The leak check does not flag bare references to `spec.md`, `plan.md`, or `spec-review.md`. | Met | Covered by `tests/sync-canon-templates.test.ts:336-355`. |
+| AC-3: The internal-only basename set is derived from the template directories, not a hand-maintained literal list. | Met | `scripts/sync-canon-templates.mjs:27-39` derives the set from the actual directories; `tests/sync-canon-templates.test.ts:303-334` pins `implement.md` in the set and `spec.md` out of it. |
+| AC-4: Existing leak-gate behavior is preserved for full-path refs, relative refs, fenced blocks, and repo escapes. | Met | The existing tests remain in `tests/sync-canon-templates.test.ts:281-299,358-425` and passed unchanged. |
+| AC-5: Validation Matrix extracted from `scripts/run-task/prompts/templates/implement.md` matches `.canon/templates/spec.md` byte-for-byte and is non-empty in both files. | Met | Covered by `tests/validation-matrix-sync.test.ts:6-31`. |
+| AC-6: `.claude/skills/canon-changelog/SKILL.md` no longer contains a backtick reference to an internal-only basename and the sentence is reframed around canon's QA phase. | Met | Covered by `.claude/skills/canon-changelog/SKILL.md:222-226` and the synced mirror. |
+| AC-7: `templates/.claude/skills/canon-changelog/SKILL.md` matches the edited root file. | Met | `npm run sync-templates:check` passed after syncing the mirror. |
+| AC-8: Running the leak gate over the whole repo passes with no `[canon-internal-leak]` errors. | Met | `npm run sync-templates:check` exited 0. |
+| AC-9: `docs/decisions.md` gains a new decision entry stating shipped guidance must not reference orchestration internals, with the leak gate as enforcement. | Met | Covered by `docs/decisions.md:161-167`. |
 
 ## Edge Cases Considered
 
-- ...
+- Bare basename collisions are intentionally exempt for `spec.md`, `plan.md`, and `spec-review.md`, because those names also belong to adopter-facing task artifacts and shipped templates.
+- Code-fenced refs remain ignored, so examples in fenced snippets do not trigger the leak gate.
+- The matrix extractor fails closed if the anchor header disappears or the block is empty, avoiding a vacuous pass.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -73,44 +89,17 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | Full suite passed: 882 passed, 1 skipped. |
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | |
+| `npm run build` | not_configured | Spec marked this N/A. |
+| `<E2E>` | not_configured | Spec marked this N/A. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration. Same format as the baseline Changes table — `` `path/to/file.ext` `` or `[path/to/file.ext](url)` only. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->

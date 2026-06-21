@@ -606,3 +606,6 @@
 | 2026-06-20T23:46:18.022Z | internal-leak-gate-and-matrix-sync | spec | claude | opus | 0 | 57.9s | 302699 | ok |
 | 2026-06-20T23:47:15.812Z | internal-leak-gate-and-matrix-sync | spec_review | codex | gpt-5.4-mini | 1 | 57.8s | 1415342 | ok |
 | 2026-06-20T23:55:49.340Z | internal-leak-gate-and-matrix-sync | plan | claude | sonnet | 0 | 360.7s | 941696 | ok |
+| 2026-06-21T00:02:29.862Z | internal-leak-gate-and-matrix-sync | implement | codex | gpt-5.4-mini | 0 | 399.8s | 3727718 | ok |
+| 2026-06-21T00:13:53.750Z | internal-leak-gate-and-matrix-sync | code_review | claude | sonnet | 0 | 683.4s | 635630 | ok |
+| 2026-06-21T00:18:42.051Z | internal-leak-gate-and-matrix-sync | qa | claude | sonnet | 0 | 288.3s | 781860 | ok |

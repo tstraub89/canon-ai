@@ -223,4 +223,4 @@ Confirm the commit hash. Stop. Do not push. Tell the user: "When ready, run `git
 
 - `/canon-status` — confirm what's in flight or recently shipped before drafting.
 - `/canon-pipeline` — for hotfix absorption and finalize-ship operations.
-- `docs/decisions.md` §"Versioning and release policy" — project changelog scope and SemVer interpretation. Canon's general release rules (propose-only, separate bump commit, no major surprises) are inlined in `qa.md`.
+- `docs/decisions.md` §"Versioning and release policy" — project changelog scope and SemVer interpretation. Canon's general release rules (propose-only, separate bump commit, no major surprises) are enforced during canon's QA phase.

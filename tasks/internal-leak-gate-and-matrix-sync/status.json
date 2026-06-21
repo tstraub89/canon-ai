@@ -1,15 +1,15 @@
 {
   "id": "internal-leak-gate-and-matrix-sync",
   "title": "Close internal-leak gate gap, sync Validation Matrix, encode no-internals rule",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-20",
-  "updated": "2026-06-20",
-  "branch": "",
+  "updated": "2026-06-21",
+  "branch": "task/internal-leak-gate-and-matrix-sync",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "f6cc6561045af98d4231103eeb263acc900cbc92",
-    "orchestrator_commit": "f6cc6561045af98d4231103eeb263acc900cbc92",
+    "upstream_commit": "0b6717b1aff74438265ed9f955b1aadeb5477c73",
+    "orchestrator_commit": "0b6717b1aff74438265ed9f955b1aadeb5477c73",
     "codex_cli": "codex-cli 0.141.0",
     "claude_code": "2.1.185 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "019ee76a-2bdd-7a93-a6fe-5978ebca8d5f",
-    "claude_spec": "9d395c3e-ce1a-421c-9ca4-3eda9f9b2cbe"
+    "claude_spec": "9d395c3e-ce1a-421c-9ca4-3eda9f9b2cbe",
+    "codex": "019ee776-4e03-7102-8f05-4ace095fb07b",
+    "claude_review": "a688fb61-070c-431d-ad3f-88deb46001b9"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

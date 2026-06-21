@@ -10,12 +10,14 @@ import { CANON_GITIGNORE_BLOCK } from '../src/lib/canon-block.js';
 
 type SyncCanonTemplatesModule = {
     applySync(repoRoot: string): string[];
+    INTERNAL_ONLY_TEMPLATE_BASENAMES: ReadonlySet<string>;
     checkSync(repoRoot: string): string[];
     findSyncErrors(repoRoot: string): string[];
     mergeDelimitedForSync(rootContent: string, templatesContent: string): string | null;
 };
 
-const syncCanonTemplates = syncCanonTemplatesRaw as SyncCanonTemplatesModule;
+const syncCanonTemplates = syncCanonTemplatesRaw as unknown as SyncCanonTemplatesModule;
+const internalOnlyTemplateBasenames = syncCanonTemplates.INTERNAL_ONLY_TEMPLATE_BASENAMES;
 
 const scriptPath = path.resolve('scripts/sync-canon-templates.mjs');
 const tsxBin = path.resolve(process.platform === 'win32' ? 'node_modules/.bin/tsx.cmd' : 'node_modules/.bin/tsx');
@@ -294,6 +296,61 @@ void test('findSyncErrors flags canon-internal leak in a wholesale-synced markdo
         assert.ok(
             errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*scripts\/run-task\/main\.ts/.test(e)),
             `expected canon-internal-leak error for docs/pipeline-orchestrator.md; got: ${errors.join(' | ')}`,
+        );
+    });
+});
+
+void test('findSyncErrors flags bare internal-only prompt-template basenames in wholesale-synced markdown', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const content = [
+            'See `qa.md` for canon QA rules.',
+            'See `implement.md` for the implementation prompt.',
+            '',
+        ].join('\n');
+        writeFile(root, 'docs/pipeline-orchestrator.md', content);
+        writeFile(root, 'templates/docs/pipeline-orchestrator.md', content);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        const leakErrors = errors.filter(e => e.startsWith('[canon-internal-leak]'));
+        assert.equal(leakErrors.length, 2, `expected two canon-internal-leak errors; got: ${leakErrors.join(' | ')}`);
+        assert.ok(
+            leakErrors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*`qa\.md`/.test(e)),
+            `expected canon-internal-leak error for bare \`qa.md\`; got: ${leakErrors.join(' | ')}`,
+        );
+        assert.ok(
+            leakErrors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:2 .*`implement\.md`/.test(e)),
+            `expected canon-internal-leak error for bare \`implement.md\`; got: ${leakErrors.join(' | ')}`,
+        );
+        assert.ok(
+            internalOnlyTemplateBasenames.has('implement.md'),
+            'expected implement.md to be in INTERNAL_ONLY_TEMPLATE_BASENAMES',
+        );
+        assert.ok(
+            !internalOnlyTemplateBasenames.has('spec.md'),
+            'expected spec.md to be excluded from INTERNAL_ONLY_TEMPLATE_BASENAMES',
+        );
+    });
+});
+
+void test('findSyncErrors does NOT flag bare colliding-name refs (spec.md, plan.md, spec-review.md)', () => {
+    withTempDir(root => {
+        seedCanonFixture(root);
+        const content = [
+            'Review `spec.md` before editing.',
+            'Review `plan.md` before editing.',
+            'Review `spec-review.md` before editing.',
+            '',
+        ].join('\n');
+        writeFile(root, 'docs/pipeline-orchestrator.md', content);
+        writeFile(root, 'templates/docs/pipeline-orchestrator.md', content);
+
+        const errors = syncCanonTemplates.findSyncErrors(root);
+        const leakErrors = errors.filter(e => e.startsWith('[canon-internal-leak]'));
+        assert.deepEqual(
+            leakErrors,
+            [],
+            `expected no [canon-internal-leak] errors for colliding-name bare refs; got: ${leakErrors.join(' | ')}`,
         );
     });
 });

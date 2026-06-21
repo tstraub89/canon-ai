@@ -158,6 +158,22 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
+## Canon-shipped guidance never names orchestration internals
+
+**Decision**: Canon-managed and shipped guidance must not point adopters at canon orchestration internals — the orchestrator source under `scripts/run-task/**`, canon's CLI source under `src/**`, or the per-phase prompt templates under `scripts/run-task/prompts/templates/`. Adopters customize task templates by copying them into `tasks/_templates/` (which `canon task new` prefers over the canon-shipped `.canon/templates/` defaults, and which `canon upgrade` never overwrites); canon's shipped surfaces otherwise stay decoupled from the implementation machinery adopters do not have. This is the broad principle; enforcement of it is split between a mechanical gate and authoring/review discipline (see Rule).
+
+**Why**: Canon ships into adopter repos through upgradeable guidance surfaces, while the orchestration internals live only in canon's own checkout. If shipped prose points at those internals, adopters get broken references — surfaced when their `docs-refs-check` next runs (canon invokes it at `--pr`/commit time in `scripts/run-task/main.ts`, and in CI for repos that wire it up), not at `canon upgrade` itself — or instructions they cannot follow. Keeping shipped guidance on adopter-facing phases, concepts, and overridable templates preserves the contract without leaking canon's implementation details. The v2.0.0 leak (`adopter-agent-file-redesign`, a shipped skill naming the internal `implement.md` prompt template) is the canonical instance this rule guards against.
+
+**Rule**:
+
+- **The leak gate in `scripts/sync-canon-templates.mjs` mechanically enforces the unambiguous subset** of this principle, and the gate (run via `npm run sync-templates:check`) must pass before shipping canon-managed markdown, skills, or templates. The gate blocks two reference classes because they are *unambiguously* canon-internal: (1) path refs under `scripts/run-task/` (the orchestrator tree, including the prompt templates), and (2) bare basenames of internal-only per-phase prompt templates — those under `scripts/run-task/prompts/templates/` that have no `.canon/templates/` or task-artifact counterpart (e.g. `qa.md`, `implement.md`). It deliberately does **not** blanket-block bare `src/` or `scripts/` path refs: those directory names are ambiguous — adopters have their *own* `src/` and `scripts/`, and shipped guidance legitimately references the adopter's source root as a concept (e.g. `canon-init/SKILL.md`'s "`src/` or equivalent source root"). A blanket prefix block there would false-positive on correct adopter-facing prose.
+
+- **For the ambiguous internals the gate cannot mechanize** — a ref to one of canon's *own* `src/**` files (e.g. `` `src/task/index.ts` ``) inside shipped guidance — the principle is upheld by authoring and code review, not the gate. When authoring or reviewing canon-managed surfaces, treat a specific canon `src/**` file path as a leak and rephrase it to name the adopter-facing concept, phase, or override point instead.
+
+- **Either way, the fix for a flagged or spotted leak is the same**: rephrase to name the phase, adopter-facing concept, or override point — never the internal file path. Strengthening the gate to cover an additional reference class is worthwhile only when that class can be detected without false-positiving on legitimate adopter-facing usage.
+
+---
+
 ## Canon prescribes no release model to adopters
 
 **Decision**: Canon's adopter-facing guidance prescribes no specific release model. The `--pr` / `--ship` / `base_branch` mechanics are model-neutral by design. Adopters may use release-branch-per-version, trunk-from-main, tag-from-main, no versioning, or any hybrid — canon supports all of them because `base_branch` is recorded **per task** in `status.json` at creation.
