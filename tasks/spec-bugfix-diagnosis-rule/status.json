@@ -1,0 +1,72 @@
+{
+  "id": "spec-bugfix-diagnosis-rule",
+  "title": "Re-home diagnose/reproduce rule + red-first test into spec-authoring surfaces",
+  "status": "implement",
+  "created": "2026-06-25",
+  "updated": "2026-06-25",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "9c1d638fe6fef9f1edb045e69f4e515dfb2ce28e",
+    "orchestrator_commit": "9c1d638fe6fef9f1edb045e69f4e515dfb2ce28e",
+    "codex_cli": "codex-cli 0.142.0",
+    "claude_code": "2.1.185 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019efcb0-baae-7a50-b807-00c18d864fb5"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}
