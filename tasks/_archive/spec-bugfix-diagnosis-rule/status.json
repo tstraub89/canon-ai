@@ -1,7 +1,7 @@
 {
   "id": "spec-bugfix-diagnosis-rule",
   "title": "Re-home diagnose/reproduce rule + red-first test into spec-authoring surfaces",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-25",
   "updated": "2026-06-25",
   "branch": "task/spec-bugfix-diagnosis-rule",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
