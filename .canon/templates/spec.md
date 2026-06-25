@@ -7,6 +7,8 @@
 
 What is broken, missing, or suboptimal? Be specific. Link to user feedback, bugs, or roadmap items if available.
 
+> **For a bug or flake fix:** State the confirmed mechanism in *Problem* and how you confirmed it (the reproduction, trace, or forced repro), not merely a plausible cause. Satisfying this is your obligation before marking the spec done; on fast-tier (S, non-delicate) tasks the `spec_review` checkpoint is skipped and no reviewer will catch an unverified mechanism. If the mechanism is environment-bound and a faithful repro is impractical, say so and name the deterministic alternative used instead (integration fixture or documented manual repro).
+
 ## Decision
 
 What are we building? Describe the behavior change, not implementation details.
@@ -18,6 +20,8 @@ What are we explicitly NOT doing in this task? This prevents scope creep.
 ## Acceptance Criteria
 
 Checklist of verifiable outcomes. Each item must be testable.
+
+> **For a bug or flake fix:** Include a regression-test AC that fails on the pre-fix code for the stated reason and passes after the fix (red-first). If the mechanism is environment-bound and a faithful repro is impractical, the AC must say so and name the deterministic alternative rather than omitting verification.
 
 - [ ] AC-1: ...
 - [ ] AC-2: ...
@@ -93,3 +97,4 @@ Steps the human should perform to verify the feature works as intended. Written 
 - [ ] Known Risks covers failure modes for the trickiest ACs
 - [ ] Human Test Plan uses product language only (no code, no file names)
 - [ ] Validation Required has at least one entry marked `- [x]` (not `- [ ]`). `- [ ]` is a placeholder; the spec author flips required checks to `- [x]` before marking spec done. The orchestrator's code_review pre-flight blocks if no `[x]` items are present.
+- [ ] (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative

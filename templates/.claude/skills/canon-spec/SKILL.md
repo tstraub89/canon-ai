@@ -142,12 +142,14 @@ Self-check before presenting:
 - [ ] Validation Required has at least one entry (or "None" with a reason)
 - [ ] Non-Goals rules out the most tempting scope expansions — back load-bearing exclusions with a positive scope-bound or grep AC, not prose "NOT" alone
 - [ ] Symbols named in ACs actually exist in the codebase — grep-verify before presenting
+- [ ] (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative
 
 **Spec-writing rules of thumb** (apply when writing ACs and structure):
 - **Name effects to DELETE**: frame supersession as replacement ("replace `oldFn` with `newFn`; `oldFn` must not exist after"), not separate add/remove bullets.
 - **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe.
 - **Symbols in ACs must exist** — grep for every named function or symbol; verify return shape matches the spec's assumed data contract.
 - **Behavioral contracts, not mechanics** — ACs describe observable behavior; defer implementation mechanics to plan/implement.
+- **Bug and flake-fix specs need a confirmed mechanism and red-first test**: For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed (the reproduction, trace, or forced repro that established it) — not merely a plausible cause. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (S, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.
 - **At ≥3 spec_review iterations, label each round**: *edge-fine-tune* (missed path, single validator) or *scope-expansion* (new sub-problem). If scope-expansion, redesign rather than iterate.
 - **Refactor specs need hard structural caps**: size cap, explicit deletion expectations per symbol, grep AC for disappeared symbols.
 

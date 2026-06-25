@@ -49,3 +49,15 @@ When a record references another by ID, computed fields (caches, transforms, eph
 *(2026-06-11, source: recovery-surface-hardening)*
 
 When adding per-task variant behavior to a shared template's prompt, storing the state is necessary but not sufficient — the template's generic wording must also defer to the per-task line, or the generic clause overrides the per-task customization entirely. Concrete case: the `reroute_exempt` implementation stored `reroute_exempt_prior_verdict` so prompts could render approved vs. failing flavors, but the `implement-reroute.md` template still had a generic "exempt task only re-verifies shared behavior" clause that would override the per-task failing-sibling line for any exempt task. The fix was a template change that makes the generic clause defer to whatever per-task line was injected. Pattern: when a spec adds state for conditional rendering, immediately audit every template that displays that state for a generic fallback clause that would negate it.
+
+### In tiered pipelines, reviewer-enforced rules need author-side homes too
+
+*(2026-06-25, source: spec-bugfix-diagnosis-rule)*
+
+A rule that names a reviewer checkpoint as its enforcement point gives false confidence to authors on tiers where that reviewer doesn't run. Concrete case: the bug-fix mechanism-confirmation rule lived only in the `spec_review` prompt; fast-tier (S, non-delicate) bug fixes skip `spec_review`, so the rule silently reached nobody on the exact tier most likely to ship an unverified premise. Fix: home the rule on the author-facing surfaces (skill + template) and frame it as the author's own obligation — with an explicit call-out that the reviewer may not run — rather than as a thing a reviewer will catch. Grep for "reviewer will catch" / "spec_review will" in any guidance targeting a fast-tier audience.
+
+### Multi-surface escape clauses must carry the full predicate in every occurrence
+
+*(2026-06-25, source: spec-bugfix-diagnosis-rule)*
+
+When the same conditional escape clause appears across multiple guidance surfaces, every occurrence must state the full predicate — not a shortened form. Dropping even one conjunct silently widens the escape. Concrete case: the within-reason escape required "environment-bound AND a faithful repro is impractical"; one surface rendered only "if a direct test is impractical," which would have let any hard-to-test case skip verification. Code review caught this as a spec_gap before ship. Rule: when a spec defines an escape predicate with multiple conjuncts, add a verification step that greps all target surfaces for the shorter single-conjunct form and rejects any hit.

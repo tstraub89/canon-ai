@@ -1,17 +1,17 @@
 {
   "id": "spec-bugfix-diagnosis-rule",
   "title": "Re-home diagnose/reproduce rule + red-first test into spec-authoring surfaces",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-25",
   "updated": "2026-06-25",
-  "branch": "",
+  "branch": "task/spec-bugfix-diagnosis-rule",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "c3f8006f23e0f52498d0b812d699ffe047ffa1c2",
-    "orchestrator_commit": "c3f8006f23e0f52498d0b812d699ffe047ffa1c2",
-    "codex_cli": "codex-cli 0.142.0",
-    "claude_code": "2.1.185 (Claude Code)"
+    "upstream_commit": "791fec27b208d9b0f9cee1a69625ccc33c7a81d9",
+    "orchestrator_commit": "791fec27b208d9b0f9cee1a69625ccc33c7a81d9",
+    "codex_cli": "codex-cli 0.142.1",
+    "claude_code": "2.1.191 (Claude Code)"
   },
   "task_size": "M",
   "delicate": false,
@@ -30,7 +30,7 @@
       "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 1,
+      "iterations_total": 3,
       "changes_requested_total": 0,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
@@ -40,21 +40,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 2
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 3,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -62,9 +65,18 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-06-25",
+      "phase": "code_review",
+      "iteration_count": 0,
+      "reason": "Code review surfaced a spec_gap verdict for task(s): spec-bugfix-diagnosis-rule. The implementation cannot resolve this — the root cause is in the spec. Recovery options (both operate on the full blocked bundle [spec-bugfix-diagnosis-rule]):\n  FIX: amend spec.md with ## Amendment, then: canon run spec-bugfix-diagnosis-rule --reroute\n  BLESS: canon task accept spec-bugfix-diagnosis-rule code_review --reason \"<why>\""
+    }
+  ],
   "sessions": {
-    "codex_spec_review": "019efcb0-baae-7a50-b807-00c18d864fb5"
+    "codex": "019efce5-d992-7292-ba11-01c3c03c2790",
+    "claude_review": "5ce97dfc-0267-454d-bcde-ca0f38c0721d",
+    "codex_spec_review": "019efd6f-ce2c-7c31-9b71-91be4a357255"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

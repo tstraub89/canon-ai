@@ -46,3 +46,15 @@ none
 - [x] **Approved** — spec is implementable as written
 - [ ] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
+
+## Amendment Review
+
+- [x] **Approved**
+
+Findings: none. The amendment is implementable as written, the new AC-7 is coherent with the current authoring surfaces, and the tightened escape predicate remains scoped to bug/flake fixes.
+
+## Amendment Review Round 2
+
+- [x] **Approved**
+
+Findings: none.

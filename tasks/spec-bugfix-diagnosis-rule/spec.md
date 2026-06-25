@@ -53,6 +53,11 @@ The guidance is **scoped to bug/flake fixes**; feature and refactor spec authori
 | `.canon/templates/spec.md` | Add bug-fix-gated guidance to the *Problem* section (state how the mechanism was confirmed), to *Acceptance Criteria* (include a red-first regression-test AC), and a conditional bug-fix item to the *Spec Quality Checklist*. No new section. |
 | `templates/.claude/skills/canon-spec/SKILL.md` | Generated mirror — regenerated from the root skill by `npm run sync-templates`. |
 | `templates/.canon/templates/spec.md` | Generated mirror — regenerated from the root template by `npm run sync-templates`. |
+| `scripts/run-task/prompts/templates/spec.md` | Runtime fresh-spec prompt (`promptSpec`) — add the bug/flake-fix rules-of-thumb bullet. *(Added in Amendment Round 2.)* |
+| `scripts/run-task/prompts/templates/spec-revision.md` | Runtime spec-revision prompt (`promptSpecRevision`, used on `changes_requested`) — add the same bullet. *(Amendment Round 2.)* |
+| `scripts/run-task/prompts/index.ts` | The `selfCheck` constant rendered into the spec prompt via `{{{selfCheck}}}` — add the conditional bug/flake-fix self-check item. *(Amendment Round 2.)* |
+| `tests/run-task-prompts.golden.json` | Regenerated prompt snapshot — the spec-prompt change alters `promptSpec` output. *(Amendment Round 2.)* |
+| `dist/scripts/run-task.js` | Rebuilt bundle — the runtime prompts and `index.ts` bundle into this entry-point artifact. *(Amendment Round 2.)* |
 
 ### Interaction Dependencies
 
@@ -74,7 +79,7 @@ None. No `status.json` schema, no code, no types.
 - [x] `npm test` — full suite runs clean (no test asserts skill/template prose; this confirms nothing regressed)
 - [x] `npm run sync-templates:check` — the load-bearing check: root↔`templates/` mirrors aligned
 - [x] `npm run docs-refs-check` — required for `templates/`/skills/`.canon/` markdown edits; also confirms the additions introduce no broken refs
-- [ ] `npm run build` — **not required**: this change touches no `src/**`, `scripts/run-task.ts`, `scripts/run-task/**`, or `scripts/pipeline-policy.ts`, so it produces no `dist/` delta.
+- [x] `npm run build` — **required** (Amendment Round 2): the rule was added to the runtime prompts and `scripts/run-task/prompts/index.ts`, which bundle into `dist/scripts/run-task.js`; a rebuilt `dist/` is committed.
 
 ## Docs Impact
 
@@ -106,3 +111,48 @@ None of the five protected docs (`architecture`, `codebase-map`, `decisions`, `p
 - [x] Known Risks covers failure modes for the trickiest ACs
 - [x] Human Test Plan uses product language only (no code, no file names)
 - [x] Validation Required has at least one entry marked `- [x]`
+
+---
+
+## Amendment
+
+Addresses two `spec_gap` findings from `code_review` round 1 — both are wording defects in the *produced* guidance that the original ACs left under-constrained. They are tightenings of existing ACs plus one new AC; no scope change.
+
+**Finding 1 — the escape predicate must be the same two-part condition in every location.** AC-3's escape applies only when the mechanism is **environment-bound AND a faithful repro is impractical**. Round 1 rendered the Acceptance-Criteria-section callout with only the second half ("if a direct test is impractical"), which silently widens the escape to *any* hard-to-test case. AC-3 is amended to require the **identical two-part predicate** ("environment-bound and a faithful repro is impractical") wherever the escape is stated — the *Problem*-section prompt, the *Acceptance Criteria* prompt, and the skill rule-of-thumb. No location may reduce it to "impractical" alone. Verify (added to AC-3): each occurrence of the escape across both surfaces names *both* "environment-bound" and the impracticality condition.
+
+**Finding 2 — the produced guidance must read as a self-authoring obligation, not a reviewer promise.** The original spec named the `spec_review` checkpoint as the place an unverified mechanism is "a blocking concern." But fast-tier (S) bug fixes — the primary audience named in *Problem* — skip `spec_review`, so that phrasing tells the exact unprotected audience that a reviewer will catch the gap. New AC-7 below.
+
+- [ ] AC-7: In the produced guidance, any reference to the `spec_review` checkpoint frames the obligation as the **author's to satisfy before the spec is marked done**, and makes explicit that on fast-tier (S, non-delicate) tasks no reviewer enforces it — never phrasing that implies a reviewer will catch an unverified mechanism. Verify: `git grep` for the `spec_review` mention in `.canon/templates/spec.md` and `.claude/skills/canon-spec/SKILL.md` shows self-enforcing framing (e.g. "no reviewer will catch this on fast-tier"); no occurrence implies downstream reviewer enforcement as the backstop.
+
+**Also align while re-implementing (P4 consistency, non-blocking):**
+- Don't use the bare shorthand "within-reason escape" in a checklist item without the inline condition nearby; either name the two-part condition or keep the term adjacent to its defining blockquote.
+- State the anti-pattern identically in both homes: "**name the confirmed mechanism**, not a plausible cause" (avoid the looser "assert a cause", which a real confirmed cause also satisfies).
+
+No new files, validation, or non-goals beyond the originals; the Affected Files set is unchanged (the two root surfaces + their two mirrors). *(Superseded by Amendment Round 2 — the surface set was incomplete.)*
+
+## Amendment Round 2
+
+Round 1 implemented the rule on **2 of the 4** surfaces that carry the "Spec-writing rules of thumb" block, and updated the self-check in **2 of its 3** homes. Successive cold `codex review` passes (verified against the codebase) found the gaps. Canon's spec-authoring guidance travels via two vehicles; this amendment enumerates the **complete** set so coverage is designed, not discovered — partial coverage is the exact failure this task exists to prevent.
+
+**Vehicle 1 — rules-of-thumb bullet** (the bug/flake-fix "confirmed mechanism + red-first regression-test AC + within-reason escape" rule). Must appear in all four:
+- `.claude/skills/canon-spec/SKILL.md` — done (round 1)
+- `.canon/templates/spec.md` — done (round 1)
+- `scripts/run-task/prompts/templates/spec.md` — runtime fresh-spec prompt (`promptSpec`) — **add**
+- `scripts/run-task/prompts/templates/spec-revision.md` — runtime revision prompt (`promptSpecRevision`, used when a spec is `changes_requested`) — **add**
+- Do **not** add to `code-review-foreman.md` (a code-review surface, not spec-authoring).
+
+**Vehicle 2 — conditional self-check item** ("(Bug/flake fixes; N/A for features/refactors) *Problem* states how the mechanism was confirmed and *Acceptance Criteria* has a red-first regression-test AC, or an explicit environment-bound-and-impractical escape with a named deterministic alternative"). Must appear in all three:
+- `.claude/skills/canon-spec/SKILL.md` inline self-check — done (round 1)
+- `.canon/templates/spec.md` "Spec Quality Checklist" — done (round 1)
+- the `selfCheck` constant in `scripts/run-task/prompts/index.ts` (rendered into the `spec.md` prompt via `{{{selfCheck}}}`) — **add**
+
+**Wording consistency across every surface** (the round-2 P4 nits): use the identical two-part escape predicate everywhere — "environment-bound AND a faithful repro is impractical"; do not reduce it to "impractical" alone; drop the undefined "within-reason escape" shorthand in checklist items (state the condition inline); state the anti-pattern identically — "name the confirmed mechanism, not merely a plausible cause"; mark conditional checklist items "N/A for features/refactors".
+
+**New ACs:**
+
+- [ ] AC-8: The rules-of-thumb bullet is present in **both** runtime prompts (`scripts/run-task/prompts/templates/spec.md` and `scripts/run-task/prompts/templates/spec-revision.md`) with the identical two-part escape predicate. Verify: `git grep -n "confirmed mechanism and red-first"` returns both files; neither states the escape with only the impracticality half.
+- [ ] AC-9: The runtime self-check includes the conditional bug/flake-fix item — the item is in the `selfCheck` constant in `scripts/run-task/prompts/index.ts`, and the regenerated `spec.md` prompt golden renders it. Verify: grep `index.ts` for the item; `tests/run-task-prompts.golden.json` for the spec prompt contains it.
+- [ ] AC-10: Wording is consistent across all four rules-of-thumb surfaces and all three self-check homes — same two-part predicate, same "name the confirmed mechanism, not merely a plausible cause" anti-pattern, conditional items marked N/A for non-bug specs, no "within-reason escape" undefined shorthand. Verify: `git grep` shows no divergent phrasing of these.
+- [ ] AC-11: `dist/` matches a fresh build and the prompt golden is regenerated. Verify: `npm run build` then `git diff --exit-code -- dist/` is clean; `npm test` passes with the regenerated `tests/run-task-prompts.golden.json` (regenerate via `UPDATE_GOLDENS=1 npm test`).
+
+**Validation/Affected Files:** `npm run build` is now required (dist delta); the runtime prompts, `index.ts`, the golden, and `dist/scripts/run-task.js` are added to Affected Files above. No change to Non-Goals (the reviewer-side `spec_review` prompt and `code-review-foreman.md` stay untouched; still no tier/matrix/`code_review` logic changes).

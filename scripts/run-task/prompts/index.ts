@@ -96,6 +96,7 @@ export function promptSpec(state: PipelineState): string {
             '- Known Risks covers failure modes for the trickiest ACs',
             '- Human Test Plan describes product behavior only (no code, no file names, no TypeScript)',
             '- Validation Required has at least one entry checked (or explicitly "None" with a reason)',
+            '- (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative',
         ].filter(Boolean).join('\n'),
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'spec', 'done'),
     });
