@@ -626,3 +626,15 @@
 | 2026-06-25T07:01:16.972Z | spec-bugfix-diagnosis-rule | implement | codex | gpt-5.4-mini | 0 | 326.4s | - | failed |
 | 2026-06-25T07:14:43.638Z | spec-bugfix-diagnosis-rule | code_review | claude | sonnet | 0 | 722.3s | 512707 | ok |
 | 2026-06-25T07:18:39.018Z | spec-bugfix-diagnosis-rule | qa | claude | sonnet | 0 | 235.4s | 655223 | ok |
+| 2026-06-25T20:22:30.295Z | add-xs-tier | spec_review | codex | gpt-5.5 | 0 | 117.9s | 705829 | ok |
+| 2026-06-25T20:24:27.469Z | add-xs-tier | spec | claude | opus | 0 | 117.2s | 476597 | ok |
+| 2026-06-25T20:25:50.716Z | add-xs-tier | spec_review | codex | gpt-5.5 | 1 | 83.2s | 1389073 | ok |
+| 2026-06-25T20:36:48.659Z | add-xs-tier | spec | claude | opus | 0 | 657.9s | 1891538 | ok |
+| 2026-06-25T20:37:37.352Z | add-xs-tier | spec_review | codex | gpt-5.5 | 2 | 48.7s | 2106550 | ok |
+| 2026-06-26T00:41:53.704Z | add-xs-tier | spec_review | codex | gpt-5.5 | 3 | 114.2s | 3548664 | ok |
+| 2026-06-26T00:58:56.347Z | add-xs-tier | spec | claude | opus | 0 | 1022.6s | 2699772 | ok |
+| 2026-06-26T01:00:46.231Z | add-xs-tier | spec_review | codex | gpt-5.5 | 4 | 109.9s | 5404132 | ok |
+| 2026-06-26T01:05:57.861Z | add-xs-tier | spec | claude | opus | 0 | 311.6s | 1260516 | ok |
+| 2026-06-26T01:56:31.126Z | add-xs-tier | spec_review | codex | gpt-5.5 | 5 | 125.1s | 6341984 | ok |
+| 2026-06-26T02:16:09.303Z | add-xs-tier | spec | claude | opus | 0 | 1178.2s | 5348636 | ok |
+| 2026-06-26T02:17:55.469Z | add-xs-tier | spec_review | codex | gpt-5.5 | 6 | 106.2s | 7192212 | ok |
