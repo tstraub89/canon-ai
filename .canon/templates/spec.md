@@ -7,7 +7,7 @@
 
 What is broken, missing, or suboptimal? Be specific. Link to user feedback, bugs, or roadmap items if available.
 
-> **For a bug or flake fix:** State the confirmed mechanism in *Problem* and how you confirmed it (the reproduction, trace, or forced repro), not merely a plausible cause. Satisfying this is your obligation before marking the spec done; on fast-tier (S, non-delicate) tasks the `spec_review` checkpoint is skipped and no reviewer will catch an unverified mechanism. If the mechanism is environment-bound and a faithful repro is impractical, say so and name the deterministic alternative used instead (integration fixture or documented manual repro).
+> **For a bug or flake fix:** State the confirmed mechanism in *Problem* and how you confirmed it (the reproduction, trace, or forced repro), not merely a plausible cause. Satisfying this is your obligation before marking the spec done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped and no reviewer will catch an unverified mechanism. If the mechanism is environment-bound and a faithful repro is impractical, say so and name the deterministic alternative used instead (integration fixture or documented manual repro).
 
 ## Decision
 

@@ -91,8 +91,8 @@ canon run options:
                           at cleanup.
   --dry-run               Print planned phases without running any agents
   --reroute               Reset a task from human_review back into the post-review fix path after
-                          human feedback. Full-tier tasks (M/L/XL or delicate) re-enter at
-                          spec_review; fast-tier tasks (S) re-enter at implement.
+                          human feedback. Full-tier tasks (S/M/L/XL or delicate) re-enter at
+                          spec_review; fast-tier tasks (XS) re-enter at implement.
                           Feedback channel: append a new section to tasks/<id>/spec.md describing
                           what to address. Codex re-reads spec.md only — additions to review.md
                           or PR comments are NOT consulted on reroute. See docs/pipeline-orchestrator.md

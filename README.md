@@ -59,8 +59,8 @@ The human gates between `spec_review` and `plan` — they approve the spec befor
 
 The pipeline supports two tiers:
 
-- **Fast tier** (small tasks): spec + plan in one Claude session, skip Codex spec review, human gate replaces it.
-- **Full tier** (medium / large / delicate tasks): every phase runs separately, Codex reviews specs before they reach the human.
+- **Fast tier** (XS tasks): spec + plan in one Claude session, skip Codex spec review, human gate replaces it.
+- **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, Codex reviews specs before they reach the human.
 
 `delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the orchestrator's model and effort across every phase. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
 
@@ -70,7 +70,7 @@ A single command runs a task end-to-end:
 canon run <task-id>
 ```
 
-`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` runs *after* PR approval — it squash-merges the PR, deletes the branch, tears down the worktree, archives the task, and pulls the base branch (don't merge the PR manually first). `--reroute` resets a task from `human_review` back into the post-review fix path after human feedback on the diff — full-tier tasks (M/L/XL or delicate) re-enter at `spec_review`, fast-tier tasks (S) re-enter at `implement`. `--full-send` skips the spec gate and auto-opens a draft PR on clean QA. `--dry-run` prints planned phases without spawning agents.
+`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` runs *after* PR approval — it squash-merges the PR, deletes the branch, tears down the worktree, archives the task, and pulls the base branch (don't merge the PR manually first). `--reroute` resets a task from `human_review` back into the post-review fix path after human feedback on the diff — full-tier tasks (S/M/L/XL or delicate) re-enter at `spec_review`, fast-tier tasks (XS) re-enter at `implement`. `--full-send` skips the spec gate and auto-opens a draft PR on clean QA. `--dry-run` prints planned phases without spawning agents.
 
 Multiple task IDs in one invocation activates **bundle mode** — `canon run id1 id2 id3` runs all tasks together per phase under a single review loop with one commit history and one PR. Any full-tier task in the bundle promotes the entire bundle to full tier.
 
@@ -123,7 +123,7 @@ The other installed skills (auto-trigger on natural-language phrases — see eac
 |---|---|
 | `/canon-spec` | Authoring a new task — "let's add X", "start a task for…" |
 | `/canon-spec-review` | Pre-flighting a spec before invoking the pipeline |
-| `/canon-inline-review` | Independent cross-review of inline or XS changes before commit or PR |
+| `/canon-inline-review` | Independent cross-review of inline or below-pipeline changes before commit or PR |
 | `/canon-pipeline` | Driving an existing task forward (`canon run`, `--pr`, `--ship`, recovery) |
 | `/canon-status` | "Where are we?" — surfaces phases and blockers across in-flight tasks |
 | `/canon-changelog` | Drafting release notes (projects that version their releases) |
@@ -152,7 +152,7 @@ Start with `/canon-spec` rather than implementing directly.
 
 ### Independent review for inline work
 
-For below-pipeline changes or XS inline work, do not self-review. Use `/canon-inline-review` for an independent cross-review before committing, or `codex review` if you are not running canon.
+For below-pipeline changes or trivial inline work, do not self-review. Use `/canon-inline-review` for an independent cross-review before committing, or `codex review` if you are not running canon.
 
 ### Skip the permission prompts (optional)
 

@@ -115,7 +115,7 @@ export function printUsage(): void {
     console.log('  Bundle:       canon run fix-hover-state dark-tokens empty-cta');
     console.log('');
     console.log('  Bundle mode runs all tasks together per phase (one agent session each).');
-    console.log('  Fast tier (S, non-delicate only) skips Codex spec review. Full tier (any M/L/XL');
+    console.log('  Fast tier (XS, non-delicate only) skips Codex spec review. Full tier (any S/M/L/XL');
     console.log('  or delicate task) runs the complete pipeline — any such task pulls the entire');
     console.log('  bundle to full tier.');
     console.log('');
@@ -149,8 +149,8 @@ export function printUsage(): void {
     console.log('                      at cleanup.');
     console.log('  --dry-run           Print each planned phase and exit without spawning any LLM');
     console.log('  --reroute           Reset a task from human_review back into the post-review fix path after');
-    console.log('                      human feedback. Full-tier tasks (M/L/XL or delicate) re-enter at');
-    console.log('                      spec_review; fast-tier tasks (S) re-enter at implement.');
+    console.log('                      human feedback. Full-tier tasks (S/M/L/XL or delicate) re-enter at');
+    console.log('                      spec_review; fast-tier tasks (XS) re-enter at implement.');
     console.log('                      Feedback channel: append a new section to tasks/<id>/spec.md describing');
     console.log('                      what to address. Codex re-reads spec.md only — additions to review.md');
     console.log('                      or PR comments are NOT consulted on reroute.');

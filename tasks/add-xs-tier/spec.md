@@ -163,11 +163,15 @@ Add `XS` to the task-size matrix in `scripts/pipeline-policy.ts` as a clone of t
 
 | File | Change |
 |---|---|
-| `dist/**` | Rebuilt via `npm run build` (AC-20). |
+| `dist/` | Rebuilt via `npm run build` (AC-20); directory-form entry matches the regenerated `dist/cli/index.js` + `dist/scripts/run-task.js`. |
 | `tests/run-task-prompts.golden.json` | Regenerated via `UPDATE_GOLDENS=1 npm test` after the runtime-prompt edits (AC-21). |
 | `templates/docs/pipeline-orchestrator.md` | Auto-synced mirror of the only edited `docs/` file in `CANON_OWNED` (AC-22). |
 | `templates/.canon/templates/spec.md` | Auto-synced mirror (AC-22). |
-| `templates/.claude/skills/{canon-spec,canon-spec-review,canon-pipeline,canon-inline-review,canon-status}/SKILL.md` | Auto-synced mirrors of the five edited skills (AC-22). |
+| `templates/.claude/skills/canon-spec/SKILL.md` | Auto-synced mirror of the edited skill (AC-22). |
+| `templates/.claude/skills/canon-spec-review/SKILL.md` | Auto-synced mirror of the edited skill (AC-22). |
+| `templates/.claude/skills/canon-pipeline/SKILL.md` | Auto-synced mirror of the edited skill (AC-22). |
+| `templates/.claude/skills/canon-inline-review/SKILL.md` | Auto-synced mirror of the edited skill (AC-22). |
+| `templates/.claude/skills/canon-status/SKILL.md` | Auto-synced mirror of the edited skill (AC-22). |
 
 > **Not synced**: editing `docs/product-context.md`, `docs/decisions.md`, `docs/architecture.md` does **not** touch `templates/docs/{product-context,decisions,architecture}.md` — those docs are not in `CANON_OWNED`, their `templates/` snapshots are unmanaged and unchanged by this task, and they will not appear in the diff.
 > **Not edited** (historical/planning records, excluded from AC-18): `CHANGELOG.md`, `docs/lessons-learned.md`, `docs/BACKLOG.md`.

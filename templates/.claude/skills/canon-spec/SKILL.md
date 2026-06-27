@@ -68,16 +68,19 @@ Before grilling, detect full-send intent from `$ARGUMENTS`: if it contains an ex
 `Full-send mode detected. I'll grill, write the spec, and run the pipeline through to a draft PR without further interrupts.`
 
 Assess task size from the description and exploration findings:
-- **S**: 1–3 files, clearly bounded, low uncertainty
+- **XS**: more than a trivial one-file inline change (>1 file, or real logic), but little-to-no spec premise worth reviewing. This is the smallest way into the pipeline: choosing it over inline buys the pipeline's cross-review direction (Codex implements against written ACs, Claude reviews), a plan, and a real `code_review`.
+- **S**: the first full-tier size; small and bounded, but the spec carries enough logic/risk that a Codex `spec_review` pass earns its keep.
 - **M**: several files, well-understood approach, < 1 day
 - **L**: cross-cutting, significant refactor, or meaningful uncertainty
 - **XL**: architecture change, high uncertainty, multiple systems
 
 Also assess: is this **delicate**? Check `docs/product-context.md` for the project's defined delicate surfaces. The bar is: an undetected bug here is materially harder to recover from than a normal bug.
 
-**For S tasks:** Ask at most 2–3 clarifying questions in one round if scope is genuinely ambiguous. Resolve them, then move to Phase 4.
+Inline remains below the pipeline: Claude implements directly and asks Codex for review at intervals, with no task, written ACs, or plan. XS is the pipeline floor; `spec_review` is the XS→S dividing line. The cross-review flip is a property of running the pipeline at all, and XS is simply the cheapest tier that has it.
 
-**For M / L / XL / delicate tasks — grill mode:**
+**For XS tasks:** Ask at most 2–3 clarifying questions in one round if scope is genuinely ambiguous. Resolve them, then move to Phase 4.
+
+**For S / M / L / XL / delicate tasks — grill mode:**
 
 Walk the decision tree one branch at a time until you have full shared understanding:
 - Ask **one question at a time** — never a batch
@@ -88,7 +91,7 @@ Walk the decision tree one branch at a time until you have full shared understan
 
 **Always take a position.** A question without a recommended answer offloads design work onto the user.
 
-Topics to work through for M+ (apply judgment — not all will apply):
+Topics to work through for full-tier tasks (apply judgment — not all will apply):
 - What exact behavior changes? What does the user see/do differently?
 - What's explicitly out of scope?
 - Does this conflict with an existing pattern or settled decision?
@@ -106,7 +109,7 @@ Summarize concisely:
 
 - **Task slug** — kebab-case, descriptive (e.g. `add-search-sidebar`, `fix-auth-timeout`)
 - **Title** — short phrase
-- **Size** — S / M / L / XL with one-line justification
+- **Size** — XS / S / M / L / XL with one-line justification
 - **Delicate?** — yes/no, citing the relevant surface
 - **Affected areas** — 2–4 bullets: which files/systems change
 - **Approach** — 1–2 sentences: what we're building
@@ -149,7 +152,7 @@ Self-check before presenting:
 - **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe.
 - **Symbols in ACs must exist** — grep for every named function or symbol; verify return shape matches the spec's assumed data contract.
 - **Behavioral contracts, not mechanics** — ACs describe observable behavior; defer implementation mechanics to plan/implement.
-- **Bug and flake-fix specs need a confirmed mechanism and red-first test**: For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed (the reproduction, trace, or forced repro that established it) — not merely a plausible cause. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (S, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.
+- **Bug and flake-fix specs need a confirmed mechanism and red-first test**: For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed (the reproduction, trace, or forced repro that established it) — not merely a plausible cause. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.
 - **At ≥3 spec_review iterations, label each round**: *edge-fine-tune* (missed path, single validator) or *scope-expansion* (new sub-problem). If scope-expansion, redesign rather than iterate.
 - **Refactor specs need hard structural caps**: size cap, explicit deletion expectations per symbol, grep AC for disappeared symbols.
 
@@ -159,7 +162,7 @@ Self-check before presenting:
 
 ### Phase 6 — After spec approval
 
-**S tasks:**
+**XS tasks:**
 1. Write `tasks/TASK-ID/plan.md` using `.canon/templates/plan.md` as structure.
 2. Record the human's approval in `tasks/TASK-ID/spec-review.md`: check the **Approved** box and add a one-line note ("Fast tier — human conversational spec approval; Codex spec review skipped"). The phase gate reads this artifact before letting `spec_review` advance.
 3. Advance the phases with the helpers (they rederive the top-level `status` pointer):
@@ -174,7 +177,7 @@ Self-check before presenting:
    canon run TASK-ID
    ```
 
-**Full-tier tasks (M, L, XL, or any delicate task):**
+**Full-tier tasks (S, M, L, XL, or any delicate task):**
 1. Invoke the pipeline — Codex reviews the spec, then pipeline Claude writes the plan, Codex implements, pipeline Claude reviews and QA's:
    ```bash
    canon run TASK-ID
@@ -193,7 +196,7 @@ canon run --full-send [--force] TASK-ID
 
 ## Related
 
-- `/canon-spec-review` — adversarial pre-pipeline review of the spec. Recommended for M/L/XL or delicate tasks before invoking the pipeline.
+- `/canon-spec-review` — adversarial pre-pipeline review of the spec. Recommended for S/M/L/XL or delicate tasks before invoking the pipeline.
 - `/canon-pipeline` — drive the pipeline after spec approval.
 - `/canon-status` — check what other canon tasks are in flight before committing to scope.
 - `docs/pipeline-orchestrator.md` — pipeline internals, sizing guide, model/effort matrix. The Validation Matrix is now inline in `.canon/templates/spec.md`.

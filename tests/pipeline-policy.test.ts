@@ -42,7 +42,9 @@ type RoutingRow = {
 
 const ROUTING_TABLE: RoutingRow[] = [
     // Single-task: size × delicate
-    { name: 'S non-delicate',  tasks: [s('S')],        tier: 'fast', nominal: 'S',  effective: 'S',  planCombined: true,  maxLoops: 3 },
+    { name: 'XS non-delicate', tasks: [s('XS')],       tier: 'fast', nominal: 'XS', effective: 'XS', planCombined: true,  maxLoops: 3 },
+    { name: 'XS delicate',     tasks: [s('XS', true)], tier: 'full', nominal: 'XS', effective: 'XL', planCombined: false, maxLoops: 3 },
+    { name: 'S non-delicate',  tasks: [s('S')],        tier: 'full', nominal: 'S',  effective: 'S',  planCombined: false, maxLoops: 3 },
     { name: 'S delicate',      tasks: [s('S', true)],  tier: 'full', nominal: 'S',  effective: 'XL', planCombined: false, maxLoops: 3 },
     { name: 'M non-delicate',  tasks: [s('M')],        tier: 'full', nominal: 'M',  effective: 'M',  planCombined: false, maxLoops: 3 },
     { name: 'M delicate',      tasks: [s('M', true)],  tier: 'full', nominal: 'M',  effective: 'XL', planCombined: false, maxLoops: 3 },
@@ -52,7 +54,10 @@ const ROUTING_TABLE: RoutingRow[] = [
     { name: 'XL delicate',     tasks: [s('XL', true)], tier: 'full', nominal: 'XL', effective: 'XL', planCombined: false, maxLoops: 5 },
 
     // Bundles: max scope wins for nominal; any delicate promotes effective to XL
-    { name: 'bundle [S, S]',                  tasks: [s('S'), s('S')],               tier: 'fast', nominal: 'S',  effective: 'S',  planCombined: true,  maxLoops: 3 },
+    { name: 'bundle [XS, XS]',                tasks: [s('XS'), s('XS')],             tier: 'fast', nominal: 'XS', effective: 'XS', planCombined: true,  maxLoops: 3 },
+    { name: 'bundle [XS, S]',                 tasks: [s('XS'), s('S')],              tier: 'full', nominal: 'S',  effective: 'S',  planCombined: false, maxLoops: 3 },
+    { name: 'bundle [XS, M]',                 tasks: [s('XS'), s('M')],              tier: 'full', nominal: 'M',  effective: 'M',  planCombined: false, maxLoops: 3 },
+    { name: 'bundle [S, S]',                  tasks: [s('S'), s('S')],               tier: 'full', nominal: 'S',  effective: 'S',  planCombined: false, maxLoops: 3 },
     { name: 'bundle [S, M]',                  tasks: [s('S'), s('M')],               tier: 'full', nominal: 'M',  effective: 'M',  planCombined: false, maxLoops: 3 },
     { name: 'bundle [S, L]',                  tasks: [s('S'), s('L')],               tier: 'full', nominal: 'L',  effective: 'L',  planCombined: false, maxLoops: 5 },
     { name: 'bundle [M, XL]',                 tasks: [s('M'), s('XL')],              tier: 'full', nominal: 'XL', effective: 'XL', planCombined: false, maxLoops: 5 },
@@ -78,7 +83,7 @@ for (const row of ROUTING_TABLE) {
 // ── MAX_REVIEW_LOOPS env override applies uniformly across sizes ───────────
 
 void test('policy: MAX_REVIEW_LOOPS override overrides size-aware default', () => {
-    for (const size of ['S', 'M', 'L', 'XL'] as TaskSize[]) {
+    for (const size of ['XS', 'S', 'M', 'L', 'XL'] as TaskSize[]) {
         const p = getPipelinePolicy([s(size)], { ...TEST_CONFIG, maxReviewLoops: 5 });
         assert.equal(p.maxReviewLoops, 5, `size ${size} honors override`);
     }
@@ -96,6 +101,7 @@ void test('policy: MAX_REVIEW_LOOPS=0 is a valid (suicidal) override', () => {
 type BudgetRow = { name: string; tasks: PolicyInput[]; expected: string };
 
 const BUDGET_TABLE: BudgetRow[] = [
+    { name: 'XS non-delicate', tasks: [s('XS')], expected: '5.00' },
     { name: 'S non-delicate', tasks: [s('S')], expected: '5.00' },
     { name: 'M non-delicate', tasks: [s('M')], expected: '5.00' },
     { name: 'L non-delicate', tasks: [s('L')], expected: '10.00' },
@@ -130,11 +136,13 @@ type CodexRow = {
 
 const CODEX_MATRIX: CodexRow[] = [
     // spec_review
+    { phase: 'spec_review', size: 'XS', expected: { model: 'mini', effort: 'medium' } },
     { phase: 'spec_review', size: 'S',  expected: { model: 'mini', effort: 'medium' } },
     { phase: 'spec_review', size: 'M',  expected: { model: 'mini', effort: 'medium' } },
     { phase: 'spec_review', size: 'L',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'spec_review', size: 'XL', expected: { model: 'full', effort: 'high' } },
     // implement
+    { phase: 'implement',   size: 'XS', expected: { model: 'mini', effort: 'medium' } },
     { phase: 'implement',   size: 'S',  expected: { model: 'mini', effort: 'medium' } },
     { phase: 'implement',   size: 'M',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'implement',   size: 'L',  expected: { model: 'mini', effort: 'high' } },
@@ -158,7 +166,7 @@ void test('codex matrix: delicate M uses XL row (effective size)', () => {
 //
 // Most Claude phases use one model across all sizes — varying effort, not
 // model — so we pin them at a representative size (M). code_review is the
-// exception: it splits model by size (Sonnet for S/M/L, Opus for XL/delicate)
+// exception: it splits model by size (Sonnet for XS/S/M/L, Opus for XL/delicate)
 // so the matrix below enumerates every size.
 
 type ClaudeRow = { phase: ClaudePhase; expected: { model: string; effort: string } };
@@ -177,6 +185,7 @@ for (const row of CLAUDE_TABLE) {
 
 type CodeReviewRow = { size: TaskSize; expected: { model: string; effort: string; budget: string } };
 const CODE_REVIEW_TABLE: CodeReviewRow[] = [
+    { size: 'XS', expected: { model: 'sonnet', effort: 'medium', budget: '5.00' } },
     { size: 'S',  expected: { model: 'sonnet', effort: 'medium', budget: '5.00' } },
     { size: 'M',  expected: { model: 'sonnet', effort: 'high',   budget: '5.00' } },
     { size: 'L',  expected: { model: 'sonnet', effort: 'high',   budget: '10.00' } },  // re-baselined 2026-06: L → Sonnet 4.6
@@ -201,29 +210,37 @@ void test('claude model: delicate M code_review uses XL slot (large model + xhig
 // callsites that don't build a full policy. Tests pin their behavior so
 // future refactors can't silently diverge the two surfaces.
 
-void test('detectTier: S-only bundle is fast, any other size/delicate is full', () => {
-    assert.equal(detectTier([s('S')]), 'fast');
-    assert.equal(detectTier([s('S'), s('S')]), 'fast');
-    assert.equal(detectTier([s('S', true)]), 'full');
+void test('detectTier: XS-only bundle is fast, any other size/delicate is full', () => {
+    assert.equal(detectTier([s('XS')]), 'fast');
+    assert.equal(detectTier([s('XS'), s('XS')]), 'fast');
+    assert.equal(detectTier([s('XS', true)]), 'full');
+    assert.equal(detectTier([s('S')]), 'full');
     assert.equal(detectTier([s('M')]), 'full');
+    assert.equal(detectTier([s('XS'), s('S')]), 'full');
+    assert.equal(detectTier([s('XS'), s('M')]), 'full');
     assert.equal(detectTier([s('S'), s('M')]), 'full');
 });
 
-void test('isPlanCombined: only S non-delicate', () => {
-    assert.equal(isPlanCombined(s('S')), true);
-    assert.equal(isPlanCombined(s('S', true)), false);
+void test('isPlanCombined: only XS non-delicate', () => {
+    assert.equal(isPlanCombined(s('XS')), true);
+    assert.equal(isPlanCombined(s('XS', true)), false);
+    assert.equal(isPlanCombined(s('S')), false);
     assert.equal(isPlanCombined(s('M')), false);
     assert.equal(isPlanCombined(s('XL')), false);
 });
 
 void test('getNominalSize / getEffectiveSize: scope vs scope+delicate', () => {
+    assert.equal(getNominalSize([s('XS')]), 'XS');
+    assert.equal(getEffectiveSize([s('XS')]), 'XS');
+    assert.equal(getEffectiveSize([s('XS', true)]), 'XL');
     assert.equal(getNominalSize([s('M', true)]), 'M');
     assert.equal(getEffectiveSize([s('M', true)]), 'XL');
     assert.equal(getNominalSize([s('S'), s('L')]), 'L');
     assert.equal(getEffectiveSize([s('S'), s('L')]), 'L');
 });
 
-void test('defaultMaxReviewLoops: 3 for S/M, 5 for L/XL', () => {
+void test('defaultMaxReviewLoops: 3 for XS/S/M, 5 for L/XL', () => {
+    assert.equal(defaultMaxReviewLoops('XS'), 3);
     assert.equal(defaultMaxReviewLoops('S'), 3);
     assert.equal(defaultMaxReviewLoops('M'), 3);
     assert.equal(defaultMaxReviewLoops('L'), 5);
@@ -232,12 +249,12 @@ void test('defaultMaxReviewLoops: 3 for S/M, 5 for L/XL', () => {
 
 // ── Empty input (defensive — retry path builds a minimal task list) ────────
 
-void test('policy: empty task list falls back to S/fast tier', () => {
-    // An empty list shouldn't crash. Today it resolves to `S` nominal/effective
-    // (no delicate = no promotion, no non-S = fast tier). Not a real runtime case.
+void test('policy: empty task list falls back to XS/fast tier', () => {
+    // An empty list shouldn't crash. Today it resolves to `XS` nominal/effective
+    // (no delicate = no promotion, no non-XS = fast tier). Not a real runtime case.
     const p = getPipelinePolicy([], TEST_CONFIG);
     assert.equal(p.tier, 'fast');
-    assert.equal(p.nominalSize, 'S');
-    assert.equal(p.effectiveSize, 'S');
+    assert.equal(p.nominalSize, 'XS');
+    assert.equal(p.effectiveSize, 'XS');
     assert.deepEqual(p.claude('spec'), { model: 'opus', effort: 'medium', budget: '5.00' });
 });

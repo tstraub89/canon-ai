@@ -2,7 +2,7 @@
 
 Reference for driving canon's pipeline: CLI surface, flags, task-management subcommands, pipeline tiers, the model/effort matrix, environment variables, worktree mechanics, session resumption, auto-block thresholds, and recovery patterns. Read on demand when you need to know which flag to use, why canon picked a particular model, or how to recover from a stuck phase.
 
-For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`). For **adversarial pre-pipeline spec review** on M/L/XL or delicate tasks, see `/canon-spec-review`.
+For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`). For **adversarial pre-pipeline spec review** on S/M/L/XL or delicate tasks, see `/canon-spec-review`.
 
 Canon's phase prompts, skills, and templates deliver reusable roles, implementation rules, validation, git, and release guidance just in time. This file is the source of truth for *how to operate the pipeline*.
 
@@ -148,7 +148,7 @@ canon task post-merge-sync
 
 The tier is set by the largest task in the run. Task size is set in `status.json` at task creation.
 
-**Fast tier** (all tasks S, non-delicate):
+**Fast tier** (all tasks XS, non-delicate):
 ```
 Claude writes spec+plan → [human spec gate] → Codex implements →
 Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human tests
@@ -158,7 +158,7 @@ Claude reviews code ↔ Codex iterates → Claude writes QA summary → Human te
 - Codex `spec_review` is skipped; the human spec gate replaces it.
 - The plan phase auto-advances (already written during spec).
 
-**Full tier** (any task M, L, XL, or `delicate`):
+**Full tier** (any task S, M, L, XL, or `delicate`):
 ```
 Claude writes spec → Codex reviews spec → [human spec gate] → Claude writes plan →
 Codex implements → Claude reviews code ↔ Codex iterates →
@@ -172,7 +172,7 @@ Claude writes QA summary → Human tests
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
-**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the whole bundle blocks until the operator chooses fix (`canon run <ids> --reroute` after amending the `spec_gap` task specs) or bless (`canon task accept <ids> code_review --reason "<why>"`).
+**Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any S/M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the whole bundle blocks until the operator chooses fix (`canon run <ids> --reroute` after amending the `spec_gap` task specs) or bless (`canon task accept <ids> code_review --reason "<why>"`).
 
 **One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
 
@@ -182,7 +182,7 @@ Set in `status.json` at task creation:
 
 | Field | Values | Purpose |
 |---|---|---|
-| `task_size` | `S \| M \| L \| XL` | Drives Codex model + effort selection and the pipeline tier. S is fast-tier; M+ runs the full pipeline (including Codex spec review). |
+| `task_size` | `XS \| S \| M \| L \| XL` | Drives Codex model + effort selection and the pipeline tier. XS is fast-tier; S+ runs the full pipeline (including Codex spec review). |
 | `delicate` | `true \| false` | Forces the XL bucket (full Codex model, high implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | **Single-use latch**, not a persistent toggle. `true` arms a one-time halt after `spec_review`, before planning (default: `true`). The orchestrator flips it to `false` *at the moment it halts* — so `false` means "the gate already fired (or was pre-cleared)," not "review was skipped." See [Spec gate is a single-use latch](#spec-gate-is-a-single-use-latch). |
 | `worktree` | `true \| false` | Worktree isolation. `canon task new` scaffolds this to `true`, so worktree mode is the effective default for every scaffolded task — set it to `false` to opt out and run in the main checkout. The orchestrator treats an *absent* field as `false`, but that fallback only applies to hand-rolled `status.json` files. See Worktree Isolation below. |
@@ -194,7 +194,8 @@ Set in `status.json` at task creation:
 
 | Size | Files touched (heuristic) | Scope |
 |---|---|---|
-| S | 1–3 | Single behavior, no cross-context mutations, no sensitive surfaces |
+| XS | 1–3 | More than trivial inline work (>1 file, or real logic), but little-to-no spec premise worth reviewing; smallest pipeline tier |
+| S | 1–3 | Smallest full-tier task; enough logic/risk in the spec that Codex `spec_review` earns its keep |
 | M | 4–7 | May touch one context, clear interaction model |
 | L | 8+ | Multiple contexts, new subsystem, or touches a sensitive surface |
 | XL | — | Milestone-scale, staged implementation, multiple L-scope changes |
@@ -211,10 +212,10 @@ This is a default — your project can adopt a stricter or looser bar in `docs/d
 
 Codex model and effort scale with task size:
 
-| Phase | S | M | L | XL / delicate |
-|---|---|---|---|---|
-| `spec_review` | — (skipped) | mini / medium | mini / high | full / high |
-| `implement`   | mini / medium | mini / high | mini / high | full / high |
+| Phase | XS | S | M | L | XL / delicate |
+|---|---|---|---|---|---|
+| `spec_review` | — (skipped) | mini / medium | mini / medium | mini / high | full / high |
+| `implement`   | mini / medium | mini / medium | mini / high | mini / high | full / high |
 
 Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. XL/delicate implement runs at `high`, not `xhigh`: GPT-5.5 tends to overthink at `xhigh` with open-ended tool access (cost without quality gain). Raise via env only if eval shows under-reasoning.
 
@@ -226,10 +227,10 @@ Claude is tuned for correctness — Opus on phases where false negatives cascade
 |---|---|---|
 | `CLAUDE_MODEL_SPEC` | `opus` | Spec phase (foundational; cascades into every downstream phase). |
 | `CLAUDE_MODEL_PLAN` | `sonnet` | Plan phase (structured translation of spec → steps). |
-| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for S/M/L (Sonnet 4.6 matches the prior Opus flagship on long-horizon / lifecycle / state-machine bug detection — re-baselined 2026-06; L was Opus on Sonnet 4.5). |
+| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for XS/S/M/L (Sonnet 4.6 matches the prior Opus flagship on long-horizon / lifecycle / state-machine bug detection — re-baselined 2026-06; L was Opus on Sonnet 4.5). |
 | `CLAUDE_MODEL_REVIEW_LARGE` | `opus` | Code review for XL/delicate only — the highest-blast-radius tier where the subtlest cross-file bugs warrant Opus. |
 | `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
-| `CLAUDE_BUDGET` | _(size-aware)_ | Max spend per Claude phase (USD). Unset → tiered by effective size: S/M `5.00`, L `10.00`, XL/delicate `20.00`. Set → flat cap for all phases (e.g. `CLAUDE_BUDGET=20.00` overrides the tier). |
+| `CLAUDE_BUDGET` | _(size-aware)_ | Max spend per Claude phase (USD). Unset → tiered by effective size: XS/S/M `5.00`, L `10.00`, XL/delicate `20.00`. Set → flat cap for all phases (e.g. `CLAUDE_BUDGET=20.00` overrides the tier). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
 | `CANON_WORKTREES_ROOT` | `../dev-worktrees` | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |
 | `CANON_PR_BODY` | _(unset)_ | Literal PR body for `--pr`, overriding the normal resolution chain. Supports `$LABEL` and `$TITLE` placeholders. |
@@ -240,9 +241,9 @@ Codex model overrides:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CODEX_MODEL_MINI` | `gpt-5.4-mini` | Codex model for S/M/L non-delicate phases. |
+| `CODEX_MODEL_MINI` | `gpt-5.4-mini` | Codex model for XS/S/M/L non-delicate phases. |
 | `CODEX_MODEL_FULL` | `gpt-5.5` | Codex model for XL or delicate phases. |
-| `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for S/M, 5 for L/XL. |
+| `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for XS/S/M, 5 for L/XL. |
 
 These are canon's shipped defaults at the time of release and may lag
 behind what your local `codex` CLI accepts. **Verify they resolve on your
@@ -316,8 +317,8 @@ The flip to `false` *is the gate firing* — it happens at the halt, **before** 
 
 Where the gate fires by tier:
 
-- **Fast tier (S, non-delicate)**: at `spec_review` phase entry. (In practice the operator usually pre-clears it to `false` when writing the plan, because the human's conversational spec approval *is* the gate — so the runtime halt is often already consumed before the pipeline starts.)
-- **Full tier (M/L/XL/delicate)**: after Codex `spec_review` completes, before planning.
+- **Fast tier (XS, non-delicate)**: at `spec_review` phase entry. (In practice the operator usually pre-clears it to `false` when writing the plan, because the human's conversational spec approval *is* the gate — so the runtime halt is often already consumed before the pipeline starts.)
+- **Full tier (S/M/L/XL/delicate)**: after Codex `spec_review` completes, before planning.
 - **`--full-send`**: pre-clears the latch to `false` at launch, so the gate never fires.
 
 So when you inspect `status.json` mid-pipeline and see `human_spec_gate: false`, read it as **"the gate already fired (or was pre-cleared) — review was *not* skipped"**, not "the halt was lost." There is no separate "gate satisfied" field; the consumed latch *is* the record that the gate fired. Re-running `canon run <id>` after the banner is the intended next move — it does not re-arm or re-fire the gate.
@@ -335,7 +336,7 @@ After `spec_review` or `code_review`, the orchestrator checks the verdict.
 | `code_review` | `spec_gap` | Block the whole `code_review` bundle with an escalation. Fix path: amend the `spec_gap` task specs and run `canon run <ids> --reroute`. Bless path: `canon task accept <ids> code_review --reason "<why>"`. |
 | `spec_review` / `code_review` | `approved` / `approved_with_nits` / `sanctioned` | Continue to the next phase. `sanctioned` is status-only and written by `canon task accept`, not by review artifacts; `canon task accept` refuses a review phase with no recorded verdict unless `--force` is passed. |
 
-**Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. For code review the cap check is the **sum** of `iterations_current_loop` and `preflight_rejections_current_loop` — handoffs bounced by the deterministic pre-flight gate count toward the same budget, and recovery requires resetting both counters (the block message says which). Separately, a pre-flight where every blocker is a `blocked` validation row auto-blocks immediately without consuming loop budget. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
+**Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for XS/S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. For code review the cap check is the **sum** of `iterations_current_loop` and `preflight_rejections_current_loop` — handoffs bounced by the deterministic pre-flight gate count toward the same budget, and recovery requires resetting both counters (the block message says which). Separately, a pre-flight where every blocker is a `blocked` validation row auto-blocks immediately without consuming loop budget. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
 
 **`Fail – unrelated` result state**: When a required check fails due to a pre-existing flake or a test outside the task's Affected Files, Codex may record `Fail – unrelated` in the Validation Outcomes table instead of blocking on a bare `Fail`. The orchestrator accepts this state only when the Notes column contains a specific file reference (a path, file extension, or `file:line`); vague notes are rejected. The code-review prompt instructs Claude to assess whether the explanation is credible and the failure is genuinely out of scope.
 
@@ -422,7 +423,7 @@ If the human rejects at `human_review`, or code review blocks with `spec_gap`, u
 
 Before rerouting from `human_review`, write the new requirements into **`tasks/<id>/spec.md` in the active task directory** for every task as an Amendment section. Before rerouting from a `code_review` `spec_gap` block, only the tasks with a `spec_gap` verdict need an Amendment section; approved or other non-gap siblings in the same bundle do not. If a worktree exists for the task, edit the worktree copy; edit REPO_ROOT only before the task has a worktree. `review.md` alone is not sufficient — Codex reads `spec.md` as the contract.
 
-Full-tier reroute (any M/L/XL task or any `delicate` task) re-enters at the same review altitude as the original spec: `human_review` or `code_review` `spec_gap` → `spec_review` → `plan` → `implement`. Codex reviews the amendment in the context of the previously approved ACs and prior `spec-review.md`, without auditing `handoff.md`, `review.md`, or `done.md`. If the amendment is approved, the pipeline flows through to `plan` without re-arming the human spec gate; Claude appends a reroute plan section (`## Reroute Plan` or `## Reroute Plan Round N`) to `plan.md`; Codex then implements from the amendment plus that reroute plan.
+Full-tier reroute (any S/M/L/XL task or any `delicate` task) re-enters at the same review altitude as the original spec: `human_review` or `code_review` `spec_gap` → `spec_review` → `plan` → `implement`. Codex reviews the amendment in the context of the previously approved ACs and prior `spec-review.md`, without auditing `handoff.md`, `review.md`, or `done.md`. If the amendment is approved, the pipeline flows through to `plan` without re-arming the human spec gate; Claude appends a reroute plan section (`## Reroute Plan` or `## Reroute Plan Round N`) to `plan.md`; Codex then implements from the amendment plus that reroute plan.
 
 If Codex returns `changes_requested` on a full-tier reroute amendment, the pipeline blocks to the human instead of routing to pipeline-Claude spec revision. The block names the rejected task's `spec.md` and `spec-review.md`; revise the amendment in `spec.md`, then re-run the normal command:
 
@@ -432,7 +433,7 @@ canon run <id>
 
 Do **not** re-run with `--reroute` after this block. `--reroute` starts a new reroute round and increments `reroute_count`; an amendment rejection is still the same round.
 
-Fast-tier reroute is unchanged mechanically: S, non-delicate tasks re-enter directly at `implement`. Operators may optionally append a conversational `## Reroute Plan` section to `plan.md` before rerouting; implement-reroute reads it when present and falls back to the base plan when absent.
+Fast-tier reroute is unchanged mechanically: XS, non-delicate tasks re-enter directly at `implement`. Operators may optionally append a conversational `## Reroute Plan` section to `plan.md` before rerouting; implement-reroute reads it when present and falls back to the base plan when absent.
 
 Bare `--reroute` auto-detaches and runs the complete rerouted pipeline in the background. Stepped foreground reroutes must combine `--reroute`, `--step`, and the tier-specific expected re-entry phase in a single invocation:
 
@@ -473,4 +474,4 @@ Task templates are managed by canon — `canon upgrade` overwrites `.canon/templ
 - `docs/patterns.md` — implementation patterns and Known Pitfalls.
 - `docs/decisions.md` — settled architectural decisions.
 - `/canon-pipeline` — command patterns and snag-recovery flows for operating the pipeline.
-- `/canon-spec-review` — adversarial pre-pipeline spec review (multi-agent fan-out) for M/L/XL or delicate tasks.
+- `/canon-spec-review` — adversarial pre-pipeline spec review (multi-agent fan-out) for S/M/L/XL or delicate tasks.

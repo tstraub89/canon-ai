@@ -7,7 +7,7 @@
 // This file has no side effects: it reads only what is passed in. Env-var
 // resolution + legacy-shim warnings stay in run-task.ts.
 
-export type TaskSize = 'S' | 'M' | 'L' | 'XL';
+export type TaskSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
 export type PipelineTier = 'fast' | 'full';
 export type CodexPhase = 'spec_review' | 'implement';
 export type ClaudePhase = 'spec' | 'plan' | 'code_review' | 'qa';
@@ -40,7 +40,7 @@ export type PolicyConfig = {
     claudeModelQa: string;
     codexModelMini: string;
     codexModelFull: string;
-    // null → use size-aware default (3 for S/M, 5 for L/XL). A number here
+    // null → use size-aware default (3 for XS/S/M, 5 for L/XL). A number here
     // (from MAX_REVIEW_LOOPS env var) applies uniformly across all sizes.
     maxReviewLoops: number | null;
     claudeBudget: string | null;
@@ -57,7 +57,7 @@ export type PipelinePolicy = {
     // Nominal size with `delicate` promoting to XL. Drives model/effort —
     // any auth/Pro/storage-sensitive task gets the full model at xhigh.
     effectiveSize: TaskSize;
-    // True when the whole bundle runs the fast tier (S, non-delicate): spec
+    // True when the whole bundle runs the fast tier (XS, non-delicate): spec
     // and plan collapse into one Claude session.
     planCombined: boolean;
     maxReviewLoops: number;
@@ -65,8 +65,9 @@ export type PipelinePolicy = {
     claude: (phase: ClaudePhase) => ClaudeModelConfig;
 };
 
-const SIZE_ORDER: readonly TaskSize[] = ['S', 'M', 'L', 'XL'];
+const SIZE_ORDER: readonly TaskSize[] = ['XS', 'S', 'M', 'L', 'XL'];
 const BUDGET_BY_SIZE: Record<TaskSize, string> = {
+    XS: '5.00',
     S: '5.00',
     M: '5.00',
     L: '10.00',
@@ -74,7 +75,7 @@ const BUDGET_BY_SIZE: Record<TaskSize, string> = {
 };
 
 function maxSize(tasks: readonly PolicyInput[]): TaskSize {
-    let max: TaskSize = 'S';
+    let max: TaskSize = 'XS';
     for (const t of tasks) {
         const size = t.task_size ?? 'M';
         if (SIZE_ORDER.indexOf(size) > SIZE_ORDER.indexOf(max)) max = size;
@@ -90,19 +91,19 @@ function resolveBudget(effectiveSize: TaskSize, claudeBudget: string | null): st
     return claudeBudget ?? BUDGET_BY_SIZE[effectiveSize];
 }
 
-// Fast tier: S only, non-delicate. Full tier: anything else — any M/L/XL,
+// Fast tier: XS only, non-delicate. Full tier: anything else — any S/M/L/XL,
 // or any delicate task regardless of nominal size.
 export function detectTier(tasks: readonly PolicyInput[]): PipelineTier {
-    return tasks.some(t => (t.task_size ?? 'M') !== 'S' || (t.delicate ?? false))
+    return tasks.some(t => (t.task_size ?? 'M') !== 'XS' || (t.delicate ?? false))
         ? 'full'
         : 'fast';
 }
 
 // Per-task answer to "does this task skip a separate plan phase?". True
-// only for S non-delicate — the fast-tier invariant. Exposed for callers
+// only for XS non-delicate — the fast-tier invariant. Exposed for callers
 // that don't build a full policy (e.g. per-task loops inside the pipeline).
 export function isPlanCombined(task: PolicyInput): boolean {
-    return task.task_size === 'S' && !(task.delicate ?? false);
+    return task.task_size === 'XS' && !(task.delicate ?? false);
 }
 
 export function getNominalSize(tasks: readonly PolicyInput[]): TaskSize {
@@ -119,11 +120,11 @@ export function getEffectiveSize(tasks: readonly PolicyInput[]): TaskSize {
 // legitimate convergence (one L-tier task hit 15+; an M-tier task hit 6+2
 // escalations; another hit 4+2). The old caps (2 for S/M, 3 for L/XL) were
 // auto-blocking real spec convergence and forcing manual MAX_REVIEW_LOOPS
-// overrides. New floor: 3 for S/M (S rarely hits even 1; defensive cushion),
-// 5 for L/XL (matches the manual-override sweet spot). Env override
+// overrides. New floor: 3 for XS/S/M (XS/S rarely hit even 1; defensive
+// cushion), 5 for L/XL (matches the manual-override sweet spot). Env override
 // (PolicyConfig.maxReviewLoops) wins if non-null.
 export function defaultMaxReviewLoops(nominalSize: TaskSize): number {
-    return nominalSize === 'S' || nominalSize === 'M' ? 3 : 5;
+    return nominalSize === 'XS' || nominalSize === 'S' || nominalSize === 'M' ? 3 : 5;
 }
 
 function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, CodexModelConfig>> {
@@ -132,23 +133,26 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //   spec_review: read-heavy, structured output → mini handles up through
     //                L; effort scales with size. XL/delicate needs full-model
     //                shape-checking because that's where expensive mistakes lurk.
-    //   implement:   mini through L. S gets medium effort (token savings on
-    //                trivial changes). XL/delicate: full model at high. Not
+    //   implement:   mini through L. XS/S get medium effort (token savings on
+    //                the smallest changes). XL/delicate: full model at high. Not
     //                xhigh — GPT-5.5 tends to overthink at xhigh with open-ended
     //                tool access (cost without quality gain), and canon's thesis
     //                is token discipline over reflexive max-effort. Raise via
     //                env only if eval shows under-reasoning on delicate work.
     //
-    // The `S` row under spec_review is unused in practice (S fast tier skips
+    // The `XS` row under spec_review is unused in practice (XS fast tier skips
     // Codex spec review entirely) but kept for completeness and testability.
+    // The `S` row is active — S is full tier and runs spec_review.
     return {
         spec_review: {
+            XS: { model: config.codexModelMini, effort: 'medium' },
             S:  { model: config.codexModelMini, effort: 'medium' },
             M:  { model: config.codexModelMini, effort: 'medium' },
             L:  { model: config.codexModelMini, effort: 'high' },
             XL: { model: config.codexModelFull, effort: 'high' },
         },
         implement: {
+            XS: { model: config.codexModelMini, effort: 'medium' },
             S:  { model: config.codexModelMini, effort: 'medium' },
             M:  { model: config.codexModelMini, effort: 'high' },
             L:  { model: config.codexModelMini, effort: 'high' },
@@ -174,6 +178,7 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
     const buildHigh = (phase: ClaudePhase, xlEffort = 'xhigh'): Record<TaskSize, ClaudeMatrixConfig> => {
         const model = claudeModelFor(config, phase);
         return {
+            XS: { model, effort: 'medium' },
             S:  { model, effort: 'medium' },
             M:  { model, effort: 'high' },
             L:  { model, effort: 'high' },
@@ -183,6 +188,7 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
     const buildMedium = (phase: ClaudePhase): Record<TaskSize, ClaudeMatrixConfig> => {
         const model = claudeModelFor(config, phase);
         return {
+            XS: { model, effort: 'medium' },
             S:  { model, effort: 'medium' },
             M:  { model, effort: 'medium' },
             L:  { model, effort: 'high' },
@@ -190,7 +196,7 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
         };
     };
     // code_review splits model by size: Sonnet (claudeModelReview) handles
-    // S/M/L; Opus (claudeModelReviewLarge) is reserved for XL/delicate.
+    // XS/S/M/L; Opus (claudeModelReviewLarge) is reserved for XL/delicate.
     // Re-baselined 2026-06 for the Sonnet 4.6 generation — Sonnet 4.6 matches
     // the prior Opus flagship on long-horizon / lifecycle / state-machine bug
     // detection (the class that forced the earlier L→Opus bump on Sonnet 4.5),
@@ -198,6 +204,7 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
     // most subtle cross-file bugs and the highest blast radius live. Delicate
     // promotes to XL effective size, so it picks up Opus automatically.
     const codeReviewMatrix = (): Record<TaskSize, ClaudeMatrixConfig> => ({
+        XS: { model: config.claudeModelReview,      effort: 'medium' },
         S:  { model: config.claudeModelReview,      effort: 'medium' },
         M:  { model: config.claudeModelReview,      effort: 'high' },
         L:  { model: config.claudeModelReview,      effort: 'high' },

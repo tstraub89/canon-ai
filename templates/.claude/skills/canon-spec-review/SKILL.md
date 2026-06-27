@@ -1,6 +1,6 @@
 ---
 name: canon-spec-review
-description: Use when a canon task spec is written and the human wants to surface BLOCKING issues before invoking `canon run <id>`. Triggers on "/canon-spec-review", "review the spec", "pre-flight the spec", "what would Codex catch", or before kicking off the pipeline. Useful for any spec with logic — for full-tier (M/L/XL/delicate) it pre-empts Codex spec_review iterations, for fast-tier (S non-delicate) it's the only automated review layer since Codex spec_review auto-approves.
+description: Use when a canon task spec is written and the human wants to surface BLOCKING issues before invoking `canon run <id>`. Triggers on "/canon-spec-review", "review the spec", "pre-flight the spec", "what would Codex catch", or before kicking off the pipeline. Useful for any spec with logic — for full-tier (S/M/L/XL/delicate) it pre-empts Codex spec_review iterations, for fast-tier (XS non-delicate) it's the only automated review layer since Codex spec_review auto-approves.
 argument-hint: "<task-id>"
 allowed-tools: Read Glob Grep Bash(canon task list*) Bash(git status*) Agent
 effort: high
@@ -13,11 +13,11 @@ Previews what Codex's `spec_review` phase would surface — BEFORE `canon run <i
 ## When to use
 
 - Spec is written, `human_spec_gate` not yet cleared
-- Task is **full-tier (M/L/XL/delicate)** — pre-empts Codex spec_review iterations; saves ~10 min × N rounds + $
-- Task is **fast-tier (S non-delicate)** — this is the *only* automated review layer (fast-tier auto-approves `spec_review`, so without this skill the human's read is the only gate before Codex hits the spec at implement-time)
+- Task is **full-tier (S/M/L/XL/delicate)** — pre-empts Codex spec_review iterations; saves ~10 min × N rounds + $
+- Task is **fast-tier (XS non-delicate)** — this is the *only* automated review layer (fast-tier auto-approves `spec_review`, so without this skill the human's read is the only gate before Codex hits the spec at implement-time)
 - After a reroute amendment, before re-invoking the pipeline
 
-Don't use for already-committed code review (use `codex review --uncommitted` for that), or for genuinely trivial S patches (typo fixes, version bumps) where there's no logic to vet.
+Don't use for already-committed code review (use `codex review --commit <SHA>` or `codex review --base <branch>` for that), or for genuinely trivial inline patches (typo fixes, version bumps) where there's no logic to vet.
 
 ## Workflow
 
@@ -99,7 +99,7 @@ Print this inline (do NOT write to a file):
 ```markdown
 # /canon-spec-review for `<task-id>`
 
-**Task**: <title> · **Size**: <S/M/L/XL> · **Delicate**: <yes/no>
+**Task**: <title> · **Size**: <XS/S/M/L/XL> · **Delicate**: <yes/no>
 
 ## 🔴 BLOCKING (N)
 

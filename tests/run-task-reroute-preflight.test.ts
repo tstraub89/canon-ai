@@ -36,7 +36,7 @@ function worktreeTasksRoot(worktreesRoot: string, taskId: string): string {
 }
 
 type RerouteStatusOptions = {
-    taskSize?: 'S' | 'M' | 'L' | 'XL';
+    taskSize?: 'XS' | 'S' | 'M' | 'L' | 'XL';
     delicate?: boolean;
     worktree?: boolean;
     humanSpecGate?: boolean;
@@ -681,7 +681,7 @@ void test('rerouteFromHumanReview fast-tier leaves spec_review and plan untouche
         const worktreesRoot = path.join(dir, 'worktrees');
         const taskId = 'task-a';
         const status = makeRerouteStatus(taskId, 'task/task-a', 0, {
-            taskSize: 'S',
+            taskSize: 'XS',
             delicate: false,
             sessions: {
                 codex_spec_review: 'unchanged-session',

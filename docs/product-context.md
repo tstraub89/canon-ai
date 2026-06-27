@@ -38,8 +38,8 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 | **Review** | Three-lens code review. The orchestrator pre-obtains a cold-Codex diff review, then a Claude foreman spawns an anchored Claude lens (Stage 1 gate + Stage 2 quality) and a cold-Claude lens (diff only), synthesizes all three, and writes one `review.md`. |
 | **Verdict** | The review outcome: `approved`, `approved_with_nits`, `changes_requested`, `needs_re_review`, `spec_gap` (blocks for operator action — see below), or `sanctioned` (operator override via `canon task accept --reason`). |
 | **Done** | The QA artifact Claude writes after review passes — plain-English summary, files changed, test plan for the human. |
-| **Tier** | The level of orchestrator effort applied. Fast tier (S non-delicate) collapses spec+plan and skips Codex spec review. Full tier (M/L/XL or any delicate) runs the complete workflow. |
-| **Task size** | `S` (trivial), `M` (default, contained), `L` (substantial), `XL` (large or sensitive). Drives tier, model, effort, and loop caps via `pipeline-policy.ts`. |
+| **Tier** | The level of orchestrator effort applied. Fast tier (XS non-delicate) collapses spec+plan and skips Codex spec review. Full tier (S/M/L/XL or any delicate) runs the complete workflow. |
+| **Task size** | `XS` (fast-tier floor, more than trivial inline but no spec premise to challenge), `S` (smallest full-tier), `M` (default, contained), `L` (substantial), `XL` (large or sensitive). Drives tier, model, effort, and loop caps via `pipeline-policy.ts`. |
 | **Delicate** | A boolean flag that promotes a task's effective size to XL, regardless of nominal size. For surfaces where regressions have unbounded blast radius (auth, billing, persistent storage, or — for canon-ai itself — the orchestrator's own routing logic). |
 | **Bundle mode** | Multiple task IDs passed to one `run-task.ts` invocation. Tasks share a tier, share a review loop, and reroute together on `changes_requested`. |
 | **Worktree** | A separate git working tree (and branch) for a task, isolating its edits from the supervising orchestrator's view. Default-on; opt-out is a per-task flag. |
@@ -87,8 +87,8 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 (See `scripts/pipeline-policy.ts` for the authoritative matrix; this is the human-readable summary.)
 
-- **Fast tier**: `S` non-delicate. Spec+plan in one Claude session. Codex spec review skipped (human gate replaces it). Lower model effort.
-- **Full tier**: anything `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Higher model effort scaling with size; XL/delicate uses the full Codex model at `high` effort (re-baselined from `xhigh` in 1.11.0 — GPT-5.5 overthinks at `xhigh` with open-ended tools; see `docs/decisions.md` §"Model-generation re-baseline (2026-06)"). Claude's `code_review` for XL/delicate stays Opus at `xhigh`.
+- **Fast tier**: `XS` non-delicate. Spec+plan in one Claude session. Codex spec review skipped (human gate replaces it). Lower model effort.
+- **Full tier**: anything `S`, `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Higher model effort scaling with size; XL/delicate uses the full Codex model at `high` effort (re-baselined from `xhigh` in 1.11.0 — GPT-5.5 overthinks at `xhigh` with open-ended tools; see `docs/decisions.md` §"Model-generation re-baseline (2026-06)"). Claude's `code_review` for XL/delicate stays Opus at `xhigh`.
 
 ### `delicate` flag — project-specific domains
 

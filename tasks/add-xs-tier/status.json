@@ -1,17 +1,17 @@
 {
   "id": "add-xs-tier",
   "title": "Add XS task size as the new fast-tier floor",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-25",
   "updated": "2026-06-27",
-  "branch": "",
+  "branch": "task/add-xs-tier",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "df800dda082752fbd8670944a422691f82276f29",
-    "orchestrator_commit": "df800dda082752fbd8670944a422691f82276f29",
-    "codex_cli": "codex-cli 0.142.1",
-    "claude_code": "2.1.191 (Claude Code)"
+    "upstream_commit": "b592227fed005240e6ad7a5f719d466fae6b5403",
+    "orchestrator_commit": "b592227fed005240e6ad7a5f719d466fae6b5403",
+    "codex_cli": "codex-cli 0.142.3",
+    "claude_code": "2.1.195 (Claude Code)"
   },
   "task_size": "L",
   "delicate": true,
@@ -40,21 +40,23 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 1,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0,
+      "preflight_rejections_total": 1
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -72,7 +74,9 @@
   ],
   "sessions": {
     "codex_spec_review": "019f0071-0023-7021-a4d2-8323ea6b2283",
-    "claude_spec": "ad29923f-c015-495a-bc9b-677ba11fddd0"
+    "claude_spec": "ad29923f-c015-495a-bc9b-677ba11fddd0",
+    "codex": "019f078c-a8b3-7432-8d01-b91ac38f3cea",
+    "claude_review": "b54a2292-7950-442b-bf7b-db7a1bb14a1a"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

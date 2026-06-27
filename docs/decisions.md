@@ -78,13 +78,23 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 ---
 
-## Fast tier (S non-delicate) skips Codex spec review
+## Fast tier (XS non-delicate) skips Codex spec review
 
-**Decision**: Tasks marked `task_size: S` and not `delicate` skip the Codex spec review phase entirely. The human spec gate replaces it.
+**Decision**: Tasks marked `task_size: XS` and not `delicate` skip the Codex spec review phase entirely. The human spec gate replaces it.
 
-**Why**: The alternative — every task gets full spec review — was thorough but expensive. For trivial tasks (S, non-delicate), the human-Claude conversation produces a spec the human directly approves; routing it through a Codex review pass adds latency and cost without catching real issues, because the spec is short enough that the human's own gate is a sufficient check. Reserving Codex spec review for M/L/XL/delicate tasks (where shape concerns and decomposition are real) preserves the cost-quality tradeoff.
+**Why**: The alternative — every task gets full spec review — was thorough but expensive. For fast-tier tasks (XS, non-delicate), the human-Claude conversation produces a spec the human directly approves; routing it through a Codex review pass adds latency and cost without catching real issues, because the spec has little-to-no premise worth challenging. Reserving Codex spec review for S/M/L/XL/delicate tasks (where shape concerns and decomposition are real) preserves the cost-quality tradeoff.
 
-**Rule**: Don't add spec_review work to S non-delicate tasks. If a task feels like it needs spec review, that's a signal to size it M (or set `delicate: true`), not to bypass the tier rule.
+**Rule**: Don't add spec_review work to XS non-delicate tasks. If a task feels like it needs spec review, that's a signal to size it S (or set `delicate: true`), not to bypass the tier rule.
+
+---
+
+## XS is the pipeline floor; spec_review is the XS→S dividing line
+
+**Decision**: XS exists for changes where running the pipeline beats inline work, but the spec still has little-to-no premise worth reviewing. S is the first full-tier size.
+
+**Why**: Inline work is for trivial direct edits; Claude implements and asks Codex for review at intervals, with no task, ACs, or plan. XS is for more than a trivial one-file inline change (>1 file, or real logic): it buys the pipeline's cross-review direction, written ACs, a plan, and a real code review while still skipping Codex spec_review. S begins when the spec carries enough logic or risk that Codex challenging the premise earns its keep.
+
+**Rule**: Choose inline below the pipeline, XS for the smallest pipeline-worthy work, and S when spec_review should run.
 
 ---
 

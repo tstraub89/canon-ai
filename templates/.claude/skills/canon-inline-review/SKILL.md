@@ -7,12 +7,12 @@ effort: medium
 
 # canon-inline-review
 
-Use this skill to drive an independent second-model review of below-pipeline work. It is for correctness and quality bugs in inline edits and XS fixes that are too small for a canon task.
+Use this skill to drive an independent second-model review of below-pipeline work. It is for correctness and quality bugs in inline edits and trivial fixes that are too small for a canon task.
 
 ## When to use
 
 - Non-trivial inline edits
-- XS fixes too small to justify a canon task
+- Trivial fixes too small to justify a canon task
 - Before committing or before opening a PR
 
 Claude never self-reviews its own inline code. Use this skill to invoke Codex as the independent reviewer.

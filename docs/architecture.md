@@ -103,7 +103,7 @@ Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json`
 
 - Top-level `status` is **derived** — it points at the first non-`done` phase. Hand-editing it produces inconsistent state. Use `canon task phase` instead.
 - Each phase has at least `{ status, agent }`. Review phases also have `{ verdict, iterations }`.
-- `task_size` (`S | M | L | XL`) and `delicate` (boolean) are set at task creation; both feed `pipeline-policy.ts` to choose tier, model, and loop cap.
+- `task_size` (`XS | S | M | L | XL`) and `delicate` (boolean) are set at task creation; both feed `pipeline-policy.ts` to choose tier, model, and loop cap.
 
 ### File-based handoff (not in-memory)
 
