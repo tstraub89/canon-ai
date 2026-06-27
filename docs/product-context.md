@@ -35,7 +35,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 | **Spec** | The contract for what a task accomplishes. Written by Claude (architect), reviewed by Codex (full tier) or by the human (fast tier). Approved before implementation begins. |
 | **Plan** | The implementation steps Claude lays out after spec approval. References specific files and existing patterns. |
 | **Handoff** | The artifact Codex writes after implementing — what files changed, what ACs were met, what validation outcomes are. The reviewer reads this alongside the diff. |
-| **Review** | Two-stage code review by Claude. Stage 1 verifies spec compliance (gate); Stage 2 assesses code quality (only if Stage 1 passes). |
+| **Review** | Three-lens code review. The orchestrator pre-obtains a cold-Codex diff review, then a Claude foreman spawns an anchored Claude lens (Stage 1 gate + Stage 2 quality) and a cold-Claude lens (diff only), synthesizes all three, and writes one `review.md`. |
 | **Verdict** | The review outcome: `approved`, `approved_with_nits`, `changes_requested`, `needs_re_review`, `spec_gap` (blocks for operator action — see below), or `sanctioned` (operator override via `canon task accept --reason`). |
 | **Done** | The QA artifact Claude writes after review passes — plain-English summary, files changed, test plan for the human. |
 | **Tier** | The level of orchestrator effort applied. Fast tier (S non-delicate) collapses spec+plan and skips Codex spec review. Full tier (M/L/XL or any delicate) runs the complete workflow. |
@@ -125,7 +125,7 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 ## Roadmap (Brief)
 
 - **Current state**: canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Development is trunk-based on `main`; releases are cut from `main` (see `docs/release-process.md`). Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
-- **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Multi-agent cold review shipped in v1.10.0 (`code_review` now runs as a foreman over anchored + cold lenses).
+- **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Multi-agent cold review now includes a cold-Codex third lens: `code_review` runs an orchestrator-owned `codex review` step followed by a Claude foreman over anchored-Claude, cold-Claude, and cold-Codex inputs.
 - **Future**: Additional agent-CLI adapters (Gemini, Aider). Public release decision.
 
 (See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)

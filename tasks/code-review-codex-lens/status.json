@@ -1,15 +1,15 @@
 {
   "id": "code-review-codex-lens",
   "title": "Add cold-Codex third lens to code_review",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-26",
   "updated": "2026-06-27",
-  "branch": "",
+  "branch": "task/code-review-codex-lens",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "03655cb5b7ac2f864a534398d6f6999498488ad8",
-    "orchestrator_commit": "03655cb5b7ac2f864a534398d6f6999498488ad8",
+    "upstream_commit": "dc75fa37e15da42df0492e0f702fd5601f74781f",
+    "orchestrator_commit": "dc75fa37e15da42df0492e0f702fd5601f74781f",
     "codex_cli": "codex-cli 0.142.1",
     "claude_code": "2.1.191 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -78,7 +79,9 @@
   ],
   "sessions": {
     "codex_spec_review": "019f029b-de89-78d1-8c96-c7d2d53292b1",
-    "claude_spec": "648e8239-3f05-4f30-ab9a-0465fb7510ea"
+    "claude_spec": "648e8239-3f05-4f30-ab9a-0465fb7510ea",
+    "codex": "019f06bc-1f65-7173-b06f-2d43f2b97772",
+    "claude_review": "930c8966-6934-4d59-813d-ae192ce77325"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

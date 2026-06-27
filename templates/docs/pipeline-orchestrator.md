@@ -371,11 +371,15 @@ PIPELINE_STALL_TIMEOUT_MS=1800000 canon run <id>
 
 ## Code Review Diff Injection
 
-The code-review foreman prompt includes a scoped diff: `git diff <baseBranch>...HEAD` run in the active worktree (three-dot, so only commits on the task branch are included, not unrelated divergence on `baseBranch`). The diff is capped at 50,000 bytes; if truncated, the prompt notes it. The foreman gives the anchored lens the diff plus spec/handoff context and gives the cold lens the diff without spec/AC/canon context.
+Code review starts with a cold-Codex diff review run by the orchestrator in the active worktree: `codex exec review --json --base <baseBranch> -m <miniModel>`, where `<miniModel>` is canon's resolved mini Codex model. The captured findings are written verbatim to `tasks/<id>/review-cold-codex.md` for every task in the invocation. Bundles run this once over the combined branch diff, and the same findings reach every member.
+
+If the cold-Codex review cannot be obtained (no captured findings output, spawn error, stall, or signal), `code_review` stops before any Claude session. Re-run `canon run <id>` when Codex is available; there is no two-Claude-lens fallback. Successful runs emit one duration line in the run log: `→ cold-codex review (<taskIds>): <n>s`.
+
+After that, the code-review foreman prompt includes a scoped diff: `git diff <baseBranch>...HEAD` run in the active worktree (three-dot, so only commits on the task branch are included, not unrelated divergence on `baseBranch`). The diff is capped at 50,000 bytes; if truncated, the prompt notes it. The foreman receives the cold-Codex findings as the pre-obtained third lens input, gives the anchored Claude lens the diff plus spec/handoff context, and gives the cold-Claude lens the diff without spec/AC/canon context. The Codex `--base` review and the Claude scoped diff are both over the task branch versus `<baseBranch>` range.
 
 ## Per-Iteration Prompt Slimming
 
-Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context; round-1 findings are durable in the artifacts; the round-2+ prompts target only the delta. Code-review re-runs both lenses from scratch on every round before the foreman synthesizes the new verdict.
+Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context; round-1 findings are durable in the artifacts; the round-2+ prompts target only the delta. Code-review re-obtains cold-Codex findings and re-runs the Claude lenses from scratch on every round before the foreman synthesizes the new verdict.
 
 **Cumulative artifacts.** `handoff.md` and `review.md` grow by section per round:
 - Round 1 fills the existing template structure.

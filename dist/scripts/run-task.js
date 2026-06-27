@@ -1663,6 +1663,133 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
   }
 }
 
+// scripts/run-task/agents/codex.ts
+async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
+  const effectivePrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
+  info(resumeId ? `Calling Codex (resuming ${resumeId.slice(0, 8)}...)...` : "Calling Codex...");
+  info(`Model: ${model} | Effort: ${effort}`);
+  const startMs = Date.now();
+  let status = "ok";
+  let tokens;
+  let sessionId = null;
+  try {
+    if (interactive) {
+      console.log("");
+      console.log(resumeId ? "\u2500\u2500\u2500 Resuming interactive Codex session \u2500\u2500\u2500" : "\u2500\u2500\u2500 Opening interactive Codex session \u2500\u2500\u2500");
+      console.log("Prompt loaded. You're in the driver's seat.");
+      console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+      console.log("");
+      runCommandOrDie("codex", ["-m", model, "-C", cwd, effectivePrompt], { cwd });
+      return {
+        exitCode: 0,
+        signal: null,
+        spawnError: null,
+        stalled: false,
+        capturedStdout: "",
+        capturedStderr: "",
+        sessionId: null
+      };
+    }
+    const effortFlag = ["-c", `model_reasoning_effort=${effort}`];
+    const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
+    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
+    const displayChunks = [];
+    let tokenTotal = 0;
+    let sawUsage = false;
+    const onLine = (line) => {
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
+      const tick = formatLiveTick(event);
+      if (tick) console.log(tick);
+      if (event.type === "thread.started" && typeof event.thread_id === "string") {
+        sessionId = event.thread_id;
+      } else if (event.type === "turn.completed" && event.usage) {
+        tokenTotal += (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0);
+        sawUsage = true;
+      } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
+        displayChunks.push(event.item.text);
+      }
+    };
+    const result = await streamProcess("codex", args, {
+      cwd,
+      label: "Codex",
+      onLine
+    });
+    if (sawUsage) tokens = tokenTotal;
+    if (displayChunks.length > 0) {
+      process.stdout.write(`${displayChunks.join("\n\n")}
+`);
+    }
+    if (result.spawnError) {
+      console.error(result.spawnError.message);
+      status = "failed";
+      setExitReason(`codex session spawn error: ${result.spawnError.message}`);
+      process.exit(1);
+    }
+    if (result.stalled) {
+      status = "failed";
+      setExitReason("codex session stalled");
+      process.exit(1);
+    }
+    if (result.signal) {
+      status = "failed";
+      setExitReason(`codex session received signal ${result.signal}`);
+      process.exit(1);
+    }
+    if (result.exitCode !== 0) {
+      status = "failed";
+      warn(`Codex exited with status ${result.exitCode ?? 0} \u2014 will verify phase completion via status.json.`);
+    }
+    return {
+      ...result,
+      sessionId
+    };
+  } catch (err) {
+    status = "failed";
+    throw err;
+  } finally {
+    if (metricsContext) recordMetric({ ...metricsContext, agent: "codex", model, durationMs: Date.now() - startMs, status, tokens });
+  }
+}
+async function runColdCodexReview(baseBranch, model, activeCwd, options = {}) {
+  const command = options.codexBinary ?? "codex";
+  const args = ["exec", "review", "--json", "--base", baseBranch, "-m", model];
+  const displayChunks = [];
+  let sawTurnCompleted = false;
+  const startMs = Date.now();
+  const onLine = (line) => {
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const tick = formatLiveTick(event);
+    if (tick) console.log(tick);
+    if (event.type === "turn.completed") {
+      sawTurnCompleted = true;
+    } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
+      displayChunks.push(event.item.text);
+    }
+  };
+  const result = await streamProcess(command, args, {
+    cwd: activeCwd,
+    label: "Codex cold review",
+    onLine
+  });
+  const findings = displayChunks.join("\n\n");
+  const success = findings.trim().length > 0 && sawTurnCompleted && !result.spawnError && !result.stalled && !result.signal;
+  return {
+    success,
+    findings,
+    durationMs: Date.now() - startMs
+  };
+}
+
 // scripts/run-task/validation.ts
 import fs7 from "fs";
 import path7 from "path";
@@ -3445,7 +3572,7 @@ function renderTemplate(template, view) {
 }
 
 // scripts/run-task/prompts/templates/code-review-foreman.md
-var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n## Code-Review Rules of Thumb (Foreman)\n\n- **Reviewer diffs against the task baseline, not `main`, on release branches**: on a shared release branch ahead of `main`, always diff against the task's baseline \u2014 diffing against `main` attributes unrelated work to the task.\n- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: when operating across REPO_ROOT and a task worktree, `git -C /absolute/path` avoids silent cwd reversion between tool calls.\n- **Don't infer one git invariant from another**: `git status --porcelain` empty \u2260 origin matches HEAD; `origin/<branch>` exists \u2260 origin matches HEAD; PR exists \u2260 PR is in the expected state. Do the actual check directly.\n- **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At \u22653 sites, extract the shared helper and route all sites through it.\n\nYour job is to spawn two review lenses as isolated sub-agents, collect their findings, adjudicate using the spec (which you hold and the cold lens does not), then write one `review.md` and set the verdict.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. Both lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give both lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Foreman Protocol\n\n### 1. Spawn Lenses In Parallel\n\nUse the Task tool to spawn both lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nDo not let either lens see the other lens's output.\n\n### 2. Adjudicate\n\nUse the two lens outputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if both lenses flagged the same behavior, collapse it to one finding and record \"flagged by both lenses.\" A finding flagged by both lenses is higher-confidence regardless of either lens's self-tag.\n2. Cold-vs-spec reconciliation: if a cold finding is explained as intended by the spec, drop it and record `Dismissed (cold): <finding> - <spec reason>` in `review.md`.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Only optional nits or cleanup -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the spec reason.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
+var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n## Code-Review Rules of Thumb (Foreman)\n\n- **Reviewer diffs against the task baseline, not `main`, on release branches**: on a shared release branch ahead of `main`, always diff against the task's baseline \u2014 diffing against `main` attributes unrelated work to the task.\n- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: when operating across REPO_ROOT and a task worktree, `git -C /absolute/path` avoids silent cwd reversion between tool calls.\n- **Don't infer one git invariant from another**: `git status --porcelain` empty \u2260 origin matches HEAD; `origin/<branch>` exists \u2260 origin matches HEAD; PR exists \u2260 PR is in the expected state. Do the actual check directly.\n- **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At \u22653 sites, extract the shared helper and route all sites through it.\n\nYour job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. The lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give the Claude lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold-Claude lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Injected Cold-Codex Findings\n\n{{#hasColdCodexFindings}}\nThe orchestrator ran `codex review` over the task's branch diff before spawning you. Its findings are reproduced below. These are unanchored: Codex reviewed adversarially without the spec as a checklist. Treat them as the third lens input. Do not re-run Codex; synthesize these findings alongside the Claude lens outputs.\n\n{{{coldCodexFindings}}}\n{{/hasColdCodexFindings}}\n{{^hasColdCodexFindings}}\nNo cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.\n{{/hasColdCodexFindings}}\n\n## Foreman Protocol\n\n### 1. Spawn Claude Lenses In Parallel\n\nUse the Task tool to spawn the Claude lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold-Claude lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nThe injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.\n\n### 2. Adjudicate\n\nUse the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record \"flagged by N lenses.\" A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement \u2014 the same behavior flagged by cold-Claude and cold-Codex \u2014 must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.\n2. Keep the two reconciliation checks separate:\n   - Does it hold against the code? For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.\n   - Is it in spec scope? Apply this only to anchored-lens findings as part of the Stage 1 / Stage 2 charter.\n   - Forbidden: do not dismiss a verified cold-Claude or cold-Codex finding merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Optional nits or cleanup without blocking findings -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
 
 // scripts/run-task/prompts/templates/implement.md
 var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\n## Implementation Rules\n\n**Safe-First Rules** \u2014 always applicable regardless of stack:\n1. For storage, reload, sync, or data-affecting flows: ship the safer guarded behavior first.\n2. Behavior that reloads the app, replaces local state, or dismisses user work must be gated by explicit user action.\n3. Prefer shared types over duplicating signatures.\n\n**Scope Discipline** \u2014 always applicable; the spec is the contract:\n1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec\'s *Affected Files* table, stop, document the gap in `handoff.md` under *Blockers*, and surface it for human attention. Do not silently expand scope.\n2. **No unauthorized new abstractions.** Do not introduce new top-level modules, services, packages, or routing layers that the spec did not authorize. Minor refactors within an authorized file are fine; new abstractions are an architecture decision and belong in the spec.\n3. **No incidental dependency changes.** Do not add, remove, upgrade, or downgrade dependencies (or their pinned versions) unless the spec explicitly requests it.\n\n**Lint & Type Safety Policy** \u2014 always applicable:\n1. **Suppressing a lint or type error is a last resort**, not a convenience escape hatch. Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*.\n2. **`any` / dynamic typing**: When the shape is truly unknown at the boundary, type as `unknown` and narrow explicitly.\n\n**Parsing Structured Input** \u2014 always applicable when implementing a parser for author-facing structured input:\nParse cell-by-cell with explicit rejection, not a permissive whole-string regex. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason at the parse boundary.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md. The universal change-type \u2192 check-category matrix:\n\n| Change Type | Required Check Categories |\n|---|---|\n| Most changes | Linting, type checking, unit tests |\n| Docs references | Docs references |\n| Routes / config / build | Full build |\n| UI / interaction changes | End-to-end tests |\n| Content / SEO / metadata | Prerender / sitemap / feed regeneration |\n| Schema / migration | Migration runner + manual review |\n| Cross-platform | Subset of the above on each platform |\n\nFor which command runs each category: see `docs/architecture.md` \xA7Validation (project command bindings). Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
@@ -3791,7 +3918,7 @@ function bundleHasRealPriorReview(taskIds) {
     }
   });
 }
-function promptCodeReview(state, baseBranch, scopedDiff = null) {
+function promptCodeReview(state, baseBranch, scopedDiff = null, coldCodexFindings = null) {
   const { tasks } = state;
   const rawMaxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
   const maxIter = bundleHasRealPriorReview(tasks.map((t) => t.taskId)) ? rawMaxIter : 0;
@@ -3829,6 +3956,8 @@ function promptCodeReview(state, baseBranch, scopedDiff = null) {
     maxIter,
     tightenLine,
     ...diffView,
+    coldCodexFindings: coldCodexFindings ?? "",
+    hasColdCodexFindings: coldCodexFindings !== null,
     phaseCommands: phaseCommands(tasks.map((t) => t.taskId), "code_review", "done", "<verdict>")
   });
 }
@@ -4118,6 +4247,19 @@ function taskPhasePreflightRejected(id, phaseArg) {
 }
 
 // scripts/run-task/phases/code-review.ts
+var defaultDeps = {
+  verifyBranch,
+  getBaseBranch,
+  getActiveCwd,
+  getAffectedFiles,
+  verifyHandoffAgainstDiff,
+  getScopedDiff,
+  getClaudeConfig,
+  getMaxReviewLoops,
+  getColdCodexModel: () => policyConfig().codexModelMini,
+  runColdCodexReview,
+  runClaude
+};
 function determinePreflightRoute(failures) {
   const allClassified = failures.flatMap((failure) => failure.classified);
   const hasFixable = allClassified.some((blocker) => blocker.bucket === "format" || blocker.bucket === "regression");
@@ -4271,12 +4413,12 @@ ${stub}` : stub;
   }
   return true;
 }
-async function runCodeReviewPhase(state, interactive, resumeId) {
+async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDeps) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
-  verifyBranch(taskIds);
-  const baseBranch = getBaseBranch(taskIds);
-  const activeCwd = getActiveCwd(taskIds);
+  deps.verifyBranch(taskIds);
+  const baseBranch = deps.getBaseBranch(taskIds);
+  const activeCwd = deps.getActiveCwd(taskIds);
   const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
   const perTaskCombined = tasks.map((t) => {
     const preflight = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
@@ -4288,15 +4430,15 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
     };
   });
   const worstTask = perTaskCombined.reduce((worst, curr) => curr.combined > worst.combined ? curr : worst, perTaskCombined[0]);
-  const codeReviewLoopCap = getMaxReviewLoops(tasks);
+  const codeReviewLoopCap = deps.getMaxReviewLoops(tasks);
   if (worstTask.combined >= codeReviewLoopCap) {
     const reason = `Code review hit ${worstTask.combined} attempts in a row for task ${worstTask.taskId} (${worstTask.real} reviewer rounds + ${worstTask.preflight} pre-flight rejections; limit: ${codeReviewLoopCap}). Pipeline auto-blocked. Read tasks/<id>/review.md \u2014 if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To resume after fixing: run \`canon task reset-code-review <id>\` to archive the prior review, clear the loop-local counters, and re-derive status.json, then re-run the pipeline.`;
     warn(reason);
     autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
     process.exit(2);
   }
-  const changedFiles = new Set(getAffectedFiles(baseBranch, activeCwd));
-  const bundleIssues = verifyHandoffAgainstDiff(taskIds, baseBranch);
+  const changedFiles = new Set(deps.getAffectedFiles(baseBranch, activeCwd));
+  const bundleIssues = deps.verifyHandoffAgainstDiff(taskIds, baseBranch);
   const preflightFailed = [];
   for (const t of tasks) {
     const taskBundleIssues = bundleIssues.filter(
@@ -4325,10 +4467,28 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
   }
   info(`Phase: code_review (Claude${state.isBundle ? " bundle" : ""}, iteration ${maxIter + 1})`);
   for (const t of tasks) taskPhase(t.taskId, "code_review", "in_progress");
-  const cfg = getClaudeConfig("code_review", tasks);
+  const miniModel = deps.getColdCodexModel();
+  const coldReviewStartMs = Date.now();
+  const coldReview = await deps.runColdCodexReview(baseBranch, miniModel, activeCwd);
+  const coldReviewDurationMs = Date.now() - coldReviewStartMs;
+  if (!coldReview.success) {
+    setExitReason(
+      `cold-Codex review could not be obtained for task(s) ${taskIds.join(", ")} (no findings output / spawn error / stall / signal). Re-run when Codex is available \u2014 the code_review phase has not advanced.`
+    );
+    process.exit(1);
+  }
+  for (const t of tasks) {
+    fs12.writeFileSync(
+      path12.join(taskDirFor(t.taskId), "review-cold-codex.md"),
+      coldReview.findings,
+      "utf8"
+    );
+  }
+  info(`\u2192 cold-codex review (${taskIds.join(", ")}): ${Math.round(coldReviewDurationMs / 1e3)}s`);
+  const cfg = deps.getClaudeConfig("code_review", tasks);
   const reviewResumeId = maxIter > 0 ? resumeId : null;
-  const scopedDiff = getScopedDiff(baseBranch, activeCwd);
-  const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
+  const scopedDiff = deps.getScopedDiff(baseBranch, activeCwd);
+  const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
     taskId: taskIds.join("+"),
     phase: "code_review",
     iteration: maxIter,
@@ -4347,99 +4507,6 @@ async function runCodeReviewPhase(state, interactive, resumeId) {
     }
   }
   return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
-}
-
-// scripts/run-task/agents/codex.ts
-async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
-  const effectivePrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
-  info(resumeId ? `Calling Codex (resuming ${resumeId.slice(0, 8)}...)...` : "Calling Codex...");
-  info(`Model: ${model} | Effort: ${effort}`);
-  const startMs = Date.now();
-  let status = "ok";
-  let tokens;
-  let sessionId = null;
-  try {
-    if (interactive) {
-      console.log("");
-      console.log(resumeId ? "\u2500\u2500\u2500 Resuming interactive Codex session \u2500\u2500\u2500" : "\u2500\u2500\u2500 Opening interactive Codex session \u2500\u2500\u2500");
-      console.log("Prompt loaded. You're in the driver's seat.");
-      console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-      console.log("");
-      runCommandOrDie("codex", ["-m", model, "-C", cwd, effectivePrompt], { cwd });
-      return {
-        exitCode: 0,
-        signal: null,
-        spawnError: null,
-        stalled: false,
-        capturedStdout: "",
-        capturedStderr: "",
-        sessionId: null
-      };
-    }
-    const effortFlag = ["-c", `model_reasoning_effort=${effort}`];
-    const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
-    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
-    const displayChunks = [];
-    let tokenTotal = 0;
-    let sawUsage = false;
-    const onLine = (line) => {
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        return;
-      }
-      const tick = formatLiveTick(event);
-      if (tick) console.log(tick);
-      if (event.type === "thread.started" && typeof event.thread_id === "string") {
-        sessionId = event.thread_id;
-      } else if (event.type === "turn.completed" && event.usage) {
-        tokenTotal += (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0);
-        sawUsage = true;
-      } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
-        displayChunks.push(event.item.text);
-      }
-    };
-    const result = await streamProcess("codex", args, {
-      cwd,
-      label: "Codex",
-      onLine
-    });
-    if (sawUsage) tokens = tokenTotal;
-    if (displayChunks.length > 0) {
-      process.stdout.write(`${displayChunks.join("\n\n")}
-`);
-    }
-    if (result.spawnError) {
-      console.error(result.spawnError.message);
-      status = "failed";
-      setExitReason(`codex session spawn error: ${result.spawnError.message}`);
-      process.exit(1);
-    }
-    if (result.stalled) {
-      status = "failed";
-      setExitReason("codex session stalled");
-      process.exit(1);
-    }
-    if (result.signal) {
-      status = "failed";
-      setExitReason(`codex session received signal ${result.signal}`);
-      process.exit(1);
-    }
-    if (result.exitCode !== 0) {
-      status = "failed";
-      warn(`Codex exited with status ${result.exitCode ?? 0} \u2014 will verify phase completion via status.json.`);
-    }
-    return {
-      ...result,
-      sessionId
-    };
-  } catch (err) {
-    status = "failed";
-    throw err;
-  } finally {
-    if (metricsContext) recordMetric({ ...metricsContext, agent: "codex", model, durationMs: Date.now() - startMs, status, tokens });
-  }
 }
 
 // scripts/run-task/phases/implement.ts

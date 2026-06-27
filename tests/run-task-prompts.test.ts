@@ -516,12 +516,16 @@ void test('promptCodeReview_round1', () => {
     recordOrAssert('promptCodeReview_round1', actual);
 });
 
-void test('promptCodeReview renders the synthesis foreman and both lens subagents', () => {
-    const actual = normalize(promptCodeReview(baseState));
+void test('promptCodeReview renders the synthesis foreman, Claude subagents, and injected cold-Codex lens', () => {
+    const actual = normalize(promptCodeReview(baseState, 'main', null, 'P2 - null deref at src/foo.ts:10'));
     assert.match(actual, /synthesis foreman/);
     assert.match(actual, /subagent_type: code-review-anchored/);
     assert.match(actual, /subagent_type: code-review-cold/);
     assert.match(actual, /Do not give it `spec\.md`, ACs, handoff rationale, canon docs/);
+    assert.match(actual, /P2 - null deref at src\/foo\.ts:10/);
+    assert.match(actual, /third lens input/);
+    assert.match(actual, /three review inputs/);
+    assert.match(actual, /Do not run `codex` yourself/);
 });
 
 void test('promptCodeReview_roundN', () => {

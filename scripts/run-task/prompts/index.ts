@@ -470,6 +470,7 @@ export function promptCodeReview(
     state: PipelineState,
     baseBranch?: string,
     scopedDiff: ScopedDiff | null = null,
+    coldCodexFindings: string | null = null,
 ): string {
     const { tasks } = state;
     const rawMaxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
@@ -518,6 +519,8 @@ export function promptCodeReview(
         maxIter,
         tightenLine,
         ...diffView,
+        coldCodexFindings: coldCodexFindings ?? '',
+        hasColdCodexFindings: coldCodexFindings !== null,
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
     });
 }

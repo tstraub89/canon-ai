@@ -61,3 +61,9 @@ A rule that names a reviewer checkpoint as its enforcement point gives false con
 *(2026-06-25, source: spec-bugfix-diagnosis-rule)*
 
 When the same conditional escape clause appears across multiple guidance surfaces, every occurrence must state the full predicate — not a shortened form. Dropping even one conjunct silently widens the escape. Concrete case: the within-reason escape required "environment-bound AND a faithful repro is impractical"; one surface rendered only "if a direct test is impractical," which would have let any hard-to-test case skip verification. Code review caught this as a spec_gap before ship. Rule: when a spec defines an escape predicate with multiple conjuncts, add a verification step that greps all target surfaces for the shorter single-conjunct form and rejects any hit.
+
+### Task artifacts are uncommitted at code_review time — `getScopedDiff()` naturally excludes them
+
+*(2026-06-26, source: code-review-codex-lens)*
+
+When designing a review or validation step that should see only source changes (not task docs), there is no need to filter out `spec.md`, `plan.md`, `handoff.md`, `notes.md`, or `status.json`. Canon's `autoCommitCode()` stages only handoff-table source files (`main.ts:512`, `:605`–`:614`); task artifacts commit at QA-end. Because `getScopedDiff()` uses `git diff <base>...HEAD` (committed range only), the entire `tasks/<id>/` directory is simply absent from the diff at code_review time. Concrete case: spec_review raised a "spec-blindness" blocker assuming `handoff.md` would appear in the cold review diff — it doesn't. Verify this assumption by checking `autoCommitCode()` in `main.ts` if it comes up again; do not add artifact-filtering construction, which would make a cold review more spec-blind than intended and break same-surface symmetry with the other lenses.

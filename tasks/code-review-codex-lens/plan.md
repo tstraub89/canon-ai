@@ -270,6 +270,7 @@ Run in sequence:
    ```
    rg -n --hidden -g '!.git' -g '!tasks/**' -g '!node_modules' -g '!dist/**' \
       -g '!CHANGELOG.md' -g '!docs/lessons-learned.md' -g '!docs/BACKLOG.md' \
+      -g '!docs/task-quality-log.md' \
       -g '!docs/harness-audit-2026-06.md' -g '!docs/canon-opus48-gpt55-report.md' \
       -e 'two-lens' -e 'two review lenses' -e 'Lens count stays two' -e 'Do not add a third lens'
    ```

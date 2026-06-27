@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { info, warn } from '../cli.js';
+import { info, setExitReason, warn } from '../cli.js';
 import { getAffectedFiles, getBaseBranch, getScopedDiff, verifyBranch } from '../git.js';
-import { getClaudeConfig, getMaxReviewLoops } from '../policy.js';
+import { getClaudeConfig, getMaxReviewLoops, policyConfig } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
+import { runColdCodexReview } from '../agents/codex.js';
 import { getActiveCwd } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
 import { classifyPreflightBlockers, isTemplateUnfilled, verifyHandoffAgainstDiff } from '../validation.js';
@@ -18,6 +19,34 @@ export type PreflightRoute = 'implement' | 'auto_block';
 export type PreflightFailure = {
     taskId: string;
     classified: ClassifiedBlocker[];
+};
+
+export type CodeReviewPhaseDeps = {
+    verifyBranch: typeof verifyBranch;
+    getBaseBranch: typeof getBaseBranch;
+    getActiveCwd: typeof getActiveCwd;
+    getAffectedFiles: typeof getAffectedFiles;
+    verifyHandoffAgainstDiff: typeof verifyHandoffAgainstDiff;
+    getScopedDiff: typeof getScopedDiff;
+    getClaudeConfig: typeof getClaudeConfig;
+    getMaxReviewLoops: typeof getMaxReviewLoops;
+    getColdCodexModel: () => string;
+    runColdCodexReview: typeof runColdCodexReview;
+    runClaude: typeof runClaude;
+};
+
+const defaultDeps: CodeReviewPhaseDeps = {
+    verifyBranch,
+    getBaseBranch,
+    getActiveCwd,
+    getAffectedFiles,
+    verifyHandoffAgainstDiff,
+    getScopedDiff,
+    getClaudeConfig,
+    getMaxReviewLoops,
+    getColdCodexModel: () => policyConfig().codexModelMini,
+    runColdCodexReview,
+    runClaude,
 };
 
 export function determinePreflightRoute(failures: readonly PreflightFailure[]): PreflightRoute {
@@ -198,12 +227,13 @@ export async function runCodeReviewPhase(
     state: PipelineState,
     interactive: boolean,
     resumeId: string | null,
+    deps: CodeReviewPhaseDeps = defaultDeps,
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
-    verifyBranch(taskIds);
-    const baseBranch = getBaseBranch(taskIds);
-    const activeCwd = getActiveCwd(taskIds);
+    deps.verifyBranch(taskIds);
+    const baseBranch = deps.getBaseBranch(taskIds);
+    const activeCwd = deps.getActiveCwd(taskIds);
     const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
     // Pre-flight rejections are tracked separately from review iterations
     // (they're not Claude rounds) but still need to count toward the loop
@@ -223,7 +253,7 @@ export async function runCodeReviewPhase(
         };
     });
     const worstTask = perTaskCombined.reduce((worst, curr) => curr.combined > worst.combined ? curr : worst, perTaskCombined[0]);
-    const codeReviewLoopCap = getMaxReviewLoops(tasks);
+    const codeReviewLoopCap = deps.getMaxReviewLoops(tasks);
     if (worstTask.combined >= codeReviewLoopCap) {
         const reason =
             `Code review hit ${worstTask.combined} attempts in a row for task ${worstTask.taskId} ` +
@@ -243,8 +273,8 @@ export async function runCodeReviewPhase(
     // Pre-flight: reject obviously invalid handoffs without spending a Claude session.
     // Classify blockers by who can fix them so a real regression is not framed
     // as a handoff-format problem.
-    const changedFiles = new Set(getAffectedFiles(baseBranch, activeCwd));
-    const bundleIssues = verifyHandoffAgainstDiff(taskIds, baseBranch);
+    const changedFiles = new Set(deps.getAffectedFiles(baseBranch, activeCwd));
+    const bundleIssues = deps.verifyHandoffAgainstDiff(taskIds, baseBranch);
     const preflightFailed: PreflightFailure[] = [];
     for (const t of tasks) {
         // Task-prefixed issues (e.g. "[task-a] handoff→diff: ...") are scoped to
@@ -294,10 +324,33 @@ export async function runCodeReviewPhase(
     info(`Phase: code_review (Claude${state.isBundle ? ' bundle' : ''}, iteration ${maxIter + 1})`);
     for (const t of tasks) taskPhase(t.taskId, 'code_review', 'in_progress');
 
-    const cfg = getClaudeConfig('code_review', tasks);
+    const miniModel = deps.getColdCodexModel();
+    const coldReviewStartMs = Date.now();
+    const coldReview = await deps.runColdCodexReview(baseBranch, miniModel, activeCwd);
+    const coldReviewDurationMs = Date.now() - coldReviewStartMs;
+
+    if (!coldReview.success) {
+        setExitReason(
+            `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
+            `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
+            `the code_review phase has not advanced.`,
+        );
+        process.exit(1);
+    }
+
+    for (const t of tasks) {
+        fs.writeFileSync(
+            path.join(taskDirFor(t.taskId), 'review-cold-codex.md'),
+            coldReview.findings,
+            'utf8',
+        );
+    }
+    info(`→ cold-codex review (${taskIds.join(', ')}): ${Math.round(coldReviewDurationMs / 1000)}s`);
+
+    const cfg = deps.getClaudeConfig('code_review', tasks);
     const reviewResumeId = maxIter > 0 ? resumeId : null;
-    const scopedDiff = getScopedDiff(baseBranch, activeCwd);
-    const result = await runClaude(promptCodeReview(state, baseBranch, scopedDiff), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
+    const scopedDiff = deps.getScopedDiff(baseBranch, activeCwd);
+    const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,

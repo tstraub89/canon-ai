@@ -190,7 +190,7 @@ The per-task `base_branch` also makes hybrid repos first-class: a project that s
 
 _Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
 
-**Decision**: Re-baseline the review harness and the code_review/implement model+effort tiers for the model generation canon now runs on. Three changes land in 1.11.0: (1) the two review lenses are instructed to over-report with severity + confidence labels and the foreman filters (find/filter split); (2) `code_review` L tier moves Opus → Sonnet 4.6, leaving Opus only for XL/delicate; (3) `implement` XL/delicate effort eases `xhigh` → `high`. Full analysis: [`harness-audit-2026-06.md`](harness-audit-2026-06.md).
+**Decision**: Re-baseline the review harness and the code_review/implement model+effort tiers for the model generation canon now runs on. Three changes land in 1.11.0: (1) the review lenses are instructed to over-report with severity + confidence labels and the foreman filters (find/filter split); (2) `code_review` L tier moves Opus → Sonnet 4.6, leaving Opus only for XL/delicate; (3) `implement` XL/delicate effort eases `xhigh` → `high`. Full analysis: [`harness-audit-2026-06.md`](harness-audit-2026-06.md).
 
 **Why**:
 - **Find/filter split.** Opus 4.8 and Sonnet 4.6 follow review instructions *literally*. Conservative prompts ("only high-severity," "don't nitpick") now measurably suppress real-bug recall, not just noise (CodeRabbit 100-PR planted-bug study: criticals 35→29, majors 119→81; recovered to parity once conservative language was dropped and filtering moved downstream). Canon's foreman architecture already separates synthesis from finding, so the fix is prompt wording: lenses report everything with severity+confidence; the foreman ranks and filters. The round-3+ tightening rule was likewise reworded to a *synthesis-stage* filter so it no longer instructs the lenses to self-censor.
@@ -199,7 +199,7 @@ _Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
 
 **Deliberately NOT changed**:
 - **Effort floors** — audited and already adequate: the matrix's `medium` entries are either on Sonnet/tiny diffs or on phase/size combos that don't run (fast-tier spec is conversational); every Opus exploration tier (spec M+, code_review XL) is already `high`/`xhigh`, and code_review L is Sonnet/`high`.
-- **Lens count stays two** (one anchored + one cold). 2026 correlated-error research endorses exactly this: beyond one anchored + one adversarial lens, added reviewers are near-clones (limited recall, more noise). Do not add a third lens.
+- **Lens count: one anchored + two cross-family adversarial lenses (cold-Claude + cold-Codex).** The near-clone caveat scopes to same-model additions: beyond one anchored reviewer and one same-family adversarial reviewer, added same-model reviewers tend to produce correlated misses, limited recall gain, and more noise. A lens from a different model family is the exception when evidence shows decorrelated blind spots. The archived head-to-head (`docs/canon-opus48-gpt55-report.md`: 173 Codex PR findings, 0 false positives, ~76% off-AC) found Codex and cold-Claude complementary, and the operator's current practice of pre-running `codex review` before PRs confirms Codex repeatedly finds P2s the Claude lenses miss. Do not add another same-model review lens without fresh evidence; cross-family additions are evaluated on their own merits.
 
 **Backlogged (separate future minors, each its own spec)**: a test-generation / self-verification phase after implement; confidence-based cascaded reviewer escalation (Sonnet→Opus on low confidence) replacing pure size-based routing; micro-spec decomposition guidance for L/XL; a spec-contradiction lint in `/canon-spec-review`.
 
@@ -294,13 +294,27 @@ What the orchestrator does uniquely (and these stand): routes between phases and
 
 ---
 
-## Cold independent review: pursue multi-agent Claude, park the Codex code-review phase
+## Cold independent review: cold-Claude + cold-Codex in-pipeline, PR-level Codex backstop retained
 
-**Decision** (2026-06-04): Canon's independent-adversarial-review direction is **multi-agent Claude cold review**, not a built-in Codex code-review phase. The `codex-code-review-phase` task is **archived** — its spec and evidence stay as reference for possible later use.
+**Decision** (updated 2026-06): Canon's independent-adversarial-review direction is a three-input synthesis: anchored Claude, cold-Claude, and cold-Codex. The earlier `codex-code-review-phase` archive is superseded by an in-pipeline cold-Codex lens adopted on fresh human direction.
 
-**Why**: A cold review pass (a reviewer reading the diff with no spec anchor) catches a class of lifecycle/state-machine/consistency bugs that spec-anchored Claude `code_review` structurally misses — the empirical case is strong (`tasks/_archive/codex-code-review-phase/evidence-codex-vs-claude.md`: across 173 Codex PR findings, 0 false positives and ~76% sat off-AC). But the head-to-head also found Codex and cold-Claude are *complementary, not substitutes*, and that the highest-value marginal add is a **cold-Claude in-pipeline pass**: it reuses the in-loop model (no new dependency) and needs no external review provider, whereas a Codex phase binds canon to one provider that not every adopter runs and that is async + rate-limited on PRs. Archiving keeps the Codex-phase design available for an adopter who lacks any external cold-review source. This refines, not reverses, the [[Two distinct agents]] decision — the goal is still no-self-review independence; the open question is which second reviewer, and the answer is now "a cold-context Claude pass" by default.
+**Why**: A cold review pass catches lifecycle/state-machine/consistency bugs that spec-anchored code review structurally misses. The archived evidence remains relevant (`tasks/_archive/codex-code-review-phase/evidence-codex-vs-claude.md`: across 173 Codex PR findings, 0 false positives and ~76% sat off-AC), but its "park Codex" conclusion has been overtaken by current dogfood: Codex routinely finds PR P2s missed by the Claude lenses, and the operator now pre-runs `codex review` before opening PRs. This change institutionalizes that manual step inside `code_review`. PR-level Codex review remains on as a belt-and-suspenders backstop.
 
-**Rule**: Don't build the opt-in Codex code-review phase without fresh human direction. New cold-review work targets a multi-agent Claude pass. Cold-Claude is higher-recall but noisier (lower precision) than Codex, so any cold-Claude review phase must carry an adjudication/precision layer (the adjudication design in the archived spec largely carries over). If reviving the Codex phase for an adopter, drive from `tasks/_archive/codex-code-review-phase/spec.md`, not the stale `task/codex-code-review-phase` branch.
+**Rule**: The cold-Codex lens is in-pipeline. The PR-level `codex review` remains as a final backstop. The archived `codex-code-review-phase` spec is historical reference, not the active design.
+
+---
+
+## Cold-Codex code-review lens: orchestrator-run, sequential, hard-fail (2026-06)
+
+**Decision**: During `code_review`, the orchestrator runs a sequential cold-Codex review before the Claude foreman: `codex exec review --json --base <baseBranch> -m <miniModel>` in the active task worktree. `<miniModel>` is `policyConfig().codexModelMini`, so `CODEX_MODEL_MINI` / `CODEX_MODEL_DEFAULT` overrides still apply and no new `codexMatrix` phase exists. The captured `agent_message` text is written verbatim to `tasks/<id>/review-cold-codex.md` and injected into the foreman prompt as the pre-obtained third lens input.
+
+The foreman still spawns only the two Claude lenses. It synthesizes anchored Claude, cold-Claude, and cold-Codex with verify-don't-relay discipline: cold findings are checked against the diff/code, anchored findings are reconciled against spec scope, and a verified cold finding is not dismissed merely for being off-AC.
+
+Failure is deterministic: if the cold-Codex review produces no findings output or the subprocess cannot run, `code_review` stops before any Claude session. There is no new verdict, no `codex_error`, and no graceful two-Claude-lens fallback.
+
+Bundle contract: a bundle shares one branch and one combined diff, so the orchestrator runs one cold-Codex review per `code_review` invocation. The same captured findings reach every member's foreman prompt/artifact, and failure is atomic across the bundle.
+
+**Why**: Orchestrator-run was chosen over foreman-owned execution because the foreman would need a poller or a new verdict/routing path to hard-fail reliably. The orchestrator already owns Codex subprocess invocation and can halt before synthesis without changing `checkAndRoute()`. Sequential execution is the v1 tradeoff: it adds wall-clock latency, but the run log records `→ cold-codex review (<taskIds>): <n>s` so a later concurrency decision can use real data.
 
 ---
 

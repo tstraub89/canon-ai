@@ -6,6 +6,12 @@ import { toResumePrompt } from '../prompts/helpers.js';
 import { formatLiveTick, streamProcess } from './stream.js';
 import type { CodexRunResult } from '../types.js';
 
+export type ColdCodexReviewResult = {
+    success: boolean;
+    findings: string;
+    durationMs: number;
+};
+
 export async function runCodex(
     prompt: string,
     interactive: boolean,
@@ -117,4 +123,57 @@ export async function runCodex(
     } finally {
         if (metricsContext) recordMetric({ ...metricsContext, agent: 'codex', model, durationMs: Date.now() - startMs, status, tokens });
     }
+}
+
+export async function runColdCodexReview(
+    baseBranch: string,
+    model: string,
+    activeCwd: string,
+    options: { codexBinary?: string } = {},
+): Promise<ColdCodexReviewResult> {
+    const command = options.codexBinary ?? 'codex';
+    const args = ['exec', 'review', '--json', '--base', baseBranch, '-m', model];
+    const displayChunks: string[] = [];
+    let sawTurnCompleted = false;
+    const startMs = Date.now();
+
+    const onLine = (line: string): void => {
+        let event: {
+            type?: string;
+            item?: { type?: string; text?: string };
+        };
+        try { event = JSON.parse(line) as typeof event; } catch { return; }
+        const tick = formatLiveTick(event);
+        if (tick) console.log(tick);
+        if (event.type === 'turn.completed') {
+            sawTurnCompleted = true;
+        } else if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
+            displayChunks.push(event.item.text);
+        }
+    };
+
+    const result = await streamProcess(command, args, {
+        cwd: activeCwd,
+        label: 'Codex cold review',
+        onLine,
+    });
+    const findings = displayChunks.join('\n\n');
+    // A review is "obtained" only when the stream ran to completion (`turn.completed`).
+    // Captured findings from a stream that crashed/truncated before completing (e.g. a
+    // rate-limit or process error after a partial `agent_message`) are incomplete and must
+    // not be fed to the foreman as a finished review. We gate on the completion event rather
+    // than the exit code so a complete review followed by a benign non-zero teardown still
+    // counts as obtained (AC-2: "obtained" = a review that ran, not a non-zero-on-findings code).
+    const success =
+        findings.trim().length > 0 &&
+        sawTurnCompleted &&
+        !result.spawnError &&
+        !result.stalled &&
+        !result.signal;
+
+    return {
+        success,
+        findings,
+        durationMs: Date.now() - startMs,
+    };
 }
