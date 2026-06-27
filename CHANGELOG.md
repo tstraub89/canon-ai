@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-06-27
+
+### Added
+
+- **`XS` task size — the new fast-tier floor.** Tasks sized `XS` run the fast tier (spec and plan combined in one Claude session, Codex `spec_review` skipped) — the smallest way into the pipeline. Use it for work past a trivial inline edit (>1 file, or real logic) whose spec premise needs no challenging; it still buys written ACs, a plan, and a real `code_review`. The inline → XS → S decision rule is documented in the spec-authoring skill and orchestrator doc. ([#183](https://github.com/tstraub89/canon-ai/pull/183))
+- **`code_review` now runs three independent reviewers — an anchored Claude lens, a cold (spec-blind) Claude lens, and a cold Codex (GPT-family) lens, synthesized by the foreman.** Cold findings are verified against the diff before being carried, and a verified finding can't be dismissed merely for being off-AC. A Codex review that can't be obtained stops the phase hard — no silent fallback to two lenses. The cross-family pairing was the driver: Codex routinely surfaced P2s the Claude lenses missed. ([#182](https://github.com/tstraub89/canon-ai/pull/182))
+- **Bug- and flake-fix specs now must confirm the failure mechanism before the fix.** `/canon-spec`, the spec template, and the runtime prompts direct authors to state how the mechanism was confirmed (reproduction, trace, or forced repro) and to include a regression-test AC that fails pre-fix and passes after. When the mechanism is environment-bound and a faithful repro is impractical, they must say so and supply a deterministic alternative rather than skip verification silently. Feature and refactor authoring is unchanged. ([#181](https://github.com/tstraub89/canon-ai/pull/181))
+
+### Changed
+
+- **`S` tasks now run the full pipeline.** `S` gets a separate plan and a Codex `spec_review` pass — the same treatment as `M/L/XL`, but lighter. `spec_review` is the formal XS→S dividing line: `XS` when the spec premise needs no Codex challenge, `S` when it does. No effort, model, budget, or loop-cap value changed for any existing size. ([#183](https://github.com/tstraub89/canon-ai/pull/183))
+
 ## [2.0.1] — 2026-06-20
 
 ### Fixed
