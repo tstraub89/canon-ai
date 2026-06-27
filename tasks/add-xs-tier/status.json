@@ -1,15 +1,15 @@
 {
   "id": "add-xs-tier",
   "title": "Add XS task size as the new fast-tier floor",
-  "status": "plan",
+  "status": "implement",
   "created": "2026-06-25",
-  "updated": "2026-06-26",
+  "updated": "2026-06-27",
   "branch": "",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "972b20611a77ace6f42fa4c2a730e3710736f7a0",
-    "orchestrator_commit": "972b20611a77ace6f42fa4c2a730e3710736f7a0",
+    "upstream_commit": "df800dda082752fbd8670944a422691f82276f29",
+    "orchestrator_commit": "df800dda082752fbd8670944a422691f82276f29",
     "codex_cli": "codex-cli 0.142.1",
     "claude_code": "2.1.191 (Claude Code)"
   },
@@ -36,7 +36,7 @@
       "preflight_rejections_current_loop": 0
     },
     "plan": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "implement": {
