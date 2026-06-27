@@ -1,7 +1,7 @@
 {
   "id": "add-xs-tier",
   "title": "Add XS task size as the new fast-tier floor",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-25",
   "updated": "2026-06-27",
   "branch": "task/add-xs-tier",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
