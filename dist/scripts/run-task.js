@@ -3994,6 +3994,17 @@ import { spawnSync as spawnSync4 } from "child_process";
 import fs10 from "fs";
 import path10 from "path";
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
+function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
+  const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
+  if (!ownToplevel) return upstreamCommit;
+  const parentDir = path10.dirname(repoRoot);
+  const parentToplevel = captureGitOutput(parentDir, ["rev-parse", "--show-toplevel"], runGitAt);
+  if (!parentToplevel) return upstreamCommit;
+  if (path10.resolve(parentToplevel) === path10.resolve(ownToplevel)) {
+    return upstreamCommit;
+  }
+  return captureGitOutput(path10.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
+}
 function defaultRunCommand(command, args) {
   const result = spawnSync4(command, args, {
     cwd: REPO_ROOT,
@@ -4024,9 +4035,11 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const runCommand3 = options.runCommand ?? defaultRunCommand;
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const upstreamCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path10.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : upstreamCommit;
+  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path10.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt);
+  const envUpstreamRepo = process.env.CANON_UPSTREAM_REPO?.trim();
+  const upstreamRepo = envUpstreamRepo ? envUpstreamRepo : CANON_UPSTREAM_REPO;
   return {
-    upstream_repo: CANON_UPSTREAM_REPO,
+    upstream_repo: upstreamRepo,
     upstream_commit: upstreamCommit,
     orchestrator_commit: orchestratorCommit,
     codex_cli: captureVersion("codex", runCommand3),
@@ -4063,6 +4076,8 @@ var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
 var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
+var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch"];
+var SETTABLE_FIELD_SET = new Set(SETTABLE_FIELDS);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 }

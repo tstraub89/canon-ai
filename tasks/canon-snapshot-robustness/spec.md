@@ -102,3 +102,7 @@ None. `CanonStamp` shape is unchanged; only the *source* of `upstream_repo` and 
 1. In a normal canon-ai checkout, create a task and view its provenance stamp: confirm the upstream repo reads `tstraub89/canon-ai` and the orchestrator commit matches canon's own HEAD (unchanged behavior).
 2. Set the upstream-repo override environment variable to a different value, create a task, and confirm the stamp records that value instead.
 3. Expected: forks/mirrors can correct their attribution via the environment variable, and a host repo that vendors canon as a plain folder gets the host's commit recorded as the orchestrator commit rather than a copy of the upstream commit.
+
+## Amendment
+
+No change. This task is rerouted only because it is bundled with `task-metadata-helpers` on a shared branch, and a `human_review` reroute requires an `## Amendment` heading on every bundle member (the per-task skip applies only to `spec_gap` reroutes). `canon-snapshot-robustness`'s Problem, Decision, Acceptance Criteria, and implementation are unchanged from the approved round — no re-implementation is expected; this section exists solely to satisfy the reroute pre-flight gate.

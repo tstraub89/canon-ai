@@ -42,7 +42,7 @@ Typical workflow:
 Pipeline phases (in order):
   spec → spec_review → plan → implement → code_review → qa → human_review
 
-canon task subcommands:
+  canon task subcommands:
   new <id> "Title" [--base <branch>]
                           Scaffold tasks/<id>/ from .canon/templates/. Auto-detects
                           base branch from current checkout; --base to override.
@@ -58,6 +58,9 @@ canon task subcommands:
   accept <id...> <phase> [--reason "<text>"] [--force]
                           Accept implement, or sanction spec_review/code_review with an audit reason.
                           --reason is required for spec_review and code_review.
+  set <id> <field> <value>
+                          Set task metadata fields with validation, redirects for guarded fields,
+                          and immutable-field refusals instead of raw status.json edits.
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.
   reset-code-review <id>  Clear state for a fresh code-review pass after an auto-block.

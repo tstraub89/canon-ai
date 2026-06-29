@@ -68,6 +68,30 @@ When the same conditional escape clause appears across multiple guidance surface
 
 When designing a review or validation step that should see only source changes (not task docs), there is no need to filter out `spec.md`, `plan.md`, `handoff.md`, `notes.md`, or `status.json`. Canon's `autoCommitCode()` stages only handoff-table source files (`main.ts:512`, `:605`–`:614`); task artifacts commit at QA-end. Because `getScopedDiff()` uses `git diff <base>...HEAD` (committed range only), the entire `tasks/<id>/` directory is simply absent from the diff at code_review time. Concrete case: spec_review raised a "spec-blindness" blocker assuming `handoff.md` would appear in the cold review diff — it doesn't. Verify this assumption by checking `autoCommitCode()` in `main.ts` if it comes up again; do not add artifact-filtering construction, which would make a cold review more spec-blind than intended and break same-surface symmetry with the other lenses.
 
+### New task-state mutators need a worktree-routing regression test — the decisions doc rule is necessary but not sufficient
+
+*(2026-06-28, source: task-metadata-helpers)*
+
+When adding a new function that writes to a task's `status.json`, the "use `taskDirFor()`" rule in `docs/decisions.md` exists but is easy to violate in practice: Codex still used `taskDirFromRoot()` in the first iteration, which silently writes the supervising-checkout copy instead of the active worktree copy. The pattern: add a regression test that exercises a task with both a repo-root copy and a worktree copy of `status.json` and asserts only the worktree copy changes. Without that specific test shape, the bug passes all other validation checks undetected. Code review surfaced this as a correctness bug in round 1; the fix was adding the worktree-routing test alongside the resolver change. Reference: `tests/task-cli.test.ts` worktree-routing fixture added in iteration 2.
+
+### Env-override tests must set the env var after import — not at module load time
+
+*(2026-06-28, source: canon-snapshot-robustness)*
+
+When testing a function that resolves a configuration value from an env var at call time, the test must mutate `process.env` AFTER the module import and BEFORE the call. If the production code accidentally captures the env var at module load (e.g. `const REPO = process.env.X ?? DEFAULT` at top level), a test that sets the var before import will pass while the production bug goes undetected. Concrete case: `captureCanonSnapshot()` was designed to resolve `CANON_UPSTREAM_REPO` at call time; the spec's AC-1 explicitly required the call-time guarantee, and the tests set `process.env` post-import to enforce it. Apply this shape to any future env-override test.
+
+### Key past-pending warnings off actual phase state, not the cached top-level status pointer
+
+*(2026-06-29, source: task-metadata-helpers)*
+
+When adding a "warn if the task is already in progress" check to a mutator, use `status.phases` phase progress rather than the cached top-level `status` field. A freshly scaffolded task has all phases at `pending` but its top-level `status` already reads `spec` (the first phase in the pipeline); a check on the top-level pointer fires a spurious warning on every newly-created task. The correct predicate is "any phase has a non-pending state." Concrete case: `taskSet()` initially considered using the top-level pointer, but the implementation correctly keyed off phase state; the spec called out this distinction explicitly. Apply the same predicate to any future mutator that needs a "warn once in flight" check.
+
+### Review artifacts need the same citation hygiene as docs and handoffs
+
+*(2026-06-29, source: canon-snapshot-robustness)*
+
+Path-like prose in `tasks/*/review.md` files is subject to `docs-refs-check` even though review artifacts are not part of the implementation surface. A phrase like "see tasks/&lt;id&gt;/spec.md Non-Goals" that references a path under a `validDirs` directory will trip the checker if the path is broken or the file is renamed — the same way a backtick ref in a handoff or doc would. Fix: apply the same "backtick path = a live reference" discipline in review.md files, or use prose/markdown-link form to describe non-code targets. Concrete case: `tasks/canon-snapshot-robustness/review.md` had a broken non-goal citation that tripped `docs-refs-check` in the reroute pass; cleaned in Iteration 3.
+
 ### For codebase-wide term renames, use per-family invariant gates — not enumeration lists
 
 *(2026-06-27, source: add-xs-tier)*

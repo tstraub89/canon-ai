@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskStatus } from '../src/task/index.js';
+import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskSet, taskStatus } from '../src/task/index.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
 
 const WORKSPACE_ROOT = process.cwd();
@@ -270,6 +270,205 @@ void test('task status prints formatted JSON and errors for missing tasks', () =
     });
 });
 
+void test('task set updates task_size, re-derives status, and refreshes updated timestamp', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'set-task');
+        captureStdout(() => taskSet(['set-task', 'task_size', 'L']));
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.task_size, 'L');
+        assert.equal(updated.status, 'spec');
+        assert.equal(updated.updated, new Date().toISOString().slice(0, 10));
+    });
+});
+
+void test('task set routes writes to the task worktree status.json', () => {
+    withTempDir('task-set-worktree-routing-', root => {
+        const repo = path.join(root, 'repo');
+        const worktreesRoot = path.join(root, 'worktrees');
+        const worktree = path.join(worktreesRoot, 'worktree-set');
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        git(root, ['init', '-b', 'main', repo]);
+        git(repo, ['config', 'user.email', 'test@example.com']);
+        git(repo, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n', 'utf8');
+        git(repo, ['add', 'README.md']);
+        git(repo, ['commit', '-m', 'init']);
+        git(repo, ['worktree', 'add', '-b', 'task/worktree-set', worktree, 'main']);
+
+        const mainTaskDir = path.join(repo, 'tasks', 'worktree-set');
+        const worktreeTaskDir = path.join(worktree, 'tasks', 'worktree-set');
+        fs.mkdirSync(mainTaskDir, { recursive: true });
+        fs.mkdirSync(worktreeTaskDir, { recursive: true });
+        fs.writeFileSync(path.join(mainTaskDir, 'status.json'), `${JSON.stringify(makeStatus('worktree-set', {
+            branch: 'task/worktree-set',
+            worktree: true,
+            task_size: 'S',
+        }), null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(makeStatus('worktree-set', {
+            branch: 'task/worktree-set',
+            worktree: true,
+            task_size: 'M',
+        }), null, 2)}\n`, 'utf8');
+
+        withEnv({ CANON_WORKTREES_ROOT: worktreesRoot }, () => {
+            withCwd(worktree, () => {
+                captureStdout(() => taskSet(['worktree-set', 'task_size', 'XL']));
+            });
+        });
+
+        const mainStatus = readStatusFile(mainTaskDir);
+        const worktreeStatus = readStatusFile(worktreeTaskDir);
+        assert.equal(mainStatus.task_size, 'S');
+        assert.equal(worktreeStatus.task_size, 'XL');
+        assert.equal(worktreeStatus.status, 'spec');
+    });
+});
+
+void test('task set applies valid values across the settable fields', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'set-valid', makeStatus('set-valid', {
+            title: 'Before',
+            task_size: 'S',
+            delicate: false,
+            worktree: false,
+            base_branch: 'main',
+        }));
+
+        captureStdout(() => taskSet(['set-valid', 'title', 'After title']));
+        captureStdout(() => taskSet(['set-valid', 'task_size', 'XL']));
+        captureStdout(() => taskSet(['set-valid', 'delicate', 'TRUE']));
+        captureStdout(() => taskSet(['set-valid', 'worktree', 'false']));
+        captureStdout(() => taskSet(['set-valid', 'base_branch', 'feature/topic']));
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.title, 'After title');
+        assert.equal(updated.task_size, 'XL');
+        assert.equal(updated.delicate, true);
+        assert.equal(updated.worktree, false);
+        assert.equal(updated.base_branch, 'feature/topic');
+    });
+});
+
+void test('task set rejects topology fields once a branch is recorded', () => {
+    withTasksRoot(tasksRoot => {
+        const taskId = 'set-topology-locked';
+        const taskDir = writeTask(tasksRoot, taskId, makeStatus(taskId, {
+            branch: 'task/set-topology-locked',
+            title: 'Original',
+            task_size: 'S',
+            worktree: false,
+            base_branch: 'main',
+        }));
+        const original = fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8');
+
+        assert.throws(() => taskSet([taskId, 'worktree', 'true']), /worktree is locked once branch 'task\/set-topology-locked' is recorded/);
+        assert.throws(() => taskSet([taskId, 'base_branch', 'feature/topic']), /base_branch is locked once branch 'task\/set-topology-locked' is recorded/);
+
+        assert.equal(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8'), original);
+    });
+});
+
+void test('task set rejects invalid field values without changing the file', () => {
+    withTasksRoot(tasksRoot => {
+        const taskId = 'set-invalid';
+        const taskDir = writeTask(tasksRoot, taskId, makeStatus(taskId, {
+            title: 'Original',
+            task_size: 'M',
+            delicate: false,
+            worktree: true,
+            base_branch: 'main',
+        }));
+        const original = fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8');
+
+        assert.throws(() => taskSet([taskId, 'task_size', 'Medium']), /task_size.*XS, S, M, L, XL/);
+        assert.throws(() => taskSet([taskId, 'delicate', 'yes']), /Must be true or false/);
+        assert.throws(() => taskSet([taskId, 'worktree', '1']), /Must be true or false/);
+        assert.throws(() => taskSet([taskId, 'base_branch', '']), /must not be empty or whitespace-only/);
+        assert.throws(() => taskSet([taskId, 'base_branch', '   ']), /must not be empty or whitespace-only/);
+        assert.throws(() => taskSet([taskId, 'base_branch', '-flaglike']), /looks like a flag/);
+        assert.throws(() => taskSet([taskId, 'base_branch', 'foo bar']), /contains control chars, whitespace, or refspec separator/);
+        assert.throws(() => taskSet([taskId, 'base_branch', 'foo:bar']), /contains control chars, whitespace, or refspec separator/);
+        assert.throws(() => taskSet([taskId, 'title', 'line 1\nline 2']), /single-line/);
+
+        assert.equal(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8'), original);
+    });
+});
+
+void test('task set rejects extra positional args (unquoted multi-word value) without changing the file', () => {
+    withTasksRoot(tasksRoot => {
+        const taskId = 'set-extra-args';
+        const taskDir = writeTask(tasksRoot, taskId, makeStatus(taskId, { title: 'Original' }));
+        const original = fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8');
+
+        // `canon task set my-task title New title` would otherwise keep only "New"
+        // and silently drop the rest while still rewriting status.json.
+        assert.throws(() => taskSet([taskId, 'title', 'New', 'title']), /unexpected argument 'title'/);
+
+        assert.equal(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8'), original);
+    });
+});
+
+void test('task set rejects guarded, redirected, immutable, and unknown fields with category-correct messages', () => {
+    withTasksRoot(tasksRoot => {
+        const taskId = 'set-categories';
+        const taskDir = writeTask(tasksRoot, taskId);
+        const original = fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8');
+
+        assert.throws(() => taskSet([taskId, 'full_send', 'true']), /canon run --full-send/);
+        assert.throws(() => taskSet([taskId, 'human_spec_gate', 'false']), /Re-run `canon run <id>`/);
+        assert.throws(() => taskSet([taskId, 'status', 'done']), /canon task phase/);
+        assert.throws(() => taskSet([taskId, 'branch', 'main']), /git identity/);
+        assert.throws(() => taskSet([taskId, 'phases', '{}']), /canon task phase/);
+        assert.throws(() => taskSet([taskId, 'sessions', '{}']), /reset-spec-review/);
+        assert.throws(() => taskSet([taskId, 'canon', '{}']), /CANON_UPSTREAM_REPO/);
+        assert.throws(() => taskSet([taskId, 'escalations', '[]']), /canon task accept/);
+        assert.throws(() => taskSet([taskId, 'id', 'new-id']), /immutable \/ not editable/);
+        assert.throws(() => taskSet([taskId, 'created', '2026-01-01']), /immutable \/ not editable/);
+        assert.throws(() => taskSet([taskId, 'updated', '2026-01-01']), /immutable \/ not editable/);
+        assert.throws(() => taskSet([taskId, '_inline_doc', 'x']), /immutable \/ not editable/);
+        assert.throws(() => taskSet([taskId, 'nope', '1']), /Settable fields: title, task_size, delicate, worktree, base_branch/);
+
+        assert.equal(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8'), original);
+    });
+});
+
+void test('task set warns only after a task has started', () => {
+    withTasksRoot(tasksRoot => {
+        const pendingId = 'set-pending';
+        const pendingDir = writeTask(tasksRoot, pendingId, makeStatus(pendingId, {
+            status: 'pending',
+            phases: {
+                spec: { status: 'pending', agent: 'claude' },
+                spec_review: { status: 'pending', agent: 'codex', verdict: '', iterations: 0, iterations_current_loop: 0, iterations_total: 0, changes_requested_total: 0, auto_block_count: 0 },
+                plan: { status: 'pending', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '', iterations: 0, iterations_current_loop: 0, iterations_total: 0, changes_requested_total: 0, auto_block_count: 0 },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        }));
+        const pendingOut = captureStdout(() => taskSet([pendingId, 'task_size', 'M']));
+        assert.equal(pendingOut.includes('takes effect on the next canon run'), false);
+        assert.equal(readStatusFile(pendingDir).task_size, 'M');
+
+        const activeId = 'set-active';
+        const activeDir = writeTask(tasksRoot, activeId, makeStatus(activeId, {
+            branch: 'task/set-active',
+            status: 'implement',
+            phases: {
+                ...makeStatus(activeId).phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'in_progress', agent: 'codex' },
+            },
+        }));
+        const activeOut = captureStdout(() => taskSet([activeId, 'delicate', 'true']));
+        assert.match(activeOut, /takes effect on the next canon run/);
+        assert.equal(readStatusFile(activeDir).delicate, true);
+    });
+});
+
 void test('task phase updates phase state and derives top-level status', () => {
     withTasksRoot(tasksRoot => {
         const taskDir = writeTask(tasksRoot, 'phase-task');
@@ -422,6 +621,15 @@ void test('task phase rejects invalid phase and out-of-order transitions', () =>
             () => taskPhase('phase-errors', 'plan', 'done'),
             /prior phases not done: spec,spec_review/,
         );
+    });
+});
+
+void test('taskCmd routes set to the handler', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'set-dispatch');
+        captureStdout(() => taskCmd(['set', 'set-dispatch', 'task_size', 'XS']));
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.task_size, 'XS');
     });
 });
 

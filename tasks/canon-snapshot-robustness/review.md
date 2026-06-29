@@ -14,74 +14,70 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | Call-time env read at `canon-snapshot.ts:72-73`; tests mutate `process.env` after import and before call; override, unset, empty, and whitespace cases all covered. |
+| AC-2 | Pass | Existing superproject test unchanged; non-empty `superprojectWorkingTree` takes the original branch; `resolveOrchestratorCommit` never called in that path. |
+| AC-3 | Pass | Vendored fixture at `run-task-canon-snapshot.test.ts:201-221`: `parentToplevel=/tmp/host` distinct from `ownToplevel`; asserts `orchestrator_commit='host-sha'` ≠ `upstream_commit`. |
+| AC-4 | Pass | Two native-fallback fixtures: (a) parent probe returns `ok: false` → native; (b) parent resolves to own toplevel → native. Both assert `orchestrator_commit === upstream_commit`. |
+| AC-5 | Pass | Probe-failure fixture exercises non-ok `parentDir` probe; function returns complete `CanonStamp` without throwing. `fakeGitRunner` provides implicit non-regression guard. |
+| AC-6 | Pass | `docs/decisions.md` env-override clause appended in-place to the existing `CANON_UPSTREAM_REPO` provenance Rule. |
+| AC-7 | Pass (deferred to CI) | Handoff claims all checks passed; code and tests consistent. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no config-file migration; no symbol relocation; symlinks documented as best-effort)
+- [x] Known Risks addressed (false-positive probe mitigated by `parentToplevel !== ownToplevel` test; symlink accepted as non-goal; path normalization applied via `path.resolve`; env trimming tested)
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The implementation is correct and minimal. The `resolveOrchestratorCommit` helper cleanly encapsulates the fallback logic and remains fully test-seamable via the existing `runGitAt` injection point. The env-var override follows the exact resolution rule specified (trim → non-empty check → fallback to const), and the call-time read is correctly placed at the assignment site in `captureCanonSnapshot` rather than at module load. No blocking findings.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+(none)
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): `resolveOrchestratorCommit` compares `path.resolve(parentToplevel)` vs `path.resolve(ownToplevel)` rather than `path.resolve(repoRoot)` — `ownToplevel` is git-reported (the actual repo root), not a user-supplied path; the comparison is correct for the intended cases; symlinks are an accepted non-goal per spec.
+- Dismissed (cold-Claude): `fakeGitRunner` not registered for toplevel probes in the submodule test — correct: non-empty `superprojectWorkingTree` means `resolveOrchestratorCommit` is never reached; the fake runner throws on unexpected calls, providing implicit non-regression protection.
+- Dismissed (cold-Claude): code-shape difference between inline superproject branch and extracted helper — informational only; the extracted helper is the cleaner shape, not a defect.
+- Dismissed (cold-Codex): no findings submitted for this task.
+- Dismissed (anchored): AC-5 lacks a dedicated first-probe-failure test for the `ownToplevel` empty path — the early-exit is covered implicitly; `fakeGitRunner` throw-on-unexpected would catch a regression; low severity, not blocking.
+- Dismissed (anchored): `resolveOrchestratorCommit` subdirectory edge case — spec documents safe native fallback as intentional; below nit threshold.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
@@ -126,3 +122,71 @@ Re-fill this table with every AC from spec.md against the latest code. Earlier A
 
 > Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
 -->
+
+## Round 2 — verifying iteration 1's response to round 1
+
+### Stage 1 — Acceptance Criteria Re-Check
+
+No source code changed in iteration 2 for this task. All ACs remain met as verified in round 1.
+
+| AC | Status | Notes |
+|---|---|---|
+| AC-1 | Met (unchanged from round 1) | No code changes in iteration 2. |
+| AC-2 | Met (unchanged from round 1) | No code changes in iteration 2. |
+| AC-3 | Met (unchanged from round 1) | No code changes in iteration 2. |
+| AC-4 | Met (unchanged from round 1) | No code changes in iteration 2. |
+| AC-5 | Met (unchanged from round 1) | No code changes in iteration 2. |
+| AC-6 | Met (unchanged from round 1) | No code changes in iteration 2. |
+| AC-7 | Met | Full `npm test` passes (909/909) after fixing broken refs introduced by the round 1 foreman review.md artifacts. |
+
+### Verifying Round 1 findings
+
+- _optional cleanup/nit (round 1 nits):_ No blocking findings in round 1; no code changes required. ✓ Confirmed.
+
+### New findings (only NEW issues introduced by Iteration 2's changes)
+
+(none — iteration 2 added only a handoff record with no source or test changes)
+
+### Verdict for this round
+
+- [ ] Approved
+- [x] Approved with nits
+- [ ] Changes requested
+- [ ] Spec gap
+
+## Round 3 — verifying reroute iteration's response to round 2
+
+No source code changed for this task in iteration 3. All ACs remain met as verified in round 2.
+
+### Stage 1 — Acceptance Criteria Re-Check
+
+| AC | Status | Notes |
+|---|---|---|
+| AC-1 | Met (unchanged from round 2) | No code changes in iteration 3. |
+| AC-2 | Met (unchanged from round 2) | No code changes in iteration 3. |
+| AC-3 | Met (unchanged from round 2) | No code changes in iteration 3. |
+| AC-4 | Met (unchanged from round 2) | No code changes in iteration 3. |
+| AC-5 | Met (unchanged from round 2) | No code changes in iteration 3. |
+| AC-6 | Met (unchanged from round 2) | No code changes in iteration 3. |
+| AC-7 | Met | Full suite green after reroute bundle fixes (shared workspace validation). |
+
+### Verifying Round 2 findings
+
+- _approved_with_nits (round 2):_ No blocking findings; no code changes required. ✓ Confirmed.
+
+### New findings (only NEW issues introduced by reroute Iteration 3's changes)
+
+**Dismissed (cold-Claude): `path.dirname('/')` degenerate edge in `resolveOrchestratorCommit`** — `captureGitOutput` returns empty on failure; the caller returns `upstreamCommit` on empty `parentToplevel`, so the degenerate case degrades to native silently. Accepted as best-effort per spec Non-Goals.
+
+**Dismissed (cold-Claude): `CANON_UPSTREAM_REPO` const/env-var naming collision** — The env var intentionally mirrors the const name for discoverability; the spec calls this out explicitly (`docs/decisions.md` provenance Rule). Callers that import the const get the hardcoded default; callers that call `captureCanonSnapshot()` get the overridden value when the env var is set. This is the intended design surface — not a bug.
+
+**Dismissed (cold-Claude): test concurrency for `withEnv` env mutations** — `captureCanonSnapshot` is synchronous; `withEnv` is synchronous; no event-loop yield between env set and restore. Node's test runner does not preemptively parallelize synchronous code within a file. Not a real race.
+
+**Dismissed (cold-Codex): no findings submitted for this task.**
+
+### Verdict for this round
+
+- [ ] Approved
+- [x] Approved with nits
+- [ ] Changes requested
+- [ ] Spec gap

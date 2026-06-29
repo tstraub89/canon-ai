@@ -1,15 +1,15 @@
 {
   "id": "task-metadata-helpers",
   "title": "canon task set — set task metadata fields without hand-editing status.json",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-28",
   "updated": "2026-06-29",
-  "branch": "",
+  "branch": "task/task-metadata-helpers",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "071baa41fcf0efb8274c316a65f7ceef872c16d1",
-    "orchestrator_commit": "071baa41fcf0efb8274c316a65f7ceef872c16d1",
+    "upstream_commit": "502e099e1138ed95eae88d8e595bfc68fff6f1c1",
+    "orchestrator_commit": "502e099e1138ed95eae88d8e595bfc68fff6f1c1",
     "codex_cli": "codex-cli 0.142.3",
     "claude_code": "2.1.195 (Claude Code)"
   },
@@ -30,9 +30,9 @@
       "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 3,
-      "changes_requested_total": 2,
-      "auto_block_count": 0,
+      "iterations_total": 7,
+      "changes_requested_total": 5,
+      "auto_block_count": 1,
       "preflight_rejections_current_loop": 0
     },
     "plan": {
@@ -40,21 +40,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -62,10 +65,19 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-06-29",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    }
+  ],
   "sessions": {
-    "codex_spec_review": "019f10e0-7f02-7102-bf91-e4e5d45e3f50",
-    "claude_spec": "ba659117-36f0-44c8-a821-860aa347fc40"
+    "claude_spec": "ba659117-36f0-44c8-a821-860aa347fc40",
+    "codex": "019f10fa-4539-7aa3-b6e5-5e0b25a2ea75",
+    "claude_review": "9074a4ce-5a96-4a53-aaec-dad5593c9a13",
+    "codex_spec_review": "019f14db-7e1b-7b31-858d-659248a54dd1"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

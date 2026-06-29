@@ -114,7 +114,7 @@ export function statusFileFor(taskId: string): string {
     return path.join(resolveTaskCwd(taskId), 'tasks', taskId, 'status.json');
 }
 
-function validateBranchField(value: string | undefined, taskId: string, fieldName: string): void {
+export function validateBranchField(value: string | undefined, taskId: string, fieldName: string): void {
     if (value === undefined) return;
     if (typeof value !== 'string') {
         throw new Error(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);

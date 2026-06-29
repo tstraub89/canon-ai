@@ -1,0 +1,1 @@
+The new `canon task set` handler, snapshot override logic, help/docs updates, and tests are internally consistent and the added test suite passes. I did not find a discrete, actionable regression introduced by this diff.

@@ -672,3 +672,16 @@
 | 2026-06-29T01:09:14.923Z | task-metadata-helpers+canon-snapshot-robustness | spec | claude | opus | 0 | 116.8s | 585953 | ok |
 | 2026-06-29T01:13:29.877Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 2 | 254.9s | 4000158 | ok |
 | 2026-06-29T01:24:22.810Z | task-metadata-helpers+canon-snapshot-robustness | plan | claude | sonnet | 0 | 348.7s | 789603 | ok |
+| 2026-06-29T01:42:28.047Z | task-metadata-helpers+canon-snapshot-robustness | implement | codex | gpt-5.4-mini | 0 | 1083.8s | 8492522 | ok |
+| 2026-06-29T01:56:28.319Z | task-metadata-helpers+canon-snapshot-robustness | code_review | claude | sonnet | 0 | 476.2s | 946259 | ok |
+| 2026-06-29T02:03:45.238Z | task-metadata-helpers+canon-snapshot-robustness | implement | codex | gpt-5.4-mini | 1 | 436.7s | 10848128 | ok |
+| 2026-06-29T02:21:59.820Z | task-metadata-helpers+canon-snapshot-robustness | code_review | claude | sonnet | 1 | 652.0s | 2170097 | ok |
+| 2026-06-29T02:28:42.114Z | task-metadata-helpers+canon-snapshot-robustness | qa | claude | sonnet | 0 | 402.2s | 1066406 | ok |
+| 2026-06-29T15:46:10.804Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 0 | 171.3s | 557473 | ok |
+| 2026-06-29T15:48:20.506Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 1 | 2.9s | - | failed |
+| 2026-06-29T15:50:50.022Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 2 | 5.1s | - | failed |
+| 2026-06-29T19:32:36.962Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 3 | 200.3s | 585895 | ok |
+| 2026-06-29T19:35:22.667Z | task-metadata-helpers+canon-snapshot-robustness | plan | claude | sonnet | 0 | 165.6s | 580228 | ok |
+| 2026-06-29T19:44:07.233Z | task-metadata-helpers+canon-snapshot-robustness | implement | codex | gpt-5.4-mini | 0 | 524.4s | 15567143 | ok |
+| 2026-06-29T20:00:57.379Z | task-metadata-helpers+canon-snapshot-robustness | code_review | claude | sonnet | 0 | 573.6s | 568110 | ok |
+| 2026-06-29T20:06:34.294Z | task-metadata-helpers+canon-snapshot-robustness | qa | claude | sonnet | 0 | 336.8s | 817699 | ok |

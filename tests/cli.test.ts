@@ -223,6 +223,7 @@ void test('canon CLI help mentions watch', () => {
     const result = runCanonCli(['--help']);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /canon watch <id>/);
+    assert.match(result.stdout, /set <id> <field> <value>/);
     assert.match(result.stdout, /Exit codes: 0 healthy stop\/until/);
 });
 

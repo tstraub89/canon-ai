@@ -46,3 +46,15 @@ Does the spec's approach work against the actual codebase?
 - [ ] **Approved** — spec is implementable as written
 - [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
+
+## Amendment Review
+
+- [x] **Approved**
+- [ ] **Approved with nits**
+- [ ] **Changes requested**
+
+## Amendment Review Round 2
+
+- [x] **Approved**
+- [ ] **Approved with nits**
+- [ ] **Changes requested**

@@ -1990,6 +1990,17 @@ function filterGitIgnoredPaths(paths, cwd) {
 
 // scripts/run-task/canon-snapshot.ts
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
+function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
+  const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
+  if (!ownToplevel) return upstreamCommit;
+  const parentDir = path8.dirname(repoRoot);
+  const parentToplevel = captureGitOutput(parentDir, ["rev-parse", "--show-toplevel"], runGitAt);
+  if (!parentToplevel) return upstreamCommit;
+  if (path8.resolve(parentToplevel) === path8.resolve(ownToplevel)) {
+    return upstreamCommit;
+  }
+  return captureGitOutput(path8.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
+}
 function defaultRunCommand(command2, args2) {
   const result = spawnSync5(command2, args2, {
     cwd: REPO_ROOT,
@@ -2020,9 +2031,11 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const upstreamCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path8.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : upstreamCommit;
+  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path8.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt);
+  const envUpstreamRepo = process.env.CANON_UPSTREAM_REPO?.trim();
+  const upstreamRepo = envUpstreamRepo ? envUpstreamRepo : CANON_UPSTREAM_REPO;
   return {
-    upstream_repo: CANON_UPSTREAM_REPO,
+    upstream_repo: upstreamRepo,
     upstream_commit: upstreamCommit,
     orchestrator_commit: orchestratorCommit,
     codex_cli: captureVersion("codex", runCommand),
@@ -2626,6 +2639,20 @@ var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
 var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
+var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch"];
+var SETTABLE_FIELD_SET = new Set(SETTABLE_FIELDS);
+var IMMUTABLE_FIELDS = /* @__PURE__ */ new Set(["id", "created", "updated"]);
+var REDIRECT_MESSAGES = {
+  full_send: "a per-run stance, not durable metadata. Use `canon run --full-send <id>`, which also clears the spec gate and enforces the delicate\u2192`--force` guard.",
+  human_spec_gate: "the spec gate is self-clearing. Re-run `canon run <id>` to proceed past it, or use `canon run --full-send <id>` to skip it entirely.",
+  status: "derived from phase states. Use `canon task phase <id> <phase> <status>`.",
+  branch: "load-bearing git identity; retargeting it desyncs the worktree. Not settable via `canon task set`.",
+  phases: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.",
+  sessions: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.",
+  canon: "nested orchestrator-owned state. `status.json.canon` is stamped by canon snapshot; use `CANON_UPSTREAM_REPO` to override the upstream slug, not `canon task set`.",
+  escalations: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead."
+};
+var TASK_SIZE_VALUES = /* @__PURE__ */ new Set(["XS", "S", "M", "L", "XL"]);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 }
@@ -2639,6 +2666,7 @@ function usage() {
     "  status <TASK-ID>",
     "  phase <TASK-ID> <phase> <status> [verdict]",
     '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]',
+    "  set <TASK-ID> <field> <value>",
     "  reset-spec-review <TASK-ID>",
     "  reset-code-review <TASK-ID>",
     "  post-merge-sync [<branch>]"
@@ -3597,6 +3625,100 @@ function nudgeShippableTasks() {
   for (const id of shippable) console.log(`    ${id}`);
   console.log("  Run `canon run <id> --ship` on each to archive + clean up.");
 }
+function taskSetValue(taskId, field, value, status) {
+  switch (field) {
+    case "title":
+      if (value.includes("\n") || value.includes("\r")) {
+        throw new Error("Error: title must be single-line (no embedded newlines).");
+      }
+      status.title = value;
+      return;
+    case "task_size":
+      if (!TASK_SIZE_VALUES.has(value)) {
+        throw new Error(`Error: invalid task_size '${value}'. Must be one of: XS, S, M, L, XL.`);
+      }
+      status.task_size = value;
+      return;
+    case "delicate":
+    case "worktree": {
+      const normalized = value.toLowerCase();
+      if (normalized !== "true" && normalized !== "false") {
+        throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
+      }
+      status[field] = normalized === "true";
+      return;
+    }
+    case "base_branch": {
+      const trimmed = value.trim();
+      if (trimmed === "") {
+        throw new Error("Error: base_branch must not be empty or whitespace-only.");
+      }
+      validateBranchField(trimmed, taskId, "base_branch");
+      status.base_branch = trimmed;
+      return;
+    }
+    default:
+      throw new Error(`Error: internal error \u2014 unsupported settable field '${field}'.`);
+  }
+}
+function taskSetRedirectMessage(field) {
+  return REDIRECT_MESSAGES[field] ?? "nested orchestrator-owned state. Use the owning canon task command instead.";
+}
+function taskHasStarted(status) {
+  return Object.values(status.phases).some((entry) => (entry?.status ?? "pending") !== "pending");
+}
+function taskSet(args2) {
+  const [id, field, value] = args2;
+  if (!id || !field || value === void 0) {
+    throw new Error("Error: usage: canon task set <TASK-ID> <field> <value>");
+  }
+  if (args2.length > 3) {
+    throw new Error(`Error: unexpected argument '${args2[3]}'. Quote multi-word values, e.g. canon task set <id> title "My Title".`);
+  }
+  validateTaskId(id);
+  const taskCwd = resolveTaskCwd(id);
+  const statusPath = taskStatusFileForCwd(taskCwd, id);
+  if (!fs10.existsSync(statusPath)) {
+    throw new Error(`Error: No status.json found for task ${id}`);
+  }
+  const status = readJsonFile(statusPath);
+  const recordedBranch = (status.branch ?? "").trim();
+  if (recordedBranch && (field === "worktree" || field === "base_branch")) {
+    throw new Error(
+      `Error: ${field} is locked once branch '${recordedBranch}' is recorded. Topology changes are only allowed before branching; recreate the task or migrate status.json manually.`
+    );
+  }
+  if (SETTABLE_FIELD_SET.has(field)) {
+    taskSetValue(id, field, value, status);
+    status.updated = today();
+    writeStatusAtomic(statusPath, status);
+    if (taskHasStarted(status)) {
+      console.log(`Warning: ${field} on task ${id} takes effect on the next canon run.`);
+    }
+    return;
+  }
+  if (field === "full_send") {
+    throw new Error(`Error: full_send is ${taskSetRedirectMessage(field)}`);
+  }
+  if (field === "human_spec_gate") {
+    throw new Error(`Error: human_spec_gate is ${taskSetRedirectMessage(field)}`);
+  }
+  if (field === "status") {
+    throw new Error(`Error: status is ${taskSetRedirectMessage(field)}`);
+  }
+  if (field === "branch") {
+    throw new Error(`Error: branch is ${taskSetRedirectMessage(field)}`);
+  }
+  if (field === "phases" || field === "sessions" || field === "canon" || field === "escalations") {
+    throw new Error(`Error: ${field} is ${taskSetRedirectMessage(field)}`);
+  }
+  if (IMMUTABLE_FIELDS.has(field) || field.startsWith("_")) {
+    throw new Error(`Error: field '${field}' is immutable / not editable.`);
+  }
+  throw new Error(
+    `Error: unknown field '${field}'. Settable fields: ${SETTABLE_FIELDS.join(", ")}. Other recognized fields are redirected or immutable.`
+  );
+}
 function taskCmd(args2) {
   const [subcommand, ...rest] = args2;
   try {
@@ -3612,6 +3734,9 @@ function taskCmd(args2) {
         break;
       case "phase":
         taskPhase(rest[0] ?? "", rest[1] ?? "", rest[2] ?? "", rest[3]);
+        break;
+      case "set":
+        taskSet(rest);
         break;
       case "accept": {
         const force = rest.includes("--force");
@@ -4113,7 +4238,7 @@ Typical workflow:
 Pipeline phases (in order):
   spec \u2192 spec_review \u2192 plan \u2192 implement \u2192 code_review \u2192 qa \u2192 human_review
 
-canon task subcommands:
+  canon task subcommands:
   new <id> "Title" [--base <branch>]
                           Scaffold tasks/<id>/ from .canon/templates/. Auto-detects
                           base branch from current checkout; --base to override.
@@ -4129,6 +4254,9 @@ canon task subcommands:
   accept <id...> <phase> [--reason "<text>"] [--force]
                           Accept implement, or sanction spec_review/code_review with an audit reason.
                           --reason is required for spec_review and code_review.
+  set <id> <field> <value>
+                          Set task metadata fields with validation, redirects for guarded fields,
+                          and immutable-field refusals instead of raw status.json edits.
   reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
                           Zeroes iterations, clears verdict, archives prior spec-review.md.
   reset-code-review <id>  Clear state for a fresh code-review pass after an auto-block.

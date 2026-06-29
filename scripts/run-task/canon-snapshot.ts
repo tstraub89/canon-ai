@@ -17,6 +17,21 @@ export type CanonSnapshotOptions = {
     runCommand?: CommandRunner;
 };
 
+function resolveOrchestratorCommit(repoRoot: string, upstreamCommit: string, runGitAt: GitRunner): string {
+    const ownToplevel = captureGitOutput(repoRoot, ['rev-parse', '--show-toplevel'], runGitAt);
+    if (!ownToplevel) return upstreamCommit;
+
+    const parentDir = path.dirname(repoRoot);
+    const parentToplevel = captureGitOutput(parentDir, ['rev-parse', '--show-toplevel'], runGitAt);
+    if (!parentToplevel) return upstreamCommit;
+
+    if (path.resolve(parentToplevel) === path.resolve(ownToplevel)) {
+        return upstreamCommit;
+    }
+
+    return captureGitOutput(path.resolve(parentToplevel), ['rev-parse', 'HEAD'], runGitAt) || upstreamCommit;
+}
+
 function defaultRunCommand(command: string, args: string[]): CommandResult {
     const result = spawnSync(command, args, {
         cwd: REPO_ROOT,
@@ -53,10 +68,12 @@ export function captureCanonSnapshot(repoRoot = REPO_ROOT, options: CanonSnapsho
     const upstreamCommit = captureGitOutput(repoRoot, ['rev-parse', 'HEAD'], runGitAt) || '<unavailable>';
     const orchestratorCommit = superprojectWorkingTree
         ? captureGitOutput(path.resolve(superprojectWorkingTree), ['rev-parse', 'HEAD'], runGitAt) || '<unavailable>'
-        : upstreamCommit;
+        : resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt);
+    const envUpstreamRepo = process.env.CANON_UPSTREAM_REPO?.trim();
+    const upstreamRepo = envUpstreamRepo ? envUpstreamRepo : CANON_UPSTREAM_REPO;
 
     return {
-        upstream_repo: CANON_UPSTREAM_REPO,
+        upstream_repo: upstreamRepo,
         upstream_commit: upstreamCommit,
         orchestrator_commit: orchestratorCommit,
         codex_cli: captureVersion('codex', runCommand),

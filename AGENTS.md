@@ -34,7 +34,7 @@ TypeScript/Node CLI, built and tested with `npm run build`, `npm test`, `npm run
 
 - `canon init` scaffolds canon into a repo.
 - `canon doctor` checks environment and setup.
-- `canon task new`, `list`, `status`, `phase`, `accept`, `reset-spec-review`, and `reset-code-review` manage task state.
+- `canon task new`, `list`, `status`, `phase`, `accept`, `set`, `reset-spec-review`, and `reset-code-review` manage task state.
 - `canon run`, `watch`, `stop`, `update`, and `upgrade` operate the pipeline and package lifecycle.
 - `canon run --pr` opens a draft PR at `human_review`; `canon run --ship` runs the post-merge cleanup path after approval.
 

@@ -65,6 +65,34 @@ function fakeCommandRunner(responses: Record<string, CommandResult>): NonNullabl
     };
 }
 
+function nativeGitResponses(repoRoot: string, sha: string): Record<string, CommandResult> {
+    const parentDir = path.dirname(repoRoot);
+    return {
+        [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+        [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: sha, stderr: '' },
+        [`${repoRoot} :: rev-parse --show-toplevel`]: { ok: true, stdout: repoRoot, stderr: '' },
+        [`${parentDir} :: rev-parse --show-toplevel`]: { ok: false, stdout: '', stderr: '' },
+    };
+}
+
+function withEnv<T>(updates: Record<string, string | undefined>, fn: () => T): T {
+    const previous = new Map<string, string | undefined>();
+    for (const key of Object.keys(updates)) {
+        previous.set(key, process.env[key]);
+        const value = updates[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+    }
+    try {
+        return fn();
+    } finally {
+        for (const [key, value] of previous) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+    }
+}
+
 void test('captureCanonSnapshot uses the current checkout SHA for native canon', () => {
     const snapshot = captureCanonSnapshot(REPO_ROOT);
     assert.equal(snapshot.upstream_repo, CANON_UPSTREAM_REPO);
@@ -95,10 +123,7 @@ void test('captureCanonSnapshot uses the superproject SHA when canon is vendored
 void test('captureCanonSnapshot records unavailable CLIs without failing', () => {
     const repoRoot = '/tmp/native/canon-ai';
     const snapshot = captureCanonSnapshot(repoRoot, {
-        runGitAt: fakeGitRunner({
-            [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
-            [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: 'native-sha', stderr: '' },
-        }),
+        runGitAt: fakeGitRunner(nativeGitResponses(repoRoot, 'native-sha')),
         runCommand: fakeCommandRunner({
             ['codex :: --version']: { ok: false, stdout: '', stderr: 'ENOENT' },
             ['claude :: --version']: { ok: false, stdout: '', stderr: 'ENOENT' },
@@ -120,10 +145,7 @@ void test('refreshCanonSnapshotAtPath stamps an older task before pipeline work 
         fs.writeFileSync(statusFile, `${JSON.stringify(makeStatus(taskId, { canon: undefined }), null, 2)}\n`, 'utf8');
 
         refreshCanonSnapshotAtPath(statusFile, {
-            runGitAt: fakeGitRunner({
-                [`${REPO_ROOT} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
-                [`${REPO_ROOT} :: rev-parse HEAD`]: { ok: true, stdout: 'refresh-sha', stderr: '' },
-            }),
+            runGitAt: fakeGitRunner(nativeGitResponses(REPO_ROOT, 'refresh-sha')),
             runCommand: fakeCommandRunner({
                 ['codex :: --version']: { ok: true, stdout: 'codex 9.9.9', stderr: '' },
                 ['claude :: --version']: { ok: true, stdout: 'claude 8.8.8', stderr: '' },
@@ -140,6 +162,95 @@ void test('refreshCanonSnapshotAtPath stamps an older task before pipeline work 
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
+});
+
+void test('captureCanonSnapshot uses CANON_UPSTREAM_REPO env var when non-empty', () => {
+    const repoRoot = '/tmp/env-override/canon-ai';
+    withEnv({ CANON_UPSTREAM_REPO: 'my-fork/canon-ai' }, () => {
+        const snapshot = captureCanonSnapshot(repoRoot, {
+            runGitAt: fakeGitRunner(nativeGitResponses(repoRoot, 'abc1234')),
+            runCommand: fakeCommandRunner({
+                ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+                ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+            }),
+        });
+        assert.equal(snapshot.upstream_repo, 'my-fork/canon-ai');
+    });
+});
+
+void test('captureCanonSnapshot falls back to the const when CANON_UPSTREAM_REPO is unset, empty, or whitespace-only', () => {
+    for (const [label, value] of [
+        ['unset', undefined],
+        ['empty', ''],
+        ['whitespace', '   '],
+    ] as const) {
+        const repoRoot = `/tmp/env-${label}/canon-ai`;
+        withEnv({ CANON_UPSTREAM_REPO: value }, () => {
+            const snapshot = captureCanonSnapshot(repoRoot, {
+                runGitAt: fakeGitRunner(nativeGitResponses(repoRoot, `${label}-sha`)),
+                runCommand: fakeCommandRunner({
+                    ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+                    ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+                }),
+            });
+            assert.equal(snapshot.upstream_repo, CANON_UPSTREAM_REPO);
+        });
+    }
+});
+
+void test('captureCanonSnapshot uses host HEAD when canon is a plain vendored clone', () => {
+    const repoRoot = '/tmp/host/vendor/canon-ai';
+    const parentDir = path.dirname(repoRoot);
+    const parentToplevel = '/tmp/host';
+    const snapshot = captureCanonSnapshot(repoRoot, {
+        runGitAt: fakeGitRunner({
+            [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+            [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: 'canon-sha', stderr: '' },
+            [`${repoRoot} :: rev-parse --show-toplevel`]: { ok: true, stdout: repoRoot, stderr: '' },
+            [`${parentDir} :: rev-parse --show-toplevel`]: { ok: true, stdout: parentToplevel, stderr: '' },
+            [`${parentToplevel} :: rev-parse HEAD`]: { ok: true, stdout: 'host-sha', stderr: '' },
+        }),
+        runCommand: fakeCommandRunner({
+            ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+            ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+        }),
+    });
+    assert.equal(snapshot.upstream_commit, 'canon-sha');
+    assert.equal(snapshot.orchestrator_commit, 'host-sha');
+    assert.notEqual(snapshot.orchestrator_commit, snapshot.upstream_commit);
+});
+
+void test('captureCanonSnapshot falls back to native mode when no enclosing repo exists', () => {
+    const repoRoot = '/tmp/standalone/canon-ai';
+    const snapshot = captureCanonSnapshot(repoRoot, {
+        runGitAt: fakeGitRunner(nativeGitResponses(repoRoot, 'standalone-sha')),
+        runCommand: fakeCommandRunner({
+            ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+            ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+        }),
+    });
+    assert.equal(snapshot.orchestrator_commit, snapshot.upstream_commit);
+    assert.equal(snapshot.orchestrator_commit, 'standalone-sha');
+});
+
+void test('captureCanonSnapshot falls back to native mode when parent resolves to own toplevel', () => {
+    const repoRoot = '/tmp/monorepo/packages/canon-ai';
+    const parentDir = path.dirname(repoRoot);
+    const sharedToplevel = '/tmp/monorepo';
+    const snapshot = captureCanonSnapshot(repoRoot, {
+        runGitAt: fakeGitRunner({
+            [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+            [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: 'canon-sha2', stderr: '' },
+            [`${repoRoot} :: rev-parse --show-toplevel`]: { ok: true, stdout: sharedToplevel, stderr: '' },
+            [`${parentDir} :: rev-parse --show-toplevel`]: { ok: true, stdout: sharedToplevel, stderr: '' },
+        }),
+        runCommand: fakeCommandRunner({
+            ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+            ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+        }),
+    });
+    assert.equal(snapshot.orchestrator_commit, snapshot.upstream_commit);
+    assert.equal(snapshot.orchestrator_commit, 'canon-sha2');
 });
 
 function withCwd<T>(cwd: string, fn: () => T): T {

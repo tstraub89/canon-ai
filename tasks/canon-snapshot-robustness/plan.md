@@ -331,3 +331,27 @@ Declare in handoff Changes table:
 | `docs/decisions.md` | In-place env-override clause on existing `CANON_UPSTREAM_REPO` Rule |
 | `dist/scripts/run-task.js` | Generated — `npm run build` |
 | `dist/cli/index.js` | Generated — `npm run build` |
+
+---
+
+## Reroute Plan
+
+### Delta
+
+The amendment for this task carries no implementation delta — it exists solely to satisfy the bundle reroute pre-flight gate (every bundle member requires an `## Amendment` heading; the spec explicitly states "no re-implementation is expected"). All ACs (AC-1 through AC-7) were met in Iterations 1–2 and the amendment review is approved.
+
+The only work for this reroute is operational: fix the broken docs-ref at `tasks/canon-snapshot-robustness/review.md:35` that the `tests/run-task-safety.test.ts` suite surfaced, and re-run validation to confirm the existing implementation still passes in the context of the bundle's reroute commit.
+
+#### Step 1 — Fix broken docs-ref in review artifact
+
+Locate and repair the broken path reference at `tasks/canon-snapshot-robustness/review.md:35`. Run `npm run docs-refs-check` to confirm clean after the fix.
+
+#### Step 2 — Re-run validation (in order)
+
+1. `npm run lint`
+2. `npm run type-check`
+3. `npm test`
+4. `npm run build` (confirm `dist/` still matches a fresh build)
+5. `npm run docs-refs-check`
+
+No source files in `scripts/`, `src/`, or `tests/` require changes for this task's reroute. Declare only the review artifact in the handoff Changes table if it was modified.
