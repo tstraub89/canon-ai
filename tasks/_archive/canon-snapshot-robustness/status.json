@@ -1,7 +1,7 @@
 {
   "id": "canon-snapshot-robustness",
   "title": "CANON_UPSTREAM_REPO env override + non-submodule vendored-mode detection",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-28",
   "updated": "2026-06-29",
   "branch": "task/task-metadata-helpers",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

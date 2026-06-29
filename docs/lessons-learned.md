@@ -90,7 +90,7 @@ When adding a "warn if the task is already in progress" check to a mutator, use 
 
 *(2026-06-29, source: canon-snapshot-robustness)*
 
-Path-like prose in `tasks/*/review.md` files is subject to `docs-refs-check` even though review artifacts are not part of the implementation surface. A phrase like "see tasks/&lt;id&gt;/spec.md Non-Goals" that references a path under a `validDirs` directory will trip the checker if the path is broken or the file is renamed — the same way a backtick ref in a handoff or doc would. Fix: apply the same "backtick path = a live reference" discipline in review.md files, or use prose/markdown-link form to describe non-code targets. Concrete case: `tasks/canon-snapshot-robustness/review.md` had a broken non-goal citation that tripped `docs-refs-check` in the reroute pass; cleaned in Iteration 3.
+Path-like prose in `tasks/*/review.md` files is subject to `docs-refs-check` even though review artifacts are not part of the implementation surface. A phrase like "see tasks/&lt;id&gt;/spec.md Non-Goals" that references a path under a `validDirs` directory will trip the checker if the path is broken or the file is renamed — the same way a backtick ref in a handoff or doc would. Fix: apply the same "backtick path = a live reference" discipline in review.md files, or use prose/markdown-link form to describe non-code targets. Concrete case: `tasks/_archive/canon-snapshot-robustness/review.md` had a broken non-goal citation that tripped `docs-refs-check` in the reroute pass; cleaned in Iteration 3.
 
 ### For codebase-wide term renames, use per-family invariant gates — not enumeration lists
 
