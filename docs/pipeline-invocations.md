@@ -666,3 +666,9 @@
 | 2026-06-27T05:43:48.843Z | add-xs-tier | implement | codex | gpt-5.5 | 0 | 2.6s | - | failed |
 | 2026-06-27T05:51:40.267Z | add-xs-tier | code_review | claude | opus | 0 | 470.7s | 1034868 | ok |
 | 2026-06-27T05:56:38.666Z | add-xs-tier | qa | claude | sonnet | 0 | 298.4s | 1845175 | ok |
+| 2026-06-29T01:02:00.760Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 0 | 345.9s | 1123731 | ok |
+| 2026-06-29T01:04:38.010Z | task-metadata-helpers+canon-snapshot-robustness | spec | claude | opus | 0 | 157.2s | 634799 | ok |
+| 2026-06-29T01:07:18.161Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 1 | 160.1s | 2042712 | ok |
+| 2026-06-29T01:09:14.923Z | task-metadata-helpers+canon-snapshot-robustness | spec | claude | opus | 0 | 116.8s | 585953 | ok |
+| 2026-06-29T01:13:29.877Z | task-metadata-helpers+canon-snapshot-robustness | spec_review | codex | gpt-5.4-mini | 2 | 254.9s | 4000158 | ok |
+| 2026-06-29T01:24:22.810Z | task-metadata-helpers+canon-snapshot-robustness | plan | claude | sonnet | 0 | 348.7s | 789603 | ok |
