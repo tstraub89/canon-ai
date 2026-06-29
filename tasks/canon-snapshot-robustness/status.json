@@ -4,7 +4,7 @@
   "status": "implement",
   "created": "2026-06-28",
   "updated": "2026-06-29",
-  "branch": "",
+  "branch": "task/task-metadata-helpers",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
