@@ -54,6 +54,33 @@ function isHeadingBoundary(line: string): boolean {
     return /^#{1,2}\s/.test(line);
 }
 
+// Per-line HTML comment visibility. `hidden[i]` is true when line i starts
+// inside an HTML comment block (`<!-- ... -->`) or opens one without closing
+// it on the same line. A comment opened on a line stays open for the rest of
+// that line; a `-->` token closes it for subsequent lines. Block-level
+// tracking only — single-line `<!-- ... -->` doesn't affect other lines.
+function computeCommentHiddenLines(lines: readonly string[]): boolean[] {
+    const hidden: boolean[] = new Array<boolean>(lines.length).fill(false);
+    let inHtmlComment = false;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        const opensComment = /<!--/.test(line);
+        const closesComment = /-->/.test(line);
+        const startsInComment = inHtmlComment;
+        if (opensComment && !closesComment) inHtmlComment = true;
+        else if (closesComment && !opensComment) inHtmlComment = false;
+        else if (opensComment && closesComment) {
+            // Both on the same line — the *next* line is outside a comment
+            // block either way. (If we were already in a comment, the `-->`
+            // closes it. If not, the `<!--` opens and the same line's `-->`
+            // closes.)
+            inHtmlComment = false;
+        }
+        hidden[i] = startsInComment || (opensComment && !closesComment);
+    }
+    return hidden;
+}
+
 // Returns the body text of every section whose H2 heading line matches `pattern`.
 // Body excludes the heading line itself; spans to the next H1/H2 heading or EOF.
 // Headings inside HTML comment blocks (`<!-- ... -->`) are skipped — those are
@@ -62,35 +89,12 @@ function isHeadingBoundary(line: string): boolean {
 // needs to evaluate the *latest* of multiple same-level sections.
 export function extractSectionBodies(markdown: string, pattern: RegExp): string[] {
     const lines = markdown.split('\n');
+    const hidden = computeCommentHiddenLines(lines);
     const bodies: string[] = [];
     let activeStart = -1;
-    let inHtmlComment = false;
     for (let i = 0; i < lines.length; i += 1) {
         const line = lines[i];
-
-        // Track HTML comment block state. A comment opened on a line stays open
-        // for the rest of that line; a `-->` token closes it for subsequent
-        // lines. We only need block-level tracking for skipping headings, so
-        // single-line `<!-- ... -->` on one line doesn't affect headings on
-        // other lines.
-        const opensComment = /<!--/.test(line);
-        const closesComment = /-->/.test(line);
-        const startsInComment = inHtmlComment;
-        if (opensComment && !closesComment) inHtmlComment = true;
-        else if (closesComment && !opensComment) inHtmlComment = false;
-        else if (opensComment && closesComment) {
-            // Both on the same line — net state unchanged from before this line.
-            // (If we were already in a comment, the `-->` closes it. If not,
-            // the `<!--` opens and the same line's `-->` closes. Either way,
-            // the *next* line is outside a comment block.)
-            inHtmlComment = false;
-        }
-
-        // Skip if this line is inside an HTML comment block as of its start.
-        if (startsInComment) continue;
-        // Also skip a heading that lives on the same line as a comment opener
-        // (defensive — unusual but cheap to handle).
-        if (opensComment && !closesComment) continue;
+        if (hidden[i]) continue;
 
         const isH2 = /^## /.test(line);
         const isH1 = /^# /.test(line);
@@ -227,6 +231,84 @@ export function parseAllTablesH3(markdown: string, sectionHeading: string): Arra
     }
 
     return allRows;
+}
+
+export type ScannedTable = {
+    /** Trimmed text of the nearest preceding visible heading line (any level, hashes included), or null if none. */
+    heading: string | null;
+    headerCells: string[];
+    rows: Array<Record<string, string>>;
+};
+
+// Scans EVERY markdown table in the document regardless of which section it
+// lives under. Tables inside HTML comment blocks are skipped (template
+// scaffolds), as are blockquoted tables (`> | ... |` — guidance, not data;
+// their lines don't start with `|`) and anything inside fenced code blocks
+// (``` or ~~~ — example/command-output text, not real tables). The
+// diff→handoff pre-flight uses this to (a) accept coverage rows from any
+// table whose first column header is `File`, wherever the implementer put
+// it, and (b) name near-miss tables in rejection messages instead of leaving
+// the implementer to guess which headings are scanned.
+export function scanAllTables(markdown: string): ScannedTable[] {
+    const lines = markdown.split('\n');
+    const hidden = computeCommentHiddenLines(lines);
+    const tables: ScannedTable[] = [];
+    let currentHeading: string | null = null;
+    // Open fence marker, or null when outside a fence. Per CommonMark, the
+    // closing fence must use the same character and be at least as long as
+    // the opener, with nothing else on the line.
+    let fence: { char: string; length: number } | null = null;
+    let i = 0;
+    while (i < lines.length) {
+        if (hidden[i]) {
+            i += 1;
+            continue;
+        }
+        const line = lines[i];
+        if (fence) {
+            const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
+            if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+            i += 1;
+            continue;
+        }
+        const open = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+        if (open) {
+            fence = { char: open[1][0], length: open[1].length };
+            i += 1;
+            continue;
+        }
+        if (/^#{1,6}\s/.test(line)) {
+            currentHeading = line.trim();
+            i += 1;
+            continue;
+        }
+        if (!line.trimStart().startsWith('|')) {
+            i += 1;
+            continue;
+        }
+
+        // Table block: contiguous visible `|` lines. First line is the header
+        // row, optionally followed by a separator row.
+        let end = i;
+        while (end < lines.length && !hidden[end] && lines[end].trimStart().startsWith('|')) end += 1;
+        const headerCells = normalizeCells(lines[i]);
+        let rowStart = i + 1;
+        if (rowStart < end && isSeparatorRow(normalizeCells(lines[rowStart]))) rowStart += 1;
+
+        const rows: Array<Record<string, string>> = [];
+        for (let index = rowStart; index < end; index += 1) {
+            const cells = normalizeCells(lines[index]);
+            if (isSeparatorRow(cells)) continue;
+            const row: Record<string, string> = {};
+            for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+                row[headerCells[cellIndex]] = cells[cellIndex] ?? '';
+            }
+            rows.push(row);
+        }
+        if (headerCells.length > 0) tables.push({ heading: currentHeading, headerCells, rows });
+        i = end;
+    }
+    return tables;
 }
 
 export function parseTable(markdown: string, sectionHeading: string): Array<Record<string, string>> {

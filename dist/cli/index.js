@@ -2116,10 +2116,8 @@ function isSectionHeading(line, sectionHeading) {
 function isHeadingBoundary(line) {
   return /^#{1,2}\s/.test(line);
 }
-function extractSectionBodies(markdown, pattern) {
-  const lines = markdown.split("\n");
-  const bodies = [];
-  let activeStart = -1;
+function computeCommentHiddenLines(lines) {
+  const hidden = new Array(lines.length).fill(false);
   let inHtmlComment = false;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -2131,8 +2129,18 @@ function extractSectionBodies(markdown, pattern) {
     else if (opensComment && closesComment) {
       inHtmlComment = false;
     }
-    if (startsInComment) continue;
-    if (opensComment && !closesComment) continue;
+    hidden[i] = startsInComment || opensComment && !closesComment;
+  }
+  return hidden;
+}
+function extractSectionBodies(markdown, pattern) {
+  const lines = markdown.split("\n");
+  const hidden = computeCommentHiddenLines(lines);
+  const bodies = [];
+  let activeStart = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (hidden[i]) continue;
     const isH2 = /^## /.test(line);
     const isH1 = /^# /.test(line);
     if (isH2 || isH1) {
@@ -2579,6 +2587,7 @@ var HANDOFF_DIFF_EXEMPT_PATHS = new Set(PIPELINE_TELEMETRY_FILES);
 function isPipelineOwnedTaskArtifact(filePath, taskIds) {
   return taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`));
 }
+var HANDOFF_COVERAGE_SURFACES = "the baseline '## Changes' table and '### Changes' tables inside '## Iteration' sections";
 function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
   const renamePairs = inputs.renamePairs ?? [];
   const gitIgnored = inputs.gitIgnoredHandoffFiles ?? /* @__PURE__ */ new Set();
@@ -2604,17 +2613,29 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
       }
     }
   }
+  const nearMiss = (filePath) => {
+    const found = inputs.unscannedTableHits?.get(filePath) ?? [];
+    return found.length > 0 ? ` \u2014 a row for it exists under ${found.join(" and ")}, which this check does not scan` : "";
+  };
+  let missingCoverage = false;
   for (const filePath of inputs.diffFiles) {
     if (HANDOFF_DIFF_EXEMPT_PATHS.has(filePath)) continue;
     if (isPipelineOwnedTaskArtifact(filePath, taskIds)) continue;
     if (bundleHandoffFiles.has(filePath)) continue;
-    issues.push(`diff\u2192handoff: ${filePath} in diff but not in any bundle handoff`);
+    missingCoverage = true;
+    issues.push(`diff\u2192handoff: ${filePath} in diff but not in any bundle handoff${nearMiss(filePath)}`);
   }
   for (const [oldPath, newPath] of renamePairs) {
     if (HANDOFF_DIFF_EXEMPT_PATHS.has(oldPath) && HANDOFF_DIFF_EXEMPT_PATHS.has(newPath)) continue;
     if (isPipelineOwnedTaskArtifact(oldPath, taskIds) || isPipelineOwnedTaskArtifact(newPath, taskIds)) continue;
     if (bundleHandoffFiles.has(oldPath) || bundleHandoffFiles.has(newPath)) continue;
-    issues.push(`diff\u2192handoff: rename ${oldPath} \u2192 ${newPath} \u2014 neither path in any bundle handoff`);
+    missingCoverage = true;
+    issues.push(`diff\u2192handoff: rename ${oldPath} \u2192 ${newPath} \u2014 neither path in any bundle handoff${nearMiss(newPath) || nearMiss(oldPath)}`);
+  }
+  if (missingCoverage) {
+    issues.push(
+      `diff\u2192handoff: coverage rows are read only from ${HANDOFF_COVERAGE_SURFACES} \u2014 rows under any other heading or column layout are invisible to this check.`
+    );
   }
   return issues;
 }

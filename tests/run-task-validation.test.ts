@@ -21,6 +21,7 @@ import {
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
     classifyPreflightBlockersFromData,
+    collectUnscannedTableHits,
     computeLatestValidationResults,
     extractCheckedVerdict,
     extractCitedFilePaths,
@@ -1324,6 +1325,143 @@ void test('verifyHandoffAgainstDiffFromData accepts iteration-added files covere
     });
 });
 
+void test('rows under an unrecognized heading are not coverage, but the rejection names the table (multi-wall-ux-cleanup incident)', () => {
+    // GP task multi-wall-ux-cleanup (2026-07-06): amendment-pass files listed
+    // in a well-formed table under `### Changes Added For Coverage` were
+    // invisible to the heading-scoped parser; the pre-flight rejected the same
+    // files three rounds running (never saying which headings ARE scanned) and
+    // auto-blocked with zero reviewer rounds. Coverage stays heading-scoped —
+    // the fix is that the rejection now points at the near-miss table.
+    const handoffContent = [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/current.ts` | current-round change |',
+        '',
+        '## Iteration 1 — addressing pre-flight rejection',
+        '',
+        '### Changes Added For Coverage',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/earlier.ts` | earlier-round change |',
+        '',
+    ].join('\n');
+    withTempTaskHandoff('coverage-heading-task', handoffContent, () => {
+        const { files, malformed } = parseHandoffChangesRows('coverage-heading-task');
+        assert.deepEqual(files, ['src/current.ts']);
+        assert.deepEqual(malformed, []);
+
+        const issues = verifyHandoffAgainstDiffFromData(
+            ['coverage-heading-task'],
+            {
+                diffFiles: ['src/current.ts', 'src/earlier.ts'],
+                handoffFilesByTask: makeHandoffMap({ 'coverage-heading-task': files }),
+                unscannedTableHits: collectUnscannedTableHits(handoffContent),
+            },
+        );
+        assert.equal(issues.length, 2);
+        assert.ok(issues[0].includes('src/earlier.ts in diff but not in any bundle handoff'));
+        assert.ok(issues[0].includes("'### Changes Added For Coverage'"));
+        assert.ok(issues[0].includes('does not scan'));
+        assert.ok(issues[1].includes('coverage rows are read only from'));
+    });
+});
+
+void test('parseHandoffChangesRows ignores commented-out template scaffold tables', () => {
+    withTempTaskHandoff('commented-scaffold-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/real.ts` | real change |',
+        '',
+        '<!--',
+        '### Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/scaffold-only.ts` | commented-out example |',
+        '-->',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseHandoffFiles('commented-scaffold-task'), ['src/real.ts']);
+    });
+});
+
+void test('parseHandoffChangesRows leaves tables under unrecognized headings alone — no coverage, no malformed errors', () => {
+    // An informational file list is neither a coverage claim nor held to
+    // strict row parsing; only the recognized Changes tables are load-bearing.
+    withTempTaskHandoff('unrecognized-heading-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `src/real.ts` | real change |',
+        '',
+        '## Appendix',
+        '',
+        '### Files Reviewed, No Changes Needed',
+        '',
+        '| File | Why |',
+        '|---|---|',
+        '| `src/untouched.ts` | already handled the edge case |',
+        '| several helper files | prose that would be malformed in a Changes table |',
+        '',
+    ].join('\n'), () => {
+        const { files, malformed } = parseHandoffChangesRows('unrecognized-heading-task');
+        assert.deepEqual(files, ['src/real.ts']);
+        assert.deepEqual(malformed, []);
+    });
+});
+
+void test('collectUnscannedTableHits reports valid path rows from any table, with heading and first column header', () => {
+    const hits = collectUnscannedTableHits([
+        '# Implementation Handoff: test',
+        '',
+        '## Iteration 1',
+        '',
+        '### Files Touched',
+        '',
+        '| Path | What Changed |',
+        '|---|---|',
+        '| `src/orphan.ts` | valid row, unrecognized table |',
+        '| prose without a path | skipped |',
+        '',
+    ].join('\n'));
+    const found = hits.get('src/orphan.ts');
+    assert.ok(found, 'expected a hit for src/orphan.ts');
+    assert.equal(found.length, 1);
+    assert.ok(found[0].includes('### Files Touched'));
+    assert.ok(found[0].includes("first column header 'Path'"));
+    assert.equal(hits.size, 1);
+});
+
+void test('verifyHandoffAgainstDiffFromData names the near-miss table for an uncovered diff file', () => {
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a'],
+        {
+            diffFiles: ['src/orphan.ts'],
+            handoffFilesByTask: makeHandoffMap({ 'task-a': [] }),
+            unscannedTableHits: new Map([
+                ['src/orphan.ts', ["'### Files Touched' (first column header 'Path')"]],
+            ]),
+        },
+    );
+    assert.equal(issues.length, 2);
+    assert.ok(issues[0].includes('src/orphan.ts in diff but not in any bundle handoff'));
+    assert.ok(issues[0].includes("a row for it exists under '### Files Touched' (first column header 'Path')"));
+    assert.ok(issues[0].includes('does not scan'));
+    assert.ok(issues[1].includes('coverage rows are read only from'));
+});
+
 void test('verifyHandoffAgainstDiffFromData exempts gitignored handoff entries from handoff→diff check', () => {
     // Build-generated artifacts like `public/sitemap.xml` that Codex
     // legitimately references in the Changes table to describe build output.
@@ -1369,9 +1507,13 @@ void test('verifyHandoffAgainstDiffFromData rejects a diff file missing from all
             }),
         },
     );
-    assert.equal(issues.length, 1);
+    assert.equal(issues.length, 2);
     assert.ok(issues[0].includes('diff→handoff'));
     assert.ok(issues[0].includes('src/baz.ts'));
+    // Trailing hint enumerates the scanned coverage surfaces once per run.
+    assert.ok(issues[1].includes('coverage rows are read only from'));
+    assert.ok(issues[1].includes("'## Changes'"));
+    assert.ok(issues[1].includes("'### Changes'"));
 });
 
 void test('verifyHandoffAgainstDiffFromData exempts PIPELINE_TELEMETRY_FILES from diff→handoff check', () => {
@@ -1402,9 +1544,10 @@ void test('verifyHandoffAgainstDiffFromData still rejects non-telemetry diff fil
             }),
         },
     );
-    assert.equal(issues.length, 1);
+    assert.equal(issues.length, 2);
     assert.ok(issues[0].includes('src/baz.ts'));
     assert.ok(!issues[0].includes('lessons-learned'));
+    assert.ok(issues[1].includes('coverage rows are read only from'));
 });
 
 void test('verifyHandoffAgainstDiffFromData respects bundle-wide handoff unions', () => {
@@ -1476,11 +1619,12 @@ void test('verifyHandoffAgainstDiffFromData: rename uncovered emits one issue na
             }),
         },
     );
-    assert.equal(issues.length, 1);
+    assert.equal(issues.length, 2);
     assert.ok(issues[0].includes('rename'));
     assert.ok(issues[0].includes('src/old-name.ts'));
     assert.ok(issues[0].includes('src/new-name.ts'));
     assert.ok(issues[0].includes('diff→handoff'));
+    assert.ok(issues[1].includes('coverage rows are read only from'));
 });
 
 void test('verifyBaseDriftFromData: empty diff returns no drift', () => {
@@ -2160,8 +2304,9 @@ void test('verifyHandoffAgainstDiffFromData: tasks/<active-id>/* exemption is pe
             }),
         },
     );
-    assert.equal(issues.length, 1);
+    assert.equal(issues.length, 2);
     assert.ok(issues[0].includes('tasks/some-other-task/notes.md'));
+    assert.ok(issues[1].includes('coverage rows are read only from'));
 });
 
 void test('verifyHandoffAgainstDiffFromData: app/source changes still strictly required in handoff', () => {
@@ -2176,8 +2321,9 @@ void test('verifyHandoffAgainstDiffFromData: app/source changes still strictly r
             }),
         },
     );
-    assert.equal(issues.length, 1);
+    assert.equal(issues.length, 2);
     assert.ok(issues[0].includes('apps/web/src/Page.tsx'));
+    assert.ok(issues[1].includes('coverage rows are read only from'));
 });
 
 void test('verifyHandoffAgainstDiffFromData: rename whose either side is a pipeline-owned task artifact is exempt', () => {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies } from './markdown-table.js';
+import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies, scanAllTables } from './markdown-table.js';
 import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
 import { filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
@@ -1035,6 +1035,17 @@ export function parseHandoffFiles(taskId: string): string[] {
  * failed strict path validation (so callers can surface actionable errors
  * instead of silently dropping the row).
  *
+ * These two exact headings are deliberately the ONLY coverage surfaces.
+ * Accepting shape-matched tables anywhere (e.g. anything with a `File` first
+ * column) was tried and rejected: it turns informational file lists into
+ * load-bearing coverage claims, so a "files reviewed, unchanged" table starts
+ * failing the handoff→diff direction. Instead, rows parked under an
+ * unrecognized heading are caught by `collectUnscannedTableHits` and named in
+ * the rejection message so the implementer moves them in one round — GP task
+ * multi-wall-ux-cleanup (2026-07-06) looped to an auto-block with zero
+ * reviewer rounds because the old rejection never said which headings are
+ * scanned.
+ *
  * "Malformed" covers the failure classes that bit the GP starter-preview
  * bundle in 1.2.0:
  *
@@ -1285,7 +1296,49 @@ export type HandoffDiffInputs = {
      * them is the real change. Callers compute this via `filterGitIgnoredPaths`.
      */
     gitIgnoredHandoffFiles?: ReadonlySet<string>;
+    /**
+     * Paths that appear as valid rows in handoff tables the coverage parser
+     * does NOT scan (first column header other than `File`), mapped to a
+     * description of where each row was found. Used to turn a bare "not in
+     * any bundle handoff" rejection into an actionable near-miss message.
+     * Callers compute this via `collectUnscannedTableHits`.
+     */
+    unscannedTableHits?: ReadonlyMap<string, readonly string[]>;
 };
+
+/**
+ * Human-readable enumeration of every surface the diff→handoff coverage
+ * parser reads. Appended to rejections so the implementer knows exactly where
+ * coverage rows must live instead of guessing heading names (the guessing is
+ * what looped GP task multi-wall-ux-cleanup into an auto-block).
+ */
+export const HANDOFF_COVERAGE_SURFACES =
+    "the baseline '## Changes' table and '### Changes' tables inside '## Iteration' sections";
+
+/**
+ * Scans a handoff for valid path rows in ANY table, recognized or not.
+ * Returns path → list of "under <heading> (first column header '<header>')"
+ * descriptions. Rows in the recognized Changes tables show up here too, but
+ * that's harmless: callers only consult this map for files that are MISSING
+ * coverage, and a valid row in a recognized table means the file is covered
+ * and never looked up.
+ */
+export function collectUnscannedTableHits(handoffContent: string): Map<string, string[]> {
+    const hits = new Map<string, string[]>();
+    for (const table of scanAllTables(handoffContent)) {
+        const firstHeader = (table.headerCells[0] ?? '').trim();
+        for (const row of table.rows) {
+            const firstColumn = Object.values(row)[0] ?? '';
+            const parsed = parseHandoffPathCell(firstColumn);
+            if (parsed.kind !== 'ok') continue;
+            const where = `'${table.heading ?? '(no heading)'}' (first column header '${firstHeader}')`;
+            const existing = hits.get(parsed.path) ?? [];
+            if (!existing.includes(where)) existing.push(where);
+            hits.set(parsed.path, existing);
+        }
+    }
+    return hits;
+}
 
 export function verifyHandoffAgainstDiffFromData(
     taskIds: string[],
@@ -1318,11 +1371,24 @@ export function verifyHandoffAgainstDiffFromData(
         }
     }
 
+    // Near-miss context: the row exists, but in a table this check never
+    // reads. Naming the table is the difference between "add the row" (wrong
+    // — Codex verifies the row exists, re-closes, and loops) and "move the
+    // row" (right).
+    const nearMiss = (filePath: string): string => {
+        const found = inputs.unscannedTableHits?.get(filePath) ?? [];
+        return found.length > 0
+            ? ` — a row for it exists under ${found.join(' and ')}, which this check does not scan`
+            : '';
+    };
+
+    let missingCoverage = false;
     for (const filePath of inputs.diffFiles) {
         if (HANDOFF_DIFF_EXEMPT_PATHS.has(filePath)) continue;
         if (isPipelineOwnedTaskArtifact(filePath, taskIds)) continue;
         if (bundleHandoffFiles.has(filePath)) continue;
-        issues.push(`diff→handoff: ${filePath} in diff but not in any bundle handoff`);
+        missingCoverage = true;
+        issues.push(`diff→handoff: ${filePath} in diff but not in any bundle handoff${nearMiss(filePath)}`);
     }
 
     for (const [oldPath, newPath] of renamePairs) {
@@ -1332,7 +1398,15 @@ export function verifyHandoffAgainstDiffFromData(
         // moves) and never belong in a handoff Changes table.
         if (isPipelineOwnedTaskArtifact(oldPath, taskIds) || isPipelineOwnedTaskArtifact(newPath, taskIds)) continue;
         if (bundleHandoffFiles.has(oldPath) || bundleHandoffFiles.has(newPath)) continue;
-        issues.push(`diff→handoff: rename ${oldPath} → ${newPath} — neither path in any bundle handoff`);
+        missingCoverage = true;
+        issues.push(`diff→handoff: rename ${oldPath} → ${newPath} — neither path in any bundle handoff${nearMiss(newPath) || nearMiss(oldPath)}`);
+    }
+
+    if (missingCoverage) {
+        issues.push(
+            `diff→handoff: coverage rows are read only from ${HANDOFF_COVERAGE_SURFACES} — ` +
+            `rows under any other heading or column layout are invisible to this check.`,
+        );
     }
 
     return issues;
@@ -1382,11 +1456,28 @@ export function verifyHandoffAgainstDiff(taskIds: string[], baseRef: string): st
     );
     const allHandoffPaths = [...new Set([...handoffFilesByTask.values()].flat())];
     const gitIgnoredHandoffFiles = filterGitIgnoredPaths(allHandoffPaths, cwd);
+    const unscannedTableHits = new Map<string, string[]>();
+    for (const taskId of taskIds) {
+        let content: string;
+        try {
+            content = fs.readFileSync(path.join(taskDirFor(taskId), 'handoff.md'), 'utf8');
+        } catch {
+            continue;
+        }
+        for (const [filePath, found] of collectUnscannedTableHits(content)) {
+            const existing = unscannedTableHits.get(filePath) ?? [];
+            for (const where of found) {
+                if (!existing.includes(where)) existing.push(where);
+            }
+            unscannedTableHits.set(filePath, existing);
+        }
+    }
     return verifyHandoffAgainstDiffFromData(taskIds, {
         diffFiles,
         renamePairs,
         handoffFilesByTask,
         gitIgnoredHandoffFiles,
+        unscannedTableHits,
     });
 }
 

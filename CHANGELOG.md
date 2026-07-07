@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `code_review` diff→handoff pre-flight rejection now says where coverage rows must live — and names near-miss tables.** The coverage parser reads rows only from the baseline `## Changes` table and `### Changes` tables inside `## Iteration` sections, but the rejection never said so. An adopter incident (GalleryPlanner, 2026-07-06) showed the failure mode: Codex parked amendment-pass coverage rows in a well-formed table under an invented heading (`### Changes Added For Coverage`), got the bare "in diff but not in any bundle handoff" rejection, verified the rows existed, re-closed — and the loop ran to an auto-block with zero reviewer rounds. Every diff→handoff rejection now ends with the list of scanned surfaces, and when a missing file has a valid row in an unscanned table, the rejection names that table's heading and first column header so the fix is "move the rows", not another guess. Coverage itself stays heading-scoped by design — accepting any `File`-columned table anywhere was tried and rejected because it turns informational file lists into load-bearing coverage claims. The handoff template now states the two scanned surfaces up front. Ships to adopters via `canon upgrade`.
+
 ## [2.1.0] — 2026-06-27
 
 ### Added
