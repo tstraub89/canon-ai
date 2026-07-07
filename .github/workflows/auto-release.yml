@@ -61,7 +61,42 @@ jobs:
             exit 1
           fi
 
+      - name: Skip if GitHub release already exists
+        id: release-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Cheap existence check from HEAD's package.json — just enough to
+          # name the candidate tag. Deliberately does NOT validate
+          # .canon/version consistency here: that check runs against the
+          # blame-derived bump SHA below, which for an *already-published*
+          # version permanently resolves to the same historical commit (git
+          # blame tracks last-changed-content, and a later retag can't move
+          # it). Running the strict check unconditionally on every push
+          # would re-fail forever on any version whose bump commit was ever
+          # historically inconsistent, even after the release is fixed and
+          # published — exactly what happened when this gate briefly ran
+          # unconditionally against v2.1.0's bump commit. Gating it behind
+          # "release doesn't exist yet" confines strict validation to the
+          # one push that's actually cutting a new release.
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG="v$PKG_VERSION"
+          # Gate on the release object, not just the tag. A prior run that
+          # created the tag but failed before publishing the release must
+          # still be able to self-heal on retry. `gh release create` reuses
+          # an existing tag (won't try to recreate it), so the create step
+          # below is safe to re-run when the tag already exists but the
+          # release doesn't.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Identify the version-bump commit
+        if: steps.release-check.outputs.skip != 'true'
         id: bump
         run: |
           set -euo pipefail
@@ -89,6 +124,7 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Read versions and compare
+        if: steps.release-check.outputs.skip != 'true'
         id: versions
         run: |
           set -euo pipefail
@@ -101,7 +137,9 @@ jobs:
           # internally inconsistent. The v2.1.0 release shipped exactly
           # this way: tagged at the package.json-bump commit while
           # .canon/version there still read the prior version, one commit
-          # before the file was corrected.
+          # before the file was corrected. This only runs when
+          # release-check found no existing release for the candidate
+          # tag — see that step for why the strict check is gated.
           BUMP_SHA="${{ steps.bump.outputs.sha }}"
           PKG_VERSION="$(git show "${BUMP_SHA}:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
           if ! git cat-file -e "${BUMP_SHA}:.canon/version" 2>/dev/null; then
@@ -119,26 +157,6 @@ jobs:
           fi
           echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$PKG_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Skip if GitHub release already exists
-        id: release-check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.versions.outputs.tag }}"
-          # Gate on the release object, not just the tag. A prior run that
-          # created the tag but failed before publishing the release must
-          # still be able to self-heal on retry. `gh release create` reuses
-          # an existing tag (won't try to recreate it), so the create step
-          # below is safe to re-run when the tag already exists but the
-          # release doesn't.
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — nothing to do."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Extract matching CHANGELOG block
         if: steps.release-check.outputs.skip != 'true'
