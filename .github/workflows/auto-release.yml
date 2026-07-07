@@ -61,27 +61,6 @@ jobs:
             exit 1
           fi
 
-      - name: Read versions and compare
-        id: versions
-        run: |
-          set -euo pipefail
-          PKG_VERSION="$(node -p "require('./package.json').version")"
-          if [ ! -f .canon/version ]; then
-            echo "::error::.canon/version missing — release blocked"
-            exit 1
-          fi
-          CANON_VERSION="$(tr -d ' \n\r' < .canon/version)"
-          if [ "$PKG_VERSION" != "$CANON_VERSION" ]; then
-            echo "::error::package.json version ($PKG_VERSION) does not match .canon/version ($CANON_VERSION) — release blocked"
-            exit 1
-          fi
-          if ! printf '%s' "$PKG_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::version '$PKG_VERSION' is not semver — release blocked"
-            exit 1
-          fi
-          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$PKG_VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Identify the version-bump commit
         id: bump
         run: |
@@ -108,6 +87,38 @@ jobs:
           fi
           echo "Version-bump commit: $SHA"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Read versions and compare
+        id: versions
+        run: |
+          set -euo pipefail
+          # Read both files from the blame-derived bump SHA's tree, not the
+          # workflow's working checkout. Checking HEAD here is insufficient:
+          # if the .canon/version bump lands in a follow-up commit instead
+          # of atomically with the package.json bump (both in the same
+          # push), HEAD shows the two files agreeing even though the SHA
+          # that will actually be tagged (the bump SHA, picked by blame) is
+          # internally inconsistent. The v2.1.0 release shipped exactly
+          # this way: tagged at the package.json-bump commit while
+          # .canon/version there still read the prior version, one commit
+          # before the file was corrected.
+          BUMP_SHA="${{ steps.bump.outputs.sha }}"
+          PKG_VERSION="$(git show "${BUMP_SHA}:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
+          if ! git cat-file -e "${BUMP_SHA}:.canon/version" 2>/dev/null; then
+            echo "::error::.canon/version missing at bump commit ${BUMP_SHA} — release blocked"
+            exit 1
+          fi
+          CANON_VERSION="$(git show "${BUMP_SHA}:.canon/version" | tr -d ' \n\r')"
+          if [ "$PKG_VERSION" != "$CANON_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match .canon/version ($CANON_VERSION) at bump commit ${BUMP_SHA} — release blocked"
+            exit 1
+          fi
+          if ! printf '%s' "$PKG_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version '$PKG_VERSION' is not semver — release blocked"
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$PKG_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Skip if GitHub release already exists
         id: release-check
