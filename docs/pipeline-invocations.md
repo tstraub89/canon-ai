@@ -685,3 +685,7 @@
 | 2026-06-29T19:44:07.233Z | task-metadata-helpers+canon-snapshot-robustness | implement | codex | gpt-5.4-mini | 0 | 524.4s | 15567143 | ok |
 | 2026-06-29T20:00:57.379Z | task-metadata-helpers+canon-snapshot-robustness | code_review | claude | sonnet | 0 | 573.6s | 568110 | ok |
 | 2026-06-29T20:06:34.294Z | task-metadata-helpers+canon-snapshot-robustness | qa | claude | sonnet | 0 | 336.8s | 817699 | ok |
+| 2026-07-07T01:04:08.474Z | ship-shared-doc-dirt-preservation | spec_review | codex | gpt-5.5 | 0 | 122.7s | 742142 | ok |
+| 2026-07-07T01:11:00.032Z | ship-shared-doc-dirt-preservation | spec | claude | opus | 0 | 411.6s | 1020039 | ok |
+| 2026-07-07T01:12:42.070Z | ship-shared-doc-dirt-preservation | spec_review | codex | gpt-5.5 | 1 | 102.0s | 1417469 | ok |
+| 2026-07-09T00:40:29.772Z | ship-shared-doc-dirt-preservation | plan | claude | sonnet | 0 | 802.0s | 4844263 | ok |
