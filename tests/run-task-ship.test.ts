@@ -27,7 +27,11 @@ function gitIn(cwd: string, ...args: string[]): string {
     return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-function makeGitFixture(dir: string): { localDir: string; originDir: string } {
+function gitRawIn(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+function makeGitFixture(dir: string, initialFiles: Record<string, string> = {}): { localDir: string; originDir: string } {
     const originDir = path.join(dir, 'origin.git');
     const localDir = path.join(dir, 'local');
     execFileSync('git', ['init', '--bare', originDir], { stdio: 'ignore' });
@@ -41,7 +45,12 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
         'tasks/**/.canon-pid\ntasks/**/.canon-run.log\ntasks/**/.heartbeat.json\ntasks/**/.pr-number\n',
         'utf8',
     );
-    gitIn(localDir, 'add', 'README.md', '.gitignore');
+    for (const [relPath, content] of Object.entries(initialFiles)) {
+        const fullPath = path.join(localDir, relPath);
+        fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+        fs.writeFileSync(fullPath, content, 'utf8');
+    }
+    gitIn(localDir, 'add', 'README.md', '.gitignore', ...Object.keys(initialFiles));
     gitIn(localDir, 'commit', '-m', 'initial');
     gitIn(localDir, 'push', '-u', 'origin', 'main');
     return { localDir, originDir };
@@ -163,6 +172,30 @@ function setupGitDeleteRace(scriptDir: string, realGit: string): void {
         '  printf "%s\\n" "error: unable to delete: remote ref does not exist" >&2',
         '  exit 1',
         'fi',
+        `exec ${JSON.stringify(realGit)} "$@"`,
+    ]);
+}
+
+function setupGitArchiveFailure(scriptDir: string, realGit: string, mode: 'commit' | 'push'): void {
+    const guard = mode === 'commit'
+        ? [
+            'if [ "${1:-}" = "commit" ] && [ "${2:-}" = "-m" ]; then',
+            '  case "${3:-}" in',
+            '    "chore: archive "*)',
+            '      printf "%s\\n" "simulated archive commit failure" >&2',
+            '      exit 1',
+            '      ;;',
+            '  esac',
+            'fi',
+        ]
+        : [
+            'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ $# -eq 3 ]; then',
+            '  printf "%s\\n" "simulated archive push failure" >&2',
+            '  exit 1',
+            'fi',
+        ];
+    writeExecutable(scriptDir, 'git', [
+        ...guard,
         `exec ${JSON.stringify(realGit)} "$@"`,
     ]);
 }
@@ -333,9 +366,10 @@ function prepareShipFixture(
         syncBase?: boolean;
         advanceRemote?: boolean;
         materializeAdvancedHead?: boolean;
+        initialFiles?: Record<string, string>;
     } = {},
 ): { localDir: string; originDir: string; branch: string; tip: string; prHead: string; fakeTools: string } {
-    const { localDir, originDir } = makeGitFixture(dir);
+    const { localDir, originDir } = makeGitFixture(dir, options.initialFiles);
     const fakeTools = path.join(dir, 'fake-tools');
     setupFakeTools(fakeTools);
 
@@ -469,6 +503,48 @@ function expectTaskAndBranchSurvive(repoDir: string, taskId: string, branch: str
     assert.ok(!fs.existsSync(path.join(repoDir, 'tasks', '_archive', taskId)));
     assert.equal(branchExists(repoDir, branch), true);
     assert.doesNotThrow(() => gitIn(repoDir, 'cat-file', '-e', `${branch}:tasks/${taskId}/status.json`));
+}
+
+function markTaskWorktree(repoDir: string, taskId: string): void {
+    const statusPath = path.join(repoDir, 'tasks', taskId, 'status.json');
+    const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Record<string, unknown>;
+    status.worktree = true;
+    fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+}
+
+function sharedDocInitialFiles(taskId: string): Record<string, string> {
+    return {
+        'docs/pipeline-invocations.md': 'pipeline base\n',
+        'docs/lessons-learned.md': `lessons base for tasks/${taskId}/spec.md\n`,
+        'docs/task-quality-log.md': `quality base for tasks/${taskId}/review.md\n`,
+        'docs/patterns.md': 'patterns base\n',
+    };
+}
+
+function readRel(repoDir: string, relPath: string): string {
+    return fs.readFileSync(path.join(repoDir, relPath), 'utf8');
+}
+
+function writeRel(repoDir: string, relPath: string, content: string): void {
+    const fullPath = path.join(repoDir, relPath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content, 'utf8');
+}
+
+function assertNoPrMergeInvoked(logPath: string): void {
+    const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+    assert.doesNotMatch(log, /pr merge/);
+}
+
+function makeTmpDir(dir: string): string {
+    const tmpDir = path.join(dir, 'tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    return tmpDir;
+}
+
+function backupEntries(tmpDir: string): string[] {
+    if (!fs.existsSync(tmpDir)) return [];
+    return fs.readdirSync(tmpDir).filter(entry => entry.startsWith('canon-ship-shared-doc-backup-'));
 }
 
 void test('--pr writes the sidecar on create path and leaves status clean', () => {
@@ -637,6 +713,340 @@ void test('--ship proves pinned merged PR, fast-forwards, archives, and deletes 
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /fast-forwarding/);
         expectArchivedAndDeleted(localDir, taskId, branch);
+    });
+});
+
+void test('--ship preserves appended pipeline invocation dirt as uncommitted after archive', () => {
+    withTempDir('run-task-ship-preserve-invocations-', dir => {
+        const taskId = 'ship-preserve-invocations';
+        const suffix = 'sibling pre-implement telemetry row\n';
+        const tmpDir = makeTmpDir(dir);
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: sharedDocInitialFiles(taskId),
+            prNumbers: { [taskId]: 301 },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            TMPDIR: tmpDir,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Preserving uncommitted docs\/pipeline-invocations\.md dirt during --ship; backup: /);
+        const backupPath = result.stdout.match(/backup: (.+)/)?.[1]?.trim();
+        assert.ok(backupPath);
+        assert.equal(fs.existsSync(backupPath), false);
+        assert.match(readRel(localDir, 'docs/pipeline-invocations.md'), new RegExp(suffix.trim()));
+        assert.doesNotMatch(gitIn(localDir, 'show', 'HEAD:docs/pipeline-invocations.md'), new RegExp(suffix.trim()));
+        assert.match(gitRawIn(localDir, 'status', '--porcelain', '--', 'docs/pipeline-invocations.md'), /^ M docs\/pipeline-invocations\.md\n$/);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+    });
+});
+
+void test('--ship aborts mixed shared-doc dirt before backups or mutation', () => {
+    withTempDir('run-task-ship-mixed-shared-doc-dirt-', dir => {
+        const taskId = 'ship-mixed-shared-doc-dirt';
+        const tmpDir = makeTmpDir(dir);
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: sharedDocInitialFiles(taskId),
+            prNumbers: { [taskId]: 302 },
+        });
+        markTaskWorktree(localDir, taskId);
+        const telemetryPath = 'docs/pipeline-invocations.md';
+        const managedPath = 'docs/patterns.md';
+        fs.appendFileSync(path.join(localDir, telemetryPath), 'safe telemetry suffix\n', 'utf8');
+        fs.appendFileSync(path.join(localDir, managedPath), 'managed edit\n', 'utf8');
+        const telemetryBefore = readRel(localDir, telemetryPath);
+        const managedBefore = readRel(localDir, managedPath);
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_LOG: ghLog,
+            TMPDIR: tmpDir,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /docs\/patterns\.md/);
+        assertNoPrMergeInvoked(ghLog);
+        assert.equal(readRel(localDir, telemetryPath), telemetryBefore);
+        assert.equal(readRel(localDir, managedPath), managedBefore);
+        assert.equal(backupEntries(tmpDir).length, 0);
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+
+void test('--ship aborts managed shared-doc dirt and --force does not bypass it', () => {
+    for (const force of [false, true]) {
+        withTempDir(`run-task-ship-managed-dirt-${force ? 'force' : 'normal'}-`, dir => {
+            const taskId = force ? 'ship-managed-dirt-force' : 'ship-managed-dirt';
+            const ghLog = path.join(dir, 'gh.log');
+            const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+                initialFiles: sharedDocInitialFiles(taskId),
+                prNumbers: { [taskId]: 303 },
+            });
+            markTaskWorktree(localDir, taskId);
+            fs.appendFileSync(path.join(localDir, 'docs', 'patterns.md'), 'operator edit\n', 'utf8');
+            const before = readRel(localDir, 'docs/patterns.md');
+
+            const result = runCanon(
+                localDir,
+                force ? [taskId, '--ship', '--force'] : [taskId, '--ship'],
+                fakeTools,
+                {
+                    FAKE_GH_PR_STATE: 'MERGED',
+                    FAKE_GH_BASE_REF_NAME: 'main',
+                    FAKE_GH_HEAD_REF_OID: tip,
+                    FAKE_GH_LOG: ghLog,
+                },
+            );
+
+            assert.notEqual(result.status, 0);
+            assert.match(result.stderr, /docs\/patterns\.md/);
+            assert.match(result.stderr, /commit or stash your edits/);
+            assertNoPrMergeInvoked(ghLog);
+            assert.equal(readRel(localDir, 'docs/patterns.md'), before);
+            expectTaskAndBranchSurvive(localDir, taskId, branch);
+        });
+    }
+});
+
+void test('--ship aborts non-pure-append telemetry dirt before merge', () => {
+    withTempDir('run-task-ship-non-append-telemetry-', dir => {
+        const taskId = 'ship-non-append-telemetry';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: sharedDocInitialFiles(taskId),
+            prNumbers: { [taskId]: 304 },
+        });
+        markTaskWorktree(localDir, taskId);
+        writeRel(localDir, 'docs/pipeline-invocations.md', 'modified existing line\n');
+        const before = readRel(localDir, 'docs/pipeline-invocations.md');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_LOG: ghLog,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /not a pure append/);
+        assertNoPrMergeInvoked(ghLog);
+        assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), before);
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+
+void test('--ship aborts untracked telemetry dirt before merge', () => {
+    withTempDir('run-task-ship-untracked-telemetry-', dir => {
+        const taskId = 'ship-untracked-telemetry';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 305 },
+        });
+        markTaskWorktree(localDir, taskId);
+        writeRel(localDir, 'docs/pipeline-invocations.md', 'untracked telemetry\n');
+        const before = readRel(localDir, 'docs/pipeline-invocations.md');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_LOG: ghLog,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /git status shows this path as '\?\?'/);
+        assertNoPrMergeInvoked(ghLog);
+        assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), before);
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+
+void test('--ship preserves archive-staged telemetry dirt without committing the suffix', () => {
+    withTempDir('run-task-ship-preserve-archive-telemetry-', dir => {
+        const taskId = 'ship-preserve-archive-telemetry';
+        const lessonsSuffix = 'sibling lesson suffix\n';
+        const qualitySuffix = 'sibling quality suffix\n';
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: sharedDocInitialFiles(taskId),
+            prNumbers: { [taskId]: 306 },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'lessons-learned.md'), lessonsSuffix, 'utf8');
+        fs.appendFileSync(path.join(localDir, 'docs', 'task-quality-log.md'), qualitySuffix, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const committedLessons = gitIn(localDir, 'show', 'HEAD:docs/lessons-learned.md');
+        const committedQuality = gitIn(localDir, 'show', 'HEAD:docs/task-quality-log.md');
+        assert.match(committedLessons, new RegExp(`tasks/_archive/${taskId}/spec\\.md`));
+        assert.match(committedQuality, new RegExp(`tasks/_archive/${taskId}/review\\.md`));
+        assert.doesNotMatch(committedLessons, new RegExp(lessonsSuffix.trim()));
+        assert.doesNotMatch(committedQuality, new RegExp(qualitySuffix.trim()));
+        assert.match(readRel(localDir, 'docs/lessons-learned.md'), new RegExp(lessonsSuffix.trim()));
+        assert.match(readRel(localDir, 'docs/task-quality-log.md'), new RegExp(qualitySuffix.trim()));
+        assert.match(gitRawIn(localDir, 'status', '--porcelain', '--', 'docs/lessons-learned.md'), /^ M docs\/lessons-learned\.md\n$/);
+        assert.match(gitRawIn(localDir, 'status', '--porcelain', '--', 'docs/task-quality-log.md'), /^ M docs\/task-quality-log\.md\n$/);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+    });
+});
+
+void test('--ship preserves telemetry in the working tree when the archive commit fails', () => {
+    withTempDir('run-task-ship-archive-commit-fail-', dir => {
+        const taskId = 'ship-archive-commit-fail';
+        const suffix = 'pending row\n';
+        const { localDir, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: { 'docs/pipeline-invocations.md': '# Pipeline Invocations\n\nexisting row\n' },
+            prNumbers: { [taskId]: 308 },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+
+        const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+        setupGitArchiveFailure(fakeTools, realGit, 'commit');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /failed to commit archive changes/);
+        assert.equal(
+            readRel(localDir, 'docs/pipeline-invocations.md'),
+            '# Pipeline Invocations\n\nexisting row\npending row\n',
+        );
+    });
+});
+
+void test('--ship preserves telemetry in the working tree when the archive push fails', () => {
+    withTempDir('run-task-ship-archive-push-fail-', dir => {
+        const taskId = 'ship-archive-push-fail';
+        const suffix = 'pending row\n';
+        const { localDir, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: { 'docs/pipeline-invocations.md': '# Pipeline Invocations\n\nexisting row\n' },
+            prNumbers: { [taskId]: 309 },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+
+        const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+        setupGitArchiveFailure(fakeTools, realGit, 'push');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /simulated archive push failure/);
+        assert.equal(
+            readRel(localDir, 'docs/pipeline-invocations.md'),
+            '# Pipeline Invocations\n\nexisting row\npending row\n',
+        );
+    });
+});
+
+void test('--ship aborts a staged-only edit on a managed doc before merge', () => {
+    withTempDir('run-task-ship-staged-managed-', dir => {
+        const taskId = 'ship-staged-managed';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: { 'docs/patterns.md': '# Patterns\n\nexisting pattern\n' },
+            prNumbers: { [taskId]: 310 },
+        });
+        markTaskWorktree(localDir, taskId);
+        const target = path.join(localDir, 'docs', 'patterns.md');
+        const headContent = fs.readFileSync(target, 'utf8');
+        fs.writeFileSync(target, `${headContent}staged edit\n`, 'utf8');
+        gitIn(localDir, 'add', 'docs/patterns.md');
+        fs.writeFileSync(target, headContent, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_LOG: ghLog,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /docs\/patterns\.md/);
+        assertNoPrMergeInvoked(ghLog);
+        assert.notEqual(gitIn(localDir, 'diff', '--cached', '--', 'docs/patterns.md'), '');
+        assert.equal(readRel(localDir, 'docs/patterns.md'), headContent);
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+
+void test('--ship aborts a staged-only edit on a telemetry file before merge', () => {
+    withTempDir('run-task-ship-staged-telemetry-', dir => {
+        const taskId = 'ship-staged-telemetry';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: { 'docs/pipeline-invocations.md': '# Pipeline Invocations\n\nexisting row\n' },
+            prNumbers: { [taskId]: 311 },
+        });
+        markTaskWorktree(localDir, taskId);
+        const target = path.join(localDir, 'docs', 'pipeline-invocations.md');
+        const headContent = fs.readFileSync(target, 'utf8');
+        fs.writeFileSync(target, `${headContent}staged row\n`, 'utf8');
+        gitIn(localDir, 'add', 'docs/pipeline-invocations.md');
+        fs.writeFileSync(target, headContent, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_LOG: ghLog,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /docs\/pipeline-invocations\.md/);
+        assertNoPrMergeInvoked(ghLog);
+        assert.notEqual(gitIn(localDir, 'diff', '--cached', '--', 'docs/pipeline-invocations.md'), '');
+        assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), headContent);
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+
+void test('--ship aborts a working-tree deletion of a tracked shared doc before merge', () => {
+    withTempDir('run-task-ship-deleted-doc-', dir => {
+        const taskId = 'ship-deleted-doc';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: { 'docs/decisions.md': '# Decisions\n\nexisting decision\n' },
+            prNumbers: { [taskId]: 312 },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.rmSync(path.join(localDir, 'docs', 'decisions.md'));
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_LOG: ghLog,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /docs\/decisions\.md/);
+        assertNoPrMergeInvoked(ghLog);
+        assert.match(gitRawIn(localDir, 'status', '--porcelain', '--', 'docs/decisions.md'), /^ D docs\/decisions\.md\n$/);
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
     });
 });
 

@@ -659,3 +659,529 @@ Run in this order (matches the spec's Validation Required):
 ## Rollback Plan
 
 Pure revert of the `main.ts` / `validation.ts` diff restores the pre-existing blanket-discard behavior (data-loss bug included) — no data migration, no schema change, no `status.json` shape change. The backup files this change writes live under `os.tmpdir()` and are self-cleaning on success; a crash mid-window leaves an orphaned backup file that is harmless to delete manually (it only ever contains a suffix of a telemetry doc, never source code).
+
+## Reroute Plan
+
+### Context
+
+The final amendment review verdict is **approved with nits** (`spec-review.md`'s last "Amendment Review" block). The two nits are spec-wording-only (AC-7's label should say "Amendment A6," not "A5"; Known Risks should say "this amendment," not "Amendment, round 2") — no spec edit is needed to implement against them.
+
+The code currently on this branch (per `handoff.md`) predates the amendment entirely — it implements the pre-amendment design the amendment's Blocking findings were filed against. Confirmed directly in `scripts/run-task/main.ts`:
+
+- `commitArchiveChanges(taskIds, baseBranch, stagedPaths)` (`main.ts:1887-1905`) still does staging (`git add -A` loop), the cached-diff check, `git commit`, and `git push` all inside one function — the exact shape the amendment's first Blocking finding (round-2 review) said made A1 unimplementable as originally worded.
+- The call site (`main.ts:2274-2283`) still calls `commitArchiveChanges(...)` first and only re-appends the preserved suffix in a loop *after* it returns — the exact ordering the amendment's second Blocking finding said reintroduces a narrowed data-loss window on commit/push failure.
+- `docs/pipeline-orchestrator.md:457,459` still documents "after the archive commit lands the suffix is re-appended" — the stale timing the amendment's third Blocking finding flagged against AC-10.
+
+So this round's delta is exactly implementing A1–A6 as written in the spec's `## Amendment` section: split the seam, move the re-append between staging and commit, add the two crash-safety regression tests (A2, A3), update the one existing caller of the old 3-arg `commitArchiveChanges`, and fix the doc wording. Everything from the original plan (Steps 0–6 above) that isn't touched by this delta stands as implemented — this section does not re-plan the classification helpers, the abort paths, or AC-2/3/4/5/6/7/8/9/11 test bodies, which are unaffected by the seam split.
+
+### Delta
+
+**1. Split the seam in `scripts/run-task/main.ts` (A1).**
+
+Replace `commitArchiveChanges` (`main.ts:1887-1905`) with two exported functions:
+
+```ts
+export function stageArchiveChanges(stagedPaths: readonly string[]): void {
+    for (const p of stagedPaths) gitSafe('add', '-A', '--', p);
+}
+
+export function commitArchiveChanges(
+    taskIds: string[],
+    baseBranch: string,
+): { committed: boolean; stderr?: string } {
+    const staged = gitSafe('diff', '--cached', '--name-only');
+    if (!staged.stdout.trim()) return { committed: false };
+
+    const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
+    const commitResult = gitSafe('commit', '-m', `chore: archive ${label}`);
+    if (!commitResult.ok) {
+        return { committed: false, stderr: commitResult.stderr || 'unknown error' };
+    }
+
+    info(`Pushing ${baseBranch}...`);
+    git('push', 'origin', baseBranch);
+    return { committed: true };
+}
+```
+
+`stagedPaths` is dropped from `commitArchiveChanges`'s signature per the amendment's Scope note — it moves entirely into `stageArchiveChanges`.
+
+**2. Reorder the call site (`main.ts:2264-2283`) (A1).**
+
+Old (current code):
+
+```ts
+    rewriteArchivedTaskRefs(taskIds);
+
+    const stagedPaths: string[] = taskIds.flatMap(id => [ /* ... */ ]);
+    const archiveCommit = commitArchiveChanges(taskIds, baseBranch, stagedPaths);
+    if (archiveCommit.stderr) {
+        die(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}`);
+    }
+
+    for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+        fs.appendFileSync(path.join(REPO_ROOT, relPath), suffix, 'utf8');
+        fs.rmSync(backupPath, { force: true });
+        info(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+    }
+```
+
+New:
+
+```ts
+    rewriteArchivedTaskRefs(taskIds);
+
+    const stagedPaths: string[] = taskIds.flatMap(id => [ /* unchanged */ ]);
+    stageArchiveChanges(stagedPaths);
+
+    // Re-apply preserved telemetry dirt now that this task's archive move is
+    // staged (still suffix-free at this point — the suffix lands only in the
+    // working tree, never in the index `stageArchiveChanges` just captured).
+    // Re-appending here, before commit, means a sibling task's pending rows
+    // never land inside THIS task's archive commit — see spec Amendment.
+    for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+        fs.appendFileSync(path.join(REPO_ROOT, relPath), suffix, 'utf8');
+        fs.rmSync(backupPath, { force: true });
+        info(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+    }
+
+    const archiveCommit = commitArchiveChanges(taskIds, baseBranch);
+    if (archiveCommit.stderr) {
+        die(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}`);
+    }
+```
+
+Note the `die()` on commit failure now runs *after* the re-append, so the suffix is already back in the working tree when the process exits — this is what makes A2 pass. `stagedPaths` itself and everything before `rewriteArchivedTaskRefs` are untouched.
+
+**3. Update the one existing caller of the old 3-arg form: `tests/run-task-safety.test.ts:1107` (per Amendment Scope).**
+
+Old:
+
+```ts
+            const result = commitArchiveChanges(['example'], 'main', ['tasks/example']);
+            assert.deepEqual(result, { committed: false, stderr: 'commit failed' });
+```
+
+New:
+
+```ts
+            stageArchiveChanges(['tasks/example']);
+            const result = commitArchiveChanges(['example'], 'main');
+            assert.deepEqual(result, { committed: false, stderr: 'commit failed' });
+```
+
+Add `stageArchiveChanges` to the import at `tests/run-task-safety.test.ts:23`:
+
+```ts
+import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
+```
+
+The existing log assertions right after (`add -A -- tasks/example`, then `diff --cached --name-only`, then `commit -m chore: archive example`, no push) still hold in the same order — `stageArchiveChanges` now emits the `add` line and `commitArchiveChanges` emits the rest. No fixture change needed (`FAKE_GIT_FAIL_COMMIT: '1'` from `setupFakeGit`, already present at `tests/run-task-safety.test.ts:1105`, still drives the failure).
+
+**4. New regression tests in `tests/run-task-ship.test.ts` (A2, A3).**
+
+These need a real-`git` passthrough wrapper that fails one specific command, following the existing `setupGitDeleteRace` precedent (`tests/run-task-ship.test.ts:169-177`) rather than `run-task-safety.test.ts`'s fully-fake git (this suite drives real git repos via `makeGitFixture`/`prepareShipFixture`). Grep-confirmed unique match targets: `git commit -m "chore: archive <id>"` is the only commit call with that message prefix anywhere in `shipTasks()`'s call graph, and `git push origin <baseBranch>` with exactly 3 args (no `-u`/`--delete`) is the only such call — every other push in `main.ts` passes `-u`/`--set-upstream`/`--delete` (`main.ts:1239,1337,1552`). Add near `setupGitDeleteRace`:
+
+```ts
+function setupGitArchiveFailure(scriptDir: string, realGit: string, mode: 'commit' | 'push'): void {
+    const guard = mode === 'commit'
+        ? [
+            'if [ "${1:-}" = "commit" ] && [ "${2:-}" = "-m" ]; then',
+            '  case "${3:-}" in',
+            '    "chore: archive "*)',
+            '      printf "%s\\n" "simulated archive commit failure" >&2',
+            '      exit 1',
+            '      ;;',
+            '  esac',
+            'fi',
+        ]
+        : [
+            'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ $# -eq 3 ]; then',
+            '  printf "%s\\n" "simulated archive push failure" >&2',
+            '  exit 1',
+            'fi',
+        ];
+    writeExecutable(scriptDir, 'git', [
+        ...guard,
+        `exec ${JSON.stringify(realGit)} "$@"`,
+    ]);
+}
+```
+
+Add after the existing AC-11 test (end of file):
+
+```ts
+void test('--ship preserves telemetry in the working tree when the archive commit fails (A2)', () => {
+    withTempDir('run-task-ship-archive-commit-fail-', dir => {
+        const taskId = 'ship-archive-commit-fail';
+        const { localDir, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 308 },
+            seedSharedDocs: { 'docs/pipeline-invocations.md': '# Pipeline Invocations\n\nexisting row\n' },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'pending row\n', 'utf8');
+
+        const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+        setupGitArchiveFailure(fakeTools, realGit, 'commit');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /failed to commit archive changes/);
+        assert.equal(
+            fs.readFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'utf8'),
+            '# Pipeline Invocations\n\nexisting row\npending row\n',
+        );
+    });
+});
+
+void test('--ship preserves telemetry in the working tree when the archive push fails (A3)', () => {
+    withTempDir('run-task-ship-archive-push-fail-', dir => {
+        const taskId = 'ship-archive-push-fail';
+        const { localDir, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 309 },
+            seedSharedDocs: { 'docs/pipeline-invocations.md': '# Pipeline Invocations\n\nexisting row\n' },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'pending row\n', 'utf8');
+
+        const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+        setupGitArchiveFailure(fakeTools, realGit, 'push');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /simulated archive push failure/);
+        assert.equal(
+            fs.readFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'utf8'),
+            '# Pipeline Invocations\n\nexisting row\npending row\n',
+        );
+    });
+});
+```
+
+A3 relies on `git('push', ...)` (`git.ts:32-36`) throwing on non-zero exit, which propagates uncaught out of `main()` in the `runCanon` test harness's `.catch(error => { console.error(error); process.exit(1); })` (`tests/run-task-ship.test.ts:188`) — so `result.status !== 0` and the thrown message lands in `result.stderr`. Unlike A2, there is no `die()` call to word the message; assert on the fake git's own stderr text instead.
+
+**5. Regression check only — no new code (A4).**
+
+Re-run the existing AC-2 (`--ship preserves a sibling task's pending telemetry rows...`), AC-3 (mixed-dirt abort), and AC-11 (archive-staged telemetry preserved without absorption) tests after the steps above land. They must pass unmodified — the reordering changes *when* re-append happens relative to commit/push, not the happy-path or abort-path outcomes those three tests assert on. If any of the three needs an edit to pass, that's a signal the reorder broke something the amendment didn't intend to change — stop and re-examine before adjusting the test.
+
+**6. Docs: `docs/pipeline-orchestrator.md` (AC-10, as amended).**
+
+Two edits to the `## Shipping & Post-Merge Reconciliation` section:
+
+`docs/pipeline-orchestrator.md:457` — replace "the suffix is backed up to disk, the working copy is reverted to HEAD, and after the archive commit lands the suffix is re-appended as an uncommitted change" with "the suffix is backed up to disk, the working copy is reverted to HEAD, and — after the archive changes are staged but before they are committed — the suffix is re-appended as an uncommitted change."
+
+`docs/pipeline-orchestrator.md:459` — replace step (9) "commit archive changes, re-append preserved telemetry dirt as uncommitted supervising-checkout changes, and clean up local branches" with "stage archive changes, re-append preserved telemetry dirt as uncommitted supervising-checkout changes, commit and push the archive changes, and clean up local branches."
+
+After editing, let the pre-commit sync hook regenerate `templates/docs/pipeline-orchestrator.md`, or run `npm run sync-templates`; verify with `npm run sync-templates:check`. List both paths in the handoff Changes table.
+
+**7. Rebuild and validate.**
+
+`scripts/run-task/main.ts` changed again, so `npm run build` must be re-run and the `dist/cli/index.js` / `dist/scripts/run-task.js` diffs (whichever actually change) committed. Full order, same as the spec's amendment validation line: `npm run lint`, `npm run type-check`, `npm test` (confirm A2/A3 pass and A4's three pre-existing tests still pass), `npm run build`, `npm run docs-refs-check`, `npm run sync-templates:check`.
+
+### Handoff Changes table — expected entries for this round
+
+- `scripts/run-task/main.ts` — seam split (`stageArchiveChanges` + slimmed `commitArchiveChanges`), reordered call site.
+- `tests/run-task-safety.test.ts` — updated caller + import for the new 2-function seam.
+- `tests/run-task-ship.test.ts` — new `setupGitArchiveFailure` helper, two new tests (A2, A3).
+- `docs/pipeline-orchestrator.md` — corrected re-append timing in two places.
+- `templates/docs/pipeline-orchestrator.md` — generated mirror.
+- `dist/cli/index.js`, `dist/scripts/run-task.js` — rebuild output (whichever changes).
+
+### Out of scope for this round (per Amendment Scope)
+
+- `scripts/run-task/validation.ts` and its classification helpers — unaffected; the amendment doesn't change classification, only the re-append timing relative to staging/commit.
+- No new files, no schema change, no change to *what* gets staged or committed — only *which function performs which step* and what runs between them (Amendment, Scope paragraph).
+- AC-7's original "backup survives push failure" wording is already superseded in spec.md by A6 — no further spec edit needed; A2/A3 above are what makes that superseding claim true in code.
+
+## Reroute Plan Round 2
+
+### Context
+
+Amendment Round 2's final verdict is **approved with nits** (`spec-review.md`'s last "Amendment Review Round 2" block). The one nit is non-blocking and test-construction-only (A7's porcelain-code example is slightly off — see Step 4 below); no further spec edit is needed to implement against it.
+
+The code currently on this branch (confirmed by reading the actual files, not just `handoff.md`) implements Round 1 (A1–A6) only — `handoff.md`'s AC Coverage table stops at A6 and never mentions A7–A11. Confirmed directly:
+
+- `classifySharedDocDirtFromData(docClass, headContent, workingContent)` in `scripts/run-task/validation.ts:1587` still takes the pre-Round-2 3-argument shape (`headContent: string | null`, `workingContent: string` — non-nullable). `SharedDocEntryInput` (`validation.ts:1618`) still has no `porcelainCode` field and `workingContent: string`.
+- `classifyAndPreserveSharedDocDirt()` in `scripts/run-task/main.ts:1940-1956` still derives dirt from `fs.existsSync` (the present-filter Round 2 replaces) plus a per-file `fs.readFileSync` + `gitSafeAtRaw(REPO_ROOT, 'show', 'HEAD:...')` content comparison — no batched `git status --porcelain` call, no porcelain-code gate.
+- `tests/run-task-validation.test.ts:227,234,241,248,255,264-281` still call the old 3-arg form, exactly matching the spec's "Known callers to update" table.
+
+So this round's delta is implementing Round 2's amendment as written: replace the `fs.existsSync`-plus-content-diff detection with a batched `git status --porcelain=v1` call, gate classification on the resulting 2-character code (only `' M'` reaches the existing content check; everything else — staged changes, deletions, renames, untracked — aborts for both file classes), widen the `*FromData` seam to take `porcelainCode`, update the known test callers, and add the new A7–A10 integration/unit coverage. Everything from the original plan (Steps 0–6) and Round 1's delta that isn't touched here stands as implemented — this section does not re-plan the classification-verdict shape (`clean`/`preserve`/`abort`), the abort-message builder, the two-phase set gate, the `stageArchiveChanges`/`commitArchiveChanges` seam split, or AC-2/3/4/5/6/7/8/9/11/A1-A6, none of which Round 2 touches.
+
+**Reusable seam found during orientation — not in the spec, but load-bearing for this delta**: `scripts/run-task/git.ts:373` already exports `parsePorcelainEntries(output: string): PorcelainEntry[]`, returning `{ raw, indexStatus, worktreeStatus, paths }` per line, with rename lines (`'...  -> ...'`) already split into `paths: [oldPath, newPath]`. `indexStatus + worktreeStatus` is exactly the 2-character porcelain code the amendment specifies (e.g. `' M'`, `'M '`, `'??'`... concatenating `'?' + '?'` for untracked). Reuse this directly instead of writing new porcelain-parsing logic in `main.ts` — it is already used at 7 other call sites in `main.ts` for the same `git status --porcelain=v1` output shape.
+
+### Delta
+
+**1. Widen the pure classification seam in `scripts/run-task/validation.ts` (AC-8 as amended, A10).**
+
+Replace the `classifySharedDocDirtFromData` signature and body (`validation.ts:1587-1611`):
+
+```ts
+export function classifySharedDocDirtFromData(
+    docClass: SharedDocClass,
+    porcelainCode: string | null,
+    headContent: string | null,
+    workingContent: string | null,
+): SharedDocClassification {
+    if (porcelainCode === null) {
+        return { verdict: 'clean' };
+    }
+    if (porcelainCode !== ' M') {
+        return {
+            verdict: 'abort',
+            reason: `git status shows this path as '${porcelainCode.trim()}' — only a plain unstaged ` +
+                'modification is eligible for preservation; staged changes, deletions, untracked files, ' +
+                'and renames abort',
+        };
+    }
+    // From here down: porcelainCode === ' M' — original content-diff logic, unchanged.
+    // main.ts only ever passes workingContent: null when porcelainCode !== ' M' (see step 2), so this
+    // branch is unreachable in practice; narrow defensively rather than asserting, since the type is
+    // honestly nullable at the signature boundary.
+    if (workingContent === null) {
+        return {
+            verdict: 'abort',
+            reason: 'present on disk but not readable at HEAD (untracked?) — cannot verify pure-append safety',
+        };
+    }
+    if (headContent !== null && workingContent === headContent) {
+        return { verdict: 'clean' };
+    }
+    if (docClass === 'managed') {
+        return {
+            verdict: 'abort',
+            reason: headContent === null
+                ? 'present on disk but not readable at HEAD (untracked?) — cannot verify it is safe to leave in place'
+                : 'has uncommitted edits',
+        };
+    }
+    if (headContent === null) {
+        return {
+            verdict: 'abort',
+            reason: 'present on disk but not readable at HEAD (untracked?) — cannot verify pure-append safety',
+        };
+    }
+    if (workingContent.startsWith(headContent)) {
+        return { verdict: 'preserve', suffix: workingContent.slice(headContent.length) };
+    }
+    return {
+        verdict: 'abort',
+        reason: 'uncommitted edits are not a pure append over HEAD content — cannot safely preserve',
+    };
+}
+```
+
+Widen `SharedDocEntryInput` (`validation.ts:1618-1623`):
+
+```ts
+export type SharedDocEntryInput = {
+    relPath: string;
+    docClass: SharedDocClass;
+    porcelainCode: string | null;
+    headContent: string | null;
+    workingContent: string | null;
+};
+```
+
+`classifySharedDocSetFromData` (`validation.ts:1626-1639`) needs one added argument in its call to `classifySharedDocDirtFromData` — pass `entry.porcelainCode` as the new second positional arg; everything else in that function (the abort/preserve aggregation loop) is untouched. `buildSharedDocAbortMessage` is untouched (it only ever consumes `{ relPath, reason }`, already produced correctly by the new abort branch).
+
+**2. Replace `fs.existsSync`-plus-content-diff detection with a batched porcelain call in `scripts/run-task/main.ts` (AC-1 as amended, AC-8, A7-A9).**
+
+Replace `classifyAndPreserveSharedDocDirt()`'s detection block (`main.ts:1940-1956`, everything before `const verdict = ...`):
+
+```ts
+function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
+    const statusResult = splitGit.gitSafeAtRaw(
+        REPO_ROOT, 'status', '--porcelain=v1', '-uall', '--', ...splitWorktree.PIPELINE_SHARED_DOCS,
+    );
+    const porcelainByPath = new Map<string, string>();
+    for (const entry of splitGit.parsePorcelainEntries(statusResult.stdout)) {
+        const code = entry.indexStatus + entry.worktreeStatus;
+        for (const p of entry.paths) porcelainByPath.set(p, code);
+    }
+
+    const dirty = splitWorktree.PIPELINE_SHARED_DOCS.filter(relPath => porcelainByPath.has(relPath));
+    if (dirty.length === 0) return [];
+
+    const managedDocs: readonly string[] = splitWorktree.PIPELINE_MANAGED_DOCS;
+    const entries = dirty.map(relPath => {
+        const docClass: splitValidation.SharedDocClass = managedDocs.includes(relPath) ? 'managed' : 'telemetry';
+        const porcelainCode = porcelainByPath.get(relPath) ?? null;
+        if (porcelainCode !== ' M') {
+            // Not the safe shape — no content read needed, nothing to preserve.
+            return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
+        }
+        const workingContent = fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+        const headResult = splitGit.gitSafeAtRaw(REPO_ROOT, 'show', `HEAD:${relPath}`);
+        return {
+            relPath,
+            docClass,
+            porcelainCode,
+            headContent: headResult.ok ? headResult.stdout : null,
+            workingContent,
+        };
+    });
+    // (rest of the function — classifySharedDocSetFromData call through the backup loop — is unchanged)
+```
+
+Notes:
+- This drops the old `fs.existsSync` present-filter entirely — a path absent from the porcelain map (fully clean, matches HEAD in both index and worktree) never enters `entries`, exactly matching the pre-Round-2 "zero-`present` fast path" behavior for the truly-clean case. A path that's dirty-but-deleted-from-the-working-tree (a case `fs.existsSync` would have silently skipped, AC-9's gap) now surfaces via its porcelain code (`' D'`) and reaches the entries array, closing that gap.
+- `git status --porcelain=v1 -- <paths>` reports explicitly-named files individually regardless of the `-u` setting (the `-u` flag only governs untracked-*directory* expansion) — `-uall` is included only for consistency with every other `git status --porcelain=v1` call site in this file, not because it's load-bearing here.
+- Rename lines produce `paths: [oldPath, newPath]` from `parsePorcelainEntries` — both get mapped to the same code, so a rename is caught whichever side is the `PIPELINE_SHARED_DOCS` entry (the old path, in practice, since the new path is a project-defined constant unlikely to also be in that list).
+- Reads (`fs.readFileSync` + `gitSafeAtRaw ... show`) now happen only for the `' M'` subset, not for every dirty file — a smaller, more precise read set than Round 1's, and it naturally skips a read attempt for a deleted file (which would have thrown on `fs.readFileSync`).
+
+**3. Update the known test callers in `tests/run-task-validation.test.ts` (per spec's "Known callers to update" table).**
+
+Apply exactly the table from the spec's Amendment Round 2 section, at the confirmed current line numbers:
+
+| Line | Change |
+|---|---|
+| 227 | `classifySharedDocDirtFromData('telemetry', 'base\n', 'base\nrow\n')` → `classifySharedDocDirtFromData('telemetry', ' M', 'base\n', 'base\nrow\n')` — same expected result |
+| 234 | `classifySharedDocDirtFromData('telemetry', 'base\n', 'base\n')` → `classifySharedDocDirtFromData('telemetry', null, 'base\n', 'base\n')` — same expected result (`{ verdict: 'clean' }`) |
+| 241 | `classifySharedDocDirtFromData('telemetry', 'base\n', 'changed\n')` → `classifySharedDocDirtFromData('telemetry', ' M', 'base\n', 'changed\n')` — same expected result |
+| 248 | `classifySharedDocDirtFromData('managed', 'base\n', 'base\nedit\n')` → `classifySharedDocDirtFromData('managed', ' M', 'base\n', 'base\nedit\n')` — same expected result |
+| 255 | `classifySharedDocDirtFromData('telemetry', null, 'row\n')` → `classifySharedDocDirtFromData('telemetry', '??', null, 'row\n')` — **expected result changes** to `{ verdict: 'abort', reason: "git status shows this path as '??' — only a plain unstaged modification is eligible for preservation; staged changes, deletions, untracked files, and renames abort" }` |
+| 264-281 | both entries in the `classifySharedDocSetFromData` set-test array gain `porcelainCode: ' M'` — same expected verdict |
+
+Add one new unit test (the spec's "New test needed" paragraph) for the still-relevant defensive fallback the old line-255 test used to cover:
+
+```ts
+void test('classifySharedDocDirtFromData aborts when HEAD is unreadable even though porcelain says safe-shape', () => {
+    assert.deepEqual(
+        classifySharedDocDirtFromData('telemetry', ' M', null, 'row\n'),
+        { verdict: 'abort', reason: 'present on disk but not readable at HEAD (untracked?) — cannot verify pure-append safety' },
+    );
+});
+```
+
+**4. A10 unit coverage: one row per practical porcelain code.**
+
+Add unit rows (near the tests updated in step 3) for every code A10 lists, plus the `'MM'` variant the review's non-blocking nit flagged:
+
+```ts
+void test('classifySharedDocDirtFromData aborts every porcelain code except the safe plain-unstaged-edit shape', () => {
+    const unsafeCodes = ['A ', 'M ', 'D ', ' D', 'R ', '??', 'MM'];
+    for (const code of unsafeCodes) {
+        const result = classifySharedDocDirtFromData('telemetry', code, 'base\n', 'base\nrow\n');
+        assert.equal(result.verdict, 'abort', `expected abort for code ${JSON.stringify(code)}`);
+    }
+});
+```
+
+`'MM'` (index differs from HEAD **and** worktree differs from index) is the code the spec-review's final non-blocking nit found when constructing A7's fixture by directly overwriting the working-tree file after `git add` (rather than using `git checkout`/`git reset`, which would touch the index too and produce a fully-clean file instead) — see step 5. It aborts under the same "only `' M'` is safe" rule as every other non-safe code; no special case needed, but it's worth an explicit row since it's the code A7's real fixture actually produces.
+
+**5. A7 (staged-only edit on a managed doc aborts) and A8 (same, on telemetry) — integration tests in `tests/run-task-ship.test.ts`.**
+
+Per the review's non-blocking nit: construct the "staged edit, working tree back at HEAD" fixture by staging via `git add`, then overwriting the working-tree file directly with the HEAD content via `fs.writeFileSync` (not `git checkout -- <path>` or `git reset`, both of which would also reset the index and produce a fully clean file — losing the staged-only shape entirely). This produces porcelain code `'MM'` in practice, not `' M'` as an earlier draft of the amendment's prose assumed — that's fine, since Round 2's rule aborts every code except `' M'`, so the test's abort assertion holds regardless of the exact 2-character code. Don't assert an exact porcelain code string in the test; assert the abort behavior (non-zero exit, file named in the error, no `pr merge` invoked, content unchanged).
+
+Append after the existing A2/A3 tests (end of file, after line 1232):
+
+```ts
+void test('--ship aborts a staged-only edit on a managed doc rather than silently absorbing it (A7)', () => {
+    withTempDir('run-task-ship-staged-managed-', dir => {
+        const taskId = 'ship-staged-managed';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 310 },
+            seedSharedDocs: { 'docs/patterns.md': '# Patterns\n\nexisting pattern\n' },
+        });
+        markTaskWorktree(localDir, taskId);
+        const target = path.join(localDir, 'docs', 'patterns.md');
+        const headContent = fs.readFileSync(target, 'utf8');
+        fs.writeFileSync(target, `${headContent}staged edit\n`, 'utf8');
+        gitIn(localDir, 'add', 'docs/patterns.md');
+        fs.writeFileSync(target, headContent, 'utf8'); // working tree back at HEAD; index still staged
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, { FAKE_GH_LOG: ghLog });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /docs\/patterns\.md/);
+        assert.ok(!fs.existsSync(ghLog) || !fs.readFileSync(ghLog, 'utf8').includes('merge'));
+        assert.equal(gitIn(localDir, 'diff', '--cached', '--', 'docs/patterns.md').length > 0, true);
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+
+void test('--ship aborts a staged-only edit on a telemetry file, fail-closed (A8)', () => {
+    withTempDir('run-task-ship-staged-telemetry-', dir => {
+        const taskId = 'ship-staged-telemetry';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 311 },
+            seedSharedDocs: { 'docs/pipeline-invocations.md': '# Pipeline Invocations\n\nexisting row\n' },
+        });
+        markTaskWorktree(localDir, taskId);
+        const target = path.join(localDir, 'docs', 'pipeline-invocations.md');
+        const headContent = fs.readFileSync(target, 'utf8');
+        fs.writeFileSync(target, `${headContent}staged row\n`, 'utf8');
+        gitIn(localDir, 'add', 'docs/pipeline-invocations.md');
+        fs.writeFileSync(target, headContent, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, { FAKE_GH_LOG: ghLog });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /docs\/pipeline-invocations\.md/);
+        assert.ok(!fs.existsSync(ghLog) || !fs.readFileSync(ghLog, 'utf8').includes('merge'));
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+```
+
+**6. A9 (working-tree deletion of a tracked shared doc aborts) — integration test.**
+
+```ts
+void test('--ship aborts a working-tree deletion of a tracked shared doc rather than silently restoring or staging it (A9)', () => {
+    withTempDir('run-task-ship-deleted-doc-', dir => {
+        const taskId = 'ship-deleted-doc';
+        const ghLog = path.join(dir, 'gh.log');
+        const { localDir, branch, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 312 },
+            seedSharedDocs: { 'docs/decisions.md': '# Decisions\n\nexisting decision\n' },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.rmSync(path.join(localDir, 'docs', 'decisions.md'));
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, { FAKE_GH_LOG: ghLog });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /docs\/decisions\.md/);
+        assert.ok(!fs.existsSync(ghLog) || !fs.readFileSync(ghLog, 'utf8').includes('merge'));
+        expectTaskAndBranchSurvive(localDir, taskId, branch);
+    });
+});
+```
+
+`docs/decisions.md` is used here (rather than `docs/patterns.md`, already used by other fixtures in this file) only to avoid seeding-content collisions across tests in the same suite; any `PIPELINE_MANAGED_DOCS` entry works identically for this AC.
+
+**7. Regression check only — no new code (A4, still applies).**
+
+Re-run AC-2, AC-3, AC-11 (Round 1's regression set) plus A2/A3 (Round 1's crash-safety set) after the steps above land — all five must still pass unmodified, since Round 2 only changes *how* dirt is detected (porcelain-gated), not the classify/backup/revert/re-append behavior once a file is classified `preserve`. If any of the five needs an edit, stop and re-examine — Round 2 isn't supposed to touch that path.
+
+**8. Rebuild and validate.**
+
+`scripts/run-task/main.ts` and `scripts/run-task/validation.ts` both changed, so `npm run build` must be re-run and the changed `dist/` bundle(s) committed. Full order: `npm run lint`, `npm run type-check`, `npm test` (confirm A7-A10 and the updated/added unit rows pass, and AC-2/3/11/A2/A3 still pass unmodified), `npm run build`, `npm run docs-refs-check`, `npm run sync-templates:check`.
+
+Per A11, `docs/pipeline-orchestrator.md` and the spec's own Design/Known Risks sections are already updated in place (the spec-review record confirms this landed before final approval) — no doc edit is needed in this round; `docs-refs-check` is run only because it's in the standard validation list, not because this round touches `docs/pipeline-orchestrator.md`.
+
+### Handoff Changes table — expected entries for this round
+
+- `scripts/run-task/validation.ts` — widened `classifySharedDocDirtFromData` signature (porcelain-gated), widened `SharedDocEntryInput`.
+- `scripts/run-task/main.ts` — `classifyAndPreserveSharedDocDirt()` detection rewritten to a batched `git status --porcelain=v1` call gated on the 2-character code.
+- `tests/run-task-validation.test.ts` — updated known callers (6 call sites), 1 new defensive-fallback test, 1 new porcelain-code-sweep test.
+- `tests/run-task-ship.test.ts` — 3 new integration tests (A7, A8, A9).
+- `dist/cli/index.js`, `dist/scripts/run-task.js` — rebuild output (whichever changes).
+
+### Out of scope for this round (per Amendment Round 2 Scope)
+
+- `docs/pipeline-orchestrator.md` / `templates/docs/pipeline-orchestrator.md` — not touched this round (A11's doc updates already landed pre-approval, per the Context section above).
+- The `stageArchiveChanges`/`commitArchiveChanges` seam split and the re-append call-site ordering (Round 1's A1-A6) — unaffected; Round 2 only changes upstream detection, not what happens once a file is classified `preserve`.
+- Rename-aware recovery — explicitly non-goal per the spec's Round 2 "Non-Goals addition"; a rename's porcelain code is never `' M'`, so it aborts like any other unsafe state.

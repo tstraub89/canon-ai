@@ -53,6 +53,7 @@ import { pathToFileURL } from "url";
 // scripts/run-task/main.ts
 import { spawnSync as spawnSync6 } from "child_process";
 import fs17 from "fs";
+import os from "os";
 import path17 from "path";
 
 // scripts/run-task/phases/code-review.ts
@@ -2988,6 +2989,74 @@ function verifyBaseDivergence(baseBranch, cwd) {
     return { commits: result.commits, ok: false, stderr: result.stderr, fetchFailed: false };
   }
   return { commits: result.commits, ok: true, stderr: "", fetchFailed: false };
+}
+function classifySharedDocDirtFromData(docClass, porcelainCode, headContent, workingContent) {
+  if (porcelainCode === null) {
+    return { verdict: "clean" };
+  }
+  if (porcelainCode !== " M") {
+    return {
+      verdict: "abort",
+      reason: `git status shows this path as '${porcelainCode.trim()}' \u2014 only a plain unstaged modification is eligible for preservation; staged changes, deletions, untracked files, and renames abort`
+    };
+  }
+  if (workingContent === null) {
+    return {
+      verdict: "abort",
+      reason: "present on disk but not readable at HEAD (untracked?) \u2014 cannot verify pure-append safety"
+    };
+  }
+  if (headContent !== null && workingContent === headContent) {
+    return { verdict: "clean" };
+  }
+  if (docClass === "managed") {
+    return {
+      verdict: "abort",
+      reason: headContent === null ? "present on disk but not readable at HEAD (untracked?) \u2014 cannot verify it is safe to leave in place" : "has uncommitted edits"
+    };
+  }
+  if (headContent === null) {
+    return {
+      verdict: "abort",
+      reason: "present on disk but not readable at HEAD (untracked?) \u2014 cannot verify pure-append safety"
+    };
+  }
+  if (workingContent.startsWith(headContent)) {
+    return { verdict: "preserve", suffix: workingContent.slice(headContent.length) };
+  }
+  return {
+    verdict: "abort",
+    reason: "uncommitted edits are not a pure append over HEAD content \u2014 cannot safely preserve"
+  };
+}
+function classifySharedDocSetFromData(entries) {
+  const preserve = [];
+  const abortedFiles = [];
+  for (const entry of entries) {
+    const result = classifySharedDocDirtFromData(
+      entry.docClass,
+      entry.porcelainCode,
+      entry.headContent,
+      entry.workingContent
+    );
+    if (result.verdict === "abort") {
+      abortedFiles.push({ relPath: entry.relPath, reason: result.reason });
+    } else if (result.verdict === "preserve") {
+      preserve.push({ relPath: entry.relPath, suffix: result.suffix });
+    }
+  }
+  if (abortedFiles.length > 0) return { ok: false, abortedFiles };
+  return { ok: true, preserve };
+}
+function buildSharedDocAbortMessage(abortedFiles) {
+  const list = abortedFiles.map((file) => `  - ${file.relPath}: ${file.reason}`).join("\n");
+  return [
+    "--ship aborted: uncommitted shared-doc edits could not be safely resolved before merging:",
+    list,
+    "",
+    "Recovery: commit or stash your edits, then re-run --ship.",
+    "--force does not bypass this gate."
+  ].join("\n");
 }
 
 // scripts/run-task/prompts/index.ts
@@ -6294,8 +6363,10 @@ function runPostMergeHook() {
     warn2(`.canon/hooks/post-merge.sh exited non-zero \u2014 continuing. stderr: ${result.stderr.slice(0, 400)}`);
   }
 }
-function commitArchiveChanges(taskIds, baseBranch, stagedPaths) {
+function stageArchiveChanges(stagedPaths) {
   for (const p of stagedPaths) gitSafe2("add", "-A", "--", p);
+}
+function commitArchiveChanges(taskIds, baseBranch) {
   const staged = gitSafe2("diff", "--cached", "--name-only");
   if (!staged.stdout.trim()) return { committed: false };
   const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(", ");
@@ -6329,6 +6400,66 @@ function rewriteArchivedTaskRefs(taskIds) {
       info2(`Updated stale task refs in ${path17.relative(REPO_ROOT2, filePath)}.`);
     }
   }
+}
+function classifyAndPreserveSharedDocDirt() {
+  const statusResult = gitSafeAtRaw(
+    REPO_ROOT2,
+    "status",
+    "--porcelain=v1",
+    "-uall",
+    "--",
+    ...PIPELINE_SHARED_DOCS
+  );
+  if (!statusResult.ok) {
+    die2(`--ship aborted: failed to inspect shared-doc dirt before merging: ${statusResult.stderr}`);
+    return [];
+  }
+  const porcelainByPath = /* @__PURE__ */ new Map();
+  for (const entry of parsePorcelainEntries(statusResult.stdout)) {
+    const code = entry.indexStatus + entry.worktreeStatus;
+    for (const entryPath of entry.paths) {
+      porcelainByPath.set(entryPath, code);
+    }
+  }
+  const dirty = PIPELINE_SHARED_DOCS.filter((relPath) => porcelainByPath.has(relPath));
+  if (dirty.length === 0) return [];
+  const managedDocs = PIPELINE_MANAGED_DOCS;
+  const entries = dirty.map((relPath) => {
+    const docClass = managedDocs.includes(relPath) ? "managed" : "telemetry";
+    const porcelainCode = porcelainByPath.get(relPath) ?? null;
+    if (porcelainCode !== " M") {
+      return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
+    }
+    const workingContent = fs17.readFileSync(path17.join(REPO_ROOT2, relPath), "utf8");
+    const headResult = gitSafeAtRaw(REPO_ROOT2, "show", `HEAD:${relPath}`);
+    return {
+      relPath,
+      docClass,
+      porcelainCode,
+      headContent: headResult.ok ? headResult.stdout : null,
+      workingContent
+    };
+  });
+  const verdict = classifySharedDocSetFromData(entries);
+  if (!verdict.ok) {
+    die2(buildSharedDocAbortMessage(verdict.abortedFiles));
+    return [];
+  }
+  const preserve = verdict.preserve;
+  if (preserve.length === 0) return [];
+  const backupDir = fs17.mkdtempSync(path17.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
+  const preserved = [];
+  for (const { relPath, suffix } of preserve) {
+    const backupPath = path17.join(backupDir, relPath.replace(/[\\/]/g, "__"));
+    fs17.writeFileSync(backupPath, suffix, "utf8");
+    info2(`Preserving uncommitted ${relPath} dirt during --ship; backup: ${backupPath}`);
+    const checkoutResult = gitSafe("checkout", "HEAD", "--", relPath);
+    if (!checkoutResult.ok) {
+      die2(`--ship aborted: failed to revert ${relPath} after writing backup ${backupPath}: ${checkoutResult.stderr}`);
+    }
+    preserved.push({ relPath, suffix, backupPath });
+  }
+  return preserved;
 }
 function shipTasks(taskIds) {
   const resolveShipCwd = (taskId) => {
@@ -6411,11 +6542,9 @@ function shipTasks(taskIds) {
     if (!snapshot) die(`Missing pre-switch ship snapshot for task '${taskId}'.`);
     return snapshot;
   };
+  let preservedSharedDocDirt = [];
   if (taskIds.some((id) => taskSnapshot(id).worktree)) {
-    const presentSharedDocs = PIPELINE_SHARED_DOCS.filter((relPath) => fs17.existsSync(path17.join(REPO_ROOT2, relPath)));
-    if (presentSharedDocs.length > 0) {
-      gitSafe("checkout", "HEAD", "--", ...presentSharedDocs);
-    }
+    preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
   }
   const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path17.join("tasks", taskId, "status.json"));
   if (orphanedStatusPaths.length > 0) {
@@ -6517,7 +6646,13 @@ Recovery:
     path17.join(REPO_ROOT2, "docs", "lessons-learned.md"),
     path17.join(REPO_ROOT2, "docs", "task-quality-log.md")
   ]);
-  const archiveCommit = commitArchiveChanges(taskIds, baseBranch, stagedPaths);
+  stageArchiveChanges(stagedPaths);
+  for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+    fs17.appendFileSync(path17.join(REPO_ROOT2, relPath), suffix, "utf8");
+    fs17.rmSync(backupPath, { force: true });
+    info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+  }
+  const archiveCommit = commitArchiveChanges(taskIds, baseBranch);
   if (archiveCommit.stderr) {
     die2(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}`);
   }

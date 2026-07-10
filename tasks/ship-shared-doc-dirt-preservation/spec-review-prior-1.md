@@ -78,38 +78,3 @@ Does the spec's approach work against the actual codebase?
 > Findings:
 >
 > - **Blocking integration conflict — AC-10 still requires documenting the obsolete restore timing.** The current Decision and amendment both say preserved telemetry is re-appended after `stageArchiveChanges()` and before `commitArchiveChanges()` / `git commit` (`tasks/ship-shared-doc-dirt-preservation/spec.md:24`, `:63`, `:75`, `:137`). AC-10 still requires `docs/pipeline-orchestrator.md` to document that pure-append telemetry is "re-applied as uncommitted dirt after the archive commit" (`spec.md:54`). That is now the pre-amendment behavior, and satisfying AC-10 literally would put stale ship-order documentation in the managed docs. Amend AC-10 to require the new timing: dirty managed docs abort pre-merge; pure-append telemetry is preserved, reverted for checkout/merge, then re-applied as uncommitted dirt after archive staging and before archive commit/push; anything else aborts pre-merge.
-
-## Amendment Review
-
-- [ ] **Approved**
-- [x] **Approved with nits**
-- [ ] **Changes requested**
-
-> Findings:
->
-> - **Non-blocking nit:** AC-7's label says it is "superseded by Amendment A5," but A6 is the item that explicitly supersedes AC-7's backup lifetime. The AC body is clear and implementable, so this is just a cross-reference cleanup.
-> - **Non-blocking nit:** Known Risks says the insertion point is killed by "Amendment, round 2," but this prompt is reroute amendment review round 1. The surrounding wording and ACs are coherent, so this is only a label mismatch.
-
-## Amendment Review Round 2
-
-- [ ] **Approved**
-- [ ] **Approved with nits**
-- [x] **Changes requested**
-
-> Findings:
->
-> - **Blocking integration conflict — AC-8 still requires the old content-only pure seam.** The already-approved AC-8 defines the validation helper inputs as "file class, HEAD content, working content" and its unit-test list is still keyed to that three-input shape (`tasks/ship-shared-doc-dirt-preservation/spec.md:52`). Round 2 now requires `classifySharedDocDirtFromData(docClass, porcelainCode, headContent, workingContent)` and says clean/unsafe decisions are gated first by `porcelainCode` (`spec.md:157`, `:159`, `:181`). Those cannot both be literal acceptance criteria: implementing the required porcelain parameter violates AC-8's stated interface, while satisfying AC-8 leaves the SG-1 index-state regression unfixed. Amend AC-8 in place or explicitly supersede it so the accepted seam is porcelain-code + content only for the `' M'` branch.
->
-> - **Blocking type/interface gap — Round 2 tells `main.ts` to pass `workingContent: null` without amending the type contract.** The current helper and set-entry type require `workingContent: string` (`scripts/run-task/validation.ts:1587`, `:1590`, `:1618`, `:1622`). The amendment only names adding `porcelainCode` as the second parameter, but then instructs `classifyAndPreserveSharedDocDirt()` to skip reads for every non-`' M'` porcelain entry and pass `workingContent: null` (`tasks/ship-shared-doc-dirt-preservation/spec.md:159`). As written, the implementer must either fail type-check or invent an unstated widening/sentinel. Specify the new signature/type explicitly, e.g. `workingContent: string | null` with content required only when `porcelainCode === ' M'`, or require callers to pass a string placeholder that the non-`' M'` branch ignores.
->
-> - **Blocking integration gap — A11 says the Design and Known Risks sections are updated, but the integrated spec sections are still stale.** A11 requires Known Risks to document git-status-derived detection and the single safe-shape rule, and requires the Design `main.ts` row to describe the batched `git status --porcelain` replacement for the `fs.existsSync` loop (`spec.md:182`). The actual Design row still describes only the original classification/preserve step and Round 1 staging split, with no batched status call (`spec.md:63`), and Known Risks contains no git-status-derived detection risk or safe-shape rule (`spec.md:98`-`:105`). Move the Round 2 detection mechanism into those integrated sections or change A11 so it no longer asserts edits that have not landed.
-
-## Amendment Review Round 2
-
-- [ ] **Approved**
-- [x] **Approved with nits**
-- [ ] **Changes requested**
-
-> Findings:
->
-> - **Non-blocking nit:** The amendment's fail-closed rule is sound, but the porcelain-code example for A7's exact setup is slightly off. A7 says to stage an edit and then reset only the working copy back to HEAD, leaving the index changed and the working tree matching HEAD (`tasks/ship-shared-doc-dirt-preservation/spec.md:179`); in a temporary git fixture during review, that shape emitted `MM`, not `M `, because column 2 compares the working tree to the index. A plain staged edit where the working tree still matches the index emits `M `. This does not block implementation because Round 2 aborts every code other than `' M'` (`spec.md:158`) and A7's integration test still exercises the central regression, but A10's unit list should ideally include `MM` or the prose should avoid naming `M ` as the staged-only code for the reset-worktree variant.

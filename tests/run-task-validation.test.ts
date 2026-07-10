@@ -20,6 +20,9 @@ import {
     canonicalizeValidationCheck,
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
+    buildSharedDocAbortMessage,
+    classifySharedDocDirtFromData,
+    classifySharedDocSetFromData,
     classifyPreflightBlockersFromData,
     collectUnscannedTableHits,
     computeLatestValidationResults,
@@ -217,6 +220,95 @@ void test('parseNameStatusOutput: non-renamed change returns one path', () => {
 
 void test('parseNameStatusOutput: rename returns pre-image and post-image paths sorted', () => {
     assert.deepEqual(parseNameStatusOutput('R95\0old.ts\0new.ts\0'), ['new.ts', 'old.ts']);
+});
+
+void test('classifySharedDocDirtFromData preserves byte-for-byte telemetry appends', () => {
+    assert.deepEqual(
+        classifySharedDocDirtFromData('telemetry', ' M', 'base\n', 'base\nrow\n'),
+        { verdict: 'preserve', suffix: 'row\n' },
+    );
+});
+
+void test('classifySharedDocDirtFromData treats identical content as clean, not empty preserve', () => {
+    assert.deepEqual(
+        classifySharedDocDirtFromData('telemetry', null, 'base\n', 'base\n'),
+        { verdict: 'clean' },
+    );
+});
+
+void test('classifySharedDocDirtFromData aborts modified telemetry and managed dirt', () => {
+    assert.deepEqual(
+        classifySharedDocDirtFromData('telemetry', ' M', 'base\n', 'changed\n'),
+        {
+            verdict: 'abort',
+            reason: 'uncommitted edits are not a pure append over HEAD content — cannot safely preserve',
+        },
+    );
+    assert.deepEqual(
+        classifySharedDocDirtFromData('managed', ' M', 'base\n', 'base\nedit\n'),
+        { verdict: 'abort', reason: 'has uncommitted edits' },
+    );
+});
+
+void test('classifySharedDocDirtFromData aborts untracked status before content checks', () => {
+    assert.deepEqual(
+        classifySharedDocDirtFromData('telemetry', '??', null, 'row\n'),
+        {
+            verdict: 'abort',
+            reason: "git status shows this path as '??' — only a plain unstaged modification " +
+                'is eligible for preservation; staged changes, deletions, untracked files, and renames abort',
+        },
+    );
+});
+
+void test('classifySharedDocDirtFromData aborts missing HEAD content for safe-shape status', () => {
+    assert.deepEqual(
+        classifySharedDocDirtFromData('telemetry', ' M', null, 'row\n'),
+        {
+            verdict: 'abort',
+            reason: 'present on disk but not readable at HEAD (untracked?) — cannot verify pure-append safety',
+        },
+    );
+});
+
+void test('classifySharedDocDirtFromData aborts every unsafe porcelain code', () => {
+    const unsafeCodes = ['A ', 'M ', 'D ', ' D', 'R ', '??', 'MM'];
+    for (const code of unsafeCodes) {
+        const result = classifySharedDocDirtFromData('telemetry', code, 'base\n', 'base\nrow\n');
+        assert.equal(result.verdict, 'abort', `expected abort for code ${JSON.stringify(code)}`);
+    }
+});
+
+void test('classifySharedDocSetFromData aborts mixed sets before returning preserve work', () => {
+    const verdict = classifySharedDocSetFromData([
+        {
+            relPath: 'docs/pipeline-invocations.md',
+            docClass: 'telemetry',
+            porcelainCode: ' M',
+            headContent: 'base\n',
+            workingContent: 'base\nrow\n',
+        },
+        {
+            relPath: 'docs/patterns.md',
+            docClass: 'managed',
+            porcelainCode: ' M',
+            headContent: 'base\n',
+            workingContent: 'base\nedit\n',
+        },
+    ]);
+    assert.deepEqual(verdict, {
+        ok: false,
+        abortedFiles: [{ relPath: 'docs/patterns.md', reason: 'has uncommitted edits' }],
+    });
+});
+
+void test('buildSharedDocAbortMessage names files and recovery', () => {
+    const message = buildSharedDocAbortMessage([
+        { relPath: 'docs/patterns.md', reason: 'has uncommitted edits' },
+    ]);
+    assert.match(message, /docs\/patterns\.md: has uncommitted edits/);
+    assert.match(message, /commit or stash your edits/);
+    assert.match(message, /--force does not bypass this gate/);
 });
 
 void test('parseNameStatusOutput: deletion is included', () => {

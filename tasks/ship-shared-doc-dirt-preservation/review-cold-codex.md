@@ -1,0 +1,9 @@
+The patch adds the shared-doc preservation path, but it still misclassifies some dirty states as clean and computes preserved telemetry against the wrong branch snapshot when shipping from a non-base checkout. Both can leave the checkout in an unexpected state or reject valid appends.
+
+Full review comments:
+
+- [P2] Reject metadata-only shared-doc dirt instead of treating it as clean — /Users/tstraub/canon-ai/dev-worktrees/ship-shared-doc-dirt-preservation/scripts/run-task/validation.ts:1609-1610
+  This `workingContent === headContent` fast-path lets a path with a non-content `git status` change (for example a chmod/file-mode flip, or any other metadata-only ` M` state) pass as `clean`. In that case `--ship` continues with a dirty checkout and can later fail at the branch switch or leave the mode change behind, so the new fail-closed gate no longer covers all shared-doc dirt. Content equality alone is not sufficient here; this should still abort unless porcelain is actually clean.
+
+- [P2] Preserve telemetry against the base branch snapshot, not the current checkout — /Users/tstraub/canon-ai/dev-worktrees/ship-shared-doc-dirt-preservation/scripts/run-task/main.ts:1973-1973
+  `shipTasks()` explicitly supports starting from a checkout that is not `baseBranch` and only switches branches later, but this code snapshots `HEAD:<path>` before that switch. If the supervising checkout is on a different branch, the preserved suffix is validated against the wrong blob and then re-applied on top of a different file body, which can falsely reject a valid append-only telemetry edit or restore the wrong text. Take the snapshot after checking out `baseBranch`, or read `baseBranch:<path>` directly.

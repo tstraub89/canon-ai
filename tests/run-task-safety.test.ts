@@ -20,7 +20,7 @@ import {
     resolveQaPrBody,
 } from '../scripts/run-task/main.js';
 import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
-import { commitArchiveChanges } from '../scripts/run-task/main.js';
+import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
 import { resolveTaskCwd } from '../scripts/run-task/state.js';
 import { PIPELINE_MANAGED_DOCS } from '../scripts/run-task/worktree.js';
 
@@ -1104,7 +1104,8 @@ void test('commitArchiveChanges stops before push when archive commit fails', ()
             FAKE_GIT_DIFF_OUTPUT: 'tasks/example/status.json',
             FAKE_GIT_FAIL_COMMIT: '1',
         }, () => {
-            const result = commitArchiveChanges(['example'], 'main', ['tasks/example']);
+            stageArchiveChanges(['tasks/example']);
+            const result = commitArchiveChanges(['example'], 'main');
             assert.deepEqual(result, { committed: false, stderr: 'commit failed' });
         });
 

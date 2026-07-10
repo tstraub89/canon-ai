@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { runCodeReviewPhase } from './phases/code-review.js';
 import { runImplementPhase } from './phases/implement.js';
@@ -1883,12 +1884,14 @@ function runPostMergeHook(): void {
     }
 }
 
+export function stageArchiveChanges(stagedPaths: readonly string[]): void {
+    for (const p of stagedPaths) gitSafe('add', '-A', '--', p);
+}
+
 export function commitArchiveChanges(
     taskIds: string[],
     baseBranch: string,
-    stagedPaths: readonly string[],
 ): { committed: boolean; stderr?: string } {
-    for (const p of stagedPaths) gitSafe('add', '-A', '--', p);
     const staged = gitSafe('diff', '--cached', '--name-only');
     if (!staged.stdout.trim()) return { committed: false };
 
@@ -1930,6 +1933,74 @@ function rewriteArchivedTaskRefs(taskIds: string[]): void {
             info(`Updated stale task refs in ${path.relative(REPO_ROOT, filePath)}.`);
         }
     }
+}
+
+type PreservedTelemetryEntry = { relPath: string; suffix: string; backupPath: string };
+
+function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
+    const statusResult = splitGit.gitSafeAtRaw(
+        REPO_ROOT,
+        'status',
+        '--porcelain=v1',
+        '-uall',
+        '--',
+        ...splitWorktree.PIPELINE_SHARED_DOCS,
+    );
+    if (!statusResult.ok) {
+        die(`--ship aborted: failed to inspect shared-doc dirt before merging: ${statusResult.stderr}`);
+        return [];
+    }
+
+    const porcelainByPath = new Map<string, string>();
+    for (const entry of splitGit.parsePorcelainEntries(statusResult.stdout)) {
+        const code = entry.indexStatus + entry.worktreeStatus;
+        for (const entryPath of entry.paths) {
+            porcelainByPath.set(entryPath, code);
+        }
+    }
+
+    const dirty = splitWorktree.PIPELINE_SHARED_DOCS.filter(relPath => porcelainByPath.has(relPath));
+    if (dirty.length === 0) return [];
+
+    const managedDocs: readonly string[] = splitWorktree.PIPELINE_MANAGED_DOCS;
+    const entries = dirty.map(relPath => {
+        const docClass: splitValidation.SharedDocClass = managedDocs.includes(relPath) ? 'managed' : 'telemetry';
+        const porcelainCode = porcelainByPath.get(relPath) ?? null;
+        if (porcelainCode !== ' M') {
+            return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
+        }
+        const workingContent = fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+        const headResult = splitGit.gitSafeAtRaw(REPO_ROOT, 'show', `HEAD:${relPath}`);
+        return {
+            relPath,
+            docClass,
+            porcelainCode,
+            headContent: headResult.ok ? headResult.stdout : null,
+            workingContent,
+        };
+    });
+
+    const verdict = splitValidation.classifySharedDocSetFromData(entries);
+    if (!verdict.ok) {
+        die(splitValidation.buildSharedDocAbortMessage(verdict.abortedFiles));
+        return [];
+    }
+    const preserve = verdict.preserve;
+    if (preserve.length === 0) return [];
+
+    const backupDir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-ship-shared-doc-backup-'));
+    const preserved: PreservedTelemetryEntry[] = [];
+    for (const { relPath, suffix } of preserve) {
+        const backupPath = path.join(backupDir, relPath.replace(/[\\/]/g, '__'));
+        fs.writeFileSync(backupPath, suffix, 'utf8');
+        info(`Preserving uncommitted ${relPath} dirt during --ship; backup: ${backupPath}`);
+        const checkoutResult = splitGit.gitSafe('checkout', 'HEAD', '--', relPath);
+        if (!checkoutResult.ok) {
+            die(`--ship aborted: failed to revert ${relPath} after writing backup ${backupPath}: ${checkoutResult.stderr}`);
+        }
+        preserved.push({ relPath, suffix, backupPath });
+    }
+    return preserved;
 }
 
 function shipTasks(taskIds: string[]): void {
@@ -2061,14 +2132,12 @@ function shipTasks(taskIds: string[]): void {
     };
 
     // Worktree-mode tasks should leave no REPO_ROOT task-state mirror dirty under
-    // the worktree-canonical model. Keep this as a legacy/backstop cleanup for
-    // stale supervising-checkout shared-doc dirt before the merge pull.
+    // the worktree-canonical model. Classify shared-doc dirt before merge-time
+    // branch changes so live managed-doc edits fail closed and pure-append
+    // telemetry can be restored after archive staging and before commit/push.
+    let preservedSharedDocDirt: PreservedTelemetryEntry[] = [];
     if (taskIds.some(id => taskSnapshot(id).worktree)) {
-        const presentSharedDocs = splitWorktree.PIPELINE_SHARED_DOCS
-            .filter(relPath => fs.existsSync(path.join(REPO_ROOT, relPath)));
-        if (presentSharedDocs.length > 0) {
-            splitGit.gitSafe('checkout', 'HEAD', '--', ...presentSharedDocs);
-        }
+        preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
     }
 
     const orphanedStatusPaths = taskIds
@@ -2229,7 +2298,18 @@ function shipTasks(taskIds: string[]): void {
         path.join(REPO_ROOT, 'docs', 'lessons-learned.md'),
         path.join(REPO_ROOT, 'docs', 'task-quality-log.md'),
     ]);
-    const archiveCommit = commitArchiveChanges(taskIds, baseBranch, stagedPaths);
+    stageArchiveChanges(stagedPaths);
+
+    // Re-apply preserved telemetry dirt after the archive changes are staged
+    // but before commit/push. That keeps sibling rows out of this task's
+    // archive commit while restoring them before commit/push failure paths.
+    for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+        fs.appendFileSync(path.join(REPO_ROOT, relPath), suffix, 'utf8');
+        fs.rmSync(backupPath, { force: true });
+        info(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+    }
+
+    const archiveCommit = commitArchiveChanges(taskIds, baseBranch);
     if (archiveCommit.stderr) {
         die(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}`);
     }

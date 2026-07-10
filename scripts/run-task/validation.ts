@@ -1576,3 +1576,103 @@ export function verifyBaseDivergence(
     }
     return { commits: result.commits, ok: true, stderr: '', fetchFailed: false };
 }
+
+export type SharedDocClass = 'managed' | 'telemetry';
+
+export type SharedDocClassification =
+    | { verdict: 'clean' }
+    | { verdict: 'preserve'; suffix: string }
+    | { verdict: 'abort'; reason: string };
+
+export function classifySharedDocDirtFromData(
+    docClass: SharedDocClass,
+    porcelainCode: string | null,
+    headContent: string | null,
+    workingContent: string | null,
+): SharedDocClassification {
+    if (porcelainCode === null) {
+        return { verdict: 'clean' };
+    }
+    if (porcelainCode !== ' M') {
+        return {
+            verdict: 'abort',
+            reason: `git status shows this path as '${porcelainCode.trim()}' — only a plain unstaged modification ` +
+                'is eligible for preservation; staged changes, deletions, untracked files, and renames abort',
+        };
+    }
+    if (workingContent === null) {
+        return {
+            verdict: 'abort',
+            reason: 'present on disk but not readable at HEAD (untracked?) — cannot verify pure-append safety',
+        };
+    }
+    if (headContent !== null && workingContent === headContent) {
+        return { verdict: 'clean' };
+    }
+    if (docClass === 'managed') {
+        return {
+            verdict: 'abort',
+            reason: headContent === null
+                ? 'present on disk but not readable at HEAD (untracked?) — cannot verify it is safe to leave in place'
+                : 'has uncommitted edits',
+        };
+    }
+    if (headContent === null) {
+        return {
+            verdict: 'abort',
+            reason: 'present on disk but not readable at HEAD (untracked?) — cannot verify pure-append safety',
+        };
+    }
+    if (workingContent.startsWith(headContent)) {
+        return { verdict: 'preserve', suffix: workingContent.slice(headContent.length) };
+    }
+    return {
+        verdict: 'abort',
+        reason: 'uncommitted edits are not a pure append over HEAD content — cannot safely preserve',
+    };
+}
+
+export type SharedDocEntryInput = {
+    relPath: string;
+    docClass: SharedDocClass;
+    porcelainCode: string | null;
+    headContent: string | null;
+    workingContent: string | null;
+};
+
+export type SharedDocSetVerdict =
+    | { ok: true; preserve: { relPath: string; suffix: string }[] }
+    | { ok: false; abortedFiles: { relPath: string; reason: string }[] };
+
+export function classifySharedDocSetFromData(entries: readonly SharedDocEntryInput[]): SharedDocSetVerdict {
+    const preserve: { relPath: string; suffix: string }[] = [];
+    const abortedFiles: { relPath: string; reason: string }[] = [];
+
+    for (const entry of entries) {
+        const result = classifySharedDocDirtFromData(
+            entry.docClass,
+            entry.porcelainCode,
+            entry.headContent,
+            entry.workingContent,
+        );
+        if (result.verdict === 'abort') {
+            abortedFiles.push({ relPath: entry.relPath, reason: result.reason });
+        } else if (result.verdict === 'preserve') {
+            preserve.push({ relPath: entry.relPath, suffix: result.suffix });
+        }
+    }
+
+    if (abortedFiles.length > 0) return { ok: false, abortedFiles };
+    return { ok: true, preserve };
+}
+
+export function buildSharedDocAbortMessage(abortedFiles: readonly { relPath: string; reason: string }[]): string {
+    const list = abortedFiles.map(file => `  - ${file.relPath}: ${file.reason}`).join('\n');
+    return [
+        '--ship aborted: uncommitted shared-doc edits could not be safely resolved before merging:',
+        list,
+        '',
+        'Recovery: commit or stash your edits, then re-run --ship.',
+        '--force does not bypass this gate.',
+    ].join('\n');
+}

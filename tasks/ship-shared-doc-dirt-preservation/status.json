@@ -1,16 +1,16 @@
 {
   "id": "ship-shared-doc-dirt-preservation",
   "title": "Stop --ship discarding live shared-doc edits in the supervising checkout",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-07-06",
-  "updated": "2026-07-09",
-  "branch": "",
+  "updated": "2026-07-10",
+  "branch": "task/ship-shared-doc-dirt-preservation",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "3939b27d92e371a035569d159c67389762a06c95",
-    "orchestrator_commit": "3939b27d92e371a035569d159c67389762a06c95",
-    "codex_cli": "codex-cli 0.142.5",
+    "upstream_commit": "2d15582242aace6dde2dfb9b0cc427297fa561d9",
+    "orchestrator_commit": "2d15582242aace6dde2dfb9b0cc427297fa561d9",
+    "codex_cli": "codex-cli 0.144.0",
     "claude_code": "2.1.204 (Claude Code)"
   },
   "task_size": "S",
@@ -30,9 +30,9 @@
       "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 2,
-      "changes_requested_total": 1,
-      "auto_block_count": 0,
+      "iterations_total": 8,
+      "changes_requested_total": 5,
+      "auto_block_count": 1,
       "preflight_rejections_current_loop": 0
     },
     "plan": {
@@ -40,21 +40,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 2
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 3,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -62,10 +65,24 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-07-09",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    },
+    {
+      "date": "2026-07-09",
+      "phase": "code_review",
+      "iteration_count": 0,
+      "reason": "Code review surfaced a spec_gap verdict for task(s): ship-shared-doc-dirt-preservation. The implementation cannot resolve this — the root cause is in the spec. Recovery options (both operate on the full blocked bundle [ship-shared-doc-dirt-preservation]):\n  FIX: amend spec.md with ## Amendment, then: canon run ship-shared-doc-dirt-preservation --reroute\n  BLESS: canon task accept ship-shared-doc-dirt-preservation code_review --reason \"<why>\""
+    }
+  ],
   "sessions": {
-    "codex_spec_review": "019f3a18-b65c-7003-8aee-8fb81578d8a0",
-    "claude_spec": "af65444a-4ba9-46a8-8657-a1e79a1904a7"
+    "codex": "019f4451-adc4-7b82-82be-23b028128610",
+    "claude_review": "4bad08a3-31be-497e-91d7-83765df9bd6d",
+    "codex_spec_review": "019f4705-cea0-7713-ad06-47d7df0ea559"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
