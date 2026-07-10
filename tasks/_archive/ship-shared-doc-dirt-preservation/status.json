@@ -1,7 +1,7 @@
 {
   "id": "ship-shared-doc-dirt-preservation",
   "title": "Stop --ship discarding live shared-doc edits in the supervising checkout",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-06",
   "updated": "2026-07-10",
   "branch": "task/ship-shared-doc-dirt-preservation",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
