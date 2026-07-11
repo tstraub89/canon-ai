@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-07-10
+
 ### Added
 
 - **`canon task set <id> <field> <value>` — update task metadata without hand-editing `status.json`.** Settable fields: `task_size`, `delicate`, `worktree`, `base_branch`, `title`. Guarded run-stance fields (`full_send`, `human_spec_gate`) redirect to the correct command instead of writing; derived and orchestrator-owned fields refuse with clear guidance. Topology fields (`worktree`, `base_branch`) lock once a branch is recorded, preventing task-state corruption. Setting a field on an in-progress task succeeds but warns the change takes effect on the next `canon run`. ([#184](https://github.com/tstraub89/canon-ai/pull/184))
