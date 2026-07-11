@@ -62,6 +62,7 @@ Do not pipe stdin into the command. The `review` subcommand already runs non-int
 
 Summarize the review output concisely. Group findings by severity, then stop. Do not dump raw output into the session.
 
+- Stdout is already formatted prose, not JSON: a summary line, then each finding as `Review comment: - [P0]`-`[P3] <title> — <file>:<line>` with its body below. Relay the existing `[P0]`-`[P3]` tags and summary line as-is — don't re-derive severity from wording.
 - If there are findings, report the important ones first and keep the summary short.
 - If there are no findings, say so in one line.
 
