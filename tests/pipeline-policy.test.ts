@@ -98,30 +98,34 @@ void test('policy: MAX_REVIEW_LOOPS=0 is a valid (suicidal) override', () => {
 
 // ── CLAUDE_BUDGET env override / tiered defaults ──────────────────────────
 
-type BudgetRow = { name: string; tasks: PolicyInput[]; expected: string };
+type BudgetRow = { name: string; tasks: PolicyInput[]; singlePass: string; codeReview: string };
 
 const BUDGET_TABLE: BudgetRow[] = [
-    { name: 'XS non-delicate', tasks: [s('XS')], expected: '5.00' },
-    { name: 'S non-delicate', tasks: [s('S')], expected: '5.00' },
-    { name: 'M non-delicate', tasks: [s('M')], expected: '10.00' },
-    { name: 'L non-delicate', tasks: [s('L')], expected: '10.00' },
-    { name: 'XL non-delicate', tasks: [s('XL')], expected: '20.00' },
-    { name: 'M delicate', tasks: [s('M', true)], expected: '20.00' },
+    { name: 'XS non-delicate', tasks: [s('XS')], singlePass: '5.00', codeReview: '5.00' },
+    { name: 'S non-delicate', tasks: [s('S')], singlePass: '5.00', codeReview: '10.00' },
+    { name: 'M non-delicate', tasks: [s('M')], singlePass: '10.00', codeReview: '15.00' },
+    { name: 'L non-delicate', tasks: [s('L')], singlePass: '10.00', codeReview: '20.00' },
+    { name: 'XL non-delicate', tasks: [s('XL')], singlePass: '20.00', codeReview: '40.00' },
+    { name: 'M delicate', tasks: [s('M', true)], singlePass: '20.00', codeReview: '40.00' },
 ];
 
 for (const row of BUDGET_TABLE) {
-    void test(`claude budget: ${row.name} → ${row.expected} when CLAUDE_BUDGET unset`, () => {
+    void test(`claude budget: ${row.name} when CLAUDE_BUDGET unset`, () => {
         const p = getPipelinePolicy(row.tasks, TEST_CONFIG);
-        assert.equal(p.claude('spec').budget, row.expected);
-        assert.equal(p.claude('qa').budget, row.expected);
+        assert.equal(p.claude('spec').budget, row.singlePass, 'spec');
+        assert.equal(p.claude('plan').budget, row.singlePass, 'plan');
+        assert.equal(p.claude('qa').budget, row.singlePass, 'qa');
+        assert.equal(p.claude('code_review').budget, row.codeReview, 'code_review');
     });
 }
 
-void test('claude budget: CLAUDE_BUDGET flat override wins for every effective size', () => {
+void test('claude budget: CLAUDE_BUDGET flat override wins for every effective size and phase', () => {
     const cfg: PolicyConfig = { ...TEST_CONFIG, claudeBudget: '20.00' };
     for (const row of BUDGET_TABLE) {
         const p = getPipelinePolicy(row.tasks, cfg);
         assert.equal(p.claude('spec').budget, '20.00', row.name);
+        assert.equal(p.claude('plan').budget, '20.00', row.name);
+        assert.equal(p.claude('qa').budget, '20.00', row.name);
         assert.equal(p.claude('code_review').budget, '20.00', row.name);
     }
 });
@@ -186,10 +190,10 @@ for (const row of CLAUDE_TABLE) {
 type CodeReviewRow = { size: TaskSize; expected: { model: string; effort: string; budget: string } };
 const CODE_REVIEW_TABLE: CodeReviewRow[] = [
     { size: 'XS', expected: { model: 'sonnet', effort: 'medium', budget: '5.00' } },
-    { size: 'S',  expected: { model: 'sonnet', effort: 'medium', budget: '5.00' } },
-    { size: 'M',  expected: { model: 'sonnet', effort: 'high',   budget: '10.00' } },
-    { size: 'L',  expected: { model: 'sonnet', effort: 'high',   budget: '10.00' } },  // re-baselined 2026-06: L → Sonnet 4.6
-    { size: 'XL', expected: { model: 'opus',   effort: 'xhigh',  budget: '20.00' } },
+    { size: 'S',  expected: { model: 'sonnet', effort: 'medium', budget: '10.00' } },
+    { size: 'M',  expected: { model: 'sonnet', effort: 'high',   budget: '15.00' } },
+    { size: 'L',  expected: { model: 'sonnet', effort: 'high',   budget: '20.00' } },  // re-baselined 2026-06: L → Sonnet 4.6
+    { size: 'XL', expected: { model: 'opus',   effort: 'xhigh',  budget: '40.00' } },
 ];
 
 for (const row of CODE_REVIEW_TABLE) {
@@ -201,7 +205,7 @@ for (const row of CODE_REVIEW_TABLE) {
 
 void test('claude model: delicate M code_review uses XL slot (large model + xhigh)', () => {
     const p = getPipelinePolicy([s('M', true)], TEST_CONFIG);
-    assert.deepEqual(p.claude('code_review'), { model: 'opus', effort: 'xhigh', budget: '20.00' });
+    assert.deepEqual(p.claude('code_review'), { model: 'opus', effort: 'xhigh', budget: '40.00' });
 });
 
 // ── Standalone helpers (detectTier, isPlanCombined, size helpers) ──────────

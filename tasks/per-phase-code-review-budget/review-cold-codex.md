@@ -1,0 +1,1 @@
+The phase-aware Claude budget split is implemented consistently in the policy module, runtime wiring, docs, and tests, and the full test suite passes. I didn’t find any actionable regressions introduced by the change.

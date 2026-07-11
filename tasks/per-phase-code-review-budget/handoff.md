@@ -14,6 +14,12 @@
 
 | File | What Changed |
 |---|---|
+| `scripts/pipeline-policy.ts` | Replaced the size-only Claude budget table with a `ClaudePhase` × `TaskSize` budget table and resolved budget inside the `.claude(phase)` closure. |
+| `tests/pipeline-policy.test.ts` | Expanded budget assertions across `spec`, `plan`, `qa`, and `code_review`; updated `code_review` expected budget cells and the delicate XL-promotion assertion. |
+| `docs/pipeline-orchestrator.md` | Added the Claude Budget Matrix and updated the `CLAUDE_BUDGET` env-var row to describe phase- and size-aware defaults plus the flat override behavior. |
+| `docs/decisions.md` | Added the phase-aware `CLAUDE_BUDGET` decision record and marked the prior M/L equalization note as superseded. |
+| `templates/docs/pipeline-orchestrator.md` | Regenerated the canon-managed mirror of `docs/pipeline-orchestrator.md`. |
+| `dist/scripts/run-task.js` | Rebuilt published output containing the generated policy change. |
 
 ## Canon Governance
 
@@ -29,7 +35,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+`code_review` now gets its own Claude budget curve while `spec`, `plan`, and `qa` retain the existing single-pass curve. The implementation keeps the policy module side-effect-free and table-driven: the env override still short-circuits all phases uniformly, and the Codex model/effort path remains untouched.
 
 ## Deviations from Plan
 
@@ -37,7 +43,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| _(none)_ | | |
 
 ## AC Coverage
 
@@ -45,17 +51,24 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: `code_review` budget curve by size | Met | `CODE_REVIEW_TABLE` and `BUDGET_TABLE` assert XS `5.00`, S `10.00`, M `15.00`, L `20.00`, XL `40.00`. |
+| AC-2: `spec`/`plan`/`qa` unchanged | Met | `BUDGET_TABLE` asserts single-pass budgets XS/S `5.00`, M/L `10.00`, XL `20.00` for all three phases. |
+| AC-3: delicate tasks use XL budgets | Met | `M delicate` budget row asserts single-pass `20.00` and `code_review` `40.00`; the existing delicate code-review model test now expects budget `40.00`. |
+| AC-4: `CLAUDE_BUDGET` flat override | Met | Override test asserts `spec`, `plan`, `qa`, and `code_review` all return `20.00` for every budget-table row. |
+| AC-5: `resolveBudget()` phase parameter and call sites | Met | `grep -n "resolveBudget(" scripts/pipeline-policy.ts` shows only the phase-aware signature and `resolveBudget(phase, effectiveSize, config.claudeBudget)` call. |
+| AC-6: pipeline doc matrix | Met | `docs/pipeline-orchestrator.md` now has a `## Claude Budget Matrix` with single-pass and `code_review` rows across all sizes, plus the flat override note. |
+| AC-7: rebuilt `dist/` output included | Met | `npm run build` passed twice and `dist/scripts/run-task.js` contains only the generated policy update. In the pre-auto-commit worktree, `git diff --exit-code -- dist/` reports that intentional dirty generated file; `dist/scripts/run-task.js` is listed above (literal path, not directory form — the auto-commit coverage check requires an exact match) for the orchestrator commit. |
 
 ## Edge Cases Considered
 
-- ...
+- `CLAUDE_BUDGET` remains flat because `resolveBudget()` still returns `claudeBudget` before consulting the phase table.
+- `delicate: true` still promotes via `effectiveSize` before budget lookup, so every phase picks the XL row without a second delicate branch.
+- `codex: (phase) => matrix[phase][effectiveSize]` was left unchanged; the budget change is isolated to Claude config.
+- No standalone E2E npm script exists in `package.json`; the full `npm test` run covers the orchestrator subprocess/integration paths available in this repo.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -75,13 +88,21 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | `eslint scripts/ tests/ src/` completed successfully. |
+| `npm run type-check` | Pass | `tsc -p tsconfig.json --noEmit` completed successfully. |
+| `npm test` | Pass | Exact full-suite run passed: 939 tests, 938 pass, 1 skipped, 0 fail. |
+| `npm run build` | Pass | Build completed successfully twice; rebuilt `dist/scripts/run-task.js` is listed in Changes. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates` | Pass | Regenerated `templates/docs/pipeline-orchestrator.md`. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `<E2E>` | Pass | No standalone E2E script is configured in `package.json`; covered by the full orchestrator integration/subprocess coverage in `npm test`, which passed. |
+| `grep -n "resolveBudget(" scripts/pipeline-policy.ts` | Pass | Shows only the phase-aware signature and phase-aware call. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 

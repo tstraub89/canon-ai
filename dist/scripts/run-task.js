@@ -1108,12 +1108,25 @@ function getTreeDriftFiles(baseRef, cwd) {
 
 // scripts/pipeline-policy.ts
 var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
-var BUDGET_BY_SIZE = {
+var SINGLE_PASS_BUDGET_BY_SIZE = {
   XS: "5.00",
   S: "5.00",
   M: "10.00",
   L: "10.00",
   XL: "20.00"
+};
+var CODE_REVIEW_BUDGET_BY_SIZE = {
+  XS: "5.00",
+  S: "10.00",
+  M: "15.00",
+  L: "20.00",
+  XL: "40.00"
+};
+var BUDGET_BY_PHASE_AND_SIZE = {
+  spec: SINGLE_PASS_BUDGET_BY_SIZE,
+  plan: SINGLE_PASS_BUDGET_BY_SIZE,
+  code_review: CODE_REVIEW_BUDGET_BY_SIZE,
+  qa: SINGLE_PASS_BUDGET_BY_SIZE
 };
 function maxSize(tasks) {
   let max = "XS";
@@ -1126,8 +1139,8 @@ function maxSize(tasks) {
 function anyDelicate(tasks) {
   return tasks.some((t) => t.delicate ?? false);
 }
-function resolveBudget(effectiveSize, claudeBudget) {
-  return claudeBudget ?? BUDGET_BY_SIZE[effectiveSize];
+function resolveBudget(phase, effectiveSize, claudeBudget) {
+  return claudeBudget ?? BUDGET_BY_PHASE_AND_SIZE[phase][effectiveSize];
 }
 function detectTier(tasks) {
   return tasks.some((t) => (t.task_size ?? "M") !== "XS" || (t.delicate ?? false)) ? "full" : "fast";
@@ -1222,7 +1235,6 @@ function getPipelinePolicy(tasks, config3) {
   const matrix = codexMatrix(config3);
   const claudeMat = claudeMatrix(config3);
   const maxReviewLoops = config3.maxReviewLoops ?? defaultMaxReviewLoops(nominalSize);
-  const budget = resolveBudget(effectiveSize, config3.claudeBudget);
   return {
     tier,
     nominalSize,
@@ -1230,7 +1242,10 @@ function getPipelinePolicy(tasks, config3) {
     planCombined: tier === "fast",
     maxReviewLoops,
     codex: (phase) => matrix[phase][effectiveSize],
-    claude: (phase) => ({ ...claudeMat[phase][effectiveSize], budget })
+    claude: (phase) => ({
+      ...claudeMat[phase][effectiveSize],
+      budget: resolveBudget(phase, effectiveSize, config3.claudeBudget)
+    })
   };
 }
 

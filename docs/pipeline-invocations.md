@@ -709,3 +709,7 @@
 | 2026-07-11T16:18:55.624Z | per-phase-code-review-budget | spec | claude | opus | 0 | 177.7s | 562341 | ok |
 | 2026-07-11T16:21:20.113Z | per-phase-code-review-budget | spec_review | codex | gpt-5.5 | 1 | 144.5s | 2453897 | ok |
 | 2026-07-11T16:42:06.215Z | per-phase-code-review-budget | plan | claude | sonnet | 0 | 339.6s | 938314 | ok |
+| 2026-07-11T16:48:09.305Z | per-phase-code-review-budget | implement | codex | gpt-5.5 | 0 | 362.1s | 2246224 | ok |
+| 2026-07-11T17:17:55.905Z | per-phase-code-review-budget | implement | codex | gpt-5.5 | 0 | 2.0s | - | failed |
+| 2026-07-11T17:32:44.703Z | per-phase-code-review-budget | code_review | claude | opus | 0 | 482.5s | 690402 | ok |
+| 2026-07-11T17:37:10.139Z | per-phase-code-review-budget | qa | claude | sonnet | 0 | 265.4s | 1957177 | ok |

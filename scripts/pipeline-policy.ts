@@ -66,12 +66,25 @@ export type PipelinePolicy = {
 };
 
 const SIZE_ORDER: readonly TaskSize[] = ['XS', 'S', 'M', 'L', 'XL'];
-const BUDGET_BY_SIZE: Record<TaskSize, string> = {
+const SINGLE_PASS_BUDGET_BY_SIZE: Record<TaskSize, string> = {
     XS: '5.00',
     S: '5.00',
     M: '10.00',
     L: '10.00',
     XL: '20.00',
+};
+const CODE_REVIEW_BUDGET_BY_SIZE: Record<TaskSize, string> = {
+    XS: '5.00',
+    S: '10.00',
+    M: '15.00',
+    L: '20.00',
+    XL: '40.00',
+};
+const BUDGET_BY_PHASE_AND_SIZE: Record<ClaudePhase, Record<TaskSize, string>> = {
+    spec: SINGLE_PASS_BUDGET_BY_SIZE,
+    plan: SINGLE_PASS_BUDGET_BY_SIZE,
+    code_review: CODE_REVIEW_BUDGET_BY_SIZE,
+    qa: SINGLE_PASS_BUDGET_BY_SIZE,
 };
 
 function maxSize(tasks: readonly PolicyInput[]): TaskSize {
@@ -87,8 +100,8 @@ function anyDelicate(tasks: readonly PolicyInput[]): boolean {
     return tasks.some(t => t.delicate ?? false);
 }
 
-function resolveBudget(effectiveSize: TaskSize, claudeBudget: string | null): string {
-    return claudeBudget ?? BUDGET_BY_SIZE[effectiveSize];
+function resolveBudget(phase: ClaudePhase, effectiveSize: TaskSize, claudeBudget: string | null): string {
+    return claudeBudget ?? BUDGET_BY_PHASE_AND_SIZE[phase][effectiveSize];
 }
 
 // Fast tier: XS only, non-delicate. Full tier: anything else — any S/M/L/XL,
@@ -236,7 +249,6 @@ export function getPipelinePolicy(
     const matrix = codexMatrix(config);
     const claudeMat = claudeMatrix(config);
     const maxReviewLoops = config.maxReviewLoops ?? defaultMaxReviewLoops(nominalSize);
-    const budget = resolveBudget(effectiveSize, config.claudeBudget);
     return {
         tier,
         nominalSize,
@@ -244,6 +256,9 @@ export function getPipelinePolicy(
         planCombined: tier === 'fast',
         maxReviewLoops,
         codex: (phase) => matrix[phase][effectiveSize],
-        claude: (phase) => ({ ...claudeMat[phase][effectiveSize], budget }),
+        claude: (phase) => ({
+            ...claudeMat[phase][effectiveSize],
+            budget: resolveBudget(phase, effectiveSize, config.claudeBudget),
+        }),
     };
 }

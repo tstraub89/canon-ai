@@ -222,6 +222,17 @@ Codex is tuned for token efficiency — the mini model handles most phases; the 
 
 `spec_review` M was raised from `medium` to `high` (2026-07): task-history analysis across canon-ai and galleryplanner found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts, ~1.0–1.4) but a reroute-severity gap (M rerouted-task average 5.15 vs. L's 4.83). M's lighter spec_review effort is the leading hypothesis — not a proven sole cause, since M and L also differ on loop cap, budget, and QA effort. Re-measure the M vs. L reroute rate after this change; see [`docs/decisions.md`](docs/decisions.md) §"`spec_review` M effort raised medium → high (2026-07)" for the full reasoning and caveats.
 
+## Claude Budget Matrix
+
+Claude phase budgets scale with task size. `spec`/`plan`/`qa` are single-pass Claude sessions and share one curve; `code_review` runs a structurally costlier workload — a cold-Codex diff review followed by a Claude foreman that spawns an anchored-Claude lens and a cold-Claude lens and synthesizes all three, sometimes including an empirical test-suite re-run to confirm a finding discriminates — and gets its own, higher curve.
+
+| Phase | XS | S | M | L | XL / delicate |
+|---|---|---|---|---|---|
+| `spec` / `plan` / `qa` | $5.00 | $5.00 | $10.00 | $10.00 | $20.00 |
+| `code_review` | $5.00 | $10.00 | $15.00 | $20.00 | $40.00 |
+
+`CLAUDE_BUDGET` remains a single flat env-var override: when set, it applies uniformly across every phase and size, exactly as before. See `CLAUDE_BUDGET` in the Environment Variables section below.
+
 ## Environment Variables
 
 Claude is tuned for correctness — Opus on phases where false negatives cascade, Sonnet on structured/templated phases.
@@ -233,7 +244,7 @@ Claude is tuned for correctness — Opus on phases where false negatives cascade
 | `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for XS/S/M/L (Sonnet 4.6 matches the prior Opus flagship on long-horizon / lifecycle / state-machine bug detection — re-baselined 2026-06; L was Opus on Sonnet 4.5). |
 | `CLAUDE_MODEL_REVIEW_LARGE` | `opus` | Code review for XL/delicate only — the highest-blast-radius tier where the subtlest cross-file bugs warrant Opus. |
 | `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
-| `CLAUDE_BUDGET` | _(size-aware)_ | Max spend per Claude phase (USD). Unset → tiered by effective size: XS/S `5.00`, M/L `10.00`, XL/delicate `20.00`. Set → flat cap for all phases (e.g. `CLAUDE_BUDGET=20.00` overrides the tier). |
+| `CLAUDE_BUDGET` | _(phase- and size-aware)_ | Max spend per Claude phase (USD). Unset → resolved from the Claude Budget Matrix above (phase × size). Set → flat cap applied uniformly across every phase and size (e.g. `CLAUDE_BUDGET=15.00` overrides every phase to $15). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
 | `CANON_WORKTREES_ROOT` | `../dev-worktrees` | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |
 | `CANON_PR_BODY` | _(unset)_ | Literal PR body for `--pr`, overriding the normal resolution chain. Supports `$LABEL` and `$TITLE` placeholders. |
