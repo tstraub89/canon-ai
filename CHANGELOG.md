@@ -43,7 +43,7 @@
 
 ## [2.0.0] — 2026-06-20
 
-> **Breaking (adopters):** Canon no longer ships or manages a canon-owned content block in your `AGENTS.md` / `CLAUDE.md`. On `canon upgrade` the managed block is removed and these files become fully adopter-owned — canon does not create, modify, or read them. Canon's operating rules now arrive just-in-time through the per-phase prompt templates, agent charters, and `/canon-*` skills; generate your agent files with the tool-native `/init` (Claude Code's `/init` → `CLAUDE.md`, Codex's init → `AGENTS.md`). `canon doctor` guides the transition.
+> **Breaking (adopters):** Canon no longer ships or manages a canon-owned content block in your `AGENTS.md` / `CLAUDE.md`. `canon upgrade` no longer touches these files — they are fully adopter-owned; canon does not create, modify, or read them. A legacy v1 managed block is **not** removed automatically: strip it with the one-off `tools/strip-canon-block.mjs` (in the repo checkout; not shipped via npm) or delete the `<!-- canon:start -->`…`<!-- canon:end -->` block manually. Canon's operating rules now arrive just-in-time through the per-phase prompt templates, agent charters, and `/canon-*` skills; generate your agent files with the tool-native `/init` (Claude Code's `/init` → `CLAUDE.md`, Codex's init → `AGENTS.md`). `canon doctor` guides the transition.
 
 ### Added
 
@@ -56,7 +56,7 @@
 
 ### Removed
 
-- **The canon-owned content block is no longer shipped into adopter `AGENTS.md` / `CLAUDE.md`.** Canon ships zero managed content into adopter agent files; the operating rules once broadcast into those blocks now travel just-in-time with the per-phase prompt templates, agent charters, startup constants, and `/canon-*` skills (completing the relocation begun in #174). On `canon upgrade` the managed block is removed and the files become fully adopter-owned — canon does not create, modify, or read them. A recommend-only `canon doctor` discovery nudge is the backstop so fresh sessions still learn a repo uses canon. ([#176](https://github.com/tstraub89/canon-ai/pull/176))
+- **The canon-owned content block is no longer shipped into adopter `AGENTS.md` / `CLAUDE.md`.** Canon ships zero managed content into adopter agent files; the operating rules once broadcast into those blocks now travel just-in-time with the per-phase prompt templates, agent charters, startup constants, and `/canon-*` skills (completing the relocation begun in #174). `canon upgrade` no longer touches the files — they are fully adopter-owned; canon does not create, modify, or read them, and an existing v1 managed block is left in place for the adopter to strip (`tools/strip-canon-block.mjs` or by hand). A recommend-only `canon doctor` discovery nudge is the backstop so fresh sessions still learn a repo uses canon. ([#176](https://github.com/tstraub89/canon-ai/pull/176))
 
 ### Fixed
 
