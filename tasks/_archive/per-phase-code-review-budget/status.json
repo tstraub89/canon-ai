@@ -1,7 +1,7 @@
 {
   "id": "per-phase-code-review-budget",
   "title": "Per-phase CLAUDE_BUDGET — code_review gets its own budget curve",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-11",
   "updated": "2026-07-11",
   "branch": "task/per-phase-code-review-budget",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
