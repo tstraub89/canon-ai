@@ -215,10 +215,12 @@ Codex model and effort scale with task size:
 
 | Phase | XS | S | M | L | XL / delicate |
 |---|---|---|---|---|---|
-| `spec_review` | — (skipped) | mini / medium | mini / medium | mini / high | full / high |
+| `spec_review` | — (skipped) | mini / medium | mini / high | mini / high | full / high |
 | `implement`   | mini / medium | mini / medium | mini / high | mini / high | full / high |
 
 Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. XL/delicate implement runs at `high`, not `xhigh`: GPT-5.5 tends to overthink at `xhigh` with open-ended tool access (cost without quality gain). Raise via env only if eval shows under-reasoning.
+
+`spec_review` M was raised from `medium` to `high` (2026-07): task-history analysis across canon-ai and galleryplanner found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts, ~1.0–1.4) but a reroute-severity gap (M rerouted-task average 5.15 vs. L's 4.83). M's lighter spec_review effort is the leading hypothesis — not a proven sole cause, since M and L also differ on loop cap, budget, and QA effort. Re-measure the M vs. L reroute rate after this change; see [`docs/decisions.md`](docs/decisions.md) §"`spec_review` M effort raised medium → high (2026-07)" for the full reasoning and caveats.
 
 ## Environment Variables
 

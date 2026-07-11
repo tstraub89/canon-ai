@@ -138,7 +138,7 @@ const CODEX_MATRIX: CodexRow[] = [
     // spec_review
     { phase: 'spec_review', size: 'XS', expected: { model: 'mini', effort: 'medium' } },
     { phase: 'spec_review', size: 'S',  expected: { model: 'mini', effort: 'medium' } },
-    { phase: 'spec_review', size: 'M',  expected: { model: 'mini', effort: 'medium' } },
+    { phase: 'spec_review', size: 'M',  expected: { model: 'mini', effort: 'high' } },  // raised from medium 2026-07: M's reroute severity tracked its lighter spec_review effort
     { phase: 'spec_review', size: 'L',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'spec_review', size: 'XL', expected: { model: 'full', effort: 'high' } },
     // implement

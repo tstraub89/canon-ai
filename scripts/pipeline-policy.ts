@@ -133,6 +133,14 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //   spec_review: read-heavy, structured output → mini handles up through
     //                L; effort scales with size. XL/delicate needs full-model
     //                shape-checking because that's where expensive mistakes lurk.
+    //                M and L both run at high (M raised from medium 2026-07):
+    //                task-history analysis across canon-ai and galleryplanner
+    //                showed M's iteration overhead was concentrated almost
+    //                entirely in reroute severity, not implement-quality —
+    //                non-rerouted tasks were flat across M/L (~1.0-1.4 rounds),
+    //                but M's rerouted tasks averaged worse than L's (5.15 vs
+    //                4.83). M's lighter spec_review effort is the leading
+    //                hypothesis (not a proven sole cause — see decisions.md).
     //   implement:   mini through L. XS/S get medium effort (token savings on
     //                the smallest changes). XL/delicate: full model at high. Not
     //                xhigh — GPT-5.5 tends to overthink at xhigh with open-ended
@@ -147,7 +155,7 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
         spec_review: {
             XS: { model: config.codexModelMini, effort: 'medium' },
             S:  { model: config.codexModelMini, effort: 'medium' },
-            M:  { model: config.codexModelMini, effort: 'medium' },
+            M:  { model: config.codexModelMini, effort: 'high' },
             L:  { model: config.codexModelMini, effort: 'high' },
             XL: { model: config.codexModelFull, effort: 'high' },
         },

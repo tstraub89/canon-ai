@@ -215,6 +215,20 @@ _Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
 
 ---
 
+## `spec_review` M effort raised medium → high (2026-07)
+
+**Decision**: Raise Codex `spec_review` effort for M-sized tasks from `medium` to `high`, matching L. This supersedes the 2026-06 re-baseline's "effort floors already adequate" audit, which had not yet analyzed reroute-severity data — the claim above needs correcting: M's `medium` floor was not adequate.
+
+**Why**: A task-history analysis across canon-ai's own archive and a second production project (galleryplanner), ~145 tasks with code_review iteration data, found:
+- Aggregate `code_review.iterations_total` looked worse for M (avg 2.91) than L (avg 2.21) — naively suggesting mini struggles more with M-scope implementation than L-scope.
+- Controlling for whether a task hit a mid-implement reroute (`implement.reroute_count > 0`) overturned that read: **non-rerouted** M and L tasks were nearly identical (1.40 vs 1.00 avg rounds) — mini's clean-path implementation quality doesn't degrade going from M to L. The entire size-correlated gap lived in reroute rate and severity, not implement capability.
+- Rerouted tasks average ~3.7x more code_review rounds than non-rerouted ones (4.39 vs 1.19) — reroute status, not size, is the dominant cost driver. And M's rerouted tasks were the worst of any size band (avg 5.15, vs. L's 4.83, S's 3.45). This is a correlational read, not a controlled isolation — M and L also differ in loop cap, budget, and QA effort, so `spec_review` effort is the leading **hypothesis** for M's worse reroute severity, not a proven sole cause. It's the one difference that plausibly acts *before* implementation (catching scope gaps pre-reroute) and it lines up with the effort-curve evidence below, which is why it's the lever this decision changes first — not because the other confounds have been ruled out.
+- External corroboration: a practitioner study running GPT-5.5-driven Codex across 26 real tasks on an open-source repo found `medium → high` is the single largest quality jump (test-pass 81%→96%, review-pass doubles) for a modest cost increase (+43%), while `high → xhigh` shows diminishing-to-negative returns (test-pass regresses, cost nearly doubles again) — the OpenAI-guidance overthinking pattern already cited for the `implement` XL/delicate `xhigh` decision above, independently reproduced at the `medium`/`high` boundary this change touches.
+
+**Rule**: `spec_review` M now runs `mini/high`, identical to L on both `spec_review` and `implement`. M and L still differ on `MAX_REVIEW_LOOPS` (3 vs. 5), `CLAUDE_BUDGET` ($5 vs. $10), and Claude `qa` effort (`medium` vs. `high` per `claudeMatrix()`'s `buildMedium`) — those are unchanged by this decision and are blast-radius/patience knobs rather than Codex model-capability tuning. Re-measure M vs. L reroute rate and severity after this ships across enough tasks to be meaningful; if they converge, that's evidence (not yet proof) that `spec_review` effort was the load-bearing difference, and the remaining QA-effort gap becomes the next thing worth questioning. Do not chase a Codex model-family upgrade (e.g. GPT-5.6 Luna/Sol) for M or L on the strength of the pre-correction iteration data — that data pointed at a spec_review effort gap, not a model-capability gap.
+
+---
+
 ## Auto-commit owned by the orchestrator (not the agent)
 
 **Decision**: After Codex's `implement` phase passes validation, the orchestrator (`autoCommitCode()` in `scripts/run-task/main.ts`) parses the handoff Changes table and creates the implement commit. Codex does not run `git commit` itself.

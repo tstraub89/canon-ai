@@ -1150,7 +1150,7 @@ function codexMatrix(config3) {
     spec_review: {
       XS: { model: config3.codexModelMini, effort: "medium" },
       S: { model: config3.codexModelMini, effort: "medium" },
-      M: { model: config3.codexModelMini, effort: "medium" },
+      M: { model: config3.codexModelMini, effort: "high" },
       L: { model: config3.codexModelMini, effort: "high" },
       XL: { model: config3.codexModelFull, effort: "high" }
     },

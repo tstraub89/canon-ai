@@ -78,7 +78,7 @@ The orchestrator is a long-running TypeScript process. It spawns agent CLIs as s
 1. **Human + conversational Claude** discuss the problem. Claude creates `tasks/<id>/` with templated artifacts via `canon task new <id> "<title>"`. Status starts at `phases.spec.status = "pending"`.
 2. **Spec authorship** happens in the conversation. Claude writes `spec.md` and updates status (`phases.spec.status = "done"`).
 3. **Human spec gate**: human reads `spec.md`, signals approval. Claude invokes `canon run <id>`.
-4. **Orchestrator boots**: reads `status.json`, derives current phase (`spec_review`), resolves policy from `pipeline-policy.ts` (tier=full, model=codex-mini medium effort, etc.).
+4. **Orchestrator boots**: reads `status.json`, derives current phase (`spec_review`), resolves policy from `pipeline-policy.ts` (tier=full, model+effort per the size/phase matrix, etc.).
 5. **Codex spec review**: orchestrator spawns `codex exec` with the spec-review prompt and the spec file. Codex writes `spec-review.md`. Orchestrator parses verdict; if `changes_requested`, increments iteration count and routes back to spec (or auto-blocks if cap hit).
 6. **Plan**: orchestrator spawns Claude with the plan prompt. Claude writes `plan.md`.
 7. **Implement**: orchestrator spawns Codex with the implement prompt + spec + plan. Codex edits files in the worktree (or main checkout if `worktree: false`), writes `handoff.md`. Orchestrator runs hallucination check.
