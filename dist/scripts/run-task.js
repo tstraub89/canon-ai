@@ -1111,7 +1111,7 @@ var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
 var BUDGET_BY_SIZE = {
   XS: "5.00",
   S: "5.00",
-  M: "5.00",
+  M: "10.00",
   L: "10.00",
   XL: "20.00"
 };

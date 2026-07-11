@@ -69,7 +69,7 @@ const SIZE_ORDER: readonly TaskSize[] = ['XS', 'S', 'M', 'L', 'XL'];
 const BUDGET_BY_SIZE: Record<TaskSize, string> = {
     XS: '5.00',
     S: '5.00',
-    M: '5.00',
+    M: '10.00',
     L: '10.00',
     XL: '20.00',
 };

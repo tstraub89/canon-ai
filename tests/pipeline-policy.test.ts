@@ -103,7 +103,7 @@ type BudgetRow = { name: string; tasks: PolicyInput[]; expected: string };
 const BUDGET_TABLE: BudgetRow[] = [
     { name: 'XS non-delicate', tasks: [s('XS')], expected: '5.00' },
     { name: 'S non-delicate', tasks: [s('S')], expected: '5.00' },
-    { name: 'M non-delicate', tasks: [s('M')], expected: '5.00' },
+    { name: 'M non-delicate', tasks: [s('M')], expected: '10.00' },
     { name: 'L non-delicate', tasks: [s('L')], expected: '10.00' },
     { name: 'XL non-delicate', tasks: [s('XL')], expected: '20.00' },
     { name: 'M delicate', tasks: [s('M', true)], expected: '20.00' },
@@ -179,7 +179,7 @@ const CLAUDE_TABLE: ClaudeRow[] = [
 for (const row of CLAUDE_TABLE) {
     void test(`claude model: ${row.phase} → ${row.expected.model}/${row.expected.effort}`, () => {
         const p = getPipelinePolicy([s('M')], TEST_CONFIG);
-        assert.deepEqual(p.claude(row.phase), { ...row.expected, budget: '5.00' });
+        assert.deepEqual(p.claude(row.phase), { ...row.expected, budget: '10.00' });
     });
 }
 
@@ -187,7 +187,7 @@ type CodeReviewRow = { size: TaskSize; expected: { model: string; effort: string
 const CODE_REVIEW_TABLE: CodeReviewRow[] = [
     { size: 'XS', expected: { model: 'sonnet', effort: 'medium', budget: '5.00' } },
     { size: 'S',  expected: { model: 'sonnet', effort: 'medium', budget: '5.00' } },
-    { size: 'M',  expected: { model: 'sonnet', effort: 'high',   budget: '5.00' } },
+    { size: 'M',  expected: { model: 'sonnet', effort: 'high',   budget: '10.00' } },
     { size: 'L',  expected: { model: 'sonnet', effort: 'high',   budget: '10.00' } },  // re-baselined 2026-06: L → Sonnet 4.6
     { size: 'XL', expected: { model: 'opus',   effort: 'xhigh',  budget: '20.00' } },
 ];

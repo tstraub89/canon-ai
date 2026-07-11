@@ -7,6 +7,7 @@
 ### Changed
 
 - **`spec_review` effort for `M`-sized tasks raised `medium` → `high`, matching `L`.** Task-history analysis (canon-ai + a second production project) found M's higher code_review iteration counts weren't an implement-quality gap — non-rerouted M and L tasks ran nearly identical (~1.0–1.4 rounds) — but a reroute-severity gap tracking M's lighter spec_review scrutiny (M's rerouted-task average was the worst of any size band). `implement` is unchanged; M and L now share the same Codex model/effort on both phases. See [`docs/decisions.md`](docs/decisions.md) §"`spec_review` M effort raised medium → high (2026-07)".
+- **`CLAUDE_BUDGET` for `M`-sized tasks raised `$5.00` → `$10.00`, matching `L`.** M's code_review reroutes were already the most review-heavy of any size band (worst average round count per [`docs/decisions.md`](docs/decisions.md)), yet M shared the flattest per-Claude-phase-session budget cap with XS/S. M now gets the same ceiling as L; XS/S and XL/delicate are unchanged. See `CLAUDE_BUDGET` in [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md).
 
 ## [2.2.0] — 2026-07-10
 
