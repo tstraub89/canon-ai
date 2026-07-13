@@ -87,6 +87,53 @@ export function findExistingWorktreeForBranch(branch: string): string | null {
     return null;
 }
 
+export type NodeModulesLstatKind = 'missing' | 'file' | 'directory' | 'symlink' | 'error';
+
+export type NodeModulesLinkInputs = {
+    lstatKind: NodeModulesLstatKind;
+    resolvedTarget: string | null;
+    expectedTarget: string | null;
+};
+
+export type NodeModulesLinkVerdict = 'verified-symlink' | 'not-exempt';
+
+export function classifyNodeModulesLinkFromData(input: NodeModulesLinkInputs): NodeModulesLinkVerdict {
+    if (input.lstatKind !== 'symlink') return 'not-exempt';
+    if (input.resolvedTarget === null || input.expectedTarget === null) return 'not-exempt';
+    return input.resolvedTarget === input.expectedTarget ? 'verified-symlink' : 'not-exempt';
+}
+
+function probeNodeModulesLstatKind(candidatePath: string): NodeModulesLstatKind {
+    let stat: fs.Stats;
+    try {
+        stat = fs.lstatSync(candidatePath);
+    } catch (err) {
+        return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'error';
+    }
+    if (stat.isSymbolicLink()) return 'symlink';
+    if (stat.isDirectory()) return 'directory';
+    return 'file';
+}
+
+function realpathOrNull(candidatePath: string): string | null {
+    try {
+        return fs.realpathSync(candidatePath);
+    } catch {
+        return null;
+    }
+}
+
+export function probeNodeModulesEntry(
+    candidatePath: string,
+    repoRoot: string,
+): { verdict: NodeModulesLinkVerdict; lstatKind: NodeModulesLstatKind; resolvedTarget: string | null } {
+    const lstatKind = probeNodeModulesLstatKind(candidatePath);
+    const resolvedTarget = lstatKind === 'symlink' ? realpathOrNull(candidatePath) : null;
+    const expectedTarget = realpathOrNull(path.join(repoRoot, 'node_modules'));
+    const verdict = classifyNodeModulesLinkFromData({ lstatKind, resolvedTarget, expectedTarget });
+    return { verdict, lstatKind, resolvedTarget };
+}
+
 export function ensureWorktree(taskId: string, branch: string, startPoint?: string): string {
     if (!fs.existsSync(WORKTREES_ROOT)) {
         fs.mkdirSync(WORKTREES_ROOT, { recursive: true });
@@ -124,9 +171,29 @@ export function ensureWorktree(taskId: string, branch: string, startPoint?: stri
     }
 
     const wtModules = path.join(wt, 'node_modules');
-    if (fs.existsSync(repoPackageJson) && !fs.existsSync(wtModules)) {
-        fs.symlinkSync(repoModulesSrc, wtModules);
-        info('Symlinked node_modules into worktree.');
+    if (fs.existsSync(repoPackageJson)) {
+        const probe = probeNodeModulesEntry(wtModules, REPO_ROOT);
+        switch (probe.lstatKind) {
+            case 'missing':
+                fs.symlinkSync(repoModulesSrc, wtModules);
+                info('Symlinked node_modules into worktree.');
+                break;
+            case 'symlink':
+                if (probe.verdict === 'not-exempt') {
+                    die(
+                        `Worktree setup aborted: ${wtModules} is a symlink but does not resolve to ` +
+                        `${repoModulesSrc} (found: ${probe.resolvedTarget ?? 'unresolvable target'}). ` +
+                        `Remove or fix the stray symlink before retrying.`
+                    );
+                }
+                break;
+            case 'file':
+            case 'directory':
+                break;
+            case 'error':
+                die(`Worktree setup aborted: could not inspect ${wtModules} (lstat failed).`);
+                break;
+        }
     }
 
     const envFiles = fs.readdirSync(REPO_ROOT).filter((name) =>

@@ -734,6 +734,36 @@ function findExistingWorktreeForBranch2(branch) {
   }
   return null;
 }
+function classifyNodeModulesLinkFromData(input) {
+  if (input.lstatKind !== "symlink") return "not-exempt";
+  if (input.resolvedTarget === null || input.expectedTarget === null) return "not-exempt";
+  return input.resolvedTarget === input.expectedTarget ? "verified-symlink" : "not-exempt";
+}
+function probeNodeModulesLstatKind(candidatePath) {
+  let stat;
+  try {
+    stat = fs5.lstatSync(candidatePath);
+  } catch (err) {
+    return err.code === "ENOENT" ? "missing" : "error";
+  }
+  if (stat.isSymbolicLink()) return "symlink";
+  if (stat.isDirectory()) return "directory";
+  return "file";
+}
+function realpathOrNull(candidatePath) {
+  try {
+    return fs5.realpathSync(candidatePath);
+  } catch {
+    return null;
+  }
+}
+function probeNodeModulesEntry(candidatePath, repoRoot) {
+  const lstatKind = probeNodeModulesLstatKind(candidatePath);
+  const resolvedTarget = lstatKind === "symlink" ? realpathOrNull(candidatePath) : null;
+  const expectedTarget = realpathOrNull(path4.join(repoRoot, "node_modules"));
+  const verdict = classifyNodeModulesLinkFromData({ lstatKind, resolvedTarget, expectedTarget });
+  return { verdict, lstatKind, resolvedTarget };
+}
 function ensureWorktree(taskId, branch, startPoint) {
   if (!fs5.existsSync(WORKTREES_ROOT)) {
     fs5.mkdirSync(WORKTREES_ROOT, { recursive: true });
@@ -766,9 +796,27 @@ function ensureWorktree(taskId, branch, startPoint) {
     git(...args);
   }
   const wtModules = path4.join(wt, "node_modules");
-  if (fs5.existsSync(repoPackageJson) && !fs5.existsSync(wtModules)) {
-    fs5.symlinkSync(repoModulesSrc, wtModules);
-    info("Symlinked node_modules into worktree.");
+  if (fs5.existsSync(repoPackageJson)) {
+    const probe = probeNodeModulesEntry(wtModules, REPO_ROOT);
+    switch (probe.lstatKind) {
+      case "missing":
+        fs5.symlinkSync(repoModulesSrc, wtModules);
+        info("Symlinked node_modules into worktree.");
+        break;
+      case "symlink":
+        if (probe.verdict === "not-exempt") {
+          die(
+            `Worktree setup aborted: ${wtModules} is a symlink but does not resolve to ${repoModulesSrc} (found: ${probe.resolvedTarget ?? "unresolvable target"}). Remove or fix the stray symlink before retrying.`
+          );
+        }
+        break;
+      case "file":
+      case "directory":
+        break;
+      case "error":
+        die(`Worktree setup aborted: could not inspect ${wtModules} (lstat failed).`);
+        break;
+    }
   }
   const envFiles = fs5.readdirSync(REPO_ROOT).filter(
     (name) => name.startsWith(".env") && fs5.statSync(path4.join(REPO_ROOT, name)).isFile()
@@ -5593,6 +5641,11 @@ ${stagedAfterUnexpected.map((f) => `    ${f}`).join("\n")}
 function humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes = /* @__PURE__ */ new Set()) {
   return taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) || PIPELINE_TELEMETRY_FILES.includes(filePath) || affectedManagedDocs.has(filePath) || [...affectedPrefixes].some((prefix) => filePath.startsWith(prefix));
 }
+function isExemptNodeModulesEntry(entry, cwd) {
+  if (entry.paths.length !== 1 || entry.paths[0] !== "node_modules") return false;
+  if (entry.indexStatus !== "?" || entry.worktreeStatus !== "?") return false;
+  return probeNodeModulesEntry(path17.join(cwd, "node_modules"), REPO_ROOT2).verdict === "verified-symlink";
+}
 function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, affectedPrefixes = /* @__PURE__ */ new Set()) {
   const stagePaths = /* @__PURE__ */ new Set();
   for (const taskId of taskIds) {
@@ -5659,7 +5712,7 @@ function commitQaArtifacts(taskIds, cwd) {
   const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
   if (dirtyEntries.length === 0) return;
   const unexpected = dirtyEntries.filter(
-    (entry) => !entry.paths.every((filePath) => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))
+    (entry) => !isExemptNodeModulesEntry(entry, cwd) && !entry.paths.every((filePath) => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))
   );
   if (unexpected.length > 0) {
     die2(
@@ -5970,7 +6023,7 @@ Bypass with --force if you've verified the drift is intentional.`
   if (!dirtyResult.ok) {
     die2(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || "unknown error"}`);
   }
-  const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
+  const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout).filter((entry) => !isExemptNodeModulesEntry(entry, cwd));
   if (dirtyEntries.length === 0 && (createPR || cliArgs.push)) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";

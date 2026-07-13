@@ -67,6 +67,9 @@ The verification predicate is built as a pure, injectable-input classifier (the 
 | `scripts/run-task/main.ts` | Apply the verified-symlink exemption to the commit-relevant dirty set in both commit gates. In `commitQaArtifacts()`: filter porcelain entries through the shared predicate at the `unexpected` allowlist classification (line 825). In `commitHumanReviewFiles()`: filter them out of the dirty set **before** the clean-tree push/PR retry decision (line 1220), the no-dirty-to-commit `die` (line 1249), the `unexpected` allowlist filter (line 1253), and the no-stage-paths `die` (line 1279) — so a symlink-only dirty tree takes the normal clean-tree push/PR path. No change to staging (`buildHumanReviewStagePaths()`) or the pre/post staged-set guards. |
 | `scripts/run-task/worktree.ts` | New shared verification helper (pure classifier + fs-probe wrapper) colocated with the symlink creation; replace the `fs.existsSync` setup guard in `ensureWorktree()` with the `lstat`-based idempotent logic of AC-7. |
 | `tests/run-task-safety.test.ts` | New tests: AC-1 red-first QA-end regression, AC-2 human-review path, AC-3 negative cases, AC-4 probe-error, AC-5 no-slash companion, AC-6 staged-set assertions, AC-7 setup idempotency, AC-8 classifier decision table. |
+| `dist/scripts/run-task.js` | Rebuilt output reflecting the `scripts/run-task/**` source changes above — committed dist must match a fresh build per `docs/architecture.md`. |
+| `docs/pipeline-orchestrator.md` | One-sentence heads-up added post-QA describing the exemption's scope in the QA-end/human-review dirty-tree sections. |
+| `templates/docs/` | Auto-synced mirror of the `docs/pipeline-orchestrator.md` edit above (`npm run sync-templates`); directory-form entry since this managed-doc mirror isn't itself in `PIPELINE_MANAGED_DOCS`. |
 
 ### Interaction Dependencies
 

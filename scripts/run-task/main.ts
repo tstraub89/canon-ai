@@ -710,6 +710,15 @@ function humanReviewAllowedPath(
         [...affectedPrefixes].some(prefix => filePath.startsWith(prefix));
 }
 
+function isExemptNodeModulesEntry(entry: PorcelainEntry, cwd: string): boolean {
+    if (entry.paths.length !== 1 || entry.paths[0] !== 'node_modules') return false;
+    // Untracked-only: a staged node_modules (e.g. `git add -f`) is a deliberate
+    // departure from canon's own untracked worktree symlink and must still hit
+    // the normal staged-files safety checks, not be waved through as clean.
+    if (entry.indexStatus !== '?' || entry.worktreeStatus !== '?') return false;
+    return splitWorktree.probeNodeModulesEntry(path.join(cwd, 'node_modules'), REPO_ROOT).verdict === 'verified-symlink';
+}
+
 export function buildHumanReviewStagePaths(
     taskIds: string[],
     affectedManagedDocs: ReadonlySet<string>,
@@ -823,6 +832,7 @@ export function commitQaArtifacts(taskIds: string[], cwd: string): void {
     if (dirtyEntries.length === 0) return;
 
     const unexpected = dirtyEntries.filter(entry =>
+        !isExemptNodeModulesEntry(entry, cwd) &&
         !entry.paths.every(filePath => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))
     );
     if (unexpected.length > 0) {
@@ -1210,7 +1220,8 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || 'unknown error'}`);
     }
 
-    const dirtyEntries = splitGit.parsePorcelainEntries(dirtyResult.stdout);
+    const dirtyEntries = splitGit.parsePorcelainEntries(dirtyResult.stdout)
+        .filter(entry => !isExemptNodeModulesEntry(entry, cwd));
 
     // Idempotent --pr retry: tree is clean AND --pr is set AND the branch was
     // already pushed AND no open PR exists. This is the post-state of a prior

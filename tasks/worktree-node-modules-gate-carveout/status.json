@@ -1,15 +1,15 @@
 {
   "id": "worktree-node-modules-gate-carveout",
   "title": "Exempt canon's verified node_modules worktree symlink from QA-end and human-review dirty gates",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-07-13",
   "updated": "2026-07-13",
-  "branch": "",
+  "branch": "task/worktree-node-modules-gate-carveout",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "6b5038c965f69158966f7a458f67fe03b6f8a3aa",
-    "orchestrator_commit": "6b5038c965f69158966f7a458f67fe03b6f8a3aa",
+    "upstream_commit": "a232f974ed6e7dca5869e1897c1e70eca3df9587",
+    "orchestrator_commit": "a232f974ed6e7dca5869e1897c1e70eca3df9587",
     "codex_cli": "codex-cli 0.144.3",
     "claude_code": "2.1.207 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "019f5bcc-7414-79e0-92cb-483e4c7a8b6c",
-    "claude_spec": "2c2031de-cd74-47d1-8b9b-9ad0c18885fe"
+    "claude_spec": "2c2031de-cd74-47d1-8b9b-9ad0c18885fe",
+    "codex": "019f5c2f-d26a-7153-819f-bf4ba0233a23",
+    "claude_review": "a5aff201-79dd-409a-8812-5a3b29630a85"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

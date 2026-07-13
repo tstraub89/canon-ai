@@ -22,7 +22,7 @@ import {
 import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
 import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
 import { resolveTaskCwd } from '../scripts/run-task/state.js';
-import { PIPELINE_MANAGED_DOCS } from '../scripts/run-task/worktree.js';
+import { classifyNodeModulesLinkFromData, PIPELINE_MANAGED_DOCS } from '../scripts/run-task/worktree.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -389,6 +389,87 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     return { localDir, originDir };
 }
 
+function makeNodeModulesGateFixture(
+    dir: string,
+    taskId: string,
+    gitignoreRule: string | null,
+): {
+    localDir: string;
+    originDir: string;
+    worktreesRoot: string;
+    worktreeDir: string;
+    branch: string;
+    repoModulesFixture: string;
+} {
+    const { localDir, originDir } = makeGitFixture(dir);
+    fs.writeFileSync(path.join(localDir, 'package.json'), '{"name":"fixture"}\n', 'utf8');
+    if (gitignoreRule === null) {
+        gitIn(localDir, 'add', 'package.json');
+    } else {
+        fs.writeFileSync(path.join(localDir, '.gitignore'), gitignoreRule, 'utf8');
+        gitIn(localDir, 'add', '.gitignore', 'package.json');
+    }
+    gitIn(localDir, 'commit', '-m', 'fixture setup');
+    gitIn(localDir, 'push', 'origin', 'main');
+
+    const repoModulesFixture = path.join(localDir, 'node_modules');
+    fs.mkdirSync(repoModulesFixture, { recursive: true });
+    fs.writeFileSync(path.join(repoModulesFixture, 'marker.txt'), 'root install\n', 'utf8');
+
+    const branch = `task/${taskId}`;
+    const worktreesRoot = path.join(dir, 'worktrees');
+    const worktreeDir = path.join(worktreesRoot, taskId);
+    fs.mkdirSync(worktreesRoot, { recursive: true });
+    gitIn(localDir, 'worktree', 'add', worktreeDir, '-b', branch);
+
+    return { localDir, originDir, worktreesRoot, worktreeDir, branch, repoModulesFixture };
+}
+
+type TrackedNodeModulesVariant = 'missing' | 'file' | 'directory' | 'verified-symlink' | 'wrong-target-symlink';
+
+function makeEnsureWorktreeNodeModulesFixture(
+    dir: string,
+    taskId: string,
+    variant: TrackedNodeModulesVariant,
+): { localDir: string; worktreesRoot: string; worktreeDir: string; branch: string; repoModulesFixture: string; wrongTarget: string } {
+    const { localDir } = makeGitFixture(dir);
+    fs.writeFileSync(path.join(localDir, 'package.json'), '{"name":"fixture"}\n', 'utf8');
+    gitIn(localDir, 'add', 'package.json');
+    gitIn(localDir, 'commit', '-m', 'package setup');
+
+    const branch = `task/${taskId}`;
+    const repoModulesFixture = path.join(localDir, 'node_modules');
+    const wrongTarget = path.join(dir, 'wrong-node-modules-target');
+    gitIn(localDir, 'checkout', '-b', branch);
+    if (variant === 'file') {
+        fs.writeFileSync(repoModulesFixture, 'tracked file\n', 'utf8');
+        gitIn(localDir, 'add', 'node_modules');
+    } else if (variant === 'directory') {
+        fs.mkdirSync(repoModulesFixture, { recursive: true });
+        fs.writeFileSync(path.join(repoModulesFixture, 'pkg.json'), '{}\n', 'utf8');
+        gitIn(localDir, 'add', 'node_modules/pkg.json');
+    } else if (variant === 'verified-symlink') {
+        fs.symlinkSync(repoModulesFixture, repoModulesFixture);
+        gitIn(localDir, 'add', 'node_modules');
+    } else if (variant === 'wrong-target-symlink') {
+        fs.mkdirSync(wrongTarget, { recursive: true });
+        fs.symlinkSync(wrongTarget, repoModulesFixture);
+        gitIn(localDir, 'add', 'node_modules');
+    }
+    if (variant !== 'missing') {
+        gitIn(localDir, 'commit', '-m', `track ${variant} node_modules`);
+    }
+    gitIn(localDir, 'checkout', 'main');
+    fs.rmSync(repoModulesFixture, { recursive: true, force: true });
+    fs.mkdirSync(repoModulesFixture, { recursive: true });
+    fs.writeFileSync(path.join(repoModulesFixture, 'marker.txt'), 'root install\n', 'utf8');
+
+    const worktreesRoot = path.join(dir, 'worktrees');
+    const worktreeDir = path.join(worktreesRoot, taskId);
+    fs.mkdirSync(worktreesRoot, { recursive: true });
+    return { localDir, worktreesRoot, worktreeDir, branch, repoModulesFixture, wrongTarget };
+}
+
 function makeHumanReviewPendingStatus(taskId: string, branch: string): Record<string, unknown> {
     return {
         ...makeCompleteStatus(taskId, branch),
@@ -570,6 +651,27 @@ function writeQaArtifacts(repoDir: string, taskId: string): void {
     for (const fileName of ['handoff.md', 'review.md', 'done.md', 'notes.md', 'status.json']) {
         fs.writeFileSync(path.join(taskDir, fileName), `${taskId} ${fileName}\n`, 'utf8');
     }
+}
+
+function runCommitQaArtifactsInline(taskId: string, cwd: string): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+        `.then(m => { m.commitQaArtifacts([${JSON.stringify(taskId)}], ${JSON.stringify(cwd)}); })`,
+        `.catch(err => { console.error(err); process.exit(1); });`,
+    ].join('\n'), childEnvWithoutTasksOverride(), cwd);
+}
+
+function runEnsureWorktreeInline(
+    taskId: string,
+    branch: string,
+    cwd: string,
+    worktreesRoot: string,
+): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+        `.then(m => { m.ensureWorktree(${JSON.stringify(taskId)}, ${JSON.stringify(branch)}); })`,
+        `.catch(err => { console.error(err); process.exit(1); });`,
+    ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), cwd);
 }
 
 function writeImplementEvidenceFixture(tasksRoot: string, taskId: string, handoffChanges: readonly string[]): void {
@@ -1283,6 +1385,45 @@ void test('REPO_ROOT stays anchored to the supervising checkout when imported fr
     });
 });
 
+void test('classifyNodeModulesLinkFromData decision table', () => {
+    const expected = '/repo/node_modules';
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'symlink', resolvedTarget: expected, expectedTarget: expected }),
+        'verified-symlink',
+    );
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'file', resolvedTarget: null, expectedTarget: expected }),
+        'not-exempt',
+    );
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'directory', resolvedTarget: null, expectedTarget: expected }),
+        'not-exempt',
+    );
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'symlink', resolvedTarget: '/other/node_modules', expectedTarget: expected }),
+        'not-exempt',
+    );
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'missing', resolvedTarget: null, expectedTarget: expected }),
+        'not-exempt',
+    );
+});
+
+void test('classifyNodeModulesLinkFromData fails closed on probe errors', () => {
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'error', resolvedTarget: null, expectedTarget: '/repo/node_modules' }),
+        'not-exempt',
+    );
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'symlink', resolvedTarget: null, expectedTarget: '/repo/node_modules' }),
+        'not-exempt',
+    );
+    assert.equal(
+        classifyNodeModulesLinkFromData({ lstatKind: 'symlink', resolvedTarget: '/repo/node_modules', expectedTarget: null }),
+        'not-exempt',
+    );
+});
+
 void test('buildHumanReviewStagePaths includes only task artifacts, telemetry, and affected managed docs', () => {
     const paths = buildHumanReviewStagePaths(['task-a'], new Set(['docs/codebase-map.md', 'docs/patterns.md']), [
         {
@@ -1320,6 +1461,12 @@ void test('buildHumanReviewStagePaths includes only task artifacts, telemetry, a
             indexStatus: ' ',
             worktreeStatus: 'M',
             paths: ['docs/lessons-learned.md'],
+        },
+        {
+            raw: '?? node_modules',
+            indexStatus: '?',
+            worktreeStatus: '?',
+            paths: ['node_modules'],
         },
     ]);
 
@@ -1398,6 +1545,201 @@ void test('commitQaArtifacts commits task artifacts, telemetry, and managed docs
             encoding: 'utf8',
         }).trim();
         assert.equal(subject, 'chore: QA artifacts for task-a');
+    });
+});
+
+void test('commitQaArtifacts exempts the verified node_modules worktree symlink', () => {
+    withTempDir('run-task-nm-qa-end-', dir => {
+        const taskId = 'task-a';
+        const { worktreeDir, repoModulesFixture } = makeNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
+        writeQaArtifacts(worktreeDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+
+        const status = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.equal(status, '?? node_modules\n');
+        const tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--name-only'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.doesNotMatch(tree, /(?:^|\n)node_modules(?:\n|$)/);
+        const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        }).trim();
+        assert.equal(subject, 'chore: QA artifacts for task-a');
+    });
+});
+
+void test('commitHumanReviewFiles pushes a tree dirty only with the verified node_modules symlink', () => {
+    withTempDir('run-task-nm-human-review-', dir => {
+        const taskId = 'task-a';
+        const { worktreesRoot, worktreeDir, branch, repoModulesFixture } =
+            makeNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+
+        const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, []);
+        gitIn(worktreeDir, 'add', 'tasks');
+        gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+
+        fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), worktreeDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stderr, /outside the human_review allowlist/);
+        assert.doesNotMatch(result.stderr, /no allowed dirty files found to stage/);
+
+        const remoteRef = execFileSync('git', ['ls-remote', 'origin', branch], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        }).trim();
+        assert.ok(remoteRef.length > 0, 'branch was not pushed to origin');
+    });
+});
+
+void test('commitHumanReviewFiles still blocks a force-staged node_modules symlink', () => {
+    withTempDir('run-task-nm-human-review-staged-', dir => {
+        const taskId = 'task-a';
+        const { worktreesRoot, worktreeDir, branch, repoModulesFixture } =
+            makeNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+
+        const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, []);
+        gitIn(worktreeDir, 'add', 'tasks');
+        gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+
+        fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
+        // Force-stage past .gitignore, e.g. an accidental `git add -f node_modules`.
+        // Even though the symlink is otherwise verified, a *staged* node_modules
+        // is a deliberate departure from canon's own untracked worktree symlink
+        // and must still trip the normal allowlist check, not be waved through.
+        gitIn(worktreeDir, 'add', '-f', 'node_modules');
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), worktreeDir);
+
+        assert.notEqual(result.status, 0, 'force-staged node_modules unexpectedly passed');
+        assert.match(result.stderr, /outside the human_review allowlist/);
+        assert.match(result.stderr, /node_modules/);
+
+        const remoteRef = execFileSync('git', ['ls-remote', 'origin', branch], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        }).trim();
+        assert.equal(remoteRef.length, 0, 'branch should not have been pushed');
+    });
+});
+
+void test('commitQaArtifacts still rejects non-exempt node_modules entries', () => {
+    for (const variant of ['file', 'directory', 'wrong-target-symlink'] as const) {
+        withTempDir(`run-task-nm-negative-${variant}-`, dir => {
+            const taskId = `task-${variant}`;
+            const gitignoreRule = variant === 'directory' ? null : 'node_modules/\n';
+            const { worktreeDir } = makeNodeModulesGateFixture(dir, taskId, gitignoreRule);
+            const nodeModulesPath = path.join(worktreeDir, 'node_modules');
+            if (variant === 'file') {
+                fs.writeFileSync(nodeModulesPath, 'not a symlink\n', 'utf8');
+            } else if (variant === 'directory') {
+                fs.mkdirSync(nodeModulesPath, { recursive: true });
+                fs.writeFileSync(path.join(nodeModulesPath, 'pkg.json'), '{}\n', 'utf8');
+            } else {
+                const wrongTarget = path.join(dir, 'somewhere-else');
+                fs.mkdirSync(wrongTarget, { recursive: true });
+                fs.symlinkSync(wrongTarget, nodeModulesPath);
+            }
+            writeQaArtifacts(worktreeDir, taskId);
+
+            const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+            assert.notEqual(result.status, 0, `${variant} unexpectedly passed`);
+            assert.match(result.stderr, /QA-end commit aborted: working tree has dirty files outside the QA-end allowlist/);
+        });
+    }
+});
+
+void test('bare node_modules gitignore rule hides the symlink from porcelain entirely', () => {
+    withTempDir('run-task-nm-noslash-', dir => {
+        const { worktreeDir, repoModulesFixture } = makeNodeModulesGateFixture(dir, 'task-a', 'node_modules\n');
+        fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
+
+        const status = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.doesNotMatch(status, /node_modules/);
+    });
+});
+
+void test('ensureWorktree creates and reuses canon node_modules symlinks without clobbering other entries', () => {
+    for (const variant of ['missing', 'verified-symlink', 'file', 'directory'] as const) {
+        withTempDir(`run-task-ensure-wt-nm-${variant}-`, dir => {
+            const taskId = `task-${variant}`;
+            const { localDir, worktreesRoot, worktreeDir, branch, repoModulesFixture } =
+                makeEnsureWorktreeNodeModulesFixture(dir, taskId, variant);
+
+            const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+            assert.equal(result.status, 0, result.stderr);
+
+            const nodeModulesPath = path.join(worktreeDir, 'node_modules');
+            const stat = fs.lstatSync(nodeModulesPath);
+            if (variant === 'missing' || variant === 'verified-symlink') {
+                assert.equal(stat.isSymbolicLink(), true);
+                assert.equal(fs.realpathSync(nodeModulesPath), fs.realpathSync(repoModulesFixture));
+            } else if (variant === 'file') {
+                assert.equal(stat.isFile(), true);
+                assert.equal(fs.readFileSync(nodeModulesPath, 'utf8'), 'tracked file\n');
+            } else {
+                assert.equal(stat.isDirectory(), true);
+                assert.equal(fs.readFileSync(path.join(nodeModulesPath, 'pkg.json'), 'utf8'), '{}\n');
+            }
+        });
+    }
+});
+
+void test('ensureWorktree fails closed on a wrong-target node_modules symlink', () => {
+    withTempDir('run-task-ensure-wt-nm-wrong-target-', dir => {
+        const taskId = 'task-wrong-target';
+        const { localDir, worktreesRoot, branch, wrongTarget } =
+            makeEnsureWorktreeNodeModulesFixture(dir, taskId, 'wrong-target-symlink');
+
+        const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Worktree setup aborted: .*node_modules is a symlink but does not resolve to/);
+        assert.match(result.stderr, new RegExp(wrongTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     });
 });
 
