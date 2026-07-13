@@ -1,7 +1,7 @@
 {
   "id": "upgrade-destination-classification",
   "title": "canon upgrade: refuse untracked-existing targets, fail closed on git errors",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-11",
   "updated": "2026-07-13",
   "branch": "task/upgrade-destination-classification",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
