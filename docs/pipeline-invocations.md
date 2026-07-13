@@ -720,3 +720,7 @@
 | 2026-07-13T03:17:23.368Z | upgrade-destination-classification | implement | codex | gpt-5.5 | 1 | 249.1s | 8696995 | ok |
 | 2026-07-13T03:36:10.902Z | upgrade-destination-classification | code_review | claude | opus | 1 | 675.6s | 898471 | ok |
 | 2026-07-13T03:39:22.670Z | upgrade-destination-classification | qa | claude | sonnet | 0 | 191.8s | 1461280 | ok |
+| 2026-07-13T14:08:28.836Z | worktree-node-modules-gate-carveout | spec_review | codex | gpt-5.5 | 0 | 156.9s | 1239060 | ok |
+| 2026-07-13T14:16:10.902Z | worktree-node-modules-gate-carveout | spec | claude | opus | 0 | 462.1s | 1624968 | ok |
+| 2026-07-13T14:17:30.762Z | worktree-node-modules-gate-carveout | spec_review | codex | gpt-5.5 | 1 | 79.9s | 2244411 | ok |
+| 2026-07-13T15:54:24.797Z | worktree-node-modules-gate-carveout | plan | claude | sonnet | 0 | 817.3s | 4810731 | ok |
