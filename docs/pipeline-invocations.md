@@ -713,3 +713,5 @@
 | 2026-07-11T17:17:55.905Z | per-phase-code-review-budget | implement | codex | gpt-5.5 | 0 | 2.0s | - | failed |
 | 2026-07-11T17:32:44.703Z | per-phase-code-review-budget | code_review | claude | opus | 0 | 482.5s | 690402 | ok |
 | 2026-07-11T17:37:10.139Z | per-phase-code-review-budget | qa | claude | sonnet | 0 | 265.4s | 1957177 | ok |
+| 2026-07-11T23:04:44.979Z | upgrade-destination-classification | spec_review | codex | gpt-5.5 | 0 | 120.6s | 467748 | ok |
+| 2026-07-13T02:42:36.364Z | upgrade-destination-classification | plan | claude | sonnet | 0 | 870.8s | 3299107 | ok |
