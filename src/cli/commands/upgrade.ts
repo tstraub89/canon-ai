@@ -11,7 +11,7 @@ const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 export interface UpgradeOptions {
     /** Dry-run: print the plan and exit without writing any files. */
     check?: boolean;
-    /** Overwrite dirty (modified/staged) managed targets. Without this, dirty targets cause the operation to refuse. */
+    /** Overwrite refused managed targets. Without this, unsafe destinations cause the operation to refuse. */
     force?: boolean;
     /** Skip the post-write `git add`. Teams that prefer to stage manually. */
     noStage?: boolean;
@@ -158,8 +158,17 @@ export interface UpgradeResult {
     skipped: string[];
     /** Under --check: files that WOULD be upgraded. Empty otherwise. */
     wouldUpgrade: string[];
-    /** Files that would have been upgraded but are dirty in git. Empty under --force. */
+    /** Union of all refusal buckets in `refusals`. Empty under --force. */
     dirtyRefused: string[];
+    /** Files refused by destination safety class. Empty under --force. */
+    refusals: {
+        /** Tracked by git with staged/unstaged changes, including local deletion. */
+        trackedDirty: string[];
+        /** Exists on disk but is not tracked by git, including gitignored files. */
+        untrackedExisting: string[];
+        /** Exists on disk but git state could not be verified. */
+        unverifiable: string[];
+    };
     /** Files with malformed canon markers that cannot be safely rewritten. */
     malformed: string[];
     /** Pre-split docs-refs checkers overwritten this run whose adopter should
@@ -169,26 +178,101 @@ export interface UpgradeResult {
     staleOverrides: string[];
 }
 
+type DestinationClass = 'absent' | 'tracked-clean' | 'tracked-dirty' | 'untracked-existing' | 'unverifiable';
+
 /**
- * Returns true if the project's git working tree has any modified/staged
- * changes to `relPath`. Untracked files return false (they don't represent
- * "user work that would be lost"). Returns false if the repo is not a git
- * repo or git is unavailable — treat as clean.
+ * Classifies pending upgrade destinations by whether canon can write them
+ * safely: absent and tracked-clean paths may be written; tracked-dirty,
+ * untracked-existing, and unverifiable paths are refused unless --force.
+ *
+ * Git is the safety boundary for existing non-identical content, so git
+ * failures classify existing paths as unverifiable. Dirty status is checked
+ * before trackedness so a staged deletion (`git rm`) remains tracked-dirty
+ * instead of falling through to absent. Trackedness is then checked before
+ * on-disk existence so an unstaged local deletion also remains tracked-dirty.
+ * Untracked-existing includes gitignored files, which single-path porcelain
+ * output alone cannot distinguish from tracked-clean.
  */
-function isPathDirty(cwd: string, relPath: string): boolean {
-    const result = spawnSync('git', ['status', '--porcelain', '--', relPath], {
+function classifyDestinations(cwd: string, relPaths: readonly string[]): Map<string, DestinationClass> {
+    const classes = new Map<string, DestinationClass>();
+    const uniqueRelPaths = [...new Set(relPaths)];
+    if (uniqueRelPaths.length === 0) return classes;
+
+    const probe = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
         cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
     });
-    if (result.status !== 0 || result.error) return false;
-    // Porcelain v1 first two columns: index status, working-tree status. ?? = untracked
-    // (we don't refuse on untracked). M, A, D, R, C, T, U in either column = dirty.
-    for (const line of (result.stdout ?? '').split('\n')) {
-        if (!line.trim()) continue;
-        const xy = line.slice(0, 2);
-        if (xy === '??') continue;
-        return true;
+    const gitAvailable = probe.status === 0 && !probe.error && probe.stdout.trim() === 'true';
+    if (!gitAvailable) {
+        for (const rel of uniqueRelPaths) {
+            classes.set(rel, existsSync(join(cwd, rel)) ? 'unverifiable' : 'absent');
+        }
+        return classes;
     }
-    return false;
+
+    const lsFiles = spawnSync('git', ['ls-files', '-z', '--', ...uniqueRelPaths], {
+        cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const status = spawnSync('git', ['status', '--porcelain=v1', '-z', '--', ...uniqueRelPaths], {
+        cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+
+    if (lsFiles.status !== 0 || lsFiles.error || status.status !== 0 || status.error) {
+        for (const rel of uniqueRelPaths) {
+            classes.set(rel, existsSync(join(cwd, rel)) ? 'unverifiable' : 'absent');
+        }
+        return classes;
+    }
+
+    const tracked = new Set((lsFiles.stdout ?? '').split('\0').filter(Boolean));
+    const dirty = new Set<string>();
+    const statusEntries = (status.stdout ?? '').split('\0');
+    for (let i = 0; i < statusEntries.length; i += 1) {
+        const entry = statusEntries[i];
+        if (!entry) continue;
+        const xy = entry.slice(0, 2);
+        const rel = entry.slice(3);
+        if (xy !== '??') dirty.add(rel);
+        if (xy[0] === 'R' || xy[0] === 'C') i += 1;
+    }
+
+    for (const rel of uniqueRelPaths) {
+        if (dirty.has(rel)) {
+            classes.set(rel, 'tracked-dirty');
+            continue;
+        }
+        if (!tracked.has(rel)) {
+            classes.set(rel, existsSync(join(cwd, rel)) ? 'untracked-existing' : 'absent');
+            continue;
+        }
+        classes.set(rel, dirty.has(rel) ? 'tracked-dirty' : 'tracked-clean');
+    }
+    return classes;
+}
+
+function emptyRefusals(): UpgradeResult['refusals'] {
+    return {
+        trackedDirty: [],
+        untrackedExisting: [],
+        unverifiable: [],
+    };
+}
+
+export function printUpgradeRefusals(refusals: UpgradeResult['refusals'], prefix: 'Would refuse' | 'Refused'): void {
+    if (refusals.trackedDirty.length > 0) {
+        console.log(`${prefix} — tracked and locally modified (commit/stash first, or pass --force):`);
+        for (const f of refusals.trackedDirty) console.log(`  ⚠ ${f}`);
+        console.log('');
+    }
+    if (refusals.untrackedExisting.length > 0) {
+        console.log(`${prefix} — exists but not tracked by git (git could not restore it after an overwrite; commit it, move it aside, or pass --force):`);
+        for (const f of refusals.untrackedExisting) console.log(`  ⚠ ${f}`);
+        console.log('');
+    }
+    if (refusals.unverifiable.length > 0) {
+        console.log(`${prefix} — git state could not be verified (git is canon upgrade's safety boundary; repair git or run inside a git repo, or pass --force):`);
+        for (const f of refusals.unverifiable) console.log(`  ⚠ ${f}`);
+        console.log('');
+    }
 }
 
 export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions = {}): UpgradeResult {
@@ -197,6 +281,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     const skipped: string[] = [];
     const wouldUpgrade: string[] = [];
     const dirtyRefused: string[] = [];
+    const refusals = emptyRefusals();
     const malformed: string[] = [];
     const cutoverWarnings: string[] = [];
 
@@ -299,6 +384,10 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     const docsRefsConfigPath = join(cwd, docsRefsConfigRel);
     const docsRefsCheckContent = existsSync(docsRefsCheckPath) ? readFileSync(docsRefsCheckPath, 'utf8') : null;
     const docsRefsConfigExists = existsSync(docsRefsConfigPath);
+    const docsRefsConfigTemplatePath = join(pkgDir, 'templates', docsRefsConfigRel);
+    const docsRefsConfigTemplateContent = existsSync(docsRefsConfigTemplatePath)
+        ? readFileSync(docsRefsConfigTemplatePath, 'utf8')
+        : null;
     // "Pre-split" = the old checker that hardcoded its config inline and never
     // imports docs-refs-config.mjs. This is independent of whether the config
     // file already exists: a repo can carry an old inline checker alongside a
@@ -308,17 +397,6 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     const isPreSplitDocsRefs =
         docsRefsCheckContent !== null &&
         !docsRefsCheckContent.includes('./docs-refs-config.mjs');
-    const docsRefsConfigMissing = !docsRefsConfigExists;
-
-    if (docsRefsConfigMissing) {
-        const docsRefsConfigTemplatePath = join(pkgDir, 'templates', docsRefsConfigRel);
-        if (existsSync(docsRefsConfigTemplatePath)) {
-            const templateContent = readFileSync(docsRefsConfigTemplatePath, 'utf8');
-            pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: templateContent });
-        } else {
-            skipped.push(`${docsRefsConfigRel} (missing template for cutover scaffold)`);
-        }
-    }
 
     // Pre-split cutover: the old checker hardcoded its config inline. The new
     // checker (and its .d.ts) are canon-owned and overwrite in place through the
@@ -354,34 +432,78 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         pending.push({ rel: gitignoreRel, projectPath: gitignorePath, content: desiredGitignore });
     }
 
-    // Dirty-target detection: any pending write whose project path has
-    // tracked changes in git becomes a refusal (unless --force). Untracked
-    // files don't count (no committed history to lose). We always ask git
-    // — including for paths that don't exist on disk — because `git status`
-    // is the authoritative source: a managed file deleted locally (or
-    // renamed out of the way) is still a tracked change that should refuse
-    // recreation, even though `existsSync()` returns false. Caught by Codex
-    // P1 on the original `existsSync && isPathDirty` gate.
-    const dirty: WriteOp[] = [];
-    const clean: WriteOp[] = [];
-    for (const op of pending) {
-        if (isPathDirty(cwd, op.rel)) dirty.push(op);
-        else clean.push(op);
+    const destinationClasses = classifyDestinations(cwd, [
+        ...pending.map(op => op.rel),
+        docsRefsConfigRel,
+    ]);
+
+    if (docsRefsConfigTemplateContent === null) {
+        if (!docsRefsConfigExists) {
+            skipped.push(`${docsRefsConfigRel} (missing template for cutover scaffold)`);
+        }
+    } else {
+        const docsRefsConfigClass = destinationClasses.get(docsRefsConfigRel);
+        if (docsRefsConfigClass === 'absent') {
+            pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
+        } else if (!docsRefsConfigExists) {
+            // Locally deleted tracked config: queue it so the shared classifier
+            // refuses it instead of silently recreating adopter-owned state.
+            pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
+        } else {
+            const existingConfigContent = readFileSync(docsRefsConfigPath, 'utf8');
+            if (
+                existingConfigContent !== docsRefsConfigTemplateContent &&
+                (docsRefsConfigClass === 'untracked-existing' || docsRefsConfigClass === 'unverifiable')
+            ) {
+                pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
+            }
+        }
     }
+
+    // Destination classification: classify every pending write before writing
+    // anything, then refuse the whole run if any unsafe destination appears.
+    const clean: WriteOp[] = [];
+    const trackedDirtyOps: WriteOp[] = [];
+    const untrackedExistingOps: WriteOp[] = [];
+    const unverifiableOps: WriteOp[] = [];
+    for (const op of pending) {
+        switch (destinationClasses.get(op.rel)) {
+            case 'tracked-dirty':
+                trackedDirtyOps.push(op);
+                break;
+            case 'untracked-existing':
+                untrackedExistingOps.push(op);
+                break;
+            case 'unverifiable':
+                unverifiableOps.push(op);
+                break;
+            case 'absent':
+            case 'tracked-clean':
+                clean.push(op);
+                break;
+            default:
+                unverifiableOps.push(op);
+                break;
+        }
+    }
+    const dirty: WriteOp[] = [...trackedDirtyOps, ...untrackedExistingOps, ...unverifiableOps];
+    refusals.trackedDirty.push(...trackedDirtyOps.map(op => op.rel));
+    refusals.untrackedExisting.push(...untrackedExistingOps.map(op => op.rel));
+    refusals.unverifiable.push(...unverifiableOps.map(op => op.rel));
 
     if (options.check) {
         // Dry-run: report what would change, including dirty conflicts.
         const staleOverrides = getStaleOverrides(cwd, clean);
         for (const op of clean) wouldUpgrade.push(op.rel);
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides };
     }
 
     if (dirty.length > 0 && !options.force) {
         // Refuse: don't write ANY pending op. Report the dirty list so the
         // caller can surface it and the operator can decide.
         for (const op of dirty) dirtyRefused.push(op.rel);
-        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides: [] };
+        return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides: [] };
     }
 
     // Compare the canon task templates actually written by this run against
@@ -400,7 +522,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
         upgraded.push(op.rel);
     }
 
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals: emptyRefusals(), malformed, cutoverWarnings, staleOverrides };
 }
 
 export function parseUpgradeArgs(args: string[]): UpgradeOptions {
@@ -419,7 +541,7 @@ export function parseUpgradeArgs(args: string[]): UpgradeOptions {
 export function upgradeCmd(args: string[]): void {
     const options = parseUpgradeArgs(args);
     const result = runUpgrade(process.cwd(), packageDir, options);
-    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides } = result;
+    const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides } = result;
 
     console.log('\ncanon upgrade' + (options.check ? ' --check' : '') + '\n');
 
@@ -436,11 +558,7 @@ export function upgradeCmd(args: string[]): void {
         if (staleOverrides.length > 0) {
             printStaleOverrideNudge(staleOverrides, true);
         }
-        if (dirtyRefused.length > 0) {
-            console.log('Would refuse (dirty in git — pass --force to overwrite):');
-            for (const f of dirtyRefused) console.log(`  ⚠ ${f}`);
-            console.log('');
-        }
+        printUpgradeRefusals(refusals, 'Would refuse');
         if (unchanged.length > 0) {
             console.log('Already up to date:');
             for (const f of unchanged) console.log(`  = ${f}`);
@@ -466,11 +584,9 @@ export function upgradeCmd(args: string[]): void {
         return;
     }
 
-    // Refusal path: dirty managed targets without --force.
+    // Refusal path: unsafe managed targets without --force.
     if (dirtyRefused.length > 0) {
-        console.log('Refused (dirty in git — pass --force to overwrite, or commit/stash these paths first):');
-        for (const f of dirtyRefused) console.log(`  ⚠ ${f}`);
-        console.log('');
+        printUpgradeRefusals(refusals, 'Refused');
         if (malformed.length > 0) {
             console.log('Malformed (manual fix needed):');
             for (const f of malformed) {
@@ -478,7 +594,7 @@ export function upgradeCmd(args: string[]): void {
             }
             console.log('');
         }
-        console.log('No files were upgraded. Resolve the dirty paths and re-run, or pass `--force`.');
+        console.log('No files were upgraded. Resolve the refused paths and re-run, or pass `--force`.');
         // Surface as a non-zero exit so scripts can detect.
         process.exit(2);
     }

@@ -1,15 +1,15 @@
 {
   "id": "upgrade-destination-classification",
   "title": "canon upgrade: refuse untracked-existing targets, fail closed on git errors",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-07-11",
   "updated": "2026-07-13",
-  "branch": "",
+  "branch": "task/upgrade-destination-classification",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "c0ccd8ed1fe09d82ea374f70202381bd8cc8ee62",
-    "orchestrator_commit": "c0ccd8ed1fe09d82ea374f70202381bd8cc8ee62",
+    "upstream_commit": "979c914d4842641050a178fca1de9d480e062e50",
+    "orchestrator_commit": "979c914d4842641050a178fca1de9d480e062e50",
     "codex_cli": "codex-cli 0.144.1",
     "claude_code": "2.1.207 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -64,7 +65,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "019f536b-3bf9-7c40-a089-a1aaaaa82651"
+    "codex_spec_review": "019f536b-3bf9-7c40-a089-a1aaaaa82651",
+    "codex": "019f595a-e971-7123-b793-56bc2c119111",
+    "claude_review": "b16ac7db-b73e-4748-a115-f2e462258c29"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

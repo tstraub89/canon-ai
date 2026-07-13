@@ -3956,20 +3956,85 @@ function getStaleOverrides(cwd, changedOps) {
   }
   return staleOverrides;
 }
-function isPathDirty(cwd, relPath) {
-  const result = spawnSync8("git", ["status", "--porcelain", "--", relPath], {
+function classifyDestinations(cwd, relPaths) {
+  const classes = /* @__PURE__ */ new Map();
+  const uniqueRelPaths = [...new Set(relPaths)];
+  if (uniqueRelPaths.length === 0) return classes;
+  const probe = spawnSync8("git", ["rev-parse", "--is-inside-work-tree"], {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"]
   });
-  if (result.status !== 0 || result.error) return false;
-  for (const line of (result.stdout ?? "").split("\n")) {
-    if (!line.trim()) continue;
-    const xy = line.slice(0, 2);
-    if (xy === "??") continue;
-    return true;
+  const gitAvailable = probe.status === 0 && !probe.error && probe.stdout.trim() === "true";
+  if (!gitAvailable) {
+    for (const rel of uniqueRelPaths) {
+      classes.set(rel, existsSync5(join5(cwd, rel)) ? "unverifiable" : "absent");
+    }
+    return classes;
   }
-  return false;
+  const lsFiles = spawnSync8("git", ["ls-files", "-z", "--", ...uniqueRelPaths], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  const status = spawnSync8("git", ["status", "--porcelain=v1", "-z", "--", ...uniqueRelPaths], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  if (lsFiles.status !== 0 || lsFiles.error || status.status !== 0 || status.error) {
+    for (const rel of uniqueRelPaths) {
+      classes.set(rel, existsSync5(join5(cwd, rel)) ? "unverifiable" : "absent");
+    }
+    return classes;
+  }
+  const tracked = new Set((lsFiles.stdout ?? "").split("\0").filter(Boolean));
+  const dirty = /* @__PURE__ */ new Set();
+  const statusEntries = (status.stdout ?? "").split("\0");
+  for (let i = 0; i < statusEntries.length; i += 1) {
+    const entry = statusEntries[i];
+    if (!entry) continue;
+    const xy = entry.slice(0, 2);
+    const rel = entry.slice(3);
+    if (xy !== "??") dirty.add(rel);
+    if (xy[0] === "R" || xy[0] === "C") i += 1;
+  }
+  for (const rel of uniqueRelPaths) {
+    if (dirty.has(rel)) {
+      classes.set(rel, "tracked-dirty");
+      continue;
+    }
+    if (!tracked.has(rel)) {
+      classes.set(rel, existsSync5(join5(cwd, rel)) ? "untracked-existing" : "absent");
+      continue;
+    }
+    classes.set(rel, dirty.has(rel) ? "tracked-dirty" : "tracked-clean");
+  }
+  return classes;
+}
+function emptyRefusals() {
+  return {
+    trackedDirty: [],
+    untrackedExisting: [],
+    unverifiable: []
+  };
+}
+function printUpgradeRefusals(refusals, prefix) {
+  if (refusals.trackedDirty.length > 0) {
+    console.log(`${prefix} \u2014 tracked and locally modified (commit/stash first, or pass --force):`);
+    for (const f of refusals.trackedDirty) console.log(`  \u26A0 ${f}`);
+    console.log("");
+  }
+  if (refusals.untrackedExisting.length > 0) {
+    console.log(`${prefix} \u2014 exists but not tracked by git (git could not restore it after an overwrite; commit it, move it aside, or pass --force):`);
+    for (const f of refusals.untrackedExisting) console.log(`  \u26A0 ${f}`);
+    console.log("");
+  }
+  if (refusals.unverifiable.length > 0) {
+    console.log(`${prefix} \u2014 git state could not be verified (git is canon upgrade's safety boundary; repair git or run inside a git repo, or pass --force):`);
+    for (const f of refusals.unverifiable) console.log(`  \u26A0 ${f}`);
+    console.log("");
+  }
 }
 function runUpgrade(cwd, pkgDir, options = {}) {
   const upgraded = [];
@@ -3977,6 +4042,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const skipped = [];
   const wouldUpgrade = [];
   const dirtyRefused = [];
+  const refusals = emptyRefusals();
   const malformed = [];
   const cutoverWarnings = [];
   const pending = [];
@@ -4048,17 +4114,9 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const docsRefsConfigPath = join5(cwd, docsRefsConfigRel);
   const docsRefsCheckContent = existsSync5(docsRefsCheckPath) ? readFileSync3(docsRefsCheckPath, "utf8") : null;
   const docsRefsConfigExists = existsSync5(docsRefsConfigPath);
+  const docsRefsConfigTemplatePath = join5(pkgDir, "templates", docsRefsConfigRel);
+  const docsRefsConfigTemplateContent = existsSync5(docsRefsConfigTemplatePath) ? readFileSync3(docsRefsConfigTemplatePath, "utf8") : null;
   const isPreSplitDocsRefs = docsRefsCheckContent !== null && !docsRefsCheckContent.includes("./docs-refs-config.mjs");
-  const docsRefsConfigMissing = !docsRefsConfigExists;
-  if (docsRefsConfigMissing) {
-    const docsRefsConfigTemplatePath = join5(pkgDir, "templates", docsRefsConfigRel);
-    if (existsSync5(docsRefsConfigTemplatePath)) {
-      const templateContent = readFileSync3(docsRefsConfigTemplatePath, "utf8");
-      pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: templateContent });
-    } else {
-      skipped.push(`${docsRefsConfigRel} (missing template for cutover scaffold)`);
-    }
-  }
   if (isPreSplitDocsRefs) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
@@ -4079,21 +4137,64 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   } else {
     pending.push({ rel: gitignoreRel, projectPath: gitignorePath, content: desiredGitignore });
   }
-  const dirty = [];
-  const clean = [];
-  for (const op of pending) {
-    if (isPathDirty(cwd, op.rel)) dirty.push(op);
-    else clean.push(op);
+  const destinationClasses = classifyDestinations(cwd, [
+    ...pending.map((op) => op.rel),
+    docsRefsConfigRel
+  ]);
+  if (docsRefsConfigTemplateContent === null) {
+    if (!docsRefsConfigExists) {
+      skipped.push(`${docsRefsConfigRel} (missing template for cutover scaffold)`);
+    }
+  } else {
+    const docsRefsConfigClass = destinationClasses.get(docsRefsConfigRel);
+    if (docsRefsConfigClass === "absent") {
+      pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
+    } else if (!docsRefsConfigExists) {
+      pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
+    } else {
+      const existingConfigContent = readFileSync3(docsRefsConfigPath, "utf8");
+      if (existingConfigContent !== docsRefsConfigTemplateContent && (docsRefsConfigClass === "untracked-existing" || docsRefsConfigClass === "unverifiable")) {
+        pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
+      }
+    }
   }
+  const clean = [];
+  const trackedDirtyOps = [];
+  const untrackedExistingOps = [];
+  const unverifiableOps = [];
+  for (const op of pending) {
+    switch (destinationClasses.get(op.rel)) {
+      case "tracked-dirty":
+        trackedDirtyOps.push(op);
+        break;
+      case "untracked-existing":
+        untrackedExistingOps.push(op);
+        break;
+      case "unverifiable":
+        unverifiableOps.push(op);
+        break;
+      case "absent":
+      case "tracked-clean":
+        clean.push(op);
+        break;
+      default:
+        unverifiableOps.push(op);
+        break;
+    }
+  }
+  const dirty = [...trackedDirtyOps, ...untrackedExistingOps, ...unverifiableOps];
+  refusals.trackedDirty.push(...trackedDirtyOps.map((op) => op.rel));
+  refusals.untrackedExisting.push(...untrackedExistingOps.map((op) => op.rel));
+  refusals.unverifiable.push(...unverifiableOps.map((op) => op.rel));
   if (options.check) {
     const staleOverrides2 = getStaleOverrides(cwd, clean);
     for (const op of clean) wouldUpgrade.push(op.rel);
     for (const op of dirty) dirtyRefused.push(op.rel);
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides: staleOverrides2 };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides: staleOverrides2 };
   }
   if (dirty.length > 0 && !options.force) {
     for (const op of dirty) dirtyRefused.push(op.rel);
-    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides: [] };
+    return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides: [] };
   }
   const reportedWrites = options.force ? pending : clean;
   const staleOverrides = getStaleOverrides(cwd, reportedWrites);
@@ -4103,7 +4204,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     writeFileSync2(op.projectPath, op.content);
     upgraded.push(op.rel);
   }
-  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides };
+  return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals: emptyRefusals(), malformed, cutoverWarnings, staleOverrides };
 }
 function parseUpgradeArgs(args2) {
   const options = {};
@@ -4120,7 +4221,7 @@ function parseUpgradeArgs(args2) {
 function upgradeCmd(args2) {
   const options = parseUpgradeArgs(args2);
   const result = runUpgrade(process.cwd(), packageDir4, options);
-  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, malformed, cutoverWarnings, staleOverrides } = result;
+  const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides } = result;
   console.log("\ncanon upgrade" + (options.check ? " --check" : "") + "\n");
   if (options.check) {
     if (wouldUpgrade.length > 0) {
@@ -4134,11 +4235,7 @@ function upgradeCmd(args2) {
     if (staleOverrides.length > 0) {
       printStaleOverrideNudge(staleOverrides, true);
     }
-    if (dirtyRefused.length > 0) {
-      console.log("Would refuse (dirty in git \u2014 pass --force to overwrite):");
-      for (const f of dirtyRefused) console.log(`  \u26A0 ${f}`);
-      console.log("");
-    }
+    printUpgradeRefusals(refusals, "Would refuse");
     if (unchanged.length > 0) {
       console.log("Already up to date:");
       for (const f of unchanged) console.log(`  = ${f}`);
@@ -4164,9 +4261,7 @@ function upgradeCmd(args2) {
     return;
   }
   if (dirtyRefused.length > 0) {
-    console.log("Refused (dirty in git \u2014 pass --force to overwrite, or commit/stash these paths first):");
-    for (const f of dirtyRefused) console.log(`  \u26A0 ${f}`);
-    console.log("");
+    printUpgradeRefusals(refusals, "Refused");
     if (malformed.length > 0) {
       console.log("Malformed (manual fix needed):");
       for (const f of malformed) {
@@ -4174,7 +4269,7 @@ function upgradeCmd(args2) {
       }
       console.log("");
     }
-    console.log("No files were upgraded. Resolve the dirty paths and re-run, or pass `--force`.");
+    console.log("No files were upgraded. Resolve the refused paths and re-run, or pass `--force`.");
     process.exit(2);
   }
   if (upgraded.length > 0 && !options.noStage) {
