@@ -2089,7 +2089,7 @@ function checkAcCoveragePlaceholders(handoffContent) {
   }
   const rows = parseTable(handoffContent, "AC Coverage");
   if (rows.length === 0) return ["AC Coverage table is missing or contains no AC rows"];
-  const hasAcRow = rows.some((row) => /AC-\d+/i.test(Object.values(row)[0] ?? ""));
+  const hasAcRow = rows.some((row) => /AC-[A-Za-z]?\d+/i.test(Object.values(row)[0] ?? ""));
   if (!hasAcRow) return ["AC Coverage table is missing or contains no AC rows"];
   const PLACEHOLDER = "Met / Partial / Not met";
   const allPlaceholder = rows.every((row) => (row["Status"] ?? "") === PLACEHOLDER);

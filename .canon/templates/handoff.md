@@ -41,7 +41,7 @@ Brief explanation of the approach taken and why.
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
+Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
 
 | AC | Status | Notes |
 |---|---|---|

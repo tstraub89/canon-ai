@@ -20,7 +20,11 @@ export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
     const rows = parseTable(handoffContent, 'AC Coverage');
     if (rows.length === 0) return ['AC Coverage table is missing or contains no AC rows'];
 
-    const hasAcRow = rows.some(row => /AC-\d+/i.test(Object.values(row)[0] ?? ''));
+    // Accepts both bare-numeric (`AC-1`) and lettered-section (`AC-A1`) ID schemes —
+    // specs group ACs under section letters (A, B, C...) as often as they use flat
+    // numbering, and the handoff's AC IDs mirror whatever spec.md uses. Single
+    // letter only: multi-letter prefixes (`AC-XYZ9`) are not a documented scheme.
+    const hasAcRow = rows.some(row => /AC-[A-Za-z]?\d+/i.test(Object.values(row)[0] ?? ''));
     if (!hasAcRow) return ['AC Coverage table is missing or contains no AC rows'];
 
     const PLACEHOLDER = 'Met / Partial / Not met';

@@ -817,6 +817,34 @@ void test('checkAcCoveragePlaceholders ignores prose in the AC Coverage section'
     assert.deepEqual(issues, []);
 });
 
+void test('checkAcCoveragePlaceholders accepts lettered-section AC IDs (AC-A1) with no bare-numeric rows', () => {
+    const issues = checkAcCoveragePlaceholders([
+        '## AC Coverage',
+        '',
+        '| AC | Status | Evidence |',
+        '|---|---|---|',
+        '| AC-A1 | Met | filled in |',
+        '| AC-B9 | Met | filled in |',
+        '| AC-G3 | Met | filled in |',
+        '',
+    ].join('\n'));
+
+    assert.deepEqual(issues, []);
+});
+
+void test('checkAcCoveragePlaceholders rejects multi-letter AC IDs (AC-XYZ9) as non-AC rows', () => {
+    const issues = checkAcCoveragePlaceholders([
+        '## AC Coverage',
+        '',
+        '| AC | Status | Evidence |',
+        '|---|---|---|',
+        '| AC-XYZ9 | Met | filled in |',
+        '',
+    ].join('\n'));
+
+    assert.deepEqual(issues, ['AC Coverage table is missing or contains no AC rows']);
+});
+
 void test('checkAcCoveragePlaceholders flags an all-placeholder table even when Status is last', () => {
     const issues = checkAcCoveragePlaceholders([
         '## AC Coverage',
