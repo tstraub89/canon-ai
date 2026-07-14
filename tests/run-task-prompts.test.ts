@@ -399,7 +399,7 @@ void test('promptImplement renders empty affected-files branch', () => {
 
 void test('promptImplement renders affected files when provided', () => {
     const actual = normalize(promptImplement(baseState, 'fresh', ['src/a.ts', 'src/b.ts'], 'main'));
-    assert.match(actual, /## Affected files \(committed diff vs base branch\)/);
+    assert.match(actual, /## Committed diff vs base branch/);
     assert.match(actual, /- `src\/a\.ts`/);
     assert.match(actual, /- `src\/b\.ts`/);
     assert.match(actual, /vs `main`/);

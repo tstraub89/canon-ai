@@ -48,7 +48,7 @@ function buildAffectedFilesBlock(affectedFiles: readonly string[] | undefined, b
     if (!affectedFiles) return '';
     if (affectedFiles.length === 0) {
         return [
-            '## Affected files (committed diff vs base branch)',
+            '## Committed diff vs base branch',
             '',
             'No prior commits on this task\'s branch yet. Apply the full default check matrix from the spec\'s *Validation Required* section — every check runs unconditionally on this first implement pass. Predicate gating is meaningful only once the task branch has committed changes.',
             '',
@@ -57,7 +57,7 @@ function buildAffectedFilesBlock(affectedFiles: readonly string[] | undefined, b
 
     const branch = baseBranch ?? 'base branch';
     return [
-        '## Affected files (committed diff vs base branch)',
+        '## Committed diff vs base branch',
         '',
         `The following files have committed changes on this task's branch vs \`${branch}\`:`,
         '',
