@@ -734,3 +734,9 @@
 | 2026-07-16T04:07:19.604Z | cold-codex-review-invocation-policy | implement | codex | gpt-5.6-sol | 0 | 402.3s | 3408894 | ok |
 | 2026-07-16T04:22:00.416Z | cold-codex-review-invocation-policy | code_review | claude | opus | 0 | 590.0s | 848776 | ok |
 | 2026-07-16T04:26:16.919Z | cold-codex-review-invocation-policy | qa | claude | sonnet | 0 | 256.5s | 2790143 | ok |
+| 2026-07-16T05:44:55.453Z | review-verdict-freshness-guard | spec_review | codex | gpt-5.6-sol | 0 | 180.4s | 864978 | ok |
+| 2026-07-16T06:01:41.411Z | review-verdict-freshness-guard | spec | claude | opus | 0 | 1006.0s | 2549871 | ok |
+| 2026-07-16T06:04:47.031Z | review-verdict-freshness-guard | spec_review | codex | gpt-5.6-sol | 1 | 185.6s | 2232986 | ok |
+| 2026-07-16T06:20:17.365Z | review-verdict-freshness-guard | spec | claude | opus | 0 | 930.3s | 1916443 | ok |
+| 2026-07-16T06:22:25.705Z | review-verdict-freshness-guard | spec_review | codex | gpt-5.6-sol | 2 | 128.3s | 3850497 | ok |
+| 2026-07-16T18:04:03.020Z | review-verdict-freshness-guard | plan | claude | sonnet | 0 | 640.0s | 5476159 | ok |
