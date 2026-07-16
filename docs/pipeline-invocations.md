@@ -727,3 +727,7 @@
 | 2026-07-13T16:02:03.623Z | worktree-node-modules-gate-carveout | implement | codex | gpt-5.5 | 0 | 458.2s | 4923537 | ok |
 | 2026-07-13T16:23:28.250Z | worktree-node-modules-gate-carveout | code_review | claude | opus | 0 | 889.2s | 1268782 | ok |
 | 2026-07-13T16:26:08.041Z | worktree-node-modules-gate-carveout | qa | claude | sonnet | 0 | 159.8s | 693492 | ok |
+| 2026-07-16T03:33:22.955Z | cold-codex-review-invocation-policy | spec_review | codex | gpt-5.6-sol | 0 | 241.6s | 2369953 | ok |
+| 2026-07-16T03:39:16.582Z | cold-codex-review-invocation-policy | spec | claude | opus | 0 | 353.6s | 1784419 | ok |
+| 2026-07-16T03:42:35.719Z | cold-codex-review-invocation-policy | spec_review | codex | gpt-5.6-sol | 1 | 199.1s | 4379755 | ok |
+| 2026-07-16T04:00:35.931Z | cold-codex-review-invocation-policy | plan | claude | sonnet | 0 | 296.1s | 1946038 | ok |
