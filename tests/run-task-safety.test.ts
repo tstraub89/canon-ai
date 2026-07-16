@@ -18,6 +18,7 @@ import {
     guardConcurrentRun,
     resolveCanonPrBody,
     resolveQaPrBody,
+    shouldParkCrashedReview,
 } from '../scripts/run-task/main.js';
 import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
 import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
@@ -521,6 +522,55 @@ function makeCompleteStatus(taskId: string, branch: string): Record<string, unkn
             human_review: { status: 'done', agent: 'human' },
         },
     };
+}
+
+function writeReviewRecoveryTask(
+    tasksRoot: string,
+    taskId: string,
+    phase: 'spec_review' | 'code_review',
+    phaseStatus: 'in_progress' | 'done',
+    verdict: string,
+    counters = { current: 0, total: 0, changesRequested: 0 },
+): void {
+    const status = makeCompleteStatus(taskId, `task/${taskId}`);
+    status.status = phase;
+    status.human_spec_gate = false;
+    status.delicate = true;
+    const phases = status.phases as Record<string, Record<string, unknown>>;
+    phases[phase] = {
+        status: phaseStatus,
+        agent: phase === 'spec_review' ? 'codex' : 'claude',
+        verdict: phaseStatus === 'done' ? verdict : '',
+        iterations: counters.current,
+        iterations_current_loop: counters.current,
+        iterations_total: counters.total,
+        changes_requested_total: counters.changesRequested,
+        auto_block_count: 0,
+        preflight_rejections_current_loop: 0,
+    };
+    if (phase === 'spec_review') {
+        phases.plan = { status: 'pending', agent: 'claude' };
+        phases.implement = { status: 'pending', agent: 'codex' };
+        phases.code_review = { status: 'pending', agent: 'claude', verdict: '' };
+        phases.qa = { status: 'pending', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+    } else {
+        phases.qa = { status: 'pending', agent: 'claude' };
+        phases.human_review = { status: 'pending', agent: 'human' };
+    }
+    writeTaskStatus(tasksRoot, taskId, status);
+    const artifact = phase === 'spec_review' ? 'spec-review.md' : 'review.md';
+    const verdictLabel = verdict === 'changes_requested' ? 'Changes requested'
+        : verdict === 'approved_with_nits' ? 'Approved with nits'
+        : verdict.charAt(0).toUpperCase() + verdict.slice(1);
+    fs.writeFileSync(path.join(tasksRoot, taskId, artifact), [
+        phase === 'spec_review' ? '# Spec Review' : '# Code Review',
+        '',
+        '## Verdict',
+        '',
+        `- [x] **${verdictLabel}**`,
+        '',
+    ].join('\n'), 'utf8');
 }
 
 function writeAffectedFilesSpec(tasksRoot: string, taskId: string, fileCells: readonly string[]): void {
@@ -3946,6 +3996,159 @@ void test('main --reroute clears full_send', () => {
         assert.equal(updated.phases?.code_review?.status, 'pending');
         assert.equal(updated.phases?.qa?.status, 'pending');
         assert.equal(updated.phases?.human_review?.status, 'pending');
+    });
+});
+
+void test('checkAndRoute parks a crashed Codex spec_review before stale-verdict recovery', () => {
+    withTempDir('spec-review-crash-park-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-crash';
+        writeReviewRecoveryTask(tasksRoot, taskId, 'spec_review', 'in_progress', 'changes_requested', {
+            current: 1,
+            total: 2,
+            changesRequested: 1,
+        });
+
+        const result = runNodeInline([
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            'setLastCodexExitStatusForTest(1);',
+            `await checkAndRoute('spec_review', [${JSON.stringify(taskId)}]);`,
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.equal(result.status, 2);
+        assert.match(result.stderr, /status 1/);
+        assert.match(result.stderr, /did not complete/i);
+        assert.match(result.stderr, /no verdict was recorded this round/i);
+        assert.match(result.stderr, /out-of-credits/);
+        assert.match(result.stderr, /auth/);
+        assert.match(result.stderr, /network/);
+        assert.match(result.stderr, /MCP crash/);
+        assert.match(result.stderr, /canon run task-crash/);
+        assert.doesNotMatch(result.stderr, /Attempting one-shot retry/);
+        assert.doesNotMatch(result.stderr, /completed despite Codex exit status/);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: {
+                spec_review?: {
+                    status?: string;
+                    verdict?: string;
+                    iterations_current_loop?: number;
+                    iterations_total?: number;
+                    changes_requested_total?: number;
+                };
+            };
+        };
+        assert.equal(updated.phases?.spec_review?.status, 'in_progress');
+        assert.equal(updated.phases?.spec_review?.verdict, '');
+        assert.equal(updated.phases?.spec_review?.iterations_current_loop, 1);
+        assert.equal(updated.phases?.spec_review?.iterations_total, 2);
+        assert.equal(updated.phases?.spec_review?.changes_requested_total, 1);
+    });
+});
+
+void test('checkAndRoute accepts a self-bookkept spec_review despite a trailing non-zero Codex exit', () => {
+    withTempDir('spec-review-done-nonzero-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-done';
+        writeReviewRecoveryTask(tasksRoot, taskId, 'spec_review', 'done', 'approved_with_nits', {
+            current: 0,
+            total: 1,
+            changesRequested: 0,
+        });
+
+        const result = runNodeInline([
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            'setLastCodexExitStatusForTest(1);',
+            `await checkAndRoute('spec_review', [${JSON.stringify(taskId)}]);`,
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /completed despite Codex exit status 1/);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { spec_review?: { status?: string; verdict?: string } };
+        };
+        assert.equal(updated.phases?.spec_review?.status, 'done');
+        assert.equal(updated.phases?.spec_review?.verdict, 'approved_with_nits');
+    });
+});
+
+void test('checkAndRoute still auto-advances a clean-exit spec_review from its fresh verdict', () => {
+    withTempDir('spec-review-clean-recovery-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-fresh';
+        writeReviewRecoveryTask(tasksRoot, taskId, 'spec_review', 'in_progress', 'changes_requested', {
+            current: 0,
+            total: 1,
+            changesRequested: 1,
+        });
+
+        const result = runNodeInline([
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            'setLastCodexExitStatusForTest(0);',
+            `await checkAndRoute('spec_review', [${JSON.stringify(taskId)}]);`,
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /Auto-advanced 'spec_review'/);
+        assert.match(result.stderr, /verdict=changes_requested/);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: {
+                spec?: { status?: string };
+                spec_review?: {
+                    status?: string;
+                    verdict?: string;
+                    iterations_current_loop?: number;
+                    iterations_total?: number;
+                    changes_requested_total?: number;
+                };
+            };
+        };
+        assert.equal(updated.phases?.spec?.status, 'pending');
+        assert.equal(updated.phases?.spec_review?.status, 'pending');
+        assert.equal(updated.phases?.spec_review?.verdict, '');
+        assert.equal(updated.phases?.spec_review?.iterations_current_loop, 1);
+        assert.equal(updated.phases?.spec_review?.iterations_total, 2);
+        assert.equal(updated.phases?.spec_review?.changes_requested_total, 2);
+    });
+});
+
+void test('crashed-review park is spec_review-only and code_review recovery remains unchanged', () => {
+    assert.equal(shouldParkCrashedReview('spec_review', 1), true);
+    assert.equal(shouldParkCrashedReview('spec_review', 0), false);
+    for (const phase of ['code_review', 'plan', 'implement', 'qa'] as const) {
+        assert.equal(shouldParkCrashedReview(phase, 1), false);
+    }
+
+    withTempDir('code-review-clean-recovery-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-code-review';
+        writeReviewRecoveryTask(tasksRoot, taskId, 'code_review', 'in_progress', 'approved');
+
+        const result = runNodeInline([
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            'setLastCodexExitStatusForTest(0);',
+            `await checkAndRoute('code_review', [${JSON.stringify(taskId)}]);`,
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /Auto-advanced 'code_review'/);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { code_review?: { status?: string; verdict?: string } };
+        };
+        assert.equal(updated.phases?.code_review?.status, 'done');
+        assert.equal(updated.phases?.code_review?.verdict, 'approved');
     });
 });
 

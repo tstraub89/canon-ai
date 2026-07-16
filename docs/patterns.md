@@ -201,6 +201,10 @@ When `detachAndExit()` re-execs the process (same argv plus `CANON_DETACHED=1`),
 
 When a guard gates a destructive write on an external probe (`git status`, a network check, a filesystem stat), treat a probe *error* the same as a "dirty"/unsafe result — never as "clean." A guard that fails open on probe error is a bypass, not a safety net. Canonical case: `tools/strip-canon-block.mjs`'s dirty-tree check first treated a non-zero `git status` exit as "unknown → allow write"; code review changed it to refuse on any probe failure. Prevention: every new write-safety guard needs a test where the probe itself fails (e.g. `git` unavailable or exiting non-zero) asserting refusal, not permission.
 
+### A non-zero agent exit is not a completed review — recovery must park, not read the artifact
+
+`checkAndRoute()` recovery once trusted any verdict extractable from a review artifact when the phase was not yet `done`, regardless of how the preceding agent invocation exited. A returning non-interactive Codex `spec_review` crash—out-of-credits, auth, network, or MCP—could therefore read the prior round's verdict from cumulative `spec-review.md`, fabricate a review, and inflate the durable iteration counters used by `autoBlockSpecReview`. A non-zero exit cannot distinguish a completed review followed by shutdown noise from a crash that never updated the artifact. The safe rule is to test `phase === 'spec_review' && lastCodexExitStatus !== 0` via `shouldParkCrashedReview()` before `recoverPhaseForTask()`, then park with an actionable error and exit `2` instead of reading evidence or retrying. This is scoped to `spec_review`: `code_review` is Claude-owned and sees a forced Codex exit status of `0`, while a crashed Claude exits before recovery. When extending recovery for any phase, treat a non-zero agent exit as incomplete unless a stronger phase-specific completion signal already exists.
+
 ## Quick Reference: "I Want To..."
 
 | I want to... | Section above | Start at |

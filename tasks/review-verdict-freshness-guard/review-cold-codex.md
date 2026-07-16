@@ -1,0 +1,1 @@
+The fail-closed guard is correctly scoped to incomplete Codex spec reviews with non-zero exits, preserves completed and clean-exit recovery paths, and the relevant tests and validation checks pass.

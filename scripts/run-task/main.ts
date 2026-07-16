@@ -87,11 +87,16 @@ let lastClaudeSessionId: string | null = null;
 // Codex session ID captured from startup banner for session resumption
 let lastCodexSessionId: string | null = null;
 // Non-zero Codex exit (e.g. MCP warnings) doesn't necessarily mean failure.
-// checkAndRoute validates by reading status.json instead of trusting exit code alone.
+// checkAndRoute accepts completed phases, but parks an incomplete spec review
+// because its cumulative artifact may still contain a prior round's verdict.
 let lastCodexExitStatus = 0;
 
 export function setCliArgsForTest(next: Partial<CliArgs>): void {
     cliArgs = { ...cliArgs, ...next };
+}
+
+export function setLastCodexExitStatusForTest(status: number): void {
+    lastCodexExitStatus = status;
 }
 
 export function classifyMergeOutcome(opts: { exitOk: boolean; mergeConfirmed: boolean }): 'tolerate' | 'fail' {
@@ -2896,6 +2901,10 @@ export function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult
     }
 }
 
+export function shouldParkCrashedReview(phase: Phase, codexExitStatus: number): boolean {
+    return phase === 'spec_review' && codexExitStatus !== 0;
+}
+
 // Resume the last agent session for this phase and prompt them to complete.
 // Single turn, terse — the agent has full conversational context already.
 export async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: string): Promise<'done' | 'drift' | 'no_session'> {
@@ -3037,6 +3046,12 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
         if (phaseStatus !== 'done') {
             if (lastCodexExitStatus !== 0) {
                 warn(`Codex exited with status ${lastCodexExitStatus} and '${phase}' was not completed for '${taskIds[i]}'.`);
+            }
+            if (shouldParkCrashedReview(phase, lastCodexExitStatus)) {
+                warn(`Codex spec review exited with status ${lastCodexExitStatus} and did not complete — no verdict was recorded this round for '${taskIds[i]}'.`);
+                warn('This is typically caused by out-of-credits, auth, network, or an MCP crash.');
+                warn(`Fix the cause, then re-run \`canon run ${taskIds[i]}\`.`);
+                process.exit(2);
             }
             const recovered = await recoverPhaseForTask(taskIds[i], phase, phaseStatus);
             if (!recovered) {

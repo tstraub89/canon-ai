@@ -1,15 +1,15 @@
 {
   "id": "review-verdict-freshness-guard",
   "title": "Reject stale review verdicts from crashed agent invocations",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-06-30",
   "updated": "2026-07-16",
-  "branch": "",
+  "branch": "task/review-verdict-freshness-guard",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "467b847f159522bb6d41182b4b3926d3de1c7eb9",
-    "orchestrator_commit": "467b847f159522bb6d41182b4b3926d3de1c7eb9",
+    "upstream_commit": "392c26e343944a18011c5ece86c2e74b6be59df6",
+    "orchestrator_commit": "392c26e343944a18011c5ece86c2e74b6be59df6",
     "codex_cli": "codex-cli 0.144.5",
     "claude_code": "2.1.208 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "019f6972-25c1-75b0-a45f-2b6271d5348f",
-    "claude_spec": "17f5c988-0184-4a4d-be6f-5da10864cff1"
+    "claude_spec": "17f5c988-0184-4a4d-be6f-5da10864cff1",
+    "codex": "019f6c19-9b1f-7de1-9f37-5b9ec2aa0f2e",
+    "claude_review": "0fa8fee6-7f06-416d-9dad-5c711315b752"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

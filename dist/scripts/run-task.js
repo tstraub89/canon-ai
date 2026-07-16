@@ -7183,6 +7183,9 @@ function tryEvidenceAdvance(taskId, phase) {
       return { advanced: false, note: `phase '${phase}' has no evidence rule` };
   }
 }
+function shouldParkCrashedReview(phase, codexExitStatus) {
+  return phase === "spec_review" && codexExitStatus !== 0;
+}
 async function retryAgentForPhase(taskId, phase, evidenceNote) {
   const status = readStatus(taskId);
   const agent = status.phases[phase]?.agent;
@@ -7293,6 +7296,12 @@ async function checkAndRoute(phase, taskIds) {
     if (phaseStatus !== "done") {
       if (lastCodexExitStatus !== 0) {
         warn2(`Codex exited with status ${lastCodexExitStatus} and '${phase}' was not completed for '${taskIds[i]}'.`);
+      }
+      if (shouldParkCrashedReview(phase, lastCodexExitStatus)) {
+        warn2(`Codex spec review exited with status ${lastCodexExitStatus} and did not complete \u2014 no verdict was recorded this round for '${taskIds[i]}'.`);
+        warn2("This is typically caused by out-of-credits, auth, network, or an MCP crash.");
+        warn2(`Fix the cause, then re-run \`canon run ${taskIds[i]}\`.`);
+        process.exit(2);
       }
       const recovered = await recoverPhaseForTask(taskIds[i], phase, phaseStatus);
       if (!recovered) {

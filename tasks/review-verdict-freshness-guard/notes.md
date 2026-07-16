@@ -28,3 +28,8 @@ Deliberate tradeoff for the human_spec_gate: a genuine verdict + non-zero exit (
 [plan] Added a test-only `setLastCodexExitStatusForTest()` setter (mirroring the existing `setCliArgsForTest` pattern) as the seam for driving the private module-level `lastCodexExitStatus` from direct-import tests — there was no existing way to set it from outside `main.ts`.
 
 [plan] Traced `routeBackTo()` (main.ts:2536-2566) and the `spec_review` case of the post-recovery `switch` (main.ts:3059-3128) to pin down exact AC-3/AC-4 assertions: `routeBackTo` resets only `.status`/`.verdict`/operator-acceptance fields on the target phase and everything downstream — it never touches the iteration counters — so AC-4's counter assertions hold after routing loops back to `spec`. AC-3 (approved_with_nits, no changes-requested) hits a bare `return` in the switch with no further mutation, so `spec_review.status` stays `done` as seeded.
+
+[implement] Kept the crash regressions in `tests/run-task-safety.test.ts` rather than the plan's proposed direct-import validation suite. Running `checkAndRoute()` in a child process makes exit `2` observable directly and keeps the test-only `lastCodexExitStatus` mutation process-local. The explicit red-first run confirmed the test fails without the park (`result.status` was `0`, expected `2`) because the stale verdict auto-advanced.
+
+[implement] A fresh build changed only `dist/scripts/run-task.js`; `dist/cli/index.js` stayed byte-identical. Repeating the build reproduced SHA-256 `e974b66bca14233a2eeffe0450ba6de13522c7a6d79e4a857186236d37a1669c`.
+

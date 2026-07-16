@@ -740,3 +740,7 @@
 | 2026-07-16T06:20:17.365Z | review-verdict-freshness-guard | spec | claude | opus | 0 | 930.3s | 1916443 | ok |
 | 2026-07-16T06:22:25.705Z | review-verdict-freshness-guard | spec_review | codex | gpt-5.6-sol | 2 | 128.3s | 3850497 | ok |
 | 2026-07-16T18:04:03.020Z | review-verdict-freshness-guard | plan | claude | sonnet | 0 | 640.0s | 5476159 | ok |
+| 2026-07-16T18:11:25.425Z | review-verdict-freshness-guard | implement | codex | gpt-5.6-sol | 0 | 441.4s | 5197822 | ok |
+| 2026-07-16T18:14:05.310Z | review-verdict-freshness-guard | code_review | codex | gpt-5.6-luna | 0 | 159.3s | 0 | ok |
+| 2026-07-16T18:23:41.782Z | review-verdict-freshness-guard | code_review | claude | opus | 0 | 576.4s | 755287 | ok |
+| 2026-07-16T18:27:55.301Z | review-verdict-freshness-guard | qa | claude | sonnet | 0 | 253.5s | 1497048 | ok |
