@@ -1,7 +1,7 @@
 {
   "id": "review-verdict-freshness-guard",
   "title": "Reject stale review verdicts from crashed agent invocations",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-30",
   "updated": "2026-07-16",
   "branch": "task/review-verdict-freshness-guard",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
