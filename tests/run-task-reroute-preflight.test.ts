@@ -308,6 +308,12 @@ function readCapture(capturePath: string): Array<{ name: string; cwd: string; ar
         .map(line => JSON.parse(line) as { name: string; cwd: string; args: string[] });
 }
 
+function replaceCodexPrompt(args: readonly string[]): string[] {
+    const modelFlagIndex = args.lastIndexOf('-m');
+    assert.ok(modelFlagIndex > 0, `missing model flag in Codex argv: ${JSON.stringify(args)}`);
+    return args.map((arg, index) => index === modelFlagIndex - 1 ? '<prompt>' : arg);
+}
+
 void test('rerouteFromHumanReview reads worktree spec.md when a task worktree exists', () => {
     withTempDir('reroute-preflight-worktree-source-', dir => {
         initGitRepo(dir);
@@ -874,6 +880,7 @@ void test('spec_review phase runs in REPO_ROOT on first pass and fresh in the wo
 
         const firstPass = runMain(dir, ['--step', '--expect', 'spec_review', 'task-first'], {
             PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            CODEX_MODEL_MINI: 'fixture-mini',
             FAKE_AGENT_CAPTURE: firstPassCapture,
             FAKE_CODEX_COMPLETE_SPEC_REVIEW_TASK: 'task-first',
         });
@@ -882,7 +889,19 @@ void test('spec_review phase runs in REPO_ROOT on first pass and fresh in the wo
         const firstPassCodex = readCapture(firstPassCapture)
             .find(entry => entry.name === 'codex' && entry.args[0] === 'exec');
         assert.equal(firstPassCodex ? fs.realpathSync(firstPassCodex.cwd) : '', fs.realpathSync(dir));
-        assert.equal(firstPassCodex?.args.includes('resume'), false);
+        assert.deepEqual(replaceCodexPrompt(firstPassCodex?.args ?? []), [
+            'exec',
+            '--json',
+            '-c',
+            'model_reasoning_effort=high',
+            '--sandbox',
+            'workspace-write',
+            '<prompt>',
+            '-m',
+            'fixture-mini',
+            '-C',
+            fs.realpathSync(dir),
+        ]);
 
         const worktreesRoot = path.join(dir, 'worktrees');
         const taskId = 'task-reroute';
@@ -940,6 +959,7 @@ void test('retryAgentForPhase uses worktree cwd for reroute spec_review and REPO
         const retryEnv: NodeJS.ProcessEnv = {
             ...process.env,
             CANON_WORKTREES_ROOT: worktreesRoot,
+            CODEX_MODEL_MINI: 'fixture-mini',
             PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
             FAKE_AGENT_CAPTURE: capturePath,
         };
@@ -967,6 +987,17 @@ void test('retryAgentForPhase uses worktree cwd for reroute spec_review and REPO
             latestCapture ? fs.realpathSync(latestCapture.cwd) : '',
             fs.realpathSync(path.join(worktreesRoot, taskId)),
         );
+        assert.deepEqual(replaceCodexPrompt(latestCapture?.args ?? []), [
+            'exec',
+            'resume',
+            'retry-session',
+            '--json',
+            '-c',
+            'model_reasoning_effort=high',
+            '<prompt>',
+            '-m',
+            'fixture-mini',
+        ]);
 
         const nonRerouteStatus = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
             phases?: { implement?: Record<string, unknown> };

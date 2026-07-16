@@ -1,15 +1,15 @@
 {
   "id": "cold-codex-review-invocation-policy",
   "title": "Cold-Codex review lens gets canon-resolved effort and a telemetry row",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-07-14",
   "updated": "2026-07-16",
-  "branch": "",
+  "branch": "task/cold-codex-review-invocation-policy",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "789fd0317ef79fa0fc94916f1a260110b97c3fc9",
-    "orchestrator_commit": "789fd0317ef79fa0fc94916f1a260110b97c3fc9",
+    "upstream_commit": "c649f53cd3f9eea76a5b69400c67d4afac248db8",
+    "orchestrator_commit": "c649f53cd3f9eea76a5b69400c67d4afac248db8",
     "codex_cli": "codex-cli 0.144.5",
     "claude_code": "2.1.208 (Claude Code)"
   },
@@ -40,21 +40,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "019f68f8-c798-7193-bc0c-e81aaa9675f8",
-    "claude_spec": "738878c8-7f04-43cb-8f96-5626ee48f821"
+    "claude_spec": "738878c8-7f04-43cb-8f96-5626ee48f821",
+    "codex": "019f6915-6552-73d2-8a0c-48995c462298",
+    "claude_review": "2d4b7a9e-ffac-410f-b755-4a36e72612fa"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

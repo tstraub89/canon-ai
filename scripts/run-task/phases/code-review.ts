@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { info, setExitReason, warn } from '../cli.js';
 import { getAffectedFiles, getBaseBranch, getScopedDiff, verifyBranch } from '../git.js';
-import { getClaudeConfig, getMaxReviewLoops, policyConfig } from '../policy.js';
+import { getClaudeConfig, getCodexConfig, getMaxReviewLoops } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
 import { runColdCodexReview } from '../agents/codex.js';
 import { getActiveCwd } from '../worktree.js';
@@ -30,7 +30,7 @@ export type CodeReviewPhaseDeps = {
     getScopedDiff: typeof getScopedDiff;
     getClaudeConfig: typeof getClaudeConfig;
     getMaxReviewLoops: typeof getMaxReviewLoops;
-    getColdCodexModel: () => string;
+    getCodexConfig: typeof getCodexConfig;
     runColdCodexReview: typeof runColdCodexReview;
     runClaude: typeof runClaude;
 };
@@ -44,7 +44,7 @@ const defaultDeps: CodeReviewPhaseDeps = {
     getScopedDiff,
     getClaudeConfig,
     getMaxReviewLoops,
-    getColdCodexModel: () => policyConfig().codexModelMini,
+    getCodexConfig,
     runColdCodexReview,
     runClaude,
 };
@@ -324,9 +324,14 @@ export async function runCodeReviewPhase(
     info(`Phase: code_review (Claude${state.isBundle ? ' bundle' : ''}, iteration ${maxIter + 1})`);
     for (const t of tasks) taskPhase(t.taskId, 'code_review', 'in_progress');
 
-    const miniModel = deps.getColdCodexModel();
+    const coldCfg = deps.getCodexConfig('code_review', tasks);
     const coldReviewStartMs = Date.now();
-    const coldReview = await deps.runColdCodexReview(baseBranch, miniModel, activeCwd);
+    const coldReview = await deps.runColdCodexReview(baseBranch, coldCfg.model, coldCfg.effort, activeCwd, {
+        taskId: taskIds.join('+'),
+        phase: 'code_review',
+        iteration: maxIter,
+        activeCwd,
+    });
     const coldReviewDurationMs = Date.now() - coldReviewStartMs;
 
     if (!coldReview.success) {

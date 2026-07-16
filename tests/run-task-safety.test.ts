@@ -4605,7 +4605,7 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
             "import { runCodex } from './scripts/run-task/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
             '})().catch(err => { console.error(err); process.exit(1); });',
         ].join('\n'), {
             ...process.env,
@@ -4622,7 +4622,7 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
             "import { runCodex } from './scripts/run-task/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
             "  console.log('after-runCodex');",
             '})().catch(err => { console.error(err); process.exit(1); });',
         ].join('\n'), {
@@ -4640,7 +4640,7 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
             "import { runCodex } from './scripts/run-task/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
             '})().catch(err => { console.error(err); process.exit(1); });',
         ].join('\n'), {
             ...process.env,
@@ -4658,7 +4658,7 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
             "import { runCodex } from './scripts/run-task/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'effort', undefined, process.cwd());",
+            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
             '})().catch(err => { console.error(err); process.exit(1); });',
         ].join('\n'), {
             ...process.env,

@@ -1221,6 +1221,13 @@ function codexMatrix(config3) {
       M: { model: config3.codexModelMini, effort: "high" },
       L: { model: config3.codexModelMini, effort: "high" },
       XL: { model: config3.codexModelFull, effort: "high" }
+    },
+    code_review: {
+      XS: { model: config3.codexModelMini, effort: "high" },
+      S: { model: config3.codexModelMini, effort: "high" },
+      M: { model: config3.codexModelMini, effort: "high" },
+      L: { model: config3.codexModelMini, effort: "high" },
+      XL: { model: config3.codexModelMini, effort: "high" }
     }
   };
 }
@@ -1734,7 +1741,14 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
 }
 
 // scripts/run-task/agents/codex.ts
+var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
+function invalidCodexEffortMessage(effort) {
+  if (VALID_CODEX_EFFORTS.includes(effort)) return null;
+  return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. This per-invocation override supersedes any user-level model_reasoning_effort set in ~/.codex/config.toml \u2014 fix the resolved value in scripts/pipeline-policy.ts, not the user's Codex config.`;
+}
 async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
+  const invalidEffort = invalidCodexEffortMessage(effort);
+  if (invalidEffort) die(invalidEffort);
   const effectivePrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
   info(resumeId ? `Calling Codex (resuming ${resumeId.slice(0, 8)}...)...` : "Calling Codex...");
   info(`Model: ${model} | Effort: ${effort}`);
@@ -1825,39 +1839,73 @@ async function runCodex(prompt, interactive, resumeId, model, effort, metricsCon
     if (metricsContext) recordMetric({ ...metricsContext, agent: "codex", model, durationMs: Date.now() - startMs, status, tokens });
   }
 }
-async function runColdCodexReview(baseBranch, model, activeCwd, options = {}) {
+async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsContext, options = {}) {
+  const startMs = Date.now();
+  const invalidEffort = invalidCodexEffortMessage(effort);
+  if (invalidEffort) {
+    if (metricsContext) {
+      recordMetric({
+        ...metricsContext,
+        agent: "codex",
+        model,
+        durationMs: Date.now() - startMs,
+        status: "failed"
+      });
+    }
+    die(invalidEffort);
+  }
   const command = options.codexBinary ?? "codex";
-  const args = ["exec", "review", "--json", "--base", baseBranch, "-m", model];
+  const args = ["exec", "review", "--json", "-c", `model_reasoning_effort=${effort}`, "--base", baseBranch, "-m", model];
   const displayChunks = [];
   let sawTurnCompleted = false;
-  const startMs = Date.now();
-  const onLine = (line) => {
-    let event;
-    try {
-      event = JSON.parse(line);
-    } catch {
-      return;
+  let tokenTotal = 0;
+  let sawUsage = false;
+  let success = false;
+  let findings = "";
+  try {
+    const onLine = (line) => {
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
+      const tick = formatLiveTick(event);
+      if (tick) console.log(tick);
+      if (event.type === "turn.completed") {
+        sawTurnCompleted = true;
+        if (event.usage) {
+          tokenTotal += (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0);
+          sawUsage = true;
+        }
+      } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
+        displayChunks.push(event.item.text);
+      }
+    };
+    const result = await streamProcess(command, args, {
+      cwd: activeCwd,
+      label: "Codex cold review",
+      onLine
+    });
+    findings = displayChunks.join("\n\n");
+    success = findings.trim().length > 0 && sawTurnCompleted && !result.spawnError && !result.stalled && !result.signal;
+    return {
+      success,
+      findings,
+      durationMs: Date.now() - startMs
+    };
+  } finally {
+    if (metricsContext) {
+      recordMetric({
+        ...metricsContext,
+        agent: "codex",
+        model,
+        durationMs: Date.now() - startMs,
+        status: success ? "ok" : "failed",
+        tokens: sawUsage ? tokenTotal : void 0
+      });
     }
-    const tick = formatLiveTick(event);
-    if (tick) console.log(tick);
-    if (event.type === "turn.completed") {
-      sawTurnCompleted = true;
-    } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
-      displayChunks.push(event.item.text);
-    }
-  };
-  const result = await streamProcess(command, args, {
-    cwd: activeCwd,
-    label: "Codex cold review",
-    onLine
-  });
-  const findings = displayChunks.join("\n\n");
-  const success = findings.trim().length > 0 && sawTurnCompleted && !result.spawnError && !result.stalled && !result.signal;
-  return {
-    success,
-    findings,
-    durationMs: Date.now() - startMs
-  };
+  }
 }
 
 // scripts/run-task/validation.ts
@@ -4517,7 +4565,7 @@ var defaultDeps = {
   getScopedDiff,
   getClaudeConfig,
   getMaxReviewLoops,
-  getColdCodexModel: () => policyConfig().codexModelMini,
+  getCodexConfig,
   runColdCodexReview,
   runClaude
 };
@@ -4728,9 +4776,14 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
   }
   info(`Phase: code_review (Claude${state.isBundle ? " bundle" : ""}, iteration ${maxIter + 1})`);
   for (const t of tasks) taskPhase(t.taskId, "code_review", "in_progress");
-  const miniModel = deps.getColdCodexModel();
+  const coldCfg = deps.getCodexConfig("code_review", tasks);
   const coldReviewStartMs = Date.now();
-  const coldReview = await deps.runColdCodexReview(baseBranch, miniModel, activeCwd);
+  const coldReview = await deps.runColdCodexReview(baseBranch, coldCfg.model, coldCfg.effort, activeCwd, {
+    taskId: taskIds.join("+"),
+    phase: "code_review",
+    iteration: maxIter,
+    activeCwd
+  });
   const coldReviewDurationMs = Date.now() - coldReviewStartMs;
   if (!coldReview.success) {
     setExitReason(

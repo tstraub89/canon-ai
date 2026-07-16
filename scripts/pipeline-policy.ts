@@ -9,7 +9,7 @@
 
 export type TaskSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
 export type PipelineTier = 'fast' | 'full';
-export type CodexPhase = 'spec_review' | 'implement';
+export type CodexPhase = 'spec_review' | 'implement' | 'code_review';
 export type ClaudePhase = 'spec' | 'plan' | 'code_review' | 'qa';
 export type CodexModelConfig = { model: string; effort: string };
 type ClaudeMatrixConfig = { model: string; effort: string };
@@ -160,6 +160,8 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                tool access (cost without quality gain), and canon's thesis
     //                is token discipline over reflexive max-effort. Raise via
     //                env only if eval shows under-reasoning on delicate work.
+    //   code_review: the mandatory cold-Codex lens stays on mini at every
+    //                size and uses flat high effort, including XL/delicate.
     //
     // The `XS` row under spec_review is unused in practice (XS fast tier skips
     // Codex spec review entirely) but kept for completeness and testability.
@@ -178,6 +180,13 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
             M:  { model: config.codexModelMini, effort: 'high' },
             L:  { model: config.codexModelMini, effort: 'high' },
             XL: { model: config.codexModelFull, effort: 'high' },
+        },
+        code_review: {
+            XS: { model: config.codexModelMini, effort: 'high' },
+            S:  { model: config.codexModelMini, effort: 'high' },
+            M:  { model: config.codexModelMini, effort: 'high' },
+            L:  { model: config.codexModelMini, effort: 'high' },
+            XL: { model: config.codexModelMini, effort: 'high' },
         },
     };
 }

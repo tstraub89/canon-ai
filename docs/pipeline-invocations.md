@@ -731,3 +731,6 @@
 | 2026-07-16T03:39:16.582Z | cold-codex-review-invocation-policy | spec | claude | opus | 0 | 353.6s | 1784419 | ok |
 | 2026-07-16T03:42:35.719Z | cold-codex-review-invocation-policy | spec_review | codex | gpt-5.6-sol | 1 | 199.1s | 4379755 | ok |
 | 2026-07-16T04:00:35.931Z | cold-codex-review-invocation-policy | plan | claude | sonnet | 0 | 296.1s | 1946038 | ok |
+| 2026-07-16T04:07:19.604Z | cold-codex-review-invocation-policy | implement | codex | gpt-5.6-sol | 0 | 402.3s | 3408894 | ok |
+| 2026-07-16T04:22:00.416Z | cold-codex-review-invocation-policy | code_review | claude | opus | 0 | 590.0s | 848776 | ok |
+| 2026-07-16T04:26:16.919Z | cold-codex-review-invocation-policy | qa | claude | sonnet | 0 | 256.5s | 2790143 | ok |

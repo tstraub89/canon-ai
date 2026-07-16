@@ -56,6 +56,7 @@ The cold review's success gate (non-empty findings + `turn.completed` seen + no 
 | `tests/pipeline-policy.test.ts` | Test rows for the five new `code_review` matrix cells |
 | `tests/run-task-code-review.test.ts` | Updated exact-argv `deepEqual` (AC-3); effort-validation test (AC-5); telemetry ok/failed/token tests (AC-6, AC-7, AC-9); deps-stub rename fallout (AC-2, AC-8) |
 | `tests/run-task-reroute-preflight.test.ts` | Fresh/resumed exact-argv tightening (AC-4) |
+| `tests/run-task-safety.test.ts` | Replace four placeholder effort values with CLI-valid ones so pre-existing failure-ladder tests still reach their intended failure branches under the new pre-spawn guard (in-scope deviation recorded in handoff/done) |
 | `docs/decisions.md` | Amend the 2026-06 cold-Codex-lens entry (AC-10; land during implement, before handoff — code_review verifies AC-10). **Root-only — not in `CANON_OWNED`, has no `templates/` mirror; do not edit `templates/docs/decisions.md`.** |
 | `docs/pipeline-orchestrator.md` | Add the cold-lens row to the Codex Model/Effort Matrix (AC-10; land during implement, before handoff — code_review verifies AC-10). Canon-managed → its mirror auto-syncs (see Generated Artifacts). |
 

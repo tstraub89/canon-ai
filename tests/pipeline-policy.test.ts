@@ -151,6 +151,12 @@ const CODEX_MATRIX: CodexRow[] = [
     { phase: 'implement',   size: 'M',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'implement',   size: 'L',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'implement',   size: 'XL', expected: { model: 'full', effort: 'high' } },  // re-baselined 2026-06: was xhigh (GPT-5.5 overthinks at xhigh w/ open-ended tools)
+    // code_review (cold-Codex review lens)
+    { phase: 'code_review', size: 'XS', expected: { model: 'mini', effort: 'high' } },
+    { phase: 'code_review', size: 'S',  expected: { model: 'mini', effort: 'high' } },
+    { phase: 'code_review', size: 'M',  expected: { model: 'mini', effort: 'high' } },
+    { phase: 'code_review', size: 'L',  expected: { model: 'mini', effort: 'high' } },
+    { phase: 'code_review', size: 'XL', expected: { model: 'mini', effort: 'high' } },
 ];
 
 for (const row of CODEX_MATRIX) {
@@ -164,6 +170,7 @@ void test('codex matrix: delicate M uses XL row (effective size)', () => {
     const p = getPipelinePolicy([s('M', true)], TEST_CONFIG);
     assert.deepEqual(p.codex('implement'), { model: 'full', effort: 'high' });
     assert.deepEqual(p.codex('spec_review'), { model: 'full', effort: 'high' });
+    assert.deepEqual(p.codex('code_review'), { model: 'mini', effort: 'high' });
 });
 
 // ── Claude model/effort matrix ──────────────────────────────────────────────

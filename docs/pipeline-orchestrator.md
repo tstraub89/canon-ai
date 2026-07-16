@@ -217,8 +217,11 @@ Codex model and effort scale with task size:
 |---|---|---|---|---|---|
 | `spec_review` | — (skipped) | mini / medium | mini / high | mini / high | full / high |
 | `implement`   | mini / medium | mini / medium | mini / high | mini / high | full / high |
+| `code_review` (cold lens) | mini / high | mini / high | mini / high | mini / high | mini / high |
 
 Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. XL/delicate implement runs at `high`, not `xhigh`: GPT-5.5 tends to overthink at `xhigh` with open-ended tool access (cost without quality gain). Raise via env only if eval shows under-reasoning.
+
+The cold-Codex `code_review` lens is the exception to size scaling: as a mandatory hard-fail gate, it runs at flat `high` effort and stays on the mini model at every size, including XL/delicate.
 
 `spec_review` M was raised from `medium` to `high` (2026-07): task-history analysis across canon-ai and galleryplanner found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts, ~1.0–1.4) but a reroute-severity gap (M rerouted-task average 5.15 vs. L's 4.83). M's lighter spec_review effort is the leading hypothesis — not a proven sole cause, since M and L also differ on loop cap, budget, and QA effort. Re-measure the M vs. L reroute rate after this change; see [`docs/decisions.md`](docs/decisions.md) §"`spec_review` M effort raised medium → high (2026-07)" for the full reasoning and caveats.
 
@@ -386,7 +389,7 @@ PIPELINE_STALL_TIMEOUT_MS=1800000 canon run <id>
 
 ## Code Review Diff Injection
 
-Code review starts with a cold-Codex diff review run by the orchestrator in the active worktree: `codex exec review --json --base <baseBranch> -m <miniModel>`, where `<miniModel>` is canon's resolved mini Codex model. The captured findings are written verbatim to `tasks/<id>/review-cold-codex.md` for every task in the invocation. Bundles run this once over the combined branch diff, and the same findings reach every member.
+Code review starts with a cold-Codex diff review run by the orchestrator in the active worktree: `codex exec review --json -c model_reasoning_effort=<effort> --base <baseBranch> -m <miniModel>`, where canon resolves `<miniModel>` and `<effort>` through the `code_review` policy row (mini / `high` at every size). The captured findings are written verbatim to `tasks/<id>/review-cold-codex.md` for every task in the invocation. Bundles run this once over the combined branch diff, and the same findings reach every member.
 
 If the cold-Codex review cannot be obtained (no captured findings output, spawn error, stall, or signal), `code_review` stops before any Claude session. Re-run `canon run <id>` when Codex is available; there is no two-Claude-lens fallback. Successful runs emit one duration line in the run log: `→ cold-codex review (<taskIds>): <n>s`.
 

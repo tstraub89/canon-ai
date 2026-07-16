@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runColdCodexReview } from '../scripts/run-task/agents/codex.js';
+import { runCodex, runColdCodexReview } from '../scripts/run-task/agents/codex.js';
+import { recordMetric } from '../scripts/run-task/metrics.js';
 import { runCodeReviewPhase, type CodeReviewPhaseDeps } from '../scripts/run-task/phases/code-review.js';
 import { readStatus, writeStatusToFile } from '../scripts/run-task/state.js';
 import type { PipelineState, StatusJson, TaskContext } from '../scripts/run-task/types.js';
@@ -134,6 +135,49 @@ function writeFakeCodexScript(dir: string, body: string): string {
     return scriptPath;
 }
 
+async function withMetricsFileAsync<T>(dir: string, fn: (metricsFile: string) => Promise<T>): Promise<T> {
+    const metricsFile = path.join(dir, 'pipeline-invocations.md');
+    const previous = process.env.CANON_METRICS_FILE_OVERRIDE;
+    process.env.CANON_METRICS_FILE_OVERRIDE = metricsFile;
+    try {
+        return await fn(metricsFile);
+    } finally {
+        if (previous === undefined) delete process.env.CANON_METRICS_FILE_OVERRIDE;
+        else process.env.CANON_METRICS_FILE_OVERRIDE = previous;
+    }
+}
+
+function readMetricRows(metricsFile: string): string[][] {
+    return fs.readFileSync(metricsFile, 'utf8')
+        .split('\n')
+        .filter(line => /^\| 20\d\d-/.test(line))
+        .map(line => line.split('|').slice(1, -1).map(cell => cell.trim()));
+}
+
+async function captureDie(fn: () => Promise<unknown>): Promise<string> {
+    const originalExit: typeof process.exit = process.exit.bind(process);
+    const originalError = console.error;
+    const errors: string[] = [];
+    process.exit = (code?: string | number | null): never => {
+        throw Object.assign(new Error('process.exit'), { code });
+    };
+    console.error = (...args: unknown[]): void => { errors.push(args.map(String).join(' ')); };
+    try {
+        await assert.rejects(fn, (error: unknown) => isProcessExitError(error, 1));
+    } finally {
+        process.exit = originalExit;
+        console.error = originalError;
+    }
+    return errors.join('\n');
+}
+
+function assertInvalidEffortMessage(message: string): void {
+    assert.match(message, /ultra/);
+    assert.match(message, /none\|minimal\|low\|medium\|high\|xhigh/);
+    assert.match(message, /per-invocation override supersedes any user-level model_reasoning_effort/);
+    assert.match(message, /~\/\.codex\/config\.toml/);
+}
+
 function makeDeps(options: {
     activeCwd: string;
     events: string[];
@@ -150,9 +194,9 @@ function makeDeps(options: {
         getScopedDiff: () => ({ diff: 'diff --git a/src/foo.ts b/src/foo.ts\n', truncated: false }),
         getClaudeConfig: () => ({ model: 'sonnet', effort: 'high', budget: '20.00' }),
         getMaxReviewLoops: () => 3,
-        getColdCodexModel: () => 'mini-from-policy',
-        runColdCodexReview: (_baseBranch, model, cwd) => {
-            options.events.push(`cold:${model}:${cwd}`);
+        getCodexConfig: () => ({ model: 'mini-from-policy', effort: 'high' }),
+        runColdCodexReview: (_baseBranch, model, effort, cwd, metricsContext) => {
+            options.events.push(`cold:${model}:${effort}:${cwd}:${metricsContext?.taskId}:${metricsContext?.iteration}`);
             return Promise.resolve({
                 success: options.coldSuccess ?? true,
                 findings: options.findings ?? '[P2] src/foo.ts:10 - null deref',
@@ -195,7 +239,7 @@ void test('runColdCodexReview captures agent_message findings and uses codex rev
             `console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }));`,
         ].join('\n'));
 
-        const result = await runColdCodexReview('main', 'gpt-mini', dir, { codexBinary: fakeCodex });
+        const result = await runColdCodexReview('main', 'gpt-mini', 'high', dir, undefined, { codexBinary: fakeCodex });
 
         assert.equal(result.success, true);
         assert.equal(result.findings, '[P2] src/foo.ts:10 - null deref\n\nsecond paragraph');
@@ -204,6 +248,8 @@ void test('runColdCodexReview captures agent_message findings and uses codex rev
             'exec',
             'review',
             '--json',
+            '-c',
+            'model_reasoning_effort=high',
             '--base',
             'main',
             '-m',
@@ -218,7 +264,7 @@ void test('runColdCodexReview reports unavailable when no findings output is cap
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-empty-'));
     try {
         const fakeCodex = writeFakeCodexScript(dir, `process.exit(1);`);
-        const result = await runColdCodexReview('main', 'gpt-mini', dir, { codexBinary: fakeCodex });
+        const result = await runColdCodexReview('main', 'gpt-mini', 'high', dir, undefined, { codexBinary: fakeCodex });
         assert.equal(result.success, false);
         assert.equal(result.findings, '');
     } finally {
@@ -236,9 +282,199 @@ void test('runColdCodexReview reports unavailable when the stream truncates befo
             `console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '[P2] src/foo.ts:10 - partial finding' } }));`,
             `process.exit(1);`,
         ].join('\n'));
-        const result = await runColdCodexReview('main', 'gpt-mini', dir, { codexBinary: fakeCodex });
+        const result = await runColdCodexReview('main', 'gpt-mini', 'high', dir, undefined, { codexBinary: fakeCodex });
         assert.equal(result.success, false);
         assert.equal(result.findings, '[P2] src/foo.ts:10 - partial finding');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runColdCodexReview rejects an invalid effort before spawning', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-effort-'));
+    try {
+        const sentinel = path.join(dir, 'spawned.txt');
+        const fakeCodex = writeFakeCodexScript(dir, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(sentinel)}, 'spawned');`);
+        const message = await captureDie(() => runColdCodexReview(
+            'main',
+            'gpt-mini',
+            'ultra',
+            dir,
+            undefined,
+            { codexBinary: fakeCodex },
+        ));
+
+        assert.equal(fs.existsSync(sentinel), false);
+        assertInvalidEffortMessage(message);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runCodex rejects an invalid effort before spawning on the fresh path', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-fresh-effort-'));
+    const previousPath = process.env.PATH;
+    try {
+        const sentinel = path.join(dir, 'spawned.txt');
+        const binary = path.join(dir, 'codex');
+        fs.writeFileSync(binary, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'spawned');\n`, { mode: 0o755 });
+        process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ''}`;
+
+        const message = await captureDie(() => runCodex('prompt', false, null, 'gpt-mini', 'ultra', undefined, dir));
+
+        assert.equal(fs.existsSync(sentinel), false);
+        assertInvalidEffortMessage(message);
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runCodex rejects an invalid effort before spawning on the resumed path', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-resume-effort-'));
+    const previousPath = process.env.PATH;
+    try {
+        const sentinel = path.join(dir, 'spawned.txt');
+        const binary = path.join(dir, 'codex');
+        fs.writeFileSync(binary, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(sentinel)}, 'spawned');\n`, { mode: 0o755 });
+        process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ''}`;
+
+        const message = await captureDie(() => runCodex('prompt', false, 'resume-id', 'gpt-mini', 'ultra', undefined, dir));
+
+        assert.equal(fs.existsSync(sentinel), false);
+        assertInvalidEffortMessage(message);
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runColdCodexReview records one successful metric row with usage and round attribution', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-metrics-ok-'));
+    try {
+        const fakeCodex = writeFakeCodexScript(dir, [
+            `console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'clean review' } }));`,
+            `console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 4 } }));`,
+        ].join('\n'));
+
+        await withMetricsFileAsync(dir, async metricsFile => {
+            recordMetric({
+                taskId: 'task-a+task-b',
+                phase: 'code_review',
+                agent: 'claude',
+                model: 'sonnet',
+                iteration: 2,
+                durationMs: 1,
+                status: 'ok',
+            });
+            const result = await runColdCodexReview(
+                'main',
+                'gpt-mini',
+                'high',
+                dir,
+                { taskId: 'task-a+task-b', phase: 'code_review', iteration: 2, activeCwd: dir },
+                { codexBinary: fakeCodex },
+            );
+            assert.equal(result.success, true);
+
+            const rows = readMetricRows(metricsFile);
+            const codexRows = rows.filter(row => row[2] === 'code_review' && row[3] === 'codex');
+            const claudeRows = rows.filter(row => row[2] === 'code_review' && row[3] === 'claude');
+            assert.equal(codexRows.length, 1);
+            assert.equal(claudeRows.length, 1);
+            assert.deepEqual(codexRows[0]?.slice(1, 6), ['task-a+task-b', 'code_review', 'codex', 'gpt-mini', '2']);
+            assert.match(codexRows[0]?.[6] ?? '', /^\d+\.\d+s$/);
+            assert.equal(codexRows[0]?.[7], '7');
+            assert.equal(codexRows[0]?.[8], 'ok');
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runColdCodexReview records one failed metric row for an incomplete stream', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-metrics-failed-'));
+    try {
+        const fakeCodex = writeFakeCodexScript(dir, [
+            `console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'partial review' } }));`,
+            `process.exit(1);`,
+        ].join('\n'));
+
+        await withMetricsFileAsync(dir, async metricsFile => {
+            const result = await runColdCodexReview(
+                'main',
+                'gpt-mini',
+                'high',
+                dir,
+                { taskId: 'task-a', phase: 'code_review', iteration: 0, activeCwd: dir },
+                { codexBinary: fakeCodex },
+            );
+            assert.equal(result.success, false);
+
+            const rows = readMetricRows(metricsFile);
+            assert.equal(rows.length, 1);
+            assert.equal(rows[0]?.[8], 'failed');
+            assert.equal(rows.filter(row => row[8] === 'ok').length, 0);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runColdCodexReview records one failed metric row for invalid effort without spawning', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-metrics-guard-'));
+    try {
+        const sentinel = path.join(dir, 'spawned.txt');
+        const fakeCodex = writeFakeCodexScript(dir, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(sentinel)}, 'spawned');`);
+
+        await withMetricsFileAsync(dir, async metricsFile => {
+            const message = await captureDie(() => runColdCodexReview(
+                'main',
+                'gpt-mini',
+                'ultra',
+                dir,
+                { taskId: 'task-a', phase: 'code_review', iteration: 0, activeCwd: dir },
+                { codexBinary: fakeCodex },
+            ));
+            assertInvalidEffortMessage(message);
+            assert.equal(fs.existsSync(sentinel), false);
+
+            const rows = readMetricRows(metricsFile);
+            assert.equal(rows.length, 1);
+            assert.equal(rows[0]?.[8], 'failed');
+            assert.equal(rows.filter(row => row[8] === 'ok').length, 0);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runColdCodexReview records a dash token cell when completion usage is absent', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-metrics-no-usage-'));
+    try {
+        const fakeCodex = writeFakeCodexScript(dir, [
+            `console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'clean review' } }));`,
+            `console.log(JSON.stringify({ type: 'turn.completed' }));`,
+        ].join('\n'));
+
+        await withMetricsFileAsync(dir, async metricsFile => {
+            const result = await runColdCodexReview(
+                'main',
+                'gpt-mini',
+                'high',
+                dir,
+                { taskId: 'task-a', phase: 'code_review', iteration: 0, activeCwd: dir },
+                { codexBinary: fakeCodex },
+            );
+            assert.equal(result.success, true);
+
+            const rows = readMetricRows(metricsFile);
+            assert.equal(rows.length, 1);
+            assert.equal(rows[0]?.[7], '-');
+            assert.equal(rows[0]?.[8], 'ok');
+        });
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -253,7 +489,7 @@ void test('runCodeReviewPhase runs cold-Codex before the foreman and writes arti
             events,
             findings: '[P2] src/foo.ts:10 - null deref',
             onClaude: (prompt) => {
-                assert.deepEqual(events, ['verifyBranch', `cold:mini-from-policy:${activeCwd}`, 'foreman']);
+                assert.deepEqual(events, ['verifyBranch', `cold:mini-from-policy:high:${activeCwd}:task-a+task-b:0`, 'foreman']);
                 assert.match(prompt, /\[P2\] src\/foo\.ts:10 - null deref/);
                 assert.match(prompt, /third lens input/);
                 for (const taskId of ['task-a', 'task-b']) {
@@ -274,7 +510,7 @@ void test('runCodeReviewPhase runs cold-Codex before the foreman and writes arti
         const result = await runCodeReviewPhase(makeState(['task-a', 'task-b']), false, null, deps);
 
         assert.deepEqual(result, { agent: 'claude', sessionId: 'claude-session', exitCode: 0 });
-        assert.deepEqual(events, ['verifyBranch', `cold:mini-from-policy:${activeCwd}`, 'foreman']);
+        assert.deepEqual(events, ['verifyBranch', `cold:mini-from-policy:high:${activeCwd}:task-a+task-b:0`, 'foreman']);
         for (const taskId of ['task-a', 'task-b']) {
             const status = readStatus(taskId);
             assert.equal(status.phases.code_review?.status, 'in_progress');
@@ -309,7 +545,7 @@ void test('runCodeReviewPhase stops the whole bundle before foreman when cold-Co
             process.exit = originalExit;
         }
 
-        assert.deepEqual(events, ['verifyBranch', `cold:mini-from-policy:${activeCwd}`]);
+        assert.deepEqual(events, ['verifyBranch', `cold:mini-from-policy:high:${activeCwd}:task-a+task-b:0`]);
         for (const taskId of ['task-a', 'task-b']) {
             assert.equal(fs.existsSync(path.join(tasksRoot, taskId, 'review-cold-codex.md')), false);
             const status = readStatus(taskId);

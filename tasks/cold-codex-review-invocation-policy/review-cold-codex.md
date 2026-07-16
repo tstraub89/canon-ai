@@ -1,0 +1,1 @@
+The changes align the cold review with the policy matrix, add effort validation and telemetry, preserve existing failure behavior, and pass the available test, type-check, lint, and template-sync checks.
