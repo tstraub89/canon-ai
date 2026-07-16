@@ -1,7 +1,7 @@
 {
   "id": "cold-codex-review-invocation-policy",
   "title": "Cold-Codex review lens gets canon-resolved effort and a telemetry row",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-14",
   "updated": "2026-07-16",
   "branch": "task/cold-codex-review-invocation-policy",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
