@@ -31,3 +31,4 @@ and `single-path-per-row` wording that AC-9's exact regex does not match.
 and current `parseAffectedFilesFromSpec` uses `parseAllTablesH3`; revision-round
 wording that calls the multi-table problem still open should be handled as
 historical-tense cleanup in the plan, not as an active parser limitation.
+

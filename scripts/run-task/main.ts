@@ -435,8 +435,8 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
         splitCli.die(
             `Auto-commit aborted: handoff.md Changes table has malformed rows.\n` +
             lines.join('\n') +
-            `\n  Fix each row to one path per line in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),\n` +
-            `  then re-run. Combined paths, wildcards, and unfilled \`<placeholder>\` rows are not accepted.`
+            `\n  Fix each row to a comma-separated list of paths in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),\n` +
+            `  optionally followed by a short note after the last path. Wildcards and unfilled \`<placeholder>\` rows are not accepted.`
         );
     }
 

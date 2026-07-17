@@ -1308,6 +1308,37 @@ void test('task accept refuses when handoff coverage does not match the diff', (
     }
 });
 
+void test('task accept accepts a comma-separated multi-path Changes row', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir);
+        fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+            '# Implementation Handoff: accept-task',
+            '',
+            '## Changes',
+            '',
+            '| File | What Changed |',
+            '|---|---|',
+            '| `src.txt`, `extra.txt` | grouped — tightly coupled |',
+            '',
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(work, 'src.txt'), 'work\n', 'utf8');
+        fs.writeFileSync(path.join(work, 'extra.txt'), 'work\n', 'utf8');
+        git(work, ['add', '-A']);
+        git(work, ['commit', '-m', 'implement']);
+
+        withCwd(work, () => {
+            withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_SKIP_PHASE_GATE: '1' }, () => {
+                assert.doesNotThrow(() => taskAccept(['accept-task'], 'implement'));
+                const updated = readStatusFile(taskDir);
+                assert.equal(updated.phases.implement?.operator_accepted, true);
+            });
+        });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 void test('task accept refuses malformed handoff rows without --force', () => {
     const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
     try {
@@ -1319,7 +1350,7 @@ void test('task accept refuses malformed handoff rows without --force', () => {
             '',
             '| File | What Changed |',
             '|---|---|',
-            '| `src.txt`, `extra.txt` | combined row — malformed |',
+            '| `src.txt` and then `extra.txt` | prose between tokens — malformed |',
             '',
         ].join('\n'), 'utf8');
         fs.writeFileSync(path.join(work, 'src.txt'), 'work\n', 'utf8');

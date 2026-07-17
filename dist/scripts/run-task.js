@@ -2792,10 +2792,9 @@ function parseHandoffChangesRows(taskId) {
       const firstColumn = Object.values(row)[0] ?? "";
       if (!firstColumn.trim()) continue;
       const result = parseHandoffPathCell(firstColumn);
-      if (result.kind === "ok") {
-        files.add(result.path);
-      } else {
-        malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+      for (const filePath of result.paths) files.add(filePath);
+      for (const entry of result.malformed) {
+        malformed.push({ cell: firstColumn.trim(), reason: entry.reason });
       }
     }
   }
@@ -2822,52 +2821,186 @@ function parseAffectedFilesFromSpec(taskId) {
       const firstColumn = Object.values(row)[0] ?? "";
       if (!firstColumn.trim()) continue;
       const result = parseHandoffPathCell(firstColumn);
-      if (result.kind === "ok") {
-        files.add(result.path);
-      } else {
-        malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+      for (const filePath of result.paths) files.add(filePath);
+      for (const entry of result.malformed) {
+        malformed.push({ cell: firstColumn.trim(), reason: entry.reason });
       }
     }
   }
   return { files: [...files], malformed };
 }
+function matchPathTokenAt(value, start) {
+  if (value[start] === "`") {
+    const close = value.indexOf("`", start + 1);
+    if (close === -1) return null;
+    return { label: value.slice(start + 1, close), end: close + 1 };
+  }
+  if (value[start] !== "[") return null;
+  const labelClose = value.indexOf("]", start + 1);
+  if (labelClose === -1 || value[labelClose + 1] !== "(") return null;
+  const end = matchLinkTail(value, labelClose + 2);
+  if (end === null) return null;
+  return { label: value.slice(start + 1, labelClose), end };
+}
+function matchLinkTail(value, tailStart) {
+  let cursor = tailStart;
+  if (value[cursor] === "<") {
+    cursor += 1;
+    const destStart = cursor;
+    let closed = false;
+    while (cursor < value.length) {
+      if (value[cursor] === "\\") {
+        cursor += 2;
+      } else if (value[cursor] === ">") {
+        closed = true;
+        break;
+      } else {
+        cursor += 1;
+      }
+    }
+    if (!closed || cursor === destStart) return null;
+    cursor += 1;
+  } else {
+    const destStart = cursor;
+    let depth = 0;
+    while (cursor < value.length) {
+      const ch = value[cursor];
+      if (ch === "\\") {
+        cursor += 2;
+      } else if (ch === "(") {
+        depth += 1;
+        cursor += 1;
+      } else if (ch === ")" && depth > 0) {
+        depth -= 1;
+        cursor += 1;
+      } else if (ch === ")" || (ch === " " || ch === "	") && depth === 0) {
+        break;
+      } else {
+        cursor += 1;
+      }
+    }
+    if (depth !== 0 || cursor === destStart) return null;
+  }
+  let sawWhitespace = false;
+  while (value[cursor] === " " || value[cursor] === "	") {
+    cursor += 1;
+    sawWhitespace = true;
+  }
+  if (value[cursor] === ")") return cursor + 1;
+  if (!sawWhitespace) return null;
+  const open = value[cursor];
+  if (open !== '"' && open !== "'" && open !== "(") return null;
+  cursor += 1;
+  if (open === "(") {
+    let depth = 1;
+    while (cursor < value.length && depth > 0) {
+      if (value[cursor] === "\\") {
+        cursor += 2;
+      } else if (value[cursor] === "(") {
+        depth += 1;
+        cursor += 1;
+      } else if (value[cursor] === ")") {
+        depth -= 1;
+        cursor += 1;
+      } else {
+        cursor += 1;
+      }
+    }
+    if (depth !== 0) return null;
+  } else {
+    let closed = false;
+    while (cursor < value.length) {
+      if (value[cursor] === "\\") {
+        cursor += 2;
+      } else if (value[cursor] === open) {
+        closed = true;
+        cursor += 1;
+        break;
+      } else {
+        cursor += 1;
+      }
+    }
+    if (!closed) return null;
+  }
+  while (value[cursor] === " " || value[cursor] === "	") cursor += 1;
+  if (value[cursor] !== ")") return null;
+  return cursor + 1;
+}
+function findPathToken(value) {
+  for (let start = 0; start < value.length; start += 1) {
+    const token = matchPathTokenAt(value, start);
+    if (token) return { token, start };
+  }
+  return null;
+}
 function parseHandoffPathCell(cell) {
   const trimmed = cell.trim();
-  if (!trimmed) return { kind: "malformed", reason: "empty cell" };
-  const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
-  const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]+\)/g)];
-  if (backtickGroups.length + mdLinkGroups.length > 1) {
-    const tokens = [
-      ...backtickGroups.map((m) => `\`${m[1]}\``),
-      ...mdLinkGroups.map((m) => `[${m[1]}](...)`)
-    ];
-    return {
-      kind: "malformed",
-      reason: `multiple paths in one cell (${tokens.join(", ")}) \u2014 list one path per row`
-    };
-  }
-  if (backtickGroups.length === 1) {
-    if (!/^`[^`]+`(?:\s+.*)?$/.test(trimmed)) {
-      return {
-        kind: "malformed",
-        reason: `backticked path must be at the start of the cell, optionally followed by an annotation \u2014 got: ${snippet(trimmed)}`
-      };
+  const structuralFailure = (reason) => ({
+    paths: [],
+    malformed: [{ token: trimmed, reason }]
+  });
+  if (!trimmed) return structuralFailure("empty cell");
+  const first = matchPathTokenAt(trimmed, 0);
+  if (!first) {
+    const embedded = findPathToken(trimmed);
+    if (embedded?.token && trimmed[embedded.start] === "`") {
+      return structuralFailure(
+        `backticked path must be at the start of the cell, optionally followed by an annotation \u2014 got: ${snippet(trimmed)}`
+      );
     }
-    return validateExtractedPath(backtickGroups[0][1].trim());
-  }
-  if (mdLinkGroups.length === 1) {
-    if (!/^\[[^\]]+\]\(.+\)(?:\s+.*)?$/.test(trimmed)) {
-      return {
-        kind: "malformed",
-        reason: `markdown link must be at the start of the cell \u2014 got: ${snippet(trimmed)}`
-      };
+    if (embedded?.token) {
+      return structuralFailure(
+        `markdown link must be at the start of the cell \u2014 got: ${snippet(trimmed)}`
+      );
     }
-    return validateExtractedPath(mdLinkGroups[0][1].trim());
+    return structuralFailure(
+      `no recognized path \u2014 first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`
+    );
   }
-  return {
-    kind: "malformed",
-    reason: `no recognized path \u2014 first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`
-  };
+  const tokens = [first];
+  let position = first.end;
+  for (; ; ) {
+    const separator = /^\s*,\s*/.exec(trimmed.slice(position));
+    if (!separator) break;
+    const nextStart = position + separator[0].length;
+    const next = matchPathTokenAt(trimmed, nextStart);
+    if (!next) {
+      return structuralFailure(
+        `comma must be followed by another path token \u2014 got: ${snippet(trimmed)}`
+      );
+    }
+    tokens.push(next);
+    position = next.end;
+  }
+  const remainder = trimmed.slice(position);
+  const extra = findPathToken(remainder);
+  if (extra) {
+    if (remainder.trimStart().startsWith("`") || remainder.trimStart().startsWith("[")) {
+      return structuralFailure(
+        `path tokens must be comma-separated \u2014 got: ${snippet(trimmed)}`
+      );
+    }
+    return structuralFailure(
+      `extra path token found \u2014 extra paths must be comma-joined, not left as prose or trailing annotation: ${snippet(trimmed)}`
+    );
+  }
+  if (remainder && !/^\s/.test(remainder)) {
+    return structuralFailure(
+      `trailing annotation must be separated from the last path token by whitespace \u2014 got: ${snippet(trimmed)}`
+    );
+  }
+  const paths = [];
+  const malformed = [];
+  for (const token of tokens) {
+    const extracted = token.label.trim();
+    const result = validateExtractedPath(extracted);
+    if (result.kind === "ok") {
+      paths.push(result.path);
+    } else {
+      malformed.push({ token: extracted, reason: result.reason });
+    }
+  }
+  return { paths, malformed };
 }
 function snippet(value) {
   return value.length > 80 ? `${value.slice(0, 77)}...` : value;
@@ -2912,11 +3045,12 @@ function collectUnscannedTableHits(handoffContent) {
     for (const row of table.rows) {
       const firstColumn = Object.values(row)[0] ?? "";
       const parsed = parseHandoffPathCell(firstColumn);
-      if (parsed.kind !== "ok") continue;
-      const where = `'${table.heading ?? "(no heading)"}' (first column header '${firstHeader}')`;
-      const existing = hits.get(parsed.path) ?? [];
-      if (!existing.includes(where)) existing.push(where);
-      hits.set(parsed.path, existing);
+      for (const filePath of parsed.paths) {
+        const where = `'${table.heading ?? "(no heading)"}' (first column header '${firstHeader}')`;
+        const existing = hits.get(filePath) ?? [];
+        if (!existing.includes(where)) existing.push(where);
+        hits.set(filePath, existing);
+      }
     }
   }
   return hits;
@@ -5491,8 +5625,8 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     die(
       `Auto-commit aborted: handoff.md Changes table has malformed rows.
 ` + lines.join("\n") + `
-  Fix each row to one path per line in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),
-  then re-run. Combined paths, wildcards, and unfilled \`<placeholder>\` rows are not accepted.`
+  Fix each row to a comma-separated list of paths in the form \`path/to/file.ext\` (or [path/to/file.ext](url)),
+  optionally followed by a short note after the last path. Wildcards and unfilled \`<placeholder>\` rows are not accepted.`
     );
   }
   if (allHandoffFiles.size === 0) {

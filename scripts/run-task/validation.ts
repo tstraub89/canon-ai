@@ -1051,11 +1051,10 @@ export function parseHandoffFiles(taskId: string): string[] {
  * scanned.
  *
  * "Malformed" covers the failure classes that bit the GP starter-preview
- * bundle in 1.2.0:
+ * bundle in 1.2.0. Comma-separated rows like `` `a.ts`, `b.ts` `` are now
+ * parsed in full, removing the first-path-only behavior that silently dropped
+ * siblings. The remaining malformed classes include:
  *
- *   - combined rows like `` `a.ts`, `b.ts` `` (parser picked the first backtick
- *     and silently dropped the rest; the diff→handoff preflight then flagged
- *     the missing paths as a mismatch).
  *   - prose-with-embedded-paths like `` `sitemap.xml` regenerated `` (the bare
  *     filename got extracted instead of the real `public/sitemap.xml` path).
  *   - wildcards like `src/content/examples/*.md` (extracted verbatim, then
@@ -1087,10 +1086,9 @@ export function parseHandoffChangesRows(taskId: string): {
             const firstColumn = Object.values(row)[0] ?? '';
             if (!firstColumn.trim()) continue;
             const result = parseHandoffPathCell(firstColumn);
-            if (result.kind === 'ok') {
-                files.add(result.path);
-            } else {
-                malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+            for (const filePath of result.paths) files.add(filePath);
+            for (const entry of result.malformed) {
+                malformed.push({ cell: firstColumn.trim(), reason: entry.reason });
             }
         }
     }
@@ -1130,10 +1128,9 @@ export function parseAffectedFilesFromSpec(taskId: string): {
             const firstColumn = Object.values(row)[0] ?? '';
             if (!firstColumn.trim()) continue;
             const result = parseHandoffPathCell(firstColumn);
-            if (result.kind === 'ok') {
-                files.add(result.path);
-            } else {
-                malformed.push({ cell: firstColumn.trim(), reason: result.reason });
+            for (const filePath of result.paths) files.add(filePath);
+            for (const entry of result.malformed) {
+                malformed.push({ cell: firstColumn.trim(), reason: entry.reason });
             }
         }
     }
@@ -1141,80 +1138,240 @@ export function parseAffectedFilesFromSpec(taskId: string): {
     return { files: [...files], malformed };
 }
 
-export type HandoffPathCellResult =
-    | { kind: 'ok'; path: string }
-    | { kind: 'malformed'; reason: string };
+export type HandoffPathCellResult = {
+    paths: string[];
+    malformed: Array<{ token: string; reason: string }>;
+};
+
+type PathToken = { label: string; end: number };
+
+function matchPathTokenAt(value: string, start: number): PathToken | null {
+    if (value[start] === '`') {
+        const close = value.indexOf('`', start + 1);
+        if (close === -1) return null;
+        return { label: value.slice(start + 1, close), end: close + 1 };
+    }
+
+    if (value[start] !== '[') return null;
+    const labelClose = value.indexOf(']', start + 1);
+    if (labelClose === -1 || value[labelClose + 1] !== '(') return null;
+
+    const end = matchLinkTail(value, labelClose + 2);
+    if (end === null) return null;
+    return { label: value.slice(start + 1, labelClose), end };
+}
 
 /**
- * Strictly parses a single handoff Changes table cell. The cell must EITHER
- * be a backticked path (optionally followed by a non-path annotation), OR a
- * markdown link of the form `[path](url)`. Combined rows, wildcards, and
- * template placeholders are rejected with a specific reason string.
+ * Parses the parenthesized tail of an inline markdown link, starting just
+ * after its opening `(`: a destination — bare (balanced parens, no
+ * whitespace) or angle-bracket-wrapped (parens need not balance) — then an
+ * optional whitespace-separated title in any of CommonMark's three delimiter
+ * styles (`"…"`, `'…'`, balanced `(…)`), then the closing `)`. Backslash
+ * escapes are honored throughout. Returns the index just past the closing
+ * `)`, or null when the tail is not a valid link tail.
  *
- * Why strict: the lax pre-1.3.0 form ran a `/`([^`]+)`/` regex anywhere in
- * the cell and returned the first match. Prose like `` AC-9: `sitemap.xml`
- * passes `` extracted `sitemap.xml`, then the existence check failed against
- * the real `public/sitemap.xml`. Strict parsing surfaces the malformed row
- * to the operator instead of silently extracting a wrong path.
+ * This is CommonMark's complete inline-link tail grammar, implemented after
+ * three successive Codex P2s on PR #205 (escaped parens, angle destinations,
+ * titles) showed that any partial scan leaves a `)` shape that truncates the
+ * token in list context. The grammar is closed — destination + optional
+ * title is everything `(…)` can contain — so there is no fourth case.
+ * Empty destinations (`()`, `(<>)`) are rejected: a template-substitution
+ * bug that strips a URL should surface loudly (see the shape check note in
+ * `parseHandoffPathCell`).
+ */
+function matchLinkTail(value: string, tailStart: number): number | null {
+    let cursor = tailStart;
+
+    if (value[cursor] === '<') {
+        cursor += 1;
+        const destStart = cursor;
+        let closed = false;
+        while (cursor < value.length) {
+            if (value[cursor] === '\\') {
+                cursor += 2;
+            } else if (value[cursor] === '>') {
+                closed = true;
+                break;
+            } else {
+                cursor += 1;
+            }
+        }
+        if (!closed || cursor === destStart) return null;
+        cursor += 1;
+    } else {
+        const destStart = cursor;
+        let depth = 0;
+        while (cursor < value.length) {
+            const ch = value[cursor];
+            if (ch === '\\') {
+                cursor += 2;
+            } else if (ch === '(') {
+                depth += 1;
+                cursor += 1;
+            } else if (ch === ')' && depth > 0) {
+                depth -= 1;
+                cursor += 1;
+            } else if (ch === ')' || ((ch === ' ' || ch === '\t') && depth === 0)) {
+                break;
+            } else {
+                cursor += 1;
+            }
+        }
+        if (depth !== 0 || cursor === destStart) return null;
+    }
+
+    let sawWhitespace = false;
+    while (value[cursor] === ' ' || value[cursor] === '\t') {
+        cursor += 1;
+        sawWhitespace = true;
+    }
+    if (value[cursor] === ')') return cursor + 1;
+
+    // A title must be whitespace-separated from the destination.
+    if (!sawWhitespace) return null;
+    const open = value[cursor];
+    if (open !== '"' && open !== "'" && open !== '(') return null;
+    cursor += 1;
+    if (open === '(') {
+        let depth = 1;
+        while (cursor < value.length && depth > 0) {
+            if (value[cursor] === '\\') {
+                cursor += 2;
+            } else if (value[cursor] === '(') {
+                depth += 1;
+                cursor += 1;
+            } else if (value[cursor] === ')') {
+                depth -= 1;
+                cursor += 1;
+            } else {
+                cursor += 1;
+            }
+        }
+        if (depth !== 0) return null;
+    } else {
+        let closed = false;
+        while (cursor < value.length) {
+            if (value[cursor] === '\\') {
+                cursor += 2;
+            } else if (value[cursor] === open) {
+                closed = true;
+                cursor += 1;
+                break;
+            } else {
+                cursor += 1;
+            }
+        }
+        if (!closed) return null;
+    }
+    while (value[cursor] === ' ' || value[cursor] === '\t') cursor += 1;
+    if (value[cursor] !== ')') return null;
+    return cursor + 1;
+}
+
+function findPathToken(value: string): { token: PathToken; start: number } | null {
+    for (let start = 0; start < value.length; start += 1) {
+        const token = matchPathTokenAt(value, start);
+        if (token) return { token, start };
+    }
+    return null;
+}
+
+/**
+ * Strictly parses a single handoff Changes table cell as one or more backtick
+ * or markdown-link path tokens separated by commas, with an optional non-path
+ * annotation after the last token. Structural violations produce one
+ * malformed entry and no paths; per-path validation runs independently, so a
+ * valid token and a wildcard/placeholder/absolute/traversal sibling can be
+ * returned together.
+ *
+ * The lax pre-1.3.0 form returned only the first match. Parsing the complete
+ * comma-joined list removes that silent-drop failure mode while retaining
+ * strict rejection of prose-embedded paths and validation of every extracted
+ * path.
  */
 export function parseHandoffPathCell(cell: string): HandoffPathCellResult {
     const trimmed = cell.trim();
-    if (!trimmed) return { kind: 'malformed', reason: 'empty cell' };
+    const structuralFailure = (reason: string): HandoffPathCellResult => ({
+        paths: [],
+        malformed: [{ token: trimmed, reason }],
+    });
+    if (!trimmed) return structuralFailure('empty cell');
 
-    const backtickGroups = [...trimmed.matchAll(/`([^`]+)`/g)];
-    // Require at least one non-paren character inside the URL slot.
-    // `[foo]()` would otherwise pass the regex with an empty URL — Codex won't
-    // produce this on purpose, but a template-substitution bug where the URL
-    // gets stripped to `()` would silently slip through.
-    const mdLinkGroups = [...trimmed.matchAll(/\[([^\]]+)\]\([^)]+\)/g)];
-
-    if (backtickGroups.length + mdLinkGroups.length > 1) {
-        const tokens = [
-            ...backtickGroups.map(m => `\`${m[1]}\``),
-            ...mdLinkGroups.map(m => `[${m[1]}](...)`),
-        ];
-        return {
-            kind: 'malformed',
-            reason: `multiple paths in one cell (${tokens.join(', ')}) — list one path per row`,
-        };
-    }
-
-    if (backtickGroups.length === 1) {
-        if (!/^`[^`]+`(?:\s+.*)?$/.test(trimmed)) {
-            return {
-                kind: 'malformed',
-                reason: `backticked path must be at the start of the cell, optionally followed by an annotation — got: ${snippet(trimmed)}`,
-            };
+    const first = matchPathTokenAt(trimmed, 0);
+    if (!first) {
+        const embedded = findPathToken(trimmed);
+        if (embedded?.token && trimmed[embedded.start] === '`') {
+            return structuralFailure(
+                `backticked path must be at the start of the cell, optionally followed by an annotation — got: ${snippet(trimmed)}`,
+            );
         }
-        return validateExtractedPath(backtickGroups[0][1].trim());
-    }
-
-    if (mdLinkGroups.length === 1) {
-        // Greedy `.*` in the URL slot accepts nested parens like
-        // `[src/foo.ts](/tmp/build(foo)/src/foo.ts)` — the URL is never read,
-        // only the label inside `[...]`. The mdLinkGroups counter above used
-        // `[^)]*` (non-greedy) so two real links `[a](u) [b](v)` still get
-        // caught as "multiple paths"; only the SINGLE-link case reaches here.
-        if (!/^\[[^\]]+\]\(.+\)(?:\s+.*)?$/.test(trimmed)) {
-            return {
-                kind: 'malformed',
-                reason: `markdown link must be at the start of the cell — got: ${snippet(trimmed)}`,
-            };
+        if (embedded?.token) {
+            return structuralFailure(
+                `markdown link must be at the start of the cell — got: ${snippet(trimmed)}`,
+            );
         }
-        return validateExtractedPath(mdLinkGroups[0][1].trim());
+        return structuralFailure(
+            `no recognized path — first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`,
+        );
     }
 
-    return {
-        kind: 'malformed',
-        reason: `no recognized path — first column must be \`backtick-path\` or [markdown-link](url): ${snippet(trimmed)}`,
-    };
+    const tokens = [first];
+    let position = first.end;
+    for (;;) {
+        const separator = /^\s*,\s*/.exec(trimmed.slice(position));
+        if (!separator) break;
+        const nextStart = position + separator[0].length;
+        const next = matchPathTokenAt(trimmed, nextStart);
+        if (!next) {
+            return structuralFailure(
+                `comma must be followed by another path token — got: ${snippet(trimmed)}`,
+            );
+        }
+        tokens.push(next);
+        position = next.end;
+    }
+
+    const remainder = trimmed.slice(position);
+    const extra = findPathToken(remainder);
+    if (extra) {
+        if (remainder.trimStart().startsWith('`') || remainder.trimStart().startsWith('[')) {
+            return structuralFailure(
+                `path tokens must be comma-separated — got: ${snippet(trimmed)}`,
+            );
+        }
+        return structuralFailure(
+            `extra path token found — extra paths must be comma-joined, not left as prose or trailing annotation: ${snippet(trimmed)}`,
+        );
+    }
+    if (remainder && !/^\s/.test(remainder)) {
+        return structuralFailure(
+            `trailing annotation must be separated from the last path token by whitespace — got: ${snippet(trimmed)}`,
+        );
+    }
+
+    const paths: string[] = [];
+    const malformed: Array<{ token: string; reason: string }> = [];
+    for (const token of tokens) {
+        const extracted = token.label.trim();
+        const result = validateExtractedPath(extracted);
+        if (result.kind === 'ok') {
+            paths.push(result.path);
+        } else {
+            malformed.push({ token: extracted, reason: result.reason });
+        }
+    }
+    return { paths, malformed };
 }
 
 function snippet(value: string): string {
     return value.length > 80 ? `${value.slice(0, 77)}...` : value;
 }
 
-function validateExtractedPath(extracted: string): HandoffPathCellResult {
+type SinglePathValidation =
+    | { kind: 'ok'; path: string }
+    | { kind: 'malformed'; reason: string };
+
+function validateExtractedPath(extracted: string): SinglePathValidation {
     if (!extracted) return { kind: 'malformed', reason: 'empty path inside backticks/link' };
     // Only `*` and `?` are rejected as wildcards — both are invalid characters
     // in real filenames on every supported platform, so their presence is
@@ -1253,16 +1410,6 @@ function validateExtractedPath(extracted: string): HandoffPathCellResult {
         };
     }
     return { kind: 'ok', path: extracted };
-}
-
-/**
- * Lenient wrapper preserved for callers that just want a path-or-null. New
- * call sites should prefer `parseHandoffPathCell` so they can surface the
- * specific rejection reason.
- */
-export function extractHandoffPath(cell: string): string | null {
-    const result = parseHandoffPathCell(cell);
-    return result.kind === 'ok' ? result.path : null;
 }
 
 // Pipeline telemetry files are written by Claude QA (`done.md`) and the
@@ -1334,11 +1481,12 @@ export function collectUnscannedTableHits(handoffContent: string): Map<string, s
         for (const row of table.rows) {
             const firstColumn = Object.values(row)[0] ?? '';
             const parsed = parseHandoffPathCell(firstColumn);
-            if (parsed.kind !== 'ok') continue;
-            const where = `'${table.heading ?? '(no heading)'}' (first column header '${firstHeader}')`;
-            const existing = hits.get(parsed.path) ?? [];
-            if (!existing.includes(where)) existing.push(where);
-            hits.set(parsed.path, existing);
+            for (const filePath of parsed.paths) {
+                const where = `'${table.heading ?? '(no heading)'}' (first column header '${firstHeader}')`;
+                const existing = hits.get(filePath) ?? [];
+                if (!existing.includes(where)) existing.push(where);
+                hits.set(filePath, existing);
+            }
         }
     }
     return hits;

@@ -6,7 +6,7 @@
 
 ## Changes
 
-> One row per file changed. The first column must be either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — no wildcards, no combined paths, no placeholder text. Each row's path must exist in `git diff <base>...HEAD` after auto-commit.
+> Comma-separated rows group tightly coupled files; unrelated changes remain separate.
 >
 > The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
 >
@@ -14,6 +14,16 @@
 
 | File | What Changed |
 |---|---|
+| `scripts/run-task/validation.ts` | Replaced first-path extraction with sequential comma-list tokenization, balanced markdown-link destination parsing, structural rejection, per-path validation, and multi-path propagation to all consumers; removed the lenient single-path wrapper. |
+| `scripts/run-task/main.ts` | Updated the malformed-row recovery message to document comma-separated path lists and trailing annotations. |
+| `.canon/templates/handoff.md` | Documented multi-path cells in baseline and iteration notes, including grouping guidance and retained prohibitions. |
+| `templates/.canon/templates/handoff.md` | Synchronized generated mirror of the handoff template. |
+| `tests/run-task-validation.test.ts` | Added parser, spec-table, handoff-table, malformed-structure, per-path validation, and unscanned-table regression coverage; removed retired wrapper tests. |
+| `tests/task-cli.test.ts` | Added end-to-end acceptance for a comma-list handoff row and retained rejection coverage with a genuinely malformed row. |
+| `docs/BACKLOG.md` | Reworded the three stale historical single-path references without changing the entry's resolved multi-table context. |
+| `docs/codebase-map.md` | Updated the parser description for comma-separated backtick and markdown-link tokens. |
+| `dist/cli/index.js` | Rebuilt the published CLI bundle from the updated parser. |
+| `dist/scripts/run-task.js` | Rebuilt the published orchestrator bundle from the updated parser and recovery message. |
 
 ## Canon Governance
 
@@ -29,7 +39,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The parser now walks each cell from left to right, recognizing backtick tokens and markdown links with balanced destination parentheses. It only treats commas between completed tokens as separators, so commas inside a token or trailing annotation remain literal. Structural failures return no paths, preventing subset extraction; per-path validation is independent so valid siblings remain visible alongside a precise malformed entry.
 
 ## Deviations from Plan
 
@@ -37,7 +47,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Added rejection and coverage for an annotation attached without whitespace. | The spec's cell grammar says annotations are whitespace-separated; enforcing that boundary keeps the parser anchored to the documented shape. | Tightens malformed input only; all AC behavior is unchanged. |
 
 ## AC Coverage
 
@@ -45,17 +55,33 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | `parseHandoffChangesRows` extracts both backtick paths with no malformed rows. |
+| AC-2 | Met | Mixed tokens, balanced nested destination parentheses, URL commas, and link-tail annotations are covered. |
+| AC-3 | Met | Multi-token annotations and annotations containing commas preserve the intended path count. |
+| AC-4 | Met | Prose-between-token, juxtaposition, token-in-annotation, dangling-comma, and comma-then-prose cases reject with class-specific reasons and zero subset paths. |
+| AC-5 | Met | Wildcard, placeholder, absolute, and traversal siblings each retain the valid path and name the invalid token. |
+| AC-6 | Met | A comma inside one backtick token remains one literal path. |
+| AC-7 | Met | Design and Amendment Affected Files tables both accept comma-separated cells. |
+| AC-8 | Met | `extractHandoffPath` and all tests/references were deleted; structural grep is clean. |
+| AC-9 | Met | Retired wording is absent; orchestrator and historical BACKLOG wording now reflect comma-list support. |
+| AC-10 | Met | Both handoff template notes document token format, grouping guidance, annotations, and retained prohibitions; mirror check passes. |
+| AC-11 | Met | Full unit suite passes, including existing single-path behavior and both affected suites. |
+| AC-12 | Met | Fresh build regenerated both required dist bundles. |
+| AC-13 | Met | `taskAccept` accepts a covered comma-list row and still refuses prose-between-token rows. |
+| AC-14 | Met | `collectUnscannedTableHits` records both paths from a multi-path row under an unrecognized heading. |
 
 ## Edge Cases Considered
 
-- ...
+- Balanced parentheses and commas inside markdown-link destinations.
+- Literal commas inside backtick paths and commas inside annotations.
+- Empty markdown-link destinations, absolute paths on POSIX/Windows, and nested traversal.
+- Extra tokens hidden after apparent prose annotations and directly juxtaposed tokens.
+- Partial per-path failures without discarding valid siblings.
+- The resolved BACKLOG entry was kept in historical/resolved tense, matching the current file despite the spec's stale "still-open" characterization.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -75,13 +101,20 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | ESLint completed cleanly. |
+| `npm run type-check` | Pass | TypeScript no-emit check completed cleanly. |
+| `npm test` | Pass | 983 tests: 982 passed, 1 expected environment skip, 0 failed. |
+| `npm run build` | Pass | Both published bundles rebuilt; postbuild normalization completed. |
+| `npm run sync-templates:check` | Pass | Canon-managed files are in sync. |
+| `npm run docs-refs-check` | Pass | All references are valid. |
+| AC-9 retired-wording grep | Pass | Zero hits across operative guidance surfaces. |
+| AC-8 symbol grep | Pass | Zero `extractHandoffPath` hits in scripts, src, or tests. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 

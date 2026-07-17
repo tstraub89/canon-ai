@@ -1,0 +1,1 @@
+The parser change is covered by targeted tests and preserves the documented validation behavior. Type checking, linting, template synchronization, and documentation reference checks pass.

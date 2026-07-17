@@ -51,7 +51,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Phase routing logic (phase order, transitions) | `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task/main.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task/validation.ts` | |
-| Handoff Changes-table parser | `scripts/run-task/validation.ts` | Regex-based; extracts backtick-wrapped paths |
+| Handoff Changes-table parser | `scripts/run-task/validation.ts` | Extracts comma-separated backtick-path / markdown-link tokens per cell |
 | Spec Affected Files parser | `scripts/run-task/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; used by `commitHumanReviewFiles` (managed-doc allow-list) and `verifyBaseDrift` (base-drift allow-list) |
 | Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `scripts/run-task/validation.ts`, `scripts/run-task/git.ts` | `verifyBaseDivergence` / `verifyBaseDivergenceFromData` in `validation.ts` checks commit divergence first and blocks at `--push`, `--pr`, and `--ship`; `verifyBaseDrift` / `verifyBaseDriftFromData` remains the file-allow-list gate for `--push`/`--pr`; `getUnpushedBaseCommits` / `getTreeDriftFiles` in `git.ts` are the low-level helpers |
 

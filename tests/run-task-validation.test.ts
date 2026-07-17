@@ -28,7 +28,6 @@ import {
     computeLatestValidationResults,
     extractCheckedVerdict,
     extractCitedFilePaths,
-    extractHandoffPath,
     isPrBodyTemplate,
     matchAgainstChangedFiles,
     parseAffectedFilesFromSpec,
@@ -1021,6 +1020,39 @@ void test('parseAffectedFilesFromSpec accepts backtick and markdown-link path ce
     });
 });
 
+void test('parseAffectedFilesFromSpec accepts comma-separated cells in Design and Amendment tables', () => {
+    withTempTaskSpec('multi-path-affected-task', [
+        '# Spec: comma-separated affected files',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/design-a.ts`, [src/design-b.ts](src/design-b.ts) | design files |',
+        '',
+        '## Amendment',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/amendment-a.ts`, `src/amendment-b.ts` | amendment files |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseAffectedFilesFromSpec('multi-path-affected-task'), {
+            files: [
+                'src/design-a.ts',
+                'src/design-b.ts',
+                'src/amendment-a.ts',
+                'src/amendment-b.ts',
+            ],
+            malformed: [],
+        });
+    });
+});
+
 void test('parseAffectedFilesFromSpec walks round-1 `## Amendment` Affected Files', () => {
     withTempTaskSpec('amendment-r1-task', [
         '# Spec: round-1 amendment',
@@ -1226,31 +1258,13 @@ void test('parseAffectedFilesFromSpec does NOT false-match `## Amendments` (plur
     });
 });
 
-void test('extractHandoffPath: backtick-quoted path', () => {
-    assert.equal(extractHandoffPath('`src/foo.ts`'), 'src/foo.ts');
-    assert.equal(extractHandoffPath('`src/foo.ts` some annotation'), 'src/foo.ts');
-});
-
-void test('extractHandoffPath: markdown-link path', () => {
-    assert.equal(extractHandoffPath('[src/foo.ts](https://github.com/x/y/blob/main/src/foo.ts)'), 'src/foo.ts');
-    assert.equal(extractHandoffPath('[src/foo.ts](/Users/local/path/src/foo.ts)'), 'src/foo.ts');
-});
-
-void test('extractHandoffPath: rejects multiple paths in a single cell (combined row)', () => {
-    // Pre-1.3.0 this returned the FIRST path silently — the rest got dropped,
-    // and the diff→handoff preflight then flagged them as mismatches. The
-    // strict parser rejects the cell outright so the malformed row is the
-    // actionable error rather than a downstream symptom.
-    assert.equal(extractHandoffPath('`src/a.ts` and [src/b.ts](url)'), null);
-    assert.equal(extractHandoffPath('`src/a.ts`, `src/b.ts`'), null);
-});
-
 void test('parseHandoffPathCell rejects markdown links with empty URL', () => {
     // `[foo]()` would otherwise pass the loose regex with an empty URL.
     // Codex won't produce this on purpose, but a template-substitution bug
     // that strips the URL to `()` would silently slip through.
     const result = parseHandoffPathCell('[src/foo.ts]()');
-    assert.equal(result.kind, 'malformed');
+    assert.deepEqual(result.paths, []);
+    assert.equal(result.malformed.length, 1);
 });
 
 void test('parseHandoffPathCell rejects absolute paths', () => {
@@ -1259,86 +1273,198 @@ void test('parseHandoffPathCell rejects absolute paths', () => {
     // batched gitignored-filter call clean for legitimate entries in the same
     // handoff.
     const posixResult = parseHandoffPathCell('`/etc/passwd`');
-    assert.equal(posixResult.kind, 'malformed');
-    if (posixResult.kind === 'malformed') assert.match(posixResult.reason, /absolute path/);
+    assert.deepEqual(posixResult.paths, []);
+    assert.match(posixResult.malformed[0].reason, /absolute path/);
 
     const windowsResult = parseHandoffPathCell('`C:\\\\Users\\\\foo.ts`');
-    assert.equal(windowsResult.kind, 'malformed');
-    if (windowsResult.kind === 'malformed') assert.match(windowsResult.reason, /absolute path/);
+    assert.deepEqual(windowsResult.paths, []);
+    assert.match(windowsResult.malformed[0].reason, /absolute path/);
 });
 
 void test('parseHandoffPathCell rejects parent-directory traversal paths', () => {
     const result = parseHandoffPathCell('`../outside-repo.ts`');
-    assert.equal(result.kind, 'malformed');
-    if (result.kind === 'malformed') assert.match(result.reason, /parent-directory traversal/);
+    assert.deepEqual(result.paths, []);
+    assert.match(result.malformed[0].reason, /parent-directory traversal/);
 
     const nested = parseHandoffPathCell('`src/../../foo.ts`');
-    assert.equal(nested.kind, 'malformed');
-    if (nested.kind === 'malformed') assert.match(nested.reason, /parent-directory traversal/);
+    assert.deepEqual(nested.paths, []);
+    assert.match(nested.malformed[0].reason, /parent-directory traversal/);
 });
 
 void test('parseHandoffPathCell allows bracketed filenames like src/foo[beta].ts', () => {
     // Square brackets are valid filename characters even though shell globs
     // treat them as character classes. The wildcard check must not over-reject.
     const result = parseHandoffPathCell('`src/foo[beta].ts`');
-    assert.equal(result.kind, 'ok');
-    if (result.kind === 'ok') assert.equal(result.path, 'src/foo[beta].ts');
+    assert.deepEqual(result.paths, ['src/foo[beta].ts']);
+    assert.deepEqual(result.malformed, []);
 });
 
 void test('parseHandoffPathCell surfaces the specific rejection reason', () => {
     {
         const result = parseHandoffPathCell('`src/a.ts`, `src/b.ts`');
-        assert.equal(result.kind, 'malformed');
-        if (result.kind === 'malformed') {
-            assert.match(result.reason, /multiple paths/);
-            assert.match(result.reason, /one path per row/);
-        }
+        assert.deepEqual(result.paths, ['src/a.ts', 'src/b.ts']);
+        assert.deepEqual(result.malformed, []);
     }
     {
         const result = parseHandoffPathCell('`src/content/examples/*.md`');
-        assert.equal(result.kind, 'malformed');
-        if (result.kind === 'malformed') {
-            assert.match(result.reason, /wildcard not allowed/);
-        }
+        assert.deepEqual(result.paths, []);
+        assert.match(result.malformed[0].reason, /wildcard not allowed/);
     }
     {
         const result = parseHandoffPathCell('`<path>`');
-        assert.equal(result.kind, 'malformed');
-        if (result.kind === 'malformed') {
-            assert.match(result.reason, /template placeholder/);
-        }
+        assert.deepEqual(result.paths, []);
+        assert.match(result.malformed[0].reason, /template placeholder/);
     }
     {
         const result = parseHandoffPathCell('AC-9: `sitemap.xml` regenerated');
-        assert.equal(result.kind, 'malformed');
-        if (result.kind === 'malformed') {
-            assert.match(result.reason, /at the start of the cell/);
-        }
+        assert.deepEqual(result.paths, []);
+        assert.match(result.malformed[0].reason, /at the start of the cell/);
     }
     {
         const result = parseHandoffPathCell('`src/foo.ts`');
-        assert.equal(result.kind, 'ok');
-        if (result.kind === 'ok') assert.equal(result.path, 'src/foo.ts');
+        assert.deepEqual(result.paths, ['src/foo.ts']);
+        assert.deepEqual(result.malformed, []);
     }
 });
 
-void test('extractHandoffPath: markdown-link URL with parens still captures the path', () => {
-    // The captured group is everything inside `[...]`. The URL part `(...)`
-    // closing on the first `)` is fine for our purposes — we never read the
-    // destination, only the path.
-    assert.equal(
-        extractHandoffPath('[src/foo.ts](/tmp/build(foo)/src/foo.ts)'),
-        'src/foo.ts',
+void test('parseHandoffPathCell accepts mixed comma-separated token kinds and link destinations', () => {
+    const mixed = parseHandoffPathCell('[a.ts](a.ts), `b.ts`');
+    assert.deepEqual(mixed.paths, ['a.ts', 'b.ts']);
+    assert.deepEqual(mixed.malformed, []);
+
+    const nestedParens = parseHandoffPathCell('[a.ts](/tmp/build(x)/a.ts), [b.ts](b.ts)');
+    assert.deepEqual(nestedParens.paths, ['a.ts', 'b.ts']);
+    assert.deepEqual(nestedParens.malformed, []);
+
+    const urlCommaAndAnnotation = parseHandoffPathCell(
+        '[a.ts](https://example.test/a,b), [b.ts](b.ts) note',
     );
-    assert.equal(
-        extractHandoffPath('[src/foo.ts](https://github.com/x/y/pull/123)'),
-        'src/foo.ts',
-    );
+    assert.deepEqual(urlCommaAndAnnotation.paths, ['a.ts', 'b.ts']);
+    assert.deepEqual(urlCommaAndAnnotation.malformed, []);
+
+    // Codex P2 on PR #205: an escaped `\)` in a destination is not the token's
+    // closing paren — the pre-list parser accepted this form and the list
+    // tokenizer must too, alone and as a list member.
+    const escapedParen = parseHandoffPathCell('[a.ts](docs/foo\\)bar)');
+    assert.deepEqual(escapedParen.paths, ['a.ts']);
+    assert.deepEqual(escapedParen.malformed, []);
+
+    const escapedParenList = parseHandoffPathCell('[a.ts](docs/foo\\)bar), [b.ts](b.ts)');
+    assert.deepEqual(escapedParenList.paths, ['a.ts', 'b.ts']);
+    assert.deepEqual(escapedParenList.malformed, []);
+
+    // Codex P2 on PR #205 round 2: CommonMark's angle-bracket destination form
+    // may contain unbalanced parens — the destination's `)` is not the link's
+    // closing delimiter. Alone, in a list, and the empty `<>` slot rejection.
+    const angleDest = parseHandoffPathCell('[foo.ts](<docs/foo)bar>)');
+    assert.deepEqual(angleDest.paths, ['foo.ts']);
+    assert.deepEqual(angleDest.malformed, []);
+
+    const angleDestList = parseHandoffPathCell('[foo.ts](<docs/foo)bar>), [b.ts](b.ts)');
+    assert.deepEqual(angleDestList.paths, ['foo.ts', 'b.ts']);
+    assert.deepEqual(angleDestList.malformed, []);
+
+    const emptyAngle = parseHandoffPathCell('[foo.ts](<>)');
+    assert.deepEqual(emptyAngle.paths, []);
+    assert.equal(emptyAngle.malformed.length, 1);
 });
 
-void test('extractHandoffPath: returns null for no recognized format', () => {
-    assert.equal(extractHandoffPath('plain text src/foo.ts'), null);
-    assert.equal(extractHandoffPath(''), null);
+void test('parseHandoffPathCell parses CommonMark link titles in the tail grammar', () => {
+    // Codex P2 on PR #205 round 3: titled links are valid CommonMark and were
+    // accepted pre-list. The tail grammar covers dest + optional title in all
+    // three delimiter styles, after both destination forms.
+    const angleTitled = parseHandoffPathCell('[src/foo.ts](<src/foo.ts> "source")');
+    assert.deepEqual(angleTitled.paths, ['src/foo.ts']);
+    assert.deepEqual(angleTitled.malformed, []);
+
+    // A `)` inside a quoted title after a bare destination must not truncate
+    // the token — the shape an opaque balance scan cannot see.
+    const parenInTitle = parseHandoffPathCell('[a.ts](a.ts "a)b")');
+    assert.deepEqual(parenInTitle.paths, ['a.ts']);
+    assert.deepEqual(parenInTitle.malformed, []);
+
+    const titledList = parseHandoffPathCell("[a.ts](a.ts 'note'), [b.ts](b.ts)");
+    assert.deepEqual(titledList.paths, ['a.ts', 'b.ts']);
+    assert.deepEqual(titledList.malformed, []);
+
+    const parenTitle = parseHandoffPathCell('[a.ts](a.ts (note (nested)))');
+    assert.deepEqual(parenTitle.paths, ['a.ts']);
+    assert.deepEqual(parenTitle.malformed, []);
+
+    const escapedQuoteTitle = parseHandoffPathCell('[a.ts](a.ts "sa\\"y")');
+    assert.deepEqual(escapedQuoteTitle.paths, ['a.ts']);
+    assert.deepEqual(escapedQuoteTitle.malformed, []);
+
+    // Quotes glued to the destination are destination characters, not a
+    // title — per CommonMark a title requires whitespace separation. The
+    // label still extracts; the destination is never read.
+    const gluedQuotes = parseHandoffPathCell('[a.ts](a.ts"t")');
+    assert.deepEqual(gluedQuotes.paths, ['a.ts']);
+    assert.deepEqual(gluedQuotes.malformed, []);
+
+    // Malformed tails reject loudly: unterminated title, and bare prose in
+    // the URL slot (invalid CommonMark — bare destinations cannot contain
+    // whitespace, and `note` is not a delimited title).
+    for (const cell of ['[a.ts](a.ts "oops)', '[a.ts](url note)']) {
+        const result = parseHandoffPathCell(cell);
+        assert.deepEqual(result.paths, [], `expected no paths for ${cell}`);
+        assert.equal(result.malformed.length, 1, `expected malformed for ${cell}`);
+    }
+});
+
+void test('parseHandoffPathCell accepts annotations and literal commas in path tokens', () => {
+    const listAnnotation = parseHandoffPathCell('`a.ts`, `b.ts` + mirrors');
+    assert.deepEqual(listAnnotation.paths, ['a.ts', 'b.ts']);
+    assert.deepEqual(listAnnotation.malformed, []);
+
+    const annotationComma = parseHandoffPathCell('`a.ts` fixes gate, message');
+    assert.deepEqual(annotationComma.paths, ['a.ts']);
+    assert.deepEqual(annotationComma.malformed, []);
+
+    const literalComma = parseHandoffPathCell('`a,b.ts`');
+    assert.deepEqual(literalComma.paths, ['a,b.ts']);
+    assert.deepEqual(literalComma.malformed, []);
+});
+
+void test('parseHandoffPathCell rejects structural violations without returning path subsets', () => {
+    const proseBetween = parseHandoffPathCell('`a.ts` regenerated, `b.ts`');
+    assert.deepEqual(proseBetween.paths, []);
+    assert.match(proseBetween.malformed[0].reason, /comma-joined/);
+
+    const juxtaposed = parseHandoffPathCell('`a.ts` `b.ts`');
+    assert.deepEqual(juxtaposed.paths, []);
+    assert.match(juxtaposed.malformed[0].reason, /comma-separated/);
+
+    const attachedAnnotation = parseHandoffPathCell('`a.ts`regenerated');
+    assert.deepEqual(attachedAnnotation.paths, []);
+    assert.match(attachedAnnotation.malformed[0].reason, /annotation must be separated.*whitespace/);
+
+    for (const cell of ['`a.ts`, `b.ts` and `c.ts`', '`a.ts` see [b.ts](b.ts)']) {
+        const result = parseHandoffPathCell(cell);
+        assert.deepEqual(result.paths, []);
+        assert.match(result.malformed[0].reason, /comma-joined/);
+    }
+
+    for (const cell of ['`a.ts`,', '`a.ts`, `b.ts`, plus mirrors']) {
+        const result = parseHandoffPathCell(cell);
+        assert.deepEqual(result.paths, []);
+        assert.match(result.malformed[0].reason, /comma must be followed by another path token/);
+    }
+});
+
+void test('parseHandoffPathCell validates every token while retaining valid siblings', () => {
+    const cases: Array<{ cell: string; reason: RegExp }> = [
+        { cell: '`a.ts`, `src/*.ts`', reason: /wildcard not allowed.*src\/\*\.ts/ },
+        { cell: '`a.ts`, `<b.ts>`', reason: /template placeholder.*<b\.ts>/ },
+        { cell: '`a.ts`, `/etc/passwd`', reason: /absolute path.*\/etc\/passwd/ },
+        { cell: '`a.ts`, `../b.ts`', reason: /parent-directory traversal.*\.\.\/b\.ts/ },
+    ];
+    for (const { cell, reason } of cases) {
+        const result = parseHandoffPathCell(cell);
+        assert.deepEqual(result.paths, ['a.ts']);
+        assert.equal(result.malformed.length, 1);
+        assert.match(result.malformed[0].reason, reason);
+    }
 });
 
 void test('parseHandoffFiles: accepts markdown-link format in Changes table', () => {
@@ -1354,6 +1480,24 @@ void test('parseHandoffFiles: accepts markdown-link format in Changes table', ()
         '',
     ].join('\n'), () => {
         assert.deepEqual(parseHandoffFiles('mdlink-task').sort(), ['src/main.ts', 'tests/main.test.ts']);
+    });
+});
+
+void test('parseHandoffChangesRows accepts a comma-separated multi-path cell', () => {
+    withTempTaskHandoff('multi-path-handoff-task', [
+        '# Implementation Handoff: test',
+        '',
+        '## Changes',
+        '',
+        '| File | What Changed |',
+        '|---|---|',
+        '| `a.ts`, `b.ts` | tightly coupled files |',
+        '',
+    ].join('\n'), () => {
+        assert.deepEqual(parseHandoffChangesRows('multi-path-handoff-task'), {
+            files: ['a.ts', 'b.ts'],
+            malformed: [],
+        });
     });
 });
 
@@ -1375,7 +1519,7 @@ void test('parseHandoffChangesRows surfaces malformed rows from baseline + itera
         '',
         '| File | What Changed |',
         '|---|---|',
-        '| `src/iter.ts`, `src/also-iter.ts` | combined row — should be rejected |',
+        '| `src/iter.ts` and `src/also-iter.ts` | prose between tokens — should be rejected |',
         '',
     ].join('\n'), () => {
         const { files, malformed } = parseHandoffChangesRows('malformed-task');
@@ -1384,7 +1528,7 @@ void test('parseHandoffChangesRows surfaces malformed rows from baseline + itera
         const reasons = malformed.map(m => m.reason).join('\n');
         assert.match(reasons, /wildcard not allowed/);
         assert.match(reasons, /template placeholder/);
-        assert.match(reasons, /multiple paths in one cell/);
+        assert.match(reasons, /comma-joined/);
     });
 });
 
@@ -1562,6 +1706,24 @@ void test('collectUnscannedTableHits reports valid path rows from any table, wit
     assert.ok(found[0].includes('### Files Touched'));
     assert.ok(found[0].includes("first column header 'Path'"));
     assert.equal(hits.size, 1);
+});
+
+void test('collectUnscannedTableHits retains every path from comma-list cells', () => {
+    const hits = collectUnscannedTableHits([
+        '# Implementation Handoff: test',
+        '',
+        '## Appendix',
+        '',
+        '### Files Touched',
+        '',
+        '| Path | What Changed |',
+        '|---|---|',
+        '| `a.ts`, `b.ts` | valid multi-path row under an unrecognized heading |',
+        '',
+    ].join('\n'));
+    assert.ok(hits.has('a.ts'));
+    assert.ok(hits.has('b.ts'));
+    assert.equal(hits.size, 2);
 });
 
 void test('verifyHandoffAgainstDiffFromData names the near-miss table for an uncovered diff file', () => {

@@ -748,3 +748,7 @@
 | 2026-07-17T02:07:42.416Z | allow-comma-separated-multipath-cells | spec | claude | opus | 0 | 443.5s | 2065348 | ok |
 | 2026-07-17T02:10:40.666Z | allow-comma-separated-multipath-cells | spec_review | codex | gpt-5.6-sol | 1 | 178.2s | 3129496 | ok |
 | 2026-07-17T02:41:18.287Z | allow-comma-separated-multipath-cells | plan | claude | sonnet | 0 | 662.4s | 3462687 | ok |
+| 2026-07-17T02:47:34.143Z | allow-comma-separated-multipath-cells | implement | codex | gpt-5.6-sol | 0 | 375.1s | 3725504 | ok |
+| 2026-07-17T02:49:50.992Z | allow-comma-separated-multipath-cells | code_review | codex | gpt-5.6-luna | 0 | 109.1s | 0 | ok |
+| 2026-07-17T03:02:27.379Z | allow-comma-separated-multipath-cells | code_review | claude | opus | 0 | 756.4s | 878684 | ok |
+| 2026-07-17T03:05:13.484Z | allow-comma-separated-multipath-cells | qa | claude | sonnet | 0 | 166.1s | 1860490 | ok |
