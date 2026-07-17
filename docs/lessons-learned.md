@@ -42,97 +42,13 @@ When a record references another by ID, computed fields (caches, transforms, eph
 
 ---
 
-<!-- Buffer swept 2026-06-21 (post internal-leak-gate-and-matrix-sync ship; 16 entries reviewed). Promotions → docs/patterns.md: (1) declare templates/ mirrors in BOTH spec Affected Files AND handoff Changes table (merged from 3 entries); (2) git-batch exit-128 bisection; (3) strip flags from re-exec child argv; (4) write-safety guards fail closed on probe error. Folded into the existing "Worktree runs: read files from the active checkout" pattern: the two REPO_ROOT-vs-process.cwd() test-file-read entries. Pruned (already-covered / spec_review- or CI-caught / generic / niche): docs-refs-check-in-Validation-Required (already in docs/architecture.md §Validation), git-grep-pathspec-excludes (generic git), QA-end-gate-AC-inversion, removing-scaffold-then-rescope-doctor/CI, ownership-sweep-includes-templates/docs, single-task-flag-out-of-types.ts, bare-:N-citation-suffix (mitigated by the :~ fix), fake-git-log-success-fixture, exit-hook-natural-exit. Kept in buffer: the per-task-prompt-variant entry below (borderline — re-evaluate next sweep). Prior entries are in git history. -->
-
-### Per-task prompt variant requires both the state field AND template wording alignment
-
-*(2026-06-11, source: recovery-surface-hardening)*
-
-When adding per-task variant behavior to a shared template's prompt, storing the state is necessary but not sufficient — the template's generic wording must also defer to the per-task line, or the generic clause overrides the per-task customization entirely. Concrete case: the `reroute_exempt` implementation stored `reroute_exempt_prior_verdict` so prompts could render approved vs. failing flavors, but the `implement-reroute.md` template still had a generic "exempt task only re-verifies shared behavior" clause that would override the per-task failing-sibling line for any exempt task. The fix was a template change that makes the generic clause defer to whatever per-task line was injected. Pattern: when a spec adds state for conditional rendering, immediately audit every template that displays that state for a generic fallback clause that would negate it.
-
-### In tiered pipelines, reviewer-enforced rules need author-side homes too
-
-*(2026-06-25, source: spec-bugfix-diagnosis-rule)*
-
-A rule that names a reviewer checkpoint as its enforcement point gives false confidence to authors on tiers where that reviewer doesn't run. Concrete case: the bug-fix mechanism-confirmation rule lived only in the `spec_review` prompt; fast-tier (S, non-delicate) bug fixes skip `spec_review`, so the rule silently reached nobody on the exact tier most likely to ship an unverified premise. Fix: home the rule on the author-facing surfaces (skill + template) and frame it as the author's own obligation — with an explicit call-out that the reviewer may not run — rather than as a thing a reviewer will catch. Grep for "reviewer will catch" / "spec_review will" in any guidance targeting a fast-tier audience.
-
-### Multi-surface escape clauses must carry the full predicate in every occurrence
-
-*(2026-06-25, source: spec-bugfix-diagnosis-rule)*
-
-When the same conditional escape clause appears across multiple guidance surfaces, every occurrence must state the full predicate — not a shortened form. Dropping even one conjunct silently widens the escape. Concrete case: the within-reason escape required "environment-bound AND a faithful repro is impractical"; one surface rendered only "if a direct test is impractical," which would have let any hard-to-test case skip verification. Code review caught this as a spec_gap before ship. Rule: when a spec defines an escape predicate with multiple conjuncts, add a verification step that greps all target surfaces for the shorter single-conjunct form and rejects any hit.
-
-### Task artifacts are uncommitted at code_review time — `getScopedDiff()` naturally excludes them
-
-*(2026-06-26, source: code-review-codex-lens)*
-
-When designing a review or validation step that should see only source changes (not task docs), there is no need to filter out `spec.md`, `plan.md`, `handoff.md`, `notes.md`, or `status.json`. Canon's `autoCommitCode()` stages only handoff-table source files (`main.ts:512`, `:605`–`:614`); task artifacts commit at QA-end. Because `getScopedDiff()` uses `git diff <base>...HEAD` (committed range only), the entire `tasks/<id>/` directory is simply absent from the diff at code_review time. Concrete case: spec_review raised a "spec-blindness" blocker assuming `handoff.md` would appear in the cold review diff — it doesn't. Verify this assumption by checking `autoCommitCode()` in `main.ts` if it comes up again; do not add artifact-filtering construction, which would make a cold review more spec-blind than intended and break same-surface symmetry with the other lenses.
-
-### New task-state mutators need a worktree-routing regression test — the decisions doc rule is necessary but not sufficient
-
-*(2026-06-28, source: task-metadata-helpers)*
-
-When adding a new function that writes to a task's `status.json`, the "use `taskDirFor()`" rule in `docs/decisions.md` exists but is easy to violate in practice: Codex still used `taskDirFromRoot()` in the first iteration, which silently writes the supervising-checkout copy instead of the active worktree copy. The pattern: add a regression test that exercises a task with both a repo-root copy and a worktree copy of `status.json` and asserts only the worktree copy changes. Without that specific test shape, the bug passes all other validation checks undetected. Code review surfaced this as a correctness bug in round 1; the fix was adding the worktree-routing test alongside the resolver change. Reference: `tests/task-cli.test.ts` worktree-routing fixture added in iteration 2.
-
-### Env-override tests must set the env var after import — not at module load time
-
-*(2026-06-28, source: canon-snapshot-robustness)*
-
-When testing a function that resolves a configuration value from an env var at call time, the test must mutate `process.env` AFTER the module import and BEFORE the call. If the production code accidentally captures the env var at module load (e.g. `const REPO = process.env.X ?? DEFAULT` at top level), a test that sets the var before import will pass while the production bug goes undetected. Concrete case: `captureCanonSnapshot()` was designed to resolve `CANON_UPSTREAM_REPO` at call time; the spec's AC-1 explicitly required the call-time guarantee, and the tests set `process.env` post-import to enforce it. Apply this shape to any future env-override test.
-
-### Key past-pending warnings off actual phase state, not the cached top-level status pointer
-
-*(2026-06-29, source: task-metadata-helpers)*
-
-When adding a "warn if the task is already in progress" check to a mutator, use `status.phases` phase progress rather than the cached top-level `status` field. A freshly scaffolded task has all phases at `pending` but its top-level `status` already reads `spec` (the first phase in the pipeline); a check on the top-level pointer fires a spurious warning on every newly-created task. The correct predicate is "any phase has a non-pending state." Concrete case: `taskSet()` initially considered using the top-level pointer, but the implementation correctly keyed off phase state; the spec called out this distinction explicitly. Apply the same predicate to any future mutator that needs a "warn once in flight" check.
-
-### Review artifacts need the same citation hygiene as docs and handoffs
-
-*(2026-06-29, source: canon-snapshot-robustness)*
-
-Path-like prose in `tasks/*/review.md` files is subject to `docs-refs-check` even though review artifacts are not part of the implementation surface. A phrase like "see tasks/&lt;id&gt;/spec.md Non-Goals" that references a path under a `validDirs` directory will trip the checker if the path is broken or the file is renamed — the same way a backtick ref in a handoff or doc would. Fix: apply the same "backtick path = a live reference" discipline in review.md files, or use prose/markdown-link form to describe non-code targets. Concrete case: `tasks/_archive/canon-snapshot-robustness/review.md` had a broken non-goal citation that tripped `docs-refs-check` in the reroute pass; cleaned in Iteration 3.
-
-### For codebase-wide term renames, use per-family invariant gates — not enumeration lists
-
-*(2026-06-27, source: add-xs-tier)*
-
-When a spec renames or replaces a policy term across a large codebase, hand-enumerated grep lists produce round-over-round scope-expansion in spec review: each round surfaces a *new label family* (a different string shape for the same stale concept), not a missed instance of the same family. The fix is to identify every distinct string family up front via a structural sweep, then express each family's post-change invariant as an unambiguous zero-result grep gate. For Family A (fast-tier identity), a brittle literal-shape list still missed three separator variants; the solution was a word-bounded PCRE invariant (`\bS[\s,)\x60]*non-delicate`) that catches all separator forms and cannot match the post-change term. For Family C (size-set enumerations where the old string is a substring of the new), zero-result gating is structurally impossible — verify each surface positively by targeted ACs instead. Document the asymmetry in the spec so reviewers don't mis-read it as a gap. Concrete case: 7 spec_review rounds before the invariant-gate design converged; the structural per-family decomposition was the fix.
-
-### A git trackedness classifier must check dirty/status output before it checks `ls-files`
-
-*(2026-07-13, source: upgrade-destination-classification)*
-
-When classifying a path as tracked/untracked/absent using both `git ls-files` and `git status --porcelain`, consult the status (dirty) output first — a staged deletion (`git rm <path>`) removes the path from `git ls-files` entirely while `git status --porcelain` still reports it (`D  <path>`). A classifier that checks `ls-files` for trackedness before checking the dirty set will see "not tracked, not on disk" and classify a staged-deleted tracked file as `absent` — silently recreating it and defeating any refusal logic built around trackedness. Concrete case: canon upgrade's destination classifier initially checked `tracked.has(rel)` before `dirty.has(rel)`; code review round 1 caught it empirically (`git rm managed.txt` → `ls-files` empty, `status` shows `D  managed.txt`, file absent on disk → classified `absent` → written) and it regressed a working-tree-`rm` case the same classifier already handled correctly. Fix and the general rule: check the dirty/status set first for any path being classified this way, and add both `rm` (working-tree) and `git rm` (staged) as separate fixtures — they take different code paths even though they represent "the same" deletion (`src/cli/commands/upgrade.ts` classifier + `tests/cli.test.ts`).
+<!-- Buffer swept 2026-07-16 (16 entries reviewed). Promotions → docs/patterns.md: (1) multi-surface guidance rules need every-tier author-side homes + full predicate at every occurrence (merged from the two spec-bugfix-diagnosis-rule entries); (2) trackedness classifier checks dirty/status before ls-files; (3) gate exemptions apply before every decision reading the same dirty set; (4) env-override-after-import and placeholder-fixture-invalidation as Test-writing-pitfalls bullets; (5) worktree-routing regression test for new status.json writers folded into the "Worktree runs" pitfall; (6) the no-mirror inverse case folded into the "Declare templates/ mirrors" pitfall; (7) getScopedDiff-excludes-task-artifacts folded as a corollary into the blanket-stash pitfall. Promotion → .claude/skills/canon-spec/SKILL.md rules of thumb: per-family invariant gates for codebase-wide renames. Pruned (borderline-no-recurrence / niche / test-pinned): per-task-prompt-variant (kept borderline last sweep, no recurrence), past-pending-warning-predicate, review.md-citation-hygiene, preserved-dirt-restore-point (pinned by AC-11 test in shipped --ship code). Kept in buffer: the two entries below — re-evaluate next sweep. Prior entries are in git history. -->
 
 ### When a literal AC conflicts with an already-tested behavioral invariant, preserve the invariant and narrow the fix
 
 *(2026-07-13, source: upgrade-destination-classification)*
 
 A late-added AC can be worded more broadly than the spec author intended, especially when it's inserted during spec_review to close a gap ("this file should refuse the same as any other managed target") without re-checking it against the suite's existing tested contracts for that specific file. Concrete case: AC-13 asked `scripts/docs-refs-config.mjs` to refuse untracked-existing content "the same as any other managed target" — read fully literally, that would also make a *tracked-clean* customized config overwritable whenever its content diverged from the shipped template, silently destroying committed adopter customizations that an existing, passing test explicitly protected (the exact bug class the task was fixing, reintroduced for one file). At plan time, the resolution was to keep the "adopter fully owns tracked-clean content forever" invariant untouched and satisfy the AC's literal test scenario (untracked + non-identical) narrowly, documenting the interpretation and isolating it to one branch so a human or reviewer could redirect cheaply if they disagreed. Rule: before implementing a broadly-worded AC, grep the existing suite for tests already protecting the specific surface it touches; if the literal reading would flip a passing test's asserted behavior, narrow the implementation to the AC's concrete scenario and flag the interpretation rather than guessing which one wins.
-
-### Re-apply preserved dirt strictly after the last commit in the span it protects, not after the step that motivated removing it
-
-*(2026-07-09, source: ship-shared-doc-dirt-preservation)*
-
-When a flow must temporarily strip uncommitted content so a later step can proceed (a merge, a checkout, a pull), then restore that content afterward, the restore point has to sit after the *last* commit the flow makes — not merely after the step the removal was protecting. Concrete case: `--ship`'s shared-doc preserve-and-revert design had to place its telemetry re-append strictly after `commitArchiveChanges()`, not right after the PR merge, because two of the three preserved files (`docs/lessons-learned.md`, `docs/task-quality-log.md`) are staged and pushed by the archive commit; re-appending earlier would have folded a sibling task's pending, uncommitted telemetry into — and pushed it as part of — this task's `chore: archive` commit, misattributing the sibling's in-flight work. Pinned by AC-11 in `tasks/_archive/ship-shared-doc-dirt-preservation/spec.md`, which asserts the committed blob excludes the suffix while the working copy includes it. When designing any preserve-then-restore span, enumerate every commit the span makes and place the restore strictly after the last one that touches an affected file — not after the logically-related step.
-
-### Audit every downstream decision that shares a dirty-set count before adding a gate exemption
-
-*(2026-07-13, source: worktree-node-modules-gate-carveout)*
-
-When adding an exemption to a commit/dirty-tree gate, filtering the visible classification point (an "unexpected files" allowlist check) is not sufficient if other control-flow decisions in the same function branch off the same raw count or set. Concrete case: `commitHumanReviewFiles()` in `scripts/run-task/main.ts` brackets its allowlist filter with three other decisions keyed on the raw `dirtyEntries` count — a clean-tree push/PR retry, a no-dirty-to-commit `die`, and a no-stage-paths `die`. Exempting a verified `node_modules` symlink only at the allowlist filter would have swapped today's "outside the allowlist" abort for a "no allowed dirty files found to stage" abort on a symlink-only tree — the underlying stuck state survives, just under a different error. Rule: when adding an exemption predicate to a gate, trace every decision upstream and downstream of the classification point that reads the same count or set, and apply the exemption before all of them — not just the one that currently throws the reported error.
-
-### Not every doc under `docs/` has a `templates/` mirror — check `CANON_OWNED` before assuming symmetry
-
-*(2026-07-16, source: cold-codex-review-invocation-policy)*
-
-The existing "declare templates/ mirrors in both spec Affected Files AND handoff Changes table" pattern (`docs/patterns.md`) covers the case where a mirror *does* exist and must be declared. The inverse gotcha is just as easy to trip: a doc living under `docs/` is not automatically canon-managed, so it may have *no* mirror at all — editing it and then also touching (or inventing) a `templates/docs/<name>.md` counterpart fails the sync gate, since the sync script only operates on the `CANON_OWNED`/`DELIMITED` registry in `src/lib/canon-owned.ts`. Concrete case: `docs/decisions.md` is deliberately root-only (no `templates/docs/decisions.md` mirror), unlike `docs/pipeline-orchestrator.md`, which is canon-owned and does get mirrored — a spec amending both docs in the same task must treat them asymmetrically. Before writing an Affected Files or handoff Changes row for any `docs/*.md` edit, grep `src/lib/canon-owned.ts` for the path; if absent, the edit is root-only and adding a `templates/` counterpart is itself the bug.
-
-### A new pre-spawn/input guard can retroactively invalidate out-of-scope test fixtures that used placeholder values
-
-*(2026-07-16, source: cold-codex-review-invocation-policy)*
-
-Adding fail-fast validation to a shared function (e.g. rejecting invalid values before a subprocess spawns) can break existing tests that used a placeholder/sentinel value for an argument irrelevant to what that test actually exercises — because the new guard now fires before the test reaches the branch it was written to cover. Concrete case: `tests/run-task-safety.test.ts` had four `runCodex` calls using the literal string `effort` as a placeholder while targeting later subprocess branches (spawn-error, non-zero exit, stall, signal); the new AC-5 effort-validation guard rejected that placeholder pre-spawn, so all four tests started failing on the guard instead of reaching their intended branch. This file was not in the spec's Affected Files, since the spec's author had no reason to anticipate a shared-runner-contract change rippling into an unrelated safety-ladder fixture file. Rule: when a spec adds validation to a widely-shared call site (a runner, a client, a resolver), grep every test file that calls that site for placeholder/invalid values in the newly-validated parameter — not just the files the spec's Affected Files already names — before implementation, so the fixture fix lands as a planned deviation rather than a surprise mid-implement.
 
 ### When a mechanism keeps failing for the same structural reason across rounds, drop the mechanism class instead of iterating within it
 
