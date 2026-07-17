@@ -744,3 +744,7 @@
 | 2026-07-16T18:14:05.310Z | review-verdict-freshness-guard | code_review | codex | gpt-5.6-luna | 0 | 159.3s | 0 | ok |
 | 2026-07-16T18:23:41.782Z | review-verdict-freshness-guard | code_review | claude | opus | 0 | 576.4s | 755287 | ok |
 | 2026-07-16T18:27:55.301Z | review-verdict-freshness-guard | qa | claude | sonnet | 0 | 253.5s | 1497048 | ok |
+| 2026-07-17T02:00:18.891Z | allow-comma-separated-multipath-cells | spec_review | codex | gpt-5.6-sol | 0 | 226.1s | 1493307 | ok |
+| 2026-07-17T02:07:42.416Z | allow-comma-separated-multipath-cells | spec | claude | opus | 0 | 443.5s | 2065348 | ok |
+| 2026-07-17T02:10:40.666Z | allow-comma-separated-multipath-cells | spec_review | codex | gpt-5.6-sol | 1 | 178.2s | 3129496 | ok |
+| 2026-07-17T02:41:18.287Z | allow-comma-separated-multipath-cells | plan | claude | sonnet | 0 | 662.4s | 3462687 | ok |
