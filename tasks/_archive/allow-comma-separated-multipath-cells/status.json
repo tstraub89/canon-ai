@@ -1,7 +1,7 @@
 {
   "id": "allow-comma-separated-multipath-cells",
   "title": "Accept comma-separated multi-path cells in handoff Changes and spec Affected Files tables",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-14",
   "updated": "2026-07-17",
   "branch": "task/allow-comma-separated-multipath-cells",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
