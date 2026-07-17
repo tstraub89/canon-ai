@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **New spec-writing rule of thumb in `/canon-spec`: codebase-wide term renames gate per string family, not per enumerated hit.** Hand-enumerated grep lists cause round-over-round scope expansion in spec review — each round surfaces a new label family, not a missed instance. The skill now directs authors to decompose the stale term into its string families up front, gate each family with a zero-result word-bounded grep AC that can't match the new term, and fall back to positive targeted ACs (with the asymmetry documented) where the old string is a substring of the new. Distilled from a 7-round spec_review on canon-ai's own XS-tier rename. Ships to adopters via `canon upgrade`.
+
 ### Changed
 
 - **`canon-inline-review` now documents `codex review`'s actual stdout format in its reporting guidance.** Verified against a live `codex review --uncommitted` run: stdout is pre-formatted prose (`Review comment: - [P0]-[P3] <title> — <file>:<line>` plus body), not raw JSON, unless `--json`/`--output-schema` is passed. The skill previously had no guidance on the output shape; it now tells Claude to relay the existing `[P0]`-`[P3]` tags and summary line as-is instead of re-deriving severity.
