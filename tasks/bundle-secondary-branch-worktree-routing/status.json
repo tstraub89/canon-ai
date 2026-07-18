@@ -1,0 +1,80 @@
+{
+  "id": "bundle-secondary-branch-worktree-routing",
+  "title": "Fix bundle secondary's branch write landing in main instead of the worktree",
+  "status": "implement",
+  "created": "2026-06-30",
+  "updated": "2026-07-18",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "17b17f162a0e8c85e5cf16905113240de184c7c4",
+    "orchestrator_commit": "17b17f162a0e8c85e5cf16905113240de184c7c4",
+    "codex_cli": "codex-cli 0.144.5",
+    "claude_code": "2.1.208 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 5,
+      "changes_requested_total": 4,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-07-17",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    }
+  ],
+  "sessions": {
+    "claude_spec": "d55e42e1-ae06-4873-871d-6faae3fe313d",
+    "codex_spec_review": "019f7567-1382-7733-938a-0bd3d2d18656"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}
