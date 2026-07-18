@@ -1,0 +1,80 @@
+{
+  "id": "update-install-root-provenance",
+  "title": "canon update targets its own install root, pinned to an immutable release",
+  "status": "implement",
+  "created": "2026-07-11",
+  "updated": "2026-07-18",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "b12e4289fed2067b09870fd7423d5d21c9fc0b22",
+    "orchestrator_commit": "b12e4289fed2067b09870fd7423d5d21c9fc0b22",
+    "codex_cli": "codex-cli 0.144.5",
+    "claude_code": "2.1.208 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 7,
+      "changes_requested_total": 6,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-07-18",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    }
+  ],
+  "sessions": {
+    "codex_spec_review": "019f76af-9abd-7dd2-a54b-6ff68eac2d41",
+    "claude_spec": "444f0c5b-a0a0-4a8e-bc73-696a13365968"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}
