@@ -507,6 +507,60 @@ function isVerdict(value) {
 function effectiveWorktreesRoot() {
   return process.env.CANON_WORKTREES_ROOT ? path3.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
 }
+function listWorktreesWithBranches() {
+  const result = spawnSync2("git", ["worktree", "list", "--porcelain"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0) return { ok: false };
+  const worktrees = [];
+  let currentPath = null;
+  let currentBranch = null;
+  const flush = () => {
+    if (currentPath && currentPath !== REPO_ROOT) {
+      worktrees.push({ path: currentPath, branch: currentBranch });
+    }
+  };
+  for (const line of (result.stdout ?? "").split("\n")) {
+    if (line.startsWith("worktree ")) {
+      flush();
+      currentPath = line.slice("worktree ".length).trim();
+      currentBranch = null;
+    } else if (line.startsWith("branch refs/heads/")) {
+      currentBranch = line.slice("branch refs/heads/".length).trim();
+    }
+  }
+  flush();
+  return { ok: true, worktrees };
+}
+function scanWorktreesForSecondaryOwnership(taskId) {
+  const enumeration = listWorktreesWithBranches();
+  if (!enumeration.ok) return { outcome: "enumeration-failed" };
+  const matches = [];
+  for (const { path: worktreePath2, branch: checkedOutBranch } of enumeration.worktrees) {
+    const candidateStatusPath = path3.join(worktreePath2, "tasks", taskId, "status.json");
+    if (!fs4.existsSync(candidateStatusPath)) continue;
+    let candidate;
+    try {
+      candidate = readStatusFromPath(candidateStatusPath, taskId);
+    } catch (err) {
+      return {
+        outcome: "present-but-invalid",
+        worktreePath: worktreePath2,
+        error: err instanceof Error ? err.message : String(err)
+      };
+    }
+    if (candidate.worktree !== true || checkedOutBranch === null) continue;
+    const candidateBranch = candidate.branch?.trim() ?? "";
+    if (candidateBranch && candidateBranch === checkedOutBranch) {
+      matches.push(worktreePath2);
+    }
+  }
+  if (matches.length === 1) return { outcome: "matched", worktreePath: matches[0] };
+  if (matches.length >= 2) return { outcome: "ambiguous", worktreePaths: matches };
+  return { outcome: "no-match" };
+}
 function findExistingWorktreeForBranch(branch) {
   const result = spawnSync2("git", ["worktree", "list", "--porcelain"], {
     cwd: REPO_ROOT,
@@ -569,6 +623,29 @@ function resolveTaskCwd(taskId) {
   Looked for ${directWorktree} and a worktree for branch '${branch}'.
   Restore or recreate the worktree before continuing.`
         );
+      }
+      const scan2 = scanWorktreesForSecondaryOwnership(taskId);
+      switch (scan2.outcome) {
+        case "matched":
+          return scan2.worktreePath;
+        case "ambiguous":
+          die(
+            `Multiple worktrees claim ownership of task '${taskId}':
+` + scan2.worktreePaths.map((worktreePath2) => `  - ${worktreePath2}`).join("\n") + `
+  Only one worktree may record this task's branch. Resolve manually before continuing.`
+          );
+          break;
+        case "enumeration-failed":
+          die(`Could not enumerate git worktrees while resolving task '${taskId}' ('git worktree list --porcelain' failed).`);
+          break;
+        case "present-but-invalid":
+          die(
+            `Task '${taskId}' has an unreadable status.json in worktree ${scan2.worktreePath}: ${scan2.error}
+  Fix or remove that file before continuing \u2014 ownership cannot be determined.`
+          );
+          break;
+        case "no-match":
+          break;
       }
     }
   } catch {
@@ -1053,11 +1130,13 @@ function ensureBranch(taskIds, options = {}) {
   const baseBranch = getBaseBranch(taskIds);
   if (useWorktree) {
     assertRepoRootCleanBeforeFirstWorktree(options.force === true);
-    ensureWorktree(taskIds[0], branchName, baseBranch);
-    for (const taskId of taskIds) {
-      const s = readStatus(taskId);
+    const leaderWorktree = ensureWorktree(taskIds[0], branchName, baseBranch);
+    const orderedTaskIds = [...taskIds.slice(1), taskIds[0]];
+    for (const taskId of orderedTaskIds) {
+      const destination = process.env.CANON_TASKS_DIR_OVERRIDE ? path5.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, "status.json") : path5.join(leaderWorktree, "tasks", taskId, "status.json");
+      const s = readStatusFromPath(destination, taskId);
       s.branch = branchName;
-      writeStatus(taskId, s);
+      writeStatusToFile(destination, s);
     }
     try {
       tickAllHeartbeats();

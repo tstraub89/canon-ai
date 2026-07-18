@@ -12,6 +12,12 @@
 
 | File | What Changed |
 |---|---|
+| `scripts/run-task/state.ts` | Added fail-closed worktree enumeration and content-based secondary ownership resolution on the empty-main-branch path. |
+| `scripts/run-task/git.ts` | Made first-implement worktree bootstrap write every member directly to the override-aware destination, secondaries first and leader last. |
+| `tests/run-task-safety.test.ts` | Added the real-git wrong-main-write regression and focused negative/fail-closed ownership tests. |
+| `docs/patterns.md` | Documented bundle-secondary content resolution, fail-closed scanning, and the no-cache rule. |
+| `dist/cli/index.js` | Regenerated the published CLI bundle with the resolver change. |
+| `dist/scripts/run-task.js` | Regenerated the orchestrator bundle with the resolver and bootstrap changes. |
 
 ## Canon Governance
 
@@ -27,7 +33,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Bundle secondaries now discover their shared leader worktree from validated worktree-local task state instead of depending on a branch hint written into the main checkout. The scan is gated to `worktree: true` tasks whose main branch is still empty, requires the candidate's own branch to match its checked-out branch, and fails closed when enumeration or candidate validation cannot establish safe ownership. The first-implement bootstrap complements that resolver by writing each member through explicit paths returned by `ensureWorktree`, preserving `CANON_TASKS_DIR_OVERRIDE` and avoiding resolver recursion.
 
 ## Deviations from Plan
 
@@ -35,7 +41,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| The real-git regression imports source via an absolute file URL and compares the resolved worktree through `fs.realpathSync`. | Its subprocess runs with the fixture repository as `cwd`; an absolute import keeps it on the active task source, while realpath normalization handles macOS `/var` → `/private/var` canonicalization. | None; AC-1 still asserts the exact canonical leader worktree. |
 
 ## AC Coverage
 
@@ -43,17 +49,29 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: wrong-main-write regression | Met | Real-git bundle test verifies the worktree secondary branch, unchanged/clean main secondary, and secondary resolution to the leader worktree. |
+| AC-2: override-aware bootstrap destination | Met | `ensureBranch` uses the returned leader path or override root and writes secondaries before the leader. Existing override bundle test passes unchanged. |
+| AC-3: match rule and fail-closed resolution | Met | Candidate reads use `readStatusFromPath`; enumeration failure, invalid candidate, ambiguity, match, and no-match outcomes are distinct. |
+| AC-4: negative and fail-closed tests | Met | Added inherited-dir, main `worktree:false`, candidate `worktree:false`, multi-match, enumeration-failure, malformed-JSON, and schema-invalid tests. |
+| AC-5: no self-reference recursion | Met | Scan uses raw `fs`/git plus `readStatusFromPath`; bootstrap uses explicit destinations plus `readStatusFromPath`/`writeStatusToFile`. |
+| AC-6: existing behavior preserved | Met | Full suite passes, including unchanged leader/single-task, override, reuse, secondary-hint, and main-checkout tests. |
+| AC-7: existing branch-hint die path | Met | Non-empty main branch path and its existing missing-worktree failure remain unchanged and pass in the full suite. |
+| AC-8: accurate log | Met | Retained log now follows worktree-only writes for every bundle member. |
+| AC-9: build artifacts | Met | Both declared dist artifacts regenerated; a repeat build produced identical SHA-1 hashes. |
+| AC-10: clean validation | Met | Lint, type-check, full tests, build, and docs refs all pass. |
 
 ## Edge Cases Considered
 
-- ...
+- Detached-HEAD worktrees have no branch entry and cannot match.
+- Successful enumeration with zero valid matches falls back to `REPO_ROOT`; failed enumeration dies.
+- Present malformed or schema-invalid candidates die before any fallback.
+- Multiple self-consistent claimants die and name every matching path.
+- Main and candidate `worktree: false` gates prevent stale-worktree false matches.
+- Override-root writes remain authoritative in test-harness and adopter override flows.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -73,13 +91,17 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Final run after all source and test edits. |
+| `npm run type-check` | Pass | Final run after all source and test edits. |
+| `npm test` | Pass | Full test suite, including all new and unchanged worktree-routing cases. |
+| `npm run build` | Pass | Rebuilt both dist entry points; repeat build was byte-stable. |
+| `npm run docs-refs-check` | Pass | All references OK. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 

@@ -1,0 +1,1 @@
+The worktree routing and branch bootstrap changes satisfy the intended behavior, and the relevant validation suite passes.

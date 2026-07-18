@@ -150,6 +150,60 @@ var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "q
 function effectiveWorktreesRoot() {
   return process.env.CANON_WORKTREES_ROOT ? path4.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
 }
+function listWorktreesWithBranches() {
+  const result = spawnSync2("git", ["worktree", "list", "--porcelain"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0) return { ok: false };
+  const worktrees = [];
+  let currentPath = null;
+  let currentBranch = null;
+  const flush = () => {
+    if (currentPath && currentPath !== REPO_ROOT) {
+      worktrees.push({ path: currentPath, branch: currentBranch });
+    }
+  };
+  for (const line of (result.stdout ?? "").split("\n")) {
+    if (line.startsWith("worktree ")) {
+      flush();
+      currentPath = line.slice("worktree ".length).trim();
+      currentBranch = null;
+    } else if (line.startsWith("branch refs/heads/")) {
+      currentBranch = line.slice("branch refs/heads/".length).trim();
+    }
+  }
+  flush();
+  return { ok: true, worktrees };
+}
+function scanWorktreesForSecondaryOwnership(taskId) {
+  const enumeration = listWorktreesWithBranches();
+  if (!enumeration.ok) return { outcome: "enumeration-failed" };
+  const matches = [];
+  for (const { path: worktreePath, branch: checkedOutBranch } of enumeration.worktrees) {
+    const candidateStatusPath = path4.join(worktreePath, "tasks", taskId, "status.json");
+    if (!fs5.existsSync(candidateStatusPath)) continue;
+    let candidate;
+    try {
+      candidate = readStatusFromPath(candidateStatusPath, taskId);
+    } catch (err) {
+      return {
+        outcome: "present-but-invalid",
+        worktreePath,
+        error: err instanceof Error ? err.message : String(err)
+      };
+    }
+    if (candidate.worktree !== true || checkedOutBranch === null) continue;
+    const candidateBranch = candidate.branch?.trim() ?? "";
+    if (candidateBranch && candidateBranch === checkedOutBranch) {
+      matches.push(worktreePath);
+    }
+  }
+  if (matches.length === 1) return { outcome: "matched", worktreePath: matches[0] };
+  if (matches.length >= 2) return { outcome: "ambiguous", worktreePaths: matches };
+  return { outcome: "no-match" };
+}
 function findExistingWorktreeForBranch(branch) {
   const result = spawnSync2("git", ["worktree", "list", "--porcelain"], {
     cwd: REPO_ROOT,
@@ -212,6 +266,29 @@ function resolveTaskCwd(taskId) {
   Looked for ${directWorktree} and a worktree for branch '${branch}'.
   Restore or recreate the worktree before continuing.`
         );
+      }
+      const scan = scanWorktreesForSecondaryOwnership(taskId);
+      switch (scan.outcome) {
+        case "matched":
+          return scan.worktreePath;
+        case "ambiguous":
+          die(
+            `Multiple worktrees claim ownership of task '${taskId}':
+` + scan.worktreePaths.map((worktreePath) => `  - ${worktreePath}`).join("\n") + `
+  Only one worktree may record this task's branch. Resolve manually before continuing.`
+          );
+          break;
+        case "enumeration-failed":
+          die(`Could not enumerate git worktrees while resolving task '${taskId}' ('git worktree list --porcelain' failed).`);
+          break;
+        case "present-but-invalid":
+          die(
+            `Task '${taskId}' has an unreadable status.json in worktree ${scan.worktreePath}: ${scan.error}
+  Fix or remove that file before continuing \u2014 ownership cannot be determined.`
+          );
+          break;
+        case "no-match":
+          break;
       }
     }
   } catch {

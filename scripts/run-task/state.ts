@@ -10,6 +10,79 @@ function effectiveWorktreesRoot(): string {
     return process.env.CANON_WORKTREES_ROOT ? path.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
 }
 
+type WorktreeBranchEntry = { path: string; branch: string | null };
+type WorktreeEnumerationResult =
+    | { ok: true; worktrees: WorktreeBranchEntry[] }
+    | { ok: false };
+
+function listWorktreesWithBranches(): WorktreeEnumerationResult {
+    const result = spawnSync('git', ['worktree', 'list', '--porcelain'], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.error || result.status !== 0) return { ok: false };
+
+    const worktrees: WorktreeBranchEntry[] = [];
+    let currentPath: string | null = null;
+    let currentBranch: string | null = null;
+    const flush = () => {
+        if (currentPath && currentPath !== REPO_ROOT) {
+            worktrees.push({ path: currentPath, branch: currentBranch });
+        }
+    };
+    for (const line of (result.stdout ?? '').split('\n')) {
+        if (line.startsWith('worktree ')) {
+            flush();
+            currentPath = line.slice('worktree '.length).trim();
+            currentBranch = null;
+        } else if (line.startsWith('branch refs/heads/')) {
+            currentBranch = line.slice('branch refs/heads/'.length).trim();
+        }
+    }
+    flush();
+    return { ok: true, worktrees };
+}
+
+type WorktreeOwnershipScan =
+    | { outcome: 'matched'; worktreePath: string }
+    | { outcome: 'ambiguous'; worktreePaths: string[] }
+    | { outcome: 'enumeration-failed' }
+    | { outcome: 'present-but-invalid'; worktreePath: string; error: string }
+    | { outcome: 'no-match' };
+
+function scanWorktreesForSecondaryOwnership(taskId: string): WorktreeOwnershipScan {
+    const enumeration = listWorktreesWithBranches();
+    if (!enumeration.ok) return { outcome: 'enumeration-failed' };
+
+    const matches: string[] = [];
+    for (const { path: worktreePath, branch: checkedOutBranch } of enumeration.worktrees) {
+        const candidateStatusPath = path.join(worktreePath, 'tasks', taskId, 'status.json');
+        if (!fs.existsSync(candidateStatusPath)) continue;
+
+        let candidate: StatusJson;
+        try {
+            candidate = readStatusFromPath(candidateStatusPath, taskId);
+        } catch (err) {
+            return {
+                outcome: 'present-but-invalid',
+                worktreePath,
+                error: err instanceof Error ? err.message : String(err),
+            };
+        }
+
+        if (candidate.worktree !== true || checkedOutBranch === null) continue;
+        const candidateBranch = candidate.branch?.trim() ?? '';
+        if (candidateBranch && candidateBranch === checkedOutBranch) {
+            matches.push(worktreePath);
+        }
+    }
+
+    if (matches.length === 1) return { outcome: 'matched', worktreePath: matches[0] };
+    if (matches.length >= 2) return { outcome: 'ambiguous', worktreePaths: matches };
+    return { outcome: 'no-match' };
+}
+
 function findExistingWorktreeForBranch(branch: string): string | null {
     const result = spawnSync('git', ['worktree', 'list', '--porcelain'], {
         cwd: REPO_ROOT,
@@ -99,6 +172,30 @@ export function resolveTaskCwd(taskId: string): string {
                     `  Looked for ${directWorktree} and a worktree for branch '${branch}'.\n` +
                     `  Restore or recreate the worktree before continuing.`,
                 );
+            }
+
+            const scan = scanWorktreesForSecondaryOwnership(taskId);
+            switch (scan.outcome) {
+                case 'matched':
+                    return scan.worktreePath;
+                case 'ambiguous':
+                    die(
+                        `Multiple worktrees claim ownership of task '${taskId}':\n` +
+                        scan.worktreePaths.map(worktreePath => `  - ${worktreePath}`).join('\n') +
+                        `\n  Only one worktree may record this task's branch. Resolve manually before continuing.`,
+                    );
+                    break;
+                case 'enumeration-failed':
+                    die(`Could not enumerate git worktrees while resolving task '${taskId}' ('git worktree list --porcelain' failed).`);
+                    break;
+                case 'present-but-invalid':
+                    die(
+                        `Task '${taskId}' has an unreadable status.json in worktree ${scan.worktreePath}: ${scan.error}\n` +
+                        `  Fix or remove that file before continuing — ownership cannot be determined.`,
+                    );
+                    break;
+                case 'no-match':
+                    break;
             }
         }
     } catch {

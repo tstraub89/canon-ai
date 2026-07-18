@@ -4,7 +4,7 @@ import path from 'node:path';
 import { REPO_ROOT } from './env.js';
 import { die, info, warn } from './cli.js';
 import { tickAllHeartbeats } from './heartbeat.js';
-import { readStatus, taskDirForRepoRoot, writeStatus } from './state.js';
+import { readStatus, readStatusFromPath, taskDirForRepoRoot, writeStatus, writeStatusToFile } from './state.js';
 import { ensureWorktree, PIPELINE_TELEMETRY_FILES } from './worktree.js';
 import type { CommandResult } from './types.js';
 
@@ -287,11 +287,18 @@ export function ensureBranch(taskIds: string[], options: EnsureBranchOptions = {
         // checkout stays on the base branch while implementation, review, and
         // qa run in ../dev-worktrees/<id>/.
         assertRepoRootCleanBeforeFirstWorktree(options.force === true);
-        ensureWorktree(taskIds[0], branchName, baseBranch);
-        for (const taskId of taskIds) {
-            const s = readStatus(taskId);
+        const leaderWorktree = ensureWorktree(taskIds[0], branchName, baseBranch);
+        // Write secondaries first and the leader last because the leader branch
+        // is the durable marker that bootstrap completed. Explicit destinations
+        // avoid re-entering resolveTaskCwd before each worktree copy is populated.
+        const orderedTaskIds = [...taskIds.slice(1), taskIds[0]];
+        for (const taskId of orderedTaskIds) {
+            const destination = process.env.CANON_TASKS_DIR_OVERRIDE
+                ? path.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, 'status.json')
+                : path.join(leaderWorktree, 'tasks', taskId, 'status.json');
+            const s = readStatusFromPath(destination, taskId);
             s.branch = branchName;
-            writeStatus(taskId, s);
+            writeStatusToFile(destination, s);
         }
         try {
             tickAllHeartbeats();

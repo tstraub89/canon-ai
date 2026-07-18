@@ -176,6 +176,10 @@ function setupFakeGit(scriptDir: string): void {
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--porcelain" ]; then',
+        '  if [ "${FAKE_GIT_WORKTREE_LIST_FAIL:-}" = "1" ]; then',
+        '    printf "%s\\n" "simulated worktree list failure" >&2',
+        '    exit 1',
+        '  fi',
         '  if [ -n "${FAKE_GIT_WORKTREE_LIST_FILE:-}" ] && [ -f "$FAKE_GIT_WORKTREE_LIST_FILE" ]; then',
         '    cat "$FAKE_GIT_WORKTREE_LIST_FILE"',
         '  fi',
@@ -1269,6 +1273,66 @@ void test('commitArchiveChanges stops before push when archive commit fails', ()
     });
 });
 
+void test('ensureBranch records a bundle secondary\'s branch in the worktree, never main', () => {
+    withTempDir('run-task-safety-bundle-wrong-main-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const leaderId = 'bundle-leader';
+        const secondaryId = 'bundle-secondary';
+        const taskBranch = `task/${leaderId}`;
+
+        writeTaskStatus(path.join(localDir, 'tasks'), leaderId, {
+            title: leaderId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+        writeTaskStatus(path.join(localDir, 'tasks'), secondaryId, {
+            title: secondaryId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', 'task artifacts pre-pipeline');
+
+        const gitModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/git.ts')).href;
+        const ensureResult = runNodeInline([
+            `import(${JSON.stringify(gitModuleUrl)})`,
+            `.then(m => { m.ensureBranch(${JSON.stringify([leaderId, secondaryId])}); })`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), localDir);
+        assert.equal(ensureResult.status, 0, ensureResult.stderr);
+
+        const leaderWorktree = path.join(worktreesRoot, leaderId);
+        const worktreeSecondaryStatus = JSON.parse(
+            fs.readFileSync(path.join(leaderWorktree, 'tasks', secondaryId, 'status.json'), 'utf8'),
+        ) as { branch?: string };
+        assert.equal(worktreeSecondaryStatus.branch, taskBranch);
+
+        const mainSecondaryStatus = JSON.parse(
+            fs.readFileSync(path.join(localDir, 'tasks', secondaryId, 'status.json'), 'utf8'),
+        ) as { branch?: string };
+        assert.equal(mainSecondaryStatus.branch, '');
+        const mainStatus = execFileSync('git', ['status', '--porcelain', '--', `tasks/${secondaryId}/status.json`], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.equal(mainStatus, '');
+
+        const stateModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/state.ts')).href;
+        const resolveResult = runNodeInline([
+            `import(${JSON.stringify(stateModuleUrl)})`,
+            `.then(m => { console.log(m.resolveTaskCwd(${JSON.stringify(secondaryId)})); })`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), localDir);
+        assert.equal(resolveResult.status, 0, resolveResult.stderr);
+        assert.equal(resolveResult.stdout.trim(), fs.realpathSync(leaderWorktree));
+    });
+});
+
 void test('resolveTaskCwd routes worktree-backed secondary tasks to the primary worktree', () => {
     withTempDir('run-task-safety-worktree-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
@@ -1319,6 +1383,315 @@ void test('resolveTaskCwd routes worktree-backed secondary tasks to the primary 
             const cwd = resolveTaskCwd(secondaryTaskId);
             assert.equal(cwd, primaryWorktree);
         });
+    });
+});
+
+void test('resolveTaskCwd does not false-match an unrelated worktree that only inherited the task dir', () => {
+    withTempDir('run-task-safety-scan-inherited-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'scan-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const otherWorktree = path.join(dir, 'unrelated-worktree');
+        writeTaskStatus(path.join(otherWorktree, 'tasks'), taskId, {
+            worktree: true,
+            branch: '',
+            phases: {},
+        });
+        const worktreeListFile = path.join(dir, 'worktree-list.txt');
+        fs.writeFileSync(worktreeListFile, [
+            `worktree ${otherWorktree}`,
+            'HEAD abc123',
+            'branch refs/heads/some-other-branch',
+            '',
+        ].join('\n'), 'utf8');
+
+        withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, () => {
+            assert.equal(resolveTaskCwd(taskId), REPO_ROOT);
+        });
+    });
+});
+
+void test('resolveTaskCwd does not scan worktrees when main records worktree: false', () => {
+    withTempDir('run-task-safety-scan-worktree-false-main-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'non-worktree-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'main',
+            branch: '',
+            worktree: false,
+            phases: {},
+        });
+
+        const staleWorktree = path.join(dir, 'stale-worktree');
+        writeTaskStatus(path.join(staleWorktree, 'tasks'), taskId, {
+            worktree: true,
+            branch: 'stale-branch',
+            phases: {},
+        });
+        const worktreeListFile = path.join(dir, 'worktree-list.txt');
+        fs.writeFileSync(worktreeListFile, [
+            `worktree ${staleWorktree}`,
+            'HEAD abc123',
+            'branch refs/heads/stale-branch',
+            '',
+        ].join('\n'), 'utf8');
+
+        withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, () => {
+            assert.equal(resolveTaskCwd(taskId), REPO_ROOT);
+        });
+    });
+});
+
+void test('resolveTaskCwd does not match a worktree whose own status.json records worktree: false', () => {
+    withTempDir('run-task-safety-scan-candidate-worktree-false-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'candidate-worktree-false';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const candidateWorktree = path.join(dir, 'candidate-worktree');
+        writeTaskStatus(path.join(candidateWorktree, 'tasks'), taskId, {
+            worktree: false,
+            branch: 'candidate-branch',
+            phases: {},
+        });
+        const worktreeListFile = path.join(dir, 'worktree-list.txt');
+        fs.writeFileSync(worktreeListFile, [
+            `worktree ${candidateWorktree}`,
+            'HEAD abc123',
+            'branch refs/heads/candidate-branch',
+            '',
+        ].join('\n'), 'utf8');
+
+        withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, () => {
+            assert.equal(resolveTaskCwd(taskId), REPO_ROOT);
+        });
+    });
+});
+
+void test('resolveTaskCwd dies naming candidates when two worktrees both claim ownership', () => {
+    withTempDir('run-task-safety-scan-ambiguous-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'ambiguous-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const worktreeOne = path.join(dir, 'worktree-one');
+        const worktreeTwo = path.join(dir, 'worktree-two');
+        for (const [worktreePath, branch] of [[worktreeOne, 'branch-one'], [worktreeTwo, 'branch-two']] as const) {
+            writeTaskStatus(path.join(worktreePath, 'tasks'), taskId, {
+                worktree: true,
+                branch,
+                phases: {},
+            });
+        }
+        const worktreeListFile = path.join(dir, 'worktree-list.txt');
+        fs.writeFileSync(worktreeListFile, [
+            `worktree ${worktreeOne}`,
+            'HEAD abc123',
+            'branch refs/heads/branch-one',
+            '',
+            `worktree ${worktreeTwo}`,
+            'HEAD def456',
+            'branch refs/heads/branch-two',
+            '',
+        ].join('\n'), 'utf8');
+
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline([
+            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            `resolveTaskCwd(${JSON.stringify(taskId)});`,
+        ].join('\n'), env));
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Multiple worktrees claim ownership/);
+        assert.ok(result.stderr.includes(worktreeOne));
+        assert.ok(result.stderr.includes(worktreeTwo));
+    });
+});
+
+void test('resolveTaskCwd dies when git worktree list enumeration fails', () => {
+    withTempDir('run-task-safety-scan-enum-fail-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'enum-fail-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_WORKTREE_LIST_FAIL: '1',
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline([
+            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            `resolveTaskCwd(${JSON.stringify(taskId)});`,
+        ].join('\n'), env));
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Could not enumerate git worktrees/);
+    });
+});
+
+void test('resolveTaskCwd dies when a candidate status.json is present but unparseable', () => {
+    withTempDir('run-task-safety-scan-invalid-json-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'invalid-json-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+        const candidateWorktree = path.join(dir, 'candidate-worktree');
+        const candidateTaskDir = path.join(candidateWorktree, 'tasks', taskId);
+        fs.mkdirSync(candidateTaskDir, { recursive: true });
+        fs.writeFileSync(path.join(candidateTaskDir, 'status.json'), '{ not valid json', 'utf8');
+
+        const worktreeListFile = path.join(dir, 'worktree-list.txt');
+        fs.writeFileSync(worktreeListFile, [
+            `worktree ${candidateWorktree}`,
+            'HEAD abc123',
+            'branch refs/heads/some-branch',
+            '',
+        ].join('\n'), 'utf8');
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline([
+            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            `resolveTaskCwd(${JSON.stringify(taskId)});`,
+        ].join('\n'), env));
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /unreadable status\.json/);
+    });
+});
+
+void test('resolveTaskCwd dies when a candidate status.json has a schema-invalid branch field', () => {
+    withTempDir('run-task-safety-scan-invalid-schema-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const fakeGitDir = path.join(dir, 'fake-git');
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+
+        const taskId = 'invalid-schema-task';
+        writeTaskStatus(tasksRoot, taskId, {
+            title: taskId,
+            base_branch: 'main',
+            branch: '',
+            worktree: true,
+            phases: {},
+        });
+        const candidateWorktree = path.join(dir, 'candidate-worktree');
+        writeTaskStatus(path.join(candidateWorktree, 'tasks'), taskId, {
+            worktree: true,
+            branch: 123,
+            phases: {},
+        });
+
+        const worktreeListFile = path.join(dir, 'worktree-list.txt');
+        fs.writeFileSync(worktreeListFile, [
+            `worktree ${candidateWorktree}`,
+            'HEAD abc123',
+            'branch refs/heads/some-branch',
+            '',
+        ].join('\n'), 'utf8');
+        const result = withFakeGitEnv({
+            PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }, env => runNodeInline([
+            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            `resolveTaskCwd(${JSON.stringify(taskId)});`,
+        ].join('\n'), env));
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /unreadable status\.json/);
+        assert.match(result.stderr, /expected string, got number/);
     });
 });
 

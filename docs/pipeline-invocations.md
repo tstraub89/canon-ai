@@ -762,3 +762,7 @@
 | 2026-07-18T13:42:01.678Z | bundle-secondary-branch-worktree-routing | spec | claude | opus | 0 | 552.0s | 2195121 | ok |
 | 2026-07-18T13:47:38.378Z | bundle-secondary-branch-worktree-routing | spec_review | codex | gpt-5.6-sol | 1 | 336.7s | 3726881 | ok |
 | 2026-07-18T14:01:07.664Z | bundle-secondary-branch-worktree-routing | plan | claude | sonnet | 0 | 537.2s | 3019288 | ok |
+| 2026-07-18T14:09:23.242Z | bundle-secondary-branch-worktree-routing | implement | codex | gpt-5.6-sol | 0 | 494.9s | 2519133 | ok |
+| 2026-07-18T14:13:43.459Z | bundle-secondary-branch-worktree-routing | code_review | codex | gpt-5.6-luna | 0 | 259.8s | 0 | ok |
+| 2026-07-18T14:27:05.723Z | bundle-secondary-branch-worktree-routing | code_review | claude | opus | 0 | 802.2s | 820469 | ok |
+| 2026-07-18T14:30:43.435Z | bundle-secondary-branch-worktree-routing | qa | claude | sonnet | 0 | 217.7s | 1514326 | ok |
