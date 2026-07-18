@@ -752,3 +752,13 @@
 | 2026-07-17T02:49:50.992Z | allow-comma-separated-multipath-cells | code_review | codex | gpt-5.6-luna | 0 | 109.1s | 0 | ok |
 | 2026-07-17T03:02:27.379Z | allow-comma-separated-multipath-cells | code_review | claude | opus | 0 | 756.4s | 878684 | ok |
 | 2026-07-17T03:05:13.484Z | allow-comma-separated-multipath-cells | qa | claude | sonnet | 0 | 166.1s | 1860490 | ok |
+| 2026-07-17T16:11:12.731Z | bundle-secondary-branch-worktree-routing | spec_review | codex | gpt-5.6-sol | 0 | 386.9s | 1119782 | ok |
+| 2026-07-17T16:19:06.485Z | bundle-secondary-branch-worktree-routing | spec | claude | opus | 0 | 473.8s | 2543458 | ok |
+| 2026-07-17T16:21:30.557Z | bundle-secondary-branch-worktree-routing | spec_review | codex | gpt-5.6-sol | 1 | 144.1s | 1846422 | ok |
+| 2026-07-17T16:32:53.715Z | bundle-secondary-branch-worktree-routing | spec | claude | opus | 0 | 683.2s | 2288532 | ok |
+| 2026-07-17T16:35:49.955Z | bundle-secondary-branch-worktree-routing | spec_review | codex | gpt-5.6-sol | 2 | 176.2s | 3067446 | ok |
+| 2026-07-17T16:39:14.346Z | bundle-secondary-branch-worktree-routing | spec | claude | opus | 0 | 204.4s | 282279 | ok |
+| 2026-07-18T13:32:49.699Z | bundle-secondary-branch-worktree-routing | spec_review | codex | gpt-5.6-sol | 0 | 453.7s | 1658952 | ok |
+| 2026-07-18T13:42:01.678Z | bundle-secondary-branch-worktree-routing | spec | claude | opus | 0 | 552.0s | 2195121 | ok |
+| 2026-07-18T13:47:38.378Z | bundle-secondary-branch-worktree-routing | spec_review | codex | gpt-5.6-sol | 1 | 336.7s | 3726881 | ok |
+| 2026-07-18T14:01:07.664Z | bundle-secondary-branch-worktree-routing | plan | claude | sonnet | 0 | 537.2s | 3019288 | ok |
