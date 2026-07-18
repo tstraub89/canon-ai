@@ -766,3 +766,14 @@
 | 2026-07-18T14:13:43.459Z | bundle-secondary-branch-worktree-routing | code_review | codex | gpt-5.6-luna | 0 | 259.8s | 0 | ok |
 | 2026-07-18T14:27:05.723Z | bundle-secondary-branch-worktree-routing | code_review | claude | opus | 0 | 802.2s | 820469 | ok |
 | 2026-07-18T14:30:43.435Z | bundle-secondary-branch-worktree-routing | qa | claude | sonnet | 0 | 217.7s | 1514326 | ok |
+| 2026-07-18T19:29:04.567Z | update-install-root-provenance | spec_review | codex | gpt-5.6-luna | 0 | 296.9s | 1300715 | ok |
+| 2026-07-18T19:34:24.746Z | update-install-root-provenance | spec | claude | opus | 0 | 320.0s | 2084273 | ok |
+| 2026-07-18T19:37:32.763Z | update-install-root-provenance | spec_review | codex | gpt-5.6-luna | 1 | 187.9s | 2809360 | ok |
+| 2026-07-18T19:43:02.784Z | update-install-root-provenance | spec | claude | opus | 0 | 329.9s | 1619161 | ok |
+| 2026-07-18T19:47:19.696Z | update-install-root-provenance | spec_review | codex | gpt-5.6-luna | 2 | 256.8s | 4988835 | ok |
+| 2026-07-18T19:52:19.840Z | update-install-root-provenance | spec | claude | opus | 0 | 300.0s | 1238622 | ok |
+| 2026-07-18T20:02:11.921Z | update-install-root-provenance | spec_review | codex | gpt-5.6-luna | 3 | 267.4s | 5993305 | ok |
+| 2026-07-18T20:24:52.724Z | update-install-root-provenance | spec_review | codex | gpt-5.6-luna | 4 | 207.7s | 6968152 | ok |
+| 2026-07-18T20:33:34.056Z | update-install-root-provenance | spec_review | codex | gpt-5.6-luna | 5 | 183.8s | 8256941 | ok |
+| 2026-07-18T20:51:45.368Z | update-install-root-provenance | spec_review | codex | gpt-5.6-luna | 6 | 423.2s | 9518543 | ok |
+| 2026-07-18T21:34:04.062Z | update-install-root-provenance | plan | claude | sonnet | 0 | 756.6s | 4038464 | ok |
