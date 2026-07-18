@@ -1,7 +1,7 @@
 {
   "id": "bundle-secondary-branch-worktree-routing",
   "title": "Fix bundle secondary's branch write landing in main instead of the worktree",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-06-30",
   "updated": "2026-07-18",
   "branch": "task/bundle-secondary-branch-worktree-routing",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
