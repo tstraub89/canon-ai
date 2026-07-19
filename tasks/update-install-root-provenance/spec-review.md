@@ -43,3 +43,25 @@ Does the spec's approach work against the actual codebase?
 - [ ] **Approved** — spec is implementable as written
 - [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
+
+## Amendment Review
+
+- [ ] **Approved**
+- [ ] **Approved with nits**
+- [x] **Changes requested**
+
+> Findings:
+>
+> - **[blocking][integration]** The amendment says it supersedes the Known Risks “Credential prompts” entry (`spec.md:151`), but that entry remains unchanged in the earlier `Known Risks` section and still states the now-rejected premise that resolution needs the same authentication as npm's `github:` fetch. The combined spec therefore contains contradictory operational guidance. Remove or rewrite that old entry so the authoritative risk describes HTTPS-first/SSH-fallback resolution and the fail-closed behavior when both transports fail.
+>
+> - **[blocking][coverage]** AC-12 does not require the fallback matrix to run for both resolution paths, even though the amended contract explicitly covers stable tag listing and named-ref resolution alike (`spec.md:155`). A test suite could satisfy AC-12 using only stable resolution while `resolveNamedRef` remains HTTPS-only. Require the HTTPS-success, HTTPS-fails/SSH-succeeds, both-fail, and non-interactive-environment assertions for named-ref resolution as well as stable resolution (or explicitly parameterize AC-12 over both modes), including the downstream target/provenance equivalence in the fallback-success cases.
+
+## Amendment Review
+
+- [ ] **Approved**
+- [x] **Approved with nits**
+- [ ] **Changes requested**
+
+> Findings:
+>
+> - **[nit][verification]** AC-12 now covers both stable tag listing and named-ref resolution, and its success/failure cases establish the required fallback outcomes. To make the transport contract harder to satisfy with a high-level fake alone, have the recorder assert that fallback attempts occur in HTTPS-then-SSH order and represent the same logical query (tag listing or refspec) in both the SSH-success and both-fail cases. This is non-blocking because the amended contract and per-path test matrix already identify the required behavior.

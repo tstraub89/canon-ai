@@ -1,15 +1,15 @@
 {
   "id": "update-install-root-provenance",
   "title": "canon update targets its own install root, pinned to an immutable release",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-07-11",
-  "updated": "2026-07-18",
-  "branch": "",
+  "updated": "2026-07-19",
+  "branch": "task/update-install-root-provenance",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "b12e4289fed2067b09870fd7423d5d21c9fc0b22",
-    "orchestrator_commit": "b12e4289fed2067b09870fd7423d5d21c9fc0b22",
+    "upstream_commit": "270cefcaa9c7324ec32fc582ee3b414487e569dc",
+    "orchestrator_commit": "270cefcaa9c7324ec32fc582ee3b414487e569dc",
     "codex_cli": "codex-cli 0.144.5",
     "claude_code": "2.1.208 (Claude Code)"
   },
@@ -30,8 +30,8 @@
       "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 7,
-      "changes_requested_total": 6,
+      "iterations_total": 9,
+      "changes_requested_total": 7,
       "auto_block_count": 1,
       "preflight_rejections_current_loop": 0
     },
@@ -40,21 +40,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 4,
+      "changes_requested_total": 2,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -68,11 +71,19 @@
       "phase": "spec_review",
       "iteration_count": 3,
       "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix — read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    },
+    {
+      "date": "2026-07-18",
+      "phase": "code_review",
+      "iteration_count": 0,
+      "reason": "Code review surfaced a spec_gap verdict for task(s): update-install-root-provenance. The implementation cannot resolve this — the root cause is in the spec. Recovery options (both operate on the full blocked bundle [update-install-root-provenance]):\n  FIX: amend spec.md with ## Amendment, then: canon run update-install-root-provenance --reroute\n  BLESS: canon task accept update-install-root-provenance code_review --reason \"<why>\""
     }
   ],
   "sessions": {
-    "codex_spec_review": "019f76af-9abd-7dd2-a54b-6ff68eac2d41",
-    "claude_spec": "444f0c5b-a0a0-4a8e-bc73-696a13365968"
+    "claude_spec": "444f0c5b-a0a0-4a8e-bc73-696a13365968",
+    "codex": "019f7726-98d7-7c41-bc8d-2930963b6c40",
+    "claude_review": "a89d099b-330d-44da-8600-3a1a1109f648",
+    "codex_spec_review": "019f77e6-8e3b-7073-9450-caaee311abd8"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

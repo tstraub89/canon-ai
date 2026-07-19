@@ -94,6 +94,8 @@ npm install -g --install-links github:tstraub89/canon-ai
 
 > `--install-links` is required because npm otherwise symlinks the global install to its git cache rather than copying the committed `dist/`, which leaves the `canon` bin pointing at a transient path and command-not-found after the install reports success. The flag packs+installs as a regular dependency, which is what you want for a stable global CLI.
 
+> **Updating.** Once installed, use `canon update` rather than re-running `npm install` by hand — it resolves the exact install this binary is running from, pins to the latest tagged release by default (or a labeled development commit via `--channel main` / `--ref <ref|sha>`), and records what it installed in `provenance.json` under `.canon` for future tooling to read.
+
 ### Set up in a repo
 
 ```bash
@@ -233,7 +235,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
 | `canon stop <id>` | Stop a detached canon run (SIGTERM → SIGKILL after 10s). Waits up to 30s — override via `CANON_STOP_WAIT_MS` — for the orchestrator's first heartbeat to verify the PID before signaling. |
 | `canon upgrade` | Sync vendored canon-owned files to match the installed version. It does not touch adopter-owned `AGENTS.md` or `CLAUDE.md`. Refuses to overwrite canon-owned targets that are locally modified, untracked but present, or whose git state cannot be verified unless `--force` is set. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
-| `canon update` | Update the canon-ai package itself |
+| `canon update` | Update the canon-ai package itself. Targets the install's own root (never the invocation directory) and pins to the latest final release by default; refuses rather than installing an unpinned branch. `--channel main` / `--ref <ref\|sha>` pin a labeled development commit instead. Writes `provenance.json` in `.canon` after a successful install — recorded for future tooling, nothing reads it yet. |
 
 Full `canon task` subcommand reference is in `docs/pipeline-orchestrator.md`.
 

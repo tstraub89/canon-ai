@@ -47,7 +47,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `scripts/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
 | Task management helper (status.json updates, phase transitions) | `src/task/index.ts` | `taskCmd()` implementation; `src/cli/commands/task.ts` is the thin CLI wrapper |
 | `canon run` CLI dispatch wrapper | `src/cli/commands/run-task.ts` | Spawns the compiled `scripts/run-task.ts` via `spawnSync`; the installed-package entry point for `canon run` |
-| `canon update` command | `src/cli/commands/update.ts` | Detects install type (`local`/`global`/`npx`); drives adopter update checks |
+| `canon update` command | `src/cli/commands/update.ts` | Resolves the running install's root (`local`/`global`/`npx`, realpath-canonicalized); gates on manifest presence + `canon-ai` dependency listing; pins to the latest final release (or a labeled `main`/ref/SHA dev channel) via `git ls-remote`; writes `provenance.json` in `.canon` (write-only — no reader yet) |
 | Phase routing logic (phase order, transitions) | `scripts/run-task/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `scripts/run-task/main.ts`, `scripts/run-task/git.ts`, `scripts/run-task/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `scripts/run-task/validation.ts` | |

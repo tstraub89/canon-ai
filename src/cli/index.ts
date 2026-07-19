@@ -30,7 +30,15 @@ Usage:
                                 Exit codes: 0 healthy stop/until, 2 usage/nothing/read
                                 error/ambiguous_pid/launch-window timeout, 3 auto-block, 4 death,
                                 5 timeout.
-  canon update                Update the canon-ai package itself
+  canon update                Update the canon-ai package itself. Resolves the install root
+                                (never the invocation cwd) and pins to the latest final release
+                                by default — refuses rather than falling back to an unpinned
+                                source. Writes .canon/provenance.json after a successful install
+                                (written for future tooling; nothing reads it yet).
+                                Flags: --channel main       pin to main's latest commit (dev)
+                                       --ref <ref>           pin to a named ref's resolved commit (dev)
+                                       --ref <40-hex-sha>    pin directly, skip resolution
+                                --channel and --ref are mutually exclusive.
   canon upgrade               Sync vendored files to match the installed version
 
 Typical workflow:

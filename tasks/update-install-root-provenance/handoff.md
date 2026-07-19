@@ -1,118 +1,106 @@
 # Implementation Handoff: update-install-root-provenance
 
 > Author: Codex | Spec: `tasks/update-install-root-provenance/spec.md` | Plan: `tasks/update-install-root-provenance/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed. The first column must be either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — no wildcards, no combined paths, no placeholder text. Each row's path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
 | File | What Changed |
 |---|---|
-
-## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+| `src/cli/commands/update.ts` | Resolves the real install root, applies ordered layout/dependency gates, parses strict update flags, resolves immutable stable/main/ref targets, writes provenance after npm succeeds, and now retries remote resolution from HTTPS to SSH with non-interactive Git settings. |
+| `src/cli/index.ts` | Documents update pinning, development-channel flags, SHA refs, and provenance behavior in CLI help. |
+| `tests/cli.test.ts` | Covers install-root/gate behavior, immutable resolution, provenance, failure paths, and the amendment's HTTPS-success, HTTPS→SSH fallback, dual-failure, argument-equivalence, environment, and red-first cases for stable and named-ref resolution. |
+| `README.md` | Documents install-root targeting, release pinning, development flags, and the write-only provenance record. |
+| `docs/codebase-map.md` | Updates the `canon update` entry for root detection, gates, immutable resolution, and provenance. |
+| `dist/cli/index.js` | Rebuilt generated CLI output from the current source. |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The updater targets the package's own real install root, refuses unsafe local layouts before any mutation, resolves an immutable commit from the effective upstream slug, and records provenance only after npm succeeds. Remote resolution now mirrors npm's private-GitHub transport behavior: it tries HTTPS first and, on any failure, retries the identical logical query using `git@github.com:<slug>.git`. The Git runner forces `GIT_TERMINAL_PROMPT=0` and `GIT_SSH_COMMAND=ssh -oBatchMode=yes` on every attempt, so authentication failures are surfaced instead of hanging.
+
+## Red-First Evidence
+
+The amendment's stable-path regression was run against a fresh build before the fallback helper was added. The forced-HTTPS-failure fixture exited non-zero with the pre-amendment refusal and reported `npmLogExists=false`, proving npm was not reached. After the fallback implementation and rebuild, the same red-first subprocess passes, records two `ls-remote` calls in HTTPS-then-SSH order, and installs the same peeled stable SHA.
+
+The original install-root/immutable-target red-first fixture remains in place: it invokes the committed CLI by absolute path from an unrelated adopter directory and verifies the npm cwd, exact pinned target, and byte-identical adopter manifest/lockfile.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Exported `layoutGate()` for direct missing-manifest coverage. | The established detector classifies a `node_modules` path without an owning manifest as global; exporting the pure gate keeps the ordered local refusal directly testable without changing that detection contract. | AC-4 |
+| Stable matching rejects leading-zero numeric components as well as prerelease/suffixed names. | This is the strict `vX.Y.Z` interpretation and avoids treating non-SemVer tag names as releases. | AC-6, AC-7 |
+| Exported `defaultGitRunner()` for direct environment coverage. | AC-12(d) needs to observe the real subprocess environment rather than an injected fake runner; the export is test-only plumbing and does not change the CLI surface. | AC-12(d) |
+| Normalized runtime provenance references in pipeline-generated completion artifacts to prose. | The required docs-reference check treats backtick paths as repository files, while the provenance file is created only in adopter install roots. | Validation only; no product behavior |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
-
-| AC | Status | Notes |
+| AC | Status | Evidence |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | `detectInstallType()` returns `{ type, installRoot }`, canonicalizes symlinked roots, and has updated shape tests. |
+| AC-2 | Met | Absolute-entrypoint red-first subprocess test records npm cwd at the real install root and compares adopter package/lockfile contents byte-for-byte. |
+| AC-3 | Met | Malformed/unrelated manifests refuse before resolver/npm; all three supported dependency blocks select the matching npm save flag. |
+| AC-4 | Met | Layout gate owns missing-manifest refusal and nested local-shaped/pnpm-path coverage reaches it before dependency parsing. |
+| AC-5 | Met | Announcement tests cover install location, current pin/unknown, stable bare version, development unknown version, and no provenance read. |
+| AC-6 | Met | Stable resolution filters strict final tags, prefers peeled annotated-tag commits, excludes newer prereleases, and shares the effective fork slug across resolver, npm target, and provenance. |
+| AC-7 | Met | Git failures, empty tags, prerelease-only tags, zero refs, and ambiguous refs fail closed without an unpinned fallback. |
+| AC-8 | Met | Main and named refs resolve immutable commits; full SHA refs skip resolution; flag validation and ref ambiguity are covered. |
+| AC-9 | Met | Stable/main/ref and global provenance cases verify exact pinned source, SHA, timestamp, bare stable version, post-success writes, and failed-install no-write behavior. |
+| AC-10 | Met | Help, README, and codebase map describe pinning/flags/write-only provenance; docs references pass and the doctor row is unchanged. |
+| AC-11 | Met | Fresh build completed and generated `dist/cli/index.js` is included. |
+| AC-12 | Met | Stable and named-ref tests separately cover one-call HTTPS success, two-call HTTPS→SSH success with URL-only argument differences, dual failure with both transport names, and non-interactive environment; the stable fallback is also exercised through the real dist red-first fixture. |
 
 ## Edge Cases Considered
 
-- ...
+- HTTPS and SSH attempts use the same `ls-remote` query shape and differ only in remote URL.
+- Both transports are attempted at most once each; the existing 30-second timeout applies per Git invocation.
+- Empty stderr is rendered as `no output`, while both transport names remain in the refusal.
+- Full 40-hex SHA refs retain their zero-resolution-call short circuit.
+- Symlinked roots, nested local-shaped layouts, annotated tags, prerelease-only tag universes, fork overrides, global installs, and post-npm provenance failures remain covered by the prior implementation.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+None.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> Required checks (those in spec.md's Validation Required section) cannot be marked `N/A` or `not_configured` — adjust the spec or run the check.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(copy the exact check entry text from spec.md's Validation Required checklist — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | ESLint completed cleanly after the amendment. |
+| `npm run type-check` | Pass | TypeScript completed cleanly. |
+| `npm test` | Pass | Full suite passed, including the new transport fallback and refusal tests. |
+| `npm run build` | Pass | Fresh tsup build and dist normalization completed. |
+| `npm run docs-refs-check` | Pass | All repository references resolved after runtime-only provenance references were normalized in generated completion artifacts. |
+| E2E — N/A (no end-to-end runtime surface) | deferred_by_spec | Spec: §Validation Required explicitly marks E2E N/A. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All original and amended ACs are met.
+- [x] Required validation checks pass or are explicitly deferred by the spec.
+- [x] Red-first evidence and implementation deviations are recorded.
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
+## Iteration 2 — addressing review round 1
 
 ### Changes
 
-> One row per file changed in this iteration. Same format as the baseline Changes table — `` `path/to/file.ext` `` or `[path/to/file.ext](url)` only. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+| `src/cli/commands/update.ts` | Preserves a caller-provided `GIT_SSH_COMMAND` while adding or normalizing `BatchMode=yes`; the default remains `ssh -oBatchMode=yes` when no custom command is configured. |
+| `tests/cli.test.ts` | The direct Git-runner environment test now supplies a custom SSH command and asserts that its identity configuration is preserved alongside batch mode. |
+| `dist/cli/index.js` | Rebuilt generated CLI bundle with the SSH-command composition fix. |
 
 ### Findings addressed
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+- _correctness bug:_ `defaultGitRunner` overwrote a user's custom `GIT_SSH_COMMAND`, breaking configured identities/proxy hosts on the SSH fallback leg → `nonInteractiveSshCommand()` composes with custom commands and replaces common explicit BatchMode settings with `yes` rather than discarding the command.
 
-### AC deltas (if any)
+### AC deltas
 
-- AC-N: was Partial → now Met (file:line)
+- AC-12(d): remains Met, now without clobbering caller SSH configuration; every resolver invocation still receives terminal-prompt suppression and SSH batch mode.
 
-### Re-run validation (only checks that re-ran)
+### Re-run validation
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| `npm run lint` | Pass | ESLint completed cleanly. |
+| `npm run type-check` | Pass | TypeScript completed cleanly. |
+| `npm run build` | Pass | Fresh generated CLI includes the composed SSH command behavior. |
+| Focused CLI suite | Pass | `tests/cli.test.ts`: 190 passed, 0 failed; includes the custom `GIT_SSH_COMMAND` regression. |

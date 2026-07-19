@@ -6,7 +6,15 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, printStaleOverrideNudge, printUpgradeRefusals, runUpgrade } from '../src/cli/commands/upgrade.js';
-import { detectInstallType } from '../src/cli/commands/update.js';
+import {
+    detectInstallType,
+    layoutGate,
+    parseUpdateArgs,
+    updateCmd,
+    defaultGitRunner,
+    resolveNamedRef,
+    resolveStable,
+} from '../src/cli/commands/update.js';
 import { existingAgentFilesNoticeLines, hasExistingAgentFiles, scaffoldTemplates } from '../src/cli/commands/init.js';
 import {
     CANON_GITIGNORE_BLOCK,
@@ -61,6 +69,151 @@ function runCanonCliIn(cwd: string, args: string[]): { status: number | null; st
         stdout: result.stdout ?? '',
         stderr: result.stderr ?? '',
     };
+}
+
+function writeExecutable(scriptDir: string, name: string, body: string[]): void {
+    fs.writeFileSync(path.join(scriptDir, name), ['#!/bin/sh', 'set -eu', ...body, ''].join('\n'), { mode: 0o755 });
+}
+
+function buildUpdateRedFirstFixture(dir: string): {
+    installRoot: string;
+    adopterDir: string;
+    cliEntry: string;
+    binDir: string;
+    npmLogPath: string;
+    envPromptLogPath: string;
+    gitLogPath: string;
+} {
+    const installRoot = path.join(dir, 'install');
+    const adopterDir = path.join(dir, 'adopter');
+    const binDir = path.join(dir, 'bin');
+    fs.mkdirSync(installRoot, { recursive: true });
+    fs.mkdirSync(adopterDir, { recursive: true });
+    fs.mkdirSync(binDir, { recursive: true });
+
+    fs.writeFileSync(path.join(installRoot, 'package.json'), JSON.stringify({
+        name: 'install-project',
+        devDependencies: { 'canon-ai': 'github:tstraub89/canon-ai' },
+    }, null, 2));
+    const packageTarget = path.join(installRoot, 'node_modules', 'canon-ai');
+    fs.mkdirSync(packageTarget, { recursive: true });
+    fs.cpSync(path.join(WORKTREE_ROOT, 'dist'), path.join(packageTarget, 'dist'), { recursive: true });
+    fs.cpSync(path.join(WORKTREE_ROOT, 'package.json'), path.join(packageTarget, 'package.json'));
+
+    fs.writeFileSync(path.join(adopterDir, 'package.json'), JSON.stringify({
+        name: 'unrelated-adopter-project',
+        dependencies: { express: '^4.0.0' },
+    }, null, 2));
+    fs.writeFileSync(path.join(adopterDir, 'package-lock.json'), JSON.stringify({
+        name: 'unrelated-adopter-project',
+        lockfileVersion: 3,
+    }, null, 2));
+
+    const npmLogPath = path.join(dir, 'npm.log');
+    writeExecutable(binDir, 'npm', [
+        `printf '%s\\t%s\\n' "$(pwd)" "$*" >> ${JSON.stringify(npmLogPath)}`,
+        'exit 0',
+    ]);
+
+    const envPromptLogPath = path.join(dir, 'git-env.log');
+    const gitLogPath = path.join(dir, 'git.log');
+    writeExecutable(binDir, 'git', [
+        `printf '%s\\n' "$*" >> ${JSON.stringify(gitLogPath)}`,
+        `printf '%s\\n' "GIT_TERMINAL_PROMPT=${'${GIT_TERMINAL_PROMPT:-unset}'} GIT_SSH_COMMAND=${'${GIT_SSH_COMMAND:-unset}'}" >> ${JSON.stringify(envPromptLogPath)}`,
+        'if [ "${CANON_TEST_FORCE_HTTPS_FAIL:-}" = "1" ]; then',
+        '  case "$*" in',
+        '    *https://github.com*) exit 1 ;;',
+        '  esac',
+        'fi',
+        'if [ "$1" = "ls-remote" ] && [ "$2" = "--tags" ]; then',
+        `  printf '%s\\t%s\\n' ${UPDATE_SHA_A} refs/tags/v8.1.0`,
+        `  printf '%s\\t%s\\n' ${UPDATE_SHA_B} refs/tags/v8.2.0`,
+        `  printf '%s\\t%s\\n' ${UPDATE_SHA_C} refs/tags/v8.2.0^{}`,
+        '  exit 0',
+        'fi',
+        'exit 1',
+    ]);
+
+    return {
+        installRoot,
+        adopterDir,
+        cliEntry: path.join(packageTarget, 'dist', 'cli', 'index.js'),
+        binDir,
+        npmLogPath,
+        envPromptLogPath,
+        gitLogPath,
+    };
+}
+
+const UPDATE_SHA_A = 'a'.repeat(40);
+const UPDATE_SHA_B = 'b'.repeat(40);
+const UPDATE_SHA_C = 'c'.repeat(40);
+
+class UpdateExitError extends Error {
+    constructor(readonly code: number) {
+        super(`update exited with ${code}`);
+    }
+}
+
+function withEnv<T>(updates: Record<string, string | undefined>, fn: () => T): T {
+    const previous = new Map<string, string | undefined>();
+    for (const key of Object.keys(updates)) {
+        previous.set(key, process.env[key]);
+        const value = updates[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+    }
+    try {
+        return fn();
+    } finally {
+        for (const [key, value] of previous) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+        }
+    }
+}
+
+function makeLocalUpdateRoot(dir: string, manifest: unknown): string {
+    fs.mkdirSync(path.join(dir, 'node_modules', 'canon-ai'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(manifest));
+    return dir;
+}
+
+function stableUpdateGitRunner(args: string[]): { ok: boolean; stdout: string; stderr: string } {
+    if (args[0] === 'ls-remote' && args[1] === '--tags') {
+        return {
+            ok: true,
+            stdout: `${UPDATE_SHA_A}\trefs/tags/v8.1.0\n${UPDATE_SHA_B}\trefs/tags/v8.2.0\n${UPDATE_SHA_C}\trefs/tags/v8.2.0^{}\n`,
+            stderr: '',
+        };
+    }
+    return { ok: false, stdout: '', stderr: 'unexpected git invocation' };
+}
+
+function runLocalUpdate(dir: string, args: string[] = [], manifest: unknown = {
+    name: 'local-project',
+    devDependencies: { 'canon-ai': `github:tstraub89/canon-ai#${UPDATE_SHA_A}` },
+}): { output: string[]; errors: string[]; npmArgs: string[]; npmCwd: string[] } {
+    const root = makeLocalUpdateRoot(dir, manifest);
+    const output: string[] = [];
+    const errors: string[] = [];
+    const npmArgs: string[] = [];
+    const npmCwd: string[] = [];
+    updateCmd(args, {
+        packageDir: path.join(root, 'node_modules', 'canon-ai'),
+        cwd: root,
+        gitRunner: stableUpdateGitRunner,
+        spawnRunner: (_command, commandArgs, options) => {
+            npmArgs.push(commandArgs.join(' '));
+            npmCwd.push(options.cwd);
+            return { status: 0 };
+        },
+        stdout: message => output.push(message),
+        stderr: message => errors.push(message),
+        now: () => '2026-07-18T12:00:00.000Z',
+        exit: code => { throw new UpdateExitError(code); },
+    });
+    return { output, errors, npmArgs, npmCwd };
 }
 
 const CANON_START = '<!-- canon:start -->';
@@ -180,18 +333,18 @@ void test('root .gitignore canon block matches the shared constant', () => {
 // ── detectInstallType ────────────────────────────────────────────────────────
 
 void test('detectInstallType: unix npx path → npx', () => {
-    assert.equal(detectInstallType('/home/user/.npm/_npx/abc123/node_modules/canon-ai'), 'npx');
+    assert.deepEqual(detectInstallType('/home/user/.npm/_npx/abc123/node_modules/canon-ai'), { type: 'npx', installRoot: null });
 });
 
 void test('detectInstallType: windows npx path → npx', () => {
-    assert.equal(detectInstallType('C:\\Users\\user\\.npm\\_npx\\abc\\node_modules\\canon-ai'), 'npx');
+    assert.deepEqual(detectInstallType('C:\\Users\\user\\.npm\\_npx\\abc\\node_modules\\canon-ai'), { type: 'npx', installRoot: null });
 });
 
 void test('detectInstallType: local install — pkgDir inside project node_modules', () => {
     withTempDir(dir => {
         fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"my-project"}');
         const pkgDir = path.join(dir, 'node_modules', 'canon-ai');
-        assert.equal(detectInstallType(pkgDir), 'local');
+        assert.deepEqual(detectInstallType(pkgDir), { type: 'local', installRoot: fs.realpathSync(dir) });
     });
 });
 
@@ -200,24 +353,518 @@ void test('detectInstallType: local install from subdirectory — pkgDir path de
         fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"my-project"}');
         const pkgDir = path.join(dir, 'node_modules', 'canon-ai');
         // cwd is a subdir — but detectInstallType uses pkgDir, not cwd
-        assert.equal(detectInstallType(pkgDir), 'local');
+        assert.deepEqual(detectInstallType(pkgDir), { type: 'local', installRoot: fs.realpathSync(dir) });
     });
 });
 
 void test('detectInstallType: global — no package.json at node_modules parent', () => {
     // /usr/local/lib/node_modules/canon-ai: parent is /usr/local/lib — no package.json there
-    assert.equal(detectInstallType('/usr/local/lib/node_modules/canon-ai'), 'global');
+    assert.deepEqual(detectInstallType('/usr/local/lib/node_modules/canon-ai'), { type: 'global', installRoot: null });
 });
 
 void test('detectInstallType: no node_modules in path → global', () => {
-    assert.equal(detectInstallType('/usr/local/bin/canon-ai'), 'global');
+    assert.deepEqual(detectInstallType('/usr/local/bin/canon-ai'), { type: 'global', installRoot: null });
 });
 
 void test('detectInstallType: node_modules present but parent lacks package.json → global', () => {
     withTempDir(dir => {
         // dir has no package.json
         const pkgDir = path.join(dir, 'node_modules', 'canon-ai');
-        assert.equal(detectInstallType(pkgDir), 'global');
+        assert.deepEqual(detectInstallType(pkgDir), { type: 'global', installRoot: null });
+    });
+});
+
+void test('detectInstallType: symlinked package dir resolves to the real install root', () => {
+    withTempDir(dir => {
+        const realProject = path.join(dir, 'real-project');
+        fs.mkdirSync(realProject, { recursive: true });
+        fs.writeFileSync(path.join(realProject, 'package.json'), '{"name":"my-project"}');
+        const linkedProject = path.join(dir, 'linked-project');
+        fs.symlinkSync(realProject, linkedProject, 'dir');
+        const detection = detectInstallType(path.join(linkedProject, 'node_modules', 'canon-ai'));
+        assert.equal(detection.type, 'local');
+        assert.equal(detection.installRoot, fs.realpathSync(realProject));
+        assert.notEqual(detection.installRoot, linkedProject);
+    });
+});
+
+void test('canon update: pnpm-shaped virtual-store path reaches the layout refusal', () => {
+    withTempDir(dir => {
+        const packageDir = path.join(dir, 'node_modules', '.pnpm', 'canon-ai@2.2.0', 'node_modules', 'canon-ai');
+        fs.mkdirSync(path.dirname(packageDir), { recursive: true });
+        const errors: string[] = [];
+        const npmCalls: string[] = [];
+        assert.throws(() => updateCmd([], {
+            packageDir,
+            gitRunner: () => { throw new Error('resolver must not run'); },
+            spawnRunner: () => { npmCalls.push('called'); return { status: 0 }; },
+            stderr: message => errors.push(message),
+            exit: code => { throw new UpdateExitError(code); },
+        }), (error: unknown) => error instanceof UpdateExitError && error.code === 1);
+        assert.match(errors[0], /no package\.json.*install root/);
+        assert.deepEqual(npmCalls, []);
+    });
+});
+
+void test('canon update (red-first): pins to installRoot cwd and the highest final-tag commit', () => {
+    withTempDir(dir => {
+        const fixture = buildUpdateRedFirstFixture(dir);
+        const adopterPackageBefore = fs.readFileSync(path.join(fixture.adopterDir, 'package.json'), 'utf8');
+        const adopterLockBefore = fs.readFileSync(path.join(fixture.adopterDir, 'package-lock.json'), 'utf8');
+        const result = spawnSync(process.execPath, [fixture.cliEntry, 'update'], {
+            cwd: fixture.adopterDir,
+            encoding: 'utf8',
+            env: {
+                ...process.env,
+                PATH: `${fixture.binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+                GIT_TERMINAL_PROMPT: '0',
+                GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
+            },
+        });
+        assert.equal(result.status, 0, result.stderr);
+
+        const npmLog = fs.readFileSync(fixture.npmLogPath, 'utf8').trim().split('\n');
+        assert.equal(npmLog.length, 1);
+        const [recordedCwd, recordedArgs] = npmLog[0].split('\t');
+        assert.equal(fs.realpathSync(recordedCwd), fs.realpathSync(fixture.installRoot));
+        assert.match(recordedArgs, /^install --save-dev --install-links github:tstraub89\/canon-ai#cccccccccccccccccccccccccccccccccccccccc$/);
+
+        assert.equal(fs.readFileSync(path.join(fixture.adopterDir, 'package.json'), 'utf8'), adopterPackageBefore);
+        assert.equal(fs.readFileSync(path.join(fixture.adopterDir, 'package-lock.json'), 'utf8'), adopterLockBefore);
+
+        const envLines = fs.readFileSync(fixture.envPromptLogPath, 'utf8').trim().split('\n');
+        assert.ok(envLines.length > 0 && envLines.every(line => line === 'GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=ssh -oBatchMode=yes'), envLines.join('|'));
+    });
+});
+
+void test('canon update (red-first): falls back to SSH when HTTPS resolution fails (AC-12b, stable path)', () => {
+    withTempDir(dir => {
+        const fixture = buildUpdateRedFirstFixture(dir);
+        const result = spawnSync(process.execPath, [fixture.cliEntry, 'update'], {
+            cwd: fixture.adopterDir,
+            encoding: 'utf8',
+            env: {
+                ...process.env,
+                PATH: `${fixture.binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+                CANON_TEST_FORCE_HTTPS_FAIL: '1',
+                GIT_TERMINAL_PROMPT: '0',
+                GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
+            },
+        });
+        assert.equal(result.status, 0, `${result.stderr}\nstatus=${result.status}; npmLogExists=${fs.existsSync(fixture.npmLogPath)}`);
+
+        const npmLog = fs.readFileSync(fixture.npmLogPath, 'utf8').trim().split('\n');
+        assert.match(npmLog[0].split('\t')[1], /github:tstraub89\/canon-ai#cccccccccccccccccccccccccccccccccccccccc$/);
+
+        const gitCalls = fs.readFileSync(fixture.gitLogPath, 'utf8').trim().split('\n').filter(line => line.includes('ls-remote'));
+        assert.equal(gitCalls.length, 2);
+        assert.match(gitCalls[0], /https:\/\/github\.com/);
+        assert.match(gitCalls[1], /git@github\.com:/);
+
+        const envLines = fs.readFileSync(fixture.envPromptLogPath, 'utf8').trim().split('\n');
+        assert.ok(envLines.length > 0 && envLines.every(line => line === 'GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=ssh -oBatchMode=yes'), envLines.join('|'));
+    });
+});
+
+void test('parseUpdateArgs: accepts stable, main, and named or SHA refs', () => {
+    assert.deepEqual(parseUpdateArgs([]), {});
+    assert.deepEqual(parseUpdateArgs(['--channel', 'main']), { channel: 'main' });
+    assert.deepEqual(parseUpdateArgs(['--ref', 'refs/heads/feature']), { ref: 'refs/heads/feature' });
+    assert.deepEqual(parseUpdateArgs(['--ref', UPDATE_SHA_A]), { ref: UPDATE_SHA_A });
+});
+
+void test('parseUpdateArgs: rejects invalid or conflicting flags', () => {
+    assert.throws(() => parseUpdateArgs(['--channel']), /--channel only supports 'main'/);
+    assert.throws(() => parseUpdateArgs(['--channel', 'next']), /--channel only supports 'main'/);
+    assert.throws(() => parseUpdateArgs(['--ref']), /--ref requires a value/);
+    assert.throws(() => parseUpdateArgs(['--ref', '--upload-pack']), /must not start/);
+    assert.throws(() => parseUpdateArgs(['--unknown']), /Supported: --channel main, --ref <ref\|sha>/);
+    assert.throws(() => parseUpdateArgs(['--channel', 'main', '--ref', 'feature']), /mutually exclusive/);
+});
+
+void test('layoutGate: missing package.json is a distinct install-root refusal', () => {
+    withTempDir(dir => {
+        const result = layoutGate(dir);
+        assert.equal(result.ok, false);
+        if (!result.ok) assert.match(result.message, /no package\.json.*install root/);
+    });
+});
+
+void test('canon update: malformed or unrelated local manifests refuse before npm', () => {
+    withTempDir(dir => {
+        const malformedRoot = path.join(dir, 'malformed');
+        fs.mkdirSync(path.join(malformedRoot, 'node_modules', 'canon-ai'), { recursive: true });
+        fs.writeFileSync(path.join(malformedRoot, 'package.json'), '{not json');
+        const malformedErrors: string[] = [];
+        const malformedNpm: string[] = [];
+        assert.throws(() => updateCmd([], {
+            packageDir: path.join(malformedRoot, 'node_modules', 'canon-ai'),
+            gitRunner: () => { throw new Error('resolver must not run'); },
+            spawnRunner: () => { malformedNpm.push('called'); return { status: 0 }; },
+            stderr: message => malformedErrors.push(message),
+            exit: code => { throw new UpdateExitError(code); },
+        }), (error: unknown) => error instanceof UpdateExitError && error.code === 1);
+        assert.match(malformedErrors[0], /could not be parsed as JSON/);
+        assert.deepEqual(malformedNpm, []);
+
+        const unrelatedRoot = path.join(dir, 'unrelated');
+        fs.mkdirSync(path.join(unrelatedRoot, 'node_modules', 'canon-ai'), { recursive: true });
+        fs.writeFileSync(path.join(unrelatedRoot, 'package.json'), JSON.stringify({ dependencies: { express: '^4.0.0' } }));
+        const unrelatedErrors: string[] = [];
+        const unrelatedNpm: string[] = [];
+        assert.throws(() => updateCmd([], {
+            packageDir: path.join(unrelatedRoot, 'node_modules', 'canon-ai'),
+            gitRunner: () => { throw new Error('resolver must not run'); },
+            spawnRunner: () => { unrelatedNpm.push('called'); return { status: 0 }; },
+            stderr: message => unrelatedErrors.push(message),
+            exit: code => { throw new UpdateExitError(code); },
+        }), (error: unknown) => error instanceof UpdateExitError && error.code === 1);
+        assert.match(unrelatedErrors[0], /does not list canon-ai/);
+        assert.deepEqual(unrelatedNpm, []);
+    });
+});
+
+void test('canon update: canon-ai in each supported dependency block proceeds', () => {
+    const expectedSaveFlags: Record<string, string> = {
+        dependencies: '--save',
+        devDependencies: '--save-dev',
+        optionalDependencies: '--save-optional',
+    };
+    for (const block of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+        withTempDir(dir => {
+            const result = runLocalUpdate(dir, [], { name: 'local-project', [block]: { 'canon-ai': '^2.2.0' } });
+            assert.equal(result.errors.length, 0);
+            assert.equal(result.npmArgs.length, 1);
+            assert.match(result.npmArgs[0], new RegExp(`^install ${expectedSaveFlags[block]} --install-links`));
+        });
+    }
+});
+
+void test('resolveStable: selects the highest final tag and peeled commit', () => {
+    let calls = 0;
+    const result = resolveStable('owner/repo', args => {
+        calls++;
+        assert.deepEqual(args, ['ls-remote', '--tags', 'https://github.com/owner/repo.git']);
+        return {
+            ok: true,
+            stdout: `${UPDATE_SHA_A}\trefs/tags/v8.2.0\n${UPDATE_SHA_B}\trefs/tags/v9.0.0-rc.1\n${UPDATE_SHA_C}\trefs/tags/v8.2.0^{}\n`,
+            stderr: '',
+        };
+    });
+    assert.equal(calls, 1);
+    assert.deepEqual(result, { ok: true, sha: UPDATE_SHA_C, version: '8.2.0' });
+});
+
+void test('resolveStable: retries the identical query over SSH after HTTPS fails', () => {
+    const calls: string[][] = [];
+    const result = resolveStable('owner/repo', args => {
+        calls.push(args);
+        if (calls.length === 1) return { ok: false, stdout: '', stderr: 'HTTPS auth failed' };
+        return {
+            ok: true,
+            stdout: `${UPDATE_SHA_A}\trefs/tags/v8.2.0\n${UPDATE_SHA_C}\trefs/tags/v8.2.0^{}\n`,
+            stderr: '',
+        };
+    });
+    assert.deepEqual(result, { ok: true, sha: UPDATE_SHA_C, version: '8.2.0' });
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0].slice(0, 2), calls[1].slice(0, 2));
+    assert.deepEqual(calls[0].slice(3), calls[1].slice(3));
+    assert.equal(calls[0][2], 'https://github.com/owner/repo.git');
+    assert.equal(calls[1][2], 'git@github.com:owner/repo.git');
+});
+
+void test('resolveStable: reports both transports when HTTPS and SSH fail', () => {
+    const calls: string[][] = [];
+    const result = resolveStable('owner/repo', args => {
+        calls.push(args);
+        return { ok: false, stdout: '', stderr: calls.length === 1 ? 'HTTPS failed' : 'SSH failed' };
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.message, /https.*HTTPS failed.*ssh.*SSH failed/i);
+});
+
+void test('defaultGitRunner: disables prompts and enables SSH batch mode', () => {
+    withTempDir(dir => {
+        const binDir = path.join(dir, 'bin');
+        const envLogPath = path.join(dir, 'env.log');
+        fs.mkdirSync(binDir, { recursive: true });
+        writeExecutable(binDir, 'git', [
+            `printf '%s\\n' "GIT_TERMINAL_PROMPT=${'${GIT_TERMINAL_PROMPT:-unset}'} GIT_SSH_COMMAND=${'${GIT_SSH_COMMAND:-unset}'}" >> ${JSON.stringify(envLogPath)}`,
+            'exit 0',
+        ]);
+
+        const result = withEnv({
+            PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
+            GIT_SSH_COMMAND: 'ssh -i /tmp/canon-key',
+        }, () => (
+            defaultGitRunner(['ls-remote', '--tags', 'https://github.com/owner/repo.git'])
+        ));
+        assert.equal(result.ok, true);
+        assert.equal(fs.readFileSync(envLogPath, 'utf8').trim(), 'GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=ssh -i /tmp/canon-key -oBatchMode=yes');
+    });
+});
+
+void test('resolveStable: resolution errors and no-final-tag universes refuse', () => {
+    const error = resolveStable('owner/repo', () => ({ ok: false, stdout: '', stderr: 'authentication failed' }));
+    assert.equal(error.ok, false);
+    if (!error.ok) assert.match(error.message, /GitHub auth.*no npm install/);
+
+    const empty = resolveStable('owner/repo', () => ({ ok: true, stdout: '', stderr: '' }));
+    assert.equal(empty.ok, false);
+    if (!empty.ok) assert.match(empty.message, /no final release tags/);
+
+    const prereleaseOnly = resolveStable('owner/repo', () => ({
+        ok: true,
+        stdout: `${UPDATE_SHA_A}\trefs/tags/v9.0.0-rc.1\n`,
+        stderr: '',
+    }));
+    assert.equal(prereleaseOnly.ok, false);
+    if (!prereleaseOnly.ok) assert.match(prereleaseOnly.message, /no final release tags/);
+});
+
+void test('resolveNamedRef: resolves peeled refs and refuses zero or ambiguous matches', () => {
+    let resolvedCalls = 0;
+    const resolved = resolveNamedRef('owner/repo', 'refs/heads/main', args => {
+        resolvedCalls++;
+        assert.deepEqual(args, ['ls-remote', 'https://github.com/owner/repo.git', 'refs/heads/main']);
+        return { ok: true, stdout: `${UPDATE_SHA_A}\trefs/tags/v2.0.0\n${UPDATE_SHA_C}\trefs/tags/v2.0.0^{}\n`, stderr: '' };
+    });
+    assert.equal(resolvedCalls, 1);
+    assert.deepEqual(resolved, { ok: true, sha: UPDATE_SHA_C });
+
+    const none = resolveNamedRef('owner/repo', 'missing', () => ({ ok: true, stdout: '', stderr: '' }));
+    assert.equal(none.ok, false);
+    if (!none.ok) assert.match(none.message, /no remote ref matched/);
+
+    const ambiguous = resolveNamedRef('owner/repo', 'feature', () => ({
+        ok: true,
+        stdout: `${UPDATE_SHA_A}\trefs/heads/feature\n${UPDATE_SHA_B}\trefs/tags/feature\n`,
+        stderr: '',
+    }));
+    assert.equal(ambiguous.ok, false);
+    if (!ambiguous.ok) assert.match(ambiguous.message, /ambiguous/);
+});
+
+void test('resolveNamedRef: retries the identical query over SSH after HTTPS fails', () => {
+    const calls: string[][] = [];
+    const result = resolveNamedRef('owner/repo', 'refs/heads/main', args => {
+        calls.push(args);
+        if (calls.length === 1) return { ok: false, stdout: '', stderr: 'HTTPS auth failed' };
+        return { ok: true, stdout: `${UPDATE_SHA_C}\trefs/heads/main\n`, stderr: '' };
+    });
+    assert.deepEqual(result, { ok: true, sha: UPDATE_SHA_C });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0][0], calls[1][0]);
+    assert.deepEqual(calls[0].slice(2), calls[1].slice(2));
+    assert.equal(calls[0][1], 'https://github.com/owner/repo.git');
+    assert.equal(calls[1][1], 'git@github.com:owner/repo.git');
+});
+
+void test('resolveNamedRef: reports both transports when HTTPS and SSH fail', () => {
+    const calls: string[][] = [];
+    const result = resolveNamedRef('owner/repo', 'refs/heads/main', args => {
+        calls.push(args);
+        return { ok: false, stdout: '', stderr: calls.length === 1 ? 'HTTPS failed' : 'SSH failed' };
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.message, /https.*HTTPS failed.*ssh.*SSH failed/i);
+});
+
+void test('canon update: both failed resolver transports refuse before npm on stable and named-ref paths', () => {
+    for (const args of [[], ['--channel', 'main']]) {
+        withTempDir(dir => {
+            const packageDir = path.join(dir, 'node_modules', 'canon-ai');
+            const installRoot = path.dirname(path.dirname(packageDir));
+            fs.mkdirSync(packageDir, { recursive: true });
+            fs.writeFileSync(path.join(installRoot, 'package.json'), JSON.stringify({
+                name: 'local-project',
+                devDependencies: { 'canon-ai': '^2.2.0' },
+            }));
+            const errors: string[] = [];
+            const npmCalls: string[] = [];
+            let gitCalls = 0;
+            assert.throws(() => updateCmd(args, {
+                packageDir,
+                gitRunner: () => {
+                    gitCalls++;
+                    return { ok: false, stdout: '', stderr: gitCalls === 1 ? 'HTTPS failed' : 'SSH failed' };
+                },
+                spawnRunner: () => { npmCalls.push('called'); return { status: 0 }; },
+                stderr: message => errors.push(message),
+                exit: code => { throw new UpdateExitError(code); },
+            }), (error: unknown) => error instanceof UpdateExitError && error.code === 1);
+            assert.equal(gitCalls, 2);
+            assert.deepEqual(npmCalls, []);
+            assert.match(errors[0], /https.*HTTPS failed.*ssh.*SSH failed/i);
+        });
+    }
+});
+
+void test('canon update: announces current and target pins without reading provenance', () => {
+    withTempDir(dir => {
+        const pinned = runLocalUpdate(dir, [], {
+            name: 'local-project',
+            devDependencies: { 'canon-ai': `github:tstraub89/canon-ai#${UPDATE_SHA_A}` },
+        });
+        const announcement = pinned.output[0];
+        assert.match(announcement, /local install at/);
+        assert.match(announcement, new RegExp(`current: .* @ ${UPDATE_SHA_A}`));
+        assert.match(announcement, new RegExp(`target:  8\\.2\\.0 \\(stable\\) @ ${UPDATE_SHA_C}`));
+        assert.doesNotMatch(announcement, /target:  v8\.2\.0/);
+
+        withTempDir(unpinnedDir => {
+            const unpinned = runLocalUpdate(unpinnedDir, [], {
+                name: 'local-project',
+                devDependencies: { 'canon-ai': '^2.2.0' },
+            });
+            assert.match(unpinned.output[0], /current: .* @ unknown/);
+        });
+
+        withTempDir(withProvenanceDir => {
+            fs.mkdirSync(path.join(withProvenanceDir, '.canon'), { recursive: true });
+            fs.writeFileSync(path.join(withProvenanceDir, '.canon', 'provenance.json'), 'not consulted');
+            const withProvenance = runLocalUpdate(withProvenanceDir);
+            const normalizeRoot = (message: string): string => message.replace(/local install at .+\n/, 'local install at <root>\n');
+            assert.equal(normalizeRoot(withProvenance.output[0]), normalizeRoot(pinned.output[0]));
+        });
+    });
+});
+
+void test('canon update: main is labeled development and writes provenance without version', () => {
+    withTempDir(dir => {
+        const root = makeLocalUpdateRoot(dir, { devDependencies: { 'canon-ai': '^2.2.0' } });
+        const output: string[] = [];
+        const npmArgs: string[][] = [];
+        updateCmd(['--channel', 'main'], {
+            packageDir: path.join(root, 'node_modules', 'canon-ai'),
+            gitRunner: args => {
+                assert.deepEqual(args, ['ls-remote', 'https://github.com/tstraub89/canon-ai.git', 'refs/heads/main']);
+                return { ok: true, stdout: `${UPDATE_SHA_C}\trefs/heads/main\n`, stderr: '' };
+            },
+            spawnRunner: (_command, args) => { npmArgs.push(args); return { status: 0 }; },
+            stdout: message => output.push(message),
+            exit: code => { throw new UpdateExitError(code); },
+            now: () => '2026-07-18T12:00:00.000Z',
+        });
+        assert.match(output[0], /target:  main \(development\)/);
+        assert.match(output[0], new RegExp(UPDATE_SHA_C));
+        assert.deepEqual(npmArgs[0], ['install', '--save-dev', '--install-links', `github:tstraub89/canon-ai#${UPDATE_SHA_C}`]);
+        const provenance = JSON.parse(fs.readFileSync(path.join(root, '.canon', 'provenance.json'), 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(provenance, {
+            source: `github:tstraub89/canon-ai#${UPDATE_SHA_C}`,
+            channel: 'main',
+            resolved_sha: UPDATE_SHA_C,
+            updated_at: '2026-07-18T12:00:00.000Z',
+        });
+    });
+});
+
+void test('canon update: fork slug is shared by resolution, npm, and provenance', () => {
+    withTempDir(dir => withEnv({ CANON_UPSTREAM_REPO: 'my-fork/canon-ai' }, () => {
+        const root = makeLocalUpdateRoot(dir, { devDependencies: { 'canon-ai': '^2.2.0' } });
+        const gitArgs: string[][] = [];
+        const npmArgs: string[][] = [];
+        updateCmd([], {
+            packageDir: path.join(root, 'node_modules', 'canon-ai'),
+            gitRunner: args => {
+                gitArgs.push(args);
+                return { ok: true, stdout: `${UPDATE_SHA_C}\trefs/tags/v8.2.0\n`, stderr: '' };
+            },
+            spawnRunner: (_command, args) => { npmArgs.push(args); return { status: 0 }; },
+            exit: code => { throw new UpdateExitError(code); },
+            now: () => '2026-07-18T12:00:00.000Z',
+        });
+        assert.match(gitArgs[0][2], /github\.com\/my-fork\/canon-ai\.git/);
+        assert.equal(npmArgs[0][3], `github:my-fork/canon-ai#${UPDATE_SHA_C}`);
+        const provenance = JSON.parse(fs.readFileSync(path.join(root, '.canon', 'provenance.json'), 'utf8')) as { source: string };
+        assert.equal(provenance.source, `github:my-fork/canon-ai#${UPDATE_SHA_C}`);
+    }));
+});
+
+void test('canon update: a full SHA skips resolution and persists ref provenance', () => {
+    withTempDir(dir => {
+        const root = makeLocalUpdateRoot(dir, { devDependencies: { 'canon-ai': '^2.2.0' } });
+        let gitCalls = 0;
+        const npmArgs: string[][] = [];
+        updateCmd(['--ref', UPDATE_SHA_A], {
+            packageDir: path.join(root, 'node_modules', 'canon-ai'),
+            gitRunner: () => { gitCalls++; throw new Error('SHA refs must not resolve'); },
+            spawnRunner: (_command, args) => { npmArgs.push(args); return { status: 0 }; },
+            exit: code => { throw new UpdateExitError(code); },
+            now: () => '2026-07-18T12:00:00.000Z',
+        });
+        assert.equal(gitCalls, 0);
+        assert.equal(npmArgs[0][3], `github:tstraub89/canon-ai#${UPDATE_SHA_A}`);
+        const provenance = JSON.parse(fs.readFileSync(path.join(root, '.canon', 'provenance.json'), 'utf8')) as Record<string, unknown>;
+        assert.equal(provenance.channel, 'ref');
+        assert.equal(provenance.resolved_sha, UPDATE_SHA_A);
+        assert.equal('version' in provenance, false);
+    });
+});
+
+void test('canon update: failed npm install does not write provenance', () => {
+    withTempDir(dir => {
+        const root = makeLocalUpdateRoot(dir, { devDependencies: { 'canon-ai': '^2.2.0' } });
+        assert.throws(() => updateCmd([], {
+            packageDir: path.join(root, 'node_modules', 'canon-ai'),
+            gitRunner: stableUpdateGitRunner,
+            spawnRunner: () => ({ status: 17 }),
+            exit: code => { throw new UpdateExitError(code); },
+        }), (error: unknown) => error instanceof UpdateExitError && error.code === 17);
+        assert.equal(fs.existsSync(path.join(root, '.canon', 'provenance.json')), false);
+    });
+});
+
+void test('canon update: provenance write failure is reported after npm succeeds', () => {
+    withTempDir(dir => {
+        const root = makeLocalUpdateRoot(dir, { devDependencies: { 'canon-ai': '^2.2.0' } });
+        fs.mkdirSync(path.join(root, '.canon', 'provenance.json'), { recursive: true });
+        const errors: string[] = [];
+        updateCmd([], {
+            packageDir: path.join(root, 'node_modules', 'canon-ai'),
+            gitRunner: stableUpdateGitRunner,
+            spawnRunner: () => ({ status: 0 }),
+            stderr: message => errors.push(message),
+            exit: code => { throw new UpdateExitError(code); },
+        });
+        assert.match(errors[0], /npm install succeeded, but provenance could not be recorded/);
+    });
+});
+
+void test('canon update: global provenance uses an existing invoking-repo .canon only', () => {
+    withTempDir(dir => {
+        fs.mkdirSync(path.join(dir, '.canon'), { recursive: true });
+        const output: string[] = [];
+        const npmArgs: string[][] = [];
+        updateCmd([], {
+            packageDir: '/usr/local/lib/node_modules/canon-ai',
+            cwd: dir,
+            gitRunner: stableUpdateGitRunner,
+            spawnRunner: (_command, args) => { npmArgs.push(args); return { status: 0 }; },
+            stdout: message => output.push(message),
+            exit: code => { throw new UpdateExitError(code); },
+            now: () => '2026-07-18T12:00:00.000Z',
+        });
+        assert.equal(fs.existsSync(path.join(dir, '.canon', 'provenance.json')), true);
+        assert.match(output.join('\n'), /global install/);
+        assert.deepEqual(npmArgs[0].slice(0, 3), ['install', '-g', '--install-links']);
+    });
+
+    withTempDir(dir => {
+        const output: string[] = [];
+        updateCmd([], {
+            packageDir: '/usr/local/lib/node_modules/canon-ai',
+            cwd: dir,
+            gitRunner: stableUpdateGitRunner,
+            spawnRunner: () => ({ status: 0 }),
+            stdout: message => output.push(message),
+            exit: code => { throw new UpdateExitError(code); },
+        });
+        assert.equal(fs.existsSync(path.join(dir, '.canon')), false);
+        assert.match(output.join('\n'), /provenance not recorded/);
     });
 });
 
@@ -229,6 +876,8 @@ void test('canon CLI help mentions watch', () => {
     assert.match(result.stdout, /canon watch <id>/);
     assert.match(result.stdout, /set <id> <field> <value>/);
     assert.match(result.stdout, /Exit codes: 0 healthy stop\/until/);
+    assert.match(result.stdout, /--channel main/);
+    assert.match(result.stdout, /--ref <40-hex-sha>/);
 });
 
 void test('canon watch dispatches with usage when no task id is provided', () => {

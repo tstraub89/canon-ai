@@ -4019,49 +4019,385 @@ function taskCmd2(args2) {
 }
 
 // src/cli/commands/update.ts
-import { existsSync as existsSync4 } from "fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync3, realpathSync as realpathSync2, writeFileSync as writeFileSync2 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
 import { dirname as dirname3, join as join4 } from "path";
 import { spawnSync as spawnSync7 } from "child_process";
 var packageDir3 = join4(dirname3(fileURLToPath4(import.meta.url)), "../..");
 function detectInstallType(pkgDirOverride) {
   const dir = pkgDirOverride ?? packageDir3;
-  if (dir.includes("/_npx/") || dir.includes("\\_npx\\")) return "npx";
+  if (dir.includes("/_npx/") || dir.includes("\\_npx\\")) return { type: "npx", installRoot: null };
+  const firstNodeModulesIdx = dir.indexOf("/node_modules/");
   const nodeModulesIdx = dir.lastIndexOf("/node_modules/");
   if (nodeModulesIdx !== -1) {
     const projectRoot = dir.slice(0, nodeModulesIdx);
-    if (existsSync4(join4(projectRoot, "package.json"))) return "local";
+    if (existsSync4(join4(projectRoot, "package.json"))) {
+      return { type: "local", installRoot: realpathSync2(projectRoot) };
+    }
+    if (firstNodeModulesIdx !== nodeModulesIdx && existsSync4(projectRoot)) {
+      return { type: "local", installRoot: realpathSync2(projectRoot) };
+    }
   }
-  return "global";
+  return { type: "global", installRoot: null };
 }
-var CANON_GITHUB_SOURCE = "github:tstraub89/canon-ai";
-function updateCmd(_args) {
-  const cwd = process.cwd();
-  const installType = detectInstallType();
-  if (installType === "npx") {
-    console.log("\nRunning via npx \u2014 no persistent install to update.");
-    console.log("To apply the latest templates, re-run from the latest source:\n");
-    console.log(`  npx --install-links ${CANON_GITHUB_SOURCE} upgrade
+function parseUpdateArgs(args2) {
+  const options = {};
+  for (let i = 0; i < args2.length; i++) {
+    const arg = args2[i];
+    if (arg === "--channel") {
+      const value = args2[++i];
+      if (value !== "main") {
+        throw new Error(`canon update: --channel only supports 'main'. Got '${value ?? "(missing)"}'.`);
+      }
+      options.channel = "main";
+    } else if (arg === "--ref") {
+      const value = args2[++i];
+      if (!value) throw new Error("canon update: --ref requires a value.");
+      if (value.startsWith("-")) throw new Error("canon update: --ref value must not start with '-'.");
+      options.ref = value;
+    } else {
+      throw new Error(`canon update: unknown flag '${arg}'. Supported: --channel main, --ref <ref|sha>.`);
+    }
+  }
+  if (options.channel && options.ref) {
+    throw new Error("canon update: --channel and --ref are mutually exclusive.");
+  }
+  return options;
+}
+var GIT_RESOLUTION_TIMEOUT_MS = 3e4;
+function nonInteractiveSshCommand(configuredCommand) {
+  const command2 = configuredCommand?.trim();
+  if (!command2) return "ssh -oBatchMode=yes";
+  const compactBatchMode = /(^|\s)-oBatchMode=(?:yes|no)(?=\s|$)/i;
+  if (compactBatchMode.test(command2)) return command2.replace(compactBatchMode, "$1-oBatchMode=yes");
+  const splitBatchMode = /(^|\s)-o\s+BatchMode=(?:yes|no)(?=\s|$)/i;
+  if (splitBatchMode.test(command2)) return command2.replace(splitBatchMode, "$1-o BatchMode=yes");
+  return `${command2} -oBatchMode=yes`;
+}
+function defaultGitRunner(args2) {
+  const result = spawnSync7("git", args2, {
+    encoding: "utf8",
+    timeout: GIT_RESOLUTION_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: nonInteractiveSshCommand(process.env.GIT_SSH_COMMAND)
+    }
+  });
+  if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
+  return { ok: result.status === 0, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
+}
+var CANON_AI_DEP_KEYS = ["dependencies", "devDependencies", "optionalDependencies"];
+var STRICT_FINAL_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+var FULL_SHA_RE = /^[0-9a-f]{40}$/i;
+var CANONICAL_NPX_SOURCE = "github:tstraub89/canon-ai";
+function layoutGate(installRoot) {
+  if (!existsSync4(join4(installRoot, "package.json"))) {
+    return {
+      ok: false,
+      message: `canon update: no package.json found at ${installRoot} \u2014 this doesn't look like an install root. Refusing to run npm here.`
+    };
+  }
+  return { ok: true };
+}
+function dependencyGate(installRoot) {
+  const manifestPath = join4(installRoot, "package.json");
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync3(manifestPath, "utf8"));
+  } catch {
+    return {
+      ok: false,
+      message: `canon update: ${manifestPath} could not be parsed as JSON \u2014 refusing to update. Fix the manifest and retry.`
+    };
+  }
+  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
+    return { ok: false, message: `canon update: ${manifestPath} is not a JSON object \u2014 refusing to update.` };
+  }
+  const obj = manifest;
+  const dependencyBlock = CANON_AI_DEP_KEYS.find((key) => {
+    const block = obj[key];
+    return typeof block === "object" && block !== null && !Array.isArray(block) && Object.prototype.hasOwnProperty.call(block, "canon-ai");
+  });
+  if (!dependencyBlock) {
+    return {
+      ok: false,
+      message: `canon update: ${manifestPath} does not list canon-ai in dependencies, devDependencies, or optionalDependencies \u2014 refusing to run npm install here.`
+    };
+  }
+  return { ok: true, manifest: obj, dependencyBlock };
+}
+function parseLsRemoteTags(stdout) {
+  const tags = /* @__PURE__ */ new Map();
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const tabIdx = line.indexOf("	");
+    if (tabIdx === -1) continue;
+    const sha = line.slice(0, tabIdx);
+    let ref = line.slice(tabIdx + 1);
+    const isPeeled = ref.endsWith("^{}");
+    if (isPeeled) ref = ref.slice(0, -3);
+    if (!FULL_SHA_RE.test(sha) || !ref.startsWith("refs/tags/")) continue;
+    const name = ref.slice("refs/tags/".length);
+    const entry = tags.get(name) ?? {};
+    if (isPeeled) entry.peeledSha = sha;
+    else entry.sha = sha;
+    tags.set(name, entry);
+  }
+  return tags;
+}
+function compareSemver(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  return 0;
+}
+function githubHttpsUrl(slug) {
+  return `https://github.com/${slug}.git`;
+}
+function githubSshUrl(slug) {
+  return `git@github.com:${slug}.git`;
+}
+function runGitWithFallback(slug, buildArgs, runGit2) {
+  const httpsResult = runGit2(buildArgs(githubHttpsUrl(slug)));
+  if (httpsResult.ok) return { ok: true, stdout: httpsResult.stdout };
+  const sshResult = runGit2(buildArgs(githubSshUrl(slug)));
+  if (sshResult.ok) return { ok: true, stdout: sshResult.stdout };
+  return {
+    ok: false,
+    httpsStderr: httpsResult.stderr,
+    sshStderr: sshResult.stderr
+  };
+}
+function resolveStable(slug, runGit2) {
+  const result = runGitWithFallback(slug, (remote) => ["ls-remote", "--tags", remote], runGit2);
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: `canon update: could not list release tags for ${slug} over https (${result.httpsStderr || "no output"}) or ssh (${result.sshStderr || "no output"}). Check network access and GitHub auth. Aborting \u2014 no npm install run.`
+    };
+  }
+  const tags = parseLsRemoteTags(result.stdout);
+  const finalTagNames = [...tags.keys()].filter((name) => STRICT_FINAL_TAG_RE.test(name));
+  if (finalTagNames.length === 0) {
+    return {
+      ok: false,
+      message: `canon update: no final release tags (vX.Y.Z) found on ${slug}. Aborting \u2014 no npm install run, no fallback to an unpinned source.`
+    };
+  }
+  finalTagNames.sort((a, b) => compareSemver(a.slice(1), b.slice(1)));
+  const chosen = finalTagNames[finalTagNames.length - 1];
+  const entry = tags.get(chosen);
+  const sha = entry?.peeledSha ?? entry?.sha;
+  if (!sha) {
+    return {
+      ok: false,
+      message: `canon update: release tag ${chosen} on ${slug} has no commit SHA. Aborting \u2014 no npm install run.`
+    };
+  }
+  return { ok: true, sha, version: chosen.slice(1) };
+}
+function parseRemoteRefs(stdout) {
+  const refs = /* @__PURE__ */ new Map();
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const tabIdx = line.indexOf("	");
+    if (tabIdx === -1) continue;
+    const sha = line.slice(0, tabIdx);
+    let ref = line.slice(tabIdx + 1);
+    const isPeeled = ref.endsWith("^{}");
+    if (isPeeled) ref = ref.slice(0, -3);
+    if (!FULL_SHA_RE.test(sha)) continue;
+    const entry = refs.get(ref) ?? {};
+    if (isPeeled) entry.peeledSha = sha;
+    else entry.sha = sha;
+    refs.set(ref, entry);
+  }
+  return refs;
+}
+function resolveNamedRef(slug, refspec, runGit2) {
+  const result = runGitWithFallback(slug, (remote) => ["ls-remote", remote, refspec], runGit2);
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: `canon update: could not resolve '${refspec}' on ${slug} over https (${result.httpsStderr || "no output"}) or ssh (${result.sshStderr || "no output"}). Check network access and GitHub auth. Aborting \u2014 no npm install run.`
+    };
+  }
+  const refs = parseRemoteRefs(result.stdout);
+  const distinctShas = new Set([...refs.values()].map((entry) => entry.peeledSha ?? entry.sha).filter((sha) => sha !== void 0));
+  if (distinctShas.size === 0) {
+    return { ok: false, message: `canon update: no remote ref matched '${refspec}' on ${slug}. Aborting \u2014 no npm install run.` };
+  }
+  if (distinctShas.size > 1) {
+    return { ok: false, message: `canon update: '${refspec}' matched ${distinctShas.size} distinct commits on ${slug} \u2014 ambiguous. Aborting \u2014 no npm install run.` };
+  }
+  return { ok: true, sha: [...distinctShas][0] };
+}
+function resolveEffectiveSlug() {
+  const envSlug = process.env.CANON_UPSTREAM_REPO?.trim();
+  return envSlug ? envSlug : CANON_UPSTREAM_REPO;
+}
+function currentPinFromManifest(manifest) {
+  for (const key of CANON_AI_DEP_KEYS) {
+    const block = manifest[key];
+    if (typeof block !== "object" || block === null || Array.isArray(block)) continue;
+    const value = block["canon-ai"];
+    if (typeof value !== "string") continue;
+    const match = /#([0-9a-f]{40})$/i.exec(value.trim());
+    if (match) return match[1].toLowerCase();
+  }
+  return "unknown";
+}
+function bakedVersion() {
+  return "2.2.0";
+}
+function formatAnnouncement(input) {
+  const where = input.installType === "local" ? `local install at ${input.installRoot}` : "global install";
+  const targetLabel = input.channel === "stable" ? `${input.targetVersion} (stable)` : `${input.channel} (development)`;
+  return [
+    "",
+    `canon update \u2014 ${where}`,
+    `  current: ${input.currentVersion} @ ${input.currentSha}`,
+    `  target:  ${targetLabel} @ ${input.targetSha}`,
+    ""
+  ].join("\n");
+}
+function writeProvenance(root, provenance) {
+  const canonDir = join4(root, ".canon");
+  mkdirSync2(canonDir, { recursive: true });
+  writeFileSync2(join4(canonDir, "provenance.json"), `${JSON.stringify(provenance, null, 2)}
+`);
+}
+function updateCmd(args2, deps = {}) {
+  const exit = deps.exit ?? ((code) => process.exit(code));
+  const stdout = deps.stdout ?? ((message) => {
+    console.log(message);
+  });
+  const stderr = deps.stderr ?? ((message) => {
+    console.error(message);
+  });
+  const pkgDir = deps.packageDir ?? packageDir3;
+  const cwd = deps.cwd ?? process.cwd();
+  const spawn2 = deps.spawnRunner ?? ((cmd, cmdArgs, opts) => spawnSync7(cmd, cmdArgs, { stdio: "inherit", cwd: opts.cwd }));
+  const runGit2 = deps.gitRunner ?? defaultGitRunner;
+  const nowIso = deps.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
+  let options;
+  try {
+    options = parseUpdateArgs(args2);
+  } catch (error) {
+    stderr(error instanceof Error ? error.message : String(error));
+    return exit(1);
+  }
+  const detection = detectInstallType(pkgDir);
+  if (detection.type === "npx") {
+    stdout("\nRunning via npx \u2014 no persistent install to update.");
+    stdout("To apply the latest templates, re-run from the latest source:\n");
+    stdout(`  npx --install-links ${CANONICAL_NPX_SOURCE} upgrade
 `);
     return;
   }
-  let cmdArgs;
-  if (installType === "local") {
-    cmdArgs = ["install", "--save-dev", "--install-links", CANON_GITHUB_SOURCE];
-    console.log("\nUpdating canon-ai (local devDependency, from GitHub)...\n");
+  let manifest = null;
+  let dependencyBlock = "devDependencies";
+  if (detection.type === "local") {
+    const installRoot = detection.installRoot;
+    const layout = layoutGate(installRoot);
+    if (!layout.ok) {
+      stderr(layout.message);
+      return exit(1);
+    }
+    const dependency = dependencyGate(installRoot);
+    if (!dependency.ok) {
+      stderr(dependency.message);
+      return exit(1);
+    }
+    manifest = dependency.manifest;
+    dependencyBlock = dependency.dependencyBlock;
+  }
+  const slug = resolveEffectiveSlug();
+  let channel;
+  let resolvedSha;
+  let stableVersion;
+  if (options.ref && FULL_SHA_RE.test(options.ref)) {
+    channel = "ref";
+    resolvedSha = options.ref.toLowerCase();
+  } else if (options.channel === "main") {
+    channel = "main";
+    const result = resolveNamedRef(slug, "refs/heads/main", runGit2);
+    if (!result.ok) {
+      stderr(result.message);
+      return exit(1);
+    }
+    resolvedSha = result.sha;
+  } else if (options.ref) {
+    channel = "ref";
+    const result = resolveNamedRef(slug, options.ref, runGit2);
+    if (!result.ok) {
+      stderr(result.message);
+      return exit(1);
+    }
+    resolvedSha = result.sha;
   } else {
-    cmdArgs = ["install", "-g", "--install-links", CANON_GITHUB_SOURCE];
-    console.log("\nUpdating canon-ai (global install, from GitHub)...\n");
+    channel = "stable";
+    const result = resolveStable(slug, runGit2);
+    if (!result.ok) {
+      stderr(result.message);
+      return exit(1);
+    }
+    resolvedSha = result.sha;
+    stableVersion = result.version;
   }
-  const result = spawnSync7("npm", cmdArgs, { stdio: "inherit", cwd });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+  const target = `github:${slug}#${resolvedSha}`;
+  const currentSha = manifest ? currentPinFromManifest(manifest) : "unknown";
+  stdout(formatAnnouncement({
+    installType: detection.type,
+    installRoot: detection.installRoot,
+    currentVersion: bakedVersion(),
+    currentSha,
+    channel,
+    targetVersion: stableVersion ?? "unknown",
+    targetSha: resolvedSha
+  }));
+  const provenance = {
+    source: target,
+    channel,
+    resolved_sha: resolvedSha,
+    updated_at: nowIso(),
+    ...stableVersion ? { version: stableVersion } : {}
+  };
+  if (detection.type === "local") {
+    const installRoot = detection.installRoot;
+    const saveFlag = dependencyBlock === "dependencies" ? "--save" : dependencyBlock === "optionalDependencies" ? "--save-optional" : "--save-dev";
+    const result = spawn2("npm", ["install", saveFlag, "--install-links", target], { cwd: installRoot });
+    if (result.status !== 0) return exit(result.status ?? 1);
+    try {
+      writeProvenance(installRoot, provenance);
+    } catch (error) {
+      const detail = error instanceof Error ? ` (${error.message})` : "";
+      stderr(`canon update: npm install succeeded, but provenance could not be recorded at ${join4(installRoot, ".canon", "provenance.json")}${detail}.`);
+    }
+  } else {
+    const result = spawn2("npm", ["install", "-g", "--install-links", target], { cwd });
+    if (result.status !== 0) return exit(result.status ?? 1);
+    if (existsSync4(join4(cwd, ".canon"))) {
+      try {
+        writeProvenance(cwd, provenance);
+      } catch (error) {
+        const detail = error instanceof Error ? ` (${error.message})` : "";
+        stderr(`canon update: npm install succeeded, but provenance could not be recorded at ${join4(cwd, ".canon", "provenance.json")}${detail}.`);
+      }
+    } else {
+      stdout("(no .canon/ directory found in the current repo \u2014 provenance not recorded. Run `canon init` here first to persist it on future updates.)");
+    }
   }
-  console.log("\ncanon-ai updated. Run `canon upgrade` to sync vendored files in this repo.\n");
+  stdout("\ncanon-ai updated. Run `canon upgrade` to sync vendored files in this repo.\n");
 }
 
 // src/cli/commands/upgrade.ts
-import { existsSync as existsSync5, readFileSync as readFileSync3, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
 import { fileURLToPath as fileURLToPath5 } from "url";
 import { basename, dirname as dirname4, join as join5, relative as relative2, resolve } from "path";
 import { spawnSync as spawnSync8 } from "child_process";
@@ -4161,7 +4497,7 @@ function getStaleOverrides(cwd, changedOps) {
     if (newTemplateContent === void 0) continue;
     const overridePathAbs = join5(overrideRootAbs, name);
     if (!existsSync5(overridePathAbs)) continue;
-    const overrideContent = readFileSync3(overridePathAbs, "utf8");
+    const overrideContent = readFileSync4(overridePathAbs, "utf8");
     if (overrideContent === newTemplateContent) continue;
     staleOverrides.push(relative2(cwd, overridePathAbs));
   }
@@ -4265,8 +4601,8 @@ function runUpgrade(cwd, pkgDir, options = {}) {
       skipped.push(rel);
       continue;
     }
-    const projectContent = readFileSync3(projectPath, "utf8");
-    const templateContent = readFileSync3(templatePath, "utf8");
+    const projectContent = readFileSync4(projectPath, "utf8");
+    const templateContent = readFileSync4(templatePath, "utf8");
     const merged = mergeDelimited(templateContent, projectContent);
     if (merged === null) {
       skipped.push(`${rel} (no canon delimiters \u2014 run \`canon init\` to add them)`);
@@ -4285,12 +4621,12 @@ function runUpgrade(cwd, pkgDir, options = {}) {
       skipped.push(rel);
       continue;
     }
-    const templateContent = readFileSync3(templatePath, "utf8");
+    const templateContent = readFileSync4(templatePath, "utf8");
     if (!existsSync5(projectPath)) {
       pending.push({ rel, projectPath, content: templateContent });
       continue;
     }
-    const projectContent = readFileSync3(projectPath, "utf8");
+    const projectContent = readFileSync4(projectPath, "utf8");
     const merged = mergeHeaderOnly(templateContent, projectContent);
     if (merged === null) {
       skipped.push(`${rel} (no markdown table separator found \u2014 header-only sync needs the rows-below boundary)`);
@@ -4309,9 +4645,9 @@ function runUpgrade(cwd, pkgDir, options = {}) {
       skipped.push(rel);
       continue;
     }
-    const templateContent = readFileSync3(templatePath, "utf8");
+    const templateContent = readFileSync4(templatePath, "utf8");
     if (existsSync5(projectPath)) {
-      const projectContent = readFileSync3(projectPath, "utf8");
+      const projectContent = readFileSync4(projectPath, "utf8");
       if (projectContent === templateContent) {
         unchanged.push(rel);
         continue;
@@ -4323,23 +4659,23 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const docsRefsConfigRel = "scripts/docs-refs-config.mjs";
   const docsRefsCheckPath = join5(cwd, docsRefsCheckRel);
   const docsRefsConfigPath = join5(cwd, docsRefsConfigRel);
-  const docsRefsCheckContent = existsSync5(docsRefsCheckPath) ? readFileSync3(docsRefsCheckPath, "utf8") : null;
+  const docsRefsCheckContent = existsSync5(docsRefsCheckPath) ? readFileSync4(docsRefsCheckPath, "utf8") : null;
   const docsRefsConfigExists = existsSync5(docsRefsConfigPath);
   const docsRefsConfigTemplatePath = join5(pkgDir, "templates", docsRefsConfigRel);
-  const docsRefsConfigTemplateContent = existsSync5(docsRefsConfigTemplatePath) ? readFileSync3(docsRefsConfigTemplatePath, "utf8") : null;
+  const docsRefsConfigTemplateContent = existsSync5(docsRefsConfigTemplatePath) ? readFileSync4(docsRefsConfigTemplatePath, "utf8") : null;
   const isPreSplitDocsRefs = docsRefsCheckContent !== null && !docsRefsCheckContent.includes("./docs-refs-config.mjs");
   if (isPreSplitDocsRefs) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
   const newVersion = "2.2.0";
-  const currentVersion = existsSync5(versionPath) ? readFileSync3(versionPath, "utf8").trim() : null;
+  const currentVersion = existsSync5(versionPath) ? readFileSync4(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
   }
   const gitignoreRel = ".gitignore";
   const gitignorePath = join5(cwd, gitignoreRel);
-  const existingGitignore = existsSync5(gitignorePath) ? readFileSync3(gitignorePath, "utf8") : "";
+  const existingGitignore = existsSync5(gitignorePath) ? readFileSync4(gitignorePath, "utf8") : "";
   const desiredGitignore = upsertCanonBlock(existingGitignore, CANON_GITIGNORE_BLOCK);
   if (desiredGitignore === null) {
     malformed.push(gitignoreRel);
@@ -4363,7 +4699,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     } else if (!docsRefsConfigExists) {
       pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
     } else {
-      const existingConfigContent = readFileSync3(docsRefsConfigPath, "utf8");
+      const existingConfigContent = readFileSync4(docsRefsConfigPath, "utf8");
       if (existingConfigContent !== docsRefsConfigTemplateContent && (docsRefsConfigClass === "untracked-existing" || docsRefsConfigClass === "unverifiable")) {
         pending.push({ rel: docsRefsConfigRel, projectPath: docsRefsConfigPath, content: docsRefsConfigTemplateContent });
       }
@@ -4411,8 +4747,8 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const staleOverrides = getStaleOverrides(cwd, reportedWrites);
   const toWrite = options.force ? pending : clean;
   for (const op of toWrite) {
-    mkdirSync2(dirname4(op.projectPath), { recursive: true });
-    writeFileSync2(op.projectPath, op.content);
+    mkdirSync3(dirname4(op.projectPath), { recursive: true });
+    writeFileSync3(op.projectPath, op.content);
     upgraded.push(op.rel);
   }
   return { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals: emptyRefusals(), malformed, cutoverWarnings, staleOverrides };
@@ -4553,7 +4889,15 @@ Usage:
                                 Exit codes: 0 healthy stop/until, 2 usage/nothing/read
                                 error/ambiguous_pid/launch-window timeout, 3 auto-block, 4 death,
                                 5 timeout.
-  canon update                Update the canon-ai package itself
+  canon update                Update the canon-ai package itself. Resolves the install root
+                                (never the invocation cwd) and pins to the latest final release
+                                by default \u2014 refuses rather than falling back to an unpinned
+                                source. Writes .canon/provenance.json after a successful install
+                                (written for future tooling; nothing reads it yet).
+                                Flags: --channel main       pin to main's latest commit (dev)
+                                       --ref <ref>           pin to a named ref's resolved commit (dev)
+                                       --ref <40-hex-sha>    pin directly, skip resolution
+                                --channel and --ref are mutually exclusive.
   canon upgrade               Sync vendored files to match the installed version
 
 Typical workflow:

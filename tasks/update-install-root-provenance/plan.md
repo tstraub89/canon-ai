@@ -775,3 +775,142 @@ Since `dist/` is committed and consumed directly by the red-first test, run `npm
 ## Rollback Plan
 
 Single-file rewrite (`update.ts`) plus a `printHelp()` string change and two doc edits — revertable with `git revert` on the implementation commit. No data migration: `.canon/provenance.json` is a new file this task starts writing — an adopter who reverts to an older canon-ai simply stops getting it written (nothing reads it yet, so there's no consumer to break). No `status.json` schema, no pipeline-phase, no orchestrator-state involvement.
+
+## Reroute Plan
+
+### Context
+
+Real-environment testing after `human_review` found that `resolveStable`/`resolveNamedRef` (Step 6) query the remote over https only. The operator's machine (and, per the amendment, the reporter's) authenticates to the private repo over SSH only — the very first `git ls-remote` call fails with "could not read Username," so the default `canon update` invocation aborts for 100% of real installs even though fail-closed correctness held. The amendment adds **AC-12**: every remote resolution (stable tag listing and named-ref resolution alike) must try https first, then retry the identical logical query over SSH on failure, both attempts strictly non-interactive. This is a resolution-**transport** change only — Decision items 6–7's selection logic (strict final-tag semver, peeled commits, ambiguity rules), the SHA short-circuit, the gates, the announcement, and provenance are all unchanged. Codex's amendment review is `approved_with_nits` (one non-blocking nit: assert fallback order + same-logical-query, not just pass/fail outcomes) — incorporated below.
+
+This section extends **Step 6** (resolver) and **Step 10** (red-first fixture) only. Steps 1–5, 7–9, and 11–14 are unaffected and still apply as written.
+
+### Delta
+
+1. **Shared transport-fallback helper (Step 6 extension)** — `src/cli/commands/update.ts`
+
+   Add one helper used by both `resolveStable` and `resolveNamedRef` so the https→SSH sequencing lives in exactly one place:
+
+   ```ts
+   function githubHttpsUrl(slug: string): string {
+       return `https://github.com/${slug}.git`;
+   }
+   function githubSshUrl(slug: string): string {
+       return `git@github.com:${slug}.git`;
+   }
+
+   function runGitWithFallback(
+       slug: string,
+       buildArgs: (url: string) => string[],
+       runGit: GitRunner,
+   ): { ok: true; stdout: string } | { ok: false; httpsStderr: string; sshStderr: string } {
+       const httpsResult = runGit(buildArgs(githubHttpsUrl(slug)));
+       if (httpsResult.ok) return { ok: true, stdout: httpsResult.stdout };
+       const sshResult = runGit(buildArgs(githubSshUrl(slug)));
+       if (sshResult.ok) return { ok: true, stdout: sshResult.stdout };
+       return { ok: false, httpsStderr: httpsResult.stderr, sshStderr: sshResult.stderr };
+   }
+   ```
+
+   `buildArgs` is invoked with only the URL varying between the two calls (e.g. `url => ['ls-remote', '--tags', url]` for stable, `url => ['ls-remote', url, refspec]` for named-ref) — this is what makes "same logical query, different transport" structurally true rather than something a test has to hope for, which is exactly the amendment-review nit about asserting fallback order/query-identity: the assertion becomes "args differ only in the URL token," directly checkable against `buildArgs`'s own closure inputs.
+
+2. **Rewire `resolveStable` and `resolveNamedRef` through the helper (Step 6 extension)**
+
+   Replace each function's single `runGit(...)` call with `runGitWithFallback(slug, buildArgs, runGit)`, keep all downstream parsing (tag filtering/semver/peeling for stable; ref-matching/ambiguity for named-ref) unchanged, operating on `attempt.stdout` when `attempt.ok`. On failure, the refusal message must name both transports attempted (spec: "the refusal message names both transports"):
+
+   ```ts
+   // resolveStable failure branch
+   return {
+       ok: false,
+       message: `canon update: could not list release tags for ${slug} over https (${attempt.httpsStderr || 'no output'}) or ssh (${attempt.sshStderr || 'no output'}). Check network access and GitHub auth. Aborting — no npm install run.`,
+   };
+
+   // resolveNamedRef failure branch
+   return {
+       ok: false,
+       message: `canon update: could not resolve '${refspec}' on ${slug} over https (${attempt.httpsStderr || 'no output'}) or ssh (${attempt.sshStderr || 'no output'}). Aborting — no npm install run.`,
+   };
+   ```
+
+   The `--ref <40-hex-sha>` short-circuit (Step 9, `updateCmd`) is untouched — it never calls either resolver, so AC-12 doesn't reach it.
+
+3. **`defaultGitRunner` env — add SSH batch mode unconditionally (Step 6 extension)**
+
+   Add `GIT_SSH_COMMAND: 'ssh -oBatchMode=yes'` alongside the existing `GIT_TERMINAL_PROMPT: '0'` in `defaultGitRunner`'s env object, set on *every* invocation regardless of URL scheme — not conditionally for ssh-looking args. This is deliberately simpler than branching on URL shape: `GIT_SSH_COMMAND` is inert for an https invocation, and setting it unconditionally is what makes AC-12(d) ("every resolver invocation on either path carries the non-interactive environment") true by construction rather than by a branch that could drift.
+
+   ```ts
+   env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes' },
+   ```
+
+   The existing 30s `spawnSync` timeout (added in Iteration 2 of `handoff.md`) applies per attempt automatically, since https and ssh are now two separate `runGit` calls — no separate timeout plumbing needed.
+
+4. **Unit tests — stable and named-ref, cases (a)–(c) (extends Step 6's test list)**
+
+   Reuse the existing call-counting fake-`GitRunner` convention from Step 6's AC-6/AC-8 tests. For both `resolveStable` and `resolveNamedRef`, add:
+   - **(a) https succeeds** → assert exactly 1 call, and its args contain the https URL form (`https://github.com/...`).
+   - **(b) https fails, ssh succeeds** → assert exactly 2 calls; call 1's args contain the https URL, call 2's args contain the ssh URL (`git@github.com:...`); assert the two calls' args are identical except for the URL token (closes the amendment-review nit on same-logical-query); assert the resolved sha/version is identical to what (a) would have resolved for the same canned response (downstream target/provenance equivalence, per AC-12).
+   - **(c) both fail** → assert exactly 2 calls, `ok: false`, and the refusal message contains both "https" and "ssh".
+
+   This is 6 new test cases total (3 outcomes × 2 resolvers).
+
+5. **Dedicated `defaultGitRunner` env test — case (d) (extends Step 6's test list)**
+
+   Case (d) can't be observed through the injected `GitRunner` fake (the fake never sees real env). Add one small, direct test of the exported `defaultGitRunner` itself: reuse `writeExecutable` (already introduced in Step 10) to drop a fake `git` script that logs its received env to a file and exits 0; prepend it to `PATH`; call `defaultGitRunner(['ls-remote', '--tags', 'https://github.com/x/y.git'])` directly (no CLI subprocess needed — `defaultGitRunner` is a plain function). Assert the logged env line contains both `GIT_TERMINAL_PROMPT=0` and `GIT_SSH_COMMAND=ssh -oBatchMode=yes`. One test covers this for both transports/paths, since `defaultGitRunner` doesn't branch on args — it's the single chokepoint both resolvers funnel through.
+
+6. **Red-first regression for AC-12(b), stable path — extend Step 10's fixture**
+
+   The amendment specifically calls out "the stable-path case (b) is red against the pre-amendment implementation," i.e. this one needs a real-dist proof, not just a unit test (mirroring how AC-2/AC-6's base case runs against committed `dist/` while their other sub-cases are unit-tested).
+
+   Extend `buildRedFirstFixture`'s fake `git` script (`tests/cli.test.ts`) to conditionally fail the https attempt:
+
+   ```sh
+   if [ "${CANON_TEST_FORCE_HTTPS_FAIL:-}" = "1" ]; then
+     case "$*" in
+       *https://github.com*) exit 1 ;;
+     esac
+   fi
+   ```
+
+   placed before the existing `ls-remote --tags` handling (which already returns the canned tag set regardless of URL content, so the ssh-form retry reaches the same response with no further script changes). Also extend the existing env log line to capture `GIT_SSH_COMMAND` alongside `GIT_TERMINAL_PROMPT` (rename `envPromptLogPath` usage or add a second logged var on the same line) so both the base test and the new test can assert on it.
+
+   New test:
+
+   ```ts
+   void test('canon update (red-first): falls back to SSH when HTTPS resolution fails (AC-12b, stable path)', () => {
+       withTempDir(dir => {
+           const fx = buildRedFirstFixture(dir);
+           const result = spawnSync(process.execPath, [fx.cliEntry, 'update'], {
+               cwd: fx.adopterDir,
+               encoding: 'utf8',
+               env: { ...process.env, PATH: `${fx.binDir}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TEST_FORCE_HTTPS_FAIL: '1' },
+           });
+           assert.equal(result.status, 0, result.stderr);
+           // same pinned target as the https-only base test — transport didn't change the outcome
+           const npmLog = fs.readFileSync(fx.npmLogPath, 'utf8').trim().split('\n');
+           assert.match(npmLog[0].split('\t')[1], /github:tstraub89\/canon-ai#cccccccccccccccccccccccccccccccccccccccc$/);
+           // git log shows an https attempt then an ssh attempt
+           const gitCalls = fs.readFileSync(fx.gitLogPath, 'utf8').trim().split('\n');
+           assert.ok(gitCalls.some(l => l.includes('https://github.com')));
+           assert.ok(gitCalls.some(l => l.includes('git@github.com:')));
+           // non-interactive env present on every invocation
+           const envLines = fs.readFileSync(fx.envPromptLogPath, 'utf8').trim().split('\n');
+           assert.ok(envLines.every(l => l.includes('GIT_TERMINAL_PROMPT=0') && l.includes('GIT_SSH_COMMAND=ssh -oBatchMode=yes')));
+       });
+   });
+   ```
+
+   **Red-first execution order** (same discipline as Step 10's original test): write this test and the `CANON_TEST_FORCE_HTTPS_FAIL` script branch against the *current* (pre-amendment, Iteration 2) `update.ts` first. Run `npm run build`, run the test — it must fail: the https attempt fails and, pre-amendment, `resolveStable` has no SSH retry, so it returns a resolution-error refusal (non-zero exit, npm never invoked, `npmLog` empty). Record this red run in `handoff.md`'s next iteration section. Then implement items 1–3 above, rebuild, and rerun — it must pass.
+
+   Named-ref path's (b) case does not get a second subprocess fixture — the amendment only calls out the stable path for red-first proof; named-ref (a)/(b)/(c) are unit-tested per item 4, consistent with how AC-8's named-ref cases were already unit-only in the original plan.
+
+7. **Testing table addition**
+
+   | AC | Covered by |
+   |---|---|
+   | AC-12(a) both paths | Item 4 unit tests |
+   | AC-12(b) stable path | Item 6 (red-first subprocess) |
+   | AC-12(b) named-ref path | Item 4 unit tests |
+   | AC-12(c) both paths | Item 4 unit tests |
+   | AC-12(d) | Item 5 (dedicated `defaultGitRunner` env test) + Step 10's existing base-case env assertion extended to check both vars |
+   | Amendment-review nit (fallback order / same-query) | Item 4's args-diffing assertion in case (b) |
+
+   No change to Known Risks: the spec's "Credential prompts" entry already reflects the corrected https→SSH-fallback premise (superseding text is already in `spec.md`'s Known Risks section, not something the plan needs to touch).

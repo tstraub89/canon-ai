@@ -106,7 +106,7 @@ New persisted file: `.canon/provenance.json` — `{ source: string, channel: 'st
 
 ## Known Risks
 
-- **Credential prompts.** The repo is private; resolution must not block on an interactive prompt and must surface auth failure as an actionable refusal — the same auth the npm `github:` install path already requires.
+- **Credential prompts.** The repo is private; resolution must not block on an interactive prompt and must surface auth failure as an actionable refusal. npm's `github:` fetcher falls back https→SSH (hosted-git-info), so auth that satisfies npm does **not** guarantee a bare https `git ls-remote` succeeds — resolution mirrors npm's transport fallback (see §Amendment, AC-12).
 - **Prerelease and odd tags.** Stable selection considers only strict `vX.Y.Z` tags (Decision item 6); a prerelease tag must never outrank a final release, and a tag universe with no final release aborts rather than guessing. AC-6(iii)/AC-7 are the guards.
 - **Annotated vs lightweight tags.** The pinned SHA must be the tag's *commit* (peeled), never the tag object. AC-6(ii)/AC-8 assert it.
 - **`--ref <sha>` is fail-late by design.** A mistyped or unpushed SHA fails at npm's fetch with npm's own error; update must still exit non-zero and write no provenance (AC-9's failed-no-write case).
@@ -139,3 +139,26 @@ New persisted file: `.canon/provenance.json` — `{ source: string, channel: 'st
 - [x] Human Test Plan uses product language only (no code, no file names)
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes) *Problem* states the confirmed mechanism and how it was confirmed; *Acceptance Criteria* includes red-first regression-test ACs (AC-2, AC-6) with a seam-free red mechanism
+
+---
+
+## Amendment
+
+> Filed 2026-07-18 at `human_review` after real-environment testing (reroute round 1). Scope: resolution **transport** only — every other contract in this spec is unchanged.
+
+**Finding.** Stable-channel resolution fails on the operator's machine — and by the same mechanism would fail on the reporter's. The resolver queries the remote exclusively over the https transport with terminal prompts disabled; the repo is private and the machine authenticates to GitHub via SSH only (no non-interactive https credential), so the very first resolver call errors with "could not read Username" and the default `canon update` invocation aborts. Confirmed by running the resolver's exact command outside any sandbox (fails) and the SSH-form equivalent (succeeds; returns the real tag list). Fail-closed held — no wrong mutation — but the headline feature refuses for 100% of the repo's current real installs.
+
+**Premise correction (supersedes the Known Risks "Credential prompts" entry).** That entry claimed resolution needs "the same auth the npm `github:` install path already requires." False: npm's `github:` fetcher has an https→SSH fallback chain (hosted-git-info), which is exactly why `npm install github:…` has always worked on SSH-only machines where a bare https `ls-remote` cannot. The resolver must mirror that fallback rather than assume auth parity with npm.
+
+**Amended contract (extends Decision items 6–7).**
+
+- Every remote resolution — stable tag listing and named-ref resolution alike — attempts the https transport first; on any failure it retries the identical query over the SSH transport. Success on either transport yields identical downstream behavior (same pinned target, announcement, provenance).
+- Both attempts are strictly non-interactive: git terminal prompts disabled **and** SSH batch mode, so neither a credential prompt nor a passphrase/host-key prompt can hang a headless run.
+- Both transports failing → the existing fail-closed abort (non-zero exit, no npm spawn, never an unpinned fallback); the refusal message names both transports attempted and remains actionable.
+- The `--ref <40-hex-sha>` short-circuit is unaffected: still zero resolver invocations.
+
+**Additional acceptance criterion.**
+
+- [ ] **AC-12 — resolution transport fallback, on both resolution paths.** Via the injected command seam and/or the fixture's fake git (which records each invocation's arguments and environment), asserted **separately for stable tag listing and for named-ref resolution** (cases a–c run against each path): (a) https succeeds → exactly one resolver invocation, no SSH attempt; (b) https fails, SSH succeeds → resolution succeeds with downstream target and provenance identical to (a); (c) both transports fail → non-zero exit, zero npm invocations, refusal message names both transports; (d) every resolver invocation on either path carries the non-interactive environment (terminal prompts disabled; SSH batch mode) — asserted by the recorder. Unit tests per outcome per path. The stable-path case (b) is red against the pre-amendment implementation.
+
+**Implementation note (non-binding, per the altitude note).** SSH URL form `git@github.com:<slug>.git`; non-interactive via `GIT_TERMINAL_PROMPT=0` plus `GIT_SSH_COMMAND='ssh -oBatchMode=yes'` on both attempts. This mirrors npm hosted-git-info's transport chain. The existing 30s timeout applies per attempt.
