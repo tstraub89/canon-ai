@@ -1,7 +1,7 @@
 {
   "id": "update-install-root-provenance",
   "title": "canon update targets its own install root, pinned to an immutable release",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-11",
   "updated": "2026-07-19",
   "branch": "task/update-install-root-provenance",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
