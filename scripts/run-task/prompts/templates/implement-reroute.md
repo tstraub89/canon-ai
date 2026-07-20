@@ -23,6 +23,8 @@ Tasks with amended specs:
 
 **Spec ACs are binding** — including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.
 
+**Bug/flake-fix red-first checkpoint** — if the amendment adds or modifies a red-first regression-test AC: write and run the test against the task's current state **before** making this round's fix edits, and confirm it fails *for the reason the spec states*; then apply the fix and confirm it passes. Report the red run in handoff.md. If it cannot be made to fail for that reason, record a `[wrong-premise]` Blocker instead of implementing on an unconfirmed premise. If the amendment instead relies on the environment-bound-and-impractical escape, run its named deterministic alternative if it is executable in your sandbox and report the outcome in handoff.md; if it is not executable (e.g. a documented manual repro), state that instead — never report an outcome for a run that did not happen.
+
 Append to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).
 
 When done, run:

@@ -81,6 +81,7 @@ Goal: check these spec-quality rules:
 (6) **Human Test Plan** — product language only; no code, no file paths.
 (7) **Known Risks** — names actual failure modes for the trickiest ACs.
 (8) **Symbols in ACs exist** — for any named function or symbol, has the author grepped for it and verified the return shape matches the spec's assumed data contract?
+(9) **Bug/flake-fix evidence** (N/A for features/refactors) — *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation (a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro). *Acceptance Criteria* includes a red-first regression-test AC or the explicit environment-bound-and-impractical escape with a named deterministic alternative. Missing or under-rung evidence, or a missing red-first AC without the escape, is BLOCKING.
 
 Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or independently re-verify symbols against the codebase (Agent B's job). Check (8) is a spec-quality audit — did the *author* do the grep + return-shape verification before writing the AC — not a re-run of Agent B's ground-truth pass.
 

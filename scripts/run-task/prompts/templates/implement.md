@@ -33,6 +33,9 @@ Grounding rule: before you write handoff.md, re-open the files you changed and v
 1. **Suppressing a lint or type error is a last resort**, not a convenience escape hatch. Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*.
 2. **`any` / dynamic typing**: When the shape is truly unknown at the boundary, type as `unknown` and narrow explicitly.
 
+**Bug/Flake-Fix Red-First Checkpoint** — applicable when a spec's ACs include a red-first regression test:
+Write the test and run it against the pre-fix code first; confirm it fails *for the reason the spec states*, then apply the fix and confirm it passes. Report the red run (command + observed failure) in handoff.md. If the test cannot be made to fail on the pre-fix code for the stated reason, stop — the spec's mechanism is wrong. Document it in handoff.md under Blockers with label `[wrong-premise]` and do not implement a fix on a premise you could not reproduce. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative before fixing if it is executable in your sandbox (e.g. an integration fixture) and report the outcome in handoff.md the same way; if it is not executable (e.g. a documented manual repro), state that in handoff.md instead — never report an outcome for a run that did not happen.
+
 **Parsing Structured Input** — always applicable when implementing a parser for author-facing structured input:
 Parse cell-by-cell with explicit rejection, not a permissive whole-string regex. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason at the parse boundary.
 

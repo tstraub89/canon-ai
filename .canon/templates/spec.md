@@ -7,7 +7,7 @@
 
 What is broken, missing, or suboptimal? Be specific. Link to user feedback, bugs, or roadmap items if available.
 
-> **For a bug or flake fix:** State the confirmed mechanism in *Problem* and how you confirmed it (the reproduction, trace, or forced repro), not merely a plausible cause. Satisfying this is your obligation before marking the spec done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped and no reviewer will catch an unverified mechanism. If the mechanism is environment-bound and a faithful repro is impractical, say so and name the deterministic alternative used instead (integration fixture or documented manual repro).
+> **For a bug or flake fix:** State the confirmed mechanism in *Problem* and how you confirmed it, not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation — a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. Satisfying this is your obligation before marking the spec done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped and no reviewer will catch an unverified mechanism. If the mechanism is environment-bound and a faithful repro is impractical, say so and name the deterministic alternative used instead (integration fixture or documented manual repro).
 
 ## Decision
 
@@ -97,4 +97,4 @@ Steps the human should perform to verify the feature works as intended. Written 
 - [ ] Known Risks covers failure modes for the trickiest ACs
 - [ ] Human Test Plan uses product language only (no code, no file names)
 - [ ] Validation Required has at least one entry marked `- [x]` (not `- [ ]`). `- [ ]` is a placeholder; the spec author flips required checks to `- [x]` before marking spec done. The orchestrator's code_review pre-flight blocks if no `[x]` items are present.
-- [ ] (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative
+- [ ] (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class (runtime-dependent mechanisms need executed confirmation), not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative
