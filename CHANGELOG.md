@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The implement→code-review validation gate no longer matches spec checks to handoff rows by prose; it verifies the outcomes table structurally and leaves per-check coverage to code review.** The pre-flight used to pair each `## Validation Required` item in the spec to a `## Validation Outcomes` row in the handoff by canonicalizing the two prose labels and comparing them — and when the wordings drifted (a mid-sentence backticked token, a command-vs-short-name mismatch, a base check vs. a suffixed variant), it falsely reported a required check as "missing" and bounced the handoff, burning a full implement respawn on a formatting mismatch — sometimes to the auto-block cap — for checks that had actually passed (hit repeatedly: [#163](https://github.com/tstraub89/canon-ai/issues/163), [#200](https://github.com/tstraub89/canon-ai/issues/200), and canon-ai's own `add-xs-tier`). The gate now makes only the assertions it can judge unambiguously from the outcomes table itself — no unexplained `Fail`, no unfilled placeholder row, `blocked` rows surfaced for triage, and a `Fail – unrelated` row citing a file the task changed still fails as a regression (anti-laundering) — and accepts `Pass` / `N/A` / `not_configured` / `deferred_by_spec` / `human_pending`. Whether a *specific* required check was actually run (present, and not wrongly skipped) is now judged by Claude's Stage 1 code review, which already reads the outcomes table against the spec (see [`docs/decisions.md`](docs/decisions.md) "Validation runs inside agent phases"). There is no handoff or spec format change and no cutover — in-flight tasks keep working. Ships to adopters via `canon upgrade`.
+
 ## [2.3.0] — 2026-07-18
 
 ### Added
