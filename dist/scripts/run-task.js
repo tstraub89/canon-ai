@@ -2279,7 +2279,7 @@ function computeLatestValidationResults(handoffContent) {
   for (const row of baseline) {
     const check = (row["Check"] ?? "").trim();
     if (!check) continue;
-    latest.set(canonicalizeValidationCheck(check), {
+    latest.set(normalizeCheckLabel(check), {
       check,
       result: row["Result"] ?? "",
       notes: row["Notes"] ?? ""
@@ -2291,7 +2291,7 @@ function computeLatestValidationResults(handoffContent) {
     for (const row of reruns) {
       const check = (row["Check"] ?? "").trim();
       if (!check) continue;
-      latest.set(canonicalizeValidationCheck(check), {
+      latest.set(normalizeCheckLabel(check), {
         check,
         result: row["Result"] ?? "",
         notes: row["Notes"] ?? ""
@@ -2300,20 +2300,8 @@ function computeLatestValidationResults(handoffContent) {
   }
   return latest;
 }
-function canonicalizeValidationCheck(value) {
-  const backtickMatch = value.match(/`([^`]+)`/);
-  let base;
-  if (backtickMatch && !backtickMatch[1].endsWith("\\")) {
-    base = backtickMatch[1];
-  } else {
-    const stripped = value.replace(/\\`/g, "").replace(/`/g, "");
-    base = stripped.split(/\s+[—–-]\s+/)[0];
-  }
-  const normalized = base.replace(/\s+/g, " ").trim().toLowerCase();
-  if (normalized.includes(" ")) {
-    return normalized.split(" ").at(-1) ?? normalized;
-  }
-  return normalized;
+function normalizeCheckLabel(value) {
+  return value.trim();
 }
 function parseValidationRequiredChecks(specPath) {
   try {
@@ -2458,18 +2446,6 @@ function stripCitedLocation(token) {
 function hasLineLocation(token) {
   return /:\d+(?::\d+)?$/.test(token);
 }
-function hasSpecificFailUnrelatedReference(notes) {
-  for (const rawToken of notes.split(/\s+/)) {
-    const cleaned = cleanCitedPathToken(rawToken);
-    if (!cleaned) continue;
-    if (hasLineLocation(cleaned)) return true;
-    const withoutLocation = stripCitedLocation(cleaned);
-    const hasPathSeparator = withoutLocation.includes("/") || withoutLocation.includes("\\");
-    const hasFilenameExtension = /\.[A-Za-z0-9]+$/.test(withoutLocation);
-    if (hasPathSeparator && hasFilenameExtension) return true;
-  }
-  return false;
-}
 function extractCitedFilePaths(notes) {
   const seen = /* @__PURE__ */ new Set();
   const paths = [];
@@ -2523,9 +2499,6 @@ function isDeferredBySpecResult(result) {
 function isBlockedResult(result) {
   return /^blocked\b/i.test(result.trim());
 }
-function isFailResult(result) {
-  return /^fail/i.test(result.trim());
-}
 function isUnrelatedFailResult(result) {
   return /^fail\s*[–—-]\s*unrelated\b/i.test(result.trim());
 }
@@ -2541,94 +2514,57 @@ function classifyValidationChecks(requiredChecks, latestResults, changedFiles) {
   const blocked = (message) => ({ bucket: "blocked", message });
   const issues = [];
   if (requiredChecks === null) {
-    return [format("Validation Required section is missing from spec.md")];
+    issues.push(format("Validation Required section is missing from spec.md"));
+  } else if (requiredChecks.length === 0) {
+    issues.push(format(
+      "Validation Required section in spec.md has no `[x]`-checked items \u2014 mark at least one required check `[x]`. The template ships with `[ ]` placeholders; the spec author marks the required checks before invoking canon. If no checks apply, use a single `[x] None \u2014 <reason>` entry to document the decision."
+    ));
+  } else if (latestResults.size === 0) {
+    issues.push(format(
+      "spec.md lists required validation checks but handoff.md has no Validation Outcomes rows \u2014 record each check you ran (Check / Result / Notes)."
+    ));
   }
-  if (requiredChecks.length === 0) {
-    return [
-      format(
-        "Validation Required section in spec.md has no `[x]`-checked items \u2014 mark at least one required check `[x]`. The template ships with `[ ]` placeholders; the spec author marks the required checks before invoking canon. If no checks apply, use a single `[x] None \u2014 <reason>` entry to document the decision."
-      )
-    ];
-  }
-  for (const required of requiredChecks) {
-    const canonical = canonicalizeValidationCheck(required);
-    const row = latestResults.get(canonical);
-    if (!row) {
-      const present = [...latestResults.keys()];
-      const hint = present.length > 0 ? ` Handoff has rows for: ${present.join(", ")}. (Required canonicalized to: '${canonical}'.)` : " Handoff has no Validation Outcomes rows.";
-      issues.push(format(`Validation Required item missing from handoff.md: ${required}.${hint}`));
-      continue;
-    }
+  for (const row of latestResults.values()) {
+    const label = row.check;
     const note = row.notes ? ` (${row.notes})` : "";
     if (isPendingResult(row.result)) {
-      issues.push(format(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`));
+      issues.push(format(`Validation Outcomes row still in template placeholder state \u2014 fill it in or remove it: ${label}.`));
       continue;
     }
-    if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
-      issues.push(format(`Validation Required item marked ${row.result} in handoff.md: ${required} (required checks cannot be skipped \u2014 adjust spec or run the check)`));
-      continue;
-    }
-    if (isDeferredBySpecResult(row.result)) {
-      if (!/spec[:.-]/i.test(row.notes ?? "")) {
-        issues.push(format(`Validation Required item marked deferred_by_spec without a spec citation in Notes: ${required}`));
-      }
+    if (isPassResult(row.result) || isNAResult(row.result) || isNotConfiguredResult(row.result) || isDeferredBySpecResult(row.result)) {
       continue;
     }
     if (isHumanPendingResult(row.result)) {
       continue;
     }
     if (isBlockedResult(row.result)) {
-      issues.push(blocked(`Validation Required item marked blocked in handoff.md: ${required}${note} \u2014 triage required (CI/network/infrastructure)`));
+      issues.push(blocked(`Validation Outcomes row marked blocked: ${label}${note} \u2014 triage required (CI/network/infrastructure)`));
       continue;
     }
     if (isUnrelatedFailResult(row.result)) {
-      const hasFileRef = hasSpecificFailUnrelatedReference(row.notes ?? "");
-      if (!hasFileRef) {
-        issues.push(format(`Validation Required item marked Fail \u2013 unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`));
-        continue;
-      }
       if (changedFiles.size > 0) {
-        const citedPaths = extractCitedFilePaths(row.notes ?? "");
-        const citedChangedFiles = citedPaths.filter((citedPath) => matchAgainstChangedFiles(citedPath, changedFiles));
+        const citedChangedFiles = extractCitedFilePaths(row.notes ?? "").filter((citedPath) => matchAgainstChangedFiles(citedPath, changedFiles));
         if (citedChangedFiles.length > 0) {
           issues.push(regression(
-            `Validation Required item marked Fail \u2013 unrelated cites a file changed by this task: ${required}. A failure in a file you modified is yours to fix; if genuinely unrelated, cite a file outside your diff. (cited changed file${citedChangedFiles.length === 1 ? "" : "s"}: ${citedChangedFiles.join(", ")})`
+            `Validation Outcomes row marked Fail \u2013 unrelated cites a file changed by this task: ${label}. A failure in a file you modified is yours to fix; if genuinely unrelated, cite a file outside your diff. (cited changed file${citedChangedFiles.length === 1 ? "" : "s"}: ${citedChangedFiles.join(", ")})`
           ));
-          continue;
         }
       }
       continue;
     }
-    if (!isPassResult(row.result)) {
-      issues.push(regression(`Validation Required item did not pass in handoff.md: ${required} \u2014 ${row.result}${note}`));
-    }
+    issues.push(regression(`Validation Outcomes row did not pass: ${label} \u2014 ${row.result}${note}`));
   }
   return issues;
 }
 function classifyPreflightBlockersFromData(data) {
   const format = (message) => ({ bucket: "format", message });
-  const regression = (message) => ({ bucket: "regression", message });
   if (data.handoffMissing) return [format("handoff.md not found")];
-  const requiredCanonicalKeys = new Set(
-    (data.requiredChecks ?? []).map((required) => canonicalizeValidationCheck(required))
-  );
-  const fromRequired = classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles);
-  const fromNonRequired = [];
-  for (const [canonical, row] of data.latestResults) {
-    if (requiredCanonicalKeys.has(canonical)) continue;
-    if (isFailResult(row.result) && !isUnrelatedFailResult(row.result)) {
-      const note = row.notes ? ` (${row.notes})` : "";
-      fromNonRequired.push(regression(
-        `Validation Outcomes row not listed in spec's required checks has a plain Fail: ${row.check}${note} \u2014 fix the regression.`
-      ));
-    }
-  }
+  const fromRows = classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles);
   return [
     ...data.acCoverageIssues.map(format),
     ...data.changesTableIssues.map(format),
     ...data.bundleDiffIssues.map(format),
-    ...fromRequired,
-    ...fromNonRequired
+    ...fromRows
   ];
 }
 function classifyPreflightBlockers(taskId, changedFiles, bundleDiffIssues = []) {

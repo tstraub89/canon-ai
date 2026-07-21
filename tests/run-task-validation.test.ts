@@ -17,7 +17,6 @@ import {
 import { _VERDICT_VALUES } from '../scripts/run-task/types.js';
 import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
 import {
-    canonicalizeValidationCheck,
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
     buildSharedDocAbortMessage,
@@ -570,66 +569,18 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     return { localDir, originDir };
 }
 
-// ── canonicalizeValidationCheck (issue #71) ──────────────────────────────────
+// ── validation-outcome gate: structural, not spec↔handoff prose matching ─────
+//
+// The gate no longer pairs spec-required checks to handoff rows by prose (the
+// removed `canonicalizeValidationCheck`, source of #163/#200/add-xs-tier false
+// blocks). It asserts spec-side presence + per-row sanity keyed off the literal
+// Result value, and leaves per-required-check coverage to Claude Stage 1 review.
 
-void test('canonicalizeValidationCheck: plain backtick-quoted command → last word', () => {
-    assert.equal(canonicalizeValidationCheck('`npm run lint`'), 'lint');
-    assert.equal(canonicalizeValidationCheck('`npm test`'), 'test');
-});
-
-void test('canonicalizeValidationCheck: cell with escaped backticks no longer leaves trailing backslash in canonical', () => {
-    // Pre-fix regression: the cell `Type checking: \`npm run type-check:all\``
-    // canonicalized to `type-check:all\` (with trailing backslash) because the
-    // first-backtick-span match included the `\`. Fix strips both backticks
-    // and backslashes when the captured span includes a backslash.
-    assert.equal(
-        canonicalizeValidationCheck('Type checking: \\`npm run type-check:all\\`'),
-        'type-check:all',
-    );
-});
-
-void test('canonicalizeValidationCheck: preserves legitimate backslashes in labels (e.g. regex escapes)', () => {
-    // Codex P2 on PR #71 iter 1: the fallback originally stripped EVERY
-    // backslash globally, which would corrupt labels like `grep \w+`. The
-    // narrowed pattern only consumes `\`` (backslash-then-backtick) so
-    // freestanding backslashes pass through.
-    assert.equal(
-        canonicalizeValidationCheck('Pattern grep: \\`grep \\w+\\`'),
-        '\\w+',
-    );
-});
-
-void test('canonicalizeValidationCheck: backtick span with internal backslash uses shortcut (Codex P2 on PR #81 iter 1)', () => {
-    // Regression guard: the escaped-backtick guard previously fired on ANY
-    // backslash inside the captured span (`.includes('\\')`), which pushed
-    // legitimate checks with surrounding prose into the plain-text fallback
-    // and produced wrong canonical keys (the last prose word instead of the
-    // code-spanned token). The narrowed `.endsWith('\\')` guard only fires
-    // when the captured span ends with `\` — the actual escaped-backtick
-    // signature.
-    assert.equal(
-        canonicalizeValidationCheck('Do `grep \\w+` check'),
-        '\\w+',
-    );
-    // Path-style content with internal backslash also uses the shortcut.
-    assert.equal(
-        canonicalizeValidationCheck('Run `node C:\\path\\to\\script.js` to verify'),
-        'c:\\path\\to\\script.js',
-    );
-});
-
-void test('canonicalizeValidationCheck: plain text with no backticks falls back to dash-split last word', () => {
-    assert.equal(canonicalizeValidationCheck('lint — runs eslint'), 'lint');
-    assert.equal(canonicalizeValidationCheck('lint'), 'lint');
-});
-
-void test('canonicalizeValidationCheck: clean backtick span wins over surrounding prose (no regression)', () => {
-    // The pre-fix shortcut: when a clean backtick-bounded span is present,
-    // only that span is canonicalized — surrounding prose is ignored.
-    assert.equal(canonicalizeValidationCheck('`lint` and other stuff'), 'lint');
-});
-
-void test('validateHandoffAgainstSpec: missing row error includes the canonical key + present rows hint', () => {
+void test('validateHandoffAgainstSpec: a required check with no matching handoff row no longer blocks (coverage is Stage 1 review\'s job)', () => {
+    // Pre-fix: this reported "Validation Required item missing from handoff.md"
+    // via prose canonicalization (the false-block bug class). Post-fix: the
+    // handoff has a filled, passing row and no failures, so the gate is clean;
+    // whether `npm run type-check` was actually covered is judged at code review.
     withTempPair(
         ['# Spec', '', '## Validation Required', '', '- [x] `npm run type-check`', ''].join('\n'),
         [
@@ -642,18 +593,17 @@ void test('validateHandoffAgainstSpec: missing row error includes the canonical 
         ].join('\n'),
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.equal(issues.length, 1);
-            // Diagnostic now lists what the handoff DOES have so the user
-            // can spot a canonicalization mismatch instead of chasing a
-            // false "row missing" root cause.
-            assert.match(issues[0], /missing from handoff\.md/);
-            assert.match(issues[0], /canonicalized to: 'type-check'/);
-            assert.match(issues[0], /Handoff has rows for: lint/);
+            assert.deepEqual(issues, []);
         },
     );
 });
 
-void test('validateHandoffAgainstSpec rejects N/A for a required validation check', () => {
+void test('validateHandoffAgainstSpec: N/A on a recorded row is accepted (required-vs-optional skip is Stage 1 review\'s call)', () => {
+    // Pre-fix: a required check marked N/A was rejected ("required checks cannot
+    // be skipped"). That rejection depended on matching the row to a required
+    // spec item, which is exactly the prose matching removed here — so N/A is
+    // now accepted at the gate and the reviewer judges whether the skip is
+    // legitimate against the spec.
     withTempPair(
         [
             '# Spec',
@@ -677,9 +627,7 @@ void test('validateHandoffAgainstSpec rejects N/A for a required validation chec
         ].join('\n'),
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.equal(issues.length, 1);
-            assert.match(issues[0], /required checks cannot be skipped/);
-            assert.match(issues[0], /npm run test:e2e/);
+            assert.deepEqual(issues, []);
         },
     );
 });
@@ -705,6 +653,29 @@ void test('validateHandoffAgainstSpec fails closed when Validation Required is m
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
             assert.deepEqual(issues, ['Validation Required section is missing from spec.md']);
+        },
+    );
+});
+
+void test('validateHandoffAgainstSpec: a missing Validation Required section does not suppress a Fail-row regression', () => {
+    // Codex review P2 guard: the spec-presence blocker must be accumulated, not
+    // early-returned — a plain Fail row alongside a malformed required section
+    // is still classified as a regression (both findings surface).
+    withTempPair(
+        ['# Spec', '', '## Overview', '', 'No validation requirements declared.', ''].join('\n'),
+        [
+            '## Validation Outcomes',
+            '',
+            '| Check | Result | Notes |',
+            '|---|---|---|',
+            '| `npm run test` | Fail | real regression |',
+            '',
+        ].join('\n'),
+        (specPath, handoffPath) => {
+            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+            assert.equal(issues.length, 2);
+            assert.ok(issues.some(i => /Validation Required section is missing/.test(i)));
+            assert.ok(issues.some(i => /did not pass/.test(i) && /npm run test/.test(i)));
         },
     );
 });
@@ -738,12 +709,13 @@ void test('validateHandoffAgainstSpec fails closed when Validation Required exis
     );
 });
 
-void test('validateHandoffAgainstSpec matches by canonical command, ignoring spec annotations', () => {
-    // Regression: a real task shipped with a spec line like
-    // "`npm run test` — including the four new unit tests (3 in parser test
-    // file, 1 in validator test file)" but the handoff row contained just
-    // "`npm run test`". The pre-flight rejected the handoff for ~4 implement
-    // iterations because the canonicalizer compared full annotated strings.
+void test('validateHandoffAgainstSpec: all recorded rows passing is clean regardless of spec-prose annotations', () => {
+    // Regression intent (now structural): a real task shipped with a spec line
+    // like "`npm run test` — including the four new unit tests ..." while the
+    // handoff row was just "`npm run test`". The old prose canonicalizer
+    // false-rejected that mismatch for ~4 implement iterations. The gate no
+    // longer matches spec prose at all — every recorded row passes, so it is
+    // clean, and the annotation mismatch is irrelevant by construction.
     withTempPair(
         [
             '# Spec',
@@ -2420,7 +2392,7 @@ void test('computeLatestValidationResults: original Fail overridden by iteration
     ].join('\n');
 
     const latest = computeLatestValidationResults(handoff);
-    const row = latest.get('test');
+    const row = latest.get('`npm test`');
     assert.ok(row, 'should have npm test result');
     assert.equal(row.result, 'Pass');
 });
@@ -2452,7 +2424,7 @@ void test('computeLatestValidationResults: latest iteration wins when multiple i
     ].join('\n');
 
     const latest = computeLatestValidationResults(handoff);
-    assert.equal(latest.get('test')!.result, 'Fail', 'latest iteration result wins');
+    assert.equal(latest.get('`npm test`')!.result, 'Fail', 'latest iteration result wins');
 });
 
 void test('computeLatestValidationResults: check not re-run keeps baseline result', () => {
@@ -2475,8 +2447,61 @@ void test('computeLatestValidationResults: check not re-run keeps baseline resul
     ].join('\n');
 
     const latest = computeLatestValidationResults(handoff);
-    assert.equal(latest.get('lint')!.result, 'Pass');
-    assert.equal(latest.get('test')!.result, 'Pass');
+    assert.equal(latest.get('`npm run lint`')!.result, 'Pass');
+    assert.equal(latest.get('`npm test`')!.result, 'Pass');
+});
+
+void test('computeLatestValidationResults: a re-run overrides its baseline when the Check cell is byte-identical (modulo trim)', () => {
+    // Override groups baseline and re-run by the trimmed literal cell text.
+    // Identical labels (bar leading/trailing whitespace) are the same check, so
+    // the re-run Pass overrides the baseline Fail in place.
+    const handoff = [
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Fail | flaky |',
+        '',
+        '## Iteration 2 — round 1',
+        '',
+        '### Re-run validation',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Pass | resolved |',
+        '',
+    ].join('\n');
+
+    const latest = computeLatestValidationResults(handoff);
+    assert.equal(latest.size, 1, 'byte-identical labels collapse to one key');
+    assert.equal(latest.get('`npm test`')!.result, 'Pass');
+});
+
+void test('computeLatestValidationResults: the key is the literal trimmed label — no lossy normalization can merge distinct checks (fail-safe)', () => {
+    // Codex review guard (five rounds): every normalization that folded labels —
+    // last-word/backtick-span extraction, dash-annotation stripping, case
+    // folding, whitespace collapse, backtick stripping — could merge genuinely
+    // distinct commands and hide a Fail (fail-OPEN). The key must do none of
+    // them. These labels differ by case, internal whitespace, a `--grep`
+    // variant, and a literal backtick respectively; all must stay distinct.
+    const distinct = [
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test -- --grep "Checkout"` | Fail | uppercase target broke |',
+        '| `npm test -- --grep "checkout"` | Pass | lowercase target ok |',
+        '| `npm run test:e2e -- --grep "flow  A"` | Fail | double-space pattern |',
+        '| `npm run test:e2e -- --grep "flow A"` | Pass | single-space pattern |',
+        '| `check `date` output` | Fail | literal-backtick command |',
+        '| `check date output` | Pass | different command |',
+        '',
+    ].join('\n');
+    const latest = computeLatestValidationResults(distinct);
+    assert.equal(latest.size, 6, 'no pair of these distinct labels may merge');
+    assert.equal(latest.get('`npm test -- --grep "Checkout"`')!.result, 'Fail');
+    assert.equal(latest.get('`npm run test:e2e -- --grep "flow  A"`')!.result, 'Fail');
+    assert.equal(latest.get('`check `date` output`')!.result, 'Fail');
 });
 
 void test('validateHandoff: cumulative handoff with all checks resolved in later iteration passes', () => {
@@ -2998,8 +3023,11 @@ function classifyFixture(
     extra: Partial<Parameters<typeof classifyPreflightBlockersFromData>[0]> = {},
 ) {
     return classifyPreflightBlockersFromData({
-        latestResults: new Map(rows.map(row => [
-            canonicalizeValidationCheck(row.check ?? '`npm run test`'),
+        // The classifier iterates latestResults.values() and ignores the key,
+        // so key by index to keep every fixture row distinct (no accidental
+        // same-label override in multi-row fixtures).
+        latestResults: new Map(rows.map((row, i) => [
+            `${i}`,
             { check: row.check ?? '`npm run test`', result: row.result, notes: row.notes ?? '' },
         ])),
         requiredChecks: ['`npm run test`'],
@@ -3073,15 +3101,32 @@ void test('classifyPreflightBlockersFromData rejects Fail – unrelated when an 
     assert.match(issues[0].message, /file changed by this task/);
 });
 
-void test('classifyPreflightBlockersFromData rejects bare basename Fail – unrelated notes without a line suffix', () => {
+void test('classifyPreflightBlockersFromData: anti-laundering still fires on a bare basename with no line suffix that matches a changed file', () => {
+    // The reference-requirement (reject Fail – unrelated whose Notes lack a
+    // specific file/line citation) is gone — that path false-blocked on
+    // citation-format parsing. What remains is anti-laundering keyed off the
+    // changed-file set: a bare basename that resolves to a file this task
+    // changed is still a regression.
     const issues = classifyFixture(
         [{ result: 'Fail – unrelated', notes: 'editor.spec.ts' }],
         ['e2e/specs/editor.spec.ts'],
     );
 
     assert.equal(issues.length, 1);
-    assert.equal(issues[0].bucket, 'format');
-    assert.match(issues[0].message, /needs a specific test\/file reference/);
+    assert.equal(issues[0].bucket, 'regression');
+    assert.match(issues[0].message, /file changed by this task/);
+});
+
+void test('classifyPreflightBlockersFromData: Fail – unrelated with vague, uncitable notes is now accepted (reviewer assesses credibility)', () => {
+    // Pre-fix this was format-rejected by the reference-requirement. Post-fix
+    // the gate accepts it (no changed file is cited, so anti-laundering can't
+    // fire) and Claude Stage 1 judges whether "unrelated" is credible.
+    const issues = classifyFixture(
+        [{ result: 'Fail – unrelated', notes: 'pre-existing flake' }],
+        ['e2e/specs/editor.spec.ts'],
+    );
+
+    assert.deepEqual(issues, []);
 });
 
 void test('classifyPreflightBlockersFromData rejects bare basename Fail – unrelated notes with a line suffix when the basename is in the diff', () => {
@@ -3131,7 +3176,7 @@ void test('classifyPreflightBlockersFromData skips laundering guard when changed
     assert.deepEqual(issues, []);
 });
 
-void test('classifyPreflightBlockersFromData classifies non-required plain Fail rows as regression blockers', () => {
+void test('classifyPreflightBlockersFromData classifies a plain Fail row as a regression blocker (required or not)', () => {
     const issues = classifyFixture([
         { check: '`npm run test`', result: 'Pass' },
         { check: '`npm run smoke`', result: 'Fail', notes: 'smoke regression' },
@@ -3139,7 +3184,7 @@ void test('classifyPreflightBlockersFromData classifies non-required plain Fail 
 
     assert.equal(issues.length, 1);
     assert.equal(issues[0].bucket, 'regression');
-    assert.match(issues[0].message, /not listed in spec's required checks/);
+    assert.match(issues[0].message, /did not pass/);
     assert.match(issues[0].message, /npm run smoke/);
 });
 
@@ -3161,14 +3206,14 @@ void test('classifyPreflightBlockersFromData leaves non-required Fail – unrela
     assert.deepEqual(issues, []);
 });
 
-void test('classifyPreflightBlockersFromData does not double-count required plain Fail rows', () => {
+void test('classifyPreflightBlockersFromData reports a Fail row exactly once (single unified pass over all rows)', () => {
     const issues = classifyFixture([
         { check: '`npm run test`', result: 'Fail', notes: 'unit failure' },
     ], [], { requiredChecks: ['`npm run test`'] });
 
     assert.equal(issues.length, 1);
     assert.equal(issues[0].bucket, 'regression');
-    assert.match(issues[0].message, /Validation Required item did not pass/);
+    assert.match(issues[0].message, /did not pass/);
 });
 
 void test('classifyPreflightBlockersFromData assigns format, regression, and blocked buckets', () => {
@@ -3682,27 +3727,12 @@ void test('validateHandoffAgainstSpec: Fail – unrelated citing a not-in-diff f
     );
 });
 
-void test('validateHandoffAgainstSpec: Fail – unrelated without notes is rejected', () => {
-    withTempPair(
-        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
-        [
-            '## Validation Outcomes',
-            '',
-            '| Check | Result | Notes |',
-            '|---|---|---|',
-            '| `npm run test` | Fail – unrelated |  |',
-            '',
-        ].join('\n'),
-        (specPath, handoffPath) => {
-            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.equal(issues.length, 1);
-            assert.match(issues[0], /Fail.*unrelated.*needs a specific test\/file reference/);
-        },
-    );
-});
-
-void test('validateHandoffAgainstSpec: Fail – unrelated with vague notes (no file ref) is rejected', () => {
-    for (const vague of ['pre-existing flake', 'CI/network flake', 'unit/e2e failure', 'see logs']) {
+void test('validateHandoffAgainstSpec: Fail – unrelated with empty or vague notes is accepted (Stage 1 assesses credibility)', () => {
+    // The reference-requirement that rejected uncitable notes is removed — it
+    // depended on parsing Notes prose, a false-block source. With no changed
+    // files supplied here, anti-laundering can't fire, so these are accepted at
+    // the gate and Claude judges whether "unrelated" is credible at code review.
+    for (const notes of ['', 'pre-existing flake', 'CI/network flake', 'unit/e2e failure', 'see logs']) {
         withTempPair(
             ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
             [
@@ -3710,13 +3740,12 @@ void test('validateHandoffAgainstSpec: Fail – unrelated with vague notes (no f
                 '',
                 '| Check | Result | Notes |',
                 '|---|---|---|',
-                `| \`npm run test\` | Fail – unrelated | ${vague} |`,
+                `| \`npm run test\` | Fail – unrelated | ${notes} |`,
                 '',
             ].join('\n'),
             (specPath, handoffPath) => {
                 const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-                assert.equal(issues.length, 1, `expected rejection for notes: "${vague}"`);
-                assert.match(issues[0], /Fail.*unrelated.*needs a specific test\/file reference/);
+                assert.deepEqual(issues, [], `expected acceptance for notes: "${notes}"`);
             },
         );
     }
@@ -3760,44 +3789,33 @@ void test('validateHandoffAgainstSpec: blocked on a required check fails with tr
     );
 });
 
-void test('validateHandoffAgainstSpec: deferred_by_spec without a spec citation in Notes is rejected', () => {
-    withTempPair(
-        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
-        [
-            '## Validation Outcomes',
-            '',
-            '| Check | Result | Notes |',
-            '|---|---|---|',
-            '| `npm run test` | deferred_by_spec | wasn\'t needed |',
-            '',
-        ].join('\n'),
-        (specPath, handoffPath) => {
-            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.equal(issues.length, 1);
-            assert.match(issues[0], /without a spec citation/);
-        },
-    );
+void test('validateHandoffAgainstSpec: deferred_by_spec is accepted regardless of a Notes citation (spec correspondence is Stage 1 review\'s job)', () => {
+    // The citation requirement is dropped: verifying a deferral against the
+    // spec's Non-Goals needs spec↔handoff correspondence, the prose matching
+    // this gate no longer does. Both citation styles are accepted here.
+    for (const notes of ['wasn\'t needed', 'Spec: §Non-Goals explicitly defers this.']) {
+        withTempPair(
+            ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
+            [
+                '## Validation Outcomes',
+                '',
+                '| Check | Result | Notes |',
+                '|---|---|---|',
+                `| \`npm run test\` | deferred_by_spec | ${notes} |`,
+                '',
+            ].join('\n'),
+            (specPath, handoffPath) => {
+                const issues = validateHandoffAgainstSpec(specPath, handoffPath);
+                assert.deepEqual(issues, [], `expected acceptance for notes: "${notes}"`);
+            },
+        );
+    }
 });
 
-void test('validateHandoffAgainstSpec: deferred_by_spec with a spec citation in Notes is accepted', () => {
-    withTempPair(
-        ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
-        [
-            '## Validation Outcomes',
-            '',
-            '| Check | Result | Notes |',
-            '|---|---|---|',
-            '| `npm run test` | deferred_by_spec | Spec: §Non-Goals explicitly defers this. |',
-            '',
-        ].join('\n'),
-        (specPath, handoffPath) => {
-            const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.deepEqual(issues, []);
-        },
-    );
-});
-
-void test('validateHandoffAgainstSpec: not_configured on a required check fails (cannot skip)', () => {
+void test('validateHandoffAgainstSpec: not_configured on a recorded row is accepted (required-skip judgment moves to Stage 1 review)', () => {
+    // Pre-fix: rejected because the row matched a required spec check. That
+    // match is the removed prose pairing; not_configured is now accepted and
+    // whether a required check may legitimately be skipped is the reviewer's call.
     withTempPair(
         ['# Spec', '', '## Validation Required', '', '- [x] `npm run test`', ''].join('\n'),
         [
@@ -3810,8 +3828,7 @@ void test('validateHandoffAgainstSpec: not_configured on a required check fails 
         ].join('\n'),
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
-            assert.equal(issues.length, 1);
-            assert.match(issues[0], /required checks cannot be skipped/);
+            assert.deepEqual(issues, []);
         },
     );
 });
@@ -3955,9 +3972,8 @@ void test('regression: validateHandoffAgainstSpec rejects a row with the 1b temp
         (specPath, handoffPath) => {
             const issues = validateHandoffAgainstSpec(specPath, handoffPath);
             assert.equal(issues.length, 1);
-            // New (issue #71): "present but unfilled" distinguishes the
-            // template-pending case from the row-absent case.
-            assert.match(issues[0], /present but unfilled.*template 'pending' state/);
+            // An unfilled template placeholder row is flagged as a format defect.
+            assert.match(issues[0], /template placeholder state/);
         },
     );
 });

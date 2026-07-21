@@ -2315,7 +2315,7 @@ function computeLatestValidationResults(handoffContent) {
   for (const row of baseline) {
     const check = (row["Check"] ?? "").trim();
     if (!check) continue;
-    latest.set(canonicalizeValidationCheck(check), {
+    latest.set(normalizeCheckLabel(check), {
       check,
       result: row["Result"] ?? "",
       notes: row["Notes"] ?? ""
@@ -2327,7 +2327,7 @@ function computeLatestValidationResults(handoffContent) {
     for (const row of reruns) {
       const check = (row["Check"] ?? "").trim();
       if (!check) continue;
-      latest.set(canonicalizeValidationCheck(check), {
+      latest.set(normalizeCheckLabel(check), {
         check,
         result: row["Result"] ?? "",
         notes: row["Notes"] ?? ""
@@ -2336,20 +2336,8 @@ function computeLatestValidationResults(handoffContent) {
   }
   return latest;
 }
-function canonicalizeValidationCheck(value) {
-  const backtickMatch = value.match(/`([^`]+)`/);
-  let base;
-  if (backtickMatch && !backtickMatch[1].endsWith("\\")) {
-    base = backtickMatch[1];
-  } else {
-    const stripped = value.replace(/\\`/g, "").replace(/`/g, "");
-    base = stripped.split(/\s+[—–-]\s+/)[0];
-  }
-  const normalized = base.replace(/\s+/g, " ").trim().toLowerCase();
-  if (normalized.includes(" ")) {
-    return normalized.split(" ").at(-1) ?? normalized;
-  }
-  return normalized;
+function normalizeCheckLabel(value) {
+  return value.trim();
 }
 function sliceRerouteRoundSection(content, label, round) {
   const esc = label.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[ \t]+/g, "[ \\t]+");

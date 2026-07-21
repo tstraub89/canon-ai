@@ -47,7 +47,7 @@ export function computeLatestValidationResults(handoffContent: string): Map<stri
     for (const row of baseline) {
         const check = (row['Check'] ?? '').trim();
         if (!check) continue;
-        latest.set(canonicalizeValidationCheck(check), {
+        latest.set(normalizeCheckLabel(check), {
             check,
             result: row['Result'] ?? '',
             notes: row['Notes'] ?? '',
@@ -61,7 +61,7 @@ export function computeLatestValidationResults(handoffContent: string): Map<stri
         for (const row of reruns) {
             const check = (row['Check'] ?? '').trim();
             if (!check) continue;
-            latest.set(canonicalizeValidationCheck(check), {
+            latest.set(normalizeCheckLabel(check), {
                 check,
                 result: row['Result'] ?? '',
                 notes: row['Notes'] ?? '',
@@ -91,43 +91,39 @@ export function validateHandoff(taskId: string, changedFiles: ReadonlySet<string
     return issues;
 }
 
-export function canonicalizeValidationCheck(value: string): string {
-    // Prefer the first clean backtick-bounded span as a shortcut (the common
-    // case: cells like `npm run lint`). Reject the shortcut ONLY when the
-    // captured group ends with `\` — that signals the regex stopped at an
-    // escaped backtick (the closing `\``), so the capture is a prefix of an
-    // escaped-backtick form (e.g. `Type checking: \`npm run type-check:all\``
-    // captures `npm run type-check:all\`). Falling back in that case strips
-    // `\`` sequences and processes the cell as plain text.
-    //
-    // Important: only checking the END preserves the shortcut for cells with
-    // INTERNAL backslashes (regex, paths) — `grep \w+` captures `grep \w+`,
-    // does not end with `\`, uses the shortcut, canonicalizes to `\w+`.
-    // (Codex P2 on PR #81 iter 1: the original `.includes('\\')` form rejected
-    // ALL backslashes inside the span, which pushed legitimate checks into
-    // the plain-text fallback and produced wrong canonical keys.)
-    const backtickMatch = value.match(/`([^`]+)`/);
-    let base: string;
-    if (backtickMatch && !backtickMatch[1].endsWith('\\')) {
-        base = backtickMatch[1];
-    } else {
-        // Strip `\`` escape sequences (literal backslash + backtick), then
-        // remove bare remaining backticks. Preserves legitimate backslashes
-        // in check labels — `grep \w+`, Windows paths, etc. — because we
-        // only consume the backslash when it's directly followed by a
-        // backtick. (Codex P2 on PR #71 iter 1: original `[`\\]/g` form
-        // stripped EVERY backslash globally, which would corrupt such
-        // labels and collapse distinct checks into the same canonical key.)
-        const stripped = value.replace(/\\`/g, '').replace(/`/g, '');
-        base = stripped.split(/\s+[—–-]\s+/)[0];
-    }
-    const normalized = base.replace(/\s+/g, ' ').trim().toLowerCase();
-    // If the token looks like a command (contains spaces, e.g. "npm run lint"), use
-    // the last word as the canonical key so it matches the short-name form ("lint").
-    if (normalized.includes(' ')) {
-        return normalized.split(' ').at(-1) ?? normalized;
-    }
-    return normalized;
+// Intra-handoff identity for a Validation Outcomes row. Used ONLY as the map
+// key in computeLatestValidationResults, so a later `### Re-run validation` row
+// overrides the baseline row for the same check. It is deliberately NOT matched
+// against spec.md's Validation Required items: that cross-artifact prose
+// matching (the former `canonicalizeValidationCheck` with its first-backtick /
+// last-word / dash-split heuristics) was the false-"required check missing"
+// bug class that blocked valid work three times (#163, #200, add-xs-tier) and
+// is removed entirely. Whether each required check is actually satisfied is now
+// judged by Claude in Stage 1 code review — see docs/decisions.md "Validation
+// runs inside agent phases." This key keeps only what intra-handoff override
+// needs: the trimmed literal Check-cell text, with NO other normalization.
+//
+// This is the fixed point of a deliberate fail-direction argument. As an
+// intra-handoff map key (baseline row ↔ its own re-run rows; never compared to
+// spec.md), the one thing it must never do is collapse two GENUINELY DISTINCT
+// checks to one key — that would let a later row overwrite an earlier one and
+// hide a real `Fail` (a fail-OPEN gate). Every normalization that seemed
+// harmless turned out to be lossy in exactly that direction and merged distinct
+// commands: last-word / first-backtick-span extraction (`test:e2e` vs its
+// `@cross-browser` variant, #163), dash-annotation stripping (spaced hyphens in
+// quoted args), case folding (`--grep "Checkout"` vs `"checkout"`), internal-
+// whitespace collapse (a double-space inside a quoted pattern), and even
+// stripping backticks (a label containing a literal `` `date` `` command
+// substitution). Trimming leading/trailing whitespace is the only transform
+// that cannot merge distinct checks — non-empty, differently-spelled labels
+// always yield different keys; identical labels are the same check by
+// definition. The accepted, fail-CLOSED cost is that a re-run overrides its
+// baseline only when the two Check cells are byte-identical after trim; drift
+// (e.g. an annotated baseline vs a terser re-run) yields a spurious block, not
+// a hidden failure, so the handoff template instructs authors to keep a check's
+// label identical across its baseline and re-run rows.
+function normalizeCheckLabel(value: string): string {
+    return value.trim();
 }
 
 export function parseValidationRequiredChecks(specPath: string): string[] | null {
@@ -405,20 +401,6 @@ function hasLineLocation(token: string): boolean {
     return /:\d+(?::\d+)?$/.test(token);
 }
 
-function hasSpecificFailUnrelatedReference(notes: string): boolean {
-    for (const rawToken of notes.split(/\s+/)) {
-        const cleaned = cleanCitedPathToken(rawToken);
-        if (!cleaned) continue;
-        if (hasLineLocation(cleaned)) return true;
-
-        const withoutLocation = stripCitedLocation(cleaned);
-        const hasPathSeparator = withoutLocation.includes('/') || withoutLocation.includes('\\');
-        const hasFilenameExtension = /\.[A-Za-z0-9]+$/.test(withoutLocation);
-        if (hasPathSeparator && hasFilenameExtension) return true;
-    }
-    return false;
-}
-
 export function extractCitedFilePaths(notes: string): string[] {
     const seen = new Set<string>();
     const paths: string[] = [];
@@ -512,12 +494,6 @@ export function isBlockedResult(result: string): boolean {
     return /^blocked\b/i.test(result.trim());
 }
 
-// `fail` — explicit failure (catches "Fail" / "FAIL" / "failed" variants).
-// Used by validateHandoffAgainstSpec to surface failures explicitly.
-export function isFailResult(result: string): boolean {
-    return /^fail/i.test(result.trim());
-}
-
 // `fail – unrelated` — the check failed, but the failure is outside the
 // task's Affected Files (pre-existing flake, unrelated test, environment
 // issue). Codex is instructed to write this state when a required check
@@ -546,6 +522,24 @@ export function isPendingResult(result: string): boolean {
     return false;
 }
 
+// Classify the handoff's Validation Outcomes rows for the pre-flight gate.
+//
+// This gate no longer pairs each spec-required check to a handoff row by prose
+// (the removed `canonicalizeValidationCheck` matching, source of the false
+// "required check missing" blocks in #163 / #200 / add-xs-tier). Instead it
+// makes two cheap, unambiguous assertions and leaves the judgment calls to
+// Claude's Stage 1 code review (docs/decisions.md "Validation runs inside agent
+// phases"):
+//   1. Spec-side presence: spec.md actually declares required checks.
+//   2. Per-row sanity over EVERY recorded outcome, keyed only off the literal
+//      Result value (never spec matching): no unexplained Fail, no unfilled
+//      placeholder row, blocked rows surfaced for triage, and a Fail – unrelated
+//      row that cites a file THIS task changed is a regression (anti-laundering).
+//
+// Deliberately NOT enforced here anymore (moved to Stage 1 review): whether a
+// *specific* required check is present, and whether a required check may be
+// N/A / not_configured / deferred / human_pending. Those need spec↔handoff
+// correspondence, which is exactly the prose matching that kept false-blocking.
 function classifyValidationChecks(
     requiredChecks: string[] | null,
     latestResults: Map<string, ValidationOutcomeRow>,
@@ -556,100 +550,79 @@ function classifyValidationChecks(
     const blocked = (message: string): ClassifiedBlocker => ({ bucket: 'blocked', message });
     const issues: ClassifiedBlocker[] = [];
 
+    // Spec-side presence blockers are ACCUMULATED, not early-returned: a
+    // malformed Validation Required section must not suppress classification of
+    // the recorded outcome rows (a plain Fail alongside a missing section is
+    // still a regression — the per-row scan below always runs).
     if (requiredChecks === null) {
-        return [format('Validation Required section is missing from spec.md')];
-    }
-    if (requiredChecks.length === 0) {
-        return [
-            format(
-                'Validation Required section in spec.md has no `[x]`-checked items — ' +
-                'mark at least one required check `[x]`. The template ships with `[ ]` placeholders; ' +
-                'the spec author marks the required checks before invoking canon. ' +
-                'If no checks apply, use a single `[x] None — <reason>` entry to document the decision.',
-            ),
-        ];
+        issues.push(format('Validation Required section is missing from spec.md'));
+    } else if (requiredChecks.length === 0) {
+        issues.push(format(
+            'Validation Required section in spec.md has no `[x]`-checked items — ' +
+            'mark at least one required check `[x]`. The template ships with `[ ]` placeholders; ' +
+            'the spec author marks the required checks before invoking canon. ' +
+            'If no checks apply, use a single `[x] None — <reason>` entry to document the decision.',
+        ));
+    } else if (latestResults.size === 0) {
+        issues.push(format(
+            'spec.md lists required validation checks but handoff.md has no Validation Outcomes rows — ' +
+            'record each check you ran (Check / Result / Notes).',
+        ));
     }
 
-    for (const required of requiredChecks) {
-        const canonical = canonicalizeValidationCheck(required);
-        const row = latestResults.get(canonical);
-        if (!row) {
-            // Distinguish "no row at all" from "row present but canonicalized
-            // to a different key." The second case usually means a slight
-            // mismatch between the spec phrasing and the handoff cell text;
-            // surface the present keys so the user can spot it without
-            // chasing the wrong root cause. (Issue #71.)
-            const present = [...latestResults.keys()];
-            const hint = present.length > 0
-                ? ` Handoff has rows for: ${present.join(', ')}. (Required canonicalized to: '${canonical}'.)`
-                : ' Handoff has no Validation Outcomes rows.';
-            issues.push(format(`Validation Required item missing from handoff.md: ${required}.${hint}`));
-            continue;
-        }
+    for (const row of latestResults.values()) {
+        const label = row.check;
         const note = row.notes ? ` (${row.notes})` : '';
 
-        // Required items in `pending` template state count as missing — the
-        // agent didn't actually fill in the row.
+        // Unfilled template placeholder row — the agent left the "Pass / Fail /
+        // ..." stub instead of recording a result.
         if (isPendingResult(row.result)) {
-            issues.push(format(`Validation Required item present but unfilled (still in template 'pending' state): ${required}.`));
+            issues.push(format(`Validation Outcomes row still in template placeholder state — fill it in or remove it: ${label}.`));
             continue;
         }
-        if (isNAResult(row.result) || isNotConfiguredResult(row.result)) {
-            issues.push(format(`Validation Required item marked ${row.result} in handoff.md: ${required} (required checks cannot be skipped — adjust spec or run the check)`));
+        // Pass and the deliberate non-failure states are accepted. Whether a
+        // *required* check should have been skipped/deferred is Stage 1's call.
+        if (
+            isPassResult(row.result)
+            || isNAResult(row.result)
+            || isNotConfiguredResult(row.result)
+            || isDeferredBySpecResult(row.result)
+        ) {
             continue;
         }
-        // `deferred_by_spec` valid only with a spec citation in Notes.
-        if (isDeferredBySpecResult(row.result)) {
-            if (!/spec[:.-]/i.test(row.notes ?? '')) {
-                issues.push(format(`Validation Required item marked deferred_by_spec without a spec citation in Notes: ${required}`));
-            }
-            continue;
-        }
-        // `human_pending` is a soft state — valid in handoff (the human will
-        // pick this up at human_review). NOT a validateHandoffAgainstSpec
-        // failure. The `human_review.done` gate enforces zero human_pending
-        // before the task closes.
+        // `human_pending` is a soft state — the `human_review.done` gate
+        // (via countHumanPendingChecks) enforces resolution before the task closes.
         if (isHumanPendingResult(row.result)) {
             continue;
         }
-        // `blocked` means infrastructure was unavailable. It blocks progress,
-        // but re-implementation cannot fix it unless a separate format or
-        // regression blocker is also present.
+        // `blocked` means infrastructure was unavailable — surfaced for triage.
         if (isBlockedResult(row.result)) {
-            issues.push(blocked(`Validation Required item marked blocked in handoff.md: ${required}${note} — triage required (CI/network/infrastructure)`));
+            issues.push(blocked(`Validation Outcomes row marked blocked: ${label}${note} — triage required (CI/network/infrastructure)`));
             continue;
         }
-        // `fail – unrelated` is accepted only when Notes contains a specific
-        // line reference (`:\d+`, e.g. `file:42`) or a path-like token with a
-        // path separator and filename extension. Vague prose like
-        // "pre-existing flake", "CI/network flake", or "unit/e2e failure" is
-        // rejected — the reviewer assesses credibility at code_review using
-        // the named reference. Extracted citations are then matched against the
-        // changed-file set, including absolute-path suffixes, so a failure in
-        // a file this task changed cannot be laundered as unrelated.
+        // `Fail – unrelated` is accepted (Stage 1 assesses credibility), EXCEPT
+        // when the cited file is one this task changed — a failure in your own
+        // diff can't be laundered as unrelated. This keys off the changed-file
+        // set, not spec matching, and fails safe: if the note can't be parsed
+        // for a changed-file citation it is accepted and Stage 1 reviews it.
         if (isUnrelatedFailResult(row.result)) {
-            const hasFileRef = hasSpecificFailUnrelatedReference(row.notes ?? '');
-            if (!hasFileRef) {
-                issues.push(format(`Validation Required item marked Fail – unrelated needs a specific test/file reference in Notes (e.g., \`src/foo.test.ts\` or \`file:42\`; vague prose like "pre-existing flake" is rejected): ${required}`));
-                continue;
-            }
             if (changedFiles.size > 0) {
-                const citedPaths = extractCitedFilePaths(row.notes ?? '');
-                const citedChangedFiles = citedPaths.filter(citedPath => matchAgainstChangedFiles(citedPath, changedFiles));
+                const citedChangedFiles = extractCitedFilePaths(row.notes ?? '')
+                    .filter(citedPath => matchAgainstChangedFiles(citedPath, changedFiles));
                 if (citedChangedFiles.length > 0) {
                     issues.push(regression(
-                        `Validation Required item marked Fail – unrelated cites a file changed by this task: ${required}. ` +
+                        `Validation Outcomes row marked Fail – unrelated cites a file changed by this task: ${label}. ` +
                         `A failure in a file you modified is yours to fix; if genuinely unrelated, cite a file outside your diff. ` +
                         `(cited changed file${citedChangedFiles.length === 1 ? '' : 's'}: ${citedChangedFiles.join(', ')})`,
                     ));
-                    continue;
                 }
             }
             continue;
         }
-        if (!isPassResult(row.result)) {
-            issues.push(regression(`Validation Required item did not pass in handoff.md: ${required} — ${row.result}${note}`));
-        }
+        // Anything still here is a plain Fail or an unrecognized result — every
+        // accepted/soft/blocked state above has already `continue`d, so this is
+        // unconditionally an unexplained failure.
+        issues.push(regression(`Validation Outcomes row did not pass: ${label} — ${row.result}${note}`));
     }
 
     return issues;
@@ -657,30 +630,18 @@ function classifyValidationChecks(
 
 export function classifyPreflightBlockersFromData(data: PreflightClassificationData): ClassifiedBlocker[] {
     const format = (message: string): ClassifiedBlocker => ({ bucket: 'format', message });
-    const regression = (message: string): ClassifiedBlocker => ({ bucket: 'regression', message });
     if (data.handoffMissing) return [format('handoff.md not found')];
 
-    const requiredCanonicalKeys = new Set(
-        (data.requiredChecks ?? []).map(required => canonicalizeValidationCheck(required)),
-    );
-    const fromRequired = classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles);
-    const fromNonRequired: ClassifiedBlocker[] = [];
-    for (const [canonical, row] of data.latestResults) {
-        if (requiredCanonicalKeys.has(canonical)) continue;
-        if (isFailResult(row.result) && !isUnrelatedFailResult(row.result)) {
-            const note = row.notes ? ` (${row.notes})` : '';
-            fromNonRequired.push(regression(
-                `Validation Outcomes row not listed in spec's required checks has a plain Fail: ${row.check}${note} — fix the regression.`,
-            ));
-        }
-    }
+    // classifyValidationChecks now inspects every recorded outcome row, so the
+    // former separate "non-required plain Fail" sweep is folded into it — a
+    // Fail is a Fail regardless of whether the spec named the check.
+    const fromRows = classifyValidationChecks(data.requiredChecks, data.latestResults, data.changedFiles);
 
     return [
         ...data.acCoverageIssues.map(format),
         ...data.changesTableIssues.map(format),
         ...data.bundleDiffIssues.map(format),
-        ...fromRequired,
-        ...fromNonRequired,
+        ...fromRows,
     ];
 }
 

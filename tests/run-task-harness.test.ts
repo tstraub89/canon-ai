@@ -10,7 +10,6 @@ import { extractAcSummary, extractAffectedFiles, extractValidationChecks } from 
 import { validateTaskId } from '../scripts/run-task/cli.js';
 import { deriveTopLevelStatus } from '../scripts/run-task/state.js';
 import {
-    canonicalizeValidationCheck,
     parseValidationOutcomeRows,
     parseValidationRequiredChecks,
 } from '../scripts/run-task/validation.js';
@@ -309,19 +308,6 @@ void test('parseValidationRequiredChecks returns empty array when the section ex
         fs.writeFileSync(emptyPath, ['# Spec', '', '## Validation Required', '', '- [ ] `npm run lint`', ''].join('\n'), 'utf8');
         assert.deepEqual(parseValidationRequiredChecks(emptyPath), []);
     });
-});
-
-void test('canonicalizeValidationCheck normalizes commands, annotations, and whitespace', () => {
-    const cases: Array<[string, string]> = [
-        ['`npm run lint`', 'lint'],
-        ['npm run test — full suite', 'test'],
-        ['  LINT  ', 'lint'],
-        ['`custom-check`', 'custom-check'],
-    ];
-
-    for (const [input, expected] of cases) {
-        assert.equal(canonicalizeValidationCheck(input), expected);
-    }
 });
 
 void test('validateTaskId accepts leading digits and rejects path traversal / punctuation edge cases', () => {
