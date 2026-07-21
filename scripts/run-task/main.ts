@@ -3293,6 +3293,7 @@ export async function main(): Promise<void> {
     // validation per phase and re-running it on every auto-commit is waste.
     process.env.RUN_TASK_ORCHESTRATOR = '1';
     cliArgs = splitCli.parseArgs(process.argv.slice(2));
+    splitState.assertManagedInvocationRoot();
     splitEnv.warnLegacyEnvVars();
     splitEnv.warnWorktreesRootMismatch();
     const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;

@@ -42,8 +42,12 @@ function resolveRepoRoot(): string {
 export const REPO_ROOT = resolveRepoRoot();
 export const TASKS_DIR = path.join(REPO_ROOT, 'tasks');
 
+// A relative CANON_WORKTREES_ROOT anchors on REPO_ROOT (the supervising
+// checkout), never on process.cwd() — cwd can be inside a linked worktree, and
+// resolving against it would point the worktrees root at the wrong tree. Kept
+// in lockstep with effectiveWorktreesRoot() in state.ts.
 export const WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT
-    ? path.resolve(process.env.CANON_WORKTREES_ROOT)
+    ? path.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT)
     : path.resolve(REPO_ROOT, '../dev-worktrees');
 
 export const STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1000;

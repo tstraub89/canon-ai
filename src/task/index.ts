@@ -10,7 +10,7 @@ import {
     verifyHandoffAgainstDiffFromData,
 } from '../../scripts/run-task/validation.js';
 import { filterGitIgnoredPaths } from '../../scripts/run-task/git.js';
-import { deriveTopLevelStatus, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../../scripts/run-task/state.js';
+import { assertManagedInvocationRoot, deriveTopLevelStatus, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../../scripts/run-task/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../../scripts/run-task/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../../scripts/run-task/types.js';
 import { type TaskSize } from '../../scripts/pipeline-policy.js';
@@ -1512,6 +1512,7 @@ export function taskSet(args: string[]): void {
 export function taskCmd(args: string[]): void {
     const [subcommand, ...rest] = args;
     try {
+        assertManagedInvocationRoot();
         switch (subcommand) {
             case 'new':
                 taskNew(rest);

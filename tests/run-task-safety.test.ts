@@ -22,7 +22,7 @@ import {
 } from '../scripts/run-task/main.js';
 import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
 import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
-import { resolveTaskCwd } from '../scripts/run-task/state.js';
+import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../scripts/run-task/state.js';
 import { classifyNodeModulesLinkFromData, PIPELINE_MANAGED_DOCS } from '../scripts/run-task/worktree.js';
 
 const WORKTREE_ROOT = process.cwd();
@@ -5376,5 +5376,149 @@ void test('guardConcurrentRun: passes through when heartbeat PID matches own PID
         writeFreshHeartbeat(taskDir, process.pid);
         const { fn } = captureDie();
         assert.doesNotThrow(() => guardConcurrentRun(['t1'], makeGuardResolver(dir), fn));
+    });
+});
+
+// --- assertManagedInvocationRoot / classifyInvocationRoot (issue #202) ---------
+// The pure classifier decides whether canon was invoked from the main checkout,
+// a canon-managed worktree, or a hand-created (foreign) linked worktree it must
+// refuse. Callers realpath every input first, so these tests pass canonical
+// paths (see the "Canonicalize real git worktree paths" lesson).
+
+void test('classifyInvocationRoot: main checkout when active toplevel equals the main root', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: '/repo',
+        mainRoot: '/repo',
+        worktreesRoot: '/dev-worktrees',
+    });
+    assert.deepEqual(result, { kind: 'main' });
+});
+
+void test('classifyInvocationRoot: canon-worktree when active toplevel is under the worktrees root', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: '/dev-worktrees/task-a',
+        mainRoot: '/repo',
+        worktreesRoot: '/dev-worktrees',
+    });
+    assert.deepEqual(result, { kind: 'canon-worktree', activeRoot: '/dev-worktrees/task-a' });
+});
+
+void test('classifyInvocationRoot: canon-worktree for a nested subdir under the worktrees root', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: '/dev-worktrees/task-a/nested',
+        mainRoot: '/repo',
+        worktreesRoot: '/dev-worktrees',
+    });
+    assert.equal(result.kind, 'canon-worktree');
+});
+
+void test('classifyInvocationRoot: foreign-worktree for a linked worktree outside canon control', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: '/tmp/canon-root',
+        mainRoot: '/repo',
+        worktreesRoot: '/dev-worktrees',
+    });
+    assert.deepEqual(result, {
+        kind: 'foreign-worktree',
+        activeRoot: '/tmp/canon-root',
+        mainRoot: '/repo',
+        worktreesRoot: '/dev-worktrees',
+    });
+});
+
+void test('classifyInvocationRoot: a sibling that only shares a path prefix with the worktrees root is foreign', () => {
+    // `/dev-worktrees-evil` must not be treated as inside `/dev-worktrees`.
+    const result = classifyInvocationRoot({
+        activeToplevel: '/dev-worktrees-evil',
+        mainRoot: '/repo',
+        worktreesRoot: '/dev-worktrees',
+    });
+    assert.equal(result.kind, 'foreign-worktree');
+});
+
+void test('classifyInvocationRoot: unknown when git reports no toplevel (non-git tree)', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: null,
+        mainRoot: '/repo',
+        worktreesRoot: '/dev-worktrees',
+    });
+    assert.deepEqual(result, { kind: 'unknown' });
+});
+
+void test('classifyInvocationRoot: real linked worktree classifies foreign vs canon by worktrees root', () => {
+    withTempDir('run-task-202-worktree-', dir => {
+        const canonical = fs.realpathSync(dir);
+        const mainRoot = path.join(canonical, 'main');
+        fs.mkdirSync(mainRoot, { recursive: true });
+        const git = (cwd: string, args: string[]): void => {
+            const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+            if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+        };
+        git(mainRoot, ['init', '-q', '-b', 'main']);
+        git(mainRoot, ['config', 'user.email', 'test@example.com']);
+        git(mainRoot, ['config', 'user.name', 'Test']);
+        fs.writeFileSync(path.join(mainRoot, 'f.txt'), 'x\n');
+        git(mainRoot, ['add', '.']);
+        git(mainRoot, ['commit', '-q', '-m', 'init']);
+
+        // A real linked worktree the operator created by hand.
+        const linkedWorktree = path.join(canonical, 'linked');
+        git(mainRoot, ['worktree', 'add', '-q', '-b', 'feature', linkedWorktree, 'main']);
+
+        const activeToplevel = fs.realpathSync(
+            spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: linkedWorktree, encoding: 'utf8' }).stdout.trim(),
+        );
+        const realMainRoot = fs.realpathSync(mainRoot);
+
+        // With the worktrees root elsewhere, the hand-created worktree is foreign.
+        const foreign = classifyInvocationRoot({
+            activeToplevel,
+            mainRoot: realMainRoot,
+            worktreesRoot: path.join(canonical, 'dev-worktrees'),
+        });
+        assert.equal(foreign.kind, 'foreign-worktree');
+
+        // If that same directory IS canon's worktrees root, it's accepted.
+        const managed = classifyInvocationRoot({
+            activeToplevel,
+            mainRoot: realMainRoot,
+            worktreesRoot: canonical,
+        });
+        assert.equal(managed.kind, 'canon-worktree');
+
+        // From the main checkout itself, always 'main'.
+        const mainTop = fs.realpathSync(
+            spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: mainRoot, encoding: 'utf8' }).stdout.trim(),
+        );
+        const fromMain = classifyInvocationRoot({
+            activeToplevel: mainTop,
+            mainRoot: realMainRoot,
+            worktreesRoot: path.join(canonical, 'dev-worktrees'),
+        });
+        assert.equal(fromMain.kind, 'main');
+
+        git(mainRoot, ['worktree', 'remove', '--force', linkedWorktree]);
+    });
+});
+
+void test('effectiveWorktreesRoot: relative CANON_WORKTREES_ROOT anchors on REPO_ROOT, not cwd', () => {
+    // Regression for the guard falsely rejecting canon's own agents: an agent
+    // runs task commands from inside a managed worktree, so process.cwd() is the
+    // worktree. A cwd-relative resolve of a relative override would recompute a
+    // different root and misclassify that worktree as foreign.
+    withTempDir('run-task-202-relroot-', dir => {
+        const prevCwd = process.cwd();
+        const prevEnv = process.env.CANON_WORKTREES_ROOT;
+        try {
+            process.env.CANON_WORKTREES_ROOT = '../dev-worktrees';
+            process.chdir(dir);
+            const resolved = effectiveWorktreesRoot();
+            assert.equal(resolved, path.resolve(REPO_ROOT, '../dev-worktrees'));
+            assert.notEqual(resolved, path.resolve(dir, '../dev-worktrees'));
+        } finally {
+            process.chdir(prevCwd);
+            if (prevEnv === undefined) delete process.env.CANON_WORKTREES_ROOT;
+            else process.env.CANON_WORKTREES_ROOT = prevEnv;
+        }
     });
 });

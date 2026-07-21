@@ -6,8 +6,116 @@ import { die } from './cli.js';
 import { REPO_ROOT, TASKS_DIR, WORKTREES_ROOT } from './env.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type SessionSlot, type StatusJson } from './types.js';
 
-function effectiveWorktreesRoot(): string {
-    return process.env.CANON_WORKTREES_ROOT ? path.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+export function effectiveWorktreesRoot(): string {
+    // Anchor a relative CANON_WORKTREES_ROOT on the supervising checkout
+    // (REPO_ROOT), never on process.cwd(): canon's own agents run task commands
+    // from inside a managed worktree, and a cwd-relative resolve would recompute
+    // a different root there — making assertManagedInvocationRoot misclassify a
+    // genuine managed worktree as foreign. Mirrors env.ts's default resolution.
+    return process.env.CANON_WORKTREES_ROOT
+        ? path.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT)
+        : WORKTREES_ROOT;
+}
+
+function isPathInside(child: string, parent: string): boolean {
+    if (child === parent) return true;
+    const rel = path.relative(parent, child);
+    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+export type InvocationRootClassification =
+    | { kind: 'main' }
+    | { kind: 'canon-worktree'; activeRoot: string }
+    | { kind: 'foreign-worktree'; activeRoot: string; mainRoot: string; worktreesRoot: string }
+    | { kind: 'unknown' };
+
+/**
+ * Classify the checkout canon was invoked from. Pure string logic — all inputs
+ * must already be canonicalized (realpath'd) by the caller so a symlinked
+ * filesystem (macOS `/var` → `/private/var`) doesn't produce spurious
+ * inequalities (see docs/lessons-learned.md, "Canonicalize real git worktree
+ * paths before comparing them").
+ *
+ * - `main`: the supervising checkout (`activeToplevel === mainRoot`). The
+ *   common, fully-supported case.
+ * - `canon-worktree`: a linked worktree under the effective worktrees root —
+ *   canon created it, and canon's own agents run `canon task phase` from there.
+ * - `foreign-worktree`: a linked worktree canon did not create. Task commands
+ *   silently split-brain here (`task new` writes cwd-relative while
+ *   `task status`/`run` read the supervising checkout via REPO_ROOT), so this
+ *   is the case the guard refuses.
+ * - `unknown`: not a git work tree (or git failed) — nothing to guard.
+ */
+export function classifyInvocationRoot(params: {
+    activeToplevel: string | null;
+    mainRoot: string;
+    worktreesRoot: string;
+}): InvocationRootClassification {
+    const { activeToplevel, mainRoot, worktreesRoot } = params;
+    if (!activeToplevel) return { kind: 'unknown' };
+    if (activeToplevel === mainRoot) return { kind: 'main' };
+    if (isPathInside(activeToplevel, worktreesRoot)) {
+        return { kind: 'canon-worktree', activeRoot: activeToplevel };
+    }
+    return { kind: 'foreign-worktree', activeRoot: activeToplevel, mainRoot, worktreesRoot };
+}
+
+function canonicalizePath(p: string): string {
+    try {
+        return fs.realpathSync(p);
+    } catch {
+        return p;
+    }
+}
+
+function readActiveToplevel(): string | null {
+    const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (result.error || result.status !== 0) return null;
+    const out = (result.stdout ?? '').trim();
+    return out === '' ? null : out;
+}
+
+/**
+ * Refuse loudly when canon is invoked from a linked git worktree it does not
+ * manage. Canon's isolation contract is *canon creates the worktrees*;
+ * operator-created linked worktrees as a task-lifecycle entry point were never
+ * a design goal, and running task commands from one silently writes and reads
+ * task state against two different checkouts (issue #202). This is the end
+ * state, not a stopgap — see docs/BACKLOG.md.
+ *
+ * Called at the `canon task` and `canon run` entry seams. Canon's own agents
+ * (which run `canon task phase` from inside canon-created worktrees) classify
+ * as `canon-worktree` and pass through untouched.
+ */
+export function assertManagedInvocationRoot(): void {
+    // The test-harness override is an explicit "task state lives here" signal;
+    // honor it exactly as every other resolver in this file does. It also means
+    // there is no real linked worktree to classify.
+    if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
+    const activeToplevel = readActiveToplevel();
+    const classification = classifyInvocationRoot({
+        activeToplevel: activeToplevel ? canonicalizePath(activeToplevel) : null,
+        mainRoot: canonicalizePath(REPO_ROOT),
+        worktreesRoot: canonicalizePath(effectiveWorktreesRoot()),
+    });
+    if (classification.kind !== 'foreign-worktree') return;
+    die(
+        `Canon was invoked from a linked git worktree it does not manage:\n` +
+        `  ${classification.activeRoot}\n\n` +
+        `Canon manages task worktrees itself — it creates them under\n` +
+        `  ${classification.worktreesRoot}\n` +
+        `and routes task state there automatically. Running task commands from a\n` +
+        `hand-created linked worktree is unsupported: task state would be written\n` +
+        `here but read from the main checkout, so dirty-state, base-branch, and\n` +
+        `worktree-safety checks would all evaluate the wrong tree.\n\n` +
+        `Run canon from the main checkout instead:\n` +
+        `  ${classification.mainRoot}\n` +
+        `and let canon create the task's worktree. If you intend THIS directory to be\n` +
+        `canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.`,
+    );
 }
 
 type WorktreeBranchEntry = { path: string; branch: string | null };

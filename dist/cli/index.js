@@ -115,7 +115,7 @@ function resolveRepoRoot() {
 }
 var REPO_ROOT = resolveRepoRoot();
 var TASKS_DIR = path3.join(REPO_ROOT, "tasks");
-var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path3.resolve(process.env.CANON_WORKTREES_ROOT) : path3.resolve(REPO_ROOT, "../dev-worktrees");
+var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path3.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path3.resolve(REPO_ROOT, "../dev-worktrees");
 var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
 function resolveProjectName() {
   if (process.env.CANON_PROJECT_NAME) return process.env.CANON_PROJECT_NAME;
@@ -148,7 +148,63 @@ var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "q
 
 // scripts/run-task/state.ts
 function effectiveWorktreesRoot() {
-  return process.env.CANON_WORKTREES_ROOT ? path4.resolve(process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+  return process.env.CANON_WORKTREES_ROOT ? path4.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+}
+function isPathInside(child, parent) {
+  if (child === parent) return true;
+  const rel = path4.relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !path4.isAbsolute(rel);
+}
+function classifyInvocationRoot(params) {
+  const { activeToplevel, mainRoot, worktreesRoot } = params;
+  if (!activeToplevel) return { kind: "unknown" };
+  if (activeToplevel === mainRoot) return { kind: "main" };
+  if (isPathInside(activeToplevel, worktreesRoot)) {
+    return { kind: "canon-worktree", activeRoot: activeToplevel };
+  }
+  return { kind: "foreign-worktree", activeRoot: activeToplevel, mainRoot, worktreesRoot };
+}
+function canonicalizePath(p) {
+  try {
+    return fs5.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+function readActiveToplevel() {
+  const result = spawnSync2("git", ["rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  if (result.error || result.status !== 0) return null;
+  const out = (result.stdout ?? "").trim();
+  return out === "" ? null : out;
+}
+function assertManagedInvocationRoot() {
+  if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
+  const activeToplevel = readActiveToplevel();
+  const classification = classifyInvocationRoot({
+    activeToplevel: activeToplevel ? canonicalizePath(activeToplevel) : null,
+    mainRoot: canonicalizePath(REPO_ROOT),
+    worktreesRoot: canonicalizePath(effectiveWorktreesRoot())
+  });
+  if (classification.kind !== "foreign-worktree") return;
+  die(
+    `Canon was invoked from a linked git worktree it does not manage:
+  ${classification.activeRoot}
+
+Canon manages task worktrees itself \u2014 it creates them under
+  ${classification.worktreesRoot}
+and routes task state there automatically. Running task commands from a
+hand-created linked worktree is unsupported: task state would be written
+here but read from the main checkout, so dirty-state, base-branch, and
+worktree-safety checks would all evaluate the wrong tree.
+
+Run canon from the main checkout instead:
+  ${classification.mainRoot}
+and let canon create the task's worktree. If you intend THIS directory to be
+canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.`
+  );
 }
 function listWorktreesWithBranches() {
   const result = spawnSync2("git", ["worktree", "list", "--porcelain"], {
@@ -3942,6 +3998,7 @@ function taskSet(args2) {
 function taskCmd(args2) {
   const [subcommand, ...rest] = args2;
   try {
+    assertManagedInvocationRoot();
     switch (subcommand) {
       case "new":
         taskNew(rest);
