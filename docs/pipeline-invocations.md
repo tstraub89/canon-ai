@@ -803,3 +803,13 @@
 | 2026-07-21T01:23:11.456Z | stable-validation-ids | spec_review | codex | gpt-5.6-sol | 0 | 225.4s | 8636071 | ok |
 | 2026-07-21T02:08:52.512Z | stable-validation-ids | spec_review | codex | gpt-5.6-sol | 1 | 320.2s | 10465872 | ok |
 | 2026-07-21T02:17:07.206Z | stable-validation-ids | spec_review | codex | gpt-5.6-sol | 2 | 272.7s | 12931966 | ok |
+| 2026-07-21T20:27:27.697Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 0 | 105.3s | 577172 | ok |
+| 2026-07-21T20:31:21.742Z | fix-installed-provenance-version | spec | claude | opus | 0 | 233.9s | 1097181 | ok |
+| 2026-07-21T20:32:44.415Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 1 | 82.5s | 1075530 | ok |
+| 2026-07-21T20:35:24.395Z | fix-installed-provenance-version | spec | claude | opus | 0 | 159.8s | 859545 | ok |
+| 2026-07-21T20:36:20.632Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 2 | 56.0s | 1474673 | ok |
+| 2026-07-21T20:38:13.031Z | fix-installed-provenance-version | spec | claude | opus | 0 | 112.2s | 661643 | ok |
+| 2026-07-22T16:28:40.335Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 3 | 59.4s | 1930449 | ok |
+| 2026-07-22T17:25:38.598Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 4 | 61.8s | 2436890 | ok |
+| 2026-07-22T17:31:37.870Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 5 | 95.2s | 3302249 | ok |
+| 2026-07-22T18:13:00.178Z | fix-installed-provenance-version | plan | claude | sonnet | 0 | 187.5s | 1480272 | ok |
