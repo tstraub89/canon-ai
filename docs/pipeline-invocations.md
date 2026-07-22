@@ -813,3 +813,5 @@
 | 2026-07-22T17:25:38.598Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 4 | 61.8s | 2436890 | ok |
 | 2026-07-22T17:31:37.870Z | fix-installed-provenance-version | spec_review | codex | gpt-5.6-luna | 5 | 95.2s | 3302249 | ok |
 | 2026-07-22T18:13:00.178Z | fix-installed-provenance-version | plan | claude | sonnet | 0 | 187.5s | 1480272 | ok |
+| 2026-07-22T21:59:59.131Z | recalibrate-spec-review-for-stronger-reviewer | spec_review | codex | gpt-5.6-sol | 0 | 136.4s | 944938 | ok |
+| 2026-07-22T22:13:12.152Z | recalibrate-spec-review-for-stronger-reviewer | spec_review | codex | gpt-5.6-sol | 1 | 116.0s | 1819393 | ok |

@@ -1,0 +1,75 @@
+{
+  "id": "recalibrate-spec-review-for-stronger-reviewer",
+  "title": "Recalibrate spec_review prompt for the 5.6-generation reviewer",
+  "status": "plan",
+  "created": "2026-07-22",
+  "updated": "2026-07-22",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "32e54c5d16098afb018e63cca3831c1eb141abad",
+    "orchestrator_commit": "32e54c5d16098afb018e63cca3831c1eb141abad",
+    "codex_cli": "codex-cli 0.144.5",
+    "claude_code": "2.1.208 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": true,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "sanctioned",
+      "iterations": 2,
+      "iterations_current_loop": 2,
+      "iterations_total": 2,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0,
+      "operator_accepted": true,
+      "operator_accepted_at": "2026-07-22",
+      "operator_accepted_sha": "32e54c5d16098afb018e63cca3831c1eb141abad"
+    },
+    "plan": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "019f8bd5-aae8-7140-8a7c-0960342a8127"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}
