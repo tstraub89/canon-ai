@@ -1,9 +1,9 @@
 {
   "id": "fix-installed-provenance-version",
   "title": "Installed-package snapshot records canon version, not adopter HEAD",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-21",
-  "updated": "2026-07-22",
+  "updated": "2026-07-23",
   "branch": "task/fix-installed-provenance-version",
   "base_branch": "main",
   "canon": {
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
