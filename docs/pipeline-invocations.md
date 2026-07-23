@@ -819,3 +819,4 @@
 | 2026-07-22T18:21:30.799Z | fix-installed-provenance-version | code_review | codex | gpt-5.6-luna | 0 | 178.2s | 0 | ok |
 | 2026-07-22T18:26:40.265Z | fix-installed-provenance-version | code_review | claude | sonnet | 0 | 309.4s | 507972 | ok |
 | 2026-07-22T18:29:39.246Z | fix-installed-provenance-version | qa | claude | sonnet | 0 | 179.0s | 2261388 | ok |
+| 2026-07-23T18:37:59.269Z | recalibrate-spec-review-for-stronger-reviewer | plan | claude | sonnet | 0 | 300.6s | 2368002 | ok |
