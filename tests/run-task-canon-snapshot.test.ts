@@ -98,6 +98,7 @@ void test('captureCanonSnapshot uses the current checkout SHA for native canon',
     assert.equal(snapshot.upstream_repo, CANON_UPSTREAM_REPO);
     assert.equal(snapshot.upstream_commit, snapshot.orchestrator_commit);
     assert.ok(snapshot.upstream_commit.length > 0);
+    assert.ok(typeof snapshot.canon_version === 'string' && snapshot.canon_version.length > 0);
 });
 
 void test('captureCanonSnapshot uses the superproject SHA when canon is vendored', () => {
@@ -112,10 +113,12 @@ void test('captureCanonSnapshot uses the superproject SHA when canon is vendored
             ['codex :: --version']: { ok: true, stdout: 'codex 1.2.3', stderr: '' },
             ['claude :: --version']: { ok: true, stdout: 'claude 4.5.6', stderr: '' },
         }),
+        canonVersion: '1.5.0',
     });
     assert.equal(snapshot.upstream_repo, CANON_UPSTREAM_REPO);
     assert.equal(snapshot.upstream_commit, 'submodule-sha');
     assert.equal(snapshot.orchestrator_commit, 'host-sha');
+    assert.equal(snapshot.canon_version, '1.5.0');
     assert.equal(snapshot.codex_cli, 'codex 1.2.3');
     assert.equal(snapshot.claude_code, 'claude 4.5.6');
 });
@@ -133,6 +136,7 @@ void test('captureCanonSnapshot records unavailable CLIs without failing', () =>
     assert.equal(snapshot.orchestrator_commit, 'native-sha');
     assert.equal(snapshot.codex_cli, '<unavailable>');
     assert.equal(snapshot.claude_code, '<unavailable>');
+    assert.ok(snapshot.canon_version);
 });
 
 void test('refreshCanonSnapshotAtPath stamps an older task before pipeline work starts', () => {
@@ -158,6 +162,7 @@ void test('refreshCanonSnapshotAtPath stamps an older task before pipeline work 
         assert.equal(updated.canon?.orchestrator_commit, 'refresh-sha');
         assert.equal(updated.canon?.codex_cli, 'codex 9.9.9');
         assert.equal(updated.canon?.claude_code, 'claude 8.8.8');
+        assert.ok(updated.canon?.canon_version);
         assert.equal(updated.updated, new Date().toISOString().slice(0, 10));
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -176,6 +181,167 @@ void test('captureCanonSnapshot uses CANON_UPSTREAM_REPO env var when non-empty'
         });
         assert.equal(snapshot.upstream_repo, 'my-fork/canon-ai');
     });
+});
+
+void test('captureCanonSnapshot marks canon commit unavailable for an installed-package run', () => {
+    const repoRoot = '/tmp/adopter/project';
+    const snapshot = captureCanonSnapshot(repoRoot, {
+        runGitAt: fakeGitRunner({
+            [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+            [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: 'adopter-sha', stderr: '' },
+        }),
+        runCommand: fakeCommandRunner({
+            ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+            ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+        }),
+        canonSourcePath: '/tmp/adopter/project/node_modules/canon-ai/dist/scripts',
+        canonVersion: '2.2.0',
+    });
+    assert.equal(snapshot.upstream_commit, '<unavailable>');
+    assert.notEqual(snapshot.upstream_commit, 'adopter-sha');
+    assert.equal(snapshot.upstream_repo, CANON_UPSTREAM_REPO);
+    assert.equal(snapshot.orchestrator_commit, 'adopter-sha');
+    assert.equal(snapshot.canon_version, '2.2.0');
+});
+
+void test('captureCanonSnapshot never stamps the adopter commit as canon commit for an installed run (regression, #196)', () => {
+    const repoRoot = '/tmp/adopter/other-project';
+    const snapshot = captureCanonSnapshot(repoRoot, {
+        runGitAt: fakeGitRunner({
+            [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+            [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: 'p0-quick-fixes-sha', stderr: '' },
+        }),
+        runCommand: fakeCommandRunner({
+            ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+            ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+        }),
+        canonSourcePath: '/tmp/adopter/other-project/node_modules/canon-ai/dist/scripts',
+        canonVersion: '3.0.0',
+    });
+    assert.equal(snapshot.upstream_commit, '<unavailable>');
+    assert.notEqual(snapshot.upstream_commit, 'p0-quick-fixes-sha');
+    assert.equal(snapshot.canon_version, '3.0.0');
+});
+
+void test('captureCanonSnapshot preserves the upstream override for an installed run', () => {
+    const repoRoot = '/tmp/adopter/override-project';
+    withEnv({ CANON_UPSTREAM_REPO: 'my-fork/canon-ai' }, () => {
+        const snapshot = captureCanonSnapshot(repoRoot, {
+            runGitAt: fakeGitRunner({
+                [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+                [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: 'adopter-sha', stderr: '' },
+            }),
+            runCommand: fakeCommandRunner({
+                ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+                ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+            }),
+            canonSourcePath: '/tmp/adopter/override-project/node_modules/canon-ai/dist/scripts',
+            canonVersion: '2.2.0',
+        });
+        assert.equal(snapshot.upstream_repo, 'my-fork/canon-ai');
+        assert.equal(snapshot.upstream_commit, '<unavailable>');
+        assert.equal(snapshot.orchestrator_commit, 'adopter-sha');
+    });
+});
+
+void test('captureCanonSnapshot uses dev when canon version is unversioned', () => {
+    withEnv({ CANON_VERSION: undefined }, () => {
+        const repoRoot = '/tmp/unversioned/adopter';
+        const snapshot = captureCanonSnapshot(repoRoot, {
+            runGitAt: fakeGitRunner(nativeGitResponses(repoRoot, 'native-sha')),
+            runCommand: fakeCommandRunner({
+                ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+                ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+            }),
+        });
+        assert.equal(snapshot.canon_version, 'dev');
+    });
+});
+
+void test('captureCanonSnapshot classifies a linked-worktree source path as native, not installed', () => {
+    const repoRoot = '/tmp/native/canon-ai';
+    const snapshot = captureCanonSnapshot(repoRoot, {
+        runGitAt: fakeGitRunner(nativeGitResponses(repoRoot, 'worktree-native-sha')),
+        runCommand: fakeCommandRunner({
+            ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+            ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+        }),
+        canonSourcePath: '/Users/dev/canon-ai/dev-worktrees/some-task/scripts/run-task',
+        canonVersion: 'dev',
+    });
+    assert.equal(snapshot.upstream_commit, 'worktree-native-sha');
+    assert.notEqual(snapshot.upstream_commit, '<unavailable>');
+    assert.equal(snapshot.orchestrator_commit, 'worktree-native-sha');
+    assert.equal(snapshot.canon_version, 'dev');
+});
+
+void test('captureCanonSnapshot records host commit and unavailable canon commit when installed inside a submodule adopter', () => {
+    const repoRoot = '/tmp/host/adopter-submodule';
+    const snapshot = captureCanonSnapshot(repoRoot, {
+        runGitAt: fakeGitRunner({
+            [`${repoRoot} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '/tmp/host', stderr: '' },
+            [`${repoRoot} :: rev-parse HEAD`]: { ok: true, stdout: 'adopter-submodule-sha', stderr: '' },
+            ['/tmp/host :: rev-parse HEAD']: { ok: true, stdout: 'host-sha', stderr: '' },
+        }),
+        runCommand: fakeCommandRunner({
+            ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+            ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+        }),
+        canonSourcePath: '/tmp/host/adopter-submodule/node_modules/canon-ai/dist/scripts',
+        canonVersion: '2.2.0',
+    });
+    assert.equal(snapshot.upstream_commit, '<unavailable>');
+    assert.notEqual(snapshot.upstream_commit, 'adopter-submodule-sha');
+    assert.notEqual(snapshot.upstream_commit, 'host-sha');
+    assert.equal(snapshot.upstream_repo, CANON_UPSTREAM_REPO);
+    assert.equal(snapshot.canon_version, '2.2.0');
+    assert.equal(snapshot.orchestrator_commit, 'host-sha');
+});
+
+void test('refreshCanonSnapshotAtPath keeps installed canon identity stable while orchestrator tracks the adopter', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-snapshot-refresh-installed-'));
+    try {
+        const taskId = 'stale-installed-task';
+        const taskDir = path.join(root, 'tasks', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        const statusFile = path.join(taskDir, 'status.json');
+        fs.writeFileSync(statusFile, `${JSON.stringify(makeStatus(taskId, { canon: undefined }), null, 2)}\n`, 'utf8');
+        const commandOpts = {
+            runCommand: fakeCommandRunner({
+                ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
+                ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
+            }),
+            canonSourcePath: '/tmp/adopter/refresh/node_modules/canon-ai/dist/scripts',
+            canonVersion: '2.2.0',
+        };
+
+        refreshCanonSnapshotAtPath(statusFile, {
+            ...commandOpts,
+            runGitAt: fakeGitRunner({
+                [`${REPO_ROOT} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+                [`${REPO_ROOT} :: rev-parse HEAD`]: { ok: true, stdout: 'adopter-sha-1', stderr: '' },
+            }),
+        });
+        const first = JSON.parse(fs.readFileSync(statusFile, 'utf8')) as StatusJson;
+
+        refreshCanonSnapshotAtPath(statusFile, {
+            ...commandOpts,
+            runGitAt: fakeGitRunner({
+                [`${REPO_ROOT} :: rev-parse --show-superproject-working-tree`]: { ok: true, stdout: '', stderr: '' },
+                [`${REPO_ROOT} :: rev-parse HEAD`]: { ok: true, stdout: 'adopter-sha-2', stderr: '' },
+            }),
+        });
+        const second = JSON.parse(fs.readFileSync(statusFile, 'utf8')) as StatusJson;
+
+        assert.equal(first.canon?.upstream_commit, '<unavailable>');
+        assert.equal(second.canon?.upstream_commit, '<unavailable>');
+        assert.equal(first.canon?.upstream_repo, second.canon?.upstream_repo);
+        assert.equal(first.canon?.canon_version, second.canon?.canon_version);
+        assert.equal(first.canon?.orchestrator_commit, 'adopter-sha-1');
+        assert.equal(second.canon?.orchestrator_commit, 'adopter-sha-2');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 });
 
 void test('captureCanonSnapshot falls back to the const when CANON_UPSTREAM_REPO is unset, empty, or whitespace-only', () => {
@@ -278,6 +444,7 @@ void test('taskNew stamps canon provenance into the seeded status.json', () => {
         assert.match(status.canon?.orchestrator_commit ?? '', /^[0-9a-f]{7,40}$/i);
         assert.ok(status.canon?.codex_cli);
         assert.ok(status.canon?.claude_code);
+        assert.ok(status.canon?.canon_version);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

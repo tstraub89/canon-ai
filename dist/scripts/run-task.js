@@ -4487,6 +4487,12 @@ import { spawnSync as spawnSync4 } from "child_process";
 import fs10 from "fs";
 import path10 from "path";
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
+function isInstalledSourcePath(sourcePath) {
+  return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
+}
+function resolveCanonVersion(explicit) {
+  return explicit ?? "2.3.0" ?? "dev";
+}
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!ownToplevel) return upstreamCommit;
@@ -4526,15 +4532,30 @@ function captureVersion(command, runCommand3) {
 function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const runGitAt = options.runGitAt ?? gitSafeAt;
   const runCommand3 = options.runCommand ?? defaultRunCommand;
+  const canonSourcePath = options.canonSourcePath ?? __dirname;
+  const isInstalled = isInstalledSourcePath(canonSourcePath);
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
-  const upstreamCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const orchestratorCommit = superprojectWorkingTree ? captureGitOutput(path10.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt);
+  const drivingCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
+  const hostCommit = superprojectWorkingTree ? captureGitOutput(path10.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
+  let upstreamCommit;
+  let orchestratorCommit;
+  if (isInstalled) {
+    upstreamCommit = "<unavailable>";
+    orchestratorCommit = hostCommit ?? drivingCommit;
+  } else if (superprojectWorkingTree) {
+    upstreamCommit = drivingCommit;
+    orchestratorCommit = hostCommit ?? "<unavailable>";
+  } else {
+    upstreamCommit = drivingCommit;
+    orchestratorCommit = resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt);
+  }
   const envUpstreamRepo = process.env.CANON_UPSTREAM_REPO?.trim();
   const upstreamRepo = envUpstreamRepo ? envUpstreamRepo : CANON_UPSTREAM_REPO;
   return {
     upstream_repo: upstreamRepo,
     upstream_commit: upstreamCommit,
     orchestrator_commit: orchestratorCommit,
+    canon_version: resolveCanonVersion(options.canonVersion),
     codex_cli: captureVersion("codex", runCommand3),
     claude_code: captureVersion("claude", runCommand3)
   };

@@ -14,74 +14,76 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+
+The anchored lens independently reran `npm run lint`, `npm run type-check`, `npm test` (1027 pass), `npm run docs-refs-check`, `npm run sync-templates:check`, and `npm run build` (dist rebuilds byte-identical) — all green, matching handoff's Validation Outcomes table.
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | `canon-snapshot.ts:89-91`; installed-package test asserts `<unavailable>` and rejects the adopter SHA. |
+| AC-1b | Pass | `orchestrator_commit = hostCommit ?? drivingCommit` (adopter commit) preserved; `upstream_repo` slug and `CANON_UPSTREAM_REPO` override both unaffected by the `isInstalled` branch. |
+| AC-2 | Pass | Regression test named for #196; asserts fixed unavailable/version behavior. Reasoned red-first: the pre-branch code ignores the new `canonSourcePath`/`canonVersion` seam and falls through to the native path, stamping adopter HEAD — the test would fail against that prior behavior. |
+| AC-3 | Pass | `resolveCanonVersion`; explicit released-version test and unset-env `dev`-fallback test both present. |
+| AC-4 | Pass | Native (else) branch unchanged; existing native test extended with a version assertion. |
+| AC-4b | Pass | Linked-worktree source path classifies as native; canon commit is a real commit, not `<unavailable>`. |
+| AC-5 | Pass | Vendored branch unchanged; existing vendored test extended with a version assertion. |
+| AC-5b | Pass | Installed-inside-submodule-adopter fixture: canon commit `<unavailable>` (distinct from both adopter and host SHA), `orchestrator_commit` = host SHA. |
+| AC-6 | Pass | Refresh test: canon identity (repo slug, `<unavailable>`, version) stable across two refreshes with different adopter commits; `orchestrator_commit` tracks the adopter. |
+| AC-7 | Pass | `.canon/templates/status.json` and its `templates/` mirror both gain `canon_version`; `sync-templates:check` passes. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work) — no SHA-baking, no `provenance.json` (under `.canon`) consumption, no `canon doctor` cross-check work attempted.
+- [x] Known Risks addressed or documented as accepted — linked-worktree (AC-4b) and adopter-as-submodule (AC-5b) misclassification risks both have dedicated regression tests; install-layout coverage matches the spec's named layouts (local `node_modules`, `_npx`); `dev`-leakage risk is exercised by the fallback test.
+- [x] Human Test Plan is satisfiable by the implementation — installed mode shows version + `<unavailable>`, refresh doesn't perturb canon identity, native/vendored unchanged aside from the new version field.
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Clean, well-scoped implementation. The classification order (installed-package → vendored → native) matches the Implementation Notes precisely, and the trickiest cases called out in Known Risks — linked-worktree-stays-native and installed-inside-submodule-adopter — each have a purpose-built regression test. Both cold lenses (Claude and Codex) independently signaled approve; no cross-model agreement on any blocking defect. Surviving findings are all nits or explicitly-acknowledged pre-existing patterns.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `scripts/run-task/canon-snapshot.ts:29` (`resolveCanonVersion`) — `explicit ?? process.env.CANON_VERSION ?? 'dev'` doesn't guard against an empty-string `CANON_VERSION`, unlike the sibling `upstream_repo` handling a few lines below (`process.env.CANON_UPSTREAM_REPO?.trim()` then a truthy check before falling back to the const). If `CANON_VERSION` is ever exported as `""`, `canon_version` would stamp as `""` instead of falling through to `'dev'`. (Flagged by cold-Claude.) Not a spec violation — the Implementation Notes prescribe exactly this expression (`process.env.CANON_VERSION ?? 'dev'`, "the same expression `bakedVersion()` uses") — and `bakedVersion()` in `src/cli/commands/update.ts` has the identical gap, so this is a pre-existing, spec-sanctioned pattern rather than a new defect. Worth a follow-up guard if it's ever tightened, not blocking here.
+- `scripts/run-task/canon-snapshot.ts:22-25` (`isInstalledSourcePath`) duplicates the segment-matching logic already present in `detectInstallType` (`src/cli/commands/update.ts`). The spec's own Implementation Notes explicitly sanctioned this ("Reuse the underlying segment predicate (extract or duplicate the small check)"), so this is accepted duplication debt, not a defect. (Flagged by anchored lens.)
+- `scripts/run-task/canon-snapshot.ts:81-85` — `superprojectWorkingTree`/`hostCommit` are computed unconditionally even for the common installed-package case where the adopter isn't itself a submodule, costing one discarded git invocation. Harmless; needed for AC-5b. (Flagged by anchored lens.)
+- Compiled `resolveCanonVersion` in `dist/cli/index.js` / `dist/scripts/run-task.js` is `explicit ?? "2.3.0" ?? "dev"` — the `'dev'` fallback is dead code in the shipped artifact once tsup's `define` (`tsup.config.ts`: `define: { 'process.env.CANON_VERSION': JSON.stringify(version) }`) substitutes a literal version string at build time. Verified this exactly mirrors the pre-existing `bakedVersion()` pattern — expected, not a new bug. (Flagged by both cold-Claude and anchored lens; verified against `tsup.config.ts` and confirmed not a regression.)
+- `isInstalledSourcePath`'s `node_modules`/`_npx` segment check doesn't cover Yarn Plug'n'Play installs (no `node_modules` directory at all). A PnP-installed canon would misclassify as native and revert to the pre-fix behavior of stamping the adopter's commit. (Flagged by cold-Claude, low confidence.) Real edge case, but PnP is not among the install layouts the spec's Known Risks section names ("Local `node_modules`, pnpm nested/virtual stores, global npm installs, and `npx` caches") — out of the contracted scope for this task, not a violation of any AC. Noted for a future install-layout-coverage follow-up rather than blocking here.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
+- Dismissed (cold-Claude): "compiled `resolveCanonVersion`'s `'dev'` fallback is unreachable dead code in `dist/`, possibly indicating an unintentional build-time substitution" - verified against `tsup.config.ts`'s `define` config and the pre-existing `bakedVersion()` pattern in `src/cli/commands/update.ts`; the substitution is deliberate and matches an established, already-shipped pattern. Retained above as a nit for completeness, not dismissed as invalid, but confirmed not a bug.
+- Dismissed (cold-Claude): "`hostCommit` computed once from `|| '<unavailable>'`, so a transient host-git failure in the installed+submodule-adopter path yields `'<unavailable>'` for `orchestrator_commit` instead of falling back to `drivingCommit`" - this exact fallback shape (`captureGitOutput(...) || '<unavailable>'`) is pre-existing vendored-mode behavior, unchanged by this diff; not a regression introduced here and out of this task's scope (vendored/host-commit resolution is explicitly unchanged per spec's Non-Goals).
 
-(none / list items)
+Cold-Codex surfaced no findings beyond a general approval statement ("The changes correctly distinguish installed-package execution from native and vendored modes, preserve adopter provenance, and record canon version information. The test suite passes.") — no cross-model agreement to reconcile against any blocking claim.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 

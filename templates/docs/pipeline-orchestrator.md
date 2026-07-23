@@ -295,6 +295,8 @@ Every task carries a provenance snapshot in `status.json.canon`. `canon task new
 
 - Native checkouts record the canon checkout SHA in both `upstream_commit` and `orchestrator_commit`.
 - Vendored checkouts record the submodule SHA in `upstream_commit` and the host repo SHA in `orchestrator_commit`.
+- Installed-package runs record `<unavailable>` for `upstream_commit` — never the adopter's own commit — while `orchestrator_commit` still tracks the driving repository's commit (the adopter, or its host when the adopter is itself a submodule).
+- Every mode additionally records the executing canon's version in `canon_version`.
 - Missing `codex` or `claude` binaries record `<unavailable>` instead of failing the run.
 - `--dry-run` is read-only and does not refresh the snapshot.
 

@@ -815,3 +815,7 @@
 | 2026-07-22T18:13:00.178Z | fix-installed-provenance-version | plan | claude | sonnet | 0 | 187.5s | 1480272 | ok |
 | 2026-07-22T21:59:59.131Z | recalibrate-spec-review-for-stronger-reviewer | spec_review | codex | gpt-5.6-sol | 0 | 136.4s | 944938 | ok |
 | 2026-07-22T22:13:12.152Z | recalibrate-spec-review-for-stronger-reviewer | spec_review | codex | gpt-5.6-sol | 1 | 116.0s | 1819393 | ok |
+| 2026-07-22T18:18:32.007Z | fix-installed-provenance-version | implement | codex | gpt-5.6-luna | 0 | 330.7s | 2489515 | ok |
+| 2026-07-22T18:21:30.799Z | fix-installed-provenance-version | code_review | codex | gpt-5.6-luna | 0 | 178.2s | 0 | ok |
+| 2026-07-22T18:26:40.265Z | fix-installed-provenance-version | code_review | claude | sonnet | 0 | 309.4s | 507972 | ok |
+| 2026-07-22T18:29:39.246Z | fix-installed-provenance-version | qa | claude | sonnet | 0 | 179.0s | 2261388 | ok |

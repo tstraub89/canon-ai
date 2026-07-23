@@ -1,0 +1,1 @@
+The changes correctly distinguish installed-package execution from native and vendored modes, preserve adopter provenance, and record canon version information. The test suite passes.

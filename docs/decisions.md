@@ -36,6 +36,8 @@ Decisions can be reopened, but only with **strong justification and human approv
 
 **Rule**: New task-facing provenance should read from `status.json.canon`. The canonical upstream repo slug lives in `CANON_UPSTREAM_REPO` in `scripts/run-task/canon-snapshot.ts`; do not duplicate that value in docs or handoff artifacts unless you're explicitly pointing back to the symbol. `captureCanonSnapshot()` may override the stamped slug at call time from a non-empty `CANON_UPSTREAM_REPO` env var, but the symbol remains the default source of truth.
 
+Installed-package mode identifies canon by `canon_version` rather than a borrowed adopter commit, because no canon commit is recoverable from the published artifact. This does not bake a source SHA into `dist` (the reproducible-dist CI gate prevents that) or read the updater's `.canon` provenance receipt for a canon SHA (the write-time receipt can drift from the executing binary in a global install).
+
 ---
 
 ## Two distinct agents (Claude + Codex), never reviewing own output

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { REPO_ROOT } from './env.js';
+import { __dirname, REPO_ROOT } from './env.js';
 import { gitSafeAt } from './git.js';
 import { deriveTopLevelStatus } from './state.js';
 import type { CanonStamp, CommandResult, StatusJson } from './types.js';
@@ -15,7 +15,19 @@ type CommandRunner = (command: string, args: string[]) => CommandResult;
 export type CanonSnapshotOptions = {
     runGitAt?: GitRunner;
     runCommand?: CommandRunner;
+    canonSourcePath?: string;
+    canonVersion?: string;
 };
+
+function isInstalledSourcePath(sourcePath: string): boolean {
+    return sourcePath.includes('/node_modules/') || sourcePath.includes('\\node_modules\\')
+        || sourcePath.includes('/_npx/') || sourcePath.includes('\\_npx\\');
+}
+
+function resolveCanonVersion(explicit: string | undefined): string {
+    // Mirrors bakedVersion() in src/cli/commands/update.ts.
+    return explicit ?? process.env.CANON_VERSION ?? 'dev';
+}
 
 function resolveOrchestratorCommit(repoRoot: string, upstreamCommit: string, runGitAt: GitRunner): string {
     const ownToplevel = captureGitOutput(repoRoot, ['rev-parse', '--show-toplevel'], runGitAt);
@@ -63,12 +75,27 @@ function captureVersion(command: string, runCommand: CommandRunner): string {
 export function captureCanonSnapshot(repoRoot = REPO_ROOT, options: CanonSnapshotOptions = {}): CanonStamp {
     const runGitAt = options.runGitAt ?? gitSafeAt;
     const runCommand = options.runCommand ?? defaultRunCommand;
+    const canonSourcePath = options.canonSourcePath ?? __dirname;
+    const isInstalled = isInstalledSourcePath(canonSourcePath);
 
     const superprojectWorkingTree = captureGitOutput(repoRoot, ['rev-parse', '--show-superproject-working-tree'], runGitAt);
-    const upstreamCommit = captureGitOutput(repoRoot, ['rev-parse', 'HEAD'], runGitAt) || '<unavailable>';
-    const orchestratorCommit = superprojectWorkingTree
+    const drivingCommit = captureGitOutput(repoRoot, ['rev-parse', 'HEAD'], runGitAt) || '<unavailable>';
+    const hostCommit = superprojectWorkingTree
         ? captureGitOutput(path.resolve(superprojectWorkingTree), ['rev-parse', 'HEAD'], runGitAt) || '<unavailable>'
-        : resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt);
+        : null;
+
+    let upstreamCommit: string;
+    let orchestratorCommit: string;
+    if (isInstalled) {
+        upstreamCommit = '<unavailable>';
+        orchestratorCommit = hostCommit ?? drivingCommit;
+    } else if (superprojectWorkingTree) {
+        upstreamCommit = drivingCommit;
+        orchestratorCommit = hostCommit ?? '<unavailable>';
+    } else {
+        upstreamCommit = drivingCommit;
+        orchestratorCommit = resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt);
+    }
     const envUpstreamRepo = process.env.CANON_UPSTREAM_REPO?.trim();
     const upstreamRepo = envUpstreamRepo ? envUpstreamRepo : CANON_UPSTREAM_REPO;
 
@@ -76,6 +103,7 @@ export function captureCanonSnapshot(repoRoot = REPO_ROOT, options: CanonSnapsho
         upstream_repo: upstreamRepo,
         upstream_commit: upstreamCommit,
         orchestrator_commit: orchestratorCommit,
+        canon_version: resolveCanonVersion(options.canonVersion),
         codex_cli: captureVersion('codex', runCommand),
         claude_code: captureVersion('claude', runCommand),
     };

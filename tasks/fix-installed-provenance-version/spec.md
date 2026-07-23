@@ -64,10 +64,12 @@ Each criterion is an observable property of the recorded stamp for a given run s
 | `scripts/run-task/canon-snapshot.ts` | Add installed-package-mode recognition so an installed canon records `<unavailable>` for the canon commit (never the adopter's) while preserving the driving repository's commit as the orchestrating commit; record the canon version in every mode. Detection mechanism and precedence are in Implementation Notes. |
 | `scripts/run-task/types.ts` | Add a required `canon_version: string` field to `CanonStamp`, consistent with the other snake_case stamp fields. |
 | `.canon/templates/status.json` | Add the canon version field to the scaffolded `canon` block, alongside the existing runtime-populated fields. Edit the root copy only; the `templates/` mirror auto-syncs via the pre-commit hook. |
+| `templates/.canon/templates/status.json` | Auto-synced mirror of `.canon/templates/status.json` (pre-commit hook, not hand-edited); declared for the base-drift gate. |
 | `tests/run-task-canon-snapshot.test.ts` | Add tests for the installed-package situations (AC-1/1b, AC-2 red-first, AC-3, AC-5b, AC-6) and the native linked-worktree guard (AC-4b); extend the existing native/vendored tests with version assertions (AC-4, AC-5). |
 | `dist/cli/index.js` | Rebuilt bundle — `canon-snapshot.ts` is transitively imported by the `src/cli` entry point (`update.ts` imports `CANON_UPSTREAM_REPO`). Declared for the base-drift gate. |
 | `dist/scripts/run-task.js` | Rebuilt bundle — `canon-snapshot.ts` is imported by the run-task entry point. Declared for the base-drift gate. |
 | `docs/pipeline-orchestrator.md` | §"Canon Snapshot Stamping": add the installed-package behavior (version-as-identity, canon commit `<unavailable>`, driving repo's commit stays the orchestrating commit) and note the version field. |
+| `templates/docs/pipeline-orchestrator.md` | Auto-synced mirror of `docs/pipeline-orchestrator.md` (pre-commit hook, not hand-edited); declared for the base-drift gate. |
 | `docs/decisions.md` | §"Canon provenance stamp": note installed-package mode records identity by version; add the SHA-baking and provenance-consume non-goals with their reasons. |
 
 ### Interaction Dependencies

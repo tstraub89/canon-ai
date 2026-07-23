@@ -10,6 +10,7 @@
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "",
     "orchestrator_commit": "",
+    "canon_version": "",
     "codex_cli": "",
     "claude_code": ""
   },

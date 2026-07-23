@@ -14,6 +14,13 @@
 
 | File | What Changed |
 |---|---|
+| `scripts/run-task/canon-snapshot.ts` | Classifies installed package source paths, preserves driving/host commit attribution, and records canon version. |
+| `scripts/run-task/types.ts` | Adds required `canon_version` to `CanonStamp`. |
+| `.canon/templates/status.json`, `templates/.canon/templates/status.json` | Adds the scaffolded canon version field and synced mirror. |
+| `tests/run-task-canon-snapshot.test.ts` | Covers installed, override, regression, version, linked-worktree, submodule-adopter, and refresh behavior. |
+| `dist/cli/index.js`, `dist/scripts/run-task.js` | Rebuilt bundles. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documents installed-package stamping and version field. |
+| `docs/decisions.md` | Records version-based installed identity and related non-goals. |
 
 ## Canon Governance
 
@@ -24,12 +31,13 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 | Upstream repo | `status.json.canon.upstream_repo` |
 | Upstream commit | `status.json.canon.upstream_commit` |
 | Orchestrator commit | `status.json.canon.orchestrator_commit` |
+| Canon version | `status.json.canon.canon_version` |
 | Codex CLI | `status.json.canon.codex_cli` |
 | Claude Code | `status.json.canon.claude_code` |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Installed mode is detected from canon's executing source path (`node_modules`/`_npx`) before git-topology classification. It records `<unavailable>` for canon's commit while retaining the adopter or host commit as `orchestrator_commit`; native and vendored attribution remains unchanged. Version resolution uses the explicit test seam, `CANON_VERSION`, or `dev`.
 
 ## Deviations from Plan
 
@@ -37,7 +45,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Added a dedicated installed upstream-repository override test in addition to the plan's primary installed fixture. | AC-1b explicitly requires preserving `CANON_UPSTREAM_REPO` overrides in installed mode. | Strengthens AC-1b; no negative impact. |
 
 ## AC Coverage
 
@@ -45,17 +53,27 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Installed fixtures assert `<unavailable>` and reject adopter SHAs as canon identity. |
+| AC-1b | Met | Tests preserve the default slug, explicit `CANON_UPSTREAM_REPO`, and driving/host orchestrator commit. |
+| AC-2 | Met | Regression test is named for #196 and asserts the fixed unavailable/version behavior. |
+| AC-3 | Met | Explicit released-version and unset-environment `dev` tests cover `canon_version`. |
+| AC-4 | Met | Native test retains real commit attribution and asserts a populated version. |
+| AC-4b | Met | Linked-worktree source path remains native with a real commit. |
+| AC-5 | Met | Vendored test retains submodule/host commits and adds version assertion. |
+| AC-5b | Met | Installed-in-submodule fixture uses distinct adopter and host SHAs and records host attribution. |
+| AC-6 | Met | Refresh test keeps canon identity stable while following adopter commit changes. |
+| AC-7 | Met | Root template, synced mirrors, and sync check cover the stamp shape. |
 
 ## Edge Cases Considered
 
-- ...
+- Installed paths under local/global npm layouts and `_npx` are identified without comparing source and repo roots.
+- Native linked worktrees and vendored paths remain outside the installed predicate.
+- Installed canon inside a submodule adopter checks host attribution before any native fallback.
+- Version resolution is call-time/environment-based, so tests do not capture ambient values at import.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -75,13 +93,19 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | ESLint completed successfully. |
+| `npm run type-check` | Pass | TypeScript check completed successfully. |
+| `npm test` | Pass | 1,025 passed, 1 skipped; 1,026 total. |
+| `npm run build` | Pass | Rebuilt both declared dist artifacts successfully. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `git diff --check` | Pass | No whitespace errors. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 

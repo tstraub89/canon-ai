@@ -81,6 +81,7 @@ export type CanonStamp = {
     upstream_repo: string;
     upstream_commit: string;
     orchestrator_commit: string;
+    canon_version: string;
     codex_cli: string;
     claude_code: string;
 };
