@@ -11,6 +11,7 @@
 ### Fixed
 
 - **Canon now refuses to run task commands from a hand-created linked git worktree instead of silently reading and writing task state in two different checkouts.** If you ran `canon task new` from a `git worktree` you created yourself, canon wrote the task under that worktree, but `canon task status`, `canon run`, and the dirty-state / base-branch / worktree-safety checks all looked in the main checkout — so they silently disagreed about where the task lived and could evaluate a tree you weren't working in ([#202](https://github.com/tstraub89/canon-ai/issues/202)). Canon manages task worktrees itself, so it now detects this case and stops with a message pointing at the main checkout rather than proceeding against the wrong one. Its own pipeline agents, which run from canon-created worktrees, are unaffected. Ships to adopters via `canon upgrade`.
+- **Installed-package provenance stamp no longer records the adopter's commit as canon's identity.** An installed canon (global CLI or project dependency) misclassified its run and stamped the adopter repo's `HEAD` as canon's `upstream_commit`; it now records `<unavailable>` plus a new `canon_version` field, since version is canon's identity when no commit is recoverable ([#196](https://github.com/tstraub89/canon-ai/issues/196)). Ships to adopters via `canon upgrade`.
 
 ## [2.3.0] — 2026-07-18
 
