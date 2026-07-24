@@ -1,9 +1,9 @@
 {
   "id": "recalibrate-spec-review-for-stronger-reviewer",
   "title": "Recalibrate spec_review prompt for the 5.6-generation reviewer",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-22",
-  "updated": "2026-07-23",
+  "updated": "2026-07-24",
   "branch": "task/recalibrate-spec-review-for-stronger-reviewer",
   "base_branch": "main",
   "canon": {
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
