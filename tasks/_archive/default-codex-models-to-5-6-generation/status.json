@@ -1,7 +1,7 @@
 {
   "id": "default-codex-models-to-5-6-generation",
   "title": "Default Codex models to the 5.6 generation, retire 5.4-mini/5.5",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-22",
   "updated": "2026-07-24",
   "branch": "task/default-codex-models-to-5-6-generation",
@@ -59,7 +59,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
