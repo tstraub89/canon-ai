@@ -1,0 +1,1 @@
+The prompt recalibration is scoped correctly, propagated to the golden fixture and shipped bundle, and the test suite passes without regressions.

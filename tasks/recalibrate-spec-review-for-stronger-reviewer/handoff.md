@@ -6,14 +6,12 @@
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
 | File | What Changed |
 |---|---|
+| `scripts/run-task/prompts/templates/spec-review.md` | Reframed the review objective around precise blockers and a valid clean-spec outcome, extended the silence default across implementability, added the bounded scope carve-out, and added the implied-default nit example. |
+| `tests/run-task-prompts.golden.json` | Regenerated the prompt fixture; direct before/after key comparison confirms only `promptSpecReview` changed. |
+| `dist/scripts/run-task.js` | Rebuilt the published orchestrator bundle so the shipped prompt contains the recalibrated instructions. |
+| `docs/decisions.md` | Added the dated decision that reviewer guardrails carry an implicit model-strength calibration and must be revisited on model-generation changes. |
 
 ## Canon Governance
 
@@ -29,90 +27,57 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The implementation removes prompt scaffolding that pushed the stronger reviewer to manufacture findings while preserving the substantive blocker definition, Shape Check probes, bug/flake evidence ladder, verdict mapping, and cross-review ownership rules. The scope boundary is deliberately narrow: only behavior explicitly excluded and verified unaffected is downgraded; required-but-omitted dependencies, transitive effects, and contradictions remain blocking.
+
+The source prompt was then propagated through both tested and shipped forms: the golden fixture was regenerated and isolated to the normal `promptSpecReview` key, and the distribution bundle was rebuilt. The decision log records the model-calibration principle so future model-generation upgrades trigger review of peer guardrails.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | The plan's exact prompt and decision-log wording was applied as written. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: Clean spec is a valid outcome | Met | The objective now explicitly says that no blocking findings is a valid, expected result; the former neutral-review failure framing is removed, and `failure mode` is absent from the source prompt. |
+| AC-2: Whole-review silence default | Met | The silence default now names Shape Check and implementability, prohibits manufactured findings, and states that an empty implementability list is valid. |
+| AC-3: Scope boundary with omitted-dependency carve-out | Met | Explicitly excluded and verified-unaffected behavior is a nit at most, while required callers/parsers/migrations/tests, transitive effects, and contradictions remain blocking. |
+| AC-4: Blocking-vs-nit example | Met | The classification includes the field-name/implied-convention example as a plan-phase nit rather than Blocking. |
+| AC-5: Guardrail phrase preservation | Met | The exact strings `No agent reviews its own output` and `Each role owns a checkpoint` remain; `task baseline` and `git -C` are absent; the unchanged AC-11 structural test passes. |
+| AC-6: Golden regenerated | Met | `UPDATE_GOLDENS=1 npm test` regenerated the fixture; an object-key comparison against `HEAD` reports only `promptSpecReview`, and a subsequent unmodified-environment `npm test` passes. |
+| AC-7: Shipped bundle rebuilt | Met | A fresh `npm run build` updated only `dist/scripts/run-task.js`; the new objective, silence default, scope boundary, and nit example are present in the bundle, while `dist/cli/index.js` remains clean. |
+| AC-8: Durable meta-insight recorded | Met | `docs/decisions.md` now contains the July 2026 model-strength-calibration entry citing this task as the trigger; `npm run docs-refs-check` passes. |
 
 ## Edge Cases Considered
 
-- ...
+- Preserved blocking status for required-but-omitted pre-existing surfaces so the new scope boundary cannot suppress real interaction dependencies.
+- Limited the out-of-scope downgrade to behavior both explicitly excluded and verified unaffected; merely reaching untouched code does not qualify.
+- Preserved the bug/flake evidence ladder, Shape Check probes, verdict thresholds, checkpoint ownership phrase, and cross-review phrase verbatim.
+- Left `spec-review-reroute.md` and all reroute golden entries unchanged because the evidence and scope apply only to the normal changes-requested loop.
+- Confirmed the regenerated golden changed one key and the build changed one declared distribution artifact.
+- Confirmed neither authorized root file is canon-managed, so no `templates/` mirror was generated or edited.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| Golden regeneration (`UPDATE_GOLDENS=1 npm test`) | Pass | 1,027 tests: 1,026 passed, 1 skipped because linked-worktree `.git` writes are restricted; golden regenerated successfully. |
+| Lint (`npm run lint`) | Pass | ESLint completed with no findings. |
+| Type checking (`npm run type-check`) | Pass | TypeScript completed with no errors. |
+| Unit tests (`npm test`) | Pass | Clean-environment rerun: 1,027 tests, 1,026 passed, 1 expected environment skip, 0 failures. |
+| Full build (`npm run build`) | Pass | Fresh tsup build succeeded; postbuild normalization completed and only the declared orchestrator bundle differs. |
+| Docs references (`npm run docs-refs-check`) | Pass | `All refs OK`. |
+| Canon-managed template sync (`npm run sync-templates:check`) | Pass | `All canon-managed files in sync`. |
+| Diff hygiene (`git diff --check`) | Pass | No whitespace errors. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale

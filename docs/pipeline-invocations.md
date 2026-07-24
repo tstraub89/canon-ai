@@ -820,3 +820,7 @@
 | 2026-07-22T18:26:40.265Z | fix-installed-provenance-version | code_review | claude | sonnet | 0 | 309.4s | 507972 | ok |
 | 2026-07-22T18:29:39.246Z | fix-installed-provenance-version | qa | claude | sonnet | 0 | 179.0s | 2261388 | ok |
 | 2026-07-23T18:37:59.269Z | recalibrate-spec-review-for-stronger-reviewer | plan | claude | sonnet | 0 | 300.6s | 2368002 | ok |
+| 2026-07-23T18:45:34.833Z | recalibrate-spec-review-for-stronger-reviewer | implement | codex | gpt-5.6-sol | 0 | 454.7s | 3398334 | ok |
+| 2026-07-23T18:47:58.798Z | recalibrate-spec-review-for-stronger-reviewer | code_review | codex | gpt-5.6-luna | 0 | 143.6s | 0 | ok |
+| 2026-07-23T18:56:28.962Z | recalibrate-spec-review-for-stronger-reviewer | code_review | claude | opus | 0 | 510.1s | 947778 | ok |
+| 2026-07-23T18:59:13.139Z | recalibrate-spec-review-for-stronger-reviewer | qa | claude | sonnet | 0 | 164.2s | 1769138 | ok |
