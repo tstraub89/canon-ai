@@ -1,118 +1,67 @@
 # Implementation Handoff: default-codex-models-to-5-6-generation
 
 > Author: Codex | Spec: `tasks/default-codex-models-to-5-6-generation/spec.md` | Plan: `tasks/default-codex-models-to-5-6-generation/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
 | File | What Changed |
 |---|---|
+| `scripts/run-task/env.ts`, `scripts/run-task/policy.ts` | Changed the mini/full fallback defaults to `gpt-5.6-luna`/`gpt-5.6-sol`, preserving the override chains. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Updated the env-var default table and reframed the inherited effort rationale; regenerated the canon-managed mirror. |
+| `docs/product-context.md` | Reframed the full-tier effort rationale as inherited pending 5.6 evaluation. |
+| `scripts/pipeline-policy.ts` | Updated the explanatory comment without changing the model/effort matrix. |
+| `docs/decisions.md` | Appended the 2026-07 generation re-baseline and reconciliation with the prior `spec_review` caution. |
+| `dist/cli/index.js`, `dist/scripts/run-task.js` | Rebuilt bundles containing the new defaults. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+The authoritative provenance stamp for this task lives in `status.json.canon`.
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The two duplicated Codex configuration defaults now target the 5.6 generation. Current operator-facing prose no longer names retired models or attributes the prior-generation overthinking behavior to 5.6; historical records and incidental fixtures remain unchanged as allowed by the spec. The managed template and both distribution bundles were regenerated from the authoritative sources.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | The implementation follows the plan. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: code defaults bumped in both copies | Met | Both files have identical override/fallback expressions ending in `gpt-5.6-luna` and `gpt-5.6-sol`; surrounding config differences remain unchanged. |
+| AC-2: retired identifiers classified | Met | Bucket A is empty after the fresh grep across current-state scripts, operator docs, and templates. Remaining hits are the specified historical docs, incidental fixtures/comment, backlog entries, and changelog. |
+| AC-3: env-var table and mirror | Met | Root table shows both 5.6 defaults; `npm run sync-templates:check` passes. |
+| AC-4: rationale prose de-staled | Met | The three current-state rationale surfaces drop retired identifiers and describe the effort tier as inherited pending 5.6 re-evaluation. |
+| AC-5: bundles rebuilt | Met | `npm run build` passes; both bundles contain the new strings and no retired default strings. |
+| AC-6: decision recorded | Met | New 2026-07 entry records the minor default change, unchanged routing/effort, and explicitly reconciles the prior caution; the prior entries are unchanged. |
+| AC-7: validation suite green | Met | Lint, type-check, full tests, build, docs refs, and template sync all pass. |
 
 ## Edge Cases Considered
 
-- ...
+- Preserved the env-var precedence chains and the mini/full routing and effort matrix.
+- Left immutable telemetry/history and incidental fixture identifiers untouched.
+- Did not hand-edit the generated template mirror.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | ESLint completed successfully. |
+| `npm run type-check` | Pass | TypeScript no-emit check completed successfully. |
+| `npm test` | Pass | Full test suite passed. |
+| `npm run build` | Pass | Both bundles rebuilt successfully. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale

@@ -827,3 +827,7 @@
 | 2026-07-24T15:32:26.728Z | default-codex-models-to-5-6-generation | spec_review | codex | gpt-5.6-luna | 0 | 75.3s | 412592 | ok |
 | 2026-07-24T16:00:30.992Z | default-codex-models-to-5-6-generation | spec_review | codex | gpt-5.6-luna | 1 | 78.8s | 922453 | ok |
 | 2026-07-24T16:18:56.672Z | default-codex-models-to-5-6-generation | plan | claude | sonnet | 0 | 165.2s | 1030121 | ok |
+| 2026-07-24T16:22:59.681Z | default-codex-models-to-5-6-generation | implement | codex | gpt-5.6-luna | 0 | 242.0s | 1521772 | ok |
+| 2026-07-24T16:25:23.752Z | default-codex-models-to-5-6-generation | code_review | codex | gpt-5.6-luna | 0 | 143.6s | 0 | ok |
+| 2026-07-24T16:29:21.185Z | default-codex-models-to-5-6-generation | code_review | claude | sonnet | 0 | 237.4s | 559932 | ok |
+| 2026-07-24T16:31:38.571Z | default-codex-models-to-5-6-generation | qa | claude | sonnet | 0 | 137.4s | 1403885 | ok |

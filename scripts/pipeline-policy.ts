@@ -156,8 +156,9 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                hypothesis (not a proven sole cause — see decisions.md).
     //   implement:   mini through L. XS/S get medium effort (token savings on
     //                the smallest changes). XL/delicate: full model at high. Not
-    //                xhigh — GPT-5.5 tends to overthink at xhigh with open-ended
-    //                tool access (cost without quality gain), and canon's thesis
+    //                xhigh — the prior generation overthought at xhigh with
+    //                open-ended tool access (cost without quality gain); tier
+    //                inherited pending 5.6-generation re-eval, and canon's thesis
     //                is token discipline over reflexive max-effort. Raise via
     //                env only if eval shows under-reasoning on delicate work.
     //   code_review: the mandatory cold-Codex lens stays on mini at every

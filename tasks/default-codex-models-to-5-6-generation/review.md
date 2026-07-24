@@ -14,74 +14,69 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+
+Independently re-verified by the anchored lens: `npm run lint`, `npm run type-check`, `npm test` (1027/1027), `npm run build` (dist reproducible, `git diff --exit-code -- dist/` clean), `npm run docs-refs-check`, `npm run sync-templates:check` all pass.
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: code defaults bumped, both copies | Pass | `scripts/run-task/env.ts:134-135` and `scripts/run-task/policy.ts:23-24` have identical `codexModelMini`/`codexModelFull` fallback/override expressions ending in `gpt-5.6-luna`/`gpt-5.6-sol`; surrounding config differences (env.ts's `projectName`/`maxContextBytes`, field order) intentionally untouched. |
+| AC-2: no retired identifier on current-state surfaces | Pass | Fresh repo-wide grep for `gpt-5.4-mini`, `gpt-5.4`, `gpt-5.5`, `GPT-5.4`, `GPT-5.5`: zero hits in `scripts/`, `dist/`, `docs/pipeline-orchestrator.md`, `docs/product-context.md`, `templates/`, `README.md`, `.canon/` (Bucket A). Remaining hits fall exactly in the spec's Bucket B allowlist: `docs/pipeline-invocations.md`, both dated `docs/decisions.md` entries (unedited — pure append confirmed via diff hunk), `docs/harness-audit-2026-06.md`, `docs/canon-opus48-gpt55-report.md`, `docs/BACKLOG.md:943`, `docs/BACKLOG.md:1347`, `CHANGELOG.md`, `tests/cli.test.ts`, `tests/run-task-safety.test.ts`, `tests/pipeline-policy.test.ts` comment. |
+| AC-3: env-var table updated + mirror synced | Pass | `docs/pipeline-orchestrator.md:261-262` table cells show `gpt-5.6-luna`/`gpt-5.6-sol`; `templates/docs/pipeline-orchestrator.md` mirror in sync (`sync-templates:check` passes). |
+| AC-4: rationale prose de-staled, no new 5.6 claim | Pass | `docs/pipeline-orchestrator.md:222`, `docs/product-context.md:91`, and the `scripts/pipeline-policy.ts:159` comment all drop the retired identifier entirely, describe the effort tier as inherited pending 5.6 re-eval, and do not assert that `gpt-5.6-sol` overthinks at `xhigh`. |
+| AC-5: both bundles rebuilt | Pass | `dist/cli/index.js` inlines the `env.ts` copy; `dist/scripts/run-task.js` inlines both `env.ts` and `policy.ts` copies. Both contain the new strings, no retired strings, and a rebuild reproduces the committed bytes exactly. |
+| AC-6: generation re-baseline recorded + prior caution reconciled | Pass | New `## Model-generation re-baseline (2026-07): Codex defaults → 5.6 generation` entry appended at EOF of `docs/decisions.md`; states minor classification, unchanged effort/routing, and explicitly reconciles with the prior "spec_review M effort raised" caution (quotes it, distinguishes scope). Prior dated entries verified byte-unchanged. |
+| AC-7: suite stays green | Pass | Full suite, lint, type-check all pass. No test asserts a retired default as canon's current default; the three fixture hits are untouched incidental sample data, not default assertions. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work) — no effort-tier change, no new 5.6 empirical claim, no prompt recalibration, no routing change, no historical-record edits, no override-chain change.
+- [x] Known Risks addressed or documented as accepted — Bucket A/B classification done explicitly; dated entries left verbatim; no unverified 5.6 claim introduced; mirror/dist both regenerated via the proper tooling.
+- [x] Human Test Plan is satisfiable by the implementation — defaults, docs, and decision log all reflect the new generation consistently.
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
+- [ ] **Fail**
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Narrow, mechanical value-swap change with no logic branches touched: two config default strings bumped identically across `env.ts`/`policy.ts`, propagated into both rebuilt `dist/` bundles, and reflected consistently across the env-var reference table, rationale prose, and a new dated decision entry. All three review lenses (anchored Claude, cold Claude, cold Codex) independently converged on no correctness issues and no spec gaps. The only surviving item is a single low-severity wording nit.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `docs/pipeline-orchestrator.md:222` (and its `templates/` mirror), `docs/product-context.md:91`, and `scripts/pipeline-policy.ts:159` use three slightly different phrasings ("the prior generation's model showed overthinking", "the prior-generation model overthought", "the prior generation overthought") for the same underlying fact. Flagged by anchored lens (dedup: none, single-lens only). Not a defect — each phrasing independently drops the retired identifier and correctly avoids a new 5.6 claim — but a future reader skimming for consistency across the four surfaces could wonder if they refer to different things. Non-blocking.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): none surfaced — cold-Claude lens returned no findings (`COLD_OVERALL_SIGNAL: approve`).
+- Dismissed (cold-Codex): the injected cold-Codex pass returned no findings beyond confirming the bundles, docs, and template mirror are updated consistently and the validation suite passes — nothing to dismiss.
+- Note (informational, not dismissed as a finding): cold-Claude flagged, at low confidence, that `docs/decisions.md`'s cited "Versioning and release policy" calls for a `CHANGELOG.md` entry on a minor canon-supplied-default change, and none appears in this diff. Verified against the spec: Docs Impact explicitly defers the `CHANGELOG.md` entry to the release-time `/canon-changelog` step, not this task's ACs (AC-6 does not require it). Not a gap in this diff.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 

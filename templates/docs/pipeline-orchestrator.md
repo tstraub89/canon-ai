@@ -219,7 +219,7 @@ Codex model and effort scale with task size:
 | `implement`   | mini / medium | mini / medium | mini / high | mini / high | full / high |
 | `code_review` (cold lens) | mini / high | mini / high | mini / high | mini / high | mini / high |
 
-Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. XL/delicate implement runs at `high`, not `xhigh`: GPT-5.5 tends to overthink at `xhigh` with open-ended tool access (cost without quality gain). Raise via env only if eval shows under-reasoning.
+Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. XL/delicate implement runs at `high`, not `xhigh` — the prior generation's model showed overthinking at `xhigh` with open-ended tool access (cost without quality gain); the tier is inherited pending a 5.6-generation re-eval. See [`docs/decisions.md`](docs/decisions.md) §"Model-generation re-baseline (2026-06)". Raise via env only if eval shows under-reasoning.
 
 The cold-Codex `code_review` lens is the exception to size scaling: as a mandatory hard-fail gate, it runs at flat `high` effort and stays on the mini model at every size, including XL/delicate.
 
@@ -258,8 +258,8 @@ Codex model overrides:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CODEX_MODEL_MINI` | `gpt-5.4-mini` | Codex model for XS/S/M/L non-delicate phases. |
-| `CODEX_MODEL_FULL` | `gpt-5.5` | Codex model for XL or delicate phases. |
+| `CODEX_MODEL_MINI` | `gpt-5.6-luna` | Codex model for XS/S/M/L non-delicate phases. |
+| `CODEX_MODEL_FULL` | `gpt-5.6-sol` | Codex model for XL or delicate phases. |
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for XS/S/M, 5 for L/XL. |
 
 These are canon's shipped defaults at the time of release and may lag

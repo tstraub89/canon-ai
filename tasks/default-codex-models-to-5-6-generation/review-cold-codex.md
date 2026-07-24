@@ -1,0 +1,1 @@
+The model defaults, generated bundles, documentation, and template mirror are updated consistently, and the validation suite passes.
