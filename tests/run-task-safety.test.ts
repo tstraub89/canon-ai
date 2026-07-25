@@ -4546,6 +4546,7 @@ void test('checkAndRoute commits QA artifacts for every task in a completed QA b
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
         const gitLogPath = path.join(dir, 'git.log');
+        const qualityLogPath = path.join(dir, 'task-quality-log.md');
 
         const result = runNodeInline([
             "import { checkAndRoute } from './scripts/run-task/main.ts';",
@@ -4556,6 +4557,7 @@ void test('checkAndRoute commits QA artifacts for every task in a completed QA b
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_QUALITY_LOG_FILE_OVERRIDE: qualityLogPath,
             FAKE_GIT_LOG: gitLogPath,
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -4602,6 +4604,7 @@ void test('checkAndRoute commits QA artifacts after evidence-advancing qa to don
         writeTaskStatus(tasksRoot, taskId, status);
         const taskDir = path.join(tasksRoot, taskId);
         fs.writeFileSync(path.join(taskDir, 'done.md'), '# QA Summary: task-a\n\nReady.\n', 'utf8');
+        const qualityLogPath = path.join(dir, 'task-quality-log.md');
 
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
@@ -4616,6 +4619,7 @@ void test('checkAndRoute commits QA artifacts after evidence-advancing qa to don
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_QUALITY_LOG_FILE_OVERRIDE: qualityLogPath,
             FAKE_GIT_LOG: gitLogPath,
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -4632,6 +4636,8 @@ void test('checkAndRoute commits QA artifacts after evidence-advancing qa to don
             phases?: { qa?: { status?: string } };
         };
         assert.equal(updated.phases?.qa?.status, 'done');
+        const qualityLog = fs.readFileSync(qualityLogPath, 'utf8');
+        assert.match(qualityLog, /\| task-a \|/);
         const gitLog = fs.readFileSync(gitLogPath, 'utf8');
         assert.match(gitLog, /^add -A -- tasks\/task-a$/m);
         assert.match(gitLog, /^commit -m chore: QA artifacts for task-a$/m);

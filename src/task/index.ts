@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { refreshCanonSnapshotAtPath } from '../../scripts/run-task/canon-snapshot.js';
+import { writeQualityLogForTask } from '../../scripts/run-task/quality-log.js';
 import {
     checkPhaseGate,
     parseDiffNameStatus,
@@ -476,6 +477,14 @@ export function taskPhase(id: string, phaseArg: string, statusArg: string, verdi
         delete entry.operator_accepted_at;
     }
     writeStatusAtomic(statusPath, status);
+    if (phaseArg === 'qa' && statusArg === 'done') {
+        writeQualityLogForTask(
+            id,
+            taskCwd,
+            path.join(taskDirForCwd(taskCwd, id), 'done.md'),
+            status,
+        );
+    }
 
     if (verdictArg) {
         console.log(`Updated ${id}: ${phaseArg} → ${statusArg} (verdict: ${verdictArg})`);

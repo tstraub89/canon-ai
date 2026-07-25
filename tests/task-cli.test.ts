@@ -6,7 +6,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskSet, taskStatus } from '../src/task/index.js';
+import { parseTable } from '../scripts/run-task/markdown-table.js';
 import type { StatusJson } from '../scripts/run-task/types.js';
+import { extractDoneMdFromStdout, isDoneMdTemplate } from '../scripts/run-task/validation.js';
 
 const WORKSPACE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKSPACE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -118,6 +120,186 @@ function writeTask(tasksRoot: string, taskId: string, status: StatusJson = makeS
     fs.writeFileSync(path.join(taskDir, 'spec-review.md'), '# Review\n', 'utf8');
     return taskDir;
 }
+
+void test('qa completion reconciles quality-log review totals from task state', () => {
+    withTempDir('task-quality-log-counters-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'schedule-date-corrections';
+        const status = makeStatus(taskId);
+        status.created = '1998-01-02';
+        status.updated = '1999-03-04';
+        status.phases.spec = { status: 'done', agent: 'claude' };
+        status.phases.spec_review = {
+            status: 'done',
+            agent: 'codex',
+            verdict: 'approved',
+            iterations_total: 6,
+        };
+        status.phases.plan = { status: 'done', agent: 'claude' };
+        status.phases.implement = { status: 'done', agent: 'codex' };
+        status.phases.code_review = {
+            status: 'done',
+            agent: 'claude',
+            verdict: 'approved',
+            iterations_total: 2,
+        };
+        status.phases.qa = { status: 'in_progress', agent: 'claude' };
+        const taskDir = writeTask(tasksRoot, taskId, status);
+        fs.writeFileSync(path.join(taskDir, 'done.md'), '# QA Summary\n\nReady.\n', 'utf8');
+
+        const qualityLog = path.join(dir, 'task-quality-log.md');
+        fs.writeFileSync(qualityLog, [
+            '# Task Quality Log',
+            '',
+            '## Log',
+            '',
+            '| Date | Task | Size | Spec verdict | Spec iter | Review iter | Dropped ACs | Validation gaps | Human reroute? | Notes |',
+            '|---|---|---|---|---|---|---|---|---|---|',
+            `| 2026-01-01 | ${taskId} | S | approved | 1 | 1 | 0 | 0 | No | stale first pass |`,
+            '',
+            '## Periodic Reviews',
+            '',
+        ].join('\n'), 'utf8');
+
+        withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_QUALITY_LOG_FILE_OVERRIDE: qualityLog,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => captureStdout(() => taskCmd(['phase', taskId, 'qa', 'done'])));
+
+        const rows = parseTable(fs.readFileSync(qualityLog, 'utf8'), 'Log');
+        const row = rows.find(candidate => candidate.Task === taskId);
+        assert.equal(row?.Date, new Date().toISOString().slice(0, 10));
+        assert.notEqual(row?.Date, '1998-01-02');
+        assert.notEqual(row?.Date, '1999-03-04');
+        assert.equal(row?.['Spec iter'], '6');
+        assert.equal(row?.['Review iter'], '2');
+    });
+});
+
+void test('qa done.md salvage sequence writes the quality-log row through taskPhase', () => {
+    withTempDir('task-quality-log-salvage-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'salvaged-qa-task';
+        const status = makeStatus(taskId);
+        for (const phase of ['spec', 'spec_review', 'plan', 'implement', 'code_review'] as const) {
+            status.phases[phase] = { status: 'done', agent: phase === 'spec_review' ? 'codex' : 'claude' };
+        }
+        status.phases.qa = { status: 'in_progress', agent: 'claude' };
+        const taskDir = writeTask(tasksRoot, taskId, status);
+        const donePath = path.join(taskDir, 'done.md');
+        fs.writeFileSync(donePath, '# QA Summary: [TASK-ID]\n\nOne paragraph, plain English. No code jargon.\n', 'utf8');
+        assert.equal(isDoneMdTemplate(donePath), true);
+
+        const salvaged = extractDoneMdFromStdout([
+            '# QA Summary',
+            '',
+            'Ready.',
+            '',
+            '## Quality Log',
+            '- Spec verdict: approved',
+            '- Human reroute?: No',
+            '- Dropped ACs: 0',
+            '- Validation gaps: 0',
+            '- Notes: Salvaged from stdout',
+        ].join('\n'));
+        assert.notEqual(salvaged, '');
+        fs.writeFileSync(donePath, salvaged, 'utf8');
+
+        const qualityLog = path.join(dir, 'quality-log.md');
+        withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_QUALITY_LOG_FILE_OVERRIDE: qualityLog,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => captureStdout(() => taskPhase(taskId, 'qa', 'done')));
+
+        assert.equal(readStatusFile(taskDir).phases.qa?.status, 'done');
+        const row = parseTable(fs.readFileSync(qualityLog, 'utf8'), 'Log')
+            .find(candidate => candidate.Task === taskId);
+        assert.equal(row?.Notes, 'Salvaged from stdout');
+    });
+});
+
+void test('quality-log failures warn but never block qa completion, while an absent log is created', () => {
+    withTempDir('task-quality-log-fail-soft-', dir => {
+        const cases = [
+            { taskId: 'malformed-log-task', logPath: path.join(dir, 'malformed.md'), malformed: true },
+            { taskId: 'unwritable-log-task', logPath: path.join(dir, 'missing-parent', 'log.md'), malformed: false },
+            { taskId: 'absent-log-task', logPath: path.join(dir, 'absent.md'), malformed: false },
+        ];
+        fs.writeFileSync(cases[0].logPath, '# Not a quality log\n', 'utf8');
+
+        for (const fixture of cases) {
+            const tasksRoot = path.join(dir, `tasks-${fixture.taskId}`);
+            const status = makeStatus(fixture.taskId);
+            for (const phase of ['spec', 'spec_review', 'plan', 'implement', 'code_review'] as const) {
+                status.phases[phase] = { status: 'done', agent: phase === 'spec_review' ? 'codex' : 'claude' };
+            }
+            status.phases.qa = { status: 'in_progress', agent: 'claude' };
+            const taskDir = writeTask(tasksRoot, fixture.taskId, status);
+            fs.writeFileSync(path.join(taskDir, 'done.md'), '# QA Summary\n\nReady.\n', 'utf8');
+
+            const warnings: string[] = [];
+            const originalError = console.error;
+            console.error = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+            try {
+                withEnv({
+                    CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+                    CANON_QUALITY_LOG_FILE_OVERRIDE: fixture.logPath,
+                    CANON_SKIP_PHASE_GATE: '1',
+                }, () => captureStdout(() => taskCmd(['phase', fixture.taskId, 'qa', 'done'])));
+            } finally {
+                console.error = originalError;
+            }
+
+            assert.equal(readStatusFile(taskDir).phases.qa?.status, 'done');
+            if (fixture.taskId === 'malformed-log-task') {
+                assert.match(warnings.join('\n'), /no well-formed '## Log' table/);
+                assert.equal(fs.readFileSync(fixture.logPath, 'utf8'), '# Not a quality log\n');
+            } else if (fixture.taskId === 'unwritable-log-task') {
+                assert.match(warnings.join('\n'), /unexpected error writing row/);
+            } else {
+                assert.equal(warnings.length, 0);
+                assert.equal(
+                    parseTable(fs.readFileSync(fixture.logPath, 'utf8'), 'Log')
+                        .some(row => row.Task === fixture.taskId),
+                    true,
+                );
+            }
+        }
+    });
+});
+
+void test('quality-log override isolates qa transitions from the repository log', () => {
+    withTempDir('task-quality-log-isolation-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'isolated-log-task';
+        const status = makeStatus(taskId);
+        for (const phase of ['spec', 'spec_review', 'plan', 'implement', 'code_review'] as const) {
+            status.phases[phase] = { status: 'done', agent: phase === 'spec_review' ? 'codex' : 'claude' };
+        }
+        status.phases.qa = { status: 'in_progress', agent: 'claude' };
+        const taskDir = writeTask(tasksRoot, taskId, status);
+        fs.writeFileSync(path.join(taskDir, 'done.md'), '# QA Summary\n\nReady.\n', 'utf8');
+
+        const repositoryLog = path.join(WORKSPACE_ROOT, 'docs', 'task-quality-log.md');
+        const repositoryBefore = fs.readFileSync(repositoryLog, 'utf8');
+        const repositoryMtimeBefore = fs.statSync(repositoryLog).mtimeMs;
+        const overrideLog = path.join(dir, 'isolated-quality-log.md');
+        withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_QUALITY_LOG_FILE_OVERRIDE: overrideLog,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => captureStdout(() => taskCmd(['phase', taskId, 'qa', 'done'])));
+
+        assert.equal(
+            parseTable(fs.readFileSync(overrideLog, 'utf8'), 'Log').some(row => row.Task === taskId),
+            true,
+        );
+        assert.equal(fs.readFileSync(repositoryLog, 'utf8'), repositoryBefore);
+        assert.equal(fs.statSync(repositoryLog).mtimeMs, repositoryMtimeBefore);
+    });
+});
 
 function readStatusFile(taskDir: string): StatusJson {
     return JSON.parse(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8')) as StatusJson;

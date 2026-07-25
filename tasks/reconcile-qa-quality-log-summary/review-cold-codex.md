@@ -1,0 +1,1 @@
+The changes implement the quality-log upsert as specified. Type-checking, linting, build, template checks, and the full test suite pass.

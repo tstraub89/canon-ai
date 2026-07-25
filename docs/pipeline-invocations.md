@@ -838,3 +838,7 @@
 | 2026-07-25T01:45:12.381Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 4 | 153.0s | 11695761 | ok |
 | 2026-07-25T01:50:24.596Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 5 | 161.7s | 13668404 | ok |
 | 2026-07-25T02:10:39.189Z | reconcile-qa-quality-log-summary | plan | claude | sonnet | 0 | 847.7s | 2039834 | ok |
+| 2026-07-25T02:21:57.521Z | reconcile-qa-quality-log-summary | implement | codex | gpt-5.6-sol | 0 | 677.4s | 7686540 | ok |
+| 2026-07-25T02:26:06.558Z | reconcile-qa-quality-log-summary | code_review | codex | gpt-5.6-luna | 0 | 248.4s | 0 | ok |
+| 2026-07-25T02:40:16.754Z | reconcile-qa-quality-log-summary | code_review | claude | opus | 0 | 850.2s | 1047492 | ok |
+| 2026-07-25T02:47:02.899Z | reconcile-qa-quality-log-summary | qa | claude | sonnet | 0 | 406.1s | 3267092 | ok |

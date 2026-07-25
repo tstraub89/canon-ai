@@ -395,3 +395,13 @@ _Generation: gpt-5.6-luna (mini) / gpt-5.6-sol (full)._
 **Does this contradict the `spec_review` M-effort entry's caution?** No. The §"`spec_review` M effort raised" entry above says: "Do not chase a Codex model-family upgrade (e.g. GPT-5.6 Luna/Sol) for M or L on the strength of the pre-correction iteration data — that data pointed at a spec_review effort gap, not a model-capability gap." That caution is scoped to *using a model upgrade to fix reroute-severity/iteration-count churn* — it does not bar a routine currency bump of the shipped default made on its own, independent grounds (generation staleness, benchmark parity), unconnected to the M/L reroute-rate analysis. Re-measuring M vs. L reroute rate (per that entry) remains a separate, still-open follow-up; this change does not substitute for it.
 
 **Rule**: Shipped defaults are `gpt-5.6-luna` (mini) and `gpt-5.6-sol` (full) as of this entry. Effort tiers and the model/effort matrix in `scripts/pipeline-policy.ts` are unchanged; re-evaluating effort tiers for the 5.6 generation (OpenAI's migration guidance suggests comparing one effort level lower) is a separate future task, not folded into this change.
+
+---
+
+## Task quality-log row upserted at the qa → done transition (2026-07)
+
+**Decision**: The task-quality-log row is written by a deterministic upsert inside `taskPhase()`'s qa → done transition, keyed by task id. QA supplies `Spec verdict`, `Human reroute?`, `Dropped ACs`, `Validation gaps`, and `Notes` through the `## Quality Log` section of `done.md`; the remaining cells are derived from task state at write time. No completeness gate or new status field is added, and a log write failure warns without blocking the transition.
+
+**Why**: The former prompt-only append was neither revisited after reroutes nor anchored inside the Log table. Of the judgment-like fields, only `phases.spec_review.iterations_total` and `phases.code_review.iterations_total` have sound monotonic sources in `status.json`. `implement.reroute_count` conflates genuine human-review reroutes with blocked code-review `spec_gap` recovery, while the current spec-review verdict is not necessarily the first verdict the log column represents. Growing the load-bearing status schema for these low-value signals was rejected; the upsert lets later QA passes correct judgments while retaining the earliest recorded spec verdict.
+
+**Rule**: Do not derive `Human reroute?` from a reroute counter or `Spec verdict` from the current `status.json` verdict. Keep the writer at the qa → done transition because agent commands, done.md salvage, evidence advancement, and operator recovery all funnel through `taskPhase()`. The write must remain fail-soft.

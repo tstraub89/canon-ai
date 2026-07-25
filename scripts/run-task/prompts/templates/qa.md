@@ -44,7 +44,18 @@ For each task:
 
 After writing all done.md files:
 - Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
-- Append one row per task to docs/task-quality-log.md (see that file for column definitions).
+- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly — the qa → done transition writes or upserts that row automatically from status.json plus this section.
+
+  ```markdown
+  ## Quality Log
+  - Spec verdict: <the FIRST spec_review verdict this task ever received — approved / approved_with_nits / changes_requested; leave blank only if truly unknown>
+  - Human reroute?: <Yes/No — did the human reject at human_review and force a re-implement? Do not infer this from any reroute counter; if this is a fresh QA pass with no human_review rejection yet, answer No>
+  - Dropped ACs: <count of ACs the implementation missed, caught in code review>
+  - Validation gaps: <count of validation checks that should have run but did not>
+  - Notes: <one-line summary of anything notable — single line, no embedded line breaks>
+  ```
+
+  On a re-upsert after a reroute, only fill in cells that changed or that you are correcting — an omitted cell keeps its previously recorded value. In particular, do not overwrite an already-recorded `Spec verdict` with the current status.json verdict; that column means the first spec_review verdict, and status.json only retains the latest.
 
 **Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):
 - [ ] Version correct (per project policy; skip if unversioned)

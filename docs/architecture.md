@@ -84,7 +84,7 @@ The orchestrator is a long-running TypeScript process. It spawns agent CLIs as s
 7. **Implement**: orchestrator spawns Codex with the implement prompt + spec + plan. Codex edits files in the worktree (or main checkout if `worktree: false`), writes `handoff.md`. Orchestrator runs hallucination check.
 8. **Auto-commit**: `autoCommitCode()` parses every handoff Changes table → `allHandoffFiles` set. Verifies dirty tree matches handoff (every dirty file is listed; every listed file exists). Stages and commits with task-titled message.
 9. **Code review**: orchestrator runs `validateHandoff()` pre-flight (no `Fail` rows, AC coverage table populated, all required validations present). If pass, spawns Claude with the review prompt. Claude writes `review.md` (Stage 1 + Stage 2). On `changes_requested`, routes back to implement.
-10. **QA**: Claude writes `done.md`, distills `notes.md` into `lessons-learned.md` entries, appends row to `task-quality-log.md`.
+10. **QA**: Claude writes `done.md` (including judgment cells for the task-quality-log row) and distills `notes.md` into `lessons-learned.md` entries. The qa → done transition upserts the task's `task-quality-log.md` row from `status.json` plus those judgment cells.
 11. **Human review**: human tests against `done.md`, marks `phases.human_review.status = "done"`.
 
 ### State persistence
@@ -93,7 +93,7 @@ All state is files. There is no in-memory shared state between phases — every 
 
 ### Telemetry
 
-After every agent invocation, the orchestrator appends a row to `docs/pipeline-invocations.md` (duration + tokens). During QA, Claude appends a row to `docs/task-quality-log.md` (spec review iterations, dropped ACs, validation gaps). Both files are append-only; rotation is manual.
+After every agent invocation, the orchestrator appends a row to `docs/pipeline-invocations.md` (duration + tokens). During QA, Claude records five judgment cells in `done.md`; the qa → done transition derives the remaining cells from `status.json` and upserts one row per task into `docs/task-quality-log.md`. `docs/pipeline-invocations.md` remains append-only.
 
 ## Boundaries & Contracts
 
@@ -171,7 +171,7 @@ Anthropic's `claude` CLI supports `--resume <session-id>`. The orchestrator stor
 ### Auto-block / reroute
 
 Two mechanisms halt or redirect the pipeline:
-- **`autoBlockPhase()`**: when `MAX_REVIEW_LOOPS` is hit on `spec_review` or `code_review`. Sets phase status to `blocked`, appends to `task-quality-log.md`, exits with code 2. Manual intervention required (reset phase + `iterations_current_loop`; see recovery below). Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
+- **`autoBlockPhase()`**: when `MAX_REVIEW_LOOPS` is hit on `spec_review` or `code_review`. Sets phase status to `blocked`, bumps `auto_block_count`, pushes an escalation, and exits with code 2. Manual intervention required (reset phase + `iterations_current_loop`; see recovery below). Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
 - **`routeBackTo()`**: on `changes_requested` verdicts. Flips the target phase and all downstream to `pending`. Loop re-enters the routed phase next iteration.
 
 ### Validation gates
