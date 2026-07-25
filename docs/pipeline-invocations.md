@@ -831,3 +831,10 @@
 | 2026-07-24T16:25:23.752Z | default-codex-models-to-5-6-generation | code_review | codex | gpt-5.6-luna | 0 | 143.6s | 0 | ok |
 | 2026-07-24T16:29:21.185Z | default-codex-models-to-5-6-generation | code_review | claude | sonnet | 0 | 237.4s | 559932 | ok |
 | 2026-07-24T16:31:38.571Z | default-codex-models-to-5-6-generation | qa | claude | sonnet | 0 | 137.4s | 1403885 | ok |
+| 2026-07-24T21:10:30.591Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 0 | 322.7s | 2117086 | ok |
+| 2026-07-25T01:02:23.762Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 1 | 308.3s | 5357239 | ok |
+| 2026-07-25T01:26:45.014Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 2 | 358.9s | 7410355 | ok |
+| 2026-07-25T01:40:26.771Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 3 | 423.8s | 9954060 | ok |
+| 2026-07-25T01:45:12.381Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 4 | 153.0s | 11695761 | ok |
+| 2026-07-25T01:50:24.596Z | reconcile-qa-quality-log-summary | spec_review | codex | gpt-5.6-sol | 5 | 161.7s | 13668404 | ok |
+| 2026-07-25T02:10:39.189Z | reconcile-qa-quality-log-summary | plan | claude | sonnet | 0 | 847.7s | 2039834 | ok |
