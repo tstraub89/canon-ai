@@ -8,8 +8,17 @@
  * Checked ref classes:
  *   1. Backtick file-path refs: `path/to/file.ts`
  *   2. Symbol-in-file refs:    `SYMBOL` in `path/to/file.ts`
- *   3. Section refs:           `path.md` §"Heading Name"
+ *   3. Section refs:           `path.md` §"Heading Name", `path.md §"Heading Name"`,
+ *                             and [text](path.md) §"Heading Name"
  *   4. Markdown anchor links:  [text](#anchor) and [text](path.md#anchor)
+ *   5. Adopter scope:          section refs and anchor links from a shipped
+ *                              (CANON_OWNED) file into a scaffold-only doc
+ *                              resolve against the `templates/` scaffold copy
+ *
+ * Only the quoted `§"Heading Name"` form is validated. The unquoted shorthand
+ * (`docs/architecture.md §Validation`) has no unambiguous end boundary in
+ * prose, so it stays a free-text pointer; write section refs quoted to get
+ * them checked.
  *
  * Adopter note: customize `scripts/docs-refs-config.mjs` beside this script.
  * Canon defaults live here; the sibling config is merged at module load.
@@ -50,6 +59,26 @@ const CANON_VALID_DIRS = new Set([
 ]);
 const CANON_NOISY_SOURCE_PATHS = [];
 const CANON_MARKDOWN_ROOT_DIRS = ['docs', 'tasks'];
+const CANON_OWNED_SOURCE = 'src/lib/canon-owned.ts';
+const TEMPLATES_DIR = 'templates';
+
+// Section pointers appear in three carriers across canon docs. All three name
+// a heading in another doc; only the path carrier differs.
+//
+//   1. `docs/decisions.md` §"Heading"            — backtick path, pointer outside
+//   2. `docs/decisions.md §"Heading"`            — path and pointer in one span
+//   3. [`decisions.md`](decisions.md) §"Heading" — markdown-link path carrier
+//
+// Carriers 1 and 2 use canon's repo-root-relative backtick-ref convention;
+// carrier 3's path resolution is spelled out in `sectionRefTargetCandidates`.
+// Carrier 2 would otherwise be read by the bare-backtick validator as one
+// absurd filename and reported as `missing file` — see
+// `hasInlineSectionPointer`.
+const SECTION_REF_PATTERNS = [
+    { pattern: /`([^`]+\.md)`\s+§"([^"]+)"/g, relativeToSource: false },
+    { pattern: /`([^`]+\.md)\s+§"([^"]+)"`/g, relativeToSource: false },
+    { pattern: /\[[^\]]*\]\(([^)\s]+\.md)\)\s+§"([^"]+)"/g, relativeToSource: true },
+];
 const PLACEHOLDER_SEGMENTS = new Set([
     'path',
     'file',
@@ -138,7 +167,7 @@ function readText(filePath) {
     return fs.readFileSync(filePath, 'utf8');
 }
 
-function collectMarkdownFiles(repoRoot, markdownRootDirs) {
+function collectMarkdownFiles(repoRoot, markdownRootDirs, shippedSources = new Set()) {
     const files = [];
 
     for (const rel of ROOT_MARKDOWN_FILES) {
@@ -152,6 +181,23 @@ function collectMarkdownFiles(repoRoot, markdownRootDirs) {
         const abs = path.join(repoRoot, rel);
         if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) continue;
         walkMarkdownTree(abs, files, rel === 'tasks');
+    }
+
+    // Shipped markdown is scanned whether or not a configured root reaches it.
+    // Most canon-owned markdown lives under `.claude/**` and `.canon/**`, which
+    // `walkMarkdownTree` skips as hidden — so without this, the adopter-scope
+    // guard would police only the two owned docs that happen to sit under
+    // `docs/`, and a dangling section pointer in a shipped skill or task
+    // template would ship silently. These files are the ones adopters receive
+    // verbatim; they earn scanning by definition, not by directory layout.
+    const seen = new Set(files);
+    for (const rel of shippedSources) {
+        if (!rel.endsWith('.md')) continue;
+        const abs = path.join(repoRoot, rel);
+        if (seen.has(abs)) continue;
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+        files.push(abs);
+        seen.add(abs);
     }
 
     return files.sort((a, b) => a.localeCompare(b));
@@ -264,10 +310,161 @@ function isAllowedDocTarget(target, validDirs) {
 // Anchor links in nested docs commonly use relative paths (e.g.,
 // `[text](../AGENTS.md#section)` from `docs/foo.md`). The path-resolution
 // step below handles relative paths correctly; this helper widens the
-// allow-list at the gate so they're not silently skipped.
+// allow-list at the gate so they're not silently skipped. A bare sibling
+// filename (`[text](decisions.md#section)`) is the same case without the
+// redundant `./`, and resolves unambiguously — skipping it would exempt the
+// most natural way to link between two docs in one directory.
 function isAllowedAnchorLinkPath(target, validDirs) {
     if (target.startsWith('./') || target.startsWith('../')) return true;
+    if (!target.includes('/') && target.endsWith('.md')) return true;
     return isAllowedDocTarget(target, validDirs);
+}
+
+// Yields every quoted section pointer on a line, normalized across the three
+// carriers in `SECTION_REF_PATTERNS`. `relativeToSource` tells the caller how
+// to resolve `target`; `refText` is the full matched span so findings quote
+// what the author actually wrote.
+function* iterateSectionRefs(line) {
+    for (const { pattern, relativeToSource } of SECTION_REF_PATTERNS) {
+        for (const match of line.matchAll(pattern)) {
+            yield {
+                refText: match[0],
+                target: match[1],
+                headingText: match[2],
+                relativeToSource,
+            };
+        }
+    }
+}
+
+// Candidate repo-relative paths for a section ref's target, most-likely first,
+// plus `markdownPath`: where a reader's renderer actually resolves the link
+// (null for the backtick carriers, which are not links).
+//
+// Carriers 1 and 2 are repo-root-relative by canon convention, full stop.
+// Carrier 3 is checked under BOTH conventions, because canon's prose uses both:
+// true markdown-relative (`[`decisions.md`](decisions.md)` between sibling
+// docs) and repo-root-relative with the path as the link label
+// (`[`docs/decisions.md`](docs/decisions.md)`). Markdown semantics come first
+// so a link that resolves normally is never re-pointed at a same-named file
+// elsewhere; the repo-root form is a fallback that keeps the section pointer
+// checkable, and the caller reports the unrenderable link path separately.
+// Every candidate is confined to the repo. `isAllowedDocTarget` only inspects
+// the first path segment, so without this a target like
+// `docs/../../../outside.md` clears the allow-list and gets stat'd outside the
+// worktree. `normalizeAnchorLinkPath` already enforces containment on the
+// markdown-resolved path; this extends the same discipline to the repo-root
+// spelling, which is otherwise trusted verbatim.
+function isInsideRepo(repoRoot, relPath) {
+    const relative = path.relative(repoRoot, path.resolve(repoRoot, relPath));
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function sectionRefTargetCandidates(sourceFile, repoRoot, target, relativeToSource) {
+    const confine = candidates => candidates.filter(
+        candidate => Boolean(candidate) && isInsideRepo(repoRoot, candidate),
+    );
+
+    if (!relativeToSource) return { candidates: confine([target]), markdownPath: null };
+
+    const markdownPath = normalizeAnchorLinkPath(sourceFile, repoRoot, target);
+    return {
+        candidates: confine([...new Set([markdownPath, target])]),
+        markdownPath,
+    };
+}
+
+// True for the carrier-2 body (`docs/decisions.md §"Heading"` inside a single
+// backtick pair). The bare-backtick file validator must hand these to the
+// section-ref validator rather than stat a path that includes the pointer.
+//
+// Anchored at both ends to mirror carrier 2's pattern exactly, so nothing can
+// escape BOTH validators: a malformed span (`§""`, an unterminated quote) is
+// not claimed by the section validator, so it must stay claimed by the file
+// validator. A wrong-looking message beats a silent skip.
+function hasInlineSectionPointer(backtickBody) {
+    return /^[^`]+\.md\s+§"[^"]+"$/.test(backtickBody);
+}
+
+// Repo-relative paths canon ships verbatim, parsed from `CANON_OWNED` rather
+// than duplicated here — a hand-copied list would drift the moment a doc joins
+// the managed set. Regex-parsed instead of imported because this script runs
+// under plain `node` (no TS loader) and must stay importable in repos that
+// have no such file at all.
+//
+function loadCanonOwnedPaths(repoRoot) {
+    const abs = path.join(repoRoot, CANON_OWNED_SOURCE);
+    if (!fs.existsSync(abs)) return new Set();
+    return new Set(parseCanonOwnedArray(readText(abs)));
+}
+
+// Reads one quoted literal starting at `start`. Returns `next: -1` for an
+// unterminated string so the caller can bail rather than resynchronize on
+// whatever quote it finds next.
+function readStringLiteral(source, start) {
+    const quote = source[start];
+
+    for (let index = start + 1, value = ''; index < source.length; index += 1) {
+        const char = source[index];
+        if (char === '\\') {
+            value += source[index + 1] ?? '';
+            index += 1;
+            continue;
+        }
+        if (char === quote) return { value, next: index + 1 };
+        if (char === '\n' && quote !== '`') break;
+        value += char;
+    }
+
+    return { value: '', next: -1 };
+}
+
+// Extracts the string entries of `export const CANON_OWNED = [ … ]`.
+//
+// Deliberately not a regex. A `]`, `//`, or `/*` inside a quoted path
+// truncates a regex match, and a comment containing `]` hides every entry
+// after it — failures that are both silent and asymmetric, since a short
+// manifest makes the adopter-scope guard skip files it should police. So the
+// array body is walked with a small state machine that knows strings from
+// comments. Anything it cannot parse to a closing bracket yields nothing,
+// leaving the guard inert rather than half-enforced.
+function parseCanonOwnedArray(source) {
+    const anchor = source.match(/export const CANON_OWNED\s*=\s*\[/);
+    if (!anchor) return [];
+
+    const entries = [];
+    let index = anchor.index + anchor[0].length;
+    let depth = 1;
+
+    while (index < source.length && depth > 0) {
+        const char = source[index];
+
+        if (char === '/' && source[index + 1] === '/') {
+            const lineEnd = source.indexOf('\n', index);
+            if (lineEnd === -1) return [];
+            index = lineEnd + 1;
+            continue;
+        }
+        if (char === '/' && source[index + 1] === '*') {
+            const commentEnd = source.indexOf('*/', index + 2);
+            if (commentEnd === -1) return [];
+            index = commentEnd + 2;
+            continue;
+        }
+        if (char === "'" || char === '"' || char === '`') {
+            const { value, next } = readStringLiteral(source, index);
+            if (next === -1) return [];
+            entries.push(value);
+            index = next;
+            continue;
+        }
+
+        if (char === '[') depth += 1;
+        if (char === ']') depth -= 1;
+        index += 1;
+    }
+
+    return depth === 0 ? entries : [];
 }
 
 // The optional `~` after the colon tolerates the "approximate line"
@@ -425,13 +622,20 @@ function collectCandidateTargetPaths(markdownFiles, repoRoot, skipPaths) {
             }
             if (inFence) continue;
             for (const match of line.matchAll(/`([^`]+)`(?!\s+in\s+`|\s+§")/g)) {
+                if (hasInlineSectionPointer(match[1])) continue;
                 targets.add(stripLineCitation(match[1]));
             }
             for (const match of line.matchAll(/`([^`]+)`\s+in\s+`([^`]+)`/g)) {
                 targets.add(match[2]);
             }
-            for (const match of line.matchAll(/`([^`]+\.md)`\s+§"([^"]+)"/g)) {
-                targets.add(match[1]);
+            for (const sectionRef of iterateSectionRefs(line)) {
+                const { candidates } = sectionRefTargetCandidates(
+                    sourceFile,
+                    repoRoot,
+                    sectionRef.target,
+                    sectionRef.relativeToSource,
+                );
+                for (const candidate of candidates) targets.add(candidate);
             }
             for (const match of line.matchAll(/(!?)\[([^\]]*)\]\(([^)]+)\)/g)) {
                 if (match[1] === '!') continue;
@@ -452,7 +656,11 @@ function findBrokenRefs(repoRoot, options = {}) {
     const validDirs = effectiveConfig.validDirs;
     const markdownRootDirs = effectiveConfig.markdownRootDirs;
     const findings = [];
-    const allMarkdownFiles = collectMarkdownFiles(repoRoot, markdownRootDirs);
+    const canonOwnedPaths = loadCanonOwnedPaths(repoRoot);
+    const shippedSources = new Set(
+        [...canonOwnedPaths].flatMap(rel => [rel, `${TEMPLATES_DIR}/${rel}`]),
+    );
+    const allMarkdownFiles = collectMarkdownFiles(repoRoot, markdownRootDirs, shippedSources);
 
     // First pass: skip gitignored markdown source files entirely.
     // This is broader than just self-anchor false positives — refs of
@@ -489,6 +697,37 @@ function findBrokenRefs(repoRoot, options = {}) {
         return headingCache.get(filePath);
     }
 
+    // Adopter-scope guard. canon ships every CANON_OWNED file verbatim into
+    // adopter repos. The scaffold docs (`docs/decisions.md`, `docs/patterns.md`,
+    // …) ship too, but only as starting points — their *content* becomes the
+    // adopter's own. So a section pointer from a shipped file into a scaffold
+    // doc is valid only if the named heading exists in the SCAFFOLD copy under
+    // `templates/`. Resolving against canon-ai's own filled-in copy is what let
+    // three pointers into canon-ai-authored `decisions.md` sections reach
+    // adopters in 2026-07: the checker passed because those sections exist here.
+    //
+    // Both inputs are derived, never hand-listed:
+    //   - shipped sources come from `CANON_OWNED` (plus its `templates/` mirror,
+    //     which ships the same bytes and so carries the same leak).
+    //   - a scaffold-only doc is any path with a `templates/` counterpart that
+    //     is NOT in `CANON_OWNED`. Owned files are byte-identical mirrors, so
+    //     their headings agree on both sides and need no re-resolution.
+    //
+    // Both derivations come up empty outside canon-ai's own repo, leaving the
+    // guard inert for adopters — correct, since an adopter's docs pointing at
+    // their own sections is the intended usage.
+    function scaffoldOnlyCopy(target) {
+        if (!target) return null;
+        if (canonOwnedPaths.size === 0) return null;
+        if (canonOwnedPaths.has(target)) return null;
+        if (target === TEMPLATES_DIR || target.startsWith(`${TEMPLATES_DIR}/`)) return null;
+
+        const rel = `${TEMPLATES_DIR}/${target}`;
+        const abs = path.join(repoRoot, rel);
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null;
+        return { abs, rel };
+    }
+
     function addFinding(sourceFile, lineNumber, refText, reason) {
         findings.push({
             file: toPosixPath(path.relative(repoRoot, sourceFile)),
@@ -519,6 +758,7 @@ function findBrokenRefs(repoRoot, options = {}) {
             if (inFence) continue;
 
             for (const match of line.matchAll(/`([^`]+)`(?!\s+in\s+`|\s+§")/g)) {
+                if (hasInlineSectionPointer(match[1])) continue;
                 const refText = match[0];
                 const target = stripLineCitation(match[1]);
 
@@ -557,18 +797,57 @@ function findBrokenRefs(repoRoot, options = {}) {
                 }
             }
 
-            for (const match of line.matchAll(/`([^`]+\.md)`\s+§"([^"]+)"/g)) {
-                const refText = match[0];
-                const target = match[1];
-                const headingText = match[2];
+            for (const { refText, target, headingText, relativeToSource } of iterateSectionRefs(line)) {
                 if (isLineCitationTarget(target)) continue;
-                if (!isAllowedDocTarget(target, validDirs)) continue;
                 if (isPlaceholderTarget(target) || isPlaceholderTarget(headingText)) continue;
-                if (gitIgnoredTargets.has(target)) continue;
-                const targetPath = resolveRepoRelative(repoRoot, target);
 
-                if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isFile()) {
+                // Candidates are resolved before the allow-list gate so a
+                // same-directory link (`[`decisions.md`](decisions.md)` from
+                // `docs/release-process.md`) is judged as `docs/decisions.md`
+                // rather than skipped for having no leading directory.
+                const { candidates: allCandidates, markdownPath } =
+                    sectionRefTargetCandidates(sourceFile, repoRoot, target, relativeToSource);
+                const candidates = allCandidates
+                    .filter(candidate => isAllowedDocTarget(candidate, validDirs));
+                if (candidates.length === 0) continue;
+
+                const targetRel = candidates.find(candidate => {
+                    const abs = resolveRepoRelative(repoRoot, candidate);
+                    return fs.existsSync(abs) && fs.statSync(abs).isFile();
+                });
+                if (!targetRel) {
+                    // Nothing resolves under either convention. The gitignore
+                    // skip exists for exactly this shape — a target present on
+                    // a developer machine but absent on a fresh clone — so it
+                    // is consulted here only, never in place of a candidate
+                    // that does resolve.
+                    if (candidates.some(candidate => gitIgnoredTargets.has(candidate))) continue;
                     addFinding(sourceFile, lineNumber, refText, 'missing file');
+                    continue;
+                }
+                if (gitIgnoredTargets.has(targetRel)) continue;
+                const targetPath = resolveRepoRelative(repoRoot, targetRel);
+
+                // The target resolved, but not where a markdown renderer sends
+                // the reader. Reported as its own defect so the section pointer
+                // can still be judged against the file the author meant,
+                // instead of the broken link swallowing both checks.
+                if (relativeToSource && targetRel !== markdownPath) {
+                    addFinding(sourceFile, lineNumber, refText, 'link path does not resolve from this file');
+                }
+
+                const scaffoldCopy = shippedSources.has(relSourceFile)
+                    ? scaffoldOnlyCopy(targetRel)
+                    : null;
+                if (scaffoldCopy) {
+                    if (!headingExists(getText(scaffoldCopy.abs), headingText)) {
+                        addFinding(
+                            sourceFile,
+                            lineNumber,
+                            refText,
+                            `heading not found in adopter scaffold copy (${scaffoldCopy.rel})`,
+                        );
+                    }
                     continue;
                 }
 
@@ -592,10 +871,15 @@ function findBrokenRefs(repoRoot, options = {}) {
                 if (!anchor) continue;
                 if (PLACEHOLDER_SEGMENTS.has(slugify(anchor))) continue;
                 if (linkPath && !isAllowedAnchorLinkPath(linkPath, validDirs)) continue;
-                if (linkPath) {
-                    const normalized = normalizeAnchorLinkPath(sourceFile, repoRoot, linkPath);
-                    if (normalized && gitIgnoredTargets.has(normalized)) continue;
-                }
+
+                const linkTargetRel = linkPath
+                    ? normalizeAnchorLinkPath(sourceFile, repoRoot, linkPath)
+                    : null;
+                // An anchor target outside the repo is skipped rather than
+                // validated against a file no other clone has — the same
+                // containment the section-ref candidates enforce.
+                if (linkPath && !linkTargetRel) continue;
+                if (linkTargetRel && gitIgnoredTargets.has(linkTargetRel)) continue;
 
                 const targetPath = linkPath
                     ? path.resolve(path.dirname(sourceFile), linkPath)
@@ -606,9 +890,24 @@ function findBrokenRefs(repoRoot, options = {}) {
                     continue;
                 }
 
-                const targetHeadings = targetPath === sourceFile ? sourceHeadings : getHeadings(targetPath);
+                // A same-file anchor (`linkPath` empty) needs no adopter-scope
+                // check: the file ships whole, so its own headings ship with it.
+                const scaffoldCopy = linkTargetRel && shippedSources.has(relSourceFile)
+                    ? scaffoldOnlyCopy(linkTargetRel)
+                    : null;
+
+                const targetHeadings = scaffoldCopy
+                    ? getHeadings(scaffoldCopy.abs)
+                    : (targetPath === sourceFile ? sourceHeadings : getHeadings(targetPath));
                 if (!targetHeadings.some(heading => heading.slug === slugify(anchor))) {
-                    addFinding(sourceFile, lineNumber, refText, 'anchor not found');
+                    addFinding(
+                        sourceFile,
+                        lineNumber,
+                        refText,
+                        scaffoldCopy
+                            ? `anchor not found in adopter scaffold copy (${scaffoldCopy.rel})`
+                            : 'anchor not found',
+                    );
                 }
             }
         }

@@ -145,7 +145,7 @@ By default, Claude Code prompts on every `git`, `gh`, `codex`, and `canon` subpr
    - Write back with 2-space indentation.
 4. If no, skip — canon works without it; every `canon run` will just prompt per subprocess.
 
-This is purely ergonomics. The committed `.claude/settings.json` is project-level (shared with the team). Personal "full send" overrides belong in `.claude/settings.local.json` (gitignored).
+This is purely ergonomics. The committed `.claude/settings.json` is project-level (shared with the team). Personal "full send" overrides belong in a gitignored `settings.local.json` beside it.
 
 ---
 

@@ -245,6 +245,427 @@ void test('section refs: missing heading fails', () => {
     );
 });
 
+void test('section refs: markdown-link carrier with a repo-root-relative path is validated', () => {
+    // The prose convention `[`docs/x.md`](docs/x.md) §"Heading"` was invisible
+    // to the checker: the backtick-path pattern requires §" right after the
+    // closing backtick, and the anchor-link pattern requires a `#`. This is the
+    // carrier that leaked three canon-ai-only decisions.md pointers to adopters
+    // in 2026-07.
+    // Source at the repo root, where the repo-root and markdown-relative
+    // spellings agree — this asserts the carrier is validated at all. The
+    // divergent case (a root-relative path written from inside `docs/`) has its
+    // own test below.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'README.md',
+                'See [`docs/section-target.md`](docs/section-target.md) §"Missing Heading".\n',
+            );
+            writeFile(root, 'docs/section-target.md', '# Title\n\n## Target Heading\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'README.md',
+                    line: 1,
+                    ref: '[`docs/section-target.md`](docs/section-target.md) §"Missing Heading"',
+                    reason: 'heading not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('section refs: markdown-link carrier with a sibling-relative path is validated', () => {
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/section-source.md',
+                [
+                    'Good: [`section-target.md`](section-target.md) §"Target Heading".',
+                    'Bad: [`section-target.md`](section-target.md) §"Missing Heading".',
+                    '',
+                ].join('\n'),
+            );
+            writeFile(root, 'docs/section-target.md', '# Title\n\n## Target Heading\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/section-source.md',
+                    line: 2,
+                    ref: '[`section-target.md`](section-target.md) §"Missing Heading"',
+                    reason: 'heading not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('section refs: path and pointer inside one backtick pair is a section ref, not a missing file', () => {
+    // `` `docs/x.md §"Heading"` `` used to be read by the bare-backtick
+    // validator as one absurd filename and reported as `missing file` —
+    // technically a failure, but it misdirected the author to the path instead
+    // of the heading. Both the pass and fail cases now route to the section
+    // validator.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/section-source.md',
+                [
+                    'Good: `docs/section-target.md §"Target Heading"`.',
+                    'Bad: `docs/section-target.md §"Missing Heading"`.',
+                    '',
+                ].join('\n'),
+            );
+            writeFile(root, 'docs/section-target.md', '# Title\n\n## Target Heading\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/section-source.md',
+                    line: 2,
+                    ref: '`docs/section-target.md §"Missing Heading"`',
+                    reason: 'heading not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('section refs: markdown-link carrier to a genuinely missing file reports missing file', () => {
+    // Plain-text link label on purpose: a backticked label (`` [`docs/nope.md`](docs/nope.md) ``)
+    // is independently a class-1 backtick ref, so it would add a second
+    // `missing file` finding for the same line and obscure what this asserts.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/section-source.md',
+                'See [the missing doc](docs/nope.md) §"Some Heading".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/section-source.md',
+                    line: 1,
+                    ref: '[the missing doc](docs/nope.md) §"Some Heading"',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('section refs: a malformed inline pointer escapes neither validator', () => {
+    // Codex P2 on this change: `hasInlineSectionPointer` suppressed the
+    // bare-backtick file check with a looser pattern than the one the section
+    // validator recognizes, so `` `docs/x.md §""` `` fell through both and was
+    // reported by nobody. Suppression is now anchored to mirror carrier 2
+    // exactly — anything the section validator won't claim stays claimed by the
+    // file validator.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/malformed.md',
+                [
+                    'Empty pointer: `docs/nope.md §""`.',
+                    'Unterminated pointer: `docs/nope.md §"Heading`.',
+                    '',
+                ].join('\n'),
+            );
+        },
+        root => {
+            const findings = runChecks(root);
+            assert.equal(findings.length, 2);
+            assert.deepEqual(findings.map(finding => finding.line), [1, 2]);
+            for (const finding of findings) {
+                assert.equal(finding.reason, 'missing file');
+            }
+        },
+    );
+});
+
+void test('section refs: markdown-link carrier prefers true markdown resolution over the repo-root form', () => {
+    // Codex P2 on this change: trying the repo-root spelling first let a link
+    // that renders elsewhere be validated against a same-named file at the
+    // repo root. The sibling file the renderer actually reaches wins.
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/sub/source.md', 'See [target](target.md) §"Sibling Heading".\n');
+            writeFile(root, 'docs/sub/target.md', '# Title\n\n## Sibling Heading\n');
+            writeFile(root, 'target.md', '# Decoy\n\n## Decoy Heading\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('section refs: a repo-root-relative link path that a renderer cannot follow is its own finding', () => {
+    // The section pointer is still checked against the file the author meant
+    // (so an adopter-scope leak is not masked), and the unrenderable link path
+    // is reported separately rather than swallowing both checks.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'docs/source.md',
+                'See [`docs/target.md`](docs/target.md) §"Missing Heading".\n',
+            );
+            writeFile(root, 'docs/target.md', '# Title\n\n## Target Heading\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/source.md',
+                    line: 1,
+                    ref: '[`docs/target.md`](docs/target.md) §"Missing Heading"',
+                    reason: 'link path does not resolve from this file',
+                },
+                {
+                    file: 'docs/source.md',
+                    line: 1,
+                    ref: '[`docs/target.md`](docs/target.md) §"Missing Heading"',
+                    reason: 'heading not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('section refs: gitignored alternate spelling does not silence a resolvable target', () => {
+    // Codex P2 on this change: `candidates.some(gitIgnored)` skipped the whole
+    // ref when EITHER spelling was ignored, so a real heading error behind a
+    // tracked source-relative target went unreported. The gitignore skip now
+    // applies to the candidate actually selected, and to the nothing-resolves
+    // case it exists for.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', 'docs/target.md\n');
+            writeFile(root, 'docs/sub/source.md', 'See [target](target.md) §"Missing Heading".\n');
+            writeFile(root, 'docs/sub/target.md', '# Title\n\n## Real Heading\n');
+            writeFile(root, 'docs/target.md', '# Ignored\n\n## Missing Heading\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/sub/source.md',
+                    line: 1,
+                    ref: '[target](target.md) §"Missing Heading"',
+                    reason: 'heading not found',
+                },
+            ]);
+        },
+    );
+});
+
+void test('section refs: gitignored target is still skipped when no spelling resolves', () => {
+    // The CI-consistency skip must survive the reordering above: on a fresh
+    // clone the ignored file is absent, so nothing resolves and the ref must
+    // stay silent rather than fail as a missing file.
+    makeTempRepo(
+        root => {
+            spawnSync('git', ['init', '--quiet'], { cwd: root });
+            writeFile(root, '.gitignore', 'docs/generated.md\n');
+            writeFile(root, 'docs/source.md', 'See `docs/generated.md` §"Some Heading".\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('section refs: a target escaping the repo is not stat-ed outside the worktree', () => {
+    // Codex P2 round 2: `isAllowedDocTarget` only inspects the first path
+    // segment, so `docs/../../../outside.md` cleared the allow-list and the
+    // repo-root fallback candidate resolved outside `repoRoot`. Candidates are
+    // now confined to the repo, matching the containment `normalizeAnchorLinkPath`
+    // already enforces on the markdown-resolved path.
+    makeTempRepo(
+        root => {
+            // A real file just outside the fixture root, reachable only by escaping.
+            fs.writeFileSync(
+                path.join(root, '..', 'docs-refs-check-outside.md'),
+                '# Outside\n\n## Escaped Heading\n',
+                'utf8',
+            );
+            writeFile(
+                root,
+                'docs/escape.md',
+                [
+                    'Link carrier: [x](docs/../../docs-refs-check-outside.md) §"Escaped Heading".',
+                    'Backtick carrier: `docs/../../docs-refs-check-outside.md` §"Escaped Heading".',
+                    '',
+                ].join('\n'),
+            );
+        },
+        root => {
+            try {
+                assert.deepEqual(runChecks(root), []);
+            } finally {
+                fs.rmSync(path.join(root, '..', 'docs-refs-check-outside.md'), { force: true });
+            }
+        },
+    );
+});
+
+void test('anchor links: an out-of-repo target is skipped, matching section-ref containment', () => {
+    // Codex P2 round 3: the section-ref path confined its candidates to the
+    // repo while the anchor path still resolved `../outside.md` from the source
+    // directory and validated a file no other clone has. The two validators now
+    // apply the same containment. An in-repo parent-relative link still works.
+    makeTempRepo(
+        root => {
+            fs.writeFileSync(
+                path.join(root, '..', 'docs-refs-check-outside-anchor.md'),
+                '# Outside\n\n## Escaped Heading\n',
+                'utf8',
+            );
+            writeFile(root, 'AGENTS.md', '# Title\n\n## In Repo Heading\n');
+            writeFile(
+                root,
+                'docs/nested/source.md',
+                [
+                    'Escapes: [x](../../../docs-refs-check-outside-anchor.md#escaped-heading).',
+                    'In repo: [y](../../AGENTS.md#in-repo-heading).',
+                    '',
+                ].join('\n'),
+            );
+        },
+        root => {
+            try {
+                assert.deepEqual(runChecks(root), []);
+            } finally {
+                fs.rmSync(path.join(root, '..', 'docs-refs-check-outside-anchor.md'), { force: true });
+            }
+        },
+    );
+});
+
+void test('adopter scope: an unparseable CANON_OWNED manifest leaves the guard inert, not partial', () => {
+    // Codex P2 round 2: a partial manifest is worse than none — a shipped file
+    // missing from the set stops being policed, silently. An array that never
+    // closes must yield nothing rather than the entries found so far.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'src/lib/canon-owned.ts',
+                "export const CANON_OWNED = [\n    'docs/shipped-guide.md',\n",
+            );
+            writeFile(root, 'docs/decisions.md', '# Decisions\n\n## Canon Only Section\n');
+            writeFile(root, 'templates/docs/decisions.md', '# Decisions\n');
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                'See `docs/decisions.md` §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('adopter scope: CANON_OWNED entries survive brackets and slashes inside quoted paths', () => {
+    // Codex P2 round 2: the previous regex parse broke on `]`, `//`, or `/*`
+    // inside a string literal — truncating the manifest and silently dropping
+    // adopter-scope coverage for every entry after it.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'src/lib/canon-owned.ts',
+                [
+                    'export const CANON_OWNED = [',
+                    "    'docs/odd]name.md', // trailing [comment] with ]",
+                    "    'docs/odd*name.md', /* block ] comment */",
+                    "    'docs/shipped-guide.md',",
+                    '] as const;',
+                    '',
+                ].join('\n'),
+            );
+            writeFile(root, 'docs/decisions.md', '# Decisions\n\n## Canon Only Section\n');
+            writeFile(root, 'templates/docs/decisions.md', '# Decisions\n');
+            // Last entry in the list: only reachable if the odd names and the
+            // bracket-bearing comments did not truncate the parse.
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                'See `docs/decisions.md` §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/shipped-guide.md',
+                    line: 1,
+                    ref: '`docs/decisions.md` §"Canon Only Section"',
+                    reason: 'heading not found in adopter scaffold copy (templates/docs/decisions.md)',
+                },
+            ]);
+        },
+    );
+});
+
+void test('adopter scope: CANON_OWNED entries behind comments are parsed correctly', () => {
+    // Codex P2 on this change: the manifest parser stopped at the first `]` and
+    // then took every quoted substring, so a comment containing `]` truncated
+    // the list and a commented-out entry counted as owned — either way the
+    // guard silently misclassifies a file. Comments are stripped first.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'src/lib/canon-owned.ts',
+                [
+                    'export const CANON_OWNED = [',
+                    "    // 'docs/not-owned.md', // retired [see BACKLOG]",
+                    '    /* block [comment] */',
+                    "    'docs/shipped-guide.md',",
+                    '] as const;',
+                    '',
+                ].join('\n'),
+            );
+            writeFile(
+                root,
+                'docs/decisions.md',
+                '# Decisions\n\n## Canon Only Section\n',
+            );
+            writeFile(root, 'templates/docs/decisions.md', '# Decisions\n');
+            // Owned despite following the bracket-bearing comments: must be scoped.
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                'See `docs/decisions.md` §"Canon Only Section".\n',
+            );
+            // Commented out, so NOT owned: must stay unscoped.
+            writeFile(
+                root,
+                'docs/not-owned.md',
+                'See `docs/decisions.md` §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/shipped-guide.md',
+                    line: 1,
+                    ref: '`docs/decisions.md` §"Canon Only Section"',
+                    reason: 'heading not found in adopter scaffold copy (templates/docs/decisions.md)',
+                },
+            ]);
+        },
+    );
+});
+
 void test('anchor links: same-file anchor passes', () => {
     makeTempRepo(
         root => {
@@ -301,6 +722,276 @@ void test('anchor links: cross-file missing anchor fails', () => {
                     reason: 'anchor not found',
                 },
             ]);
+        },
+    );
+});
+
+// --- Adopter scope -------------------------------------------------------
+//
+// canon ships every CANON_OWNED file verbatim, but the scaffold docs it ships
+// alongside (`docs/decisions.md` and friends) become the adopter's own content.
+// A section pointer from a shipped file into a scaffold doc must therefore
+// resolve against `templates/docs/<file>`, not canon-ai's filled-in copy.
+// Fixtures below are deliberately list-driven — `docs/shipped-guide.md` is not
+// a real canon path, so a pass proves the guard reads CANON_OWNED rather than
+// recognizing filenames.
+function writeAdopterScopeFixture(
+    root: string,
+    options: { canonOwned?: string[] } = {},
+): void {
+    const canonOwned = options.canonOwned ?? ['docs/shipped-guide.md'];
+    if (canonOwned.length > 0) {
+        writeFile(
+            root,
+            'src/lib/canon-owned.ts',
+            [
+                'export const CANON_OWNED = [',
+                ...canonOwned.map(rel => `    '${rel}',`),
+                '] as const;',
+                '',
+                'export const DELIMITED = [] as const;',
+                '',
+            ].join('\n'),
+        );
+    }
+    // canon-ai's own copy carries both sections; the adopter scaffold carries
+    // only the one canon actually ships.
+    writeFile(
+        root,
+        'docs/decisions.md',
+        '# Decisions\n\n## Versioning and release policy\n\n## Canon Only Section\n',
+    );
+    writeFile(
+        root,
+        'templates/docs/decisions.md',
+        '# Decisions\n\n## Versioning and release policy\n',
+    );
+}
+
+void test('adopter scope: CANON_OWNED file naming a scaffold-only section fails', () => {
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root);
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                'See [`decisions.md`](decisions.md) §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/shipped-guide.md',
+                    line: 1,
+                    ref: '[`decisions.md`](decisions.md) §"Canon Only Section"',
+                    reason: 'heading not found in adopter scaffold copy (templates/docs/decisions.md)',
+                },
+            ]);
+        },
+    );
+});
+
+void test('adopter scope: CANON_OWNED file naming a section present in the scaffold passes', () => {
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root);
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                'See `docs/decisions.md` §"Versioning and release policy".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('adopter scope: non-CANON_OWNED file may name canon-ai-only sections freely', () => {
+    // Negative control: the same ref from a file that never ships is fine, and
+    // resolves against the repo-root copy where the section exists.
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root);
+            writeFile(
+                root,
+                'docs/internal-notes.md',
+                'See [`decisions.md`](decisions.md) §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('adopter scope: the templates/ mirror of a CANON_OWNED file is checked too', () => {
+    // The mirror ships the same bytes, so it carries the same leak.
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root);
+            writeFile(
+                root,
+                'templates/docs/shipped-guide.md',
+                'See `docs/decisions.md` §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'templates/docs/shipped-guide.md',
+                    line: 1,
+                    ref: '`docs/decisions.md` §"Canon Only Section"',
+                    reason: 'heading not found in adopter scaffold copy (templates/docs/decisions.md)',
+                },
+            ]);
+        },
+    );
+});
+
+void test('adopter scope: shipped markdown under a hidden directory is scanned and scoped', () => {
+    // Codex P2 on PR #212: `walkMarkdownTree` skips directories beginning with
+    // `.`, and no configured root reaches `.claude/**` or `.canon/**` — where
+    // 20 of canon's 21 owned markdown files live. Membership in
+    // `shippedSources` was therefore moot for almost every shipped file, so a
+    // dangling section pointer in a skill or task template still shipped
+    // silently. Owned markdown is now collected regardless of directory layout.
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root, {
+                canonOwned: ['.claude/skills/example/SKILL.md', '.canon/templates/done.md'],
+            });
+            writeFile(
+                root,
+                '.claude/skills/example/SKILL.md',
+                'See `docs/decisions.md` §"Canon Only Section".\n',
+            );
+            // The `templates/` mirror of a hidden-directory owned file is
+            // equally unreachable by the walker, and ships the same bytes.
+            writeFile(
+                root,
+                'templates/.canon/templates/done.md',
+                'See `docs/decisions.md` §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: '.claude/skills/example/SKILL.md',
+                    line: 1,
+                    ref: '`docs/decisions.md` §"Canon Only Section"',
+                    reason: 'heading not found in adopter scaffold copy (templates/docs/decisions.md)',
+                },
+                {
+                    file: 'templates/.canon/templates/done.md',
+                    line: 1,
+                    ref: '`docs/decisions.md` §"Canon Only Section"',
+                    reason: 'heading not found in adopter scaffold copy (templates/docs/decisions.md)',
+                },
+            ]);
+        },
+    );
+});
+
+void test('shipped markdown is scanned for every ref class, not only adopter scope', () => {
+    // A broken file ref in a shipped skill is an adopter-facing bug too — the
+    // point of collecting these files is that they ship, not that one validator
+    // needs them.
+    makeTempRepo(
+        root => {
+            writeFile(
+                root,
+                'src/lib/canon-owned.ts',
+                "export const CANON_OWNED = [\n    '.claude/skills/example/SKILL.md',\n] as const;\n",
+            );
+            writeFile(
+                root,
+                '.claude/skills/example/SKILL.md',
+                'See `scripts/never-existed.ts`.\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: '.claude/skills/example/SKILL.md',
+                    line: 1,
+                    ref: '`scripts/never-existed.ts`',
+                    reason: 'missing file',
+                },
+            ]);
+        },
+    );
+});
+
+void test('adopter scope: anchor links into scaffold-only docs are scoped too, self-anchors are not', () => {
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root);
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                [
+                    '# Shipped Guide',
+                    '',
+                    '## Local Heading',
+                    '',
+                    'Self: [here](#local-heading).',
+                    'Scaffold-safe: [policy](decisions.md#versioning-and-release-policy).',
+                    'Leak: [rationale](decisions.md#canon-only-section).',
+                    '',
+                ].join('\n'),
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), [
+                {
+                    file: 'docs/shipped-guide.md',
+                    line: 7,
+                    ref: '[rationale](decisions.md#canon-only-section)',
+                    reason: 'anchor not found in adopter scaffold copy (templates/docs/decisions.md)',
+                },
+            ]);
+        },
+    );
+});
+
+void test('adopter scope: refs between two CANON_OWNED docs resolve against the root copy', () => {
+    // Owned files are byte-identical mirrors, so their headings ship as-is and
+    // need no scaffold re-resolution.
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root, {
+                canonOwned: ['docs/shipped-guide.md', 'docs/shipped-reference.md'],
+            });
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                'See `docs/shipped-reference.md` §"Owned Heading".\n',
+            );
+            writeFile(root, 'docs/shipped-reference.md', '# Reference\n\n## Owned Heading\n');
+            writeFile(root, 'templates/docs/shipped-reference.md', '# Reference\n\n## Owned Heading\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+        },
+    );
+});
+
+void test('adopter scope: guard is inert with no src/lib/canon-owned.ts (adopter repo)', () => {
+    // In an adopter repo there is no CANON_OWNED manifest and no templates/
+    // tree, so nothing is treated as shipped — an adopter doc pointing at its
+    // own decisions.md sections is exactly the intended usage.
+    makeTempRepo(
+        root => {
+            writeAdopterScopeFixture(root, { canonOwned: [] });
+            writeFile(
+                root,
+                'docs/shipped-guide.md',
+                'See [`decisions.md`](decisions.md) §"Canon Only Section".\n',
+            );
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
         },
     );
 });
