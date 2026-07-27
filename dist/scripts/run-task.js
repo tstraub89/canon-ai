@@ -2009,8 +2009,9 @@ async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsC
       if (tick) console.log(tick);
       if (event.type === "turn.completed") {
         sawTurnCompleted = true;
-        if (event.usage) {
-          tokenTotal += (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0);
+        const turnTokens = (event.usage?.input_tokens ?? 0) + (event.usage?.output_tokens ?? 0);
+        if (turnTokens > 0) {
+          tokenTotal += turnTokens;
           sawUsage = true;
         }
       } else if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {

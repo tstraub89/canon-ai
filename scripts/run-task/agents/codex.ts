@@ -185,8 +185,13 @@ export async function runColdCodexReview(
             if (tick) console.log(tick);
             if (event.type === 'turn.completed') {
                 sawTurnCompleted = true;
-                if (event.usage) {
-                    tokenTotal += (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0);
+                // `codex exec review` reports an all-zero usage object regardless of actual
+                // token spend (verified against codex-cli 0.144.5: plain `codex exec` returns
+                // real counts on the identical event shape, `review` never does). Treat an
+                // all-zero usage as unavailable rather than record a misleading "0".
+                const turnTokens = (event.usage?.input_tokens ?? 0) + (event.usage?.output_tokens ?? 0);
+                if (turnTokens > 0) {
+                    tokenTotal += turnTokens;
                     sawUsage = true;
                 }
             } else if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {

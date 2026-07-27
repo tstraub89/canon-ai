@@ -480,6 +480,35 @@ void test('runColdCodexReview records a dash token cell when completion usage is
     }
 });
 
+void test('runColdCodexReview records a dash token cell when completion usage is all-zero', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-metrics-zero-usage-'));
+    try {
+        const fakeCodex = writeFakeCodexScript(dir, [
+            `console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'clean review' } }));`,
+            `console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 } }));`,
+        ].join('\n'));
+
+        await withMetricsFileAsync(dir, async metricsFile => {
+            const result = await runColdCodexReview(
+                'main',
+                'gpt-mini',
+                'high',
+                dir,
+                { taskId: 'task-a', phase: 'code_review', iteration: 0, activeCwd: dir },
+                { codexBinary: fakeCodex },
+            );
+            assert.equal(result.success, true);
+
+            const rows = readMetricRows(metricsFile);
+            assert.equal(rows.length, 1);
+            assert.equal(rows[0]?.[7], '-');
+            assert.equal(rows[0]?.[8], 'ok');
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 void test('runCodeReviewPhase runs cold-Codex before the foreman and writes artifacts for a bundle', { concurrency: false }, async () => {
     await withTempTasksAsync(async (tasksRoot, activeCwd) => {
         for (const taskId of ['task-a', 'task-b']) writeTask(tasksRoot, taskId);
