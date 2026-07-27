@@ -1,7 +1,7 @@
 {
   "id": "doctor-quality-log-header-check",
   "title": "canon doctor: detect stale/malformed task-quality-log.md header",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-27",
   "updated": "2026-07-27",
   "branch": "task/doctor-quality-log-header-check",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
