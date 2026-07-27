@@ -842,3 +842,7 @@
 | 2026-07-25T02:26:06.558Z | reconcile-qa-quality-log-summary | code_review | codex | gpt-5.6-luna | 0 | 248.4s | 0 | ok |
 | 2026-07-25T02:40:16.754Z | reconcile-qa-quality-log-summary | code_review | claude | opus | 0 | 850.2s | 1047492 | ok |
 | 2026-07-25T02:47:02.899Z | reconcile-qa-quality-log-summary | qa | claude | sonnet | 0 | 406.1s | 3267092 | ok |
+| 2026-07-27T02:19:33.313Z | doctor-quality-log-header-check | spec_review | codex | gpt-5.6-luna | 0 | 105.2s | 661088 | ok |
+| 2026-07-27T02:20:49.480Z | doctor-quality-log-header-check | spec | claude | opus | 0 | 76.0s | 475288 | ok |
+| 2026-07-27T02:22:06.173Z | doctor-quality-log-header-check | spec_review | codex | gpt-5.6-luna | 1 | 76.5s | 1165081 | ok |
+| 2026-07-27T03:01:41.617Z | doctor-quality-log-header-check | plan | claude | sonnet | 0 | 129.4s | 1089741 | ok |
