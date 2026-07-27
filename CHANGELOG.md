@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex code-review token usage is no longer misreported as zero.** `codex exec review` — the cold-Codex lens in `code_review` — never reports real token counts on its completion event, unlike canon's other Codex invocations. Canon was recording that as a literal `0` in `docs/pipeline-invocations.md`, implying the lens ran for free; it now records `-` (unavailable), matching the existing convention for missing usage data. Ships to adopters via `canon upgrade`.
+
 ## [2.4.0] — 2026-07-25
 
 ### Changed
