@@ -4,7 +4,7 @@
 import { execSync as execSync2 } from "child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
-import { join, sep as pathSep } from "path";
+import { dirname, join, relative, sep as pathSep } from "path";
 
 // scripts/run-task/heartbeat.ts
 import fs from "fs";
@@ -45,42 +45,12 @@ function isHeartbeatStale(record, now = Date.now()) {
   return now - record.last_update_ms > HEARTBEAT_STALE_AFTER_MS;
 }
 
-// scripts/run-task/run-context.ts
-import path5 from "path";
-
-// scripts/run-task/detach.ts
-import { spawn } from "child_process";
-import fs2 from "fs";
+// scripts/run-task/quality-log.ts
+import fs3 from "fs";
 import path2 from "path";
-var PID_FILENAME = ".canon-pid";
-var LOG_FILENAME = ".canon-run.log";
-function readCanonPid(taskDir) {
-  const file = path2.join(taskDir, PID_FILENAME);
-  try {
-    const raw = fs2.readFileSync(file, "utf8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-function removeCanonPid(taskDir) {
-  try {
-    fs2.unlinkSync(path2.join(taskDir, PID_FILENAME));
-  } catch {
-  }
-}
-function runLogPathFor(taskDir) {
-  return path2.join(taskDir, LOG_FILENAME);
-}
-
-// scripts/run-task/state.ts
-import fs5 from "fs";
-import { spawnSync as spawnSync2 } from "child_process";
-import path4 from "path";
 
 // scripts/run-task/cli.ts
-import fs3 from "fs";
+import fs2 from "fs";
 var exitReason = null;
 var originalProcessExit = process.exit.bind(process);
 function setExitReason(reason) {
@@ -95,13 +65,496 @@ function warn(message) {
   console.error(`\u26A0\uFE0F  ${message}`);
 }
 
-// scripts/run-task/env.ts
-import { spawnSync } from "child_process";
+// scripts/run-task/markdown-table.ts
+function splitTableLine(line) {
+  const cells = [];
+  let cell = "";
+  let backslashes = 0;
+  for (const char of line) {
+    if (char === "\\") {
+      backslashes += 1;
+      continue;
+    }
+    if (char === "|") {
+      if (backslashes % 2 === 1) {
+        cell += "\\".repeat((backslashes - 1) / 2) + "|";
+      } else {
+        cell += "\\".repeat(backslashes / 2);
+        cells.push(cell);
+        cell = "";
+      }
+      backslashes = 0;
+      continue;
+    }
+    if (backslashes > 0) {
+      cell += "\\".repeat(backslashes);
+      backslashes = 0;
+    }
+    cell += char;
+  }
+  if (backslashes > 0) cell += "\\".repeat(backslashes);
+  cells.push(cell);
+  return cells;
+}
+function normalizeCells(line) {
+  const cells = splitTableLine(line.trim());
+  const innerCells = cells.slice(
+    (cells[0] ?? "").trim() === "" ? 1 : 0,
+    (cells[cells.length - 1] ?? "").trim() === "" ? -1 : void 0
+  );
+  return innerCells.map((cell) => cell.trim());
+}
+function isSeparatorRow(cells) {
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()));
+}
+function isSectionHeading(line, sectionHeading) {
+  return line.trimEnd() === `## ${sectionHeading}`;
+}
+function isHeadingBoundary(line) {
+  return /^#{1,2}\s/.test(line);
+}
+function computeCommentHiddenLines(lines) {
+  const hidden = new Array(lines.length).fill(false);
+  let inHtmlComment = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const opensComment = /<!--/.test(line);
+    const closesComment = /-->/.test(line);
+    const startsInComment = inHtmlComment;
+    if (opensComment && !closesComment) inHtmlComment = true;
+    else if (closesComment && !opensComment) inHtmlComment = false;
+    else if (opensComment && closesComment) {
+      inHtmlComment = false;
+    }
+    hidden[i] = startsInComment || opensComment && !closesComment;
+  }
+  return hidden;
+}
+function extractSectionBodies(markdown, pattern) {
+  const lines = markdown.split("\n");
+  const hidden = computeCommentHiddenLines(lines);
+  const bodies = [];
+  let activeStart = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (hidden[i]) continue;
+    const isH2 = /^## /.test(line);
+    const isH1 = /^# /.test(line);
+    if (isH2 || isH1) {
+      if (activeStart !== -1) {
+        bodies.push(lines.slice(activeStart, i).join("\n"));
+        activeStart = -1;
+      }
+      if (isH2 && pattern.test(line)) {
+        activeStart = i + 1;
+      }
+    }
+  }
+  if (activeStart !== -1) bodies.push(lines.slice(activeStart).join("\n"));
+  return bodies;
+}
+function parseTableH3(markdown, sectionHeading) {
+  const lines = markdown.split("\n");
+  const headingIndex = lines.findIndex((line) => line.trimEnd() === `### ${sectionHeading}`);
+  if (headingIndex === -1) return [];
+  let tableStart = -1;
+  let sectionEnd = lines.length;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (/^#{1,3}\s/.test(lines[index])) {
+      sectionEnd = index;
+      break;
+    }
+    if (tableStart === -1 && lines[index].trimStart().startsWith("|")) {
+      tableStart = index;
+    }
+  }
+  if (tableStart === -1 || tableStart >= sectionEnd) return [];
+  const headerCells = normalizeCells(lines[tableStart]);
+  if (headerCells.length === 0) return [];
+  let rowStart = tableStart + 1;
+  if (rowStart < sectionEnd) {
+    const separatorCells = normalizeCells(lines[rowStart]);
+    if (isSeparatorRow(separatorCells)) rowStart += 1;
+  }
+  const rows = [];
+  for (let index = rowStart; index < sectionEnd; index += 1) {
+    const line = lines[index];
+    if (!line.trimStart().startsWith("|")) break;
+    const cells = normalizeCells(line);
+    if (isSeparatorRow(cells)) continue;
+    const row = {};
+    for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+      row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+function parseTable(markdown, sectionHeading) {
+  const lines = markdown.split("\n");
+  const headingIndex = lines.findIndex((line) => isSectionHeading(line, sectionHeading));
+  if (headingIndex === -1) return [];
+  let tableStart = -1;
+  let sectionEnd = lines.length;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (isHeadingBoundary(lines[index])) {
+      sectionEnd = index;
+      break;
+    }
+    if (tableStart === -1 && lines[index].trimStart().startsWith("|")) {
+      tableStart = index;
+    }
+  }
+  if (tableStart === -1 || tableStart >= sectionEnd) return [];
+  const headerCells = normalizeCells(lines[tableStart]);
+  if (headerCells.length === 0) return [];
+  let rowStart = tableStart + 1;
+  if (rowStart < sectionEnd) {
+    const separatorCells = normalizeCells(lines[rowStart]);
+    if (isSeparatorRow(separatorCells)) rowStart += 1;
+  }
+  const rows = [];
+  for (let index = rowStart; index < sectionEnd; index += 1) {
+    const line = lines[index];
+    if (!line.trimStart().startsWith("|")) break;
+    const cells = normalizeCells(line);
+    if (isSeparatorRow(cells)) continue;
+    const row = {};
+    for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
+      row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+// scripts/run-task/quality-log.ts
+var CANON_LOG_HEADERS = [
+  "Date",
+  "Task",
+  "Size",
+  "Spec verdict",
+  "Spec iter",
+  "Review iter",
+  "Dropped ACs",
+  "Validation gaps",
+  "Human reroute?",
+  "Notes"
+];
+var DERIVED_HEADERS = /* @__PURE__ */ new Set(["Date", "Task", "Size", "Spec iter", "Review iter"]);
+var JUDGMENT_HEADERS = /* @__PURE__ */ new Set([
+  "Spec verdict",
+  "Human reroute?",
+  "Dropped ACs",
+  "Validation gaps",
+  "Notes"
+]);
+var EARLIEST_WINS_HEADERS = /* @__PURE__ */ new Set(["Spec verdict"]);
+var STANDARD_QUALITY_LOG_SKELETON = [
+  "# Task Quality Log",
+  "",
+  "## Log",
+  "",
+  "| Date | Task | Size | Spec verdict | Spec iter | Review iter | Dropped ACs | Validation gaps | Human reroute? | Notes |",
+  "|---|---|---|---|---|---|---|---|---|---|",
+  "",
+  "## Periodic Reviews",
+  ""
+].join("\n");
+var JUDGMENT_LABELS = {
+  "spec verdict": "Spec verdict",
+  "human reroute?": "Human reroute?",
+  "dropped acs": "Dropped ACs",
+  "validation gaps": "Validation gaps",
+  "notes": "Notes"
+};
+function getQualityLogFile(activeCwd) {
+  return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path2.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path2.join(activeCwd, "docs/task-quality-log.md");
+}
+function normalizeCellValue(value) {
+  return value.replace(/\r\n|\n/g, " ");
+}
+function serializeQualityLogCell(value) {
+  return normalizeCellValue(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+}
+function splitTableRowCells(line) {
+  const cells = [];
+  let cell = "";
+  let backslashes = 0;
+  for (const char of line.trim()) {
+    if (char === "\\") {
+      backslashes += 1;
+      continue;
+    }
+    if (char === "|") {
+      if (backslashes % 2 === 1) {
+        cell += "\\".repeat((backslashes - 1) / 2) + "|";
+      } else {
+        cell += "\\".repeat(backslashes / 2);
+        cells.push(cell);
+        cell = "";
+      }
+      backslashes = 0;
+      continue;
+    }
+    if (backslashes > 0) {
+      cell += "\\".repeat(backslashes);
+      backslashes = 0;
+    }
+    cell += char;
+  }
+  if (backslashes > 0) cell += "\\".repeat(backslashes);
+  cells.push(cell);
+  const innerCells = cells.slice(
+    (cells[0] ?? "").trim() === "" ? 1 : 0,
+    (cells[cells.length - 1] ?? "").trim() === "" ? -1 : void 0
+  );
+  return innerCells.map((value) => value.trim());
+}
+function isSeparatorRow2(cells) {
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()));
+}
+function locateLogTable(lines) {
+  const headingIndex = lines.findIndex((line) => line.trimEnd() === "## Log");
+  if (headingIndex === -1) return null;
+  let headerIndex = -1;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (/^#{1,2}\s/.test(lines[index])) return null;
+    if (lines[index].trimStart().startsWith("|")) {
+      headerIndex = index;
+      break;
+    }
+  }
+  if (headerIndex === -1) return null;
+  const headerCells = splitTableRowCells(lines[headerIndex]);
+  const uniqueHeaders = new Set(headerCells);
+  if (uniqueHeaders.size !== headerCells.length || CANON_LOG_HEADERS.some((required) => !uniqueHeaders.has(required))) {
+    return null;
+  }
+  let dataStart = headerIndex + 1;
+  if (dataStart < lines.length && isSeparatorRow2(splitTableRowCells(lines[dataStart]))) {
+    dataStart += 1;
+  }
+  let dataEnd = dataStart;
+  while (dataEnd < lines.length && lines[dataEnd].trimStart().startsWith("|")) {
+    dataEnd += 1;
+  }
+  return { headerCells, dataStart, dataEnd };
+}
+function rowFromCells(headerCells, cells) {
+  const row = {};
+  for (let index = 0; index < headerCells.length; index += 1) {
+    row[headerCells[index]] = cells[index] ?? "";
+  }
+  return row;
+}
+function parseLogRows(lines, headerCells, dataStart, dataEnd) {
+  const rows = [];
+  for (let index = dataStart; index < dataEnd; index += 1) {
+    const cells = splitTableRowCells(lines[index]);
+    if (isSeparatorRow2(cells)) continue;
+    rows.push({
+      lineIndex: index,
+      cells: rowFromCells(headerCells, cells)
+    });
+  }
+  return rows;
+}
+function parseStrayRows(lines, headerCells) {
+  const periodicIndex = lines.findIndex((line) => line.trimEnd() === "## Periodic Reviews");
+  if (periodicIndex === -1) return [];
+  const rows = [];
+  for (let index = periodicIndex + 1; index < lines.length; index += 1) {
+    if (!lines[index].trimStart().startsWith("|")) continue;
+    const cells = splitTableRowCells(lines[index]);
+    if (isSeparatorRow2(cells) || cells.length !== headerCells.length) continue;
+    rows.push({
+      lineIndex: index,
+      cells: rowFromCells(headerCells, cells)
+    });
+  }
+  return rows;
+}
+function reconcileHistory(existingRows, headerCells) {
+  const sorted = [...existingRows].sort((left, right) => left.lineIndex - right.lineIndex);
+  const reconciled = {};
+  for (const header of headerCells) {
+    if (DERIVED_HEADERS.has(header)) continue;
+    if (EARLIEST_WINS_HEADERS.has(header)) {
+      const earliest = sorted.map((row) => row.cells[header] ?? "").find((value) => value.trim() !== "");
+      if (earliest !== void 0) reconciled[header] = earliest;
+      continue;
+    }
+    for (const row of sorted) {
+      const value = row.cells[header] ?? "";
+      if (value.trim() !== "") reconciled[header] = value;
+    }
+  }
+  return reconciled;
+}
+function buildFinalRow(headerCells, derived, reconciled, qaSupplied) {
+  const row = {};
+  for (const header of headerCells) {
+    if (header === "Date") {
+      row[header] = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    } else if (header === "Task") {
+      row[header] = derived.taskId;
+    } else if (header === "Size") {
+      const size = derived.taskSize ?? "M";
+      row[header] = derived.delicate ? `${size} delicate` : size;
+    } else if (header === "Spec iter") {
+      row[header] = String(derived.specIterTotal ?? 0);
+    } else if (header === "Review iter") {
+      row[header] = String(derived.reviewIterTotal ?? 0);
+    } else if (JUDGMENT_HEADERS.has(header)) {
+      const supplied = qaSupplied[header];
+      row[header] = supplied?.trim() ? supplied : reconciled[header] ?? "";
+    } else {
+      row[header] = reconciled[header] ?? "";
+    }
+  }
+  return row;
+}
+function renderRowLine(headerCells, row) {
+  const cells = headerCells.map((header) => serializeQualityLogCell(row[header] ?? ""));
+  return `| ${cells.join(" | ")} |`;
+}
+function writeFileAtomic(filePath, content) {
+  const tempPath = `${filePath}.tmp`;
+  try {
+    fs3.writeFileSync(tempPath, content, "utf8");
+    fs3.renameSync(tempPath, filePath);
+  } finally {
+    try {
+      fs3.unlinkSync(tempPath);
+    } catch {
+    }
+  }
+}
+function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
+  try {
+    let content;
+    try {
+      content = fs3.readFileSync(logFilePath, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        content = STANDARD_QUALITY_LOG_SKELETON;
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        warn(`quality-log: could not read ${logFilePath}: ${message}`);
+        return;
+      }
+    }
+    const lines = content.split("\n");
+    const located = locateLogTable(lines);
+    if (!located) {
+      warn(
+        `quality-log: ${logFilePath} has no well-formed '## Log' table with all required columns \u2014 skipping row write for '${derived.taskId}'.`
+      );
+      return;
+    }
+    const logRows = parseLogRows(
+      lines,
+      located.headerCells,
+      located.dataStart,
+      located.dataEnd
+    );
+    const strayRows = parseStrayRows(lines, located.headerCells);
+    const taskRows = [...logRows, ...strayRows].filter((row) => (row.cells.Task ?? "").trim() === derived.taskId);
+    const reconciled = reconcileHistory(taskRows, located.headerCells);
+    const finalRow = buildFinalRow(located.headerCells, derived, reconciled, qaSupplied);
+    const rendered = renderRowLine(located.headerCells, finalRow);
+    const removeIndexes = new Set(taskRows.map((row) => row.lineIndex));
+    const updatedLines = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if (index === located.dataEnd) updatedLines.push(rendered);
+      if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
+    }
+    if (located.dataEnd >= lines.length) updatedLines.push(rendered);
+    writeFileAtomic(logFilePath, updatedLines.join("\n"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`quality-log: unexpected error writing row for '${derived.taskId}': ${message}`);
+  }
+}
+function parseQualityLogJudgmentBlock(doneMdContent) {
+  const bodies = extractSectionBodies(doneMdContent, /^## Quality Log\b/);
+  if (bodies.length === 0) return {};
+  const result = {};
+  for (const line of bodies[bodies.length - 1].split("\n")) {
+    const match = /^-\s*([^:]+):\s*(.*)$/.exec(line.trim());
+    if (!match) continue;
+    const key = JUDGMENT_LABELS[match[1].trim().toLowerCase()];
+    const value = match[2].trim();
+    if (key && value) result[key] = value;
+  }
+  return result;
+}
+function writeQualityLogForTask(taskId, activeCwd, donePath, status) {
+  try {
+    let doneContent = "";
+    try {
+      doneContent = fs3.readFileSync(donePath, "utf8");
+    } catch {
+    }
+    upsertQualityLogRow(
+      getQualityLogFile(activeCwd),
+      {
+        taskId,
+        taskSize: status.task_size,
+        delicate: status.delicate,
+        specIterTotal: status.phases.spec_review?.iterations_total ?? 0,
+        reviewIterTotal: status.phases.code_review?.iterations_total ?? 0
+      },
+      parseQualityLogJudgmentBlock(doneContent)
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`quality-log: failed to write row for '${taskId}': ${message}`);
+  }
+}
+
+// scripts/run-task/run-context.ts
+import path6 from "path";
+
+// scripts/run-task/detach.ts
+import { spawn } from "child_process";
 import fs4 from "fs";
 import path3 from "path";
+var PID_FILENAME = ".canon-pid";
+var LOG_FILENAME = ".canon-run.log";
+function readCanonPid(taskDir) {
+  const file = path3.join(taskDir, PID_FILENAME);
+  try {
+    const raw = fs4.readFileSync(file, "utf8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+function removeCanonPid(taskDir) {
+  try {
+    fs4.unlinkSync(path3.join(taskDir, PID_FILENAME));
+  } catch {
+  }
+}
+function runLogPathFor(taskDir) {
+  return path3.join(taskDir, LOG_FILENAME);
+}
+
+// scripts/run-task/state.ts
+import fs6 from "fs";
+import { spawnSync as spawnSync2 } from "child_process";
+import path5 from "path";
+
+// scripts/run-task/env.ts
+import { spawnSync } from "child_process";
+import fs5 from "fs";
+import path4 from "path";
 import { fileURLToPath } from "url";
 var __filename = fileURLToPath(import.meta.url);
-var __dirname = path3.dirname(__filename);
+var __dirname = path4.dirname(__filename);
 function resolveRepoRoot() {
   try {
     const result = spawnSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
@@ -110,22 +563,22 @@ function resolveRepoRoot() {
     }
     const gitCommonDir = result.stdout.trim();
     if (!gitCommonDir) throw new Error("git rev-parse --git-common-dir returned no path");
-    const resolvedGitCommonDir = path3.isAbsolute(gitCommonDir) ? gitCommonDir : path3.resolve(process.cwd(), gitCommonDir);
-    return path3.dirname(resolvedGitCommonDir);
+    const resolvedGitCommonDir = path4.isAbsolute(gitCommonDir) ? gitCommonDir : path4.resolve(process.cwd(), gitCommonDir);
+    return path4.dirname(resolvedGitCommonDir);
   } catch {
-    return path3.resolve(__dirname, "../..");
+    return path4.resolve(__dirname, "../..");
   }
 }
 var REPO_ROOT = resolveRepoRoot();
-var TASKS_DIR = path3.join(REPO_ROOT, "tasks");
-var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path3.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path3.resolve(REPO_ROOT, "../dev-worktrees");
+var TASKS_DIR = path4.join(REPO_ROOT, "tasks");
+var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path4.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path4.resolve(REPO_ROOT, "../dev-worktrees");
 var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
 function resolveProjectName() {
   if (process.env.CANON_PROJECT_NAME) return process.env.CANON_PROJECT_NAME;
   try {
-    const pkgPath = path3.join(REPO_ROOT, "package.json");
-    if (fs4.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs4.readFileSync(pkgPath, "utf8"));
+    const pkgPath = path4.join(REPO_ROOT, "package.json");
+    if (fs5.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs5.readFileSync(pkgPath, "utf8"));
       if (pkg.name) return pkg.name;
     }
   } catch {
@@ -151,12 +604,12 @@ var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "q
 
 // scripts/run-task/state.ts
 function effectiveWorktreesRoot() {
-  return process.env.CANON_WORKTREES_ROOT ? path4.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+  return process.env.CANON_WORKTREES_ROOT ? path5.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
 }
 function isPathInside(child, parent) {
   if (child === parent) return true;
-  const rel = path4.relative(parent, child);
-  return rel !== "" && !rel.startsWith("..") && !path4.isAbsolute(rel);
+  const rel = path5.relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !path5.isAbsolute(rel);
 }
 function classifyInvocationRoot(params) {
   const { activeToplevel, mainRoot, worktreesRoot } = params;
@@ -169,7 +622,7 @@ function classifyInvocationRoot(params) {
 }
 function canonicalizePath(p) {
   try {
-    return fs5.realpathSync(p);
+    return fs6.realpathSync(p);
   } catch {
     return p;
   }
@@ -241,8 +694,8 @@ function scanWorktreesForSecondaryOwnership(taskId) {
   if (!enumeration.ok) return { outcome: "enumeration-failed" };
   const matches = [];
   for (const { path: worktreePath, branch: checkedOutBranch } of enumeration.worktrees) {
-    const candidateStatusPath = path4.join(worktreePath, "tasks", taskId, "status.json");
-    if (!fs5.existsSync(candidateStatusPath)) continue;
+    const candidateStatusPath = path5.join(worktreePath, "tasks", taskId, "status.json");
+    if (!fs6.existsSync(candidateStatusPath)) continue;
     let candidate;
     try {
       candidate = readStatusFromPath(candidateStatusPath, taskId);
@@ -283,22 +736,22 @@ function findExistingWorktreeForBranch(branch) {
   return null;
 }
 function taskDirForRepoRoot(taskId) {
-  return path4.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
+  return path5.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
 }
 function taskDirFor(taskId) {
   if (process.env.CANON_TASKS_DIR_OVERRIDE) {
-    return path4.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
+    return path5.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
   }
-  return path4.join(resolveTaskCwd(taskId), "tasks", taskId);
+  return path5.join(resolveTaskCwd(taskId), "tasks", taskId);
 }
 function isOrphanedWorktreeState(taskId) {
   const worktreesRoot = effectiveWorktreesRoot();
-  const directWorktree = path4.join(worktreesRoot, taskId);
-  const directStatus = path4.join(directWorktree, "tasks", taskId, "status.json");
-  if (fs5.existsSync(directStatus)) return false;
-  const statusPath = path4.join(taskDirForRepoRoot(taskId), "status.json");
+  const directWorktree = path5.join(worktreesRoot, taskId);
+  const directStatus = path5.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs6.existsSync(directStatus)) return false;
+  const statusPath = path5.join(taskDirForRepoRoot(taskId), "status.json");
   try {
-    const parsed = JSON.parse(fs5.readFileSync(statusPath, "utf8"));
+    const parsed = JSON.parse(fs6.readFileSync(statusPath, "utf8"));
     if (parsed.worktree !== true) return false;
     const branch = parsed.branch?.trim() ?? "";
     if (!branch) return false;
@@ -309,12 +762,12 @@ function isOrphanedWorktreeState(taskId) {
 }
 function resolveTaskCwd(taskId) {
   const worktreesRoot = effectiveWorktreesRoot();
-  const directWorktree = path4.join(worktreesRoot, taskId);
-  const directStatus = path4.join(directWorktree, "tasks", taskId, "status.json");
-  if (fs5.existsSync(directStatus)) return directWorktree;
-  const statusPath = path4.join(taskDirForRepoRoot(taskId), "status.json");
+  const directWorktree = path5.join(worktreesRoot, taskId);
+  const directStatus = path5.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs6.existsSync(directStatus)) return directWorktree;
+  const statusPath = path5.join(taskDirForRepoRoot(taskId), "status.json");
   try {
-    const parsed = JSON.parse(fs5.readFileSync(statusPath, "utf8"));
+    const parsed = JSON.parse(fs6.readFileSync(statusPath, "utf8"));
     if (parsed.worktree === true) {
       const branch = parsed.branch?.trim() ?? "";
       if (branch) {
@@ -356,9 +809,9 @@ function resolveTaskCwd(taskId) {
 }
 function statusFileFor(taskId) {
   if (process.env.CANON_TASKS_DIR_OVERRIDE) {
-    return path4.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, "status.json");
+    return path5.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, "status.json");
   }
-  return path4.join(resolveTaskCwd(taskId), "tasks", taskId, "status.json");
+  return path5.join(resolveTaskCwd(taskId), "tasks", taskId, "status.json");
 }
 function validateBranchField(value, taskId, fieldName) {
   if (value === void 0) return;
@@ -392,7 +845,7 @@ function validateStatus(taskId, parsed) {
   }
 }
 function readStatusFromPath(statusFile, taskIdForErrors = "<unknown>") {
-  const parsed = JSON.parse(fs5.readFileSync(statusFile, "utf8"));
+  const parsed = JSON.parse(fs6.readFileSync(statusFile, "utf8"));
   validateStatus(taskIdForErrors, parsed);
   return parsed;
 }
@@ -424,7 +877,7 @@ function statusReadResult(taskId, statusFile, readImpl) {
 }
 function tolerantTaskDir(taskId) {
   if (isOrphanedWorktreeState(taskId)) return taskDirForRepoRoot(taskId);
-  return path5.dirname(statusFileFor(taskId));
+  return path6.dirname(statusFileFor(taskId));
 }
 function defaultProbeAlive(pid) {
   process.kill(pid, 0);
@@ -452,8 +905,8 @@ function probePidAlive(pid, probeImpl = defaultProbeAlive) {
 }
 function gatherRunContext(taskId, deps = {}) {
   const taskDir = (deps.resolveTaskDirImpl ?? tolerantTaskDir)(taskId);
-  const statusFile = path5.join(taskDir, "status.json");
-  const heartbeatFile = path5.join(taskDir, ".heartbeat.json");
+  const statusFile = path6.join(taskDir, "status.json");
+  const heartbeatFile = path6.join(taskDir, ".heartbeat.json");
   const statusResult = statusReadResult(taskId, statusFile, deps.readStatusImpl);
   const heartbeatResult = (deps.readHeartbeatImpl ?? readHeartbeatStatus)(taskDir);
   const canonPid = (deps.readCanonPidImpl ?? readCanonPid)(taskDir);
@@ -805,6 +1258,41 @@ function checkSkills(cwd) {
   }
   return { label: ".claude/skills/", status: "pass" };
 }
+function checkQualityLog(cwd) {
+  const label = "docs/task-quality-log.md";
+  const logPath = getQualityLogFile(cwd);
+  let content;
+  try {
+    content = readFileSync(logPath, "utf8");
+  } catch (error) {
+    const err = error;
+    if (err.code === "ENOENT") {
+      if (!existsSync(dirname(logPath))) {
+        return {
+          label,
+          status: "warn",
+          detail: `parent directory of ${logPath} does not exist \u2014 the writer's self-heal write would also fail; create the directory (or run \`canon init\`)`
+        };
+      }
+      return {
+        label,
+        status: "pass",
+        detail: "not present \u2014 writer creates it fresh on first qa \u2192 done transition"
+      };
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return { label, status: "warn", detail: `could not read ${logPath}: ${message}` };
+  }
+  if (locateLogTable(content.split("\n")) !== null) {
+    return { label, status: "pass" };
+  }
+  const relativePath = relative(cwd, logPath) || logPath;
+  return {
+    label,
+    status: "warn",
+    detail: `${relativePath} has no well-formed '## Log' table with all required columns \u2014 compare with templates/docs/task-quality-log.md`
+  };
+}
 function parseCodexProjectTrust(tomlContent) {
   const result = /* @__PURE__ */ new Map();
   const lines = tomlContent.split("\n");
@@ -1080,7 +1568,8 @@ function doctorCmd(_args) {
     ...codexDeprecated ? [codexDeprecated] : [],
     checkTemplates(cwd),
     checkCanonVersion(cwd),
-    checkSkills(cwd)
+    checkSkills(cwd),
+    checkQualityLog(cwd)
   ];
   const configChecks = [
     checkCodexProjectTrust(cwd),
@@ -1128,8 +1617,8 @@ import {
   writeFileSync
 } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import { dirname, join as join2, relative } from "path";
-var packageDir = join2(dirname(fileURLToPath2(import.meta.url)), "../..");
+import { dirname as dirname2, join as join2, relative as relative2 } from "path";
+var packageDir = join2(dirname2(fileURLToPath2(import.meta.url)), "../..");
 var templatesDir = join2(packageDir, "templates");
 var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md"]);
 function hasExistingAgentFiles(cwd) {
@@ -1148,7 +1637,7 @@ function walkDir(dir, base = dir) {
     if (statSync(full).isDirectory()) {
       results.push(...walkDir(full, base));
     } else {
-      results.push(relative(base, full));
+      results.push(relative2(base, full));
     }
   }
   return results;
@@ -1163,7 +1652,7 @@ function scaffoldTemplates(cwd, srcTemplatesDir) {
       skipped.push(rel);
       continue;
     }
-    mkdirSync(dirname(dest), { recursive: true });
+    mkdirSync(dirname2(dest), { recursive: true });
     copyFileSync(join2(srcTemplatesDir, rel), dest);
     scaffolded.push(rel);
   }
@@ -1179,7 +1668,7 @@ function initCmd(_args) {
   if (gitignoreResult === null) {
     console.warn("warning: .gitignore has an unclosed `# canon:start` marker \u2014 add a matching `# canon:end` line manually, then re-run `canon init`.");
   } else if (gitignoreResult !== existingGitignore) {
-    mkdirSync(dirname(gitignorePath), { recursive: true });
+    mkdirSync(dirname2(gitignorePath), { recursive: true });
     writeFileSync(gitignorePath, gitignoreResult);
   }
   const pkgPath = join2(cwd, "package.json");
@@ -1206,7 +1695,7 @@ function initCmd(_args) {
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
   const version = "2.4.0";
-  mkdirSync(dirname(versionPath), { recursive: true });
+  mkdirSync(dirname2(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
 function launchGrill(cwd, hasExistingAgentFiles2) {
@@ -1229,8 +1718,8 @@ function launchGrill(cwd, hasExistingAgentFiles2) {
 // src/cli/commands/run-task.ts
 import { spawnSync as spawnSync3 } from "child_process";
 import { fileURLToPath as fileURLToPath3 } from "url";
-import { dirname as dirname2, join as join3 } from "path";
-var packageDir2 = join3(dirname2(fileURLToPath3(import.meta.url)), "../..");
+import { dirname as dirname3, join as join3 } from "path";
+var packageDir2 = join3(dirname3(fileURLToPath3(import.meta.url)), "../..");
 var runTaskScript = join3(packageDir2, "dist/scripts/run-task.js");
 function runCmd(args2) {
   for (const arg of args2) {
@@ -1244,7 +1733,7 @@ function runCmd(args2) {
 }
 
 // src/cli/commands/watch.ts
-import fs6 from "fs";
+import fs7 from "fs";
 
 // src/cli/commands/stop.ts
 import { existsSync as existsSync3 } from "fs";
@@ -1824,7 +2313,7 @@ function tailRunLog(ctx, taskId, deps, tailState) {
   const logTaskDir = tolerantTaskDir(primaryLogTaskId(ctx, taskId));
   const logPath = runLogPathFor(logTaskDir);
   try {
-    const stat = fs6.statSync(logPath);
+    const stat = fs7.statSync(logPath);
     if (tailState.position == null) {
       tailState.position = stat.size;
       return;
@@ -1833,7 +2322,7 @@ function tailRunLog(ctx, taskId, deps, tailState) {
       tailState.position = 0;
     }
     if (stat.size === tailState.position) return;
-    const content = fs6.readFileSync(logPath, "utf8");
+    const content = fs7.readFileSync(logPath, "utf8");
     const chunk = content.slice(tailState.position);
     if (chunk.length > 0) deps.stderr?.(chunk);
     tailState.position = stat.size;
@@ -2078,16 +2567,16 @@ import path11 from "path";
 
 // scripts/run-task/canon-snapshot.ts
 import { spawnSync as spawnSync5 } from "child_process";
-import fs8 from "fs";
-import path8 from "path";
+import fs9 from "fs";
+import path9 from "path";
 
 // scripts/run-task/git.ts
 import { spawnSync as spawnSync4 } from "child_process";
-import path7 from "path";
+import path8 from "path";
 
 // scripts/run-task/worktree.ts
-import fs7 from "fs";
-import path6 from "path";
+import fs8 from "fs";
+import path7 from "path";
 var PIPELINE_TELEMETRY_FILES = [
   "docs/pipeline-invocations.md",
   "docs/task-quality-log.md",
@@ -2135,13 +2624,13 @@ function resolveCanonVersion(explicit) {
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!ownToplevel) return upstreamCommit;
-  const parentDir = path8.dirname(repoRoot);
+  const parentDir = path9.dirname(repoRoot);
   const parentToplevel = captureGitOutput(parentDir, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!parentToplevel) return upstreamCommit;
-  if (path8.resolve(parentToplevel) === path8.resolve(ownToplevel)) {
+  if (path9.resolve(parentToplevel) === path9.resolve(ownToplevel)) {
     return upstreamCommit;
   }
-  return captureGitOutput(path8.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
+  return captureGitOutput(path9.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
 }
 function defaultRunCommand(command2, args2) {
   const result = spawnSync5(command2, args2, {
@@ -2175,7 +2664,7 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const isInstalled = isInstalledSourcePath(canonSourcePath);
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const drivingCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const hostCommit = superprojectWorkingTree ? captureGitOutput(path8.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
+  const hostCommit = superprojectWorkingTree ? captureGitOutput(path9.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
   let upstreamCommit;
   let orchestratorCommit;
   if (isInstalled) {
@@ -2209,469 +2698,16 @@ function applyCanonSnapshot(status, canon) {
   return next;
 }
 function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
-  const status = JSON.parse(fs8.readFileSync(statusFilePath, "utf8"));
+  const status = JSON.parse(fs9.readFileSync(statusFilePath, "utf8"));
   const canon = captureCanonSnapshot(REPO_ROOT, options);
   const next = applyCanonSnapshot(status, canon);
   const serialized = `${JSON.stringify(next, null, 2)}
 `;
-  const current = fs8.readFileSync(statusFilePath, "utf8");
+  const current = fs9.readFileSync(statusFilePath, "utf8");
   if (current !== serialized) {
-    fs8.writeFileSync(statusFilePath, serialized, "utf8");
+    fs9.writeFileSync(statusFilePath, serialized, "utf8");
   }
   return canon;
-}
-
-// scripts/run-task/quality-log.ts
-import fs9 from "fs";
-import path9 from "path";
-
-// scripts/run-task/markdown-table.ts
-function splitTableLine(line) {
-  const cells = [];
-  let cell = "";
-  let backslashes = 0;
-  for (const char of line) {
-    if (char === "\\") {
-      backslashes += 1;
-      continue;
-    }
-    if (char === "|") {
-      if (backslashes % 2 === 1) {
-        cell += "\\".repeat((backslashes - 1) / 2) + "|";
-      } else {
-        cell += "\\".repeat(backslashes / 2);
-        cells.push(cell);
-        cell = "";
-      }
-      backslashes = 0;
-      continue;
-    }
-    if (backslashes > 0) {
-      cell += "\\".repeat(backslashes);
-      backslashes = 0;
-    }
-    cell += char;
-  }
-  if (backslashes > 0) cell += "\\".repeat(backslashes);
-  cells.push(cell);
-  return cells;
-}
-function normalizeCells(line) {
-  const cells = splitTableLine(line.trim());
-  const innerCells = cells.slice(
-    (cells[0] ?? "").trim() === "" ? 1 : 0,
-    (cells[cells.length - 1] ?? "").trim() === "" ? -1 : void 0
-  );
-  return innerCells.map((cell) => cell.trim());
-}
-function isSeparatorRow(cells) {
-  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()));
-}
-function isSectionHeading(line, sectionHeading) {
-  return line.trimEnd() === `## ${sectionHeading}`;
-}
-function isHeadingBoundary(line) {
-  return /^#{1,2}\s/.test(line);
-}
-function computeCommentHiddenLines(lines) {
-  const hidden = new Array(lines.length).fill(false);
-  let inHtmlComment = false;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const opensComment = /<!--/.test(line);
-    const closesComment = /-->/.test(line);
-    const startsInComment = inHtmlComment;
-    if (opensComment && !closesComment) inHtmlComment = true;
-    else if (closesComment && !opensComment) inHtmlComment = false;
-    else if (opensComment && closesComment) {
-      inHtmlComment = false;
-    }
-    hidden[i] = startsInComment || opensComment && !closesComment;
-  }
-  return hidden;
-}
-function extractSectionBodies(markdown, pattern) {
-  const lines = markdown.split("\n");
-  const hidden = computeCommentHiddenLines(lines);
-  const bodies = [];
-  let activeStart = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (hidden[i]) continue;
-    const isH2 = /^## /.test(line);
-    const isH1 = /^# /.test(line);
-    if (isH2 || isH1) {
-      if (activeStart !== -1) {
-        bodies.push(lines.slice(activeStart, i).join("\n"));
-        activeStart = -1;
-      }
-      if (isH2 && pattern.test(line)) {
-        activeStart = i + 1;
-      }
-    }
-  }
-  if (activeStart !== -1) bodies.push(lines.slice(activeStart).join("\n"));
-  return bodies;
-}
-function parseTableH3(markdown, sectionHeading) {
-  const lines = markdown.split("\n");
-  const headingIndex = lines.findIndex((line) => line.trimEnd() === `### ${sectionHeading}`);
-  if (headingIndex === -1) return [];
-  let tableStart = -1;
-  let sectionEnd = lines.length;
-  for (let index = headingIndex + 1; index < lines.length; index += 1) {
-    if (/^#{1,3}\s/.test(lines[index])) {
-      sectionEnd = index;
-      break;
-    }
-    if (tableStart === -1 && lines[index].trimStart().startsWith("|")) {
-      tableStart = index;
-    }
-  }
-  if (tableStart === -1 || tableStart >= sectionEnd) return [];
-  const headerCells = normalizeCells(lines[tableStart]);
-  if (headerCells.length === 0) return [];
-  let rowStart = tableStart + 1;
-  if (rowStart < sectionEnd) {
-    const separatorCells = normalizeCells(lines[rowStart]);
-    if (isSeparatorRow(separatorCells)) rowStart += 1;
-  }
-  const rows = [];
-  for (let index = rowStart; index < sectionEnd; index += 1) {
-    const line = lines[index];
-    if (!line.trimStart().startsWith("|")) break;
-    const cells = normalizeCells(line);
-    if (isSeparatorRow(cells)) continue;
-    const row = {};
-    for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
-      row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
-    }
-    rows.push(row);
-  }
-  return rows;
-}
-function parseTable(markdown, sectionHeading) {
-  const lines = markdown.split("\n");
-  const headingIndex = lines.findIndex((line) => isSectionHeading(line, sectionHeading));
-  if (headingIndex === -1) return [];
-  let tableStart = -1;
-  let sectionEnd = lines.length;
-  for (let index = headingIndex + 1; index < lines.length; index += 1) {
-    if (isHeadingBoundary(lines[index])) {
-      sectionEnd = index;
-      break;
-    }
-    if (tableStart === -1 && lines[index].trimStart().startsWith("|")) {
-      tableStart = index;
-    }
-  }
-  if (tableStart === -1 || tableStart >= sectionEnd) return [];
-  const headerCells = normalizeCells(lines[tableStart]);
-  if (headerCells.length === 0) return [];
-  let rowStart = tableStart + 1;
-  if (rowStart < sectionEnd) {
-    const separatorCells = normalizeCells(lines[rowStart]);
-    if (isSeparatorRow(separatorCells)) rowStart += 1;
-  }
-  const rows = [];
-  for (let index = rowStart; index < sectionEnd; index += 1) {
-    const line = lines[index];
-    if (!line.trimStart().startsWith("|")) break;
-    const cells = normalizeCells(line);
-    if (isSeparatorRow(cells)) continue;
-    const row = {};
-    for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
-      row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
-    }
-    rows.push(row);
-  }
-  return rows;
-}
-
-// scripts/run-task/quality-log.ts
-var CANON_LOG_HEADERS = [
-  "Date",
-  "Task",
-  "Size",
-  "Spec verdict",
-  "Spec iter",
-  "Review iter",
-  "Dropped ACs",
-  "Validation gaps",
-  "Human reroute?",
-  "Notes"
-];
-var DERIVED_HEADERS = /* @__PURE__ */ new Set(["Date", "Task", "Size", "Spec iter", "Review iter"]);
-var JUDGMENT_HEADERS = /* @__PURE__ */ new Set([
-  "Spec verdict",
-  "Human reroute?",
-  "Dropped ACs",
-  "Validation gaps",
-  "Notes"
-]);
-var EARLIEST_WINS_HEADERS = /* @__PURE__ */ new Set(["Spec verdict"]);
-var STANDARD_QUALITY_LOG_SKELETON = [
-  "# Task Quality Log",
-  "",
-  "## Log",
-  "",
-  "| Date | Task | Size | Spec verdict | Spec iter | Review iter | Dropped ACs | Validation gaps | Human reroute? | Notes |",
-  "|---|---|---|---|---|---|---|---|---|---|",
-  "",
-  "## Periodic Reviews",
-  ""
-].join("\n");
-var JUDGMENT_LABELS = {
-  "spec verdict": "Spec verdict",
-  "human reroute?": "Human reroute?",
-  "dropped acs": "Dropped ACs",
-  "validation gaps": "Validation gaps",
-  "notes": "Notes"
-};
-function getQualityLogFile(activeCwd) {
-  return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path9.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path9.join(activeCwd, "docs/task-quality-log.md");
-}
-function normalizeCellValue(value) {
-  return value.replace(/\r\n|\n/g, " ");
-}
-function serializeQualityLogCell(value) {
-  return normalizeCellValue(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
-}
-function splitTableRowCells(line) {
-  const cells = [];
-  let cell = "";
-  let backslashes = 0;
-  for (const char of line.trim()) {
-    if (char === "\\") {
-      backslashes += 1;
-      continue;
-    }
-    if (char === "|") {
-      if (backslashes % 2 === 1) {
-        cell += "\\".repeat((backslashes - 1) / 2) + "|";
-      } else {
-        cell += "\\".repeat(backslashes / 2);
-        cells.push(cell);
-        cell = "";
-      }
-      backslashes = 0;
-      continue;
-    }
-    if (backslashes > 0) {
-      cell += "\\".repeat(backslashes);
-      backslashes = 0;
-    }
-    cell += char;
-  }
-  if (backslashes > 0) cell += "\\".repeat(backslashes);
-  cells.push(cell);
-  const innerCells = cells.slice(
-    (cells[0] ?? "").trim() === "" ? 1 : 0,
-    (cells[cells.length - 1] ?? "").trim() === "" ? -1 : void 0
-  );
-  return innerCells.map((value) => value.trim());
-}
-function isSeparatorRow2(cells) {
-  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()));
-}
-function locateLogTable(lines) {
-  const headingIndex = lines.findIndex((line) => line.trimEnd() === "## Log");
-  if (headingIndex === -1) return null;
-  let headerIndex = -1;
-  for (let index = headingIndex + 1; index < lines.length; index += 1) {
-    if (/^#{1,2}\s/.test(lines[index])) return null;
-    if (lines[index].trimStart().startsWith("|")) {
-      headerIndex = index;
-      break;
-    }
-  }
-  if (headerIndex === -1) return null;
-  const headerCells = splitTableRowCells(lines[headerIndex]);
-  const uniqueHeaders = new Set(headerCells);
-  if (uniqueHeaders.size !== headerCells.length || CANON_LOG_HEADERS.some((required) => !uniqueHeaders.has(required))) {
-    return null;
-  }
-  let dataStart = headerIndex + 1;
-  if (dataStart < lines.length && isSeparatorRow2(splitTableRowCells(lines[dataStart]))) {
-    dataStart += 1;
-  }
-  let dataEnd = dataStart;
-  while (dataEnd < lines.length && lines[dataEnd].trimStart().startsWith("|")) {
-    dataEnd += 1;
-  }
-  return { headerCells, dataStart, dataEnd };
-}
-function rowFromCells(headerCells, cells) {
-  const row = {};
-  for (let index = 0; index < headerCells.length; index += 1) {
-    row[headerCells[index]] = cells[index] ?? "";
-  }
-  return row;
-}
-function parseLogRows(lines, headerCells, dataStart, dataEnd) {
-  const rows = [];
-  for (let index = dataStart; index < dataEnd; index += 1) {
-    const cells = splitTableRowCells(lines[index]);
-    if (isSeparatorRow2(cells)) continue;
-    rows.push({
-      lineIndex: index,
-      cells: rowFromCells(headerCells, cells)
-    });
-  }
-  return rows;
-}
-function parseStrayRows(lines, headerCells) {
-  const periodicIndex = lines.findIndex((line) => line.trimEnd() === "## Periodic Reviews");
-  if (periodicIndex === -1) return [];
-  const rows = [];
-  for (let index = periodicIndex + 1; index < lines.length; index += 1) {
-    if (!lines[index].trimStart().startsWith("|")) continue;
-    const cells = splitTableRowCells(lines[index]);
-    if (isSeparatorRow2(cells) || cells.length !== headerCells.length) continue;
-    rows.push({
-      lineIndex: index,
-      cells: rowFromCells(headerCells, cells)
-    });
-  }
-  return rows;
-}
-function reconcileHistory(existingRows, headerCells) {
-  const sorted = [...existingRows].sort((left, right) => left.lineIndex - right.lineIndex);
-  const reconciled = {};
-  for (const header of headerCells) {
-    if (DERIVED_HEADERS.has(header)) continue;
-    if (EARLIEST_WINS_HEADERS.has(header)) {
-      const earliest = sorted.map((row) => row.cells[header] ?? "").find((value) => value.trim() !== "");
-      if (earliest !== void 0) reconciled[header] = earliest;
-      continue;
-    }
-    for (const row of sorted) {
-      const value = row.cells[header] ?? "";
-      if (value.trim() !== "") reconciled[header] = value;
-    }
-  }
-  return reconciled;
-}
-function buildFinalRow(headerCells, derived, reconciled, qaSupplied) {
-  const row = {};
-  for (const header of headerCells) {
-    if (header === "Date") {
-      row[header] = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-    } else if (header === "Task") {
-      row[header] = derived.taskId;
-    } else if (header === "Size") {
-      const size = derived.taskSize ?? "M";
-      row[header] = derived.delicate ? `${size} delicate` : size;
-    } else if (header === "Spec iter") {
-      row[header] = String(derived.specIterTotal ?? 0);
-    } else if (header === "Review iter") {
-      row[header] = String(derived.reviewIterTotal ?? 0);
-    } else if (JUDGMENT_HEADERS.has(header)) {
-      const supplied = qaSupplied[header];
-      row[header] = supplied?.trim() ? supplied : reconciled[header] ?? "";
-    } else {
-      row[header] = reconciled[header] ?? "";
-    }
-  }
-  return row;
-}
-function renderRowLine(headerCells, row) {
-  const cells = headerCells.map((header) => serializeQualityLogCell(row[header] ?? ""));
-  return `| ${cells.join(" | ")} |`;
-}
-function writeFileAtomic(filePath, content) {
-  const tempPath = `${filePath}.tmp`;
-  try {
-    fs9.writeFileSync(tempPath, content, "utf8");
-    fs9.renameSync(tempPath, filePath);
-  } finally {
-    try {
-      fs9.unlinkSync(tempPath);
-    } catch {
-    }
-  }
-}
-function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
-  try {
-    let content;
-    try {
-      content = fs9.readFileSync(logFilePath, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        content = STANDARD_QUALITY_LOG_SKELETON;
-      } else {
-        const message = error instanceof Error ? error.message : String(error);
-        warn(`quality-log: could not read ${logFilePath}: ${message}`);
-        return;
-      }
-    }
-    const lines = content.split("\n");
-    const located = locateLogTable(lines);
-    if (!located) {
-      warn(
-        `quality-log: ${logFilePath} has no well-formed '## Log' table with all required columns \u2014 skipping row write for '${derived.taskId}'.`
-      );
-      return;
-    }
-    const logRows = parseLogRows(
-      lines,
-      located.headerCells,
-      located.dataStart,
-      located.dataEnd
-    );
-    const strayRows = parseStrayRows(lines, located.headerCells);
-    const taskRows = [...logRows, ...strayRows].filter((row) => (row.cells.Task ?? "").trim() === derived.taskId);
-    const reconciled = reconcileHistory(taskRows, located.headerCells);
-    const finalRow = buildFinalRow(located.headerCells, derived, reconciled, qaSupplied);
-    const rendered = renderRowLine(located.headerCells, finalRow);
-    const removeIndexes = new Set(taskRows.map((row) => row.lineIndex));
-    const updatedLines = [];
-    for (let index = 0; index < lines.length; index += 1) {
-      if (index === located.dataEnd) updatedLines.push(rendered);
-      if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
-    }
-    if (located.dataEnd >= lines.length) updatedLines.push(rendered);
-    writeFileAtomic(logFilePath, updatedLines.join("\n"));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    warn(`quality-log: unexpected error writing row for '${derived.taskId}': ${message}`);
-  }
-}
-function parseQualityLogJudgmentBlock(doneMdContent) {
-  const bodies = extractSectionBodies(doneMdContent, /^## Quality Log\b/);
-  if (bodies.length === 0) return {};
-  const result = {};
-  for (const line of bodies[bodies.length - 1].split("\n")) {
-    const match = /^-\s*([^:]+):\s*(.*)$/.exec(line.trim());
-    if (!match) continue;
-    const key = JUDGMENT_LABELS[match[1].trim().toLowerCase()];
-    const value = match[2].trim();
-    if (key && value) result[key] = value;
-  }
-  return result;
-}
-function writeQualityLogForTask(taskId, activeCwd, donePath, status) {
-  try {
-    let doneContent = "";
-    try {
-      doneContent = fs9.readFileSync(donePath, "utf8");
-    } catch {
-    }
-    upsertQualityLogRow(
-      getQualityLogFile(activeCwd),
-      {
-        taskId,
-        taskSize: status.task_size,
-        delicate: status.delicate,
-        specIterTotal: status.phases.spec_review?.iterations_total ?? 0,
-        reviewIterTotal: status.phases.code_review?.iterations_total ?? 0
-      },
-      parseQualityLogJudgmentBlock(doneContent)
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    warn(`quality-log: failed to write row for '${taskId}': ${message}`);
-  }
 }
 
 // scripts/run-task/validation.ts
@@ -4386,9 +4422,9 @@ function taskCmd2(args2) {
 // src/cli/commands/update.ts
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync3, realpathSync as realpathSync2, writeFileSync as writeFileSync2 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
-import { dirname as dirname3, join as join4 } from "path";
+import { dirname as dirname4, join as join4 } from "path";
 import { spawnSync as spawnSync7 } from "child_process";
-var packageDir3 = join4(dirname3(fileURLToPath4(import.meta.url)), "../..");
+var packageDir3 = join4(dirname4(fileURLToPath4(import.meta.url)), "../..");
 function detectInstallType(pkgDirOverride) {
   const dir = pkgDirOverride ?? packageDir3;
   if (dir.includes("/_npx/") || dir.includes("\\_npx\\")) return { type: "npx", installRoot: null };
@@ -4764,7 +4800,7 @@ function updateCmd(args2, deps = {}) {
 // src/cli/commands/upgrade.ts
 import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
 import { fileURLToPath as fileURLToPath5 } from "url";
-import { basename, dirname as dirname4, join as join5, relative as relative2, resolve } from "path";
+import { basename, dirname as dirname5, join as join5, relative as relative3, resolve } from "path";
 import { spawnSync as spawnSync8 } from "child_process";
 
 // src/lib/canon-owned.ts
@@ -4797,7 +4833,7 @@ var CANON_OWNED = [
 var DELIMITED = [];
 
 // src/cli/commands/upgrade.ts
-var packageDir4 = join5(dirname4(fileURLToPath5(import.meta.url)), "../..");
+var packageDir4 = join5(dirname5(fileURLToPath5(import.meta.url)), "../..");
 var CANON_END = "<!-- canon:end -->";
 var CANON_START_RE = /<!-- canon:start[^>]* -->/;
 var HEADER_ONLY_SYNC = [
@@ -4864,7 +4900,7 @@ function getStaleOverrides(cwd, changedOps) {
     if (!existsSync5(overridePathAbs)) continue;
     const overrideContent = readFileSync4(overridePathAbs, "utf8");
     if (overrideContent === newTemplateContent) continue;
-    staleOverrides.push(relative2(cwd, overridePathAbs));
+    staleOverrides.push(relative3(cwd, overridePathAbs));
   }
   return staleOverrides;
 }
@@ -5112,7 +5148,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const staleOverrides = getStaleOverrides(cwd, reportedWrites);
   const toWrite = options.force ? pending : clean;
   for (const op of toWrite) {
-    mkdirSync3(dirname4(op.projectPath), { recursive: true });
+    mkdirSync3(dirname5(op.projectPath), { recursive: true });
     writeFileSync3(op.projectPath, op.content);
     upgraded.push(op.rel);
   }

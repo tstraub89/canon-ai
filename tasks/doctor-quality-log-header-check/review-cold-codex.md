@@ -1,0 +1,1 @@
+The quality-log doctor check delegates to the existing parser, handles missing and unreadable files appropriately, is wired into the CLI, and the generated bundle is consistent. Lint, type-checking, tests, and build validation pass.

@@ -40,7 +40,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Validation gates and diff checks | `scripts/run-task/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
 | `canon stop` command | `src/cli/commands/stop.ts` | Gracefully terminates detached run; SIGTERM → SIGKILL; CASE A–D pid selection |
-| `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, and canon discovery nudge (warns when neither file exists or neither mentions canon) |
+| `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, task-quality-log header, and canon discovery nudge (warns when neither file exists or neither mentions canon) |
 | Canon runtime `.gitignore` block | `src/lib/canon-block.ts`, `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts`, `src/cli/commands/doctor.ts` | canon manages a `# canon:start`/`# canon:end` block in `.gitignore`; `canon upgrade` refreshes it. |
 | CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()`, top-level `switch` dispatch for all `canon` commands |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
@@ -68,6 +68,7 @@ Supporting modules consumed by `scripts/run-task/main.ts` and the phase handlers
 | Signal handlers | `scripts/run-task/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |
 | Detached-mode isolation | `scripts/run-task/detach.ts` | Process group detachment for SIGHUP-safe background runs |
 | Heartbeat monitor | `scripts/run-task/heartbeat.ts` | Per-task `.heartbeat.json` writes at 30s intervals; used by `canon watch` / `canon doctor` to detect live vs. stale runs |
+| Task quality log | `scripts/run-task/quality-log.ts` | Fail-soft QA row writer plus exported `CANON_LOG_HEADERS` / `locateLogTable` detection helpers used by `canon doctor` |
 | Phase gate validator | `scripts/run-task/check-phase-gate.ts` | CLI wrapper around `checkPhaseGate()`; called by `canon task phase` before status writes |
 | Canon snapshot | `scripts/run-task/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
 | Markdown table parser | `scripts/run-task/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |

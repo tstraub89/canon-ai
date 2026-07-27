@@ -6,7 +6,7 @@ import { warn } from './cli.js';
 import { extractSectionBodies } from './markdown-table.js';
 import type { StatusJson } from './types.js';
 
-const CANON_LOG_HEADERS = [
+export const CANON_LOG_HEADERS = [
     'Date',
     'Task',
     'Size',
@@ -59,7 +59,7 @@ type TableRow = {
     cells: Record<string, string>;
 };
 
-type LocatedLogTable = {
+export type LocatedLogTable = {
     headerCells: string[];
     dataStart: number;
     dataEnd: number;
@@ -134,7 +134,7 @@ function isSeparatorRow(cells: readonly string[]): boolean {
     return cells.length > 0 && cells.every(cell => /^:?-+:?$/.test(cell.trim()));
 }
 
-function locateLogTable(lines: readonly string[]): LocatedLogTable | null {
+export function locateLogTable(lines: readonly string[]): LocatedLogTable | null {
     const headingIndex = lines.findIndex(line => line.trimEnd() === '## Log');
     if (headingIndex === -1) return null;
 

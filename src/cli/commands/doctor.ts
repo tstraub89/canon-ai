@@ -1,8 +1,9 @@
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
-import { join, sep as pathSep } from 'path';
+import { dirname, join, relative, sep as pathSep } from 'path';
 import { HEARTBEAT_STALE_AFTER_MS, isHeartbeatStale } from '../../../scripts/run-task/heartbeat.js';
+import { getQualityLogFile, locateLogTable } from '../../../scripts/run-task/quality-log.js';
 import { gatherRunContext, isStatusJson } from '../../../scripts/run-task/run-context.js';
 import { type StatusJson } from '../../../scripts/run-task/types.js';
 import { CANON_RUNTIME_GITIGNORE_PATTERNS } from '../../lib/canon-block.js';
@@ -281,6 +282,45 @@ export function checkSkills(cwd: string): Check {
         };
     }
     return { label: '.claude/skills/', status: 'pass' };
+}
+
+export function checkQualityLog(cwd: string): Check {
+    const label = 'docs/task-quality-log.md';
+    const logPath = getQualityLogFile(cwd);
+
+    let content: string;
+    try {
+        content = readFileSync(logPath, 'utf8');
+    } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'ENOENT') {
+            if (!existsSync(dirname(logPath))) {
+                return {
+                    label,
+                    status: 'warn',
+                    detail: `parent directory of ${logPath} does not exist — the writer's self-heal write would also fail; create the directory (or run \`canon init\`)`,
+                };
+            }
+            return {
+                label,
+                status: 'pass',
+                detail: 'not present — writer creates it fresh on first qa → done transition',
+            };
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        return { label, status: 'warn', detail: `could not read ${logPath}: ${message}` };
+    }
+
+    if (locateLogTable(content.split('\n')) !== null) {
+        return { label, status: 'pass' };
+    }
+
+    const relativePath = relative(cwd, logPath) || logPath;
+    return {
+        label,
+        status: 'warn',
+        detail: `${relativePath} has no well-formed '## Log' table with all required columns — compare with templates/docs/task-quality-log.md`,
+    };
 }
 
 /**
@@ -665,6 +705,7 @@ export function doctorCmd(_args: string[]): void {
         checkTemplates(cwd),
         checkCanonVersion(cwd),
         checkSkills(cwd),
+        checkQualityLog(cwd),
     ];
 
     const configChecks: Check[] = [

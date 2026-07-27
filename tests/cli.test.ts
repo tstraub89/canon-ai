@@ -30,6 +30,7 @@ import {
     checkTemplates,
     checkSkills,
     checkCanonVersion,
+    checkQualityLog,
     checkCanonDiscoveryNudge,
     checkLocalSettingsGitignored,
     checkRuntimeFilesGitignored,
@@ -1112,6 +1113,61 @@ void test('checkSkills: canon-changelog specifically checked — missing canon-c
         const check = checkSkills(dir);
         assert.equal(check.status, 'warn');
         assert.match(check.detail ?? '', /canon-changelog/);
+    });
+});
+
+// ── checkQualityLog ──────────────────────────────────────────────────────────
+
+void test('checkQualityLog: missing file with existing docs/ → pass', () => {
+    withTempDir(dir => {
+        fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+        assert.equal(checkQualityLog(dir).status, 'pass');
+    });
+});
+
+void test('checkQualityLog: missing docs/ directory → warn instead of false pass', () => {
+    withTempDir(dir => {
+        const check = checkQualityLog(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /parent directory/);
+        assert.match(check.detail ?? '', /does not exist/);
+    });
+});
+
+void test('checkQualityLog: well-formed log table → pass', () => {
+    withTempDir(dir => {
+        const docsDir = path.join(dir, 'docs');
+        fs.mkdirSync(docsDir, { recursive: true });
+        fs.copyFileSync(
+            path.join(WORKTREE_ROOT, 'docs', 'task-quality-log.md'),
+            path.join(docsDir, 'task-quality-log.md'),
+        );
+        assert.equal(checkQualityLog(dir).status, 'pass');
+    });
+});
+
+void test('checkQualityLog: malformed header → warn with file and reference shape', () => {
+    withTempDir(dir => {
+        const docsDir = path.join(dir, 'docs');
+        fs.mkdirSync(docsDir, { recursive: true });
+        const source = fs.readFileSync(path.join(WORKTREE_ROOT, 'docs', 'task-quality-log.md'), 'utf8');
+        const malformed = source.replace(' | Notes |', ' | Missing notes |');
+        fs.writeFileSync(path.join(docsDir, 'task-quality-log.md'), malformed);
+
+        const check = checkQualityLog(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /docs[\\/]task-quality-log\.md/);
+        assert.match(check.detail ?? '', /templates[\\/]docs[\\/]task-quality-log\.md/);
+    });
+});
+
+void test('checkQualityLog: unreadable path → warn instead of throwing', () => {
+    withTempDir(dir => {
+        const docsDir = path.join(dir, 'docs');
+        fs.mkdirSync(path.join(docsDir, 'task-quality-log.md'), { recursive: true });
+        const check = checkQualityLog(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /could not read/);
     });
 });
 

@@ -846,3 +846,7 @@
 | 2026-07-27T02:20:49.480Z | doctor-quality-log-header-check | spec | claude | opus | 0 | 76.0s | 475288 | ok |
 | 2026-07-27T02:22:06.173Z | doctor-quality-log-header-check | spec_review | codex | gpt-5.6-luna | 1 | 76.5s | 1165081 | ok |
 | 2026-07-27T03:01:41.617Z | doctor-quality-log-header-check | plan | claude | sonnet | 0 | 129.4s | 1089741 | ok |
+| 2026-07-27T03:05:04.110Z | doctor-quality-log-header-check | implement | codex | gpt-5.6-luna | 0 | 201.5s | 1418862 | ok |
+| 2026-07-27T03:07:44.700Z | doctor-quality-log-header-check | code_review | codex | gpt-5.6-luna | 0 | 160.1s | - | ok |
+| 2026-07-27T03:11:11.509Z | doctor-quality-log-header-check | code_review | claude | sonnet | 0 | 206.8s | 688174 | ok |
+| 2026-07-27T03:13:11.123Z | doctor-quality-log-header-check | qa | claude | sonnet | 0 | 119.6s | 802736 | ok |
