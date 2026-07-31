@@ -850,3 +850,13 @@
 | 2026-07-27T03:07:44.700Z | doctor-quality-log-header-check | code_review | codex | gpt-5.6-luna | 0 | 160.1s | - | ok |
 | 2026-07-27T03:11:11.509Z | doctor-quality-log-header-check | code_review | claude | sonnet | 0 | 206.8s | 688174 | ok |
 | 2026-07-27T03:13:11.123Z | doctor-quality-log-header-check | qa | claude | sonnet | 0 | 119.6s | 802736 | ok |
+| 2026-07-31T04:46:39.889Z | preroute-review-loop-autoblock | spec_review | codex | gpt-5.6-sol | 0 | 219.1s | 1528809 | ok |
+| 2026-07-31T04:51:03.441Z | preroute-review-loop-autoblock | spec | claude | opus | 0 | 263.4s | 2140919 | ok |
+| 2026-07-31T04:53:56.557Z | preroute-review-loop-autoblock | spec_review | codex | gpt-5.6-sol | 1 | 173.0s | 2904265 | ok |
+| 2026-07-31T05:07:11.846Z | preroute-review-loop-autoblock | spec | claude | opus | 0 | 795.1s | 2803811 | ok |
+| 2026-07-31T05:09:32.477Z | preroute-review-loop-autoblock | spec_review | codex | gpt-5.6-sol | 2 | 140.5s | 4660803 | ok |
+| 2026-07-31T05:15:20.287Z | preroute-review-loop-autoblock | spec | claude | opus | 0 | 347.6s | 2337519 | ok |
+| 2026-07-31T05:22:24.076Z | preroute-review-loop-autoblock | spec_review | codex | gpt-5.6-sol | 3 | 141.2s | 6760237 | ok |
+| 2026-07-31T05:32:53.848Z | preroute-review-loop-autoblock | spec | claude | opus | 0 | 601.1s | 4125997 | ok |
+| 2026-07-31T05:36:51.842Z | preroute-review-loop-autoblock | spec_review | codex | gpt-5.6-sol | 4 | 189.5s | 8153571 | ok |
+| 2026-07-31T06:11:36.955Z | preroute-review-loop-autoblock | plan | claude | sonnet | 0 | 692.9s | 5447116 | ok |
