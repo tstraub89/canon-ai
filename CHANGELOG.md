@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- **The `spec_review` auto-block message now recommends raising the review cap, not resetting the counter, as the default recovery.** Hitting the `MAX_REVIEW_LOOPS` cap on repeated `changes_requested` isn't reliably a sign the spec has a structural issue — it can be legitimate slow convergence — but the message only ever pointed operators at resetting `iterations_current_loop` to 0 in `status.json`, discarding that signal. It now leads with raising `MAX_REVIEW_LOOPS` and continuing, and reserves the counter reset for when the spec is genuinely being rescoped. Ships to adopters via `canon upgrade`.
 - **Codex code-review token usage is no longer misreported as zero.** `codex exec review` — the cold-Codex lens in `code_review` — never reports real token counts on its completion event, unlike canon's other Codex invocations. Canon was recording that as a literal `0` in `docs/pipeline-invocations.md`, implying the lens ran for free; it now records `-` (unavailable), matching the existing convention for missing usage data. Ships to adopters via `canon upgrade`.
 
 ## [2.4.0] — 2026-07-25
