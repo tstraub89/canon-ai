@@ -5602,7 +5602,7 @@ async function runSpecReviewPhase(state, interactive, resumeId) {
   );
   const specReviewLoopCap = getMaxReviewLoops(tasks);
   if (maxSpecIter >= specReviewLoopCap) {
-    const reason = `Spec review hit ${maxSpecIter} changes_requested iterations in a row (limit: ${specReviewLoopCap}). Pipeline auto-blocked. A repeated pushback usually means the spec has a structural or scope issue that another mechanical revision won't fix \u2014 read the latest spec-review.md and decide whether to revise scope, split the task, or defer. To resume after fixing: set phases.spec_review.status = "pending" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
+    const reason = `Spec review hit ${maxSpecIter} changes_requested iterations in a row (limit: ${specReviewLoopCap}). Pipeline auto-blocked before another spec revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue \u2014 MAX_REVIEW_LOOPS=<n> canon run ${taskIds.join(" ")} --step \u2014 rather than resetting the counter, which throws away that signal. Only reset the counter if you're revising scope enough that prior iterations no longer apply: set phases.spec_review.status = "pending" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
     warn(reason);
     autoBlockSpecReview(taskIds, maxSpecIter, reason);
     process.exit(2);
