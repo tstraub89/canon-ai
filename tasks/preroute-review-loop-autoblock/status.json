@@ -1,0 +1,87 @@
+{
+  "id": "preroute-review-loop-autoblock",
+  "title": "Auto-block review loops before the next revision cycle, not after",
+  "status": "implement",
+  "created": "2026-07-31",
+  "updated": "2026-07-31",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "c1a15fa3372a0618feae4043c31357f08907dd75",
+    "orchestrator_commit": "c1a15fa3372a0618feae4043c31357f08907dd75",
+    "canon_version": "2.4.0",
+    "codex_cli": "codex-cli 0.146.0",
+    "claude_code": "2.1.220 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 5,
+      "changes_requested_total": 4,
+      "auto_block_count": 2,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-07-31",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked before another spec revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run preroute-review-loop-autoblock --step — rather than resetting the counter, which throws away that signal. Only reset the counter if you're revising scope enough that prior iterations no longer apply: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    },
+    {
+      "date": "2026-07-31",
+      "phase": "spec_review",
+      "iteration_count": 4,
+      "reason": "Spec review hit 4 changes_requested iterations in a row (limit: 4). Pipeline auto-blocked before another spec revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run preroute-review-loop-autoblock --step — rather than resetting the counter, which throws away that signal. Only reset the counter if you're revising scope enough that prior iterations no longer apply: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    }
+  ],
+  "sessions": {
+    "codex_spec_review": "019fb67b-98c0-7ad1-9fa8-517098a1817f",
+    "claude_spec": "d55090bc-5d73-4729-ba37-64c9bf041292"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}
