@@ -1,9 +1,9 @@
 {
   "id": "preroute-review-loop-autoblock",
   "title": "Auto-block review loops before the next revision cycle, not after",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-07-31",
-  "updated": "2026-07-31",
+  "updated": "2026-08-01",
   "branch": "task/preroute-review-loop-autoblock",
   "base_branch": "main",
   "canon": {
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
