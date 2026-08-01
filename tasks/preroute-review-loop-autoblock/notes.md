@@ -43,3 +43,28 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec] Iteration-shape check at round 4: **edge-fine-tune** — no new files, no new sub-problem, one state-dependent clause plus assertions on fixtures the spec already defines. Round-over-round: 1 edge → 2 design/shape (redesigned) → 3 edge (relocation consequence) → 4 edge (relocation consequence, class now closed). The relocation itself is unchanged and still the right shape, so no AC redesign. Honest caveat: two consecutive findings from one under-analyzed round-2 consequence is a real signal — the response was to close the class, not to patch instance two.
 
 [spec] Round-4 operational note: `spec_review.iterations_current_loop` is 4 with `auto_block_count` 1, so the cap is already raised past the M default of 3. Round 5 needs `MAX_REVIEW_LOOPS=5` (or higher) or it auto-blocks at the entry guard instead of reviewing — same never-reset-the-counter rule as before.
+
+[implement] Red-first subprocess fixtures reproduced the specified waste: the capped spec entry logged one `claude` invocation and both capped code entries (review iterations alone and review + pre-flight combined) logged one `codex` invocation before the fix. The retained spec-review backstop also persisted the old field-assignment recovery text and no state-derived resume phase.
+
+[implement] Scope blocker discovered only after the required fresh build: AC-16 changes `src/task/index.ts`, which is bundled into both published entry points, so `npm run build` necessarily rewrites `dist/cli/index.js` as well as the spec-declared `dist/scripts/run-task.js`. The Affected Files table omitted `dist/cli/index.js`; completion cannot honestly satisfy both the scope cap and the committed-dist freshness gate without a spec amendment/authorization.
+
+[implement] The resumed implementation direction explicitly required completion after the scope omission was surfaced. Kept the required `dist/cli/index.js` output, reran the full validation matrix, and recorded the generated-artifact deviation in the handoff.
+
+[implement-revision] A state-derived resume clause is insufficient when an earlier sentence in the same persisted reason makes the opposite state claim. Pair tests should pin invariant facts (count, cap, command order) while allowing every state-dependent sentence to vary together.
+
+[implement-revision] Tightening reset-code-review requires checking the concrete revision status, not only the derived current phase: both pending and in-progress implementations derive to `implement`, but only pending is the persisted pre-route block state.
+
+[implement-revision] The review surfaced two binding gaps that cannot be silently resolved here: task accept needs an explicit semantic choice for the new block state, and the stale recovery guidance spans files outside the spec's Affected Files table (including a canon-managed mirror).
+
+[implement-revision] The full suite's PR-flow fixtures run docs reference validation over live task artifacts. A malformed multi-location citation in reviewer-owned review.md can therefore preempt otherwise unrelated PR tests; the artifact is outside this task's implementation scope and was not edited.
+
+
+
+[implement-reroute] A plain raised-cap integration fixture must update the review artifact as well as status.json: clean-exit evidence recovery can legitimately replace a fake agent's status-only verdict with the cumulative artifact verdict. The logging fake also needs to run its completer for a phase sequence, not only a single fixed phase.
+
+[implement-revision] Recovery guidance must disclose every state-normalizing write, not just archived artifacts and counters. Here, `reset-code-review` distinguishes two materially different operator choices: reset accepts the current implementation as-is for re-review, while raising the cap requests another implementation pass.
+
+[implement-revision] Reset disclosure is a cross-loop invariant, but cap-raise guidance is state-dependent: it can promise the deferred revision only while `spec` / `implement` is pending. A shared helper must own both facts so primary and backstop reasons cannot contradict their resume clause.
+
+
+

@@ -73,7 +73,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things â
 
 1. Pipeline halts (auto-block, manual Ctrl+C, or unexpected error).
 2. Human inspects `tasks/<id>/status.json` and the latest artifact written.
-3. Resolve manually: reset the relevant phase via `canon task phase <id> <phase> pending`; for a `code_review` auto-block use `canon task reset-code-review <id>` (archives prior review, zeroes loop counters, preserves lifetime `iterations_total`); or escalate to a human reroute.
+3. Resolve manually: reset the relevant phase via `canon task phase <id> <phase> pending`; for a `spec_review` auto-block use `canon task reset-spec-review <id>`, or for `code_review` use `canon task reset-code-review <id>` (both mark the predecessor `spec` / `implement` done, accepting it as-is for re-review, archive the prior review, zero loop counters, and preserve lifetime `iterations_total`; raise the cap instead to run the deferred revision); or escalate to a human reroute.
 4. Re-run `canon run <id>`. The orchestrator picks up from the new phase state.
 
 ### Flow 4: Self-improvement (canon-on-canon)

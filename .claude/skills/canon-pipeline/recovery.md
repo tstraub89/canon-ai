@@ -28,7 +28,7 @@ canon task reset-spec-review <task-id>
 MAX_REVIEW_LOOPS=6 canon run <task-id>
 ```
 
-`reset-spec-review` archives the existing review file as `*-prior-<N>.md` (so the next pass doesn't re-emit the same complaints), resets the phase to pending, clears verdict and iteration counter, and drops the session ID.
+`reset-spec-review` marks `spec` done — accepting the current spec as-is — archives the existing review file as `*-prior-<N>.md` (so the next pass doesn't re-emit the same complaints), resets the review phase to pending, clears verdict and iteration counter, and drops the session ID. The next run re-reviews without another spec revision; raise the cap instead when the deferred spec revision should run before review.
 
 Stop the reviewer loop once findings turn wording-only. Self-grep for flagged phrases in the current spec/code before running another expensive review pass.
 
@@ -36,12 +36,9 @@ Stop the reviewer loop once findings turn wording-only. Self-grep for flagged ph
 
 ## Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 
-Cause: `phases.spec_review.verdict === 'changes_requested'` is still set in `status.json` (the dispatcher routes to spec for revision before re-running spec_review).
+Cause: the loop-cap checkpoint now sits at the revision phase's own entry (see "Auto-block" above), so after a `spec_review` block, `spec` really is the correct next phase — it's the deferred revision, not a stale verdict.
 
-Fix:
-```bash
-canon task reset-spec-review <task-id>
-```
+Fix: raise the cap and resume (see "Auto-block" above for the command). Never reset the loop counter just to make the phase match what you expected — that bypasses the exact cap the block exists to enforce.
 
 ## `--ship` refuses: wrong phase
 
@@ -84,4 +81,3 @@ Fix: re-auth (`claude login`), then re-invoke the same `canon run` command. The 
 canon task phase <task-id> <phase> pending
 canon run <task-id>
 ```
-

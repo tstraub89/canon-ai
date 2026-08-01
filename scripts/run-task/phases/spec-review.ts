@@ -9,6 +9,7 @@ import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
 import { extractCheckedVerdict, isTemplateUnfilled } from '../validation.js';
 import { getActiveCwd } from '../worktree.js';
+import { evaluateSpecReviewLoop } from '../review-loop.js';
 import { taskPhase } from '../../../src/task/index.js';
 
 export function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
@@ -87,29 +88,10 @@ export async function runSpecReviewPhase(
         return null;
     }
 
-    const maxSpecIter = tasks.reduce(
-        (max, t) => Math.max(
-            max,
-            t.status.phases.spec_review?.iterations_current_loop
-                ?? t.status.phases.spec_review?.iterations
-                ?? 0,
-        ),
-        0,
-    );
-    const specReviewLoopCap = getMaxReviewLoops(tasks);
-    if (maxSpecIter >= specReviewLoopCap) {
-        const reason =
-            `Spec review hit ${maxSpecIter} changes_requested iterations in a row ` +
-            `(limit: ${specReviewLoopCap}). Pipeline auto-blocked before another spec ` +
-            `revision. Read the latest spec-review.md: if review is still converging ` +
-            `(each round narrows on distinct, legitimate findings), raise the cap and ` +
-            `continue — MAX_REVIEW_LOOPS=<n> canon run ${taskIds.join(' ')} --step — ` +
-            `rather than resetting the counter, which throws away that signal. Only ` +
-            `reset the counter if you're revising scope enough that prior iterations no ` +
-            `longer apply: set phases.spec_review.status = "pending" and ` +
-            `phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
-        warn(reason);
-        autoBlockSpecReview(taskIds, maxSpecIter, reason);
+    const specReviewCheck = evaluateSpecReviewLoop(tasks, getMaxReviewLoops(tasks));
+    if (specReviewCheck.blocked) {
+        warn(specReviewCheck.reason);
+        autoBlockSpecReview(taskIds, specReviewCheck.count, specReviewCheck.reason);
         process.exit(2);
     }
 
@@ -124,7 +106,7 @@ export async function runSpecReviewPhase(
     const result = await runCodex(specReviewPrompt, interactive, resumeId, cfg.model, cfg.effort, {
         taskId: taskIds.join('+'),
         phase: 'spec_review',
-        iteration: maxSpecIter,
+        iteration: specReviewCheck.count,
         activeCwd,
     }, activeCwd);
 

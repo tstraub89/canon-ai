@@ -732,6 +732,29 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
             throw new Error(`Error: \`git rev-parse HEAD\` from ${gitCwd} returned an empty string; refusing to accept without a usable SHA.`);
         }
 
+        const precedingPhase = phaseArg === 'spec_review' ? 'spec' : 'implement';
+        const shouldCompletePreceding = new Map<string, boolean>();
+        const projectedNextPhases = new Map<string, string>();
+        for (const ctx of ctxByTask.values()) {
+            const completePreceding = options.force === true &&
+                ctx.status.phases[phaseArg]?.status === 'blocked' &&
+                ctx.status.phases[precedingPhase]?.status === 'pending' &&
+                deriveTopLevelStatus(ctx.status) === precedingPhase;
+            shouldCompletePreceding.set(ctx.id, completePreceding);
+
+            const projected = structuredClone(ctx.status);
+            ensurePhaseEntry(projected, phaseArg).status = 'done';
+            if (completePreceding) ensurePhaseEntry(projected, precedingPhase).status = 'done';
+            projectedNextPhases.set(ctx.id, deriveTopLevelStatus(projected));
+        }
+        if (new Set(projectedNextPhases.values()).size > 1) {
+            const details = ids.map(id => `${id}: ${projectedNextPhases.get(id)}`).join(', ');
+            throw new Error(
+                `Error: bundled accept would leave tasks at different next phases (${details}). ` +
+                `Run accept separately for each phase-aligned group.`
+            );
+        }
+
         const originalSnapshots = new Map<string, string>();
         for (const ctx of ctxByTask.values()) {
             try {
@@ -747,6 +770,9 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
         try {
             for (const ctx of ctxByTask.values()) {
                 const reviewEntry = ensurePhaseEntry(ctx.status, phaseArg);
+                if (shouldCompletePreceding.get(ctx.id) === true) {
+                    ensurePhaseEntry(ctx.status, precedingPhase).status = 'done';
+                }
                 const currentVerdict = reviewEntry.verdict ?? '';
                 if (!advancingVerdicts.has(currentVerdict)) {
                     reviewEntry.verdict = 'sanctioned';
@@ -810,7 +836,7 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
         }
 
         const label = ids.length === 1 ? ids[0] : `[${ids.join(', ')}]`;
-        const nextPhase = phaseArg === 'spec_review' ? 'plan' : 'qa';
+        const nextPhase = deriveTopLevelStatus(ctxByTask.get(ids[0])!.status);
         console.log(
             `Accepted ${label}: ${phaseArg} → done.` +
             `\n  Next phase: ${nextPhase}. Run \`canon run ${ids.join(' ')}\` to continue.`
@@ -1083,7 +1109,11 @@ export function taskResetCodeReview(id: string): void {
 
     const status = readJsonFile<StatusJson>(statusPath);
     const currentPhase = deriveTopLevelStatus(status);
-    if (currentPhase !== 'code_review') {
+    const blockedAtImplementEntry =
+        currentPhase === 'implement' &&
+        status.phases.implement?.status === 'pending' &&
+        status.phases.code_review?.status === 'blocked';
+    if (currentPhase !== 'code_review' && !blockedAtImplementEntry) {
         throw new Error(`Error: reset-code-review only operates on tasks currently at code_review. Current phase: ${currentPhase}.`);
     }
 
@@ -1095,7 +1125,9 @@ export function taskResetCodeReview(id: string): void {
         console.log(`Archived prior review.md → review-prior-${n}.md`);
     }
 
+    const implement = ensurePhaseEntry(status, 'implement');
     const codeReview = ensurePhaseEntry(status, 'code_review');
+    implement.status = 'done';
     codeReview.status = 'pending';
     codeReview.iterations_current_loop = 0;
     // `iterations` is the legacy alias for the current-loop counter (mirrors
@@ -1112,7 +1144,7 @@ export function taskResetCodeReview(id: string): void {
     status.updated = today();
     writeStatusAtomic(statusPath, status);
     console.log(
-        `Reset ${id}: code_review → pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
+        `Reset ${id}: implement → done, code_review → pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
     );
 }
 

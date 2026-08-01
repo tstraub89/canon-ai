@@ -7,6 +7,7 @@ import test from 'node:test';
 import { runCodex, runColdCodexReview } from '../scripts/run-task/agents/codex.js';
 import { recordMetric } from '../scripts/run-task/metrics.js';
 import { runCodeReviewPhase, type CodeReviewPhaseDeps } from '../scripts/run-task/phases/code-review.js';
+import { evaluateCodeReviewLoop, evaluateSpecReviewLoop } from '../scripts/run-task/review-loop.js';
 import { readStatus, writeStatusToFile } from '../scripts/run-task/state.js';
 import type { PipelineState, StatusJson, TaskContext } from '../scripts/run-task/types.js';
 
@@ -129,6 +130,60 @@ function makeState(taskIds: readonly string[]): PipelineState {
     };
 }
 
+function reviewLoopContext(options: {
+    taskId?: string;
+    specCurrent?: number;
+    codeCurrent?: number;
+    preflightCurrent?: number;
+    specTotal?: number;
+    codeTotal?: number;
+    specStatus?: 'pending' | 'done';
+    implementStatus?: 'pending' | 'done';
+} = {}): TaskContext {
+    const taskId = options.taskId ?? 'task-a';
+    const status = makeCodeReviewStatus(taskId);
+    const specCurrent = options.specCurrent ?? 0;
+    const codeCurrent = options.codeCurrent ?? 0;
+    const preflightCurrent = options.preflightCurrent ?? 0;
+    status.phases.spec = {
+        status: options.specStatus ?? 'pending',
+        agent: 'claude',
+    };
+    status.phases.spec_review = {
+        status: 'pending',
+        agent: 'codex',
+        verdict: '',
+        iterations: specCurrent,
+        iterations_current_loop: specCurrent,
+        iterations_total: options.specTotal ?? specCurrent,
+    };
+    status.phases.implement = {
+        status: options.implementStatus ?? 'pending',
+        agent: 'codex',
+    };
+    status.phases.code_review = {
+        ...status.phases.code_review!,
+        iterations: codeCurrent,
+        iterations_current_loop: codeCurrent,
+        iterations_total: options.codeTotal ?? codeCurrent,
+        preflight_rejections_current_loop: preflightCurrent,
+    };
+    return {
+        taskId,
+        title: taskId,
+        specReviewVerdict: '',
+        iterations: codeCurrent,
+        iterations_current_loop: codeCurrent,
+        iterations_total: options.codeTotal ?? codeCurrent,
+        rerouteCount: 0,
+        status,
+    };
+}
+
+function resumePhase(reason: string): string | undefined {
+    return reason.match(/Resuming after raising the cap runs `([a-z_]+)`/)?.[1];
+}
+
 function writeFakeCodexScript(dir: string, body: string): string {
     const scriptPath = path.join(dir, 'fake-codex.mjs');
     fs.writeFileSync(scriptPath, `#!/usr/bin/env node\n${body}\n`, { mode: 0o755 });
@@ -226,6 +281,182 @@ function isProcessExitError(error: unknown, code: number): boolean {
         'code' in error &&
         error.code === code;
 }
+
+void test('review-loop evaluators apply cap thresholds and loop-local counters', () => {
+    const cap = 3;
+    for (const count of [cap - 1, cap, cap + 1]) {
+        const expectedBlocked = count >= cap;
+        assert.equal(
+            evaluateSpecReviewLoop([reviewLoopContext({ specCurrent: count })], cap).blocked,
+            expectedBlocked,
+        );
+        assert.equal(
+            evaluateCodeReviewLoop([reviewLoopContext({ codeCurrent: count })], cap).blocked,
+            expectedBlocked,
+        );
+    }
+
+    assert.equal(
+        evaluateSpecReviewLoop([
+            reviewLoopContext({ specCurrent: cap, codeCurrent: 0 }),
+        ], cap).blocked,
+        true,
+    );
+    assert.equal(
+        evaluateSpecReviewLoop([
+            reviewLoopContext({ specCurrent: 0, codeCurrent: cap }),
+        ], cap).blocked,
+        false,
+    );
+    assert.equal(
+        evaluateSpecReviewLoop([
+            reviewLoopContext({ specCurrent: 0, specTotal: cap + 4 }),
+        ], cap).blocked,
+        false,
+    );
+    assert.equal(
+        evaluateCodeReviewLoop([
+            reviewLoopContext({ codeCurrent: 0, codeTotal: cap + 4 }),
+        ], cap).blocked,
+        false,
+    );
+    assert.deepEqual(
+        evaluateSpecReviewLoop([reviewLoopContext()], Number.NaN),
+        { blocked: false, count: 0 },
+    );
+    assert.deepEqual(
+        evaluateCodeReviewLoop([reviewLoopContext()], Number.NaN),
+        { blocked: false, count: 0 },
+    );
+    const zeroCapSpec = evaluateSpecReviewLoop([reviewLoopContext()], 0);
+    assert.equal(zeroCapSpec.blocked, true);
+    assert.equal(zeroCapSpec.count, 0);
+    assert.equal(evaluateCodeReviewLoop([reviewLoopContext()], 0).blocked, true);
+
+    const legacySpecCounter = reviewLoopContext({ specCurrent: cap });
+    delete legacySpecCounter.status.phases.spec_review?.iterations_current_loop;
+    assert.equal(evaluateSpecReviewLoop([legacySpecCounter], cap).blocked, true);
+
+    assert.deepEqual(evaluateSpecReviewLoop([], cap), { blocked: false, count: 0 });
+    assert.deepEqual(evaluateCodeReviewLoop([], cap), { blocked: false, count: 0 });
+});
+
+void test('code-review evaluator combines attempts per task before taking the bundle maximum', () => {
+    const mixed = evaluateCodeReviewLoop([
+        reviewLoopContext({ taskId: 'task-a', codeCurrent: 2, preflightCurrent: 0 }),
+        reviewLoopContext({ taskId: 'task-b', codeCurrent: 0, preflightCurrent: 2 }),
+    ], 3);
+    assert.deepEqual(mixed, { blocked: false, count: 2 });
+
+    const combined = evaluateCodeReviewLoop([
+        reviewLoopContext({ codeCurrent: 2, preflightCurrent: 1 }),
+    ], 3);
+    assert.equal(combined.blocked, true);
+    assert.equal(combined.count, 3);
+});
+
+void test('review-loop recovery reasons keep invariant details while deriving state-dependent block and resume guidance', () => {
+    const specPending = evaluateSpecReviewLoop([
+        reviewLoopContext({ specCurrent: 3, specStatus: 'pending' }),
+    ], 3);
+    const specDone = evaluateSpecReviewLoop([
+        reviewLoopContext({ specCurrent: 3, specStatus: 'done' }),
+    ], 3);
+    const codePending = evaluateCodeReviewLoop([
+        reviewLoopContext({ codeCurrent: 3, implementStatus: 'pending' }),
+    ], 3);
+    const codeDone = evaluateCodeReviewLoop([
+        reviewLoopContext({ codeCurrent: 3, implementStatus: 'done' }),
+    ], 3);
+    assert.equal(specPending.blocked, true);
+    assert.equal(specDone.blocked, true);
+    assert.equal(codePending.blocked, true);
+    assert.equal(codeDone.blocked, true);
+    if (!specPending.blocked || !specDone.blocked || !codePending.blocked || !codeDone.blocked) {
+        assert.fail('at-cap evaluator fixtures must block');
+    }
+
+    assert.notEqual(specPending.reason, specDone.reason);
+    assert.notEqual(codePending.reason, codeDone.reason);
+
+    assert.match(specPending.reason, /auto-blocked before the next spec revision/);
+    assert.doesNotMatch(specDone.reason, /auto-blocked before the next spec revision/);
+    assert.match(codePending.reason, /auto-blocked before the next re-implementation/);
+    assert.doesNotMatch(codeDone.reason, /auto-blocked before the next re-implementation/);
+
+    assert.equal(resumePhase(specPending.reason), 'spec');
+    assert.equal(resumePhase(specDone.reason), 'spec_review');
+    assert.equal(resumePhase(codePending.reason), 'implement');
+    assert.equal(resumePhase(codeDone.reason), 'code_review');
+
+    for (const reason of [codePending.reason, codeDone.reason]) {
+        assert.match(reason, /Read tasks\/<id>\/review\.md/);
+        assert.match(reason, /Validation Outcomes rows using prose labels instead of backticked check keys/);
+        assert.match(reason, /accepts the current implementation as-is/);
+        assert.match(reason, /enters `code_review` without another implementation pass/);
+    }
+    for (const reason of [specPending.reason, specDone.reason]) {
+        assert.match(reason, /accepts the current spec as-is/);
+        assert.match(reason, /enters `spec_review` without another spec revision/);
+    }
+    assert.match(codePending.reason, /raise the cap instead if you want the deferred implementation pass/i);
+    assert.doesNotMatch(codeDone.reason, /raise the cap instead if you want the deferred implementation pass/i);
+    assert.match(specPending.reason, /raise the cap instead if you want the deferred spec revision/i);
+    assert.doesNotMatch(specDone.reason, /raise the cap instead if you want the deferred spec revision/i);
+
+    for (const [pendingReason, doneReason, opening, resetCommand] of [
+        [specPending.reason, specDone.reason, 'Spec review hit 3 changes_requested iterations in a row (limit: 3).', 'reset-spec-review'],
+        [codePending.reason, codeDone.reason, 'Code review hit 3 attempts in a row for task task-a (3 reviewer rounds + 0 pre-flight rejections; limit: 3).', 'reset-code-review'],
+    ] as const) {
+        for (const reason of [pendingReason, doneReason]) {
+            assert.ok(reason.startsWith(opening));
+            assert.ok(reason.indexOf('MAX_REVIEW_LOOPS') >= 0);
+            assert.ok(reason.indexOf('MAX_REVIEW_LOOPS') < reason.indexOf(resetCommand));
+            assert.match(reason, /MAX_REVIEW_LOOPS=<n> canon run task-a\./);
+            assert.doesNotMatch(reason, /MAX_REVIEW_LOOPS=<n> canon run task-a --step/);
+            assert.doesNotMatch(reason, /iterations_current_loop\s*=/);
+            assert.doesNotMatch(reason, /phases\.\w+\.status\s*=/);
+        }
+    }
+});
+
+void test('runCodeReviewPhase retains the capped-loop review-entry backstop', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        const taskId = 'code-review-backstop';
+        writeTask(tasksRoot, taskId);
+        const statusPath = path.join(tasksRoot, taskId, 'status.json');
+        const status = readStatus(taskId);
+        status.phases.implement!.status = 'done';
+        status.phases.code_review!.status = 'pending';
+        status.phases.code_review!.iterations = 2;
+        status.phases.code_review!.iterations_current_loop = 2;
+        status.phases.code_review!.preflight_rejections_current_loop = 1;
+        writeStatusToFile(statusPath, status);
+
+        const events: string[] = [];
+        const deps = makeDeps({ activeCwd, events });
+        deps.getMaxReviewLoops = () => 3;
+        const originalExit: typeof process.exit = process.exit.bind(process);
+        process.exit = (code?: string | number | null): never => {
+            throw Object.assign(new Error('process.exit'), { code });
+        };
+        try {
+            await assert.rejects(
+                () => runCodeReviewPhase(makeState([taskId]), false, null, deps),
+                (error: unknown) => isProcessExitError(error, 2),
+            );
+        } finally {
+            process.exit = originalExit;
+        }
+
+        assert.deepEqual(events, ['verifyBranch']);
+        const blocked = readStatus(taskId);
+        assert.equal(blocked.status, 'code_review');
+        assert.equal(blocked.phases.code_review?.status, 'blocked');
+        assert.equal(blocked.escalations?.at(-1)?.phase, 'code_review');
+        assert.equal(resumePhase(blocked.escalations?.at(-1)?.reason ?? ''), 'code_review');
+    });
+});
 
 void test('runColdCodexReview captures agent_message findings and uses codex review args', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-'));

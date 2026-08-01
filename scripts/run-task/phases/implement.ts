@@ -1,10 +1,11 @@
 import { info, warn } from '../cli.js';
-import { getCodexConfig } from '../policy.js';
+import { getCodexConfig, getMaxReviewLoops } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
 import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
 import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, parsePorcelain, ensureBranch } from '../git.js';
 import { getActiveCwd, TASK_ARTIFACT_FILES } from '../worktree.js';
 import { autoBlockPhase, readStatus, writeStatus } from '../state.js';
+import { evaluateCodeReviewLoop } from '../review-loop.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { taskPhase } from '../../../src/task/index.js';
 
@@ -32,6 +33,21 @@ export async function runImplementPhase(
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
+    // Gated on count > 0 so MAX_REVIEW_LOOPS=0 (a valid, tested "no retries"
+    // override — tests/pipeline-policy.test.ts) still lets the very first
+    // implementation run. count >= cap alone would also trip at count=0,
+    // turning "zero retries after review requests changes" into "zero
+    // implementation, ever" — a real Codex PR finding on this task
+    // (scripts/run-task/phases/implement.ts). The retained review-entry
+    // backstop in code-review.ts is unaffected and keeps blocking the
+    // first review round for cap=0, matching pre-relocation behavior.
+    const codeReviewCheck = evaluateCodeReviewLoop(tasks, getMaxReviewLoops(tasks));
+    if (codeReviewCheck.count > 0 && codeReviewCheck.blocked) {
+        warn(codeReviewCheck.reason);
+        autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, codeReviewCheck.reason);
+        process.exit(2);
+    }
+
     // Only commit task artifacts to base on the FIRST implement-phase call.
     // On the first call the worktree doesn't exist yet, and the commit puts
     // the scaffold onto base so the new worktree inherits it via branch

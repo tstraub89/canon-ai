@@ -555,6 +555,20 @@ import path4 from "path";
 import { fileURLToPath } from "url";
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path4.dirname(__filename);
+function parseMaxReviewLoops(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
+    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+    return null;
+  }
+  return parsed;
+}
 function resolveRepoRoot() {
   try {
     const result = spawnSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
@@ -595,7 +609,7 @@ var config = {
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.6-luna",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.6-sol",
-  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
 
@@ -2018,6 +2032,9 @@ function stopCmd(args2, deps = {}) {
 
 // src/cli/commands/watch.ts
 var WATCH_POLL_INTERVAL_MS = 3e3;
+function blockedPhaseLivenessTrusted(_ctx, orchestratorLive, _now) {
+  return orchestratorLive;
+}
 function sleepSync2(ms) {
   const buffer = new SharedArrayBuffer(4);
   const view = new Int32Array(buffer);
@@ -2034,9 +2051,11 @@ function getErrnoCode2(error) {
 function errorMessage2(error) {
   return error instanceof Error ? error.message : String(error);
 }
-function isPhaseSettled(status, phase) {
+function isPhaseSettled(status, phase, blockedTrusted) {
   const phaseStatus = status.phases[phase]?.status ?? "pending";
-  return phaseStatus === "done" || phaseStatus === "changes_requested" || phaseStatus === "blocked";
+  if (phaseStatus === "done" || phaseStatus === "changes_requested") return true;
+  if (phaseStatus === "blocked") return !blockedTrusted;
+  return false;
 }
 function findFirstBlockedPhase(status) {
   for (const phase of PHASE_ORDER) {
@@ -2194,10 +2213,6 @@ function classifyAttach(ctx, taskId, probeAlive, now) {
   if (readError) return readError;
   const status = ctx.statusResult.kind === "ok" && isStatusJson(ctx.statusResult.status) ? ctx.statusResult.status : null;
   const state = status?.status ?? "unknown";
-  const blockedPhase = status ? findFirstBlockedPhase(status) : null;
-  if (blockedPhase) {
-    return { kind: "auto_block", state: "blocked", phase: blockedPhase };
-  }
   if (ctx.ambiguousPid != null) {
     return {
       kind: "ambiguous_pid",
@@ -2206,7 +2221,16 @@ function classifyAttach(ctx, taskId, probeAlive, now) {
       heartbeatPid: ctx.ambiguousPid.heartbeatPid
     };
   }
-  if (ctx.resolvedPid != null && probeAlive(ctx.resolvedPid) && ctx.heartbeatResult.kind === "found" && !isHeartbeatStale(ctx.heartbeatResult.record, now)) {
+  const blockedPhase = status ? findFirstBlockedPhase(status) : null;
+  const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+  const blockedTrusted = blockedPhaseLivenessTrusted(ctx, orchestratorLive, now);
+  if (blockedPhase && !blockedTrusted) {
+    return { kind: "auto_block", state: "blocked", phase: blockedPhase };
+  }
+  if (blockedPhase && blockedTrusted) {
+    return { kind: "live", pid: ctx.resolvedPid, state };
+  }
+  if (ctx.resolvedPid != null && orchestratorLive && ctx.heartbeatResult.kind === "found" && !isHeartbeatStale(ctx.heartbeatResult.record, now)) {
     return { kind: "live", pid: ctx.resolvedPid, state };
   }
   if (ctx.launchWindow) {
@@ -2228,7 +2252,7 @@ function classifyAttach(ctx, taskId, probeAlive, now) {
     hint: `Use \`canon task status ${taskId}\` for a non-blocking snapshot of the task state.`
   };
 }
-function classifyIdle(ctx, _taskId) {
+function classifyIdle(ctx, _taskId, probeAlive = () => false, now = Date.now()) {
   const readError = classifyStatusErrors(ctx);
   if (readError) return readError;
   const status = ctx.statusResult.kind === "ok" && isStatusJson(ctx.statusResult.status) ? ctx.statusResult.status : null;
@@ -2236,10 +2260,6 @@ function classifyIdle(ctx, _taskId) {
     return { kind: "death", state: "unknown" };
   }
   const state = summaryStateForStatus(status);
-  const blockedPhase = findFirstBlockedPhase(status);
-  if (blockedPhase) {
-    return { kind: "auto_block", state: "blocked", phase: blockedPhase, pid: ctx.resolvedPid ?? void 0 };
-  }
   if (ctx.ambiguousPid != null) {
     return {
       kind: "ambiguous_pid",
@@ -2247,6 +2267,11 @@ function classifyIdle(ctx, _taskId) {
       canonPid: ctx.ambiguousPid.canonPid,
       heartbeatPid: ctx.ambiguousPid.heartbeatPid
     };
+  }
+  const blockedPhase = findFirstBlockedPhase(status);
+  const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+  if (blockedPhase && !blockedPhaseLivenessTrusted(ctx, orchestratorLive, now)) {
+    return { kind: "auto_block", state: "blocked", phase: blockedPhase, pid: ctx.resolvedPid ?? void 0 };
   }
   if (state === "human_review") {
     const verdict = status.phases.code_review?.verdict || void 0;
@@ -2290,16 +2315,18 @@ function classifyIdle(ctx, _taskId) {
   }
   return { kind: "death", state, pid: ctx.resolvedPid ?? void 0 };
 }
-function phaseSettled(ctx, phase) {
+function phaseSettled(ctx, phase, probeAlive, now) {
   const status = ctx.statusResult.kind === "ok" && isStatusJson(ctx.statusResult.status) ? ctx.statusResult.status : null;
   if (status == null) return false;
-  return isPhaseSettled(status, phase);
+  const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+  return isPhaseSettled(status, phase, blockedPhaseLivenessTrusted(ctx, orchestratorLive, now));
 }
-function orchestratorStillProgressing(ctx, probeAlive) {
-  if (ctx.resolvedPid == null || !probeAlive(ctx.resolvedPid)) return false;
+function orchestratorStillProgressing(ctx, probeAlive, now = Date.now()) {
+  const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+  if (!orchestratorLive) return false;
   const status = ctx.statusResult.kind === "ok" && isStatusJson(ctx.statusResult.status) ? ctx.statusResult.status : null;
   if (status == null) return false;
-  if (findFirstBlockedPhase(status)) return false;
+  if (findFirstBlockedPhase(status) && !blockedPhaseLivenessTrusted(ctx, orchestratorLive, now)) return false;
   const state = status.status;
   return state !== "human_review" && state !== "complete";
 }
@@ -2353,6 +2380,7 @@ function watchCmd(args2, deps = {}) {
   const now = deps.nowImpl ?? Date.now;
   const pollIntervalMs = deps.pollIntervalMs ?? WATCH_POLL_INTERVAL_MS;
   const waitTimeoutMs = deps.waitTimeoutMs ?? STOP_WAIT_DEFAULT_MS;
+  const isOrchestratorAlive = (pid) => probePidAlive(pid, deps.probeAliveImpl);
   const parsed = parseWatchArgs(args2);
   if (parsed.usageError) {
     printUsage(stderr);
@@ -2414,7 +2442,7 @@ function watchCmd(args2, deps = {}) {
     }
   };
   let ctx = gatherContext(taskId, deps);
-  if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase)) {
+  if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
     emitSummary(stdout, {
       state: parsed.untilPhase,
       reason: "until",
@@ -2423,7 +2451,7 @@ function watchCmd(args2, deps = {}) {
     });
     return exit(0);
   }
-  const initialAttach = classifyAttach(ctx, taskId, (pid) => probePidAlive(pid, deps.probeAliveImpl), now());
+  const initialAttach = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
   if (initialAttach.kind !== "live" && initialAttach.kind !== "launch_window") {
     return reportInitialFailure(initialAttach);
   }
@@ -2447,7 +2475,7 @@ function watchCmd(args2, deps = {}) {
     });
     if (waitResult.kind === "found") {
       ctx = gatherContext(taskId, deps);
-      const postWaitAttach = classifyAttach(ctx, taskId, (pid) => probePidAlive(pid, deps.probeAliveImpl), now());
+      const postWaitAttach = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
       if (postWaitAttach.kind !== "live") {
         return reportInitialFailure(postWaitAttach);
       }
@@ -2476,7 +2504,7 @@ function watchCmd(args2, deps = {}) {
     sleep(pollIntervalMs);
     if (withinTimeout()) return reportTimeout();
     ctx = gatherContext(taskId, deps);
-    if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase)) {
+    if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
       emitSummary(stdout, {
         state: parsed.untilPhase,
         reason: "until",
@@ -2485,7 +2513,7 @@ function watchCmd(args2, deps = {}) {
       });
       return exit(0);
     }
-    const liveResult = classifyAttach(ctx, taskId, (pid) => probePidAlive(pid, deps.probeAliveImpl), now());
+    const liveResult = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
     if (liveResult.kind === "live") {
       const currentPhase = displayedPhasePointer(ctx);
       if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
@@ -2512,7 +2540,7 @@ function watchCmd(args2, deps = {}) {
       emitSummary(stdout, { state: liveResult.state, reason: "ambiguous_pid" });
       return exit(2);
     }
-    if (orchestratorStillProgressing(ctx, (pid) => probePidAlive(pid, deps.probeAliveImpl))) {
+    if (orchestratorStillProgressing(ctx, isOrchestratorAlive, now())) {
       const currentPhase = displayedPhasePointer(ctx);
       if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
         stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}
@@ -2526,7 +2554,7 @@ function watchCmd(args2, deps = {}) {
     sleep(pollIntervalMs);
     if (withinTimeout()) return reportTimeout();
     const freshCtx = gatherContext(taskId, deps);
-    if (parsed.untilPhase && phaseSettled(freshCtx, parsed.untilPhase)) {
+    if (parsed.untilPhase && phaseSettled(freshCtx, parsed.untilPhase, isOrchestratorAlive, now())) {
       emitSummary(stdout, {
         state: parsed.untilPhase,
         reason: "until",
@@ -2535,7 +2563,7 @@ function watchCmd(args2, deps = {}) {
       });
       return exit(0);
     }
-    const idleResult = classifyIdle(freshCtx, taskId);
+    const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now());
     emitSummary(stdout, summarizeIdle(idleResult));
     switch (idleResult.kind) {
       case "checkpoint":
@@ -3749,6 +3777,23 @@ function taskAccept(ids, phaseArg, options = {}) {
     if (!sharedSha2) {
       throw new Error(`Error: \`git rev-parse HEAD\` from ${gitCwd} returned an empty string; refusing to accept without a usable SHA.`);
     }
+    const precedingPhase = phaseArg === "spec_review" ? "spec" : "implement";
+    const shouldCompletePreceding = /* @__PURE__ */ new Map();
+    const projectedNextPhases = /* @__PURE__ */ new Map();
+    for (const ctx of ctxByTask.values()) {
+      const completePreceding = options.force === true && ctx.status.phases[phaseArg]?.status === "blocked" && ctx.status.phases[precedingPhase]?.status === "pending" && deriveTopLevelStatus(ctx.status) === precedingPhase;
+      shouldCompletePreceding.set(ctx.id, completePreceding);
+      const projected = structuredClone(ctx.status);
+      ensurePhaseEntry(projected, phaseArg).status = "done";
+      if (completePreceding) ensurePhaseEntry(projected, precedingPhase).status = "done";
+      projectedNextPhases.set(ctx.id, deriveTopLevelStatus(projected));
+    }
+    if (new Set(projectedNextPhases.values()).size > 1) {
+      const details = ids.map((id) => `${id}: ${projectedNextPhases.get(id)}`).join(", ");
+      throw new Error(
+        `Error: bundled accept would leave tasks at different next phases (${details}). Run accept separately for each phase-aligned group.`
+      );
+    }
     const originalSnapshots2 = /* @__PURE__ */ new Map();
     for (const ctx of ctxByTask.values()) {
       try {
@@ -3763,6 +3808,9 @@ function taskAccept(ids, phaseArg, options = {}) {
     try {
       for (const ctx of ctxByTask.values()) {
         const reviewEntry = ensurePhaseEntry(ctx.status, phaseArg);
+        if (shouldCompletePreceding.get(ctx.id) === true) {
+          ensurePhaseEntry(ctx.status, precedingPhase).status = "done";
+        }
         const currentVerdict = reviewEntry.verdict ?? "";
         if (!advancingVerdicts.has(currentVerdict)) {
           reviewEntry.verdict = "sanctioned";
@@ -3825,7 +3873,7 @@ ${noteLine}
       }
     }
     const label2 = ids.length === 1 ? ids[0] : `[${ids.join(", ")}]`;
-    const nextPhase = phaseArg === "spec_review" ? "plan" : "qa";
+    const nextPhase = deriveTopLevelStatus(ctxByTask.get(ids[0]).status);
     console.log(
       `Accepted ${label2}: ${phaseArg} \u2192 done.
   Next phase: ${nextPhase}. Run \`canon run ${ids.join(" ")}\` to continue.`
@@ -4048,7 +4096,8 @@ function taskResetCodeReview(id) {
   }
   const status = readJsonFile(statusPath);
   const currentPhase = deriveTopLevelStatus(status);
-  if (currentPhase !== "code_review") {
+  const blockedAtImplementEntry = currentPhase === "implement" && status.phases.implement?.status === "pending" && status.phases.code_review?.status === "blocked";
+  if (currentPhase !== "code_review" && !blockedAtImplementEntry) {
     throw new Error(`Error: reset-code-review only operates on tasks currently at code_review. Current phase: ${currentPhase}.`);
   }
   const reviewPath = path11.join(taskDir, "review.md");
@@ -4058,7 +4107,9 @@ function taskResetCodeReview(id) {
     fs11.renameSync(reviewPath, path11.join(taskDir, `review-prior-${n}.md`));
     console.log(`Archived prior review.md \u2192 review-prior-${n}.md`);
   }
+  const implement = ensurePhaseEntry(status, "implement");
   const codeReview = ensurePhaseEntry(status, "code_review");
+  implement.status = "done";
   codeReview.status = "pending";
   codeReview.iterations_current_loop = 0;
   codeReview.iterations = 0;
@@ -4070,7 +4121,7 @@ function taskResetCodeReview(id) {
   status.updated = today();
   writeStatusAtomic(statusPath, status);
   console.log(
-    `Reset ${id}: code_review \u2192 pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
+    `Reset ${id}: implement \u2192 done, code_review \u2192 pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
   );
 }
 function ensureGitAvailable() {

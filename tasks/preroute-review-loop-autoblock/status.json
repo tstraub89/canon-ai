@@ -1,15 +1,15 @@
 {
   "id": "preroute-review-loop-autoblock",
   "title": "Auto-block review loops before the next revision cycle, not after",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-07-31",
   "updated": "2026-07-31",
-  "branch": "",
+  "branch": "task/preroute-review-loop-autoblock",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "c1a15fa3372a0618feae4043c31357f08907dd75",
-    "orchestrator_commit": "c1a15fa3372a0618feae4043c31357f08907dd75",
+    "upstream_commit": "6ab68b88427547c1d1aa7ea0ea0edfb48405a878",
+    "orchestrator_commit": "6ab68b88427547c1d1aa7ea0ea0edfb48405a878",
     "canon_version": "2.4.0",
     "codex_cli": "codex-cli 0.146.0",
     "claude_code": "2.1.220 (Claude Code)"
@@ -31,8 +31,8 @@
       "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 5,
-      "changes_requested_total": 4,
+      "iterations_total": 15,
+      "changes_requested_total": 13,
       "auto_block_count": 2,
       "preflight_rejections_current_loop": 0
     },
@@ -41,21 +41,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 5,
+      "changes_requested_total": 3,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -75,11 +78,19 @@
       "phase": "spec_review",
       "iteration_count": 4,
       "reason": "Spec review hit 4 changes_requested iterations in a row (limit: 4). Pipeline auto-blocked before another spec revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run preroute-review-loop-autoblock --step — rather than resetting the counter, which throws away that signal. Only reset the counter if you're revising scope enough that prior iterations no longer apply: set phases.spec_review.status = \"pending\" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline."
+    },
+    {
+      "date": "2026-07-31",
+      "phase": "code_review",
+      "iteration_count": 0,
+      "reason": "Code review surfaced a spec_gap verdict for task(s): preroute-review-loop-autoblock. The implementation cannot resolve this — the root cause is in the spec. Recovery options (both operate on the full blocked bundle [preroute-review-loop-autoblock]):\n  FIX: amend spec.md with ## Amendment, then: canon run preroute-review-loop-autoblock --reroute\n  BLESS: canon task accept preroute-review-loop-autoblock code_review --reason \"<why>\""
     }
   ],
   "sessions": {
-    "codex_spec_review": "019fb67b-98c0-7ad1-9fa8-517098a1817f",
-    "claude_spec": "d55090bc-5d73-4729-ba37-64c9bf041292"
+    "claude_spec": "d55090bc-5d73-4729-ba37-64c9bf041292",
+    "codex": "019fb6cc-b9dc-7d61-bb9e-efda1ddf15f1",
+    "claude_review": "ae4f3540-0612-4bfe-a1b9-49d8f39a5286",
+    "codex_spec_review": "019fb858-37da-7673-bf92-b47cc74196b4"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { classifyAttach, classifyIdle, watchCmd } from '../src/cli/commands/watch.js';
+import { classifyAttach, classifyIdle, orchestratorStillProgressing, watchCmd } from '../src/cli/commands/watch.js';
 import type { HeartbeatReadResult, HeartbeatRecord } from '../scripts/run-task/heartbeat.js';
 import { gatherRunContext } from '../scripts/run-task/run-context.js';
 import type { RunContext } from '../scripts/run-task/run-context.js';
@@ -101,13 +101,14 @@ function runWatchCommand(
 
 // ── classifyAttach ──────────────────────────────────────────────────────────
 
-void test('classifyAttach: auto_block wins even when the pid is live', () => {
+void test('classifyAttach: a blocked marker stays live while the orchestrator pid is alive', () => {
     const ctx = makeContext({
         statusResult: {
             kind: 'ok',
             file: '/tmp/t1/status.json',
             status: makeStatus('implement', {
-                implement: { status: 'blocked', agent: 'codex' },
+                implement: { status: 'in_progress', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
             }),
         },
         heartbeatResult: { kind: 'found', record: makeHeartbeat(1234) },
@@ -116,8 +117,7 @@ void test('classifyAttach: auto_block wins even when the pid is live', () => {
     });
 
     const result = classifyAttach(ctx, 't1', () => true, NOW);
-    assert.equal(result.kind, 'auto_block');
-    if (result.kind === 'auto_block') assert.equal(result.phase, 'implement');
+    assert.equal(result.kind, 'live');
 });
 
 void test('classifyAttach: ambiguous_pid when canon-pid and heartbeat.pid are both alive but differ', () => {
@@ -127,6 +127,7 @@ void test('classifyAttach: ambiguous_pid when canon-pid and heartbeat.pid are bo
             file: '/tmp/t1/status.json',
             status: makeStatus('implement', {
                 implement: { status: 'in_progress', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
             }),
         },
         heartbeatResult: { kind: 'found', record: makeHeartbeat(2222) },
@@ -173,6 +174,32 @@ void test('classifyAttach: launch_window when .canon-pid is alive and heartbeat 
 
     const result = classifyAttach(ctx, 't1', () => true, NOW);
     assert.equal(result.kind, 'launch_window');
+});
+
+void test('classifyAttach: a detached resume of a blocked task is live, not auto_block, even with no heartbeat yet', () => {
+    // The parent that spawns a detached resume writes .canon-pid before
+    // the child has run far enough to write its own first heartbeat, so a
+    // watch invoked immediately sees a blocked (stale, pre-resume) phase
+    // with no heartbeat at all yet. Liveness alone must be enough here --
+    // must not declare auto_block before the resumed child has had any
+    // chance to prove itself.
+    const ctx = makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('implement', {
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
+            }),
+        },
+        heartbeatResult: { kind: 'missing' },
+        canonPid: 9999,
+        resolvedPid: 9999,
+        launchWindow: true,
+    });
+
+    const result = classifyAttach(ctx, 't1', () => true, NOW);
+    assert.equal(result.kind, 'live');
 });
 
 void test('classifyAttach: death when status says in_progress and no live process remains', () => {
@@ -232,6 +259,91 @@ void test('classifyAttach: nothing_to_watch when settled and no live process exi
     assert.equal(result.kind, 'nothing_to_watch');
 });
 
+void test('classifyAttach: primary and backstop loop blocks are terminal only without a live orchestrator', () => {
+    for (const [label, status] of [
+        ['primary', makeStatus('implement', {
+            implement: { status: 'pending', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        })],
+        ['backstop', makeStatus('code_review', {
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        })],
+    ] as const) {
+        const ctx = makeContext({
+            statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status },
+            heartbeatResult: { kind: 'missing' },
+            resolvedPid: null,
+        });
+        const result = classifyAttach(ctx, 't1', () => false, NOW);
+        assert.equal(result.kind, 'auto_block', label);
+    }
+});
+
+void test('classifyAttach: a live backstop pre-flight window is not terminal', () => {
+    const ctx = makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('code_review', {
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
+            }),
+        },
+        heartbeatResult: { kind: 'found', record: makeHeartbeat(1234) },
+        canonPid: 1234,
+        resolvedPid: 1234,
+    });
+    assert.equal(classifyAttach(ctx, 't1', () => true, NOW).kind, 'live');
+});
+
+void test('classifyAttach: a live resume is attachable even with a stale heartbeat', () => {
+    // The heartbeat timer can't tick during a resumed run's synchronous
+    // pre-agent setup work (scaffold commit, worktree add, session-init),
+    // so a genuinely live orchestrator can momentarily read as stale.
+    // Liveness alone must be enough to avoid nothing_to_watch/death here,
+    // matching orchestratorStillProgressing()'s no-heartbeat-window rule.
+    const ctx = makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('implement', {
+                implement: { status: 'in_progress', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
+            }),
+        },
+        heartbeatResult: { kind: 'found', record: makeHeartbeat(1234, NOW - 90_000) },
+        canonPid: 1234,
+        resolvedPid: 1234,
+    });
+
+    const result = classifyAttach(ctx, 't1', () => true, NOW);
+    assert.equal(result.kind, 'live');
+    if (result.kind === 'live') assert.equal(result.pid, 1234);
+});
+
+void test('classifyAttach: a blocked phase with a live pid is trusted as live no matter how stale the heartbeat', () => {
+    // Deliberately unbounded (AC-3/AC-20): the synchronous pre-agent setup
+    // work a resume runs through has no fixed upper bound, so a time cutoff
+    // here would misreport a genuinely slow-but-healthy resume as blocked.
+    const ctx = makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('implement', {
+                implement: { status: 'in_progress', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
+            }),
+        },
+        heartbeatResult: { kind: 'found', record: makeHeartbeat(1234, NOW - 300_000) },
+        canonPid: 1234,
+        resolvedPid: 1234,
+    });
+
+    const result = classifyAttach(ctx, 't1', () => true, NOW);
+    assert.equal(result.kind, 'live');
+});
+
 // ── classifyIdle ────────────────────────────────────────────────────────────
 
 void test('classifyIdle: checkpoint when human_review settled', () => {
@@ -288,6 +400,87 @@ void test('classifyIdle: auto_block when any phase is blocked', () => {
     const result = classifyIdle(ctx, 't1');
     assert.equal(result.kind, 'auto_block');
     if (result.kind === 'auto_block') assert.equal(result.phase, 'implement');
+});
+
+void test('classifyIdle: live primary and backstop loop-block windows are not auto_block', () => {
+    for (const status of [
+        makeStatus('implement', {
+            implement: { status: 'in_progress', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        }),
+        makeStatus('code_review', {
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        }),
+    ]) {
+        const ctx = makeContext({
+            statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(1234, NOW - 90_000) },
+            canonPid: 1234,
+            resolvedPid: 1234,
+        });
+        assert.notEqual(classifyIdle(ctx, 't1', () => true, NOW).kind, 'auto_block');
+    }
+});
+
+void test('classifyIdle: primary and backstop loop blocks are terminal without a live orchestrator', () => {
+    for (const status of [
+        makeStatus('implement', {
+            implement: { status: 'pending', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        }),
+        makeStatus('code_review', {
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        }),
+    ]) {
+        const ctx = makeContext({
+            statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status },
+            resolvedPid: null,
+        });
+        assert.equal(classifyIdle(ctx, 't1', () => false).kind, 'auto_block');
+    }
+});
+
+void test('classifyIdle: blocked plus ambiguous live pids refuses ambiguity before auto-block', () => {
+    const ctx = makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('implement', {
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
+            }),
+        },
+        resolvedPid: null,
+        ambiguousPid: { canonPid: 1111, heartbeatPid: 2222 },
+    });
+    assert.equal(classifyIdle(ctx, 't1', () => false).kind, 'ambiguous_pid');
+});
+
+void test('orchestratorStillProgressing ignores blocked markers after confirming liveness, no matter how stale the heartbeat', () => {
+    // Deliberately unbounded (AC-3/AC-20): liveness alone is authoritative
+    // for a blocked phase here. A cap-raised resume's synchronous pre-agent
+    // setup work has no fixed upper bound, so this must keep trusting a
+    // confirmed-alive pid regardless of heartbeat age.
+    for (const status of [
+        makeStatus('implement', {
+                implement: { status: 'in_progress', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude' },
+        }),
+        makeStatus('code_review', {
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        }),
+    ]) {
+        const liveCtx = makeContext({
+            statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(1234, NOW - 300_000) },
+            resolvedPid: 1234,
+        });
+        assert.equal(orchestratorStillProgressing(liveCtx, () => true, NOW), true);
+        assert.equal(orchestratorStillProgressing(liveCtx, () => false, NOW), false);
+    }
 });
 
 void test('classifyIdle: step_done carries verdict when changes_requested', () => {
@@ -373,6 +566,80 @@ void test('watchCmd: --until returns immediately when the phase has already sett
     assert.equal(result.stdout.length, 1);
     assert.match(result.stdout[0], /reason=until/);
     assert.equal(result.stderr.length, 0);
+});
+
+void test('watchCmd: --until does not settle a blocked review while its orchestrator is alive', () => {
+    for (const [label, status] of [
+        ['primary', makeStatus('implement', {
+            implement: { status: 'in_progress', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        })],
+        ['backstop', makeStatus('code_review', {
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        })],
+    ] as const) {
+        const liveCtx = makeContext({
+            statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(1234) },
+            canonPid: 1234,
+            resolvedPid: 1234,
+        });
+        const result = runWatchCommand(['t1', '--until', 'code_review', '--timeout', '0s'], {
+            gatherContextImpl: () => liveCtx,
+            probeAliveImpl: () => { /* alive */ },
+            nowImpl: () => NOW,
+        });
+        assert.equal(result.exitCode, 5, label);
+        assert.match(result.stdout[0] ?? '', /reason=timeout/, label);
+    }
+});
+
+void test('watchCmd: --until does not settle a blocked review during a detached-resume launch window', () => {
+    // The resume's parent writes .canon-pid before the child has run far
+    // enough to write its own first heartbeat. --until must not read the
+    // resulting missing heartbeat as "infinitely stale, therefore settled"
+    // -- that would report success before the resumed child ever started.
+    const status = makeStatus('implement', {
+        implement: { status: 'pending', agent: 'codex' },
+        code_review: { status: 'blocked', agent: 'claude' },
+    });
+    const launchCtx = makeContext({
+        statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status },
+        heartbeatResult: { kind: 'missing' },
+        canonPid: 9999,
+        resolvedPid: 9999,
+        launchWindow: true,
+    });
+    const result = runWatchCommand(['t1', '--until', 'code_review', '--timeout', '0s'], {
+        gatherContextImpl: () => launchCtx,
+        probeAliveImpl: () => { /* alive */ },
+        nowImpl: () => NOW,
+    });
+    assert.notEqual(result.exitCode, 0);
+    assert.doesNotMatch(result.stdout[0] ?? '', /reason=until/);
+});
+
+void test('watchCmd: --until settles primary and backstop loop blocks when no orchestrator is alive', () => {
+    for (const [label, status] of [
+        ['primary', makeStatus('implement', {
+            implement: { status: 'pending', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        })],
+        ['backstop', makeStatus('code_review', {
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude' },
+        })],
+    ] as const) {
+        const result = runWatchCommand(['t1', '--until', 'code_review'], {
+            gatherContextImpl: () => makeContext({
+                statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status },
+                resolvedPid: null,
+            }),
+        });
+        assert.equal(result.exitCode, 0, label);
+        assert.match(result.stdout[0] ?? '', /reason=until/, label);
+    }
 });
 
 void test('watchCmd: timeout exits with reason=timeout', () => {

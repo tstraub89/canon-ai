@@ -355,7 +355,7 @@ After `spec_review` or `code_review`, the orchestrator checks the verdict.
 | `code_review` | `spec_gap` | Block the whole `code_review` bundle with an escalation. Fix path: amend the `spec_gap` task specs and run `canon run <ids> --reroute`. Bless path: `canon task accept <ids> code_review --reason "<why>"`. |
 | `spec_review` / `code_review` | `approved` / `approved_with_nits` / `sanctioned` | Continue to the next phase. `sanctioned` is status-only and written by `canon task accept`, not by review artifacts; `canon task accept` refuses a review phase with no recorded verdict unless `--force` is passed. |
 
-**Auto-block on runaway loops**: If spec review or code review returns `changes_requested` for more iterations than the size-aware cap (3 for XS/S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that phase and appends an entry to `escalations` in `status.json`. For code review the cap check is the **sum** of `iterations_current_loop` and `preflight_rejections_current_loop` — handoffs bounced by the deterministic pre-flight gate count toward the same budget, and recovery requires resetting both counters (the block message says which). Separately, a pre-flight where every blocker is a `blocked` validation row auto-blocks immediately without consuming loop budget. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
+**Auto-block on runaway loops**: When spec review or code review reaches or exceeds the size-aware cap (3 for XS/S/M, 5 for L/XL, or `MAX_REVIEW_LOOPS` if set), the orchestrator auto-blocks that review phase and appends an entry to `escalations` in `status.json`. The primary check runs at the next revision phase's entry, before a spec revision or re-implementation starts; the review phase retains the same check as a defense-in-depth backstop for unexpected state. For code review the cap check is the **sum** of `iterations_current_loop` and `preflight_rejections_current_loop` — handoffs bounced by the deterministic pre-flight gate count toward the same budget, and recovery requires resetting both counters (the block message says which). Separately, a pre-flight where every blocker is a `blocked` validation row auto-blocks immediately without consuming loop budget. On approval, `iterations_current_loop` resets to `0` while `iterations_total` (lifetime verdict count) and `auto_block_count` are preserved — history is never erased.
 
 **Crashed Codex `spec_review` parks instead of advancing.** When a returning non-interactive `codex exec` spec-review invocation exits non-zero and the phase did not reach `done` through the agent's own `canon task phase` bookkeeping, the orchestrator does not read a verdict from `spec-review.md`. It reports the exit code and likely recoverable causes (out-of-credits, auth, network, or MCP crash), tells the operator to fix the cause and re-run `canon run <id>`, and exits `2`. This is deliberately fail-closed: a non-zero exit is not a completed review, and the orchestrator cannot distinguish a genuine verdict followed by shutdown noise from a crash that left the prior round's verdict in the cumulative artifact. Trusting that artifact could fabricate a review and inflate the durable counters used by auto-block. The tradeoff is that the rare benign case—a real verdict was written, the process then exited non-zero, and bookkeeping was skipped—also parks and must be re-run. A self-bookkept `done` review still continues despite a trailing non-zero exit, and clean-exit evidence recovery is unchanged. Interactive Codex failures exit before this recovery path, while `code_review` is Claude-owned and cannot trigger this Codex-specific park.
 
@@ -366,10 +366,19 @@ After `spec_review` or `code_review`, the orchestrator checks the verdict.
 If the human authorizes more iterations, override via env var rather than hand-editing `status.json`:
 
 ```bash
-MAX_REVIEW_LOOPS=5 canon run <id> --step
+MAX_REVIEW_LOOPS=5 canon run <id>
 ```
 
-If a `code_review` task auto-blocks and you need to reset the loop counters instead of raising the cap, use `canon task reset-code-review <id>`.
+After the normal revision-entry block, a cap-raised resume runs the deferred `spec` or `implement` revision first and returns to review only after that revision completes. Resuming without raising the cap re-blocks immediately without consuming another agent cycle.
+
+For a genuine rescope instead of a cap increase, run the matching reset command once per blocked task:
+
+```bash
+canon task reset-spec-review <id>
+canon task reset-code-review <id>
+```
+
+Both reset commands run directly from the loop-cap block state and mark the corresponding predecessor (`spec` or `implement`) done, accepting it as-is so the next run starts review without another revision. To run the deferred revision before review, raise the cap instead. No intermediate phase edit is required.
 
 ## Session Resumption
 

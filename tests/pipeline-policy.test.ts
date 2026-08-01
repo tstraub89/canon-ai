@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
     defaultMaxReviewLoops,
     detectTier,
@@ -27,6 +30,24 @@ const TEST_CONFIG: PolicyConfig = {
 };
 
 const s = (task_size: TaskSize, delicate = false): PolicyInput => ({ task_size, delicate });
+
+function loadPolicyConfig(raw: string): { config: PolicyConfig; stderr: string } {
+    const policyUrl = pathToFileURL(path.join(process.cwd(), 'scripts/run-task/policy.ts')).href;
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '--eval', [
+        `import(${JSON.stringify(policyUrl)})`,
+        ".then(m => console.log(JSON.stringify(m.policyConfig())))",
+        '.catch(error => { console.error(error); process.exit(1); });',
+    ].join('')], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: { ...process.env, MAX_REVIEW_LOOPS: raw },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return {
+        config: JSON.parse(result.stdout.trim()) as PolicyConfig,
+        stderr: result.stderr,
+    };
+}
 
 // ── Tier / sizing / plan-combined / loop-cap routing ───────────────────────
 
@@ -94,6 +115,18 @@ void test('policy: MAX_REVIEW_LOOPS=0 is a valid (suicidal) override', () => {
     // can set. Guards against regressions that use `??` vs `||` inversions.
     const p = getPipelinePolicy([s('L')], { ...TEST_CONFIG, maxReviewLoops: 0 });
     assert.equal(p.maxReviewLoops, 0);
+});
+
+void test('policy config rejects malformed or negative MAX_REVIEW_LOOPS and preserves zero', () => {
+    for (const raw of ['abc', '-1', '1.5', '2junk']) {
+        const loaded = loadPolicyConfig(raw);
+        assert.equal(loaded.config.maxReviewLoops, null, raw);
+        assert.equal(getPipelinePolicy([s('M')], loaded.config).maxReviewLoops, 3, raw);
+        assert.match(loaded.stderr, new RegExp(`Invalid MAX_REVIEW_LOOPS value .*${raw.replace('.', '\\.')}`));
+    }
+    const zero = loadPolicyConfig('0');
+    assert.equal(zero.config.maxReviewLoops, 0);
+    assert.doesNotMatch(zero.stderr, /Invalid MAX_REVIEW_LOOPS/);
 });
 
 // ── CLAUDE_BUDGET env override / tiered defaults ──────────────────────────

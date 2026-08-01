@@ -10,6 +10,23 @@ import { STOP_WAIT_DEFAULT_MS, STOP_WAIT_POLL_INTERVAL_MS, waitForHeartbeat } fr
 
 const WATCH_POLL_INTERVAL_MS = 3_000;
 
+// Single source of truth for "is a live pid sufficient evidence that a
+// blocked phase is actually a resuming run, not a terminal block." Per
+// AC-3/AC-20 (tasks/preroute-review-loop-autoblock/spec.md): liveness alone
+// is authoritative, deliberately unbounded by heartbeat staleness — the
+// synchronous pre-agent setup work a resume runs through (scaffold commit,
+// worktree add, session-init) has no fixed upper bound, and a time cutoff
+// here would misreport a genuinely healthy, still-slow resume as blocked,
+// defeating the reason this checkpoint exists. A long-dead orchestrator
+// whose recycled pid this can't distinguish from an unrelated live process
+// is a narrow, pre-existing risk this shares with every other liveness
+// check in this file (e.g. the non-blocked-phase branch below) — accepted,
+// not solved here. Every consumer of a blocked-phase status must route
+// through this one function so that acceptance is applied consistently.
+function blockedPhaseLivenessTrusted(_ctx: RunContext, orchestratorLive: boolean, _now: number): boolean {
+    return orchestratorLive;
+}
+
 export type WatchReason =
     | 'checkpoint'
     | 'complete'
@@ -94,9 +111,15 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-function isPhaseSettled(status: StatusJson, phase: Phase): boolean {
+// `blockedTrusted` must already be the grace-bounded result of
+// blockedPhaseLivenessTrusted() -- not raw pid liveness -- so a 'blocked'
+// phase settles (is no longer worth waiting on) only when that trust
+// check fails, matching every other consumer of the same signal.
+function isPhaseSettled(status: StatusJson, phase: Phase, blockedTrusted: boolean): boolean {
     const phaseStatus = status.phases[phase]?.status ?? 'pending';
-    return phaseStatus === 'done' || phaseStatus === 'changes_requested' || phaseStatus === 'blocked';
+    if (phaseStatus === 'done' || phaseStatus === 'changes_requested') return true;
+    if (phaseStatus === 'blocked') return !blockedTrusted;
+    return false;
 }
 
 function findFirstBlockedPhase(status: StatusJson): Phase | null {
@@ -277,11 +300,6 @@ export function classifyAttach(
         : null;
     const state = status?.status ?? 'unknown';
 
-    const blockedPhase = status ? findFirstBlockedPhase(status) : null;
-    if (blockedPhase) {
-        return { kind: 'auto_block', state: 'blocked', phase: blockedPhase };
-    }
-
     if (ctx.ambiguousPid != null) {
         return {
             kind: 'ambiguous_pid',
@@ -291,7 +309,17 @@ export function classifyAttach(
         };
     }
 
-    if (ctx.resolvedPid != null && probeAlive(ctx.resolvedPid) && ctx.heartbeatResult.kind === 'found' && !isHeartbeatStale(ctx.heartbeatResult.record, now)) {
+    const blockedPhase = status ? findFirstBlockedPhase(status) : null;
+    const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+    const blockedTrusted = blockedPhaseLivenessTrusted(ctx, orchestratorLive, now);
+    if (blockedPhase && !blockedTrusted) {
+        return { kind: 'auto_block', state: 'blocked', phase: blockedPhase };
+    }
+    if (blockedPhase && blockedTrusted) {
+        return { kind: 'live', pid: ctx.resolvedPid as number, state };
+    }
+
+    if (ctx.resolvedPid != null && orchestratorLive && ctx.heartbeatResult.kind === 'found' && !isHeartbeatStale(ctx.heartbeatResult.record, now)) {
         return { kind: 'live', pid: ctx.resolvedPid, state };
     }
 
@@ -317,7 +345,12 @@ export function classifyAttach(
     };
 }
 
-export function classifyIdle(ctx: RunContext, _taskId: string): IdleClassification {
+export function classifyIdle(
+    ctx: RunContext,
+    _taskId: string,
+    probeAlive: (pid: number) => boolean = () => false,
+    now: number = Date.now(),
+): IdleClassification {
     const readError = classifyStatusErrors(ctx);
     if (readError) return readError;
     const status = ctx.statusResult.kind === 'ok' && isStatusJson(ctx.statusResult.status)
@@ -327,11 +360,6 @@ export function classifyIdle(ctx: RunContext, _taskId: string): IdleClassificati
         return { kind: 'death', state: 'unknown' };
     }
     const state = summaryStateForStatus(status);
-    const blockedPhase = findFirstBlockedPhase(status);
-    if (blockedPhase) {
-        return { kind: 'auto_block', state: 'blocked', phase: blockedPhase, pid: ctx.resolvedPid ?? undefined };
-    }
-
     if (ctx.ambiguousPid != null) {
         return {
             kind: 'ambiguous_pid',
@@ -339,6 +367,12 @@ export function classifyIdle(ctx: RunContext, _taskId: string): IdleClassificati
             canonPid: ctx.ambiguousPid.canonPid,
             heartbeatPid: ctx.ambiguousPid.heartbeatPid,
         };
+    }
+
+    const blockedPhase = findFirstBlockedPhase(status);
+    const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+    if (blockedPhase && !blockedPhaseLivenessTrusted(ctx, orchestratorLive, now)) {
+        return { kind: 'auto_block', state: 'blocked', phase: blockedPhase, pid: ctx.resolvedPid ?? undefined };
     }
 
     if (state === 'human_review') {
@@ -388,12 +422,13 @@ export function classifyIdle(ctx: RunContext, _taskId: string): IdleClassificati
     return { kind: 'death', state, pid: ctx.resolvedPid ?? undefined };
 }
 
-function phaseSettled(ctx: RunContext, phase: Phase): boolean {
+function phaseSettled(ctx: RunContext, phase: Phase, probeAlive: (pid: number) => boolean, now: number): boolean {
     const status = ctx.statusResult.kind === 'ok' && isStatusJson(ctx.statusResult.status)
         ? ctx.statusResult.status
         : null;
     if (status == null) return false;
-    return isPhaseSettled(status, phase);
+    const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+    return isPhaseSettled(status, phase, blockedPhaseLivenessTrusted(ctx, orchestratorLive, now));
 }
 
 // A stale heartbeat alone does not mean the orchestrator stopped. The heartbeat
@@ -404,13 +439,25 @@ function phaseSettled(ctx: RunContext, phase: Phase): boolean {
 // reached a real stop — an auto-block, human_review checkpoint, or completion — it is
 // progressing, not settled, so the idle classifier must keep blocking instead of
 // reporting a false step_done.
-function orchestratorStillProgressing(ctx: RunContext, probeAlive: (pid: number) => boolean): boolean {
-    if (ctx.resolvedPid == null || !probeAlive(ctx.resolvedPid)) return false;
+//
+// A live pid alone is not enough when a phase is blocked, though: the same
+// bounded resume-setup grace classifyAttach() applies must hold here too, or
+// a task that slips past that initial bounded check once would then be
+// trusted by this function forever on every subsequent poll, regardless of
+// how stale the heartbeat gets — reopening exactly the long-dead,
+// recycled-pid ambiguity the bound exists to close.
+export function orchestratorStillProgressing(
+    ctx: RunContext,
+    probeAlive: (pid: number) => boolean,
+    now: number = Date.now(),
+): boolean {
+    const orchestratorLive = ctx.resolvedPid != null && probeAlive(ctx.resolvedPid);
+    if (!orchestratorLive) return false;
     const status = ctx.statusResult.kind === 'ok' && isStatusJson(ctx.statusResult.status)
         ? ctx.statusResult.status
         : null;
     if (status == null) return false;
-    if (findFirstBlockedPhase(status)) return false;
+    if (findFirstBlockedPhase(status) && !blockedPhaseLivenessTrusted(ctx, orchestratorLive, now)) return false;
     const state = status.status;
     return state !== 'human_review' && state !== 'complete';
 }
@@ -467,6 +514,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
     const now = deps.nowImpl ?? Date.now;
     const pollIntervalMs = deps.pollIntervalMs ?? WATCH_POLL_INTERVAL_MS;
     const waitTimeoutMs = deps.waitTimeoutMs ?? STOP_WAIT_DEFAULT_MS;
+    const isOrchestratorAlive = (pid: number): boolean => probePidAlive(pid, deps.probeAliveImpl);
 
     const parsed = parseWatchArgs(args);
     if (parsed.usageError) {
@@ -528,7 +576,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
 
     let ctx = gatherContext(taskId, deps);
 
-    if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase)) {
+    if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
         emitSummary(stdout, {
             state: parsed.untilPhase,
             reason: 'until',
@@ -538,7 +586,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         return exit(0);
     }
 
-    const initialAttach = classifyAttach(ctx, taskId, pid => probePidAlive(pid, deps.probeAliveImpl), now());
+    const initialAttach = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
     if (initialAttach.kind !== 'live' && initialAttach.kind !== 'launch_window') {
         return reportInitialFailure(initialAttach);
     }
@@ -564,7 +612,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
 
         if (waitResult.kind === 'found') {
             ctx = gatherContext(taskId, deps);
-            const postWaitAttach = classifyAttach(ctx, taskId, pid => probePidAlive(pid, deps.probeAliveImpl), now());
+            const postWaitAttach = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
             if (postWaitAttach.kind !== 'live') {
                 return reportInitialFailure(postWaitAttach);
             }
@@ -594,7 +642,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         if (withinTimeout()) return reportTimeout();
 
         ctx = gatherContext(taskId, deps);
-        if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase)) {
+        if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
             emitSummary(stdout, {
                 state: parsed.untilPhase,
                 reason: 'until',
@@ -604,7 +652,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
             return exit(0);
         }
 
-        const liveResult = classifyAttach(ctx, taskId, pid => probePidAlive(pid, deps.probeAliveImpl), now());
+        const liveResult = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
         if (liveResult.kind === 'live') {
             const currentPhase = displayedPhasePointer(ctx);
             if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
@@ -631,7 +679,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
             return exit(2);
         }
 
-        if (orchestratorStillProgressing(ctx, pid => probePidAlive(pid, deps.probeAliveImpl))) {
+        if (orchestratorStillProgressing(ctx, isOrchestratorAlive, now())) {
             // Heartbeat went stale inside a between-phase synchronous window, but the
             // orchestrator pid is alive and the run hasn't hit a stop. Surface any phase
             // advance and keep blocking — don't fall through to the idle/grace path that
@@ -650,7 +698,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         if (withinTimeout()) return reportTimeout();
 
         const freshCtx = gatherContext(taskId, deps);
-        if (parsed.untilPhase && phaseSettled(freshCtx, parsed.untilPhase)) {
+        if (parsed.untilPhase && phaseSettled(freshCtx, parsed.untilPhase, isOrchestratorAlive, now())) {
             emitSummary(stdout, {
                 state: parsed.untilPhase,
                 reason: 'until',
@@ -660,7 +708,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
             return exit(0);
         }
 
-        const idleResult = classifyIdle(freshCtx, taskId);
+        const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now());
         emitSummary(stdout, summarizeIdle(idleResult));
         switch (idleResult.kind) {
             case 'checkpoint':

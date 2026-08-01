@@ -912,6 +912,123 @@ void test('task reset-code-review rejects non-code_review tasks', () => {
     });
 });
 
+void test('task reset-code-review accepts a loop-cap block at implement entry and preserves lifetime audit fields', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-implement-block', makeStatus('reset-cr-implement-block', {
+            status: 'implement',
+            phases: {
+                ...makeStatus('reset-cr-implement-block').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: {
+                    status: 'blocked',
+                    agent: 'claude',
+                    verdict: 'changes_requested',
+                    iterations: 4,
+                    iterations_current_loop: 3,
+                    iterations_total: 8,
+                    changes_requested_total: 5,
+                    preflight_rejections_current_loop: 1,
+                    preflight_rejections_total: 2,
+                    auto_block_count: 2,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+            sessions: { claude_review: 'blocked-review-session' },
+        }));
+        fs.writeFileSync(path.join(taskDir, 'review.md'), '# Review\nblocked loop\n', 'utf8');
+
+        const output = captureStdout(() => taskCmd(['reset-code-review', 'reset-cr-implement-block']));
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.status, 'code_review');
+        assert.equal(updated.phases.implement?.status, 'done');
+        assert.equal(updated.phases.code_review?.status, 'pending');
+        assert.equal(updated.phases.code_review?.iterations, 0);
+        assert.equal(updated.phases.code_review?.iterations_current_loop, 0);
+        assert.equal(updated.phases.code_review?.preflight_rejections_current_loop, 0);
+        assert.equal(updated.phases.code_review?.verdict, '');
+        assert.equal(updated.phases.code_review?.iterations_total, 8);
+        assert.equal(updated.phases.code_review?.auto_block_count, 2);
+        assert.equal(updated.sessions?.claude_review, undefined);
+        assert.equal(fs.existsSync(path.join(taskDir, 'review-prior-1.md')), true);
+        assert.equal(fs.existsSync(path.join(taskDir, 'review.md')), false);
+        assert.match(output, /implement → done, code_review → pending/);
+    });
+});
+
+void test('task reset-code-review still rejects a healthy pending review while implement is current', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-healthy-implement', makeStatus('reset-cr-healthy-implement', {
+            status: 'implement',
+            phases: {
+                ...makeStatus('reset-cr-healthy-implement').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: {
+                    status: 'pending',
+                    agent: 'claude',
+                    verdict: '',
+                    iterations: 0,
+                    iterations_current_loop: 0,
+                    iterations_total: 3,
+                    changes_requested_total: 1,
+                    preflight_rejections_current_loop: 0,
+                    auto_block_count: 0,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        }));
+
+        assert.throws(
+            () => taskResetCodeReview('reset-cr-healthy-implement'),
+            /only operates on tasks currently at code_review/,
+        );
+        assert.equal(readStatusFile(taskDir).phases.implement?.status, 'pending');
+        assert.equal(readStatusFile(taskDir).phases.code_review?.status, 'pending');
+    });
+});
+
+void test('task reset-code-review rejects an interrupted in-progress implementation even when code review is blocked', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-in-progress-implement', makeStatus('reset-cr-in-progress-implement', {
+            status: 'implement',
+            phases: {
+                ...makeStatus('reset-cr-in-progress-implement').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'in_progress', agent: 'codex' },
+                code_review: {
+                    status: 'blocked',
+                    agent: 'claude',
+                    verdict: 'changes_requested',
+                    iterations: 3,
+                    iterations_current_loop: 3,
+                    iterations_total: 5,
+                    changes_requested_total: 3,
+                    preflight_rejections_current_loop: 0,
+                    auto_block_count: 1,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        }));
+
+        assert.throws(
+            () => taskResetCodeReview('reset-cr-in-progress-implement'),
+            /only operates on tasks currently at code_review/,
+        );
+        assert.equal(readStatusFile(taskDir).phases.implement?.status, 'in_progress');
+        assert.equal(readStatusFile(taskDir).phases.code_review?.status, 'blocked');
+    });
+});
+
 // ── canon task accept ────────────────────────────────────────────────────────
 
 function setupAcceptRepo(): { root: string; work: string; tasksRoot: string; taskDir: string } {
@@ -1100,6 +1217,209 @@ void test('task accept refuses review phases with no recorded verdict unless for
         assert.equal(forced.phases.spec_review?.status, 'done');
         assert.equal(forced.phases.spec_review?.verdict, 'sanctioned');
         assert.match(fs.readFileSync(path.join(taskDir, 'notes.md'), 'utf8'), /emergency override/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept --force completes the deferred implementation when accepting its loop-cap-blocked code review', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir, {
+            status: 'implement',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: {
+                    status: 'blocked',
+                    agent: 'claude',
+                    verdict: '',
+                    iterations_current_loop: 3,
+                    auto_block_count: 1,
+                },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const output = withCwd(work, () => withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => captureStdout(() => taskAccept(
+            ['accept-task'],
+            'code_review',
+            { reason: 'bless the capped review', force: true },
+        ))));
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.implement?.status, 'done');
+        assert.equal(updated.phases.code_review?.status, 'done');
+        assert.equal(updated.status, 'qa');
+        assert.match(output, /Next phase: qa/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept --force completes the deferred spec when accepting its loop-cap-blocked spec review', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir, {
+            status: 'spec',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'pending', agent: 'claude' },
+                spec_review: { status: 'blocked', agent: 'codex', verdict: '', iterations_current_loop: 3, auto_block_count: 1 },
+                plan: { status: 'pending', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const output = withCwd(work, () => withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => captureStdout(() => taskAccept(
+            ['accept-task'],
+            'spec_review',
+            { reason: 'bless the capped spec review', force: true },
+        ))));
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.spec?.status, 'done');
+        assert.equal(updated.phases.spec_review?.status, 'done');
+        assert.equal(updated.status, 'plan');
+        assert.match(output, /Next phase: plan/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept --force leaves an in-progress implementation current while accepting blocked code review', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir, {
+            status: 'implement',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'in_progress', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const output = withCwd(work, () => withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => captureStdout(() => taskAccept(
+            ['accept-task'],
+            'code_review',
+            { reason: 'accept review without cancelling live work', force: true },
+        ))));
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.implement?.status, 'in_progress');
+        assert.equal(updated.phases.code_review?.status, 'done');
+        assert.equal(updated.status, 'implement');
+        assert.match(output, /Next phase: implement/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept --force does not skip an earlier incomplete phase', () => {
+    const { root, work, tasksRoot, taskDir } = setupAcceptRepo();
+    try {
+        writeAcceptTaskStatus(taskDir, {
+            status: 'plan',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'pending', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const output = withCwd(work, () => withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => captureStdout(() => taskAccept(
+            ['accept-task'],
+            'code_review',
+            { reason: 'preserve earlier plan work', force: true },
+        ))));
+
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.plan?.status, 'pending');
+        assert.equal(updated.phases.implement?.status, 'pending');
+        assert.equal(updated.phases.code_review?.status, 'done');
+        assert.equal(updated.status, 'plan');
+        assert.match(output, /Next phase: plan/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+void test('task accept refuses a bundle whose post-write next phases would diverge without writing either task', () => {
+    const { root, work, tasksRoot, taskDir: taskDirA } = setupAcceptRepo();
+    try {
+        const taskDirB = path.join(tasksRoot, 'task-b');
+        fs.mkdirSync(taskDirB, { recursive: true });
+        writeAcceptTaskStatus(taskDirA, {
+            status: 'implement',
+            phases: {
+                ...makeStatus('accept-task').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'pending', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+        const statusB = readStatusFile(taskDirA);
+        statusB.id = 'task-b';
+        statusB.title = 'Task task-b';
+        statusB.phases.implement!.status = 'in_progress';
+        fs.writeFileSync(path.join(taskDirB, 'status.json'), `${JSON.stringify(statusB, null, 2)}\n`, 'utf8');
+        const beforeA = fs.readFileSync(path.join(taskDirA, 'status.json'), 'utf8');
+        const beforeB = fs.readFileSync(path.join(taskDirB, 'status.json'), 'utf8');
+
+        withCwd(work, () => withEnv({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_SKIP_PHASE_GATE: '1',
+        }, () => {
+            assert.throws(
+                () => taskAccept(
+                    ['accept-task', 'task-b'],
+                    'code_review',
+                    { reason: 'divergent bundle', force: true },
+                ),
+                error => {
+                    assert.ok(error instanceof Error);
+                    assert.match(error.message, /accept-task: qa/);
+                    assert.match(error.message, /task-b: implement/);
+                    return true;
+                },
+            );
+        }));
+
+        assert.equal(fs.readFileSync(path.join(taskDirA, 'status.json'), 'utf8'), beforeA);
+        assert.equal(fs.readFileSync(path.join(taskDirB, 'status.json'), 'utf8'), beforeB);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

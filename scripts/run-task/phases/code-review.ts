@@ -8,6 +8,7 @@ import { runClaude } from '../agents/claude.js';
 import { runColdCodexReview } from '../agents/codex.js';
 import { getActiveCwd } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
+import { evaluateCodeReviewLoop } from '../review-loop.js';
 import { classifyPreflightBlockers, isTemplateUnfilled, verifyHandoffAgainstDiff } from '../validation.js';
 import type { ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
@@ -235,38 +236,10 @@ export async function runCodeReviewPhase(
     const baseBranch = deps.getBaseBranch(taskIds);
     const activeCwd = deps.getActiveCwd(taskIds);
     const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
-    // Pre-flight rejections are tracked separately from review iterations
-    // (they're not Claude rounds) but still need to count toward the loop
-    // cap — otherwise persistent handoff-format failures could bounce
-    // implement→pre-flight→implement forever without ever tripping the
-    // safeguard. Compute combined attempts PER TASK then take the max —
-    // computing max-iter and max-preflight separately and summing would
-    // mix counters from different tasks in a bundle and over-block
-    // healthy bundles (Codex P2 on the prior iteration).
-    const perTaskCombined = tasks.map(t => {
-        const preflight = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
-        return {
-            taskId: t.taskId,
-            real: t.iterations_current_loop,
-            preflight,
-            combined: t.iterations_current_loop + preflight,
-        };
-    });
-    const worstTask = perTaskCombined.reduce((worst, curr) => curr.combined > worst.combined ? curr : worst, perTaskCombined[0]);
-    const codeReviewLoopCap = deps.getMaxReviewLoops(tasks);
-    if (worstTask.combined >= codeReviewLoopCap) {
-        const reason =
-            `Code review hit ${worstTask.combined} attempts in a row for task ${worstTask.taskId} ` +
-            `(${worstTask.real} reviewer rounds + ${worstTask.preflight} pre-flight rejections; limit: ${codeReviewLoopCap}). ` +
-            `Pipeline auto-blocked. Read tasks/<id>/review.md — if the same finding ` +
-            `keeps recurring, the spec or approach may need revisiting rather than ` +
-            `another implementation pass. If repeated failures were all pre-flight, ` +
-            `the handoff format itself may be wrong (e.g., Validation Outcomes rows ` +
-            `using prose labels instead of backticked check keys). To resume after ` +
-            `fixing: run \`canon task reset-code-review <id>\` to archive the prior review, ` +
-            `clear the loop-local counters, and re-derive status.json, then re-run the pipeline.`;
-        warn(reason);
-        autoBlockPhase(taskIds, 'code_review', worstTask.combined, reason);
+    const codeReviewCheck = evaluateCodeReviewLoop(tasks, deps.getMaxReviewLoops(tasks));
+    if (codeReviewCheck.blocked) {
+        warn(codeReviewCheck.reason);
+        autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, codeReviewCheck.reason);
         process.exit(2);
     }
 
@@ -303,7 +276,7 @@ export async function runCodeReviewPhase(
                 `handoff.md Validation Outcomes rows, run \`canon task reset-code-review <id>\` for each ` +
                 `bundle task that needs recovery, and re-run the pipeline.`;
             warn(reason);
-            autoBlockPhase(taskIds, 'code_review', worstTask.combined, reason);
+            autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, reason);
             process.exit(2);
         }
 

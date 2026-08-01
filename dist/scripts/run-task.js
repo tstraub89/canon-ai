@@ -294,6 +294,20 @@ import path from "path";
 import { fileURLToPath } from "url";
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
+function parseMaxReviewLoops(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
+    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+    return null;
+  }
+  return parsed;
+}
 function resolveRepoRoot() {
   try {
     const result = spawnSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
@@ -381,7 +395,7 @@ var config = {
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.6-luna",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.6-sol",
-  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
 
@@ -1448,7 +1462,7 @@ var config2 = {
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-5.6-luna",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-5.6-sol",
-  maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   claudeBudget: process.env.CLAUDE_BUDGET ?? null
 };
 function policyConfig() {
@@ -2042,6 +2056,92 @@ async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsC
       });
     }
   }
+}
+
+// scripts/run-task/review-loop.ts
+function isUsableCap(cap) {
+  return Number.isInteger(cap) && cap >= 0;
+}
+function specReviewIterations(task) {
+  return task.status.phases.spec_review?.iterations_current_loop ?? task.status.phases.spec_review?.iterations ?? 0;
+}
+function revisionPhaseNotDone(tasks, phase) {
+  return tasks.every((task) => (task.status.phases[phase]?.status ?? "pending") !== "done");
+}
+function resumeOrderClause(revisionPhase, reviewPhase, revisionNotDone) {
+  return revisionNotDone ? `Resuming after raising the cap runs \`${revisionPhase}\` first \u2014 the deferred revision \u2014 then \`${reviewPhase}\` again.` : `Resuming after raising the cap runs \`${reviewPhase}\` directly; \`${revisionPhase}\` already completed its revision.`;
+}
+function blockTimingClause(revisionPhase, reviewPhase, revisionNotDone) {
+  if (revisionNotDone) {
+    const revisionWork = revisionPhase === "spec" ? "spec revision" : "re-implementation";
+    return `Pipeline auto-blocked before the next ${revisionWork}.`;
+  }
+  return `Pipeline auto-blocked at the \`${reviewPhase}\` entry backstop after \`${revisionPhase}\` already completed its revision.`;
+}
+function resetSemanticsClause(revisionPhase, reviewPhase, revisionNotDone) {
+  const artifact = revisionPhase === "spec" ? "current spec" : "current implementation";
+  const revisionWork = revisionPhase === "spec" ? "spec revision" : "implementation pass";
+  const resetEffect = `Resetting accepts the ${artifact} as-is, so the next run enters \`${reviewPhase}\` without another ${revisionWork}.`;
+  return revisionNotDone ? `${resetEffect} Raise the cap instead if you want the deferred ${revisionWork} to run before review.` : resetEffect;
+}
+function buildSpecReviewReason(taskIds, count, cap, revisionNotDone) {
+  const resetCommands = taskIds.map((id) => `canon task reset-spec-review ${id}`).join("; ");
+  const timingClause = blockTimingClause("spec", "spec_review", revisionNotDone);
+  const resetClause = resetSemanticsClause("spec", "spec_review", revisionNotDone);
+  const resumeClause = resumeOrderClause("spec", "spec_review", revisionNotDone);
+  return `Spec review hit ${count} changes_requested iterations in a row (limit: ${cap}). ${timingClause} Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue \u2014 MAX_REVIEW_LOOPS=<n> canon run ${taskIds.join(" ")}. Only rescope if prior iterations no longer apply \u2014 run ${resetCommands} to archive the prior review, clear the loop counters, and drop the stored Claude session. ${resetClause} ${resumeClause}`;
+}
+function buildCodeReviewReason(worst, taskIds, cap, revisionNotDone) {
+  const resetCommands = taskIds.map((id) => `canon task reset-code-review ${id}`).join("; ");
+  const timingClause = blockTimingClause("implement", "code_review", revisionNotDone);
+  const resetClause = resetSemanticsClause("implement", "code_review", revisionNotDone);
+  const resumeClause = resumeOrderClause("implement", "code_review", revisionNotDone);
+  return `Code review hit ${worst.combined} attempts in a row for task ${worst.taskId} (${worst.real} reviewer rounds + ${worst.preflight} pre-flight rejections; limit: ${cap}). ${timingClause} Read tasks/<id>/review.md \u2014 if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If review is still converging, raise the cap and continue \u2014 MAX_REVIEW_LOOPS=<n> canon run ${taskIds.join(" ")}. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To rescope instead, run ${resetCommands} to archive the prior review and clear the loop-local counters. ${resetClause} ${resumeClause}`;
+}
+function evaluateSpecReviewLoop(tasks, cap) {
+  const count = tasks.reduce(
+    (max, task) => Math.max(max, specReviewIterations(task)),
+    0
+  );
+  if (!isUsableCap(cap) || count < cap) return { blocked: false, count };
+  return {
+    blocked: true,
+    count,
+    reason: buildSpecReviewReason(
+      tasks.map((task) => task.taskId),
+      count,
+      cap,
+      revisionPhaseNotDone(tasks, "spec")
+    )
+  };
+}
+function evaluateCodeReviewLoop(tasks, cap) {
+  const perTask = tasks.map((task) => {
+    const preflight = task.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
+    return {
+      taskId: task.taskId,
+      real: task.iterations_current_loop,
+      preflight,
+      combined: task.iterations_current_loop + preflight
+    };
+  });
+  const worst = perTask.reduce(
+    (currentWorst, candidate) => candidate.combined > currentWorst.combined ? candidate : currentWorst,
+    perTask[0] ?? { taskId: "", real: 0, preflight: 0, combined: 0 }
+  );
+  if (!isUsableCap(cap) || worst.combined < cap) {
+    return { blocked: false, count: worst.combined };
+  }
+  return {
+    blocked: true,
+    count: worst.combined,
+    reason: buildCodeReviewReason(
+      worst,
+      tasks.map((task) => task.taskId),
+      cap,
+      revisionPhaseNotDone(tasks, "implement")
+    )
+  };
 }
 
 // scripts/run-task/validation.ts
@@ -5252,21 +5352,10 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
   const baseBranch = deps.getBaseBranch(taskIds);
   const activeCwd = deps.getActiveCwd(taskIds);
   const maxIter = tasks.reduce((max, t) => Math.max(max, t.iterations_current_loop), 0);
-  const perTaskCombined = tasks.map((t) => {
-    const preflight = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
-    return {
-      taskId: t.taskId,
-      real: t.iterations_current_loop,
-      preflight,
-      combined: t.iterations_current_loop + preflight
-    };
-  });
-  const worstTask = perTaskCombined.reduce((worst, curr) => curr.combined > worst.combined ? curr : worst, perTaskCombined[0]);
-  const codeReviewLoopCap = deps.getMaxReviewLoops(tasks);
-  if (worstTask.combined >= codeReviewLoopCap) {
-    const reason = `Code review hit ${worstTask.combined} attempts in a row for task ${worstTask.taskId} (${worstTask.real} reviewer rounds + ${worstTask.preflight} pre-flight rejections; limit: ${codeReviewLoopCap}). Pipeline auto-blocked. Read tasks/<id>/review.md \u2014 if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To resume after fixing: run \`canon task reset-code-review <id>\` to archive the prior review, clear the loop-local counters, and re-derive status.json, then re-run the pipeline.`;
-    warn(reason);
-    autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
+  const codeReviewCheck = evaluateCodeReviewLoop(tasks, deps.getMaxReviewLoops(tasks));
+  if (codeReviewCheck.blocked) {
+    warn(codeReviewCheck.reason);
+    autoBlockPhase(taskIds, "code_review", codeReviewCheck.count, codeReviewCheck.reason);
     process.exit(2);
   }
   const changedFiles = new Set(deps.getAffectedFiles(baseBranch, activeCwd));
@@ -5289,7 +5378,7 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
     if (route === "auto_block") {
       const reason = `Code review pre-flight found only blocked validation rows for task(s) ${preflightFailed.map((f) => f.taskId).join(", ")}. Infrastructure was unavailable, and re-implementation cannot resolve it. Human triage required. To resume after infrastructure is restored: update the affected handoff.md Validation Outcomes rows, run \`canon task reset-code-review <id>\` for each bundle task that needs recovery, and re-run the pipeline.`;
       warn(reason);
-      autoBlockPhase(taskIds, "code_review", worstTask.combined, reason);
+      autoBlockPhase(taskIds, "code_review", codeReviewCheck.count, reason);
       process.exit(2);
     }
     for (const { taskId } of tasks) {
@@ -5356,6 +5445,12 @@ function shouldUseImplementRevision(tasks) {
 async function runImplementPhase(state, interactive, resumeId, force = false) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
+  const codeReviewCheck = evaluateCodeReviewLoop(tasks, getMaxReviewLoops(tasks));
+  if (codeReviewCheck.count > 0 && codeReviewCheck.blocked) {
+    warn(codeReviewCheck.reason);
+    autoBlockPhase(taskIds, "code_review", codeReviewCheck.count, codeReviewCheck.reason);
+    process.exit(2);
+  }
   const primaryStatus = readStatus(taskIds[0]);
   const worktreeAlreadyCreated = primaryStatus.worktree === true && Boolean(primaryStatus.branch);
   if (!worktreeAlreadyCreated) {
@@ -5500,6 +5595,12 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
 async function runSpecPhase(state, interactive, resumeId) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
+  const specReviewCheck = evaluateSpecReviewLoop(tasks, getMaxReviewLoops(tasks));
+  if (specReviewCheck.count > 0 && specReviewCheck.blocked) {
+    warn(specReviewCheck.reason);
+    autoBlockPhase(taskIds, "spec_review", specReviewCheck.count, specReviewCheck.reason);
+    process.exit(2);
+  }
   const hasChangesRequested = tasks.some((t) => t.specReviewVerdict === "changes_requested");
   if (hasChangesRequested) {
     info("Phase: spec (Claude revises specs after review feedback)");
@@ -5593,18 +5694,10 @@ async function runSpecReviewPhase(state, interactive, resumeId) {
     }
     return null;
   }
-  const maxSpecIter = tasks.reduce(
-    (max, t) => Math.max(
-      max,
-      t.status.phases.spec_review?.iterations_current_loop ?? t.status.phases.spec_review?.iterations ?? 0
-    ),
-    0
-  );
-  const specReviewLoopCap = getMaxReviewLoops(tasks);
-  if (maxSpecIter >= specReviewLoopCap) {
-    const reason = `Spec review hit ${maxSpecIter} changes_requested iterations in a row (limit: ${specReviewLoopCap}). Pipeline auto-blocked before another spec revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue \u2014 MAX_REVIEW_LOOPS=<n> canon run ${taskIds.join(" ")} --step \u2014 rather than resetting the counter, which throws away that signal. Only reset the counter if you're revising scope enough that prior iterations no longer apply: set phases.spec_review.status = "pending" and phases.spec_review.iterations_current_loop = 0 in status.json, then re-run the pipeline.`;
-    warn(reason);
-    autoBlockSpecReview(taskIds, maxSpecIter, reason);
+  const specReviewCheck = evaluateSpecReviewLoop(tasks, getMaxReviewLoops(tasks));
+  if (specReviewCheck.blocked) {
+    warn(specReviewCheck.reason);
+    autoBlockSpecReview(taskIds, specReviewCheck.count, specReviewCheck.reason);
     process.exit(2);
   }
   info(`Phase: spec_review (Codex reviews spec${state.isBundle ? "s" : ""})`);
@@ -5618,7 +5711,7 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
   const result = await runCodex(specReviewPrompt, interactive, resumeId, cfg.model, cfg.effort, {
     taskId: taskIds.join("+"),
     phase: "spec_review",
-    iteration: maxSpecIter,
+    iteration: specReviewCheck.count,
     activeCwd
   }, activeCwd);
   for (const t of tasks) {

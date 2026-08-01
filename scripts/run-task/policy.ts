@@ -13,6 +13,7 @@ import {
 } from '../pipeline-policy.js';
 
 import type { StatusJson, TaskContext } from './types.js';
+import { parseMaxReviewLoops } from './env.js';
 
 const config = {
     claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? 'opus',
@@ -22,7 +23,7 @@ const config = {
     claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? 'sonnet',
     codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? 'gpt-5.6-luna',
     codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? 'gpt-5.6-sol',
-    maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+    maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
     claudeBudget: process.env.CLAUDE_BUDGET ?? null,
 };
 

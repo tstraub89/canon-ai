@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { REPO_ROOT } from '../scripts/run-task/env.js';
 import { extractAcSummary, extractAffectedFiles, extractValidationChecks } from '../scripts/run-task/context.js';
@@ -16,6 +17,35 @@ import {
 import type { StatusJson } from '../scripts/run-task/types.js';
 
 const TSX_LOADER = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+
+function loadEnvMaxReviewLoops(raw: string): { value: number | null; stderr: string } {
+    const envUrl = pathToFileURL(path.join(process.cwd(), 'scripts/run-task/env.ts')).href;
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '--eval', [
+        `import(${JSON.stringify(envUrl)})`,
+        '.then(m => console.log(JSON.stringify(m.config.maxReviewLoops)))',
+        '.catch(error => { console.error(error); process.exit(1); });',
+    ].join('')], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: { ...process.env, MAX_REVIEW_LOOPS: raw },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return {
+        value: JSON.parse(result.stdout.trim()) as number | null,
+        stderr: result.stderr,
+    };
+}
+
+void test('env config rejects malformed or negative MAX_REVIEW_LOOPS and preserves zero', () => {
+    for (const raw of ['abc', '-1', '1.5', '2junk']) {
+        const loaded = loadEnvMaxReviewLoops(raw);
+        assert.equal(loaded.value, null, raw);
+        assert.match(loaded.stderr, new RegExp(`Invalid MAX_REVIEW_LOOPS value .*${raw.replace('.', '\\.')}`));
+    }
+    const zero = loadEnvMaxReviewLoops('0');
+    assert.equal(zero.value, 0);
+    assert.doesNotMatch(zero.stderr, /Invalid MAX_REVIEW_LOOPS/);
+});
 
 function withTempDir<T>(prefix: string, fn: (dir: string) => T): T {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));

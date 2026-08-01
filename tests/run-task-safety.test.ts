@@ -24,6 +24,9 @@ import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths 
 import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
 import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../scripts/run-task/state.js';
 import { classifyNodeModulesLinkFromData, PIPELINE_MANAGED_DOCS } from '../scripts/run-task/worktree.js';
+import { evaluateCodeReviewLoop } from '../scripts/run-task/review-loop.js';
+import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
+import { taskCmd } from '../src/task/index.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -315,6 +318,182 @@ function setupFakeCliTools(scriptDir: string): void {
         'printf "%s\\n" "unexpected gh args: $*" >&2',
         'exit 1',
     ]);
+}
+
+function setupInvocationLoggingCliTools(scriptDir: string): void {
+    setupFakeCliTools(scriptDir);
+    const completerPath = path.join(scriptDir, 'complete-agent-phase.mjs');
+    fs.writeFileSync(completerPath, [
+        "import fs from 'node:fs';",
+        "import path from 'node:path';",
+        "const tasksRoot = process.env.CANON_TASKS_DIR_OVERRIDE;",
+        "const taskId = process.env.FAKE_AGENT_TASK_ID;",
+        "const fixedPhase = process.env.FAKE_AGENT_COMPLETE_PHASE;",
+        "const sequence = (process.env.FAKE_AGENT_COMPLETE_SEQUENCE ?? '').split(',').filter(Boolean);",
+        "const logPath = process.env.FAKE_AGENT_LOG;",
+        "const invocationCount = logPath && fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').split('\\n').filter(Boolean).length : 0;",
+        "const phase = sequence[invocationCount - 1] ?? fixedPhase;",
+        "if (!tasksRoot || !taskId || !phase) process.exit(0);",
+        "const statusPath = path.join(tasksRoot, taskId, 'status.json');",
+        "const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));",
+        "status.phases[phase].status = 'done';",
+        "if (phase === 'spec_review' || phase === 'code_review') status.phases[phase].verdict = 'approved';",
+        "if (phase === 'spec_review') fs.writeFileSync(path.join(tasksRoot, taskId, 'spec-review.md'), '# Spec Review\\n\\n## Verdict\\n\\n- [x] **Approved**\\n- [ ] **Changes requested**\\n');",
+        "status.status = phase === 'spec' ? 'spec_review' : phase === 'spec_review' ? 'plan' : phase === 'implement' ? 'code_review' : phase === 'code_review' ? 'qa' : status.status;",
+        "fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\\n`);",
+        '',
+    ].join('\n'), 'utf8');
+    for (const agent of ['claude', 'codex']) {
+        writeExecutable(scriptDir, agent, [
+            'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+            `printf "%s\\n" "${agent}" >> "$FAKE_AGENT_LOG"`,
+            'if [ -n "${FAKE_AGENT_COMPLETE_PHASE:-}${FAKE_AGENT_COMPLETE_SEQUENCE:-}" ]; then node "$FAKE_AGENT_COMPLETER"; fi',
+            'exit 0',
+        ]);
+    }
+}
+
+function readAgentInvocations(logPath: string): string[] {
+    if (!fs.existsSync(logPath)) return [];
+    return fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
+}
+
+function makeReviewLoopStatus(
+    taskId: string,
+    loop: 'spec_review' | 'code_review',
+    current: number,
+    preflight = 0,
+    revisionDone = false,
+): Record<string, unknown> {
+    const phases: Record<string, Record<string, unknown>> = {
+        spec: { status: loop === 'spec_review' && !revisionDone ? 'pending' : 'done', agent: 'claude' },
+        spec_review: {
+            status: loop === 'spec_review' ? 'pending' : 'done',
+            agent: 'codex',
+            verdict: loop === 'spec_review' ? '' : 'approved',
+            iterations: loop === 'spec_review' ? current : 0,
+            iterations_current_loop: loop === 'spec_review' ? current : 0,
+            iterations_total: loop === 'spec_review' ? current + 2 : 1,
+            changes_requested_total: loop === 'spec_review' ? current : 0,
+            auto_block_count: 0,
+        },
+        plan: { status: loop === 'spec_review' ? 'pending' : 'done', agent: 'claude' },
+        implement: { status: loop === 'code_review' && !revisionDone ? 'pending' : loop === 'code_review' ? 'done' : 'pending', agent: 'codex' },
+        code_review: {
+            status: 'pending',
+            agent: 'claude',
+            verdict: '',
+            iterations: loop === 'code_review' ? current : 0,
+            iterations_current_loop: loop === 'code_review' ? current : 0,
+            iterations_total: loop === 'code_review' ? current + 4 : 0,
+            changes_requested_total: loop === 'code_review' ? current + preflight : 0,
+            preflight_rejections_current_loop: loop === 'code_review' ? preflight : 0,
+            preflight_rejections_total: loop === 'code_review' ? preflight + 1 : 0,
+            auto_block_count: 0,
+        },
+        qa: { status: 'pending', agent: 'claude' },
+        human_review: { status: 'pending', agent: 'human' },
+    };
+    return {
+        id: taskId,
+        title: taskId,
+        status: loop === 'spec_review'
+            ? (revisionDone ? 'spec_review' : 'spec')
+            : (revisionDone ? 'code_review' : 'implement'),
+        task_size: 'M',
+        delicate: true,
+        human_spec_gate: false,
+        base_branch: 'main',
+        worktree: false,
+        phases,
+        sessions: loop === 'spec_review'
+            ? { claude_spec: 'old-spec-session' }
+            : { claude_review: 'old-review-session' },
+        escalations: [],
+    };
+}
+
+function writeReviewLoopFixture(
+    repoDir: string,
+    taskId: string,
+    loop: 'spec_review' | 'code_review',
+    current: number,
+    preflight = 0,
+    revisionDone = false,
+): string {
+    const tasksRoot = path.join(repoDir, 'tasks');
+    writeTaskStatus(tasksRoot, taskId, makeReviewLoopStatus(taskId, loop, current, preflight, revisionDone));
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.writeFileSync(path.join(taskDir, loop === 'spec_review' ? 'spec-review.md' : 'review.md'), [
+        loop === 'spec_review' ? '# Spec Review' : '# Code Review',
+        '',
+        '## Verdict',
+        '',
+        '- [x] **Changes requested**',
+        '',
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(taskDir, 'spec.md'), [
+        `# Spec: ${taskId}`,
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `initial-fixture.txt` | fixture |',
+        '',
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+        `# Implementation Handoff: ${taskId}`,
+        '',
+        '## Changes',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `initial-fixture.txt` | fixture |',
+        '',
+        '## Validation Outcomes',
+        '',
+        '| Check | Result | Notes |',
+        '|---|---|---|',
+        '| `npm test` | Pass | fixture |',
+        '',
+    ].join('\n'), 'utf8');
+    return tasksRoot;
+}
+
+function runReviewLoopMain(
+    repoDir: string,
+    tasksRoot: string,
+    fakeBins: string,
+    taskId: string,
+    cap: number,
+    extraArgs: readonly string[] = [],
+    extraEnv: NodeJS.ProcessEnv = {},
+    step = true,
+): { status: number | null; stderr: string; stdout: string } {
+    const mainHref = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'main.ts')).href;
+    const argv = ['node', 'canon', taskId, ...(step ? ['--step'] : []), ...extraArgs];
+    return runNodeInline([
+        `import(${JSON.stringify(mainHref)})`,
+        '.then(async m => {',
+        `  process.argv = ${JSON.stringify(argv)};`,
+        '  await m.main();',
+        '})',
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), {
+        ...process.env,
+        PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        CANON_NO_DETACH: '1',
+        CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        CANON_WORKTREES_ROOT: path.join(repoDir, 'worktrees'),
+        MAX_REVIEW_LOOPS: String(cap),
+        FAKE_AGENT_LOG: path.join(repoDir, 'agent-invocations.log'),
+        FAKE_AGENT_COMPLETER: path.join(fakeBins, 'complete-agent-phase.mjs'),
+        FAKE_AGENT_TASK_ID: taskId,
+        ...extraEnv,
+    }, repoDir);
 }
 
 function withFakeGitEnv<T>(
@@ -4522,6 +4701,535 @@ void test('crashed-review park is spec_review-only and code_review recovery rema
         };
         assert.equal(updated.phases?.code_review?.status, 'done');
         assert.equal(updated.phases?.code_review?.verdict, 'approved');
+    });
+});
+
+void test('main blocks a capped spec loop before revision, re-blocks on resume, and its advertised reset works', { concurrency: false }, () => {
+    withTempDir('preroute-spec-loop-cap-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'spec-loop-cap';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'spec_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+
+        const first = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap);
+        assert.deepEqual(readAgentInvocations(agentLog), []);
+        assert.equal(first.status, 2, combinedOutput(first));
+
+        const blocked = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            status?: string;
+            escalations?: Array<{ phase?: string; reason?: string }>;
+            phases?: {
+                spec?: { status?: string };
+                spec_review?: { status?: string; auto_block_count?: number };
+            };
+        };
+        assert.equal(blocked.status, 'spec');
+        assert.equal(blocked.phases?.spec?.status, 'pending');
+        assert.equal(blocked.phases?.spec_review?.status, 'blocked');
+        assert.equal(blocked.phases?.spec_review?.auto_block_count, 1);
+        assert.equal(blocked.escalations?.length, 1);
+        assert.equal(blocked.escalations?.[0]?.phase, 'spec_review');
+        const firstResumePhase = blocked.escalations?.[0]?.reason?.match(/Resuming after raising the cap runs `([a-z_]+)`/)?.[1];
+        assert.equal(firstResumePhase, 'spec');
+
+        const resumed = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap);
+        assert.equal(resumed.status, 2, combinedOutput(resumed));
+        assert.deepEqual(readAgentInvocations(agentLog), []);
+        const reblocked = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            escalations?: unknown[];
+            phases?: { spec_review?: { auto_block_count?: number } };
+        };
+        assert.equal(reblocked.escalations?.length, 2);
+        assert.equal(reblocked.phases?.spec_review?.auto_block_count, 2);
+
+        withFakeGitEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot }, () => {
+            taskCmd(['reset-spec-review', taskId]);
+        });
+        const reset = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            status?: string;
+            sessions?: { claude_spec?: string };
+            phases?: {
+                spec?: { status?: string };
+                spec_review?: { status?: string; iterations?: number; iterations_current_loop?: number; verdict?: string };
+            };
+        };
+        assert.equal(reset.status, 'spec_review');
+        assert.equal(reset.phases?.spec?.status, 'done');
+        assert.equal(reset.phases?.spec_review?.status, 'pending');
+        assert.equal(reset.phases?.spec_review?.iterations, 0);
+        assert.equal(reset.phases?.spec_review?.iterations_current_loop, 0);
+        assert.equal(reset.phases?.spec_review?.verdict, '');
+        assert.equal(reset.sessions?.claude_spec, undefined);
+        assert.equal(fs.existsSync(path.join(tasksRoot, taskId, 'spec-review-prior-1.md')), true);
+    });
+});
+
+void test('main blocks a capped code loop before implementation side effects, re-blocks, and its advertised reset works', { concurrency: false }, () => {
+    withTempDir('preroute-code-loop-cap-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'code-loop-cap';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+        const baseTipBefore = execFileSync('git', ['rev-parse', 'main'], { cwd: localDir, encoding: 'utf8' }).trim();
+
+        const first = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap);
+        assert.equal(first.status, 2, combinedOutput(first));
+        assert.deepEqual(readAgentInvocations(agentLog), []);
+        assert.equal(
+            execFileSync('git', ['rev-parse', 'main'], { cwd: localDir, encoding: 'utf8' }).trim(),
+            baseTipBefore,
+        );
+
+        const blocked = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            status?: string;
+            escalations?: Array<{ phase?: string; reason?: string }>;
+            phases?: {
+                implement?: { status?: string };
+                code_review?: {
+                    status?: string;
+                    iterations_total?: number;
+                    auto_block_count?: number;
+                };
+            };
+        };
+        assert.equal(blocked.status, 'implement');
+        assert.equal(blocked.phases?.implement?.status, 'pending');
+        assert.equal(blocked.phases?.code_review?.status, 'blocked');
+        assert.equal(blocked.phases?.code_review?.auto_block_count, 1);
+        assert.equal(blocked.escalations?.length, 1);
+        assert.equal(blocked.escalations?.[0]?.phase, 'code_review');
+        const firstResumePhase = blocked.escalations?.[0]?.reason?.match(/Resuming after raising the cap runs `([a-z_]+)`/)?.[1];
+        assert.equal(firstResumePhase, 'implement');
+
+        const resumed = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap);
+        assert.equal(resumed.status, 2, combinedOutput(resumed));
+        assert.deepEqual(readAgentInvocations(agentLog), []);
+        const reblocked = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            escalations?: unknown[];
+            sessions?: { claude_review?: string };
+            phases?: {
+                code_review?: {
+                    iterations_total?: number;
+                    auto_block_count?: number;
+                };
+            };
+        };
+        assert.equal(reblocked.escalations?.length, 2);
+        assert.equal(reblocked.phases?.code_review?.auto_block_count, 2);
+        const preservedTotal = reblocked.phases?.code_review?.iterations_total;
+        const preservedAutoBlocks = reblocked.phases?.code_review?.auto_block_count;
+
+        withFakeGitEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot }, () => {
+            taskCmd(['reset-code-review', taskId]);
+        });
+        const reset = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            status?: string;
+            sessions?: { claude_review?: string };
+            phases?: {
+                implement?: { status?: string };
+                code_review?: {
+                    status?: string;
+                    iterations?: number;
+                    iterations_current_loop?: number;
+                    iterations_total?: number;
+                    preflight_rejections_current_loop?: number;
+                    auto_block_count?: number;
+                    verdict?: string;
+                };
+            };
+        };
+        assert.equal(reset.status, 'code_review');
+        assert.equal(reset.phases?.implement?.status, 'done');
+        assert.equal(reset.phases?.code_review?.status, 'pending');
+        assert.equal(reset.phases?.code_review?.iterations, 0);
+        assert.equal(reset.phases?.code_review?.iterations_current_loop, 0);
+        assert.equal(reset.phases?.code_review?.preflight_rejections_current_loop, 0);
+        assert.equal(reset.phases?.code_review?.verdict, '');
+        assert.equal(reset.phases?.code_review?.iterations_total, preservedTotal);
+        assert.equal(reset.phases?.code_review?.auto_block_count, preservedAutoBlocks);
+        assert.equal(reset.sessions?.claude_review, undefined);
+        assert.equal(fs.existsSync(path.join(tasksRoot, taskId, 'review-prior-1.md')), true);
+    });
+});
+
+void test('main runs the first spec write when MAX_REVIEW_LOOPS=0 on a genuinely fresh task', { concurrency: false }, () => {
+    // MAX_REVIEW_LOOPS=0 is a valid, tested "no retries after review requests
+    // changes" override (tests/pipeline-policy.test.ts) -- not "no work at
+    // all". A fresh task's spec_review.iterations_current_loop is 0, same as
+    // a capped-out task's threshold, so gating the revision-entry checkpoint
+    // on count >= cap alone would also block the very first spec write.
+    // Real Codex PR finding (scripts/run-task/phases/implement.ts; mirrored
+    // here on the spec side).
+    withTempDir('preroute-spec-zero-cap-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'spec-zero-cap';
+        const cap = 0;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'spec_review', 0);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+
+        const first = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap);
+        assert.equal(first.status, 0, combinedOutput(first));
+        assert.notDeepEqual(readAgentInvocations(agentLog), []);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { spec?: { status?: string }; spec_review?: { status?: string } };
+        };
+        assert.equal(updated.phases?.spec?.status, 'done');
+    });
+});
+
+void test('main runs the first implement pass when MAX_REVIEW_LOOPS=0 on a genuinely fresh task', { concurrency: false }, () => {
+    withTempDir('preroute-code-zero-cap-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'code-zero-cap';
+        const cap = 0;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+        // writeReviewLoopFixture's spec.md has no Validation Required
+        // section -- fine for the block-path tests it was built for, but
+        // this test lets implement actually run to completion, and
+        // checkPhaseGate('implement') requires that section to be present
+        // with at least one `[x]`-checked item.
+        fs.appendFileSync(
+            path.join(tasksRoot, taskId, 'spec.md'),
+            '\n## Validation Required\n\n- [x] `npm test`\n',
+            'utf8',
+        );
+        // writeReviewLoopFixture's handoff.md claims initial-fixture.txt
+        // changed (matching makeGitFixture's own tracked file of that
+        // name), but the fake codex agent normally only flips status.json
+        // -- it never actually touches the file. The orchestrator (not the
+        // agent) owns staging and committing, so give the fake agent a
+        // real, uncommitted working-tree edit to leave behind, matching
+        // what handoff.md claims and what a real agent would do.
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        fs.writeFileSync(path.join(fakeBins, 'codex'), [
+            '#!/bin/sh',
+            'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+            'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
+            'printf "fixture\\n" > initial-fixture.txt',
+            'if [ -n "${FAKE_AGENT_COMPLETE_PHASE:-}${FAKE_AGENT_COMPLETE_SEQUENCE:-}" ]; then node "$FAKE_AGENT_COMPLETER"; fi',
+            'exit 0',
+        ].join('\n'), { mode: 0o755 });
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+
+        const first = runReviewLoopMain(
+            localDir, tasksRoot, fakeBins, taskId, cap, [], { FAKE_AGENT_COMPLETE_PHASE: 'implement' },
+        );
+        assert.equal(first.status, 0, combinedOutput(first));
+        assert.deepEqual(readAgentInvocations(agentLog), ['codex']);
+
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { implement?: { status?: string } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'done');
+    });
+});
+
+void test('main blocks a code loop when reviewer plus pre-flight attempts reach the cap', { concurrency: false }, () => {
+    withTempDir('preroute-code-loop-combined-cap-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'code-loop-combined-cap';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 1, 2);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+        const baseTipBefore = execFileSync('git', ['rev-parse', 'main'], { cwd: localDir, encoding: 'utf8' }).trim();
+
+        const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap);
+        assert.equal(result.status, 2, combinedOutput(result));
+        assert.deepEqual(readAgentInvocations(agentLog), []);
+        assert.equal(
+            execFileSync('git', ['rev-parse', 'main'], { cwd: localDir, encoding: 'utf8' }).trim(),
+            baseTipBefore,
+        );
+        const blocked = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            status?: string;
+            escalations?: Array<{ phase?: string }>;
+            phases?: { code_review?: { status?: string } };
+        };
+        assert.equal(blocked.status, 'implement');
+        assert.equal(blocked.phases?.code_review?.status, 'blocked');
+        assert.equal(blocked.escalations?.at(-1)?.phase, 'code_review');
+    });
+});
+
+void test('force-accepting a pre-route code-review block makes the follow-on run enter QA without Codex', { concurrency: false }, () => {
+    withTempDir('preroute-code-loop-force-accept-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'code-loop-force-accept';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+
+        assert.equal(runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap).status, 2);
+        assert.deepEqual(readAgentInvocations(agentLog), []);
+
+        const taskModuleHref = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'task', 'index.ts')).href;
+        const accepted = runNodeInline([
+            `import(${JSON.stringify(taskModuleHref)})`,
+            `.then(m => m.taskAccept([${JSON.stringify(taskId)}], 'code_review', { force: true, reason: 'operator accepted current implementation' }))`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        }, localDir);
+        assert.equal(accepted.status, 0, combinedOutput(accepted));
+        assert.match(accepted.stdout, /Next phase: qa/);
+
+        const qaRun = runReviewLoopMain(
+            localDir,
+            tasksRoot,
+            fakeBins,
+            taskId,
+            cap,
+            ['--expect', 'qa'],
+            { FAKE_AGENT_COMPLETE_PHASE: 'qa' },
+        );
+        assert.deepEqual(readAgentInvocations(agentLog), ['claude'], combinedOutput(qaRun));
+    });
+});
+
+void test('spec-review entry retains the capped-loop backstop and persists state-accurate recovery text', { concurrency: false }, () => {
+    withTempDir('spec-review-loop-backstop-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'spec-review-backstop';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'spec_review', cap, 0, true);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+
+        const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap);
+        assert.equal(result.status, 2, combinedOutput(result));
+        assert.deepEqual(readAgentInvocations(path.join(localDir, 'agent-invocations.log')), []);
+        const blocked = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            status?: string;
+            escalations?: Array<{ reason?: string }>;
+            phases?: { spec_review?: { status?: string } };
+        };
+        assert.equal(blocked.status, 'spec_review');
+        assert.equal(blocked.phases?.spec_review?.status, 'blocked');
+        const reason = blocked.escalations?.at(-1)?.reason ?? '';
+        assert.equal(reason.match(/Resuming after raising the cap runs `([a-z_]+)`/)?.[1], 'spec_review');
+        assert.doesNotMatch(reason, /iterations_current_loop\s*=/);
+        assert.doesNotMatch(reason, /phases\.spec_review\.status\s*=/);
+    });
+});
+
+void test('raising the spec-loop cap resumes the deferred spec phase before spec_review', { concurrency: false }, () => {
+    withTempDir('preroute-spec-loop-raised-cap-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'spec-loop-raised-cap';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'spec_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+
+        assert.equal(runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap).status, 2);
+        const resumed = runReviewLoopMain(
+            localDir,
+            tasksRoot,
+            fakeBins,
+            taskId,
+            cap + 1,
+            ['--expect', 'spec'],
+            { FAKE_AGENT_COMPLETE_PHASE: 'spec' },
+        );
+        assert.deepEqual(readAgentInvocations(agentLog), ['claude']);
+        assert.doesNotMatch(combinedOutput(resumed), /--expect spec but current phase/);
+        const afterResume = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { spec_review?: { status?: string } };
+        };
+        assert.equal(afterResume.phases?.spec_review?.status, 'blocked');
+    });
+
+    withTempDir('preroute-spec-loop-wrong-expect-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'spec-loop-wrong-expect';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'spec_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        assert.equal(runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap).status, 2);
+
+        const wrongExpect = runReviewLoopMain(
+            localDir,
+            tasksRoot,
+            fakeBins,
+            taskId,
+            cap + 1,
+            ['--expect', 'spec_review'],
+        );
+        assert.match(combinedOutput(wrongExpect), /--expect spec_review but current phase is spec/);
+        assert.deepEqual(readAgentInvocations(path.join(localDir, 'agent-invocations.log')), []);
+    });
+});
+
+void test('a plain raised-cap run completes the deferred spec revision and following review in one process', { concurrency: false }, () => {
+    withTempDir('preroute-spec-loop-raised-cap-full-run-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'spec-loop-raised-cap-full-run';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'spec_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+
+        assert.equal(runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap).status, 2);
+        const statusPath = path.join(tasksRoot, taskId, 'status.json');
+        const blocked = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        blocked.human_spec_gate = true;
+        fs.writeFileSync(statusPath, `${JSON.stringify(blocked, null, 2)}\n`, 'utf8');
+
+        const resumed = runReviewLoopMain(
+            localDir,
+            tasksRoot,
+            fakeBins,
+            taskId,
+            cap + 1,
+            [],
+            { FAKE_AGENT_COMPLETE_SEQUENCE: 'spec,spec_review' },
+            false,
+        );
+        assert.equal(resumed.status, 0, combinedOutput(resumed));
+        assert.deepEqual(readAgentInvocations(agentLog), ['claude', 'codex']);
+        const completed = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        assert.equal(completed.phases.spec?.status, 'done');
+        assert.equal(completed.phases.spec_review?.status, 'done');
+        assert.equal(completed.phases.spec_review?.verdict, 'approved');
+    });
+});
+
+void test('raising the code-loop cap resumes implement before code_review', { concurrency: false }, () => {
+    withTempDir('preroute-code-loop-raised-cap-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'code-loop-raised-cap';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const agentLog = path.join(localDir, 'agent-invocations.log');
+
+        assert.equal(runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap).status, 2);
+        const resumed = runReviewLoopMain(
+            localDir,
+            tasksRoot,
+            fakeBins,
+            taskId,
+            cap + 1,
+            ['--expect', 'implement'],
+            { FAKE_AGENT_COMPLETE_PHASE: 'implement' },
+        );
+        assert.deepEqual(readAgentInvocations(agentLog), ['codex']);
+        assert.doesNotMatch(combinedOutput(resumed), /--expect implement but current phase/);
+        const afterResume = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { code_review?: { status?: string } };
+        };
+        assert.equal(afterResume.phases?.code_review?.status, 'blocked');
+    });
+
+    withTempDir('preroute-code-loop-wrong-expect-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'code-loop-wrong-expect';
+        const cap = 3;
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', cap);
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        assert.equal(runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, cap).status, 2);
+
+        const wrongExpect = runReviewLoopMain(
+            localDir,
+            tasksRoot,
+            fakeBins,
+            taskId,
+            cap + 1,
+            ['--expect', 'code_review'],
+        );
+        assert.match(combinedOutput(wrongExpect), /--expect code_review but current phase is implement/);
+        assert.deepEqual(readAgentInvocations(path.join(localDir, 'agent-invocations.log')), []);
+    });
+});
+
+void test('a human reroute clears loop-local code-review attempts before implement entry', { concurrency: false }, () => {
+    withTempDir('reroute-review-loop-inert-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'reroute-loop-inert';
+        const worktreesRoot = path.join(localDir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const status = makeReviewLoopStatus(taskId, 'code_review', 3, 2) as StatusJson;
+        status.branch = `task/${taskId}`;
+        status.worktree = true;
+        status.phases.implement!.status = 'done';
+        status.phases.code_review!.status = 'done';
+        status.phases.code_review!.verdict = 'approved';
+        status.phases.qa!.status = 'done';
+        status.phases.human_review!.status = 'pending';
+        status.status = 'human_review';
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        fs.writeFileSync(path.join(worktreeDir, 'tasks', taskId, 'spec.md'), [
+            '# Spec',
+            '',
+            '## Amendment',
+            '',
+            'Reroute fixture amendment.',
+            '',
+        ].join('\n'), 'utf8');
+
+        const mainHref = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'main.ts')).href;
+        const result = runNodeInline([
+            `import(${JSON.stringify(mainHref)})`,
+            '.then(m => {',
+            '  m.setCliArgsForTest({ force: false });',
+            `  m.rerouteFromHumanReview([${JSON.stringify(taskId)}]);`,
+            '})',
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+        }), localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+
+        const rerouted = JSON.parse(
+            fs.readFileSync(path.join(worktreeDir, 'tasks', taskId, 'status.json'), 'utf8'),
+        ) as StatusJson;
+        assert.equal(rerouted.phases.code_review?.iterations_current_loop, 0);
+        assert.equal(rerouted.phases.code_review?.preflight_rejections_current_loop, 0);
+        assert.equal(rerouted.phases.code_review?.iterations_total, 7);
+        const context: TaskContext = {
+            taskId,
+            title: taskId,
+            specReviewVerdict: rerouted.phases.spec_review?.verdict ?? '',
+            iterations: rerouted.phases.code_review?.iterations ?? 0,
+            iterations_current_loop: rerouted.phases.code_review?.iterations_current_loop ?? 0,
+            iterations_total: rerouted.phases.code_review?.iterations_total ?? 0,
+            rerouteCount: rerouted.phases.implement?.reroute_count ?? 0,
+            status: rerouted,
+        };
+        assert.equal(evaluateCodeReviewLoop([context], 3).blocked, false);
     });
 });
 

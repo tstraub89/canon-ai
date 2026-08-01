@@ -1,9 +1,11 @@
-import { info } from '../cli.js';
-import { getClaudeConfig } from '../policy.js';
+import { info, warn } from '../cli.js';
+import { getClaudeConfig, getMaxReviewLoops } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
 import { taskPhase } from '../../../src/task/index.js';
 import { promptSpec, promptSpecRevision } from '../prompts/index.js';
 import { getActiveCwd } from '../worktree.js';
+import { autoBlockPhase } from '../state.js';
+import { evaluateSpecReviewLoop } from '../review-loop.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 
 export async function runSpecPhase(
@@ -13,6 +15,21 @@ export async function runSpecPhase(
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
+
+    // Gated on count > 0 so MAX_REVIEW_LOOPS=0 (a valid, tested "no retries"
+    // override — tests/pipeline-policy.test.ts) still lets the very first
+    // spec write run. count >= cap alone would also trip at count=0,
+    // turning "zero retries after review requests changes" into "zero spec
+    // writes, ever" — the mirror of a real Codex PR finding on the
+    // implement-side checkpoint. The retained review-entry backstop in
+    // spec-review.ts is unaffected and keeps blocking the first review
+    // round for cap=0, matching pre-relocation behavior.
+    const specReviewCheck = evaluateSpecReviewLoop(tasks, getMaxReviewLoops(tasks));
+    if (specReviewCheck.count > 0 && specReviewCheck.blocked) {
+        warn(specReviewCheck.reason);
+        autoBlockPhase(taskIds, 'spec_review', specReviewCheck.count, specReviewCheck.reason);
+        process.exit(2);
+    }
 
     const hasChangesRequested = tasks.some(t => t.specReviewVerdict === 'changes_requested');
     if (hasChangesRequested) {

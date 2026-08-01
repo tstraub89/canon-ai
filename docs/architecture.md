@@ -79,7 +79,7 @@ The orchestrator is a long-running TypeScript process. It spawns agent CLIs as s
 2. **Spec authorship** happens in the conversation. Claude writes `spec.md` and updates status (`phases.spec.status = "done"`).
 3. **Human spec gate**: human reads `spec.md`, signals approval. Claude invokes `canon run <id>`.
 4. **Orchestrator boots**: reads `status.json`, derives current phase (`spec_review`), resolves policy from `pipeline-policy.ts` (tier=full, model+effort per the size/phase matrix, etc.).
-5. **Codex spec review**: orchestrator spawns `codex exec` with the spec-review prompt and the spec file. Codex writes `spec-review.md`. Orchestrator parses verdict; if `changes_requested`, increments iteration count and routes back to spec (or auto-blocks if cap hit).
+5. **Codex spec review**: orchestrator spawns `codex exec` with the spec-review prompt and the spec file. Codex writes `spec-review.md`. Orchestrator parses verdict; if `changes_requested`, increments iteration count and routes back to spec; the loop-cap block itself now fires at that next `spec` phase entry, before the revision starts, not here (see "Auto-block / reroute" below).
 6. **Plan**: orchestrator spawns Claude with the plan prompt. Claude writes `plan.md`.
 7. **Implement**: orchestrator spawns Codex with the implement prompt + spec + plan. Codex edits files in the worktree (or main checkout if `worktree: false`), writes `handoff.md`. Orchestrator runs hallucination check.
 8. **Auto-commit**: `autoCommitCode()` parses every handoff Changes table → `allHandoffFiles` set. Verifies dirty tree matches handoff (every dirty file is listed; every listed file exists). Stages and commits with task-titled message.
@@ -171,7 +171,7 @@ Anthropic's `claude` CLI supports `--resume <session-id>`. The orchestrator stor
 ### Auto-block / reroute
 
 Two mechanisms halt or redirect the pipeline:
-- **`autoBlockPhase()`**: when `MAX_REVIEW_LOOPS` is hit on `spec_review` or `code_review`. Sets phase status to `blocked`, bumps `auto_block_count`, pushes an escalation, and exits with code 2. Manual intervention required (reset phase + `iterations_current_loop`; see recovery below). Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
+- **`autoBlockPhase()`**: the primary check runs at the next revision phase's entry (`spec` / `implement`), before that revision starts; the review phase keeps the same check as a defense-in-depth backstop. On a block it sets the review phase's status to `blocked`, bumps `auto_block_count`, pushes an escalation, and exits with code 2. Recover by raising `MAX_REVIEW_LOOPS` and resuming, or via `canon task reset-spec-review <id>` / `canon task reset-code-review <id>` for a genuine rescope (see recovery below). Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
 - **`routeBackTo()`**: on `changes_requested` verdicts. Flips the target phase and all downstream to `pending`. Loop re-enters the routed phase next iteration.
 
 ### Validation gates

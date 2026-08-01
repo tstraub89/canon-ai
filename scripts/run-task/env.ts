@@ -3,8 +3,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { warn } from './cli.js';
+
 export const __filename = fileURLToPath(import.meta.url);
 export const __dirname = path.dirname(__filename);
+
+export function parseMaxReviewLoops(raw: string | undefined): number | null {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (!/^-?\d+$/.test(trimmed)) {
+        warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+        return null;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+        warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+        return null;
+    }
+    return parsed;
+}
 
 function resolveRepoRoot(): string {
     try {
@@ -133,6 +150,6 @@ export const config = {
     claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? 'sonnet',
     codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? 'gpt-5.6-luna',
     codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? 'gpt-5.6-sol',
-    maxReviewLoops: process.env.MAX_REVIEW_LOOPS ? Number.parseInt(process.env.MAX_REVIEW_LOOPS, 10) : null,
+    maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
     maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10),
 };
