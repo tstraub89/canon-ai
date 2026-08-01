@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-08-01
+
 ### Added
 
 - **`canon doctor` now detects a stale or malformed `docs/task-quality-log.md` header.** The QA-phase writer is fail-soft — a bad header just warns and skips the row, with no other signal. `canon doctor` now checks the same header requirement directly: missing file (with `docs/` present) passes, a malformed header, unreadable file, or missing `docs/` directory warns, naming the file and the reference template. `canon upgrade` is unchanged. Ships via `canon upgrade`. ([#216](https://github.com/tstraub89/canon-ai/pull/216))
