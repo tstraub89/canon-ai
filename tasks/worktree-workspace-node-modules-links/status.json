@@ -1,0 +1,81 @@
+{
+  "id": "worktree-workspace-node-modules-links",
+  "title": "Link per-workspace node_modules into task worktrees for npm-workspaces monorepos",
+  "status": "implement",
+  "created": "2026-08-09",
+  "updated": "2026-08-09",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "717203683c76199e04e34d879700f118cff6ca68",
+    "orchestrator_commit": "717203683c76199e04e34d879700f118cff6ca68",
+    "canon_version": "2.5.0",
+    "codex_cli": "codex-cli 0.147.0",
+    "claude_code": "2.1.224 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 4,
+      "changes_requested_total": 3,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [
+    {
+      "date": "2026-08-09",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked before the next spec revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run worktree-workspace-node-modules-links. Only rescope if prior iterations no longer apply — run canon task reset-spec-review worktree-workspace-node-modules-links to archive the prior review, clear the loop counters, and drop the stored Claude session. Resetting accepts the current spec as-is, so the next run enters `spec_review` without another spec revision. Raise the cap instead if you want the deferred spec revision to run before review. Resuming after raising the cap runs `spec` first — the deferred revision — then `spec_review` again."
+    }
+  ],
+  "sessions": {
+    "codex_spec_review": "019fe76c-f0f6-76c2-adef-8db115fd1dbf",
+    "claude_spec": "e68d4b44-ac20-484b-b662-c3a1ba058c21"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}

@@ -1,0 +1,208 @@
+# Spec: worktree-workspace-node-modules-links — Link per-workspace node_modules into task worktrees for npm-workspaces monorepos
+
+> Written by: Claude | Review by: Codex
+> Status: draft
+
+## Problem
+
+`ensureWorktree()` in `scripts/run-task/worktree.ts` symlinks exactly one `node_modules` into a newly created task worktree: `<REPO_ROOT>/node_modules` → `<worktree>/node_modules`. In an npm-workspaces monorepo (root `package.json` declares `"workspaces": ["apps/*", "packages/*"]`), individual workspace directories can hold their own `node_modules` with packages npm did not hoist to root. Those are never linked, so a canon worktree is missing dependencies until someone runs a full `npm install`/`npm ci` inside it.
+
+Confirmed on a real adopter repo (GalleryPlanner, 2026-08-08): the root `package.json` declares `workspaces: ["apps/*", "packages/*"]`; `apps/app/node_modules/@vitejs` exists as a real non-hoisted package in the main checkout; and the live task worktree `dev-worktrees/vercel-skew-protection` has a real installed `node_modules` directory (timestamp matching worktree creation) instead of the orchestrator's symlink — evidence the symlink path was insufficient and a manual full install was the workaround. The mechanism is deterministic (the linking code only ever constructs the single root pair — `worktree.ts:151–197`), so code-trace evidence suffices.
+
+A second, coupled gap: the dirty-tree gate carveout `isExemptNodeModulesEntry()` in `scripts/run-task/main.ts` (task `worktree-node-modules-gate-carveout`) exempts only the exact porcelain path `node_modules`, probes only `<cwd>/node_modules`, and `probeNodeModulesEntry()` hardcodes the expected target as `<repoRoot>/node_modules`. For adopters whose `.gitignore` uses the common trailing-slash form (`node_modules/`, which matches directories but not symlinks), a per-workspace symlink would surface as `?? apps/app/node_modules` and abort both `commitQaArtifacts()` and `commitHumanReviewFiles()` — recreating the exact bug class that task fixed, one directory level down. Shipping the linking without widening the carveout would be a half-landed change.
+
+### Ground truth for the resolver contract (executed 2026-08-09, Node 24.15.0 / npm 11.12.1 — within canon's `engines` pin of `node: 24.x`)
+
+**Round 1 — source-side selection.** A throwaway fixture repo (`packages/a/package.json`, `packages/a/src/`, `packages/a/node_modules/dep/package.json`, `packages/b/package.json`, `packages/notapkg/nested/` with no `package.json`, plus `../outside/ext/package.json`) with `"workspaces": ["packages/**", "../outside/ext"]` produced:
+
+| Probe | Result |
+|---|---|
+| `fs.globSync('packages/**', { cwd })` | `packages`, `packages/a`, `packages/a/node_modules`, `packages/a/node_modules/dep`, `packages/a/node_modules/dep/package.json`, `packages/a/package.json`, `packages/a/src`, `packages/b`, `packages/b/package.json`, `packages/notapkg`, `packages/notapkg/nested` |
+| `npm pkg get name --workspaces` | `{ "a": "a", "b": "b", "ext": "ext" }` |
+| `fs.globSync('../outside/ext', { cwd })` | `../outside/ext` |
+
+Three facts follow, and they drive the AC-1/AC-2 contract below: (1) a raw glob over-matches wildly — non-package directories, `node_modules` interiors, and plain files — while npm selects only directories containing a `package.json` and never descends into `node_modules`; (2) npm accepts an out-of-tree workspace pattern and `fs.globSync` faithfully returns the escaping relative path, so a repo-relative `<ws>` can normalize outside both `REPO_ROOT` and the task worktree; (3) `fs.globSync`'s `exclude` callback is invoked with a mix of basenames and repo-relative paths (`'node_modules'` *and* `'packages/a/node_modules'`), so `exclude` is a traversal-pruning optimization, not a correctness filter.
+
+**Round 2 — destination-side escape, and a correction.** Three further probes were executed after round-1 spec review:
+
+| Probe | Result |
+|---|---|
+| Workspace manifest containing only `{"version":"1.0.0"}` (no `name`), then `npm pkg get name --workspaces` | Exit 0, `{ "a": {} }` — the workspace is still selected, keyed by its **directory basename** |
+| Same fixture, `npm install --ignore-scripts --package-lock=false` | Exit 0 — installs cleanly |
+| Source `<REPO_ROOT>/packages/a/node_modules` eligible and contained; `<worktree>/packages/a` is a **symlink to a directory outside the worktree**; then apply the round-1 AC-3 sequence (`existsSync(<worktree>/<ws>)` → classify `<worktree>/<ws>/node_modules` → `missing` → `symlinkSync`) | `existsSync` returns `true` (it follows the symlink), the child classifies `missing`, and the write lands as `<outside>/node_modules` — **escape confirmed** |
+
+Two consequences, both folded into the contract below:
+
+1. **The round-1 npm `name` claim was wrong.** Round 1 asserted npm requires every workspace manifest to declare `name` and hard-errors otherwise. It does not. npm's selector is "directory containing a `package.json`" — exactly rule 3 — with no manifest-content requirement. This *strengthens* the no-parse rule rather than making it a divergence, and the incorrect claim is removed from *Non-Goals* and *Known Risks*.
+2. **Source containment does not imply destination containment.** Rule 5 realpaths `<REPO_ROOT>/<ws>` only. `ensureWorktree()` can create a worktree from an already-existing branch (`git worktree add <wt> <branch>`, `worktree.ts:162–171`), and that branch may commit `<ws>` as a symlink pointing outside the worktree while the supervising checkout's same `<ws>` is a perfectly ordinary in-repo directory. Because `fs.existsSync` follows symlinks, a bare "`<worktree>/<ws>` exists" gate admits that path and the missing-child branch writes outside the tree canon owns. A separate **destination-containment** rule is therefore required, and it is stated below as its own rule with its own AC (AC-3).
+
+**Measured bound on the gate half of the same concern** (executed same session): `git status --porcelain=v1 -uall` in a repo whose `packages/a` is a symlink to an outside directory reports the single entry `packages/a` — untracked before commit, nothing after. Git never descends through a symlinked directory, so porcelain can never emit `<ws>/node_modules` in the escaping state. The gate-side containment check is therefore defense-in-depth against a future caller that constructs entry paths some other way, and AC-3 pins it with a direct predicate unit test rather than a git fixture (a git fixture for it is not constructible, and demanding one would produce a vacuous test).
+
+## Decision
+
+Generalize worktree node_modules linking from a single root pair to a list of pairs: the root pair first (behavior unchanged), then one pair per **eligible workspace directory** that has its own `node_modules` in the supervising checkout. Each workspace pair uses the same fail-closed classification the root pair uses today (link when missing; tolerate an already-verified symlink or a real file/directory; die on a stray wrong-target symlink or an uninspectable entry).
+
+### Eligible workspace directory (source side, `REPO_ROOT`)
+
+A repo-relative path `<ws>` is eligible when *all* of the following hold:
+
+1. **Declared.** `<ws>` is returned by resolving a non-negated pattern from `<REPO_ROOT>/package.json`'s `workspaces` field (array form, or the legacy `{ "packages": [...] }` object form) against `REPO_ROOT`.
+2. **Is a directory.** `<REPO_ROOT>/<ws>` is a directory (glob matches that are plain files are dropped).
+3. **Is a package directory.** `<REPO_ROOT>/<ws>/package.json` exists and is a regular file. This is npm's own discriminator (measured round 2: npm selects on `package.json` presence alone, with no requirement on the manifest's contents) and is what excludes `packages`, `packages/a/src`, and `packages/notapkg/nested` from the fixture above.
+4. **Is not inside `node_modules`.** No path segment of `<ws>` equals `node_modules`. This is what excludes `packages/a/node_modules/dep`.
+5. **Is contained in `REPO_ROOT`.** `<ws>` is relative, contains no `..` segment after normalization, is non-empty and not `.`; *and* `fs.realpathSync(<REPO_ROOT>/<ws>)` resolves to a path strictly beneath `fs.realpathSync(REPO_ROOT)`. A candidate failing either half — a declared `../outside/ext`, or a `packages/escape` symlink pointing out of the repo — is skipped with a warning naming it, and a candidate whose realpath cannot be resolved is skipped (fail closed).
+
+Source containment lives inside the resolver, so it is enforced *before* any filesystem mutation and *before* any gate exemption: neither consumer can see a non-contained path. The resolved list is deduplicated and sorted for determinism, with `/` separators to match git porcelain.
+
+### Destination containment (worktree side) — required in addition to rule 5
+
+Rule 5 constrains where a workspace lives in the **supervising checkout**. It says nothing about where the *same repo-relative path* lands in the **task worktree**, and the two can differ: a task branch may commit `<ws>` as a symlink out of the tree. Each consumer therefore applies a second containment check against its own root, immediately before it touches the worktree-side path:
+
+- **`ensureWorktree()`**: for each eligible `<ws>`, `<worktree>/<ws>` must resolve via `fs.realpathSync` to a path strictly beneath `fs.realpathSync(<worktree>)`, compared **segment-wise**. If it resolves outside, or cannot be resolved (missing path, dangling symlink, permission error), the pair is **skipped with a warning naming `<ws>`** — no classification of `<worktree>/<ws>/node_modules`, no `symlinkSync`, no `die`. Skipping (rather than aborting) matches how rule 5 treats a non-contained source and keeps a hostile or merely unusual branch layout from halting an otherwise healthy run; the status quo for a skipped workspace is exactly today's behavior, a missing link.
+- **`isExemptNodeModulesEntry()`**: for a candidate entry path `<ws>/node_modules`, `<cwd>/<ws>` must resolve strictly beneath `fs.realpathSync(cwd)` before the entry is probed. If it resolves outside or cannot be resolved, the entry is **not exempt**, which routes it into the existing unexpected-files abort.
+
+The two directions differ deliberately and both fail closed: in the linker, "fail closed" means *write nothing*; in the gate, it means *do not wave the entry through*. The root pair is unaffected — its destination is the worktree root itself, with no intermediate segment to escape through.
+
+### Gate widening
+
+Widen the dirty-tree gate exemption so a verified per-workspace node_modules symlink is exempt at each call site's existing exemption point — the upstream `dirtyEntries` filter in `commitHumanReviewFiles()`, the inline unexpected-entries predicate in `commitQaArtifacts()` — in both cases by widening the shared `isExemptNodeModulesEntry()` predicate. Neither exemption point moves; only the predicate widens.
+
+**The workspace-level exemption applies only when a distinct task worktree is active.** When `worktree: false`, `getActiveCwd()` returns `REPO_ROOT` itself, and the probe's "candidate realpaths to expected target" comparison degenerates into comparing a path with itself — a tautology that would verify *any* symlink, including one an adopter created and canon never made (executed confirmation: the current `probeNodeModulesEntry()` returned `verified-symlink` for a `<repo>/node_modules` symlink pointing at an arbitrary outside directory when candidate and expected were the same path). The links themselves also only exist to serve worktrees — there is nothing to exempt in a non-worktree run. The predicate therefore evaluates workspace-level candidates only when `fs.realpathSync(cwd) !== fs.realpathSync(REPO_ROOT)`; otherwise every `<ws>/node_modules` entry is non-exempt and routes into the existing unexpected-files abort. The **root** entry's behavior is deliberately unchanged in both modes (its non-worktree tautology is pre-existing, shipped behavior pinned by the existing suite) — this task neither extends nor fixes it.
+
+Repos without a `workspaces` field see no behavior change.
+
+## Non-Goals
+
+- **No npm CLI invocation.** The resolver does not shell out to `npm query`/`npm pkg get --workspaces` to discover workspaces; it reimplements the package-directory rule above against `fs`. Shelling out would add a subprocess (and an npm-version dependency) to worktree setup for a read canon can do directly.
+- **No parsing of workspace `package.json` files.** Rule 3 tests existence only; the file's contents are never read. Measured on npm 11.12.1, npm's own workspace selector also keys on `package.json` presence and imposes no requirement on the manifest's contents (a workspace declaring no `name` is still selected and still installs), so existence-only matches npm rather than diverging from it. Canon never fails a run over a malformed workspace manifest.
+- **No nested `workspaces` traversal.** A `workspaces` field inside a workspace's own `package.json` is not expanded (npm does not either).
+- **Negation patterns** (`!packages/excluded`) in the `workspaces` array are not honored — they are skipped with a warning, never treated as a positive pattern. (Positive-scope bound: only directories matched by non-negated patterns are ever linked.)
+- **Windows symlink `type` argument**: `fs.symlinkSync` continues to be called without a `type` argument, carried forward from `worktree-node-modules-gate-carveout`'s Non-Goals.
+- **No new die-precondition for workspaces**: the existing root-level "package.json exists but node_modules missing → die" check in `ensureWorktree()` stays root-only. A workspace directory without its own `node_modules` is the normal fully-hoisted case and is silently skipped.
+- **No directory creation in the worktree**: if a workspace directory does not exist in the worktree, its link is skipped — the orchestrator never `mkdir`s inside a worktree to place a symlink (that would create new untracked porcelain entries and feed the gate problem this spec is closing).
+- **No repair of a non-contained destination.** When `<worktree>/<ws>` escapes the worktree, canon skips it — it does not delete, rewrite, or replace the offending symlink, and it does not touch anything under the outside target.
+- **No change to `scripts/normalize-dist-paths.mjs`**: per-workspace symlinks could in principle produce new relative-path comment shapes when *building canon itself from a worktree of a workspaces repo* — canon-ai is not a workspaces repo, so this is out of scope; noted as a known second-order risk.
+- **No change to `teardownWorktree()` logic**: `git worktree remove --force` unlinks symlinks without descending; teardown behavior is pinned by a test (AC-11), not modified.
+- **No package-manager semantics**: the feature links whatever `node_modules` directories exist under eligible workspace paths; it does not interpret pnpm/yarn lockfiles or install strategies.
+- **The pre-existing non-carveout surfaces named in `worktree-node-modules-gate-carveout`'s Non-Goals stay out of scope** (`operatorAcceptedImplement()`, `autoCommitCode()`'s empty-handoff branch, `canon task accept`'s clean-tree check). Per-workspace symlinks are invisible to them under the bare-`node_modules` ignore style and degrade identically to the root case under other styles; widening those gates remains a separate task if dogfood demand appears.
+
+## Acceptance Criteria
+
+- [ ] AC-1 **Workspace resolution selects exactly the eligible set.** The workspace resolver returns the deduplicated, sorted, `/`-separated list of repo-relative paths satisfying all five eligibility rules in *Decision*. Verified by unit tests over a resolver seam against a temp fixture laid out as `packages/a/package.json`, `packages/a/src/` (no manifest), `packages/a/node_modules/dep/package.json`, `packages/b/package.json`, `packages/notapkg/nested/` (no manifest anywhere), `apps/app/package.json`, and a plain file `packages/file.txt`, asserting **exact array equality** (not `contains`) per case:
+  - `workspaces: ["packages/**"]` → `['packages/a', 'packages/b']` — the `**` case that pins rules 2–4; a `contains`-style assertion does not satisfy this AC.
+  - `workspaces: ["packages/*", "apps/*"]` → `['apps/app', 'packages/a', 'packages/b']` (sorted).
+  - `workspaces: ["packages/a"]` (literal) → `['packages/a']`.
+  - `workspaces: ["packages/*", "packages/a"]` (overlapping) → `['packages/a', 'packages/b']` (dedupe).
+  - `workspaces: { packages: ["packages/*"] }` (legacy object form) → `['packages/a', 'packages/b']`.
+  - `workspaces: ["nope/*"]` (no match), `workspaces: []`, `workspaces` absent, `workspaces: "packages/*"` (non-array/non-object), `workspaces: [42, "packages/a"]` (non-string entries ignored) → `[]`, `[]`, `[]`, `[]`, `['packages/a']` respectively.
+  - `workspaces: ["!packages/a", "packages/*"]` → `['packages/a', 'packages/b']` with a warning naming the skipped negation entry (negations are skipped, not applied).
+  - A workspace whose `package.json` contains only `{"version":"1.0.0"}` (no `name`) is **selected** — pinning that rule 3 never reads manifest contents.
+- [ ] AC-2 **Source containment is enforced in the resolver, before any mutation or exemption.** Verified by unit tests over the same seam plus a structural assertion:
+  - A fixture with a sibling `../outside/ext/package.json` and `workspaces: ["packages/*", "../outside/ext"]` → resolver returns exactly `['packages/a', 'packages/b']` and emits a warning naming the skipped `../outside/ext`.
+  - A fixture where `<REPO_ROOT>/packages/escape` is a **symlink** to a directory outside `REPO_ROOT` that contains a `package.json`, with `workspaces: ["packages/*"]` → `packages/escape` is absent from the result and a warning names it (realpath-escape case; the lexical check alone does not catch this).
+  - A candidate whose realpath cannot be resolved (dangling symlink under a matched pattern) is absent from the result and does not throw.
+  - Structural: for every fixture in AC-1 and AC-2, every returned path is relative, non-empty, not `.`, and contains no `..` segment and no `node_modules` segment.
+  - Behavioral: in the `../outside/ext` fixture driven through `ensureWorktree()`, no symlink and no directory is created anywhere under the sibling `outside/` tree (assert the tree is byte-for-byte unchanged: same entry list, `node_modules` still absent), and the widened gate predicate's exempt-path set contains no entry with a `..` segment.
+- [ ] AC-3 **Destination containment is enforced before the worktree-side path is probed or written.** An eligible `<ws>` whose worktree-side directory escapes the worktree is skipped by the linker and non-exempt at the gate; nothing outside the worktree is read into a decision or written. Verified by:
+  - **Linker, real-git fixture (this is the red-first case for the escape).** `<REPO_ROOT>/packages/a/node_modules` and `<REPO_ROOT>/packages/b/node_modules` both exist and both workspaces are source-eligible. A branch is created in which `packages/a` is committed as a **symlink to a directory outside the worktree** (containing no `node_modules`) while `packages/b` remains a real directory; `ensureWorktree()` is then invoked for that existing branch. Assert: exit 0; a warning names `packages/a`; the outside directory's entry list is unchanged and still has no `node_modules`; and `<worktree>/packages/b/node_modules` **is** created as a symlink realpath-equal to `<REPO_ROOT>/packages/b/node_modules`. This fixture fails on a source-containment-only implementation — the escaping write was reproduced on Node 24.15.0 and is recorded in *Problem*.
+  - **Linker, unresolvable destination.** An eligible `<ws>` whose `<worktree>/<ws>` is a dangling symlink is skipped with a warning and exit 0 (no throw, no `die`).
+  - **Gate, direct predicate unit test.** `isExemptNodeModulesEntry()` returns `false` for a hand-built untracked-only `PorcelainEntry` with path `<ws>/node_modules` where `<cwd>/<ws>` realpaths outside `realpath(cwd)`. This must be a direct call with a synthesized entry, **not** a git fixture: `git status --porcelain=v1 -uall` never descends through a symlinked directory (measured — it reports only `packages/a`), so no git fixture can produce such an entry, and building one would assert nothing.
+  - **Containment comparison is segment-wise on both sides.** A worktree at `<parent>/wt` and a sibling directory `<parent>/wt-evil`: a `<ws>` resolving into `<parent>/wt-evil` is treated as non-contained (raw string-prefix comparison would wrongly admit it). The same assertion applies to rule 5's `REPO_ROOT` comparison.
+- [ ] AC-4 **Per-workspace linking in `ensureWorktree()`.** After worktree creation, for each eligible workspace `<ws>` that passes destination containment (AC-3) and where `<REPO_ROOT>/<ws>/node_modules` exists and `<worktree>/<ws>` exists, `<worktree>/<ws>/node_modules` is handled with the same classification as root: `missing` → create an absolute symlink to `<REPO_ROOT>/<ws>/node_modules`; already-verified symlink → tolerated; real `file`/`directory` → left untouched; wrong-target symlink → the run dies with a message naming the offending path; uninspectable entry → die. The root pair is processed first and its behavior is unchanged. Verified by real-git fixture tests asserting, per variant, symlink realpath equality / preserved content / non-zero exit with the path in the message.
+- [ ] AC-5 **Hoisted and absent cases never fatal.** An eligible workspace with no `<REPO_ROOT>/<ws>/node_modules`, and an eligible workspace whose directory is absent from the worktree, are each skipped without error (the latter with an info-level message). Verified by fixture tests asserting exit 0 and no symlink created for those workspaces while sibling workspaces still get linked.
+- [ ] AC-6 **Probe generalization without behavior drift.** The node_modules probe/classify helpers accept an explicit expected-target path instead of assuming `<repoRoot>/node_modules`; `classifyNodeModulesLinkFromData` remains pure (no fs). The existing decision-table tests in `tests/run-task-safety.test.ts` pass unchanged, and all pre-existing root-only node_modules tests pass unchanged.
+- [ ] AC-7 **Gate exemption widened — worktree-active runs only.** When the active checkout is a distinct worktree (canonical `cwd` ≠ canonical `REPO_ROOT`): a porcelain entry that is untracked-only, whose path is exactly `<ws>/node_modules` for a currently-eligible workspace `<ws>` that passes destination containment (AC-3), or the root `node_modules`, and whose on-disk entry is a verified symlink to the corresponding `<REPO_ROOT>` path, is exempt from the "unexpected files" classification in both `commitQaArtifacts()` and `commitHumanReviewFiles()`. The exemption is applied at each call site's existing exemption point (upstream `dirtyEntries` filter in `commitHumanReviewFiles()`; inline unexpected-entries predicate in `commitQaArtifacts()`) via the shared widened predicate — in `commitHumanReviewFiles()` this keeps it upstream of every decision that reads the dirty set or its count — including the clean-tree push/PR-retry branch: a tree dirty *only* with N verified symlinks (root plus workspaces) must behave as a clean tree in `commitHumanReviewFiles()` (push succeeds, no die). Verified by a fixture test with ≥2 verified symlinks (one root, one nested) asserting exit 0, push observed on origin, and no allowlist/no-stage abort message.
+- [ ] AC-8 **Gate still fails closed.** A workspace node_modules entry that is force-staged, a real directory (with a `.gitignore` that lets porcelain see it), a wrong-target symlink, or under a path not matching any eligible workspace — including a path under a directory that matched a glob but failed rule 3 (`packages/notapkg/nested/node_modules`) — remains non-exempt and aborts as today. A probe error on one entry makes that entry non-exempt without exempting or blocking evaluation of other entries. **No-worktree regression case (red-first for the tautology):** in a workspaces-shaped fixture run with `worktree: false` — canonical `cwd` equal to canonical `REPO_ROOT` — a porcelain-visible untracked `<ws>/node_modules` symlink (adopter-created; trailing-slash `.gitignore` so it is visible) is non-exempt and the gate aborts rather than taking the clean-tree path; this test fails against an implementation that omits the worktree-active guard. The root entry's existing no-worktree behavior is asserted unchanged in the same fixture. Verified by fixture tests per case plus a decision-table row for the error kind.
+- [ ] AC-9 **Non-vacuous porcelain fixtures.** Workspace gate tests write a `.gitignore` using the trailing-slash `node_modules/` rule and include a companion assertion that the nested symlink actually appears in `git status --porcelain` output before exercising the gate; a second companion test asserts the bare `node_modules` rule hides nested symlinks entirely (mirroring the existing root-level anti-vacuity guard).
+- [ ] AC-10 **No-workspaces repos unchanged.** With no `workspaces` field, `ensureWorktree()` and both gate call sites behave as before this task; the existing root-only test suite passes without modification (test edits allowed only for shared fixture helpers, not for assertion changes to root-only expectations).
+- [ ] AC-11 **Teardown safety pinned.** A fixture worktree containing the root symlink plus ≥1 nested workspace symlink is removed by `teardownWorktree()` without error, and afterward every `<REPO_ROOT>/<ws>/node_modules` fixture (and the root install) still exists with its content intact.
+- [ ] AC-12 **Docs updated.** The carveout description in `docs/pipeline-orchestrator.md` (currently "A top-level `node_modules` entry is exempt…", ~line 309) is reworded to cover verified per-workspace symlinks and to state the eligible-workspace rule in one sentence, and its `templates/docs/pipeline-orchestrator.md` mirror is regenerated; `npm run sync-templates:check` passes.
+
+## Design
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `scripts/run-task/worktree.ts` | Workspace resolver (read + validate `workspaces` from `<REPO_ROOT>/package.json`; glob patterns; apply eligibility rules 2–5 including source containment; dedupe + sort); a shared segment-wise containment helper used for both the `REPO_ROOT` and worktree/`cwd` checks; generalize `probeNodeModulesEntry` to an explicit expected target; extend `ensureWorktree()` to iterate root + workspace link pairs, applying destination containment before each pair's probe/write |
+| `scripts/run-task/main.ts` | Widen `isExemptNodeModulesEntry()` to accept verified workspace-level entries by reusing the shared resolver, gated on the same destination-containment helper against `cwd`; no relocation of either call-site filter |
+| `tests/run-task-safety.test.ts` | Workspaces fixture builder (including out-of-tree sibling, escaping-source-symlink, and escaping-destination-symlink-on-branch layouts); resolver unit tests (AC-1/AC-2); containment unit tests incl. the `wt` vs `wt-evil` sibling-prefix case and the synthesized-porcelain-entry gate case (AC-3); AC-4/5/7/8/9/10/11 cases; new decision-table rows |
+| `docs/pipeline-orchestrator.md` | Reword root-only carveout description to cover eligible workspace entries |
+| `templates/docs/pipeline-orchestrator.md` | Generated mirror of the above (pre-commit sync) |
+| `dist/scripts/run-task.js` | Generated build artifact (`npm run build`; CI diffs dist) |
+| `dist/cli/index.js` | Generated build artifact if the shared source bundles into it — verify after build and declare in handoff if rewritten |
+
+### Interaction Dependencies
+
+- **Direction of truth is deliberately inverted relative to the "use the active checkout, not REPO_ROOT" pitfall** (`docs/patterns.md`): the link *sources*, the expected realpath targets, and the `workspaces` globs are all read from `REPO_ROOT` (where the installs live); only the link *destinations* and porcelain candidate paths come from the worktree/`cwd`. Reviewers should not "fix" this to `getActiveCwd()`.
+- **Containment is checked twice, against two different roots**, and this does not contradict the bullet above: the source check compares `realpath(<REPO_ROOT>/<ws>)` against `realpath(REPO_ROOT)`; the destination check compares `realpath(<worktree>/<ws>)` (gate: `realpath(<cwd>/<ws>)`) against `realpath(<worktree>)` / `realpath(cwd)`. A single check against either root alone is insufficient — the two paths can diverge because a task branch can commit a symlink where the supervising checkout has a directory.
+- `commitHumanReviewFiles()` reads module-level `cliArgs`; its tests must drive `main()` with argv (existing pattern at `tests/run-task-safety.test.ts:2181`).
+- Both `probeNodeModulesEntry` comparisons must realpath both sides (macOS `/private/var` vs `/var` temp aliasing — bit a prior task's tests). The same aliasing applies to both containment checks: realpath both operands, never compare unresolved paths.
+- Containment is a prefix comparison on **path segments**, not on raw strings: `/repo-evil` must not count as contained in `/repo`, and `<parent>/wt-evil` must not count as contained in `<parent>/wt`.
+- `docs/pipeline-orchestrator.md` is in `PIPELINE_MANAGED_DOCS`; its mirror regeneration is handled by the pre-commit sync hook, and both rows must appear in the handoff Changes table.
+
+### Implementation Notes (non-binding)
+
+Owned by plan/implement; checked by compiler and tests, not by spec_review.
+
+- A resolver shape like `resolveWorkspaceDirs(repoRoot: string): string[]` gives both `ensureWorktree()` and `isExemptNodeModulesEntry()` one source of truth. Per the no-in-memory-cross-phase-state pattern, call it fresh at each use; it is cheap.
+- One containment helper (`isContainedIn(candidateAbsPath, rootAbsPath)`, realpathing both operands and comparing segment-wise, returning `false` when either realpath fails) serves rule 5, the linker's destination check, and the gate's destination check. Three call sites, one implementation — divergence between them is the failure mode AC-3 exists to catch.
+- Performing the linker's subsequent fs operations on the *resolved* destination directory (rather than re-joining the unresolved path) avoids re-traversing the symlink after it has been validated.
+- `fs.globSync(pattern, { cwd: repoRoot })` covers `*`, `**`, and literals; apply rules 2–5 to the returned paths. Measured on Node 24.15.0, `globSync`'s `exclude` callback receives a mix of basenames and repo-relative paths, so use it (if at all) only to prune `node_modules` traversal for speed on large trees — the `node_modules`-segment rejection must still be a post-filter on results.
+- Type-narrow the parsed `package.json` (`Array.isArray`, `typeof === 'string'`) — type-aware lint will flag unchecked JSON. A `package.json` that fails to parse yields an empty workspace list rather than a throw.
+- Widening `isExemptNodeModulesEntry` can keep its exact-path check by testing the entry path against the set `['node_modules', ...eligible.map(ws => ws + '/node_modules')]`, then applying the destination-containment check to `path.join(cwd, ws)` before probing `path.join(cwd, entryPath)` against `path.join(REPO_ROOT, entryPath)`. Rule 5 plus the destination check are what make those `path.join`s safe. Evaluate the workspace branch only after the worktree-active guard (`fs.realpathSync(cwd) !== fs.realpathSync(REPO_ROOT)`); the root branch stays outside that guard, preserving AC-10.
+- Symlink targets stay absolute, matching the root pair.
+
+### Data Model Changes
+
+None. No `status.json` schema, template, or artifact-format changes.
+
+## Validation Required
+
+- [x] `npm run lint`
+- [x] `npm run type-check`
+- [x] `npm test` — run the full suite; check here means "suite runs clean," not "new tests were added"
+- [x] `npm run build` — dist artifacts regenerate; CI diffs `dist/`
+- [x] `npm run sync-templates:check` — managed-doc mirror in sync
+
+## Docs Impact
+
+- `docs/pipeline-orchestrator.md` — carveout wording (in-scope, AC-12).
+- `docs/patterns.md` — the "Apply a gate exemption before every decision" pitfall may deserve a one-line note that the exemption now covers eligible workspace entries; a second candidate entry is "source containment does not imply destination containment when a branch can commit a symlink where the main checkout has a directory." Heads-up for QA, not required.
+- Others: none.
+
+## Known Risks
+
+- **Path escape out of `REPO_ROOT` (source side).** npm accepts `"workspaces": ["../outside/ext"]` and `fs.globSync` returns `../outside/ext` verbatim (both executed above), after which `<worktree>/../outside/ext/node_modules` resolves to a sibling of the worktree canon does not own — canon could stat, exempt, or create a link there. Rule 5 (lexical `..` rejection *plus* realpath containment) is the guard, it lives in the resolver so no consumer can bypass it, and AC-2 pins both halves plus the "nothing was created outside" behavioral assertion.
+- **Path escape out of the worktree (destination side).** The higher-severity variant, and the one round 1 missed: an eligible, fully contained *source* workspace whose *worktree-side* path is a committed symlink pointing outside the worktree. `fs.existsSync` follows symlinks, so an existence gate admits it and the missing-child branch writes into a tree canon does not own — reproduced on Node 24.15.0 and recorded in *Problem*. The destination-containment rule is the guard and AC-3 is its red-first fixture. Two ways to get this wrong: checking only the source (round 1's bug), and comparing raw string prefixes so `<parent>/wt-evil` passes as contained in `<parent>/wt` — AC-3 pins both.
+- **Glob over-match.** A raw `packages/**` glob returns non-package directories, `node_modules` interiors, and plain files (executed above); npm returns only package directories. Rules 2–4 are the alignment, and AC-1's exact-array assertion on the `**` fixture is what prevents two conforming implementations from shipping materially different link sets. No residual `name`-field divergence exists: npm's selector keys on `package.json` presence with no manifest-content requirement (measured round 2), which is exactly rule 3.
+- **Multi-entry recurrence of the gate-exemption pitfall.** The prior task's bug shape (exemption applied at one decision but not others reading the same dirty count) recurs in a new form here: with N workspace symlinks, `dirtyEntries.length === N` unless the filter runs first. AC-7's "N verified symlinks behave as a clean tree" clause is the direct guard; the mitigation is widening the predicate *in place* rather than adding a second filter downstream.
+- **Vacuous tests.** Two distinct vacuity traps. (1) Porcelain-based gate tests silently pass without exercising anything if the fixture `.gitignore` hides the symlink — AC-9's visibility companion assertions are the guard. (2) The gate-side destination-containment test cannot be a git fixture at all, because git never descends through a symlinked directory (measured); a git-fixture version would assert nothing. AC-3 mandates the synthesized-`PorcelainEntry` unit test instead.
+- **Tautological self-verification with no active worktree.** When `worktree: false`, `getActiveCwd()` is `REPO_ROOT`, so probing `<cwd>/<path>` against `<REPO_ROOT>/<path>` compares a path with itself and verifies any symlink — including adopter-created ones canon never made (executed confirmation recorded in *Decision*). The worktree-active guard (canonical `cwd` ≠ canonical `REPO_ROOT`) scopes the new workspace exemption out of that mode entirely; AC-8's no-worktree regression case is the red-first pin. The root entry's pre-existing behavior in that mode is left untouched by design — changing it is a separate task if ever warranted.
+- **Fail-open on probe error.** The widened probe runs per workspace; an error on one entry must classify that entry `not-exempt`, never exempt the set or abort unrelated entries (AC-8). Write-safety guards fail closed — and the containment helper returns `false` (non-contained) when either realpath throws, rather than treating an unresolvable path as safe.
+- **Skip-vs-abort asymmetry.** A non-contained destination is *skipped* by the linker but *non-exempt* (→ abort) at the gate. This is intentional — both are the fail-closed direction for their respective surface — but it means a repo in this state gets a worktree with a missing workspace link and, separately, a hard stop if such an entry ever reaches the gate. The warning text must name the workspace so the operator can tell the two apart.
+- **Divergence between the two consumers.** If `ensureWorktree()` and the gate predicate resolve workspaces or evaluate containment with different logic, an entry could be linked but not exempt (or vice versa). One shared resolver plus one shared containment helper is the mitigation; AC-3/AC-7/AC-8 fixtures exercise both consumers against the same fixture layout.
+- **Glob cost on large trees.** A `**` pattern in a repo with a fully populated root `node_modules` walks a very large directory tree at every worktree creation and at every gate evaluation. Pruning `node_modules` during traversal is the mitigation; if it proves slow in practice the resolver is the single place to memoize per process.
+- **Worktree-edited `package.json`.** A task that *adds* a workspace mid-task won't get a link for it (globs are read from `REPO_ROOT`); that workspace has no install in the supervising checkout anyway, so there is nothing to link. Accepted asymmetry, documented here so review doesn't flag it as a gap.
+
+## Human Test Plan
+
+1. In a monorepo project that uses canon (one with sub-apps that each keep some of their own dependencies), start a new task so canon creates its isolated working copy.
+2. In that working copy, run the project's usual dev checks (build or tests for one of the sub-apps) **without** running any install step.
+3. Expected: the sub-app finds all its dependencies — no "module not found" errors — because canon connected each sub-app's dependency folder automatically.
+4. Confirm nothing was created outside the isolated working copy: the project's main folder and its neighbouring folders look exactly as they did before the task started.
+5. Now repeat on a branch where one of the sub-app folders is a shortcut pointing somewhere outside the project rather than a real folder. Expected: canon reports that it is skipping that sub-app by name, finishes normally, links the other sub-apps, and leaves the folder the shortcut points at completely untouched.
+6. Let the task run through to the point where canon commits and pushes its results.
+7. Expected: canon completes without complaining about unexpected dependency-folder files, and nothing dependency-related shows up in the task's changes.
+
+---
+
+## Spec Quality Checklist
+
+- [x] Every AC states exactly how to verify it (not just "it works")
+- [x] Affected Files lists specific files (not directories) with specific change descriptions
+- [x] Plan steps (fast tier) reference actual function/file names from the codebase — N/A (full tier)
+- [x] Known Risks covers failure modes for the trickiest ACs
+- [x] Human Test Plan uses product language only (no code, no file names)
+- [x] Validation Required has at least one entry marked `- [x]`
+- [x] (Bug/flake fixes) *Problem* states the confirmed mechanism and how it was confirmed — deterministic mechanism (single root pair in code), confirmed by code trace plus on-machine evidence from the adopter repo; the resolver contract's three failure modes (glob over-match, source escape, destination escape) are each pinned by an executed Node 24.15.0 / npm 11.12.1 fixture recorded in *Problem*; regression coverage via AC-2/AC-3/AC-4/AC-7 fixtures that fail on pre-fix code (no nested link created; escaping destination written outside the worktree; gate aborts on nested symlink; no containment filter exists today)
