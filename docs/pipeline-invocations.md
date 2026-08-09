@@ -887,3 +887,10 @@
 | 2026-07-31T16:51:27.980Z | preroute-review-loop-autoblock | code_review | codex | gpt-5.6-luna | 2 | 255.9s | - | ok |
 | 2026-07-31T17:07:35.558Z | preroute-review-loop-autoblock | code_review | claude | opus | 2 | 967.5s | 1522544 | ok |
 | 2026-07-31T17:13:52.636Z | preroute-review-loop-autoblock | qa | claude | sonnet | 0 | 377.1s | 3619566 | ok |
+| 2026-08-09T16:52:31.520Z | worktree-workspace-node-modules-links | spec_review | codex | gpt-5.6-sol | 0 | 247.4s | 1090115 | ok |
+| 2026-08-09T16:56:53.371Z | worktree-workspace-node-modules-links | spec | claude | opus | 0 | 261.6s | 729895 | ok |
+| 2026-08-09T17:00:39.371Z | worktree-workspace-node-modules-links | spec_review | codex | gpt-5.6-sol | 1 | 225.8s | 2160113 | ok |
+| 2026-08-09T17:07:10.340Z | worktree-workspace-node-modules-links | spec | claude | opus | 0 | 390.8s | 1522162 | ok |
+| 2026-08-09T17:10:31.816Z | worktree-workspace-node-modules-links | spec_review | codex | gpt-5.6-sol | 2 | 201.3s | 3412943 | ok |
+| 2026-08-09T17:18:47.852Z | worktree-workspace-node-modules-links | spec_review | codex | gpt-5.6-sol | 3 | 198.5s | 4733796 | ok |
+| 2026-08-09T17:23:47.104Z | worktree-workspace-node-modules-links | plan | claude | sonnet | 0 | 269.0s | 2382209 | ok |
