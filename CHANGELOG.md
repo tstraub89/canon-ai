@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-08-10
+
 ### Added
 
 - **Task worktrees now link every npm workspace's own `node_modules`, not just the repo root's.** In an npm-workspaces monorepo, a workspace's dependencies that npm didn't hoist to the root were never linked into a task's worktree, silently leaving it missing packages until someone ran a full install by hand. Canon now discovers every eligible workspace from the root `package.json` and links each one's `node_modules` the same way it already links the root's; the QA-end and human-review dirty-tree gates were widened to match so a verified workspace-level symlink is never mistaken for an unexpected file. Ships via `canon upgrade`. ([#219](https://github.com/tstraub89/canon-ai/pull/219))
