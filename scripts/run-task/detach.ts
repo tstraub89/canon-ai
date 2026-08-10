@@ -19,6 +19,7 @@
 //   - canon stop <id>         (reads .canon-pid, SIGTERM → SIGKILL escalation)
 //   - canon doctor            ("Active orchestrators" already reports
 //                              heartbeat freshness; PID comes from heartbeat)
+//   - canon watch <id>        (blocking observer for the detached run)
 //   - tail -f tasks/<id>/.canon-run.log  (live output of the detached run)
 //
 // Opt-out: CANON_NO_DETACH=1 in env forces foreground mode regardless of
@@ -249,7 +250,8 @@ export function detachAndExit(options: DetachAndExitOptions): never {
         `  Tasks: ${options.taskIds.join(', ')}\n` +
         `  Log:   ${logPath}\n` +
         `  Stop:  canon stop ${options.taskIds[0]}\n` +
-        `  Watch: tail -f ${logPath}\n\n`,
+        `  Watch: canon watch ${options.taskIds[0]}\n` +
+        `  Tail:  tail -f ${logPath}\n\n`,
     );
 
     // Detach the child from the parent's event loop so the parent can exit

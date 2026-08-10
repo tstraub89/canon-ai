@@ -6025,7 +6025,8 @@ Detached canon run.
   Tasks: ${options.taskIds.join(", ")}
   Log:   ${logPath}
   Stop:  canon stop ${options.taskIds[0]}
-  Watch: tail -f ${logPath}
+  Watch: canon watch ${options.taskIds[0]}
+  Tail:  tail -f ${logPath}
 
 `
   );

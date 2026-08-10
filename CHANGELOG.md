@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The detach banner now points at `canon watch`.** When `canon run` auto-detaches, the banner it prints only suggested `tail -f` on the raw run log for monitoring; it now also lists `canon watch <id>`, the purpose-built blocking observer, with the log tail kept as a separate line.
+
 ## [2.6.0] — 2026-08-10
 
 ### Added
