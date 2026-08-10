@@ -1,7 +1,7 @@
 {
   "id": "worktree-workspace-node-modules-links",
   "title": "Link per-workspace node_modules into task worktrees for npm-workspaces monorepos",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-08-09",
   "updated": "2026-08-10",
   "branch": "task/worktree-workspace-node-modules-links",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
