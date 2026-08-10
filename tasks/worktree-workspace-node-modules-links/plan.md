@@ -344,3 +344,24 @@ Files: `tests/run-task-safety.test.ts`
 ## Rollback Plan
 
 Fully additive to existing root-`node_modules` behavior (AC-10 pins zero drift for no-workspaces repos) and gated behind `resolveWorkspaceDirs` returning `[]` whenever a repo has no `workspaces` field. If a regression surfaces post-merge, reverting the single commit/PR restores prior behavior with no data migration — `status.json` schema is untouched (spec's *Data Model Changes*: None) and no persisted state depends on the new code paths.
+
+## Reroute Plan
+
+### Context
+
+Round-5 `code_review` returned `spec_gap`: the Decision section's categorical "Repos without a `workspaces` field see no behavior change" (`spec.md:72` pre-amendment) contradicted amended-at-the-time AC-8/AC-10 language about the final-segment `node_modules` rejection. This was a **spec-only** defect — the reviewer's own amendment-review verdict states the current (Iteration 5) implementation is "already correct against the amended text." Two spec edits resolved it (both already reflected in the spec.md now on disk):
+
+1. Decision line 72 now reads "...with the one exception named in AC-10..." instead of the unqualified "no behavior change."
+2. AC-8's real-directory parenthetical now names the tracked-parent/untracked-child fixture shape (an untracked file inside the real `<ws>/node_modules` directory) instead of the previously-unconstructible bare-entry claim.
+
+The amendment-review round-2 verdict is **Approved**, unconditionally — no residual spec issue.
+
+### Delta
+
+Prior plan Steps 1–7 (containment helper, resolver, probe generalization, `ensureWorktree()` workspace loop, gate widening, docs, tests) are unaffected and already implemented through handoff.md Iteration 5. This round's delta is verification-only, not a new implementation pass:
+
+1. **Confirm no code delta is needed.** `main.ts`'s final-segment `node_modules` rejection (Iteration 5 / R4-1, `main.ts:774`, `784`, `1435`) and its AC-10 "narrower safety invariant" framing already match the amended Decision/AC-10 text verbatim — the amendment reworded the spec to match already-shipped behavior, not the other way around. Do not re-touch `scripts/run-task/worktree.ts` or `scripts/run-task/main.ts` on this account.
+2. **Confirm the test evidence already matches the corrected AC-8 fixture shape.** Iteration 5's real-directory fixture (handoff notes it asserts porcelain reports an untracked child inside a real `<ws>/node_modules` directory, mirroring the amendment's corrected parenthetical) is the fixture AC-8 now describes — grep `tests/run-task-safety.test.ts` for the real-directory / tracked-parent-untracked-child case and confirm it matches; do not add a second fixture for the same shape.
+3. **Grep for stale wording pinned to the old contradiction.** Check `docs/pipeline-orchestrator.md` (and its `templates/` mirror) and any handoff/test comment text for the literal old claim ("no behavior change" with no stated exception) per the "retired wording needs a semantic sweep" lesson (`docs/lessons-learned.md`) — Iteration 5's R4-5 docs update already reworded this, so this is a spot-check, not new authoring.
+4. **If confirmation is clean (expected outcome):** append an `## Iteration 6 — addressing spec amendment` section to `handoff.md` stating explicitly that no production code or test changes were required, re-run the full validation suite (`npm run lint`, `npm run type-check`, `npm test`, `npm run build`, `npm run sync-templates:check`, `npm run docs-refs-check`) to produce a fresh Pass row set attributable to the amended spec, and resubmit for `code_review`.
+5. **If confirmation instead finds a stale assertion or doc sentence still pinned to the pre-amendment wording:** fix only that specific assertion/sentence — do not reopen or re-derive any AC-1–AC-11 evidence already marked Met in the AC Coverage table; match the fix to its blast radius (a wording correction, not a re-implementation pass).

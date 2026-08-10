@@ -1,0 +1,1 @@
+The implementation and generated distribution are consistent, and the full test suite and type-check pass. No actionable regressions were identified.

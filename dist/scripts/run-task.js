@@ -904,10 +904,134 @@ function realpathOrNull(candidatePath) {
     return null;
   }
 }
-function probeNodeModulesEntry(candidatePath, repoRoot) {
+function isAbsentPathError(err) {
+  const code = err.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+function resolveContainedPath(candidateAbsPath, rootAbsPath) {
+  const resolvedCandidate = realpathOrNull(candidateAbsPath);
+  const resolvedRoot = realpathOrNull(rootAbsPath);
+  if (resolvedCandidate === null || resolvedRoot === null) return null;
+  const relative = path4.relative(resolvedRoot, resolvedCandidate);
+  const contained = relative !== "" && relative !== ".." && !relative.startsWith(`..${path4.sep}`) && !path4.isAbsolute(relative);
+  return contained ? resolvedCandidate : null;
+}
+function isContainedIn(candidateAbsPath, rootAbsPath) {
+  return resolveContainedPath(candidateAbsPath, rootAbsPath) !== null;
+}
+function extractWorkspacePatterns(pkg, emitWarnings) {
+  if (typeof pkg !== "object" || pkg === null) return [];
+  const workspaces = pkg.workspaces;
+  let entries;
+  if (Array.isArray(workspaces)) {
+    entries = workspaces;
+  } else if (typeof workspaces === "object" && workspaces !== null) {
+    const packages = workspaces.packages;
+    if (!Array.isArray(packages)) return [];
+    entries = packages;
+  } else {
+    return [];
+  }
+  const patterns = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string") continue;
+    if (entry.startsWith("!")) {
+      if (emitWarnings) warn(`Ignoring unsupported negated workspace pattern: ${entry}`);
+      continue;
+    }
+    patterns.push(entry);
+  }
+  return patterns;
+}
+function resolveWorkspaceDirs(repoRoot, options = {}) {
+  const emitWarnings = options.emitWarnings !== false;
+  let pkg;
+  try {
+    pkg = JSON.parse(fs5.readFileSync(path4.join(repoRoot, "package.json"), "utf8"));
+  } catch (err) {
+    if (emitWarnings && !isAbsentPathError(err)) {
+      warn(`Could not read or parse ${path4.join(repoRoot, "package.json")}; workspace links are disabled.`);
+    }
+    return [];
+  }
+  const patterns = extractWorkspacePatterns(pkg, emitWarnings);
+  if (patterns.length === 0) return [];
+  const matches = /* @__PURE__ */ new Set();
+  for (const pattern of patterns) {
+    const normalizedPattern = path4.normalize(pattern);
+    const patternSegments = normalizedPattern.split(path4.sep);
+    if (normalizedPattern === "" || normalizedPattern === "." || path4.isAbsolute(normalizedPattern) || patternSegments.includes("..")) {
+      if (emitWarnings) {
+        warn(`Skipping invalid workspace pattern '${pattern}': expected a relative pattern beneath REPO_ROOT.`);
+      }
+      continue;
+    }
+    try {
+      for (const match of fs5.globSync(pattern, {
+        cwd: repoRoot,
+        exclude: (entry) => typeof entry === "string" && entry.split(/[\\/]/).includes("node_modules")
+      })) {
+        matches.add(match);
+      }
+    } catch {
+      if (emitWarnings) warn(`Could not evaluate workspace pattern '${pattern}'; skipping it.`);
+    }
+  }
+  const eligible = /* @__PURE__ */ new Set();
+  for (const match of matches) {
+    const normalizedNative = path4.normalize(match);
+    const normalized = normalizedNative.split(path4.sep).join("/");
+    const segments = normalized.split("/");
+    if (normalized === "" || normalized === "." || path4.isAbsolute(normalizedNative) || segments.includes("..")) {
+      if (emitWarnings) {
+        warn(`Skipping invalid workspace path '${match}': expected a non-empty relative path beneath REPO_ROOT.`);
+      }
+      continue;
+    }
+    if (segments.includes("node_modules")) continue;
+    const workspacePath = path4.join(repoRoot, normalizedNative);
+    let workspaceStat;
+    let manifestStat;
+    try {
+      workspaceStat = fs5.statSync(workspacePath);
+      manifestStat = fs5.statSync(path4.join(workspacePath, "package.json"));
+    } catch (err) {
+      if (emitWarnings && !isAbsentPathError(err)) {
+        warn(`Could not inspect workspace candidate '${normalized}'; skipping it.`);
+      }
+      continue;
+    }
+    if (!workspaceStat.isDirectory() || !manifestStat.isFile()) continue;
+    if (!isContainedIn(workspacePath, repoRoot)) {
+      if (emitWarnings) warn(`Skipping workspace outside REPO_ROOT: ${normalized}`);
+      continue;
+    }
+    eligible.add(normalized);
+  }
+  return [...eligible].sort();
+}
+function createNodeModulesSymlink(sourceModules, destinationModules, strict) {
+  try {
+    fs5.symlinkSync(sourceModules, destinationModules);
+    return true;
+  } catch (err) {
+    const error = err;
+    if (error.code === "EEXIST" && probeNodeModulesEntry(destinationModules, sourceModules).verdict === "verified-symlink") {
+      return false;
+    }
+    if (strict) {
+      die(
+        `Worktree setup aborted: could not create ${destinationModules} -> ${sourceModules}: ${error.message || "unknown filesystem error"}`
+      );
+    }
+    warn(`Could not repair missing workspace link ${destinationModules}: ${error.message || "unknown filesystem error"}`);
+    return false;
+  }
+}
+function probeNodeModulesEntry(candidatePath, expectedTargetPath) {
   const lstatKind = probeNodeModulesLstatKind(candidatePath);
   const resolvedTarget = lstatKind === "symlink" ? realpathOrNull(candidatePath) : null;
-  const expectedTarget = realpathOrNull(path4.join(repoRoot, "node_modules"));
+  const expectedTarget = realpathOrNull(expectedTargetPath);
   const verdict = classifyNodeModulesLinkFromData({ lstatKind, resolvedTarget, expectedTarget });
   return { verdict, lstatKind, resolvedTarget };
 }
@@ -915,40 +1039,50 @@ function ensureWorktree(taskId, branch, startPoint) {
   if (!fs5.existsSync(WORKTREES_ROOT)) {
     fs5.mkdirSync(WORKTREES_ROOT, { recursive: true });
   }
-  const wt = worktreePath(taskId);
-  if (fs5.existsSync(wt)) {
-    info(`Worktree already exists: ${wt}`);
-    return wt;
-  }
-  const existingWt = findExistingWorktreeForBranch2(branch);
-  if (existingWt) {
-    info(`Worktree already exists for branch '${branch}': ${existingWt}`);
-    return existingWt;
-  }
+  let wt = worktreePath(taskId);
+  let isNewWorktree = false;
   const repoModulesSrc = path4.join(REPO_ROOT, "node_modules");
   const repoPackageJson = path4.join(REPO_ROOT, "package.json");
-  if (fs5.existsSync(repoPackageJson) && !fs5.existsSync(repoModulesSrc)) {
-    die(
-      `Worktree setup aborted: ${REPO_ROOT}/node_modules does not exist, but package.json does. The orchestrator symlinks node_modules from REPO_ROOT into each worktree; that requires REPO_ROOT to have its dependencies installed first. Run \`npm install\` (or \`npm ci\`) in ${REPO_ROOT} and try again.`
-    );
-  }
-  if (gitSafe("show-ref", "--verify", "--quiet", `refs/heads/${branch}`).ok) {
-    info(`Creating worktree at ${wt} (branch: ${branch})...`);
-    git("worktree", "add", wt, branch);
+  if (fs5.existsSync(wt)) {
+    const registeredWt = findExistingWorktreeForBranch2(branch);
+    if (registeredWt === null || realpathOrNull(registeredWt) !== realpathOrNull(wt)) {
+      info(`Worktree already exists: ${wt}`);
+      return wt;
+    }
+    info(`Worktree already exists: ${wt}; repairing missing workspace links.`);
   } else {
-    const startSuffix = startPoint ? ` from ${startPoint}` : "";
-    info(`Creating worktree at ${wt} (new branch: ${branch}${startSuffix})...`);
-    const args = ["worktree", "add", "-b", branch, wt];
-    if (startPoint) args.push(startPoint);
-    git(...args);
+    const existingWt = findExistingWorktreeForBranch2(branch);
+    if (existingWt) {
+      wt = existingWt;
+      info(`Worktree already exists for branch '${branch}': ${wt}`);
+      return wt;
+    } else {
+      if (fs5.existsSync(repoPackageJson) && !fs5.existsSync(repoModulesSrc)) {
+        die(
+          `Worktree setup aborted: ${REPO_ROOT}/node_modules does not exist, but package.json does. The orchestrator symlinks node_modules from REPO_ROOT into each worktree; that requires REPO_ROOT to have its dependencies installed first. Run \`npm install\` (or \`npm ci\`) in ${REPO_ROOT} and try again.`
+        );
+      }
+      isNewWorktree = true;
+    }
+    if (isNewWorktree && gitSafe("show-ref", "--verify", "--quiet", `refs/heads/${branch}`).ok) {
+      info(`Creating worktree at ${wt} (branch: ${branch})...`);
+      git("worktree", "add", wt, branch);
+    } else if (isNewWorktree) {
+      const startSuffix = startPoint ? ` from ${startPoint}` : "";
+      info(`Creating worktree at ${wt} (new branch: ${branch}${startSuffix})...`);
+      const args = ["worktree", "add", "-b", branch, wt];
+      if (startPoint) args.push(startPoint);
+      git(...args);
+    }
   }
   const wtModules = path4.join(wt, "node_modules");
-  if (fs5.existsSync(repoPackageJson)) {
-    const probe = probeNodeModulesEntry(wtModules, REPO_ROOT);
+  if (isNewWorktree && fs5.existsSync(repoPackageJson)) {
+    const probe = probeNodeModulesEntry(wtModules, repoModulesSrc);
     switch (probe.lstatKind) {
       case "missing":
-        fs5.symlinkSync(repoModulesSrc, wtModules);
-        info("Symlinked node_modules into worktree.");
+        if (createNodeModulesSymlink(repoModulesSrc, wtModules, true)) {
+          info("Symlinked node_modules into worktree.");
+        }
         break;
       case "symlink":
         if (probe.verdict === "not-exempt") {
@@ -965,19 +1099,78 @@ function ensureWorktree(taskId, branch, startPoint) {
         break;
     }
   }
-  const envFiles = fs5.readdirSync(REPO_ROOT).filter(
-    (name) => name.startsWith(".env") && fs5.statSync(path4.join(REPO_ROOT, name)).isFile()
-  );
-  const linkedEnvFiles = [];
-  for (const envFile of envFiles) {
-    const dst = path4.join(wt, envFile);
-    if (!fs5.existsSync(dst)) {
-      fs5.symlinkSync(path4.join(REPO_ROOT, envFile), dst);
-      linkedEnvFiles.push(envFile);
+  if (fs5.existsSync(repoPackageJson)) {
+    for (const workspace of resolveWorkspaceDirs(REPO_ROOT, { emitWarnings: isNewWorktree })) {
+      const sourceModules = path4.join(REPO_ROOT, workspace, "node_modules");
+      if (!fs5.existsSync(sourceModules)) continue;
+      const worktreeWorkspace = path4.join(wt, workspace);
+      try {
+        fs5.lstatSync(worktreeWorkspace);
+      } catch (err) {
+        if (err.code === "ENOENT") {
+          info(`Workspace '${workspace}' is not present in the worktree; skipping node_modules link.`);
+        } else {
+          warn(`Could not inspect workspace '${workspace}' in the worktree; skipping node_modules link.`);
+        }
+        continue;
+      }
+      const resolvedWorkspace = resolveContainedPath(worktreeWorkspace, wt);
+      if (resolvedWorkspace === null) {
+        warn(`Workspace '${workspace}' resolves outside the worktree or is unresolvable; skipping node_modules link.`);
+        continue;
+      }
+      let resolvedWorkspaceStat;
+      try {
+        resolvedWorkspaceStat = fs5.statSync(resolvedWorkspace);
+      } catch {
+        warn(`Workspace '${workspace}' could not be inspected after resolution; skipping node_modules link.`);
+        continue;
+      }
+      if (!resolvedWorkspaceStat.isDirectory()) {
+        warn(`Workspace '${workspace}' is not a directory in the worktree; skipping node_modules link.`);
+        continue;
+      }
+      const worktreeModules = path4.join(resolvedWorkspace, "node_modules");
+      const workspaceProbe = probeNodeModulesEntry(worktreeModules, sourceModules);
+      switch (workspaceProbe.lstatKind) {
+        case "missing":
+          if (createNodeModulesSymlink(sourceModules, worktreeModules, isNewWorktree)) {
+            info(`Symlinked node_modules into worktree workspace '${workspace}'.`);
+          }
+          break;
+        case "symlink":
+          if (isNewWorktree && workspaceProbe.verdict === "not-exempt") {
+            die(
+              `Worktree setup aborted: ${worktreeModules} is a symlink but does not resolve to ${sourceModules} (found: ${workspaceProbe.resolvedTarget ?? "unresolvable target"}). Remove or fix the stray symlink before retrying.`
+            );
+          }
+          break;
+        case "file":
+        case "directory":
+          break;
+        case "error":
+          if (isNewWorktree) {
+            die(`Worktree setup aborted: could not inspect ${worktreeModules} (lstat failed).`);
+          }
+          break;
+      }
     }
   }
-  if (linkedEnvFiles.length > 0) {
-    info(`Symlinked env file(s) into worktree: ${linkedEnvFiles.join(", ")}.`);
+  if (isNewWorktree) {
+    const envFiles = fs5.readdirSync(REPO_ROOT).filter(
+      (name) => name.startsWith(".env") && fs5.statSync(path4.join(REPO_ROOT, name)).isFile()
+    );
+    const linkedEnvFiles = [];
+    for (const envFile of envFiles) {
+      const dst = path4.join(wt, envFile);
+      if (!fs5.existsSync(dst)) {
+        fs5.symlinkSync(path4.join(REPO_ROOT, envFile), dst);
+        linkedEnvFiles.push(envFile);
+      }
+    }
+    if (linkedEnvFiles.length > 0) {
+      info(`Symlinked env file(s) into worktree: ${linkedEnvFiles.join(", ")}.`);
+    }
   }
   info("Worktree ready.");
   return wt;
@@ -6308,36 +6501,163 @@ ${stagedAfterUnexpected.map((f) => `    ${f}`).join("\n")}
   info2(`Auto-committed ${stagedCount} file(s): ${message}`);
 }
 function humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes = /* @__PURE__ */ new Set()) {
-  return taskIds.some((taskId) => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) || PIPELINE_TELEMETRY_FILES.includes(filePath) || affectedManagedDocs.has(filePath) || [...affectedPrefixes].some((prefix) => filePath.startsWith(prefix));
+  return classifyHumanReviewPath(taskIds, affectedManagedDocs, affectedPrefixes, filePath).allowed;
 }
-function isExemptNodeModulesEntry(entry, cwd) {
-  if (entry.paths.length !== 1 || entry.paths[0] !== "node_modules") return false;
-  if (entry.indexStatus !== "?" || entry.worktreeStatus !== "?") return false;
-  return probeNodeModulesEntry(path18.join(cwd, "node_modules"), REPO_ROOT2).verdict === "verified-symlink";
+function normalizeGitPath(filePath) {
+  const body = filePath.startsWith('"') && filePath.endsWith('"') ? filePath.slice(1, -1) : filePath;
+  const bytes = [];
+  const namedEscapes = {
+    a: 7,
+    b: 8,
+    t: 9,
+    n: 10,
+    v: 11,
+    f: 12,
+    r: 13,
+    '"': 34,
+    "\\": 92
+  };
+  for (let i = 0; i < body.length; i += 1) {
+    if (body[i] === "\\" && i + 1 < body.length) {
+      const octal = body.slice(i + 1).match(/^[0-7]{1,3}/)?.[0];
+      if (octal !== void 0) {
+        bytes.push(Number.parseInt(octal, 8));
+        i += octal.length;
+        continue;
+      }
+      const escaped = namedEscapes[body[i + 1]];
+      if (escaped !== void 0) {
+        bytes.push(escaped);
+        i += 1;
+        continue;
+      }
+    }
+    const codePoint = body.codePointAt(i);
+    if (codePoint === void 0) continue;
+    bytes.push(...Buffer.from(String.fromCodePoint(codePoint), "utf8"));
+    if (codePoint > 65535) i += 1;
+  }
+  return Buffer.from(bytes).toString("utf8").normalize("NFC");
 }
-function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, affectedPrefixes = /* @__PURE__ */ new Set()) {
-  const stagePaths = /* @__PURE__ */ new Set();
+function matchesPorcelainPath(actual, expected) {
+  return normalizeGitPath(actual) === expected.normalize("NFC");
+}
+function untrackedPorcelainPath(entry) {
+  if (entry.indexStatus !== "?" || entry.worktreeStatus !== "?") return null;
+  if (entry.raw.startsWith("?? ")) {
+    const rawPath = entry.raw.slice(3).trim();
+    return rawPath.startsWith('"') && rawPath.endsWith('"') ? rawPath.slice(1, -1) : rawPath;
+  }
+  return entry.paths.length === 1 ? entry.paths[0] : null;
+}
+function porcelainEntryPaths(entry) {
+  const untrackedPath = untrackedPorcelainPath(entry);
+  return untrackedPath === null ? entry.paths : [untrackedPath];
+}
+function isNodeModulesEntryPath(filePath) {
+  const segments = normalizeGitPath(filePath).split("/");
+  return segments[segments.length - 1] === "node_modules";
+}
+function classifyHumanReviewPath(taskIds, affectedManagedDocs, affectedPrefixes, filePath) {
+  if (isNodeModulesEntryPath(filePath)) return { allowed: false, stagePath: null };
+  const normalizedPath = normalizeGitPath(filePath);
   for (const taskId of taskIds) {
-    if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
-      stagePaths.add(path18.join("tasks", taskId));
+    const taskPath = `tasks/${taskId}`;
+    if (normalizedPath === taskPath || normalizedPath.startsWith(`${taskPath}/`)) {
+      return { allowed: true, stagePath: taskPath };
     }
   }
-  for (const relPath of PIPELINE_TELEMETRY_FILES) {
-    if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === relPath))) {
-      stagePaths.add(relPath);
+  for (const telemetryPath of PIPELINE_TELEMETRY_FILES) {
+    if (normalizedPath === telemetryPath.normalize("NFC")) {
+      return { allowed: true, stagePath: telemetryPath };
     }
   }
-  for (const relPath of affectedManagedDocs) {
-    if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName === relPath))) {
-      stagePaths.add(relPath);
+  for (const managedDoc of affectedManagedDocs) {
+    if (normalizedPath === managedDoc.normalize("NFC")) {
+      return { allowed: true, stagePath: managedDoc };
     }
   }
   for (const prefix of affectedPrefixes) {
-    if (dirtyEntries.some((entry) => entry.paths.some((pathName) => pathName.startsWith(prefix)))) {
-      stagePaths.add(prefix);
+    if (normalizedPath.startsWith(prefix.normalize("NFC"))) {
+      return { allowed: true, stagePath: prefix };
     }
   }
-  return [...stagePaths];
+  return { allowed: false, stagePath: null };
+}
+function workspaceDirsForNodeModulesEntries(entries) {
+  const hasWorkspaceCandidate = entries.some((entry) => {
+    const entryPath = untrackedPorcelainPath(entry);
+    return entryPath !== null && !matchesPorcelainPath(entryPath, "node_modules") && isNodeModulesEntryPath(entryPath);
+  });
+  return hasWorkspaceCandidate ? resolveWorkspaceDirs(REPO_ROOT2) : [];
+}
+function exemptNodeModulesPath(entry, cwd, resolvedWorkspaceDirs) {
+  const entryPath = untrackedPorcelainPath(entry);
+  if (entryPath === null) return null;
+  if (matchesPorcelainPath(entryPath, "node_modules")) {
+    return probeNodeModulesEntry(
+      path18.join(cwd, entryPath),
+      path18.join(REPO_ROOT2, entryPath)
+    ).verdict === "verified-symlink" ? "node_modules" : null;
+  }
+  if (!isNodeModulesEntryPath(entryPath)) return null;
+  let cwdReal;
+  let repoRootReal;
+  try {
+    cwdReal = fs18.realpathSync(cwd);
+    repoRootReal = fs18.realpathSync(REPO_ROOT2);
+  } catch {
+    return null;
+  }
+  if (cwdReal === repoRootReal) return null;
+  const workspaceDirs = resolvedWorkspaceDirs ?? resolveWorkspaceDirs(REPO_ROOT2);
+  for (const workspace of workspaceDirs) {
+    const resolvedDestination = resolveContainedPath(path18.join(cwd, workspace), cwd);
+    if (resolvedDestination === null) continue;
+    const relativeDestination = path18.relative(cwdReal, resolvedDestination).split(path18.sep).join("/");
+    const expectedEntryPath = `${relativeDestination}/node_modules`;
+    if (!matchesPorcelainPath(entryPath, expectedEntryPath)) continue;
+    return probeNodeModulesEntry(
+      path18.join(resolvedDestination, "node_modules"),
+      path18.join(REPO_ROOT2, workspace, "node_modules")
+    ).verdict === "verified-symlink" ? expectedEntryPath : null;
+  }
+  return null;
+}
+function nodeModulesExclusionArgs(relPath, exemptNodeModulesPaths) {
+  const prefix = (relPath.endsWith("/") ? relPath : `${relPath}/`).normalize("NFC");
+  return [...exemptNodeModulesPaths].filter((exemptPath) => exemptPath.normalize("NFC").startsWith(prefix)).map((exemptPath) => `:(exclude,literal)${exemptPath}`);
+}
+function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, affectedPrefixes = /* @__PURE__ */ new Set()) {
+  const stageCandidates = /* @__PURE__ */ new Set();
+  for (const entry of dirtyEntries) {
+    for (const filePath of porcelainEntryPaths(entry)) {
+      const decision = classifyHumanReviewPath(
+        taskIds,
+        affectedManagedDocs,
+        affectedPrefixes,
+        filePath
+      );
+      if (decision.allowed && decision.stagePath !== null) {
+        stageCandidates.add(decision.stagePath);
+      }
+    }
+  }
+  const stagePaths = [];
+  for (const taskId of taskIds) {
+    const taskPath = `tasks/${taskId}`;
+    if (stageCandidates.has(taskPath)) stagePaths.push(taskPath);
+  }
+  for (const relPath of PIPELINE_TELEMETRY_FILES) {
+    if (stageCandidates.has(relPath)) stagePaths.push(relPath);
+  }
+  for (const relPath of affectedManagedDocs) {
+    if (stageCandidates.has(relPath)) stagePaths.push(relPath);
+  }
+  for (const prefix of affectedPrefixes) {
+    if (stageCandidates.has(prefix)) stagePaths.push(prefix);
+  }
+  return stagePaths;
 }
 function findPullRequestTemplate(repoRoot) {
   const candidates = [
@@ -6380,9 +6700,19 @@ function commitQaArtifacts(taskIds, cwd) {
   }
   const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
   if (dirtyEntries.length === 0) return;
-  const unexpected = dirtyEntries.filter(
-    (entry) => !isExemptNodeModulesEntry(entry, cwd) && !entry.paths.every((filePath) => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))
-  );
+  const workspaceDirs = workspaceDirsForNodeModulesEntries(dirtyEntries);
+  const exemptNodeModulesPaths = /* @__PURE__ */ new Set();
+  const unexpected = [];
+  for (const entry of dirtyEntries) {
+    const exemptPath = exemptNodeModulesPath(entry, cwd, workspaceDirs);
+    if (exemptPath !== null) {
+      exemptNodeModulesPaths.add(exemptPath);
+      continue;
+    }
+    if (!porcelainEntryPaths(entry).every((filePath) => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))) {
+      unexpected.push(entry);
+    }
+  }
   if (unexpected.length > 0) {
     die2(
       `QA-end commit aborted: working tree has dirty files outside the QA-end allowlist.
@@ -6405,7 +6735,8 @@ Source or test edits must be committed during the implement phase, not left dirt
     );
   }
   for (const relPath of stagePaths) {
-    const addResult = gitSafeAt2(cwd, "add", "-A", "--", relPath);
+    const exclusions = nodeModulesExclusionArgs(relPath, exemptNodeModulesPaths);
+    const addResult = gitSafeAt2(cwd, "add", "-A", "--", relPath, ...exclusions);
     if (!addResult.ok) {
       die2(`QA-end commit aborted: failed to stage ${relPath}: ${addResult.stderr || "unknown error"}`);
     }
@@ -6692,7 +7023,18 @@ Bypass with --force if you've verified the drift is intentional.`
   if (!dirtyResult.ok) {
     die2(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || "unknown error"}`);
   }
-  const dirtyEntries = parsePorcelainEntries(dirtyResult.stdout).filter((entry) => !isExemptNodeModulesEntry(entry, cwd));
+  const allDirtyEntries = parsePorcelainEntries(dirtyResult.stdout);
+  const workspaceDirs = workspaceDirsForNodeModulesEntries(allDirtyEntries);
+  const exemptNodeModulesPaths = /* @__PURE__ */ new Set();
+  const dirtyEntries = [];
+  for (const entry of allDirtyEntries) {
+    const exemptPath = exemptNodeModulesPath(entry, cwd, workspaceDirs);
+    if (exemptPath === null) {
+      dirtyEntries.push(entry);
+    } else {
+      exemptNodeModulesPaths.add(exemptPath);
+    }
+  }
   if (dirtyEntries.length === 0 && (createPR || cliArgs.push)) {
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
@@ -6709,7 +7051,9 @@ Bypass with --force if you've verified the drift is intentional.`
   if (dirtyEntries.length === 0) {
     die2("Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.");
   }
-  const unexpected = dirtyEntries.filter((entry) => !entry.paths.every((pathName) => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName, affectedPrefixes)));
+  const unexpected = dirtyEntries.filter((entry) => !porcelainEntryPaths(entry).every(
+    (pathName) => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName, affectedPrefixes)
+  ));
   if (unexpected.length > 0) {
     die2(
       `Human review commit aborted: working tree has dirty files outside the human_review allowlist.
@@ -6736,7 +7080,12 @@ If this is a source or test file, it should have been committed during the imple
   if (!stagedBefore.ok) {
     die2(`Human review commit aborted: could not inspect staged files: ${stagedBefore.stderr || "unknown error"}`);
   }
-  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
+  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(
+    taskIds,
+    affectedManagedDocs,
+    filePath,
+    affectedPrefixes
+  ));
   if (stagedBeforeUnexpected.length > 0) {
     die2(
       `Human review commit aborted: staged files are not covered by the human_review allowlist.
@@ -6745,7 +7094,8 @@ If this is a source or test file, it should have been committed during the imple
     );
   }
   for (const relPath of stagePaths) {
-    const addResult = gitSafeAt2(cwd, "add", "-A", "--", relPath);
+    const exclusions = nodeModulesExclusionArgs(relPath, exemptNodeModulesPaths);
+    const addResult = gitSafeAt2(cwd, "add", "-A", "--", relPath, ...exclusions);
     if (!addResult.ok) {
       die2(`Human review commit aborted: failed to stage ${relPath}: ${addResult.stderr || "unknown error"}`);
     }
@@ -6758,7 +7108,12 @@ If this is a source or test file, it should have been committed during the imple
   if (stagedNames.length === 0) {
     die2("Human review commit aborted: staging produced no commit-ready files.");
   }
-  const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
+  const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(
+    taskIds,
+    affectedManagedDocs,
+    filePath,
+    affectedPrefixes
+  ));
   if (stagedUnexpected.length > 0) {
     die2(
       `Human review commit aborted: staged files escaped the allowlist.

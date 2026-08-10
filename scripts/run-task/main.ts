@@ -709,19 +709,183 @@ function humanReviewAllowedPath(
     filePath: string,
     affectedPrefixes: ReadonlySet<string> = new Set(),
 ): boolean {
-    return taskIds.some(taskId => filePath === `tasks/${taskId}` || filePath.startsWith(`tasks/${taskId}/`)) ||
-        (splitWorktree.PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath) ||
-        affectedManagedDocs.has(filePath) ||
-        [...affectedPrefixes].some(prefix => filePath.startsWith(prefix));
+    return classifyHumanReviewPath(taskIds, affectedManagedDocs, affectedPrefixes, filePath).allowed;
 }
 
-function isExemptNodeModulesEntry(entry: PorcelainEntry, cwd: string): boolean {
-    if (entry.paths.length !== 1 || entry.paths[0] !== 'node_modules') return false;
+function normalizeGitPath(filePath: string): string {
+    const body = filePath.startsWith('"') && filePath.endsWith('"')
+        ? filePath.slice(1, -1)
+        : filePath;
+    const bytes: number[] = [];
+    const namedEscapes: Readonly<Record<string, number>> = {
+        a: 7,
+        b: 8,
+        t: 9,
+        n: 10,
+        v: 11,
+        f: 12,
+        r: 13,
+        '"': 34,
+        '\\': 92,
+    };
+    for (let i = 0; i < body.length; i += 1) {
+        if (body[i] === '\\' && i + 1 < body.length) {
+            const octal = body.slice(i + 1).match(/^[0-7]{1,3}/)?.[0];
+            if (octal !== undefined) {
+                bytes.push(Number.parseInt(octal, 8));
+                i += octal.length;
+                continue;
+            }
+            const escaped = namedEscapes[body[i + 1]];
+            if (escaped !== undefined) {
+                bytes.push(escaped);
+                i += 1;
+                continue;
+            }
+        }
+        const codePoint = body.codePointAt(i);
+        if (codePoint === undefined) continue;
+        bytes.push(...Buffer.from(String.fromCodePoint(codePoint), 'utf8'));
+        if (codePoint > 0xFFFF) i += 1;
+    }
+    return Buffer.from(bytes).toString('utf8').normalize('NFC');
+}
+
+function matchesPorcelainPath(actual: string, expected: string): boolean {
+    return normalizeGitPath(actual) === expected.normalize('NFC');
+}
+
+function untrackedPorcelainPath(entry: PorcelainEntry): string | null {
+    if (entry.indexStatus !== '?' || entry.worktreeStatus !== '?') return null;
+    if (entry.raw.startsWith('?? ')) {
+        const rawPath = entry.raw.slice(3).trim();
+        return rawPath.startsWith('"') && rawPath.endsWith('"')
+            ? rawPath.slice(1, -1)
+            : rawPath;
+    }
+    return entry.paths.length === 1 ? entry.paths[0] : null;
+}
+
+function porcelainEntryPaths(entry: PorcelainEntry): string[] {
+    const untrackedPath = untrackedPorcelainPath(entry);
+    return untrackedPath === null ? entry.paths : [untrackedPath];
+}
+
+function isNodeModulesEntryPath(filePath: string): boolean {
+    const segments = normalizeGitPath(filePath).split('/');
+    return segments[segments.length - 1] === 'node_modules';
+}
+
+type HumanReviewPathDecision = {
+    allowed: boolean;
+    stagePath: string | null;
+};
+
+function classifyHumanReviewPath(
+    taskIds: readonly string[],
+    affectedManagedDocs: ReadonlySet<string>,
+    affectedPrefixes: ReadonlySet<string>,
+    filePath: string,
+): HumanReviewPathDecision {
+    if (isNodeModulesEntryPath(filePath)) return { allowed: false, stagePath: null };
+
+    const normalizedPath = normalizeGitPath(filePath);
+    for (const taskId of taskIds) {
+        const taskPath = `tasks/${taskId}`;
+        if (normalizedPath === taskPath || normalizedPath.startsWith(`${taskPath}/`)) {
+            return { allowed: true, stagePath: taskPath };
+        }
+    }
+    for (const telemetryPath of splitWorktree.PIPELINE_TELEMETRY_FILES) {
+        if (normalizedPath === telemetryPath.normalize('NFC')) {
+            return { allowed: true, stagePath: telemetryPath };
+        }
+    }
+    for (const managedDoc of affectedManagedDocs) {
+        if (normalizedPath === managedDoc.normalize('NFC')) {
+            return { allowed: true, stagePath: managedDoc };
+        }
+    }
+    for (const prefix of affectedPrefixes) {
+        if (normalizedPath.startsWith(prefix.normalize('NFC'))) {
+            return { allowed: true, stagePath: prefix };
+        }
+    }
+    return { allowed: false, stagePath: null };
+}
+
+function workspaceDirsForNodeModulesEntries(entries: readonly PorcelainEntry[]): string[] {
+    const hasWorkspaceCandidate = entries.some(entry => {
+        const entryPath = untrackedPorcelainPath(entry);
+        return entryPath !== null && !matchesPorcelainPath(entryPath, 'node_modules') &&
+            isNodeModulesEntryPath(entryPath);
+    });
+    return hasWorkspaceCandidate ? splitWorktree.resolveWorkspaceDirs(REPO_ROOT) : [];
+}
+
+function exemptNodeModulesPath(
+    entry: PorcelainEntry,
+    cwd: string,
+    resolvedWorkspaceDirs?: readonly string[],
+): string | null {
     // Untracked-only: a staged node_modules (e.g. `git add -f`) is a deliberate
     // departure from canon's own untracked worktree symlink and must still hit
     // the normal staged-files safety checks, not be waved through as clean.
-    if (entry.indexStatus !== '?' || entry.worktreeStatus !== '?') return false;
-    return splitWorktree.probeNodeModulesEntry(path.join(cwd, 'node_modules'), REPO_ROOT).verdict === 'verified-symlink';
+    const entryPath = untrackedPorcelainPath(entry);
+    if (entryPath === null) return null;
+    if (matchesPorcelainPath(entryPath, 'node_modules')) {
+        return splitWorktree.probeNodeModulesEntry(
+            path.join(cwd, entryPath),
+            path.join(REPO_ROOT, entryPath),
+        ).verdict === 'verified-symlink' ? 'node_modules' : null;
+    }
+    if (!isNodeModulesEntryPath(entryPath)) return null;
+
+    let cwdReal: string;
+    let repoRootReal: string;
+    try {
+        cwdReal = fs.realpathSync(cwd);
+        repoRootReal = fs.realpathSync(REPO_ROOT);
+    } catch {
+        return null;
+    }
+    if (cwdReal === repoRootReal) return null;
+
+    const workspaceDirs = resolvedWorkspaceDirs ?? splitWorktree.resolveWorkspaceDirs(REPO_ROOT);
+    for (const workspace of workspaceDirs) {
+        const resolvedDestination = splitWorktree.resolveContainedPath(path.join(cwd, workspace), cwd);
+        if (resolvedDestination === null) continue;
+        const relativeDestination = path.relative(cwdReal, resolvedDestination).split(path.sep).join('/');
+        const expectedEntryPath = `${relativeDestination}/node_modules`;
+        if (!matchesPorcelainPath(entryPath, expectedEntryPath)) continue;
+        return splitWorktree.probeNodeModulesEntry(
+            path.join(resolvedDestination, 'node_modules'),
+            path.join(REPO_ROOT, workspace, 'node_modules'),
+        ).verdict === 'verified-symlink' ? expectedEntryPath : null;
+    }
+    return null;
+}
+
+export function isExemptNodeModulesEntry(
+    entry: PorcelainEntry,
+    cwd: string,
+    resolvedWorkspaceDirs?: readonly string[],
+): boolean {
+    return exemptNodeModulesPath(entry, cwd, resolvedWorkspaceDirs) !== null;
+}
+
+/**
+ * Pathspec args that exclude every verified-exempt `node_modules` entry that
+ * falls under `relPath` from an `-A` add. Applies to every staged path —
+ * directory-form prefixes (`dist/`) and exact non-directory paths alike
+ * (`tasks/<id>`) — because a workspace can resolve inside either shape; the
+ * exclusion is a no-op when nothing exempt is nested under it.
+ */
+function nodeModulesExclusionArgs(relPath: string, exemptNodeModulesPaths: ReadonlySet<string>): string[] {
+    const prefix = (relPath.endsWith('/') ? relPath : `${relPath}/`).normalize('NFC');
+    return [...exemptNodeModulesPaths]
+        .filter(exemptPath => exemptPath.normalize('NFC').startsWith(prefix))
+        .map(exemptPath => `:(exclude,literal)${exemptPath}`);
 }
 
 export function buildHumanReviewStagePaths(
@@ -730,31 +894,36 @@ export function buildHumanReviewStagePaths(
     dirtyEntries: readonly PorcelainEntry[],
     affectedPrefixes: ReadonlySet<string> = new Set(),
 ): string[] {
-    const stagePaths = new Set<string>();
-    for (const taskId of taskIds) {
-        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === `tasks/${taskId}` || pathName.startsWith(`tasks/${taskId}/`)))) {
-            stagePaths.add(path.join('tasks', taskId));
+    const stageCandidates = new Set<string>();
+    for (const entry of dirtyEntries) {
+        for (const filePath of porcelainEntryPaths(entry)) {
+            const decision = classifyHumanReviewPath(
+                taskIds,
+                affectedManagedDocs,
+                affectedPrefixes,
+                filePath,
+            );
+            if (decision.allowed && decision.stagePath !== null) {
+                stageCandidates.add(decision.stagePath);
+            }
         }
+    }
+
+    const stagePaths: string[] = [];
+    for (const taskId of taskIds) {
+        const taskPath = `tasks/${taskId}`;
+        if (stageCandidates.has(taskPath)) stagePaths.push(taskPath);
     }
     for (const relPath of splitWorktree.PIPELINE_TELEMETRY_FILES) {
-        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === relPath))) {
-            stagePaths.add(relPath);
-        }
+        if (stageCandidates.has(relPath)) stagePaths.push(relPath);
     }
     for (const relPath of affectedManagedDocs) {
-        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName === relPath))) {
-            stagePaths.add(relPath);
-        }
+        if (stageCandidates.has(relPath)) stagePaths.push(relPath);
     }
-    // Directory-form Affected Files entries (e.g. `dist/`) — stage the prefix
-    // itself when any dirty entry falls under it. `git add -A -- dist/` stages
-    // every dirty path under the prefix in one call.
     for (const prefix of affectedPrefixes) {
-        if (dirtyEntries.some(entry => entry.paths.some(pathName => pathName.startsWith(prefix)))) {
-            stagePaths.add(prefix);
-        }
+        if (stageCandidates.has(prefix)) stagePaths.push(prefix);
     }
-    return [...stagePaths];
+    return stagePaths;
 }
 
 /**
@@ -835,11 +1004,20 @@ export function commitQaArtifacts(taskIds: string[], cwd: string): void {
 
     const dirtyEntries = splitGit.parsePorcelainEntries(dirtyResult.stdout);
     if (dirtyEntries.length === 0) return;
+    const workspaceDirs = workspaceDirsForNodeModulesEntries(dirtyEntries);
 
-    const unexpected = dirtyEntries.filter(entry =>
-        !isExemptNodeModulesEntry(entry, cwd) &&
-        !entry.paths.every(filePath => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))
-    );
+    const exemptNodeModulesPaths = new Set<string>();
+    const unexpected: PorcelainEntry[] = [];
+    for (const entry of dirtyEntries) {
+        const exemptPath = exemptNodeModulesPath(entry, cwd, workspaceDirs);
+        if (exemptPath !== null) {
+            exemptNodeModulesPaths.add(exemptPath);
+            continue;
+        }
+        if (!porcelainEntryPaths(entry).every(filePath => humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath))) {
+            unexpected.push(entry);
+        }
+    }
     if (unexpected.length > 0) {
         die(
             `QA-end commit aborted: working tree has dirty files outside the QA-end allowlist.\n` +
@@ -869,7 +1047,8 @@ export function commitQaArtifacts(taskIds: string[], cwd: string): void {
     }
 
     for (const relPath of stagePaths) {
-        const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath);
+        const exclusions = nodeModulesExclusionArgs(relPath, exemptNodeModulesPaths);
+        const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath, ...exclusions);
         if (!addResult.ok) {
             die(`QA-end commit aborted: failed to stage ${relPath}: ${addResult.stderr || 'unknown error'}`);
         }
@@ -1225,8 +1404,18 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(`Human review commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || 'unknown error'}`);
     }
 
-    const dirtyEntries = splitGit.parsePorcelainEntries(dirtyResult.stdout)
-        .filter(entry => !isExemptNodeModulesEntry(entry, cwd));
+    const allDirtyEntries = splitGit.parsePorcelainEntries(dirtyResult.stdout);
+    const workspaceDirs = workspaceDirsForNodeModulesEntries(allDirtyEntries);
+    const exemptNodeModulesPaths = new Set<string>();
+    const dirtyEntries: PorcelainEntry[] = [];
+    for (const entry of allDirtyEntries) {
+        const exemptPath = exemptNodeModulesPath(entry, cwd, workspaceDirs);
+        if (exemptPath === null) {
+            dirtyEntries.push(entry);
+        } else {
+            exemptNodeModulesPaths.add(exemptPath);
+        }
+    }
 
     // Idempotent --pr retry: tree is clean AND --pr is set AND the branch was
     // already pushed AND no open PR exists. This is the post-state of a prior
@@ -1266,7 +1455,9 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die('Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.');
     }
 
-    const unexpected = dirtyEntries.filter(entry => !entry.paths.every(pathName => humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName, affectedPrefixes)));
+    const unexpected = dirtyEntries.filter(entry => !porcelainEntryPaths(entry).every(pathName =>
+        humanReviewAllowedPath(taskIds, affectedManagedDocs, pathName, affectedPrefixes)
+    ));
     if (unexpected.length > 0) {
         die(
             `Human review commit aborted: working tree has dirty files outside the human_review allowlist.\n` +
@@ -1304,7 +1495,12 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         .split('\n')
         .map(line => line.trim())
         .filter(Boolean)
-        .filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
+        .filter(filePath => !humanReviewAllowedPath(
+            taskIds,
+            affectedManagedDocs,
+            filePath,
+            affectedPrefixes,
+        ));
     if (stagedBeforeUnexpected.length > 0) {
         die(
             `Human review commit aborted: staged files are not covered by the human_review allowlist.\n` +
@@ -1314,7 +1510,8 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     }
 
     for (const relPath of stagePaths) {
-        const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath);
+        const exclusions = nodeModulesExclusionArgs(relPath, exemptNodeModulesPaths);
+        const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath, ...exclusions);
         if (!addResult.ok) {
             die(`Human review commit aborted: failed to stage ${relPath}: ${addResult.stderr || 'unknown error'}`);
         }
@@ -1328,7 +1525,12 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     if (stagedNames.length === 0) {
         die('Human review commit aborted: staging produced no commit-ready files.');
     }
-    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affectedPrefixes));
+    const stagedUnexpected = stagedNames.filter(filePath => !humanReviewAllowedPath(
+        taskIds,
+        affectedManagedDocs,
+        filePath,
+        affectedPrefixes,
+    ));
     if (stagedUnexpected.length > 0) {
         die(
             `Human review commit aborted: staged files escaped the allowlist.\n` +

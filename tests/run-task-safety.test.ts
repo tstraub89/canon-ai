@@ -23,7 +23,12 @@ import {
 import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
 import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
 import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../scripts/run-task/state.js';
-import { classifyNodeModulesLinkFromData, PIPELINE_MANAGED_DOCS } from '../scripts/run-task/worktree.js';
+import {
+    classifyNodeModulesLinkFromData,
+    isContainedIn,
+    PIPELINE_MANAGED_DOCS,
+    resolveWorkspaceDirs,
+} from '../scripts/run-task/worktree.js';
 import { evaluateCodeReviewLoop } from '../scripts/run-task/review-loop.js';
 import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
 import { taskCmd } from '../src/task/index.js';
@@ -609,6 +614,97 @@ function makeNodeModulesGateFixture(
     return { localDir, originDir, worktreesRoot, worktreeDir, branch, repoModulesFixture };
 }
 
+function makeWorkspaceResolverFixture(
+    dir: string,
+    workspaces: unknown = ['packages/**'],
+): { repoRoot: string; outsideRoot: string } {
+    const repoRoot = path.join(dir, 'repo');
+    const outsideRoot = path.join(dir, 'outside');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'fixture', workspaces }), 'utf8');
+    const manifests: Array<[string, Record<string, string>]> = [
+        ['packages/a', { version: '1.0.0' }],
+        ['packages/b', { name: 'b' }],
+        ['packages/a/node_modules/dep', { name: 'dep' }],
+        ['apps/app', { name: 'app' }],
+    ];
+    for (const [workspace, manifest] of manifests) {
+        fs.mkdirSync(path.join(repoRoot, workspace), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, workspace, 'package.json'), JSON.stringify(manifest), 'utf8');
+    }
+    fs.mkdirSync(path.join(repoRoot, 'packages/a/src'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'packages/notapkg/nested'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'packages/file.txt'), 'plain file\n', 'utf8');
+    return { repoRoot, outsideRoot };
+}
+
+function captureConsoleError<T>(fn: () => T): { result: T; stderr: string } {
+    const original = console.error;
+    const lines: string[] = [];
+    console.error = (...args: unknown[]) => {
+        lines.push(args.map(String).join(' '));
+    };
+    try {
+        return { result: fn(), stderr: lines.join('\n') };
+    } finally {
+        console.error = original;
+    }
+}
+
+function makeWorkspaceNodeModulesGateFixture(
+    dir: string,
+    taskId: string,
+    gitignoreRule: string | null,
+): {
+    localDir: string;
+    originDir: string;
+    worktreesRoot: string;
+    worktreeDir: string;
+    branch: string;
+    repoModulesFixture: string;
+    repoWorkspaceModules: string;
+} {
+    const { localDir, originDir } = makeGitFixture(dir);
+    fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+        name: 'fixture',
+        workspaces: ['packages/*'],
+    }), 'utf8');
+    fs.mkdirSync(path.join(localDir, 'packages/a'), { recursive: true });
+    fs.writeFileSync(path.join(localDir, 'packages/a/package.json'), '{"version":"1.0.0"}\n', 'utf8');
+    fs.mkdirSync(path.join(localDir, 'packages/notapkg/nested'), { recursive: true });
+    fs.writeFileSync(path.join(localDir, 'packages/notapkg/nested/sentinel.txt'), 'not a package\n', 'utf8');
+    const addPaths = ['package.json', 'packages'];
+    if (gitignoreRule !== null) {
+        fs.writeFileSync(path.join(localDir, '.gitignore'), gitignoreRule, 'utf8');
+        addPaths.push('.gitignore');
+    }
+    gitIn(localDir, 'add', ...addPaths);
+    gitIn(localDir, 'commit', '-m', 'workspace fixture setup');
+    gitIn(localDir, 'push', 'origin', 'main');
+
+    const repoModulesFixture = path.join(localDir, 'node_modules');
+    fs.mkdirSync(repoModulesFixture, { recursive: true });
+    fs.writeFileSync(path.join(repoModulesFixture, 'marker.txt'), 'root install\n', 'utf8');
+    const repoWorkspaceModules = path.join(localDir, 'packages/a/node_modules');
+    fs.mkdirSync(repoWorkspaceModules, { recursive: true });
+    fs.writeFileSync(path.join(repoWorkspaceModules, 'marker.txt'), 'workspace install\n', 'utf8');
+
+    const branch = `task/${taskId}`;
+    const worktreesRoot = path.join(dir, 'worktrees');
+    const worktreeDir = path.join(worktreesRoot, taskId);
+    fs.mkdirSync(worktreesRoot, { recursive: true });
+    gitIn(localDir, 'worktree', 'add', worktreeDir, '-b', branch);
+    return {
+        localDir,
+        originDir,
+        worktreesRoot,
+        worktreeDir,
+        branch,
+        repoModulesFixture,
+        repoWorkspaceModules,
+    };
+}
+
 type TrackedNodeModulesVariant = 'missing' | 'file' | 'directory' | 'verified-symlink' | 'wrong-target-symlink';
 
 function makeEnsureWorktreeNodeModulesFixture(
@@ -652,6 +748,112 @@ function makeEnsureWorktreeNodeModulesFixture(
     const worktreeDir = path.join(worktreesRoot, taskId);
     fs.mkdirSync(worktreesRoot, { recursive: true });
     return { localDir, worktreesRoot, worktreeDir, branch, repoModulesFixture, wrongTarget };
+}
+
+type WorkspaceDestinationVariant =
+    | TrackedNodeModulesVariant
+    | 'destination-escape'
+    | 'destination-dangling'
+    | 'destination-file'
+    | 'workspace-absent'
+    | 'source-hoisted';
+
+function makeEnsureWorktreeWorkspaceFixture(
+    dir: string,
+    taskId: string,
+    variant: WorkspaceDestinationVariant,
+): {
+    localDir: string;
+    worktreesRoot: string;
+    worktreeDir: string;
+    branch: string;
+    repoModulesFixture: string;
+    repoWorkspaceModules: Record<'packages/a' | 'packages/b', string>;
+    wrongTarget: string;
+    outsideDestination: string;
+} {
+    const { localDir } = makeGitFixture(dir);
+    fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+        name: 'fixture',
+        workspaces: ['packages/*'],
+    }), 'utf8');
+    for (const workspace of ['packages/a', 'packages/b'] as const) {
+        fs.mkdirSync(path.join(localDir, workspace), { recursive: true });
+        fs.writeFileSync(path.join(localDir, workspace, 'package.json'), JSON.stringify({ name: workspace }), 'utf8');
+    }
+    gitIn(localDir, 'add', 'package.json', 'packages');
+    gitIn(localDir, 'commit', '-m', 'workspace package setup');
+
+    const branch = `task/${taskId}`;
+    const workspaceA = path.join(localDir, 'packages/a');
+    const workspaceAModules = path.join(workspaceA, 'node_modules');
+    const wrongTarget = path.join(dir, 'wrong-workspace-node-modules-target');
+    const outsideDestination = path.join(dir, 'outside-worktree-destination');
+    gitIn(localDir, 'checkout', '-b', branch);
+
+    if (variant === 'file') {
+        fs.writeFileSync(workspaceAModules, 'tracked workspace file\n', 'utf8');
+        gitIn(localDir, 'add', 'packages/a/node_modules');
+    } else if (variant === 'directory') {
+        fs.mkdirSync(workspaceAModules, { recursive: true });
+        fs.writeFileSync(path.join(workspaceAModules, 'pkg.json'), '{}\n', 'utf8');
+        gitIn(localDir, 'add', 'packages/a/node_modules/pkg.json');
+    } else if (variant === 'verified-symlink') {
+        fs.symlinkSync(workspaceAModules, workspaceAModules);
+        gitIn(localDir, 'add', 'packages/a/node_modules');
+    } else if (variant === 'wrong-target-symlink') {
+        fs.mkdirSync(wrongTarget, { recursive: true });
+        fs.symlinkSync(wrongTarget, workspaceAModules);
+        gitIn(localDir, 'add', 'packages/a/node_modules');
+    } else if (variant === 'destination-escape') {
+        fs.mkdirSync(outsideDestination, { recursive: true });
+        fs.writeFileSync(path.join(outsideDestination, 'sentinel.txt'), 'untouched\n', 'utf8');
+        gitIn(localDir, 'rm', '-r', 'packages/a');
+        fs.symlinkSync(outsideDestination, workspaceA);
+        gitIn(localDir, 'add', 'packages/a');
+    } else if (variant === 'destination-dangling') {
+        gitIn(localDir, 'rm', '-r', 'packages/a');
+        fs.symlinkSync(path.join(dir, 'missing-workspace-target'), workspaceA);
+        gitIn(localDir, 'add', 'packages/a');
+    } else if (variant === 'destination-file') {
+        gitIn(localDir, 'rm', '-r', 'packages/a');
+        fs.writeFileSync(workspaceA, 'workspace path is a file\n', 'utf8');
+        gitIn(localDir, 'add', 'packages/a');
+    } else if (variant === 'workspace-absent') {
+        gitIn(localDir, 'rm', '-r', 'packages/a');
+    }
+
+    if (variant !== 'missing' && variant !== 'source-hoisted') {
+        gitIn(localDir, 'commit', '-m', `workspace destination ${variant}`);
+    }
+    gitIn(localDir, 'checkout', 'main');
+
+    const repoModulesFixture = path.join(localDir, 'node_modules');
+    fs.mkdirSync(repoModulesFixture, { recursive: true });
+    fs.writeFileSync(path.join(repoModulesFixture, 'marker.txt'), 'root install\n', 'utf8');
+    const repoWorkspaceModules = {
+        'packages/a': path.join(localDir, 'packages/a/node_modules'),
+        'packages/b': path.join(localDir, 'packages/b/node_modules'),
+    } as const;
+    for (const workspace of ['packages/a', 'packages/b'] as const) {
+        if (variant === 'source-hoisted' && workspace === 'packages/a') continue;
+        fs.mkdirSync(repoWorkspaceModules[workspace], { recursive: true });
+        fs.writeFileSync(path.join(repoWorkspaceModules[workspace], 'marker.txt'), `${workspace} install\n`, 'utf8');
+    }
+
+    const worktreesRoot = path.join(dir, 'worktrees');
+    const worktreeDir = path.join(worktreesRoot, taskId);
+    fs.mkdirSync(worktreesRoot, { recursive: true });
+    return {
+        localDir,
+        worktreesRoot,
+        worktreeDir,
+        branch,
+        repoModulesFixture,
+        repoWorkspaceModules,
+        wrongTarget,
+        outsideDestination,
+    };
 }
 
 function makeHumanReviewPendingStatus(taskId: string, branch: string): Record<string, unknown> {
@@ -903,6 +1105,29 @@ function runEnsureWorktreeInline(
     return runNodeInline([
         `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
         `.then(m => { m.ensureWorktree(${JSON.stringify(taskId)}, ${JSON.stringify(branch)}); })`,
+        `.catch(err => { console.error(err); process.exit(1); });`,
+    ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), cwd);
+}
+
+function runIsExemptNodeModulesEntryInline(
+    entry: { raw: string; indexStatus: string; worktreeStatus: string; paths: string[] },
+    cwd: string,
+): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+        `.then(m => { console.log(String(m.isExemptNodeModulesEntry(${JSON.stringify(entry)}, ${JSON.stringify(cwd)}))); })`,
+        `.catch(err => { console.error(err); process.exit(1); });`,
+    ].join('\n'), childEnvWithoutTasksOverride(), cwd);
+}
+
+function runTeardownWorktreeInline(
+    taskId: string,
+    cwd: string,
+    worktreesRoot: string,
+): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+        `.then(m => { m.teardownWorktree(${JSON.stringify(taskId)}); })`,
         `.catch(err => { console.error(err); process.exit(1); });`,
     ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), cwd);
 }
@@ -2026,6 +2251,114 @@ void test('classifyNodeModulesLinkFromData fails closed on probe errors', () => 
     );
 });
 
+void test('resolveWorkspaceDirs selects the exact eligible npm workspace set', () => {
+    const cases: Array<{ name: string; workspaces: unknown; expected: string[] }> = [
+        { name: 'recursive glob', workspaces: ['packages/**'], expected: ['packages/a', 'packages/b'] },
+        { name: 'multiple patterns', workspaces: ['packages/*', 'apps/*'], expected: ['apps/app', 'packages/a', 'packages/b'] },
+        { name: 'literal', workspaces: ['packages/a'], expected: ['packages/a'] },
+        { name: 'overlap', workspaces: ['packages/*', 'packages/a'], expected: ['packages/a', 'packages/b'] },
+        { name: 'legacy object', workspaces: { packages: ['packages/*'] }, expected: ['packages/a', 'packages/b'] },
+        { name: 'no match', workspaces: ['nope/*'], expected: [] },
+        { name: 'empty array', workspaces: [], expected: [] },
+        { name: 'non-collection', workspaces: 'packages/*', expected: [] },
+        { name: 'non-string entry', workspaces: [42, 'packages/a'], expected: ['packages/a'] },
+    ];
+    withTempDir('run-task-workspace-resolver-', dir => {
+        for (const fixtureCase of cases) {
+            const caseDir = path.join(dir, fixtureCase.name.replaceAll(' ', '-'));
+            fs.mkdirSync(caseDir, { recursive: true });
+            const { repoRoot } = makeWorkspaceResolverFixture(caseDir, fixtureCase.workspaces);
+            const actual = resolveWorkspaceDirs(repoRoot);
+            assert.deepEqual(actual, fixtureCase.expected, fixtureCase.name);
+            for (const workspace of actual) {
+                assert.equal(path.isAbsolute(workspace), false);
+                assert.notEqual(workspace, '');
+                assert.notEqual(workspace, '.');
+                assert.equal(workspace.split('/').includes('..'), false);
+                assert.equal(workspace.split('/').includes('node_modules'), false);
+            }
+        }
+
+        const absentDir = path.join(dir, 'absent');
+        const { repoRoot: absentRoot } = makeWorkspaceResolverFixture(absentDir, []);
+        fs.writeFileSync(path.join(absentRoot, 'package.json'), '{"name":"fixture"}\n', 'utf8');
+        assert.deepEqual(resolveWorkspaceDirs(absentRoot), []);
+
+        const invalidDir = path.join(dir, 'invalid-package-json');
+        const { repoRoot: invalidRoot } = makeWorkspaceResolverFixture(invalidDir, ['packages/*']);
+        fs.writeFileSync(path.join(invalidRoot, 'package.json'), '{not json', 'utf8');
+        assert.deepEqual(resolveWorkspaceDirs(invalidRoot), []);
+    });
+});
+
+void test('resolveWorkspaceDirs skips negations while retaining positive matches', () => {
+    withTempDir('run-task-workspace-negation-', dir => {
+        const { repoRoot } = makeWorkspaceResolverFixture(dir, ['!packages/a', 'packages/*']);
+        const captured = captureConsoleError(() => resolveWorkspaceDirs(repoRoot));
+        assert.deepEqual(captured.result, ['packages/a', 'packages/b']);
+        assert.match(captured.stderr, /!packages\/a/);
+    });
+});
+
+void test('resolveWorkspaceDirs enforces lexical and realpath source containment', () => {
+    withTempDir('run-task-workspace-source-containment-', dir => {
+        const { repoRoot, outsideRoot } = makeWorkspaceResolverFixture(
+            dir,
+            ['packages/*', '../outside/ext'],
+        );
+        const prefixSibling = `${repoRoot}-evil`;
+        fs.mkdirSync(path.join(outsideRoot, 'ext'), { recursive: true });
+        fs.writeFileSync(path.join(outsideRoot, 'ext/package.json'), '{"name":"outside"}\n', 'utf8');
+        fs.mkdirSync(prefixSibling, { recursive: true });
+        fs.writeFileSync(path.join(prefixSibling, 'package.json'), '{"name":"escape"}\n', 'utf8');
+        fs.symlinkSync(prefixSibling, path.join(repoRoot, 'packages/escape'));
+        fs.symlinkSync(path.join(outsideRoot, 'missing'), path.join(repoRoot, 'packages/dangling'));
+
+        const captured = captureConsoleError(() => resolveWorkspaceDirs(repoRoot));
+        assert.deepEqual(captured.result, ['packages/a', 'packages/b']);
+        assert.match(captured.stderr, /\.\.\/outside\/ext/);
+        assert.match(captured.stderr, /packages\/escape/);
+        for (const workspace of captured.result) {
+            assert.equal(path.isAbsolute(workspace), false);
+            assert.equal(workspace.split('/').includes('..'), false);
+            assert.equal(workspace.split('/').includes('node_modules'), false);
+        }
+    });
+});
+
+void test('isContainedIn compares canonical path segments and fails closed', () => {
+    withTempDir('run-task-contained-in-', dir => {
+        const root = path.join(dir, 'wt');
+        const nested = path.join(root, 'packages/a');
+        const sibling = path.join(dir, 'wt-evil');
+        fs.mkdirSync(nested, { recursive: true });
+        fs.mkdirSync(sibling, { recursive: true });
+        assert.equal(isContainedIn(nested, root), true);
+        assert.equal(isContainedIn(root, root), false);
+        assert.equal(isContainedIn(sibling, root), false);
+        assert.equal(isContainedIn(path.join(dir, 'missing'), root), false);
+        assert.equal(isContainedIn(nested, path.join(dir, 'missing-root')), false);
+    });
+});
+
+void test('workspace node_modules exemption rejects staged entries before probing', () => {
+    withTempDir('run-task-workspace-staged-predicate-', dir => {
+        const taskId = 'task-a';
+        const { worktreeDir, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'packages/a/node_modules'));
+
+        const result = runIsExemptNodeModulesEntryInline({
+            raw: 'A  packages/a/node_modules',
+            indexStatus: 'A',
+            worktreeStatus: ' ',
+            paths: ['packages/a/node_modules'],
+        }, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout.trim(), 'false');
+    });
+});
+
 void test('buildHumanReviewStagePaths includes only task artifacts, telemetry, and affected managed docs', () => {
     const paths = buildHumanReviewStagePaths(['task-a'], new Set(['docs/codebase-map.md', 'docs/patterns.md']), [
         {
@@ -2178,6 +2511,331 @@ void test('commitQaArtifacts exempts the verified node_modules worktree symlink'
     });
 });
 
+void test('commitQaArtifacts exempts verified root and workspace node_modules symlinks', () => {
+    withTempDir('run-task-workspace-nm-qa-end-', dir => {
+        const taskId = 'task-a';
+        const { worktreeDir, repoModulesFixture, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'packages/a/node_modules'));
+        const porcelainBefore = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelainBefore, /^\?\? node_modules$/m);
+        assert.match(porcelainBefore, /^\?\? packages\/a\/node_modules$/m);
+        writeQaArtifacts(worktreeDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+
+        const porcelainAfter = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.equal(porcelainAfter, '?? node_modules\n?? packages/a/node_modules\n');
+    });
+});
+
+void test('commitQaArtifacts excludes a verified workspace symlink that resolves inside tasks/<id>', () => {
+    // Regression for a PR-review finding on worktree-workspace-node-modules-links:
+    // when an eligible workspace resolves inside `tasks/<id>` itself (an unusual
+    // but valid workspace glob like `tasks/*`), the verified node_modules symlink
+    // must still be excluded from the `git add -A -- tasks/<id>` sweep. Pre-fix,
+    // commitQaArtifacts had no exclusion mechanism at all on that add, so the
+    // exempt symlink rode the sweep into the index and the post-staging
+    // final-segment check aborted the commit with the symlink left staged.
+    withTempDir('run-task-workspace-in-taskdir-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = makeGitFixture(dir);
+        const branch = `task/${taskId}`;
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['tasks/*'],
+        }), 'utf8');
+        fs.mkdirSync(path.join(localDir, 'tasks', taskId), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'package.json'), '{"version":"1.0.0"}\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, '.gitignore'), 'node_modules/\n', 'utf8');
+        gitIn(localDir, 'add', 'package.json', '.gitignore');
+        gitIn(localDir, 'commit', '-m', 'fixture setup');
+        gitIn(localDir, 'push', 'origin', 'main');
+
+        const repoWorkspaceModules = path.join(localDir, 'tasks', taskId, 'node_modules');
+        fs.mkdirSync(repoWorkspaceModules, { recursive: true });
+        fs.writeFileSync(path.join(repoWorkspaceModules, 'marker.txt'), 'workspace install\n', 'utf8');
+
+        gitIn(localDir, 'worktree', 'add', worktreeDir, '-b', branch);
+        writeQaArtifacts(worktreeDir, taskId);
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'tasks', taskId, 'node_modules'));
+
+        const porcelainBefore = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelainBefore, /^\?\? tasks\/task-a\/node_modules$/m);
+        assert.match(porcelainBefore, /^\?\? tasks\/task-a\/handoff\.md$/m);
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+
+        const porcelainAfter = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.equal(porcelainAfter, '?? tasks/task-a/node_modules\n');
+        const tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--name-only'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.doesNotMatch(tree, /node_modules/);
+        assert.match(tree, /^tasks\/task-a\/handoff\.md$/m);
+    });
+});
+
+void test('commitQaArtifacts resolves workspace patterns at most once per dirty-tree evaluation', () => {
+    withTempDir('run-task-workspace-resolver-once-', dir => {
+        const taskId = 'task-a';
+        const { localDir, worktreeDir, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['!packages/a', 'packages/*'],
+        }), 'utf8');
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'packages/a/node_modules'));
+        writeQaArtifacts(worktreeDir, taskId);
+        fs.writeFileSync(path.join(worktreeDir, 'stray-one.txt'), 'one\n', 'utf8');
+        fs.writeFileSync(path.join(worktreeDir, 'stray-two.txt'), 'two\n', 'utf8');
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.notEqual(result.status, 0);
+        assert.equal(
+            (result.stderr.match(/Ignoring unsupported negated workspace pattern: !packages\/a/g) ?? []).length,
+            1,
+        );
+    });
+});
+
+void test('workspace gate predicate rejects escaping and unresolvable destinations without blocking root evaluation', () => {
+    withTempDir('run-task-workspace-gate-containment-', dir => {
+        const taskId = 'task-a';
+        const { worktreeDir, repoModulesFixture, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
+        const outsideWorkspace = `${worktreeDir}-evil`;
+        fs.mkdirSync(outsideWorkspace, { recursive: true });
+        fs.symlinkSync(repoWorkspaceModules, path.join(outsideWorkspace, 'node_modules'));
+        fs.rmSync(path.join(worktreeDir, 'packages/a'), { recursive: true, force: true });
+        fs.symlinkSync(outsideWorkspace, path.join(worktreeDir, 'packages/a'));
+
+        const workspaceEntry = {
+            raw: '?? packages/a/node_modules',
+            indexStatus: '?',
+            worktreeStatus: '?',
+            paths: ['packages/a/node_modules'],
+        };
+        const escaped = runIsExemptNodeModulesEntryInline(workspaceEntry, worktreeDir);
+        assert.equal(escaped.status, 0, escaped.stderr);
+        assert.equal(escaped.stdout.trim(), 'false');
+
+        const rootEntry = {
+            raw: '?? node_modules',
+            indexStatus: '?',
+            worktreeStatus: '?',
+            paths: ['node_modules'],
+        };
+        const root = runIsExemptNodeModulesEntryInline(rootEntry, worktreeDir);
+        assert.equal(root.status, 0, root.stderr);
+        assert.equal(root.stdout.trim(), 'true');
+
+        fs.rmSync(path.join(worktreeDir, 'packages/a'));
+        fs.symlinkSync(path.join(dir, 'missing-workspace'), path.join(worktreeDir, 'packages/a'));
+        const dangling = runIsExemptNodeModulesEntryInline(workspaceEntry, worktreeDir);
+        assert.equal(dangling.status, 0, dangling.stderr);
+        assert.equal(dangling.stdout.trim(), 'false');
+    });
+});
+
+void test('gate exempts the canonical destination of an in-repo symlinked workspace', () => {
+    withTempDir('run-task-workspace-canonical-destination-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = makeGitFixture(dir);
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['packages/*'],
+        }), 'utf8');
+        fs.writeFileSync(path.join(localDir, '.gitignore'), 'node_modules/\n', 'utf8');
+        fs.mkdirSync(path.join(localDir, 'packages'), { recursive: true });
+        fs.mkdirSync(path.join(localDir, 'modules/a'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'modules/a/package.json'), '{"name":"a"}\n', 'utf8');
+        fs.symlinkSync('../modules/a', path.join(localDir, 'packages/a'));
+        gitIn(localDir, 'add', '.gitignore', 'package.json', 'packages/a', 'modules/a/package.json');
+        gitIn(localDir, 'commit', '-m', 'symlinked workspace fixture');
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        fs.mkdirSync(path.join(localDir, 'modules/a/node_modules'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'modules/a/node_modules/marker.txt'), 'workspace install\n', 'utf8');
+
+        const branch = `task/${taskId}`;
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const setup = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(setup.status, 0, setup.stderr);
+        const canonicalLink = path.join(worktreeDir, 'modules/a/node_modules');
+        assert.equal(fs.lstatSync(canonicalLink).isSymbolicLink(), true);
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? modules\/a\/node_modules$/m);
+        writeQaArtifacts(worktreeDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+        const after = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.equal(after, '?? modules/a/node_modules\n?? node_modules\n');
+    });
+});
+
+void test('gate exempts a verified workspace symlink when git C-quotes the path', () => {
+    withTempDir('run-task-workspace-quoted-path-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = makeGitFixture(dir);
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['packages/*'],
+        }), 'utf8');
+        fs.writeFileSync(path.join(localDir, '.gitignore'), 'node_modules/\n', 'utf8');
+        const workspace = 'packages/café';
+        fs.mkdirSync(path.join(localDir, workspace), { recursive: true });
+        fs.writeFileSync(path.join(localDir, workspace, 'package.json'), '{"name":"cafe"}\n', 'utf8');
+        gitIn(localDir, 'add', '.gitignore', 'package.json', workspace);
+        gitIn(localDir, 'commit', '-m', 'unicode workspace fixture');
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        fs.mkdirSync(path.join(localDir, workspace, 'node_modules'), { recursive: true });
+
+        const branch = `task/${taskId}`;
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const setup = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(setup.status, 0, setup.stderr);
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /packages\/caf\\303\\251\/node_modules/);
+        writeQaArtifacts(worktreeDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+    });
+});
+
+void test('gate treats an untracked workspace path containing a rename separator as one path', () => {
+    withTempDir('run-task-workspace-arrow-path-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = makeGitFixture(dir);
+        const workspace = 'packages/a -> b';
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['packages/*'],
+        }), 'utf8');
+        fs.writeFileSync(path.join(localDir, '.gitignore'), 'node_modules/\n', 'utf8');
+        fs.mkdirSync(path.join(localDir, workspace), { recursive: true });
+        fs.writeFileSync(path.join(localDir, workspace, 'package.json'), '{"name":"arrow"}\n', 'utf8');
+        gitIn(localDir, 'add', '.gitignore', 'package.json', workspace);
+        gitIn(localDir, 'commit', '-m', 'arrow workspace fixture');
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        fs.mkdirSync(path.join(localDir, workspace, 'node_modules'), { recursive: true });
+
+        const branch = `task/${taskId}`;
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const setup = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(setup.status, 0, setup.stderr);
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? "packages\/a -> b\/node_modules"$/m);
+        writeQaArtifacts(worktreeDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+    });
+});
+
+void test('gate decodes selectively quoted workspace paths when core.quotepath is false', () => {
+    withTempDir('run-task-workspace-selective-quote-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = makeGitFixture(dir);
+        gitIn(localDir, 'config', 'core.quotepath', 'false');
+        const workspace = 'packages/café"q';
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['packages/*'],
+        }), 'utf8');
+        fs.writeFileSync(path.join(localDir, '.gitignore'), 'node_modules/\n', 'utf8');
+        fs.mkdirSync(path.join(localDir, workspace), { recursive: true });
+        fs.writeFileSync(path.join(localDir, workspace, 'package.json'), '{"name":"cafe"}\n', 'utf8');
+        gitIn(localDir, 'add', '.gitignore', 'package.json', workspace);
+        gitIn(localDir, 'commit', '-m', 'selectively quoted workspace fixture');
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        fs.mkdirSync(path.join(localDir, workspace, 'node_modules'), { recursive: true });
+
+        const branch = `task/${taskId}`;
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const setup = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(setup.status, 0, setup.stderr);
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /packages\/café\\"q\/node_modules/);
+        writeQaArtifacts(worktreeDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+    });
+});
+
+void test('gate compares normalized Unicode workspace paths', () => {
+    withTempDir('run-task-workspace-normalized-path-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = makeGitFixture(dir);
+        const workspace = 'packages/cafe\u0301';
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['packages/*'],
+        }), 'utf8');
+        fs.mkdirSync(path.join(localDir, workspace), { recursive: true });
+        fs.writeFileSync(path.join(localDir, workspace, 'package.json'), '{"name":"cafe"}\n', 'utf8');
+        gitIn(localDir, 'add', 'package.json', workspace);
+        gitIn(localDir, 'commit', '-m', 'decomposed workspace fixture');
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        fs.mkdirSync(path.join(localDir, workspace, 'node_modules'), { recursive: true });
+
+        const branch = `task/${taskId}`;
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+        const setup = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(setup.status, 0, setup.stderr);
+        const result = runIsExemptNodeModulesEntryInline({
+            raw: '?? packages/café/node_modules',
+            indexStatus: '?',
+            worktreeStatus: '?',
+            paths: ['packages/café/node_modules'],
+        }, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout.trim(), 'true');
+    });
+});
+
 void test('commitHumanReviewFiles pushes a tree dirty only with the verified node_modules symlink', () => {
     withTempDir('run-task-nm-human-review-', dir => {
         const taskId = 'task-a';
@@ -2217,6 +2875,305 @@ void test('commitHumanReviewFiles pushes a tree dirty only with the verified nod
             encoding: 'utf8',
         }).trim();
         assert.ok(remoteRef.length > 0, 'branch was not pushed to origin');
+    });
+});
+
+void test('commitHumanReviewFiles treats N verified node_modules symlinks as a clean tree', () => {
+    withTempDir('run-task-workspace-nm-human-review-', dir => {
+        const taskId = 'task-a';
+        const { worktreesRoot, worktreeDir, branch, repoModulesFixture, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+
+        const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, []);
+        gitIn(worktreeDir, 'add', 'tasks');
+        gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+        fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'packages/a/node_modules'));
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? node_modules$/m);
+        assert.match(porcelain, /^\?\? packages\/a\/node_modules$/m);
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), worktreeDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stderr, /outside the human_review allowlist/);
+        assert.doesNotMatch(result.stderr, /no allowed dirty files found to stage/);
+        const remoteRef = execFileSync('git', ['ls-remote', 'origin', branch], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        }).trim();
+        assert.ok(remoteRef.length > 0, 'branch was not pushed to origin');
+    });
+});
+
+void test('commitHumanReviewFiles never lets an Affected Files directory prefix allow a node_modules entry', () => {
+    withTempDir('run-task-workspace-nm-prefix-reject-', dir => {
+        const taskId = 'task-a';
+        const { worktreesRoot, worktreeDir, branch } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`packages/`']);
+        gitIn(worktreeDir, 'add', 'tasks');
+        gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+
+        const wrongTarget = path.join(dir, 'wrong-workspace-target');
+        fs.mkdirSync(wrongTarget, { recursive: true });
+        fs.symlinkSync(wrongTarget, path.join(worktreeDir, 'packages/a/node_modules'));
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? packages\/a\/node_modules$/m);
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), worktreeDir);
+
+        assert.notEqual(result.status, 0, 'directory prefix unexpectedly allowed node_modules');
+        assert.match(result.stderr, /outside the human_review allowlist/);
+        const after = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(after, /^\?\? packages\/a\/node_modules$/m);
+    });
+});
+
+for (const variant of ['ineligible', 'task-branch', 'staged'] as const) {
+    void test(`directory prefixes reject ${variant} node_modules entries`, () => {
+        withTempDir(`run-task-workspace-nm-prefix-${variant}-`, dir => {
+            const taskId = `task-${variant}`;
+            const { worktreesRoot, worktreeDir, branch, repoWorkspaceModules } =
+                makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+            const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+            writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+            writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`packages/`']);
+            gitIn(worktreeDir, 'add', 'tasks');
+            gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+
+            let rejectedPath: string;
+            if (variant === 'ineligible') {
+                rejectedPath = 'packages/notapkg/nested/node_modules';
+                const wrongTarget = path.join(dir, 'ineligible-target');
+                fs.mkdirSync(wrongTarget, { recursive: true });
+                fs.symlinkSync(wrongTarget, path.join(worktreeDir, rejectedPath));
+            } else if (variant === 'task-branch') {
+                rejectedPath = 'packages/c/node_modules';
+                fs.mkdirSync(path.join(worktreeDir, 'packages/c'), { recursive: true });
+                fs.writeFileSync(path.join(worktreeDir, 'packages/c/package.json'), '{"name":"c"}\n', 'utf8');
+                const wrongTarget = path.join(dir, 'task-branch-target');
+                fs.mkdirSync(wrongTarget, { recursive: true });
+                fs.symlinkSync(wrongTarget, path.join(worktreeDir, rejectedPath));
+            } else {
+                rejectedPath = 'packages/a/node_modules';
+                fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, rejectedPath));
+                gitIn(worktreeDir, 'add', '-f', rejectedPath);
+            }
+
+            const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+                cwd: worktreeDir,
+                encoding: 'utf8',
+            });
+            assert.match(porcelain, new RegExp(`^(?:\\?\\?|A ) ${rejectedPath.replaceAll('/', '\\/')}$`, 'm'));
+
+            const fakeBins = path.join(dir, 'fake-bins');
+            fs.mkdirSync(fakeBins, { recursive: true });
+            setupFakeCliTools(fakeBins);
+            const result = runNodeInline([
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+                `.then(m => {`,
+                `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+                `  return m.main();`,
+                `})`,
+                `.catch(err => { console.error(err); process.exit(1); });`,
+            ].join('\n'), childEnvWithoutTasksOverride({
+                CANON_WORKTREES_ROOT: worktreesRoot,
+                PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            }), worktreeDir);
+
+            assert.notEqual(result.status, 0, `${variant} node_modules unexpectedly passed`);
+            assert.match(result.stderr, /outside the human_review allowlist/);
+            assert.match(result.stderr, /node_modules/);
+            const tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--name-only'], {
+                cwd: worktreeDir,
+                encoding: 'utf8',
+            });
+            assert.doesNotMatch(tree, /node_modules/);
+        });
+    });
+}
+
+void test('directory-prefix staging tolerates an ignored real workspace install beside an exempt link', () => {
+    withTempDir('run-task-workspace-nm-prefix-mixed-', dir => {
+        const taskId = 'task-a';
+        const { localDir, worktreesRoot, worktreeDir, branch, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`packages/`']);
+        gitIn(worktreeDir, 'add', 'tasks');
+        gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+
+        fs.mkdirSync(path.join(localDir, 'packages/b/node_modules'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'packages/b/package.json'), '{"name":"b"}\n', 'utf8');
+        fs.mkdirSync(path.join(worktreeDir, 'packages/b/node_modules'), { recursive: true });
+        fs.writeFileSync(path.join(worktreeDir, 'packages/b/node_modules/marker.txt'), 'local install\n', 'utf8');
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'packages/a/node_modules'));
+        fs.writeFileSync(path.join(worktreeDir, 'packages/a/generated.ts'), 'export {};\n', 'utf8');
+
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? packages\/a\/generated\.ts$/m);
+        assert.match(porcelain, /^\?\? packages\/a\/node_modules$/m);
+        assert.doesNotMatch(porcelain, /packages\/b\/node_modules/);
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), worktreeDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--name-only'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(tree, /^packages\/a\/generated\.ts$/m);
+        assert.doesNotMatch(tree, /node_modules/);
+    });
+});
+
+void test('directory-form staging normalizes a C-quoted non-ASCII prefix', () => {
+    withTempDir('run-task-human-review-dirform-unicode-prefix-', dir => {
+        const taskId = 'task-a';
+        const { worktreesRoot, worktreeDir, branch } =
+            makeNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`café/`']);
+        gitIn(worktreeDir, 'add', 'tasks');
+        gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+        fs.mkdirSync(path.join(worktreeDir, 'café'), { recursive: true });
+        fs.writeFileSync(path.join(worktreeDir, 'café/build.js'), 'export {};\n', 'utf8');
+
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? "caf\\303\\251\/build\.js"$/m);
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), worktreeDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--name-only', '-z'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        }).split('\0');
+        assert.equal(tree.includes('café/build.js'), true);
+    });
+});
+
+void test('directory-prefix staging does not sweep canon workspace links into the commit', () => {
+    withTempDir('run-task-workspace-nm-prefix-stage-', dir => {
+        const taskId = 'task-a';
+        const { worktreesRoot, worktreeDir, branch, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+        writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`packages/`']);
+        gitIn(worktreeDir, 'add', 'tasks');
+        gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'packages/a/node_modules'));
+        fs.writeFileSync(path.join(worktreeDir, 'packages/a/allowed-source.ts'), 'export {};\n', 'utf8');
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? packages\/a\/allowed-source\.ts$/m);
+        assert.match(porcelain, /^\?\? packages\/a\/node_modules$/m);
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `.then(m => {`,
+            `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+            `  return m.main();`,
+            `})`,
+            `.catch(err => { console.error(err); process.exit(1); });`,
+        ].join('\n'), childEnvWithoutTasksOverride({
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), worktreeDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const after = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(after, /^\?\? packages\/a\/node_modules$/m);
+        const tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--name-only'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.match(tree, /^packages\/a\/allowed-source\.ts$/m);
+        assert.doesNotMatch(tree, /node_modules/);
     });
 });
 
@@ -2293,11 +3250,136 @@ void test('commitQaArtifacts still rejects non-exempt node_modules entries', () 
     }
 });
 
+void test('workspace node_modules gate rejects staged, real, wrong-target, and ineligible entries', () => {
+    for (const variant of ['staged', 'directory', 'wrong-target', 'ineligible'] as const) {
+        withTempDir(`run-task-workspace-nm-negative-${variant}-`, dir => {
+            const taskId = `task-${variant}`;
+            const gitignoreRule = variant === 'directory' ? null : 'node_modules/\n';
+            const { worktreeDir, repoWorkspaceModules } =
+                makeWorkspaceNodeModulesGateFixture(dir, taskId, gitignoreRule);
+            let candidate: string;
+            if (variant === 'ineligible') {
+                candidate = path.join(worktreeDir, 'packages/notapkg/nested/node_modules');
+                fs.symlinkSync(repoWorkspaceModules, candidate);
+            } else {
+                candidate = path.join(worktreeDir, 'packages/a/node_modules');
+                if (variant === 'directory') {
+                    fs.mkdirSync(candidate, { recursive: true });
+                    fs.writeFileSync(path.join(candidate, 'marker.txt'), 'real directory\n', 'utf8');
+                } else if (variant === 'wrong-target') {
+                    const wrongTarget = path.join(dir, 'wrong-target');
+                    fs.mkdirSync(wrongTarget, { recursive: true });
+                    fs.symlinkSync(wrongTarget, candidate);
+                } else {
+                    fs.symlinkSync(repoWorkspaceModules, candidate);
+                    gitIn(worktreeDir, 'add', '-f', 'packages/a/node_modules');
+                }
+            }
+            writeQaArtifacts(worktreeDir, taskId);
+            const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+                cwd: worktreeDir,
+                encoding: 'utf8',
+            });
+            if (variant === 'directory') {
+                assert.match(porcelain, /^\?\? packages\/a\/node_modules\/marker\.txt$/m);
+            } else if (variant === 'ineligible') {
+                assert.match(porcelain, /^\?\? packages\/notapkg\/nested\/node_modules$/m);
+            } else if (variant === 'staged') {
+                assert.match(porcelain, /^A  packages\/a\/node_modules$/m);
+            } else {
+                assert.match(porcelain, /^\?\? packages\/a\/node_modules$/m);
+            }
+
+            const result = runCommitQaArtifactsInline(taskId, worktreeDir);
+            assert.notEqual(result.status, 0, `${variant} unexpectedly passed`);
+            assert.match(result.stderr, /outside the QA-end allowlist/);
+        });
+    }
+});
+
+void test('workspace gate predicate classifies an exact real-directory entry as non-exempt', () => {
+    withTempDir('run-task-workspace-nm-directory-predicate-', dir => {
+        const taskId = 'task-a';
+        const { worktreeDir } = makeWorkspaceNodeModulesGateFixture(dir, taskId, null);
+        fs.mkdirSync(path.join(worktreeDir, 'packages/a/node_modules'), { recursive: true });
+        fs.writeFileSync(path.join(worktreeDir, 'packages/a/node_modules/marker.txt'), 'real directory\n', 'utf8');
+        const result = runIsExemptNodeModulesEntryInline({
+            raw: '?? packages/a/node_modules',
+            indexStatus: '?',
+            worktreeStatus: '?',
+            paths: ['packages/a/node_modules'],
+        }, worktreeDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout.trim(), 'false');
+    });
+});
+
+void test('workspace node_modules exemption is disabled when no distinct worktree is active', () => {
+    withTempDir('run-task-workspace-nm-no-worktree-', dir => {
+        const taskId = 'task-a';
+        const { localDir, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        const outsideTarget = path.join(dir, 'adopter-workspace-modules');
+        fs.mkdirSync(outsideTarget, { recursive: true });
+        fs.rmSync(repoWorkspaceModules, { recursive: true, force: true });
+        fs.symlinkSync(outsideTarget, repoWorkspaceModules);
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? packages\/a\/node_modules$/m);
+        writeQaArtifacts(localDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, localDir);
+        assert.notEqual(result.status, 0, 'no-worktree workspace symlink unexpectedly passed');
+        assert.match(result.stderr, /outside the QA-end allowlist/);
+    });
+});
+
+void test('root node_modules exemption remains unchanged when no distinct worktree is active', () => {
+    withTempDir('run-task-root-nm-no-worktree-', dir => {
+        const taskId = 'task-a';
+        const { localDir, repoModulesFixture } =
+            makeWorkspaceNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+        const outsideTarget = path.join(dir, 'adopter-root-modules');
+        fs.mkdirSync(outsideTarget, { recursive: true });
+        fs.rmSync(repoModulesFixture, { recursive: true, force: true });
+        fs.symlinkSync(outsideTarget, repoModulesFixture);
+        const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.match(porcelain, /^\?\? node_modules$/m);
+        writeQaArtifacts(localDir, taskId);
+
+        const result = runCommitQaArtifactsInline(taskId, localDir);
+        assert.equal(result.status, 0, result.stderr);
+        const after = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.equal(after, '?? node_modules\n');
+    });
+});
+
 void test('bare node_modules gitignore rule hides the symlink from porcelain entirely', () => {
     withTempDir('run-task-nm-noslash-', dir => {
         const { worktreeDir, repoModulesFixture } = makeNodeModulesGateFixture(dir, 'task-a', 'node_modules\n');
         fs.symlinkSync(repoModulesFixture, path.join(worktreeDir, 'node_modules'));
 
+        const status = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+            cwd: worktreeDir,
+            encoding: 'utf8',
+        });
+        assert.doesNotMatch(status, /node_modules/);
+    });
+});
+
+void test('bare node_modules gitignore rule hides nested workspace symlinks entirely', () => {
+    withTempDir('run-task-workspace-nm-noslash-', dir => {
+        const { worktreeDir, repoWorkspaceModules } =
+            makeWorkspaceNodeModulesGateFixture(dir, 'task-a', 'node_modules\n');
+        fs.symlinkSync(repoWorkspaceModules, path.join(worktreeDir, 'packages/a/node_modules'));
         const status = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
             cwd: worktreeDir,
             encoding: 'utf8',
@@ -2342,6 +3424,313 @@ void test('ensureWorktree fails closed on a wrong-target node_modules symlink', 
         assert.notEqual(result.status, 0);
         assert.match(result.stderr, /Worktree setup aborted: .*node_modules is a symlink but does not resolve to/);
         assert.match(result.stderr, new RegExp(wrongTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    });
+});
+
+void test('ensureWorktree skips an escaping workspace destination and still links contained siblings', () => {
+    withTempDir('run-task-ensure-wt-workspace-escape-', dir => {
+        const taskId = 'task-workspace-escape';
+        const {
+            localDir,
+            worktreesRoot,
+            worktreeDir,
+            branch,
+            repoWorkspaceModules,
+            outsideDestination,
+        } = makeEnsureWorktreeWorkspaceFixture(dir, taskId, 'destination-escape');
+        const outsideBefore = fs.readdirSync(outsideDestination).sort();
+
+        const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(fs.readdirSync(outsideDestination).sort(), outsideBefore);
+        assert.equal(fs.existsSync(path.join(outsideDestination, 'node_modules')), false);
+        assert.match(result.stderr, /packages\/a/);
+        const siblingLink = path.join(worktreeDir, 'packages/b/node_modules');
+        assert.equal(fs.lstatSync(siblingLink).isSymbolicLink(), true);
+        assert.equal(fs.realpathSync(siblingLink), fs.realpathSync(repoWorkspaceModules['packages/b']));
+    });
+});
+
+void test('ensureWorktree classifies workspace node_modules entries without clobbering them', () => {
+    for (const variant of ['missing', 'verified-symlink', 'file', 'directory'] as const) {
+        withTempDir(`run-task-ensure-wt-workspace-${variant}-`, dir => {
+            const taskId = `task-workspace-${variant}`;
+            const { localDir, worktreesRoot, worktreeDir, branch, repoWorkspaceModules } =
+                makeEnsureWorktreeWorkspaceFixture(dir, taskId, variant);
+
+            const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+            assert.equal(result.status, 0, result.stderr);
+
+            const workspaceModules = path.join(worktreeDir, 'packages/a/node_modules');
+            const stat = fs.lstatSync(workspaceModules);
+            if (variant === 'missing' || variant === 'verified-symlink') {
+                assert.equal(stat.isSymbolicLink(), true);
+                assert.equal(fs.realpathSync(workspaceModules), fs.realpathSync(repoWorkspaceModules['packages/a']));
+                if (variant === 'missing') {
+                    assert.match(result.stdout, /Symlinked node_modules into worktree workspace 'packages\/a'/);
+                } else {
+                    assert.doesNotMatch(result.stdout, /Symlinked node_modules into worktree workspace 'packages\/a'/);
+                }
+            } else if (variant === 'file') {
+                assert.equal(stat.isFile(), true);
+                assert.equal(fs.readFileSync(workspaceModules, 'utf8'), 'tracked workspace file\n');
+            } else {
+                assert.equal(stat.isDirectory(), true);
+                assert.equal(fs.readFileSync(path.join(workspaceModules, 'pkg.json'), 'utf8'), '{}\n');
+            }
+            const siblingModules = path.join(worktreeDir, 'packages/b/node_modules');
+            assert.equal(fs.lstatSync(siblingModules).isSymbolicLink(), true);
+            assert.equal(fs.realpathSync(siblingModules), fs.realpathSync(repoWorkspaceModules['packages/b']));
+        });
+    }
+});
+
+void test('ensureWorktree fails closed on a wrong-target workspace node_modules symlink', () => {
+    withTempDir('run-task-ensure-wt-workspace-wrong-target-', dir => {
+        const taskId = 'task-workspace-wrong-target';
+        const { localDir, worktreesRoot, branch, wrongTarget } =
+            makeEnsureWorktreeWorkspaceFixture(dir, taskId, 'wrong-target-symlink');
+
+        const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /packages\/a\/node_modules is a symlink but does not resolve to/);
+        assert.match(result.stderr, new RegExp(wrongTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    });
+});
+
+void test('ensureWorktree rerun repairs workspace links after a prior partial-link abort', () => {
+    withTempDir('run-task-ensure-wt-workspace-repair-', dir => {
+        const taskId = 'task-workspace-repair';
+        const { localDir } = makeGitFixture(dir);
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['packages/*'],
+        }), 'utf8');
+        for (const name of ['a', 'b', 'c']) {
+            fs.mkdirSync(path.join(localDir, 'packages', name), { recursive: true });
+            fs.writeFileSync(path.join(localDir, 'packages', name, 'package.json'), JSON.stringify({ name }), 'utf8');
+        }
+        gitIn(localDir, 'add', 'package.json', 'packages');
+        gitIn(localDir, 'commit', '-m', 'workspace package setup');
+
+        const branch = `task/${taskId}`;
+        const wrongTarget = path.join(dir, 'wrong-target');
+        fs.mkdirSync(wrongTarget, { recursive: true });
+        gitIn(localDir, 'checkout', '-b', branch);
+        fs.symlinkSync(wrongTarget, path.join(localDir, 'packages/b/node_modules'));
+        gitIn(localDir, 'add', 'packages/b/node_modules');
+        gitIn(localDir, 'commit', '-m', 'stray workspace link');
+        gitIn(localDir, 'checkout', 'main');
+
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        for (const name of ['a', 'b', 'c']) {
+            const sourceModules = path.join(localDir, 'packages', name, 'node_modules');
+            fs.mkdirSync(sourceModules, { recursive: true });
+            fs.writeFileSync(path.join(sourceModules, 'marker.txt'), `${name}\n`, 'utf8');
+        }
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+
+        const first = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.notEqual(first.status, 0);
+        assert.equal(fs.lstatSync(path.join(worktreeDir, 'packages/a/node_modules')).isSymbolicLink(), true);
+        assert.equal(fs.existsSync(path.join(worktreeDir, 'packages/c/node_modules')), false);
+
+        const second = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(second.status, 0, second.stderr);
+        assert.equal(
+            fs.realpathSync(path.join(worktreeDir, 'packages/c/node_modules')),
+            fs.realpathSync(path.join(localDir, 'packages/c/node_modules')),
+            'repair mode did not continue past the existing wrong-target link',
+        );
+
+        fs.rmSync(path.join(worktreeDir, 'packages/b/node_modules'));
+        const third = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(third.status, 0, third.stderr);
+        for (const name of ['a', 'b', 'c']) {
+            const link = path.join(worktreeDir, 'packages', name, 'node_modules');
+            assert.equal(fs.lstatSync(link).isSymbolicLink(), true, `${name} was not repaired`);
+            assert.equal(
+                fs.realpathSync(link),
+                fs.realpathSync(path.join(localDir, 'packages', name, 'node_modules')),
+            );
+        }
+    });
+});
+
+void test('ensureWorktree reuse leaves root links and env files untouched', () => {
+    for (const variant of ['missing-source', 'wrong-root-link', 'dangling-env-link'] as const) {
+        withTempDir(`run-task-ensure-wt-reuse-${variant}-`, dir => {
+            const taskId = `task-reuse-${variant}`;
+            const { localDir, worktreesRoot, worktreeDir, branch } =
+                makeEnsureWorktreeNodeModulesFixture(dir, taskId, 'missing');
+            const first = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+            assert.equal(first.status, 0, first.stderr);
+
+            if (variant === 'missing-source') {
+                fs.rmSync(path.join(localDir, 'node_modules'), { recursive: true });
+            } else if (variant === 'wrong-root-link') {
+                fs.rmSync(path.join(worktreeDir, 'node_modules'));
+                const wrongTarget = path.join(dir, 'wrong-root-target');
+                fs.mkdirSync(wrongTarget, { recursive: true });
+                fs.symlinkSync(wrongTarget, path.join(worktreeDir, 'node_modules'));
+            } else {
+                fs.writeFileSync(path.join(localDir, '.env.reuse'), 'VALUE=1\n', 'utf8');
+                fs.symlinkSync(path.join(dir, 'missing-env-target'), path.join(worktreeDir, '.env.reuse'));
+            }
+
+            const second = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+            assert.equal(second.status, 0, second.stderr);
+            if (variant === 'wrong-root-link') {
+                assert.equal(
+                    fs.realpathSync(path.join(worktreeDir, 'node_modules')),
+                    fs.realpathSync(path.join(dir, 'wrong-root-target')),
+                );
+            } else if (variant === 'dangling-env-link') {
+                assert.equal(fs.lstatSync(path.join(worktreeDir, '.env.reuse')).isSymbolicLink(), true);
+            }
+        });
+    }
+});
+
+void test('ensureWorktree reuse suppresses repeated unsupported-pattern warnings', () => {
+    withTempDir('run-task-ensure-wt-reuse-warnings-', dir => {
+        const taskId = 'task-reuse-warnings';
+        const { localDir, worktreesRoot, branch } =
+            makeEnsureWorktreeWorkspaceFixture(dir, taskId, 'missing');
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['!packages/legacy', 'packages/*'],
+        }), 'utf8');
+
+        const first = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(first.status, 0, first.stderr);
+        assert.match(first.stderr, /Ignoring unsupported negated workspace pattern: !packages\/legacy/);
+
+        const second = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(second.status, 0, second.stderr);
+        assert.doesNotMatch(second.stderr, /Ignoring unsupported negated workspace pattern/);
+    });
+});
+
+void test('ensureWorktree leaves an existing non-canon worktree untouched', () => {
+    withTempDir('run-task-ensure-wt-existing-foreign-', dir => {
+        const taskId = 'task-existing-foreign';
+        const { localDir, worktreesRoot, branch } =
+            makeEnsureWorktreeWorkspaceFixture(dir, taskId, 'missing');
+        const foreignWorktree = path.join(dir, 'developer-worktree');
+        gitIn(localDir, 'worktree', 'add', foreignWorktree, branch);
+
+        const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(fs.existsSync(path.join(foreignWorktree, 'node_modules')), false);
+        assert.equal(fs.existsSync(path.join(foreignWorktree, 'packages/a/node_modules')), false);
+        assert.equal(fs.existsSync(path.join(worktreesRoot, taskId)), false);
+    });
+});
+
+void test('ensureWorktree skips hoisted, absent, dangling, and file workspace cases while linking siblings', () => {
+    for (const variant of ['source-hoisted', 'workspace-absent', 'destination-dangling', 'destination-file'] as const) {
+        withTempDir(`run-task-ensure-wt-workspace-${variant}-`, dir => {
+            const taskId = `task-${variant}`;
+            const { localDir, worktreesRoot, worktreeDir, branch, repoWorkspaceModules } =
+                makeEnsureWorktreeWorkspaceFixture(dir, taskId, variant);
+
+            const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(fs.existsSync(path.join(worktreeDir, 'packages/a/node_modules')), false);
+            const siblingModules = path.join(worktreeDir, 'packages/b/node_modules');
+            assert.equal(fs.lstatSync(siblingModules).isSymbolicLink(), true);
+            assert.equal(fs.realpathSync(siblingModules), fs.realpathSync(repoWorkspaceModules['packages/b']));
+            if (variant === 'workspace-absent') {
+                assert.match(result.stdout, /Workspace 'packages\/a' is not present/);
+                assert.doesNotMatch(result.stderr, /packages\/a/);
+            } else if (variant === 'destination-dangling') {
+                assert.match(result.stderr, /packages\/a/);
+            } else if (variant === 'destination-file') {
+                assert.match(result.stderr, /packages\/a.*not a directory/);
+            } else {
+                assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /packages\/a/);
+            }
+        });
+    }
+});
+
+void test('ensureWorktree source containment prevents writes under an outside workspace declaration', () => {
+    withTempDir('run-task-ensure-wt-workspace-source-escape-', dir => {
+        const taskId = 'task-source-escape';
+        const { localDir } = makeGitFixture(dir);
+        fs.writeFileSync(path.join(localDir, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            workspaces: ['packages/*', '../outside/ext'],
+        }), 'utf8');
+        fs.mkdirSync(path.join(localDir, 'packages/a'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'packages/a/package.json'), '{"name":"a"}\n', 'utf8');
+        gitIn(localDir, 'add', 'package.json', 'packages/a/package.json');
+        gitIn(localDir, 'commit', '-m', 'workspace package setup');
+        const branch = `task/${taskId}`;
+        gitIn(localDir, 'branch', branch);
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        fs.mkdirSync(path.join(localDir, 'packages/a/node_modules'), { recursive: true });
+        const outsideWorkspace = path.join(dir, 'outside/ext');
+        fs.mkdirSync(outsideWorkspace, { recursive: true });
+        fs.writeFileSync(path.join(outsideWorkspace, 'package.json'), '{"name":"outside"}\n', 'utf8');
+        fs.writeFileSync(path.join(outsideWorkspace, 'sentinel.txt'), 'untouched\n', 'utf8');
+        const outsideBefore = fs.readdirSync(outsideWorkspace).sort();
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeDir = path.join(worktreesRoot, taskId);
+
+        const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /\.\.\/outside\/ext/);
+        assert.deepEqual(fs.readdirSync(outsideWorkspace).sort(), outsideBefore);
+        assert.equal(fs.existsSync(path.join(outsideWorkspace, 'node_modules')), false);
+        assert.equal(fs.lstatSync(path.join(worktreeDir, 'packages/a/node_modules')).isSymbolicLink(), true);
+        assert.equal(resolveWorkspaceDirs(localDir).some(workspace => workspace.split('/').includes('..')), false);
+    });
+});
+
+void test('ensureWorktree skips an unresolvable workspace destination and exits successfully', () => {
+    withTempDir('run-task-ensure-wt-workspace-dangling-', dir => {
+        const taskId = 'task-workspace-dangling';
+        const { localDir, worktreesRoot, worktreeDir, branch } =
+            makeEnsureWorktreeWorkspaceFixture(dir, taskId, 'destination-dangling');
+        const result = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /packages\/a/);
+        assert.equal(fs.lstatSync(path.join(worktreeDir, 'packages/a')).isSymbolicLink(), true);
+    });
+});
+
+void test('teardownWorktree removes root and workspace links without touching source installs', () => {
+    withTempDir('run-task-teardown-workspace-links-', dir => {
+        const taskId = 'task-teardown-workspace-links';
+        const {
+            localDir,
+            worktreesRoot,
+            worktreeDir,
+            branch,
+            repoModulesFixture,
+            repoWorkspaceModules,
+        } = makeEnsureWorktreeWorkspaceFixture(dir, taskId, 'missing');
+        const setup = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(setup.status, 0, setup.stderr);
+        assert.equal(fs.lstatSync(path.join(worktreeDir, 'node_modules')).isSymbolicLink(), true);
+        assert.equal(fs.lstatSync(path.join(worktreeDir, 'packages/a/node_modules')).isSymbolicLink(), true);
+
+        const teardown = runTeardownWorktreeInline(taskId, localDir, worktreesRoot);
+        assert.equal(teardown.status, 0, teardown.stderr);
+        assert.equal(fs.existsSync(worktreeDir), false);
+        assert.equal(fs.readFileSync(path.join(repoModulesFixture, 'marker.txt'), 'utf8'), 'root install\n');
+        assert.equal(
+            fs.readFileSync(path.join(repoWorkspaceModules['packages/a'], 'marker.txt'), 'utf8'),
+            'packages/a install\n',
+        );
+        assert.equal(
+            fs.readFileSync(path.join(repoWorkspaceModules['packages/b'], 'marker.txt'), 'utf8'),
+            'packages/b install\n',
+        );
     });
 });
 
@@ -4010,6 +5399,85 @@ void test('commitHumanReviewFiles accepts directory-form Affected Files entries 
         assert.match(gitLog, /^add -A -- dist\/$/m);
         assert.match(gitLog, /^commit /m);
     });
+});
+
+void test('directory-form staging preserves vendored node_modules contents', () => {
+    withTempDir('run-task-human-review-vendored-node-modules-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`dist/`']);
+        const vendoredFile = 'dist/lambda/node_modules/lodash/index.js';
+
+        const result = runHumanReviewCommit(harness, ['task-a'], {
+            FAKE_GIT_STATUS_OUTPUT: `?? ${vendoredFile}`,
+            FAKE_GIT_DIFF_OUTPUT: vendoredFile,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(gitLog, /^add -A -- dist\/$/m);
+        assert.match(gitLog, /^commit /m);
+    });
+});
+
+void test('directory-form staging handles C-quoted filenames and staged renames', () => {
+    for (const variant of ['unicode', 'rename'] as const) {
+        withTempDir(`run-task-human-review-dirform-${variant}-`, dir => {
+            const taskId = `task-${variant}`;
+            const { worktreesRoot, worktreeDir, branch } =
+                makeNodeModulesGateFixture(dir, taskId, 'node_modules/\n');
+            const status = { ...makeHumanReviewPendingStatus(taskId, branch), worktree: true };
+            writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
+            writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`dist/`']);
+            fs.mkdirSync(path.join(worktreeDir, 'dist'), { recursive: true });
+            if (variant === 'rename') {
+                fs.writeFileSync(path.join(worktreeDir, 'dist/old.js'), 'old\n', 'utf8');
+            }
+            gitIn(worktreeDir, 'add', 'tasks', ...(variant === 'rename' ? ['dist/old.js'] : []));
+            gitIn(worktreeDir, 'commit', '-m', 'qa artifacts');
+
+            if (variant === 'unicode') {
+                fs.writeFileSync(path.join(worktreeDir, 'dist/café.js'), 'export {};\n', 'utf8');
+            } else {
+                fs.renameSync(
+                    path.join(worktreeDir, 'dist/old.js'),
+                    path.join(worktreeDir, 'dist/new.js'),
+                );
+                gitIn(worktreeDir, 'add', '-A', 'dist');
+            }
+            const porcelain = execFileSync('git', ['status', '--porcelain=v1', '-uall'], {
+                cwd: worktreeDir,
+                encoding: 'utf8',
+            });
+            if (variant === 'unicode') {
+                assert.match(porcelain, /^\?\? "dist\/caf\\303\\251\.js"$/m);
+            } else {
+                assert.match(porcelain, /^R  dist\/old\.js -> dist\/new\.js$/m);
+            }
+
+            const fakeBins = path.join(dir, 'fake-bins');
+            fs.mkdirSync(fakeBins, { recursive: true });
+            setupFakeCliTools(fakeBins);
+            const result = runNodeInline([
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+                `.then(m => {`,
+                `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
+                `  return m.main();`,
+                `})`,
+                `.catch(err => { console.error(err); process.exit(1); });`,
+            ].join('\n'), childEnvWithoutTasksOverride({
+                CANON_WORKTREES_ROOT: worktreesRoot,
+                PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            }), worktreeDir);
+
+            assert.equal(result.status, 0, result.stderr);
+            const tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--name-only', '-z'], {
+                cwd: worktreeDir,
+                encoding: 'utf8',
+            }).split('\0');
+            assert.equal(tree.includes(variant === 'unicode' ? 'dist/café.js' : 'dist/new.js'), true);
+            assert.equal(tree.includes('dist/old.js'), false);
+        });
+    }
 });
 
 void test('commitHumanReviewFiles commits telemetry files without managed-doc advisory', () => {
