@@ -143,12 +143,45 @@ function formatPhaseTransition(from: CurrentPhase, to: CurrentPhase): string {
 }
 
 function formatPhasePointerTransition(from: CurrentPhase, to: CurrentPhase): string {
-    return `${from} → ${to}`;
+    // A backwards pointer move is always the orchestrator routing a task
+    // back after a changes_requested review — label it so the operator
+    // doesn't read it as the pipeline running phases out of order.
+    const fromIdx = PHASE_ORDER.indexOf(from as Phase);
+    const toIdx = PHASE_ORDER.indexOf(to as Phase);
+    const reroute = fromIdx !== -1 && toIdx !== -1 && toIdx < fromIdx;
+    return `${from} → ${to}${reroute ? ' (reroute)' : ''}`;
 }
 
 function displayedPhasePointer(ctx: RunContext): CurrentPhase | null {
     if (ctx.statusResult.kind !== 'ok' || !isStatusJson(ctx.statusResult.status)) return null;
     return deriveTopLevelStatus(ctx.statusResult.status);
+}
+
+// True while status.json is mid-reroute: a review phase sits 'done' with a
+// changes_requested/needs_re_review verdict, meaning the orchestrator's
+// post-phase hook is about to route the pointer backwards (routeBackTo
+// clears both the verdict and the 'done' stamp in one atomic write). In
+// this window the derived pointer transiently reads as the NEXT phase
+// (e.g. code_review done → pointer says qa) even though qa will never run
+// this cycle — reporting that as a transition is what produced the bogus
+// "code_review → qa" / "qa → implement" pair instead of the real
+// "code_review → implement".
+// Only the verdicts checkAndRoute actually routes back on: holding on any
+// other done+verdict combination (e.g. spec_review + needs_re_review, which
+// advances to plan) would wedge pointer reporting on a settled status.
+const REROUTE_VERDICTS: Record<'spec_review' | 'code_review', readonly Verdict[]> = {
+    spec_review: ['changes_requested'],
+    code_review: ['changes_requested', 'needs_re_review'],
+};
+
+function pointerIsMidReroute(ctx: RunContext): boolean {
+    if (ctx.statusResult.kind !== 'ok' || !isStatusJson(ctx.statusResult.status)) return false;
+    for (const phase of ['spec_review', 'code_review'] as const) {
+        const entry = ctx.statusResult.status.phases[phase];
+        if (entry?.status !== 'done') continue;
+        if (entry.verdict != null && REROUTE_VERDICTS[phase].includes(entry.verdict)) return true;
+    }
+    return false;
 }
 
 function formatSummaryLine(summary: SummaryLine): string {
@@ -620,6 +653,20 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
 
     let previousPhasePointer = displayedPhasePointer(ctx);
 
+    // Report a pointer change, holding the previous pointer while status.json
+    // is mid-reroute — the transient forward pointer in that window (see
+    // pointerIsMidReroute) would otherwise report phases that never run.
+    const reportPhasePointer = (pollCtx: RunContext): void => {
+        let currentPhase = displayedPhasePointer(pollCtx);
+        if (currentPhase != null && previousPhasePointer != null && pointerIsMidReroute(pollCtx)) {
+            currentPhase = previousPhasePointer;
+        }
+        if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
+            stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}\n`);
+        }
+        previousPhasePointer = currentPhase;
+    };
+
     if (initialAttach.kind === 'launch_window') {
         const remaining = remainingTimeoutMs();
         if (remaining != null && remaining <= 0) return reportTimeout();
@@ -681,11 +728,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
 
         const liveResult = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
         if (liveResult.kind === 'live') {
-            const currentPhase = displayedPhasePointer(ctx);
-            if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
-                stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}\n`);
-            }
-            previousPhasePointer = currentPhase;
+            reportPhasePointer(ctx);
             // A heartbeat younger than one heartbeat interval is business as
             // usual — worth a dot, not a line. Older means the orchestrator
             // missed a tick (classifyAttach caps this at the 2×-interval
@@ -720,11 +763,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
             // orchestrator pid is alive and the run hasn't hit a stop. Surface any phase
             // advance and keep blocking — don't fall through to the idle/grace path that
             // would misclassify this live run as step_done.
-            const currentPhase = displayedPhasePointer(ctx);
-            if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
-                stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}\n`);
-            }
-            previousPhasePointer = currentPhase;
+            reportPhasePointer(ctx);
             // The heartbeat is stale here by definition (classifyAttach
             // rejected it) — surface the age instead of a quiet dot so the
             // operator can see the run is in an escalated window.

@@ -2075,11 +2075,27 @@ function formatPhaseTransition(from, to) {
   return `${from}\u2192${to}`;
 }
 function formatPhasePointerTransition(from, to) {
-  return `${from} \u2192 ${to}`;
+  const fromIdx = PHASE_ORDER.indexOf(from);
+  const toIdx = PHASE_ORDER.indexOf(to);
+  const reroute = fromIdx !== -1 && toIdx !== -1 && toIdx < fromIdx;
+  return `${from} \u2192 ${to}${reroute ? " (reroute)" : ""}`;
 }
 function displayedPhasePointer(ctx) {
   if (ctx.statusResult.kind !== "ok" || !isStatusJson(ctx.statusResult.status)) return null;
   return deriveTopLevelStatus(ctx.statusResult.status);
+}
+var REROUTE_VERDICTS = {
+  spec_review: ["changes_requested"],
+  code_review: ["changes_requested", "needs_re_review"]
+};
+function pointerIsMidReroute(ctx) {
+  if (ctx.statusResult.kind !== "ok" || !isStatusJson(ctx.statusResult.status)) return false;
+  for (const phase of ["spec_review", "code_review"]) {
+    const entry = ctx.statusResult.status.phases[phase];
+    if (entry?.status !== "done") continue;
+    if (entry.verdict != null && REROUTE_VERDICTS[phase].includes(entry.verdict)) return true;
+  }
+  return false;
 }
 function formatSummaryLine(summary) {
   const parts = [`state=${summary.state}`, `reason=${summary.reason}`];
@@ -2483,6 +2499,17 @@ function watchCmd(args2, deps = {}) {
     return reportInitialFailure(initialAttach);
   }
   let previousPhasePointer = displayedPhasePointer(ctx);
+  const reportPhasePointer = (pollCtx) => {
+    let currentPhase = displayedPhasePointer(pollCtx);
+    if (currentPhase != null && previousPhasePointer != null && pointerIsMidReroute(pollCtx)) {
+      currentPhase = previousPhasePointer;
+    }
+    if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
+      stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}
+`);
+    }
+    previousPhasePointer = currentPhase;
+  };
   if (initialAttach.kind === "launch_window") {
     const remaining = remainingTimeoutMs();
     if (remaining != null && remaining <= 0) return reportTimeout();
@@ -2542,12 +2569,7 @@ function watchCmd(args2, deps = {}) {
     }
     const liveResult = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
     if (liveResult.kind === "live") {
-      const currentPhase = displayedPhasePointer(ctx);
-      if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
-        stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}
-`);
-      }
-      previousPhasePointer = currentPhase;
+      reportPhasePointer(ctx);
       const heartbeatAgeMs = now() - (ctx.heartbeatResult.kind === "found" ? ctx.heartbeatResult.record.last_update_ms : now());
       if (heartbeatAgeMs > HEARTBEAT_INTERVAL_MS) {
         stderr(`canon watch: heartbeat ${formatAge(heartbeatAgeMs)} ago
@@ -2573,12 +2595,7 @@ function watchCmd(args2, deps = {}) {
       return exit(2);
     }
     if (orchestratorStillProgressing(ctx, isOrchestratorAlive, now())) {
-      const currentPhase = displayedPhasePointer(ctx);
-      if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
-        stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}
-`);
-      }
-      previousPhasePointer = currentPhase;
+      reportPhasePointer(ctx);
       if (ctx.heartbeatResult.kind === "found") {
         stderr(`canon watch: heartbeat ${formatAge(now() - ctx.heartbeatResult.record.last_update_ms)} ago
 `);

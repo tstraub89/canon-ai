@@ -878,6 +878,76 @@ void test('watchCmd: emits phase-pointer transitions during live polling', () =>
     assert.match(joined, /\.\n?canon watch: phase/);
 });
 
+void test('watchCmd: a changes_requested reroute reports one backwards transition, not the transient forward flap', () => {
+    const clock = makeClock();
+    const livePid = 7777;
+    const makeLiveCtx = (phases: StatusJson['phases'], state: string): ReturnType<typeof makeContext> => makeContext({
+        statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status: makeStatus(state, phases) },
+        heartbeatResult: { kind: 'found', record: makeHeartbeat(livePid, clock.now()) },
+        canonPid: livePid,
+        resolvedPid: livePid,
+    });
+    const donePrefix: StatusJson['phases'] = {
+        spec: { status: 'done', agent: 'codex' },
+        spec_review: { status: 'done', agent: 'claude' },
+        plan: { status: 'done', agent: 'codex' },
+        implement: { status: 'done', agent: 'codex' },
+    };
+    // code_review running.
+    const reviewCtx = makeLiveCtx({ ...donePrefix, code_review: { status: 'in_progress', agent: 'claude' } }, 'code_review');
+    // Mid-reroute window: code_review stamped done with changes_requested —
+    // the derived pointer transiently reads 'qa'. Watch must hold, not
+    // report code_review → qa.
+    const midRerouteCtx = makeLiveCtx({ ...donePrefix, code_review: { status: 'done', agent: 'claude', verdict: 'changes_requested' } }, 'qa');
+    // Post routeBackTo: implement re-opened, verdict cleared.
+    const reroutedCtx = makeLiveCtx({
+        spec: { status: 'done', agent: 'codex' },
+        spec_review: { status: 'done', agent: 'claude' },
+        plan: { status: 'done', agent: 'codex' },
+        implement: { status: 'in_progress', agent: 'codex' },
+        code_review: { status: 'pending', agent: 'claude', verdict: '' },
+    }, 'implement');
+    const completeCtx = makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('complete', {
+                spec: { status: 'done', agent: 'codex' },
+                spec_review: { status: 'done', agent: 'claude' },
+                plan: { status: 'done', agent: 'codex' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'done', agent: 'claude' },
+                qa: { status: 'done', agent: 'codex' },
+                human_review: { status: 'done', agent: 'claude' },
+            }),
+        },
+        heartbeatResult: { kind: 'missing' },
+        canonPid: null,
+        resolvedPid: null,
+    });
+
+    const contexts = [reviewCtx, reviewCtx, midRerouteCtx, midRerouteCtx, reroutedCtx, completeCtx];
+    let gatherIndex = 0;
+
+    const result = runWatchCommand(['t1'], {
+        nowImpl: clock.now,
+        sleepImpl: clock.sleep,
+        gatherContextImpl: () => contexts[gatherIndex++] ?? completeCtx,
+        probeAliveImpl: (pid: number): void => {
+            if (pid === livePid) return;
+            const err = new Error('ESRCH') as NodeJS.ErrnoException;
+            err.code = 'ESRCH';
+            throw err;
+        },
+    });
+
+    assert.equal(result.exitCode, 0);
+    const joined = result.stderr.join('');
+    assert.doesNotMatch(joined, /code_review → qa/);
+    assert.doesNotMatch(joined, /qa → implement/);
+    assert.match(joined, /phase code_review → implement \(reroute\)/);
+});
+
 void test('watchCmd: escalates to a heartbeat-age notice only after a missed heartbeat tick', () => {
     const clock = makeClock();
     const livePid = 7777;

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`canon watch` no longer reports phantom phase transitions during a reroute.** When a review verdict of `changes_requested` came back, `status.json` transiently shows the review phase `done` before the orchestrator routes back, so watch's derived pointer flapped forward and printed e.g. `code_review → qa` then `qa → implement` when the real transition was `code_review → implement`. Watch now holds the pointer through that window and reports the single backwards move, annotated `(reroute)`.
+
 ### Changed
 
 - **`canon watch` prints a quiet `.` per healthy poll instead of a `heartbeat Ns ago` line every 3 seconds.** The per-poll age line buried phase transitions ~20 noise lines a minute deep, so a `tail` of captured watch output could easily miss them. Healthy ticks now collapse into dot runs, the heartbeat-age notice only prints once the heartbeat is older than one heartbeat interval (30s — a missed tick), and the stale-but-progressing phase-boundary window reports its age instead of staying silent. Classification, exit codes, and the machine-readable summary line are unchanged.
