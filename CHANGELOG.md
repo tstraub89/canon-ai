@@ -6,6 +6,7 @@
 
 ### Changed
 
+- **`canon watch` prints a quiet `.` per healthy poll instead of a `heartbeat Ns ago` line every 3 seconds.** The per-poll age line buried phase transitions ~20 noise lines a minute deep, so a `tail` of captured watch output could easily miss them. Healthy ticks now collapse into dot runs, the heartbeat-age notice only prints once the heartbeat is older than one heartbeat interval (30s — a missed tick), and the stale-but-progressing phase-boundary window reports its age instead of staying silent. Classification, exit codes, and the machine-readable summary line are unchanged.
 - **The detach banner now points at `canon watch`.** When `canon run` auto-detaches, the banner it prints only suggested `tail -f` on the raw run log for monitoring; it now also lists `canon watch <id>`, the purpose-built blocking observer, with the log tail kept as a separate line.
 
 ## [2.6.0] — 2026-08-10

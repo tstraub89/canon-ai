@@ -2370,12 +2370,39 @@ function gatherContext(taskId, deps) {
 }
 function watchCmd(args2, deps = {}) {
   const exit = deps.exit ?? ((code) => process.exit(code));
-  const stdout = deps.stdout ?? ((s) => {
+  const rawStdout = deps.stdout ?? ((s) => {
     process.stdout.write(s);
   });
-  const stderr = deps.stderr ?? ((s) => {
+  const rawStderr = deps.stderr ?? ((s) => {
     process.stderr.write(s);
   });
+  let dotsOpen = false;
+  let atLineStart = true;
+  const closeDots = () => {
+    if (!dotsOpen) return;
+    dotsOpen = false;
+    atLineStart = true;
+    rawStderr("\n");
+  };
+  const tick = () => {
+    if (!dotsOpen && !atLineStart) rawStderr("\n");
+    dotsOpen = true;
+    atLineStart = false;
+    rawStderr(".");
+  };
+  const noteWrite = (s) => {
+    if (s.length > 0) atLineStart = s.endsWith("\n");
+  };
+  const stdout = (s) => {
+    closeDots();
+    rawStdout(s);
+    noteWrite(s);
+  };
+  const stderr = (s) => {
+    closeDots();
+    rawStderr(s);
+    noteWrite(s);
+  };
   const sleep = deps.sleepImpl ?? sleepSync2;
   const now = deps.nowImpl ?? Date.now;
   const pollIntervalMs = deps.pollIntervalMs ?? WATCH_POLL_INTERVAL_MS;
@@ -2521,8 +2548,13 @@ function watchCmd(args2, deps = {}) {
 `);
       }
       previousPhasePointer = currentPhase;
-      stderr(`canon watch: heartbeat ${formatAge(now() - (ctx.heartbeatResult.kind === "found" ? ctx.heartbeatResult.record.last_update_ms : now()))} ago
+      const heartbeatAgeMs = now() - (ctx.heartbeatResult.kind === "found" ? ctx.heartbeatResult.record.last_update_ms : now());
+      if (heartbeatAgeMs > HEARTBEAT_INTERVAL_MS) {
+        stderr(`canon watch: heartbeat ${formatAge(heartbeatAgeMs)} ago
 `);
+      } else {
+        tick();
+      }
       if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
       continue;
     }
@@ -2547,6 +2579,12 @@ function watchCmd(args2, deps = {}) {
 `);
       }
       previousPhasePointer = currentPhase;
+      if (ctx.heartbeatResult.kind === "found") {
+        stderr(`canon watch: heartbeat ${formatAge(now() - ctx.heartbeatResult.record.last_update_ms)} ago
+`);
+      } else {
+        tick();
+      }
       if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
       continue;
     }

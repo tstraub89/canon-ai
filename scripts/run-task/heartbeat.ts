@@ -33,7 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HEARTBEAT_FILENAME = '.heartbeat.json';
-const HEARTBEAT_INTERVAL_MS = 30_000;
+export const HEARTBEAT_INTERVAL_MS = 30_000;
 
 // 2× interval. One missed tick is tolerable noise (slow FS, GC pause);
 // two missed = real stall or process death. Doctor uses this threshold.

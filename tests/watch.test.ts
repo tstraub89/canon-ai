@@ -871,7 +871,75 @@ void test('watchCmd: emits phase-pointer transitions during live polling', () =>
     assert.equal(result.stdout.length, 1);
     assert.match(result.stdout[0], /reason=complete/);
     assert.match(result.stderr.join('\n'), /phase spec_review → plan/);
-    assert.match(result.stderr.join('\n'), /heartbeat .* ago/);
+    // Fresh heartbeats print quiet '.' ticks, not per-poll age lines; the
+    // transition line must start at column 0 (dot run closed by a newline).
+    const joined = result.stderr.join('');
+    assert.doesNotMatch(joined, /heartbeat .* ago/);
+    assert.match(joined, /\.\n?canon watch: phase/);
+});
+
+void test('watchCmd: escalates to a heartbeat-age notice only after a missed heartbeat tick', () => {
+    const clock = makeClock();
+    const livePid = 7777;
+    // Heartbeat written at attach time and never refreshed: poll ages climb
+    // 3s, 6s, ... past HEARTBEAT_INTERVAL_MS (30s) while staying under the
+    // 60s stale bound, so the run stays classified live throughout.
+    const heartbeatBirth = clock.now();
+    const makeLiveCtx = (): ReturnType<typeof makeContext> => makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('plan', {
+                spec: { status: 'done', agent: 'codex' },
+                spec_review: { status: 'done', agent: 'claude' },
+                plan: { status: 'in_progress', agent: 'codex' },
+            }),
+        },
+        heartbeatResult: { kind: 'found', record: makeHeartbeat(livePid, heartbeatBirth) },
+        canonPid: livePid,
+        resolvedPid: livePid,
+    });
+    const completeCtx = makeContext({
+        statusResult: {
+            kind: 'ok',
+            file: '/tmp/t1/status.json',
+            status: makeStatus('complete', {
+                spec: { status: 'done', agent: 'codex' },
+                spec_review: { status: 'done', agent: 'claude' },
+                plan: { status: 'done', agent: 'codex' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'done', agent: 'claude' },
+                qa: { status: 'done', agent: 'codex' },
+                human_review: { status: 'done', agent: 'claude' },
+            }),
+        },
+        heartbeatResult: { kind: 'missing' },
+        canonPid: null,
+        resolvedPid: null,
+    });
+
+    // 12 live polls × 3s ⇒ ages 3s..36s: the first 10 are ≤30s (dots), the
+    // last two cross the interval and must print age lines.
+    const contexts = [...Array.from({ length: 12 }, makeLiveCtx), completeCtx];
+    let gatherIndex = 0;
+
+    const result = runWatchCommand(['t1'], {
+        nowImpl: clock.now,
+        sleepImpl: clock.sleep,
+        gatherContextImpl: () => contexts[gatherIndex++] ?? completeCtx,
+        probeAliveImpl: (pid: number): void => {
+            if (pid === livePid) return;
+            const err = new Error('ESRCH') as NodeJS.ErrnoException;
+            err.code = 'ESRCH';
+            throw err;
+        },
+    });
+
+    assert.equal(result.exitCode, 0);
+    const joined = result.stderr.join('');
+    const ageLines = joined.match(/canon watch: heartbeat .+ ago/g) ?? [];
+    assert.ok(ageLines.length >= 1, `expected at least one age notice, got stderr: ${JSON.stringify(joined)}`);
+    assert.ok((joined.match(/\./g) ?? []).length >= 5, 'expected dot ticks for the fresh-heartbeat polls');
 });
 
 void test('watchCmd: a stale heartbeat while the pid is alive at a phase boundary is not a false step_done', () => {

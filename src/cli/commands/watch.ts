@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
 import { runLogPathFor } from '../../../scripts/run-task/detach.js';
-import { isHeartbeatStale, type HeartbeatReadResult } from '../../../scripts/run-task/heartbeat.js';
+import { HEARTBEAT_INTERVAL_MS, isHeartbeatStale, type HeartbeatReadResult } from '../../../scripts/run-task/heartbeat.js';
 import { gatherRunContext, isStatusJson, probePidAlive, tolerantTaskDir, type RunContext } from '../../../scripts/run-task/run-context.js';
 import { deriveTopLevelStatus } from '../../../scripts/run-task/state.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type Verdict, type StatusJson } from '../../../scripts/run-task/types.js';
@@ -508,8 +508,35 @@ function gatherContext(taskId: string, deps: WatchCmdDeps): RunContext {
 
 export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
     const exit = deps.exit ?? ((code: number): never => process.exit(code));
-    const stdout = deps.stdout ?? ((s: string): void => { process.stdout.write(s); });
-    const stderr = deps.stderr ?? ((s: string): void => { process.stderr.write(s); });
+    const rawStdout = deps.stdout ?? ((s: string): void => { process.stdout.write(s); });
+    const rawStderr = deps.stderr ?? ((s: string): void => { process.stderr.write(s); });
+
+    // Healthy poll ticks print a bare '.' (no newline) so hours of quiet run
+    // collapse into a few dot-lines and real messages — phase transitions,
+    // stall notices, summaries — stay visible in a short log tail. Any real
+    // write first terminates an open dot run so it starts at column 0.
+    let dotsOpen = false;
+    // Follow-mode log chunks can end mid-line; a dot must never append to
+    // such a partial line, so track whether the last real write ended in a
+    // newline and open a fresh line before ticking when it didn't.
+    let atLineStart = true;
+    const closeDots = (): void => {
+        if (!dotsOpen) return;
+        dotsOpen = false;
+        atLineStart = true;
+        rawStderr('\n');
+    };
+    const tick = (): void => {
+        if (!dotsOpen && !atLineStart) rawStderr('\n');
+        dotsOpen = true;
+        atLineStart = false;
+        rawStderr('.');
+    };
+    const noteWrite = (s: string): void => {
+        if (s.length > 0) atLineStart = s.endsWith('\n');
+    };
+    const stdout = (s: string): void => { closeDots(); rawStdout(s); noteWrite(s); };
+    const stderr = (s: string): void => { closeDots(); rawStderr(s); noteWrite(s); };
     const sleep = deps.sleepImpl ?? sleepSync;
     const now = deps.nowImpl ?? Date.now;
     const pollIntervalMs = deps.pollIntervalMs ?? WATCH_POLL_INTERVAL_MS;
@@ -659,7 +686,16 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
                 stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}\n`);
             }
             previousPhasePointer = currentPhase;
-            stderr(`canon watch: heartbeat ${formatAge(now() - (ctx.heartbeatResult.kind === 'found' ? ctx.heartbeatResult.record.last_update_ms : now()))} ago\n`);
+            // A heartbeat younger than one heartbeat interval is business as
+            // usual — worth a dot, not a line. Older means the orchestrator
+            // missed a tick (classifyAttach caps this at the 2×-interval
+            // stale bound), which deserves an explicit age notice.
+            const heartbeatAgeMs = now() - (ctx.heartbeatResult.kind === 'found' ? ctx.heartbeatResult.record.last_update_ms : now());
+            if (heartbeatAgeMs > HEARTBEAT_INTERVAL_MS) {
+                stderr(`canon watch: heartbeat ${formatAge(heartbeatAgeMs)} ago\n`);
+            } else {
+                tick();
+            }
             if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
             continue;
         }
@@ -689,6 +725,14 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
                 stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}\n`);
             }
             previousPhasePointer = currentPhase;
+            // The heartbeat is stale here by definition (classifyAttach
+            // rejected it) — surface the age instead of a quiet dot so the
+            // operator can see the run is in an escalated window.
+            if (ctx.heartbeatResult.kind === 'found') {
+                stderr(`canon watch: heartbeat ${formatAge(now() - ctx.heartbeatResult.record.last_update_ms)} ago\n`);
+            } else {
+                tick();
+            }
             if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
             continue;
         }
