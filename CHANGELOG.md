@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **New spec-writing rule of thumb: enumerate every caller and classify its execution context before asserting how a mechanism works.** A claim like "counter X only increments on event Y" or "this writer can only be invoked from surface Z" is a control-flow claim, and a helper named for one trigger routinely serves several — while whether a call site runs inside an agent's own session or in the orchestrator's process is invisible from the function body. The rule asks authors to grep every caller (including skills and docs, not just source) and classify each site before the spec asserts anything about the mechanism. Lands in the `spec` and `spec-revision` phase prompts, which are bundled into the package and arrive via `canon update`, and in the `canon-spec` skill, which is vendored and arrives via `canon upgrade`.
+
+### Changed
+
+- **Two existing spec-writing rules of thumb sharpened, on round shape and code altitude.** The `≥3 spec_review iterations` rule now says to read the rounds' *content* rather than the count — a round that narrows an already-identified case is convergence, while one that names a new structural case is a real design gap — and on genuine scope-expansion it points at dropping the mechanism class, or deferring to a layer that already owns the concern, before another round of hardening. `Behavioral contracts, not mechanics` gains the symptom that detects a spec which has dropped to code altitude (review rounds re-litigating literal regexes, file layouts, or verbatim command strings) and the fix of moving mechanics into a clearly-labeled non-binding *Implementation Notes* section. Both land in the `spec` and `spec-revision` phase prompts (via `canon update`) and in the `canon-spec` skill (via `canon upgrade`). The skill's `Codebase-wide term renames` rule additionally gains a paraphrase-sweep and permitted-to-remain check on zero-result grep ACs for retired terms; that base rule has never existed in the phase prompts, so the extension is skill-only. All distilled from shipped tasks via a `docs/lessons-learned.md` sweep.
+
 ## [2.7.0] — 2026-08-10
 
 ### Changed
