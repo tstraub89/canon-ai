@@ -33,8 +33,8 @@ export type InvocationRootClassification =
  * Classify the checkout canon was invoked from. Pure string logic — all inputs
  * must already be canonicalized (realpath'd) by the caller so a symlinked
  * filesystem (macOS `/var` → `/private/var`) doesn't produce spurious
- * inequalities (see docs/lessons-learned.md, "Canonicalize real git worktree
- * paths before comparing them").
+ * inequalities (see docs/patterns.md, "Test-writing pitfalls" → "Canonicalize
+ * real git worktree paths on both sides of a comparison").
  *
  * - `main`: the supervising checkout (`activeToplevel === mainRoot`). The
  *   common, fully-supported case.

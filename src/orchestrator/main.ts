@@ -320,7 +320,7 @@ function verifyHandoffFilesCommitted(
     // regardless of which path the auto-commit took. Surfaced 2026-05-07 via canon
     // iteration 3 of handoff-verifier; this is the canonical defense, not the
     // duplicate `git diff HEAD` check that originally lived only in autoCommitCode's
-    // success path. See docs/lessons-learned.md for the incident.
+    // success path.
     const wtDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...verifiableHandoffFiles);
     if (!wtDiff.ok) {
         Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
