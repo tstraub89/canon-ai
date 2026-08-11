@@ -6,7 +6,7 @@ const { version } = JSON.parse(readFileSync('./package.json', 'utf8')) as { vers
 export default defineConfig({
     entry: {
         'cli/index': 'src/cli/index.ts',
-        'scripts/run-task': 'scripts/run-task.ts',
+        'orchestrator/run-task': 'src/orchestrator/run-task.ts',
     },
     format: ['esm'],
     target: 'node24',

@@ -107,7 +107,7 @@ jobs:
           # the implement-phase smoke runs.)
           npm install -g --install-links "git+file://$GITHUB_WORKSPACE"
           canon --version
-          node "$(npm root -g)/canon-ai/dist/scripts/run-task.js" --help
+          node "$(npm root -g)/canon-ai/dist/orchestrator/run-task.js" --help
           SHIM_DIR="$(mktemp -d)"
           ln -s "$(command -v node)" "$SHIM_DIR/node"
           ln -s "$(command -v npm)" "$SHIM_DIR/npm"

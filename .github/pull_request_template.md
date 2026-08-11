@@ -8,7 +8,7 @@
 - [ ] `npm run type-check`
 - [ ] `npm test`
 - [ ] `npm run docs-refs-check`
-- [ ] `npm run build` (rebuild + commit `dist/` if `src/` or `scripts/run-task/` changed)
+- [ ] `npm run build` (rebuild + commit `dist/` if `src/` changed)
 
 ## Notes
 

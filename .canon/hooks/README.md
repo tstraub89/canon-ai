@@ -1,6 +1,6 @@
 # Project hooks
 
-Drop project-specific scripts here. The orchestrator (`scripts/run-task.ts`) checks for these files at well-defined points in the pipeline and runs them when present. Absence is the default — canon-ai itself ships no hooks.
+Drop project-specific scripts here. The orchestrator (`src/orchestrator/main.ts`) checks for these files at well-defined points in the pipeline and runs them when present. Absence is the default — canon-ai itself ships no hooks.
 
 ## Available hooks
 
@@ -36,4 +36,4 @@ fi
 
 ## Adding new hook points
 
-The set of hooks the orchestrator checks is defined in `scripts/run-task.ts`. Adding a new hook means adding a new check site there and a new `<name>.sh` convention here.
+The set of hooks the orchestrator checks is defined in `src/orchestrator/main.ts`. Adding a new hook means adding a new check site there and a new `<name>.sh` convention here.

@@ -79,13 +79,13 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 ### Flow 4: Self-improvement (canon-on-canon)
 
 1. canon-ai develops **trunk-based on `main`** — task work accumulates there directly; there are no `dev` or `release/v*` branches.
-2. Tasks that modify the orchestrator (`scripts/run-task/`, `pipeline-policy.ts`, templates) branch off `main` and run through canon-ai's own pipeline, with worktree isolation so the supervising orchestrator is shielded from edits to itself mid-run.
+2. Tasks that modify the orchestrator (`src/orchestrator/`, `pipeline-policy.ts`, templates) branch off `main` and run through canon-ai's own pipeline, with worktree isolation so the supervising orchestrator is shielded from edits to itself mid-run.
 3. Trivial tweaks (≤ ~10 lines, no logic change) may still be inline; non-trivial changes go through the full pipeline.
 4. A release is cut by landing a version-bump commit on `main` via a short-lived release PR, when there's enough to ship (see `docs/release-process.md`). `main` is the published `canon-ai` npm package — what adopters get when they `npm install`.
 
 ## Tiers, Sizes, and Authorization
 
-(See `scripts/pipeline-policy.ts` for the authoritative matrix; this is the human-readable summary.)
+(See `src/lib/pipeline-policy.ts` for the authoritative matrix; this is the human-readable summary.)
 
 - **Fast tier**: `XS` non-delicate. Spec+plan in one Claude session. Codex spec review skipped (human gate replaces it). Lower model effort.
 - **Full tier**: anything `S`, `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Higher model effort scaling with size; XL/delicate uses the full Codex model at `high` effort (re-baselined from `xhigh` in 1.11.0 — the prior-generation model overthought at `xhigh` with open-ended tools; tier inherited pending 5.6-generation re-eval — see `docs/decisions.md` §"Model-generation re-baseline (2026-06)"). Claude's `code_review` for XL/delicate stays Opus at `xhigh`.
@@ -94,11 +94,11 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 Canon's general definition: `delicate: true` is for surfaces where a regression has **unbounded blast radius** — an undetected bug is materially harder to recover from than a normal bug. The list below names the canon-ai-specific surfaces where this applies.
 
-- **Orchestrator phase-routing logic** (`scripts/run-task/main.ts`: `PHASE_ORDER`, `runPhase()`, `checkAndRoute()`). A bug here corrupts every task that runs after the change lands.
+- **Orchestrator phase-routing logic** (`src/orchestrator/main.ts`: `PHASE_ORDER`, `runPhase()`, `checkAndRoute()`). A bug here corrupts every task that runs after the change lands.
 - **Auto-commit logic** (`autoCommitCode()`). Wrong files staged, missed handoff entries, or bypassed checks lead to invisible regressions in code review.
 - **Validation gates** (`validateHandoff()`, future pre-flight checks). A buggy gate either rejects valid work (blocking everyone) or accepts invalid work (silent corruption).
-- **Pipeline policy** (`scripts/pipeline-policy.ts`). Wrong tier, wrong model, wrong loop cap — these affect cost, latency, and reliability for every subsequent task.
-- **Status.json schema or parser changes** (`.canon/templates/status.json` + parsers in `scripts/run-task/validation.ts` and `scripts/run-task/state.ts`). A schema break in flight can leave in-progress tasks unrunnable.
+- **Pipeline policy** (`src/lib/pipeline-policy.ts`). Wrong tier, wrong model, wrong loop cap — these affect cost, latency, and reliability for every subsequent task.
+- **Status.json schema or parser changes** (`.canon/templates/status.json` + parsers in `src/orchestrator/validation.ts` and `src/orchestrator/state.ts`). A schema break in flight can leave in-progress tasks unrunnable.
 - **Worktree machinery** (worktree creation, sync, cleanup). Bugs here corrupt git state in ways that are slow to detect and expensive to recover from.
 
 Adopters of canon-ai add their own project-specific delicate domains to this list (typically: auth, billing, payments, persistent-storage migrations, security-relevant cryptography, regulated-data handling like PHI or PII).

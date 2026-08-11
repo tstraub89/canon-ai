@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// scripts/run-task/signals.ts
+// src/orchestrator/signals.ts
 var activeChildren = /* @__PURE__ */ new Set();
 var shutdownHooks = [];
 function registerShutdownHook(hook) {
@@ -47,20 +47,20 @@ function forwardAndExit(sig) {
 process.on("SIGINT", () => forwardAndExit("SIGINT"));
 process.on("SIGTERM", () => forwardAndExit("SIGTERM"));
 
-// scripts/run-task.ts
+// src/orchestrator/run-task.ts
 import { pathToFileURL } from "url";
 
-// scripts/run-task/main.ts
+// src/orchestrator/main.ts
 import { spawnSync as spawnSync6 } from "child_process";
 import fs18 from "fs";
 import os from "os";
 import path18 from "path";
 
-// scripts/run-task/phases/code-review.ts
+// src/orchestrator/phases/code-review.ts
 import fs13 from "fs";
 import path13 from "path";
 
-// scripts/run-task/cli.ts
+// src/orchestrator/cli.ts
 import fs from "fs";
 var exitReason = null;
 var exitHandlersRegistered = false;
@@ -283,11 +283,11 @@ function isSynchronousMode(args) {
   return !!(args.pr || args.push || args.ship || args.step || args.expectPhase != null);
 }
 
-// scripts/run-task/git.ts
+// src/orchestrator/git.ts
 import { spawnSync as spawnSync3 } from "child_process";
 import path5 from "path";
 
-// scripts/run-task/env.ts
+// src/orchestrator/env.ts
 import { spawnSync } from "child_process";
 import fs2 from "fs";
 import path from "path";
@@ -344,7 +344,7 @@ function warnLegacyEnvVars() {
   }
   for (const { old, reason } of LEGACY_IGNORED_ENV_VARS) {
     if (process.env[old]) {
-      console.error(`\u26A0\uFE0F  ${old} is no longer honored \u2014 ${reason}. Update the matrix in scripts/run-task.ts if you need different effort.`);
+      console.error(`\u26A0\uFE0F  ${old} is no longer honored \u2014 ${reason}. Update the matrix in src/lib/pipeline-policy.ts if you need different effort.`);
     }
   }
 }
@@ -399,7 +399,7 @@ var config = {
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
 
-// scripts/run-task/heartbeat.ts
+// src/orchestrator/heartbeat.ts
 import fs3 from "fs";
 import path2 from "path";
 var HEARTBEAT_FILENAME = ".heartbeat.json";
@@ -501,12 +501,12 @@ function isHeartbeatStale(record, now = Date.now()) {
   return now - record.last_update_ms > HEARTBEAT_STALE_AFTER_MS;
 }
 
-// scripts/run-task/state.ts
+// src/orchestrator/state.ts
 import fs4 from "fs";
 import { spawnSync as spawnSync2 } from "child_process";
 import path3 from "path";
 
-// scripts/run-task/types.ts
+// src/orchestrator/types.ts
 var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
 var _PHASE_STATUS_VALUES = ["pending", "in_progress", "done", "changes_requested", "blocked"];
 var _VERDICT_VALUES = ["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"];
@@ -517,7 +517,7 @@ function isVerdict(value) {
   return typeof value === "string" && _VERDICT_VALUES.includes(value);
 }
 
-// scripts/run-task/state.ts
+// src/orchestrator/state.ts
 function effectiveWorktreesRoot() {
   return process.env.CANON_WORKTREES_ROOT ? path3.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
 }
@@ -811,7 +811,7 @@ function autoBlockPhase(taskIds, phase, iterationCount, reason) {
   }
 }
 
-// scripts/run-task/worktree.ts
+// src/orchestrator/worktree.ts
 import fs5 from "fs";
 import path4 from "path";
 var PIPELINE_TELEMETRY_FILES = [
@@ -1184,7 +1184,7 @@ function teardownWorktree(taskId) {
   else info("Worktree removed.");
 }
 
-// scripts/run-task/git.ts
+// src/orchestrator/git.ts
 function runCommand(command, args) {
   const result = spawnSync3(command, args, {
     cwd: REPO_ROOT,
@@ -1496,7 +1496,7 @@ function getTreeDriftFiles(baseRef, cwd) {
   return { files: parseNameStatusOutput(result.stdout), ok: true, stderr: "" };
 }
 
-// scripts/pipeline-policy.ts
+// src/lib/pipeline-policy.ts
 var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
 var SINGLE_PASS_BUDGET_BY_SIZE = {
   XS: "5.00",
@@ -1646,7 +1646,7 @@ function getPipelinePolicy(tasks, config3) {
   };
 }
 
-// scripts/run-task/policy.ts
+// src/orchestrator/policy.ts
 var config2 = {
   claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
   claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
@@ -1696,10 +1696,10 @@ function isPlanCombined2(status) {
   return isPlanCombined({ task_size: status.task_size, delicate: status.delicate });
 }
 
-// scripts/run-task/agents/claude.ts
+// src/orchestrator/agents/claude.ts
 import { spawn as spawn2 } from "child_process";
 
-// scripts/run-task/metrics.ts
+// src/orchestrator/metrics.ts
 import fs6 from "fs";
 import path6 from "path";
 function getMetricsFile(activeCwd) {
@@ -1711,7 +1711,7 @@ function recordMetric(entry) {
     fs6.writeFileSync(metricsFile, [
       "# Workflow Metrics",
       "",
-      "> Auto-logged by `scripts/run-task.ts`. One row per agent invocation.",
+      "> Auto-logged by canon's orchestrator. One row per agent invocation.",
       "> Tokens: per-invocation total (input + cache + output). Parsed from the agent's structured output \u2014 `claude -p --output-format stream-json` for Claude, `codex exec --json` for Codex. Interactive-mode invocations are not tracked.",
       "",
       "| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |",
@@ -1729,7 +1729,7 @@ function recordMetric(entry) {
   );
 }
 
-// scripts/run-task/prompts/helpers.ts
+// src/orchestrator/prompts/helpers.ts
 var CLAUDE_STARTUP = "Read docs/patterns.md before starting.\nSkim docs/lessons-learned.md for entries relevant to your task area.\nRead docs/architecture.md if the task touches core data flow or state management.\nRead docs/product-context.md if the task touches user-visible behavior or Pro features.\nSkip docs/decisions.md unless the task involves explicit UX tradeoffs.\nCommunication: tone is project taste; honest signal is canon discipline \u2014 surface real disagreement rather than yielding to politeness.";
 var CODEX_STARTUP = 'Read docs/patterns.md and docs/codebase-map.md before starting.\nSkim docs/lessons-learned.md for entries relevant to your task area.\nSkip docs/decisions.md, docs/product-context.md unless the task explicitly involves product or UX decisions.\nGround every claim in the current file, diff, or artifact before you state it. Do not rely on prior-session memory for code existence, validation results, or completion status.\nOn resumed sessions, re-read the task-specific files named in the prompt and inspect the current working tree before saying anything is already done.\n\nGit ownership: the pipeline orchestrator handles staging, committing, and pushing \u2014 do NOT run `git add`, `git commit`, or `git push`. Edit files in the working tree only; the orchestrator reads `git status` after your session and stages every file listed in handoff.md\'s Changes table. Read-only git is fine (`git status`, `git diff`, `git log`, `git show`).\n\nIf a code review claims a file is "missing from the commit" or "staged but not committed," that is a pipeline-orchestration issue, not an implementation issue. Record it as a Blocker in handoff.md with the `[pipeline]` label and do not retry `git add`/`git commit` to recover \u2014 the sandbox blocks `.git` writes by design, and the orchestrator owns the recovery path.\n\nCommunication: tone is project taste; honest signal is canon discipline \u2014 surface real disagreement rather than yielding to politeness.\nBranch sync (non-pipeline sessions): `git fetch origin && git pull --rebase origin <branch>` before starting work. If `origin/<base>` is ahead, sync and rerun local validation before PR handoff. If `<base>` moves during review, resync and rerun validation. In pipeline sessions the orchestrator manages branch state \u2014 read the worktree state as-is; do not run pull/push.';
 var QA_STARTUP = "Read CHANGELOG.md for voice and version reference.\nRead docs/lessons-learned.md for recent insights to distill.\nNo full codebase context needed for QA \u2014 read each task's spec.md, handoff.md, and notes.md directly.";
@@ -1756,7 +1756,7 @@ ${block}
 ${trimmed.trimStart()}`;
 }
 
-// scripts/run-task/agents/stream.ts
+// src/orchestrator/agents/stream.ts
 import { spawn } from "child_process";
 import readline from "readline";
 function streamProcess(command, args, options) {
@@ -1875,7 +1875,7 @@ function formatLiveTick(event) {
   return null;
 }
 
-// scripts/run-task/agents/claude.ts
+// src/orchestrator/agents/claude.ts
 var CLAUDE_RESUME_NOT_FOUND_RE = /No conversation found with session ID/i;
 var CLAUDE_UNKNOWN_EFFORT_RE = /unknown (?:option|flag)[^\n]*--effort/i;
 var CLAUDE_TOO_OLD_HINT = "Claude Code is too old for canon \u2014 run `canon doctor` to verify (canon requires Claude Code 2.1.72+).";
@@ -2082,11 +2082,11 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
   }
 }
 
-// scripts/run-task/agents/codex.ts
+// src/orchestrator/agents/codex.ts
 var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
 function invalidCodexEffortMessage(effort) {
   if (VALID_CODEX_EFFORTS.includes(effort)) return null;
-  return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. This per-invocation override supersedes any user-level model_reasoning_effort set in ~/.codex/config.toml \u2014 fix the resolved value in scripts/pipeline-policy.ts, not the user's Codex config.`;
+  return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. This per-invocation override supersedes any user-level model_reasoning_effort set in ~/.codex/config.toml \u2014 fix the resolved value in src/lib/pipeline-policy.ts, not the user's Codex config.`;
 }
 async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
   const invalidEffort = invalidCodexEffortMessage(effort);
@@ -2251,7 +2251,7 @@ async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsC
   }
 }
 
-// scripts/run-task/review-loop.ts
+// src/orchestrator/review-loop.ts
 function isUsableCap(cap) {
   return Number.isInteger(cap) && cap >= 0;
 }
@@ -2337,11 +2337,11 @@ function evaluateCodeReviewLoop(tasks, cap) {
   };
 }
 
-// scripts/run-task/validation.ts
+// src/orchestrator/validation.ts
 import fs7 from "fs";
 import path7 from "path";
 
-// scripts/run-task/markdown-table.ts
+// src/orchestrator/markdown-table.ts
 function splitTableLine(line) {
   const cells = [];
   let cell = "";
@@ -2607,7 +2607,7 @@ function parseTable(markdown, sectionHeading) {
   return rows;
 }
 
-// scripts/run-task/validation.ts
+// src/orchestrator/validation.ts
 function checkAcCoveragePlaceholders(handoffContent) {
   if (!handoffContent.split("\n").some((line) => line.trimEnd() === "## AC Coverage")) {
     return ["AC Coverage section is missing"];
@@ -3669,11 +3669,11 @@ function buildSharedDocAbortMessage(abortedFiles) {
   ].join("\n");
 }
 
-// scripts/run-task/prompts/index.ts
+// src/orchestrator/prompts/index.ts
 import fs9 from "fs";
 import path9 from "path";
 
-// scripts/run-task/context.ts
+// src/orchestrator/context.ts
 import fs8 from "fs";
 import path8 from "path";
 function extractAffectedFiles(taskId) {
@@ -4353,7 +4353,7 @@ mustache.Context = Context;
 mustache.Writer = Writer;
 var mustache_default = mustache;
 
-// scripts/run-task/prompts/render.ts
+// src/orchestrator/prompts/render.ts
 function renderTemplate(template, view) {
   const prevEscape = mustache_default.escape;
   mustache_default.escape = (text) => text;
@@ -4364,40 +4364,40 @@ function renderTemplate(template, view) {
   }
 }
 
-// scripts/run-task/prompts/templates/code-review-foreman.md
+// src/orchestrator/prompts/templates/code-review-foreman.md
 var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n## Code-Review Rules of Thumb (Foreman)\n\n- **Reviewer diffs against the task baseline, not `main`, on release branches**: on a shared release branch ahead of `main`, always diff against the task's baseline \u2014 diffing against `main` attributes unrelated work to the task.\n- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: when operating across REPO_ROOT and a task worktree, `git -C /absolute/path` avoids silent cwd reversion between tool calls.\n- **Don't infer one git invariant from another**: `git status --porcelain` empty \u2260 origin matches HEAD; `origin/<branch>` exists \u2260 origin matches HEAD; PR exists \u2260 PR is in the expected state. Do the actual check directly.\n- **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At \u22653 sites, extract the shared helper and route all sites through it.\n\nYour job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. The lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give the Claude lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold-Claude lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Injected Cold-Codex Findings\n\n{{#hasColdCodexFindings}}\nThe orchestrator ran `codex review` over the task's branch diff before spawning you. Its findings are reproduced below. These are unanchored: Codex reviewed adversarially without the spec as a checklist. Treat them as the third lens input. Do not re-run Codex; synthesize these findings alongside the Claude lens outputs.\n\n{{{coldCodexFindings}}}\n{{/hasColdCodexFindings}}\n{{^hasColdCodexFindings}}\nNo cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.\n{{/hasColdCodexFindings}}\n\n## Foreman Protocol\n\n### 1. Spawn Claude Lenses In Parallel\n\nUse the Task tool to spawn the Claude lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold-Claude lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nThe injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.\n\n### 2. Adjudicate\n\nUse the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record \"flagged by N lenses.\" A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement \u2014 the same behavior flagged by cold-Claude and cold-Codex \u2014 must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.\n2. Keep the two reconciliation checks separate:\n   - Does it hold against the code? For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.\n   - Is it in spec scope? Apply this only to anchored-lens findings as part of the Stage 1 / Stage 2 charter.\n   - Forbidden: do not dismiss a verified cold-Claude or cold-Codex finding merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Optional nits or cleanup without blocking findings -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
 
-// scripts/run-task/prompts/templates/implement.md
+// src/orchestrator/prompts/templates/implement.md
 var implement_default = "You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session's memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what's in the plan, use it. Document every deviation in handoff.md under \"Deviations\" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\n## Implementation Rules\n\n**Safe-First Rules** \u2014 always applicable regardless of stack:\n1. For storage, reload, sync, or data-affecting flows: ship the safer guarded behavior first.\n2. Behavior that reloads the app, replaces local state, or dismisses user work must be gated by explicit user action.\n3. Prefer shared types over duplicating signatures.\n\n**Scope Discipline** \u2014 always applicable; the spec is the contract:\n1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec's *Affected Files* table, stop, document the gap in `handoff.md` under *Blockers*, and surface it for human attention. Do not silently expand scope.\n2. **No unauthorized new abstractions.** Do not introduce new top-level modules, services, packages, or routing layers that the spec did not authorize. Minor refactors within an authorized file are fine; new abstractions are an architecture decision and belong in the spec.\n3. **No incidental dependency changes.** Do not add, remove, upgrade, or downgrade dependencies (or their pinned versions) unless the spec explicitly requests it.\n\n**Lint & Type Safety Policy** \u2014 always applicable:\n1. **Suppressing a lint or type error is a last resort**, not a convenience escape hatch. Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*.\n2. **`any` / dynamic typing**: When the shape is truly unknown at the boundary, type as `unknown` and narrow explicitly.\n\n**Bug/Flake-Fix Red-First Checkpoint** \u2014 applicable when a spec's ACs include a red-first regression test:\nWrite the test and run it against the pre-fix code first; confirm it fails *for the reason the spec states*, then apply the fix and confirm it passes. Report the red run (command + observed failure) in handoff.md. If the test cannot be made to fail on the pre-fix code for the stated reason, stop \u2014 the spec's mechanism is wrong. Document it in handoff.md under Blockers with label `[wrong-premise]` and do not implement a fix on a premise you could not reproduce. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative before fixing if it is executable in your sandbox (e.g. an integration fixture) and report the outcome in handoff.md the same way; if it is not executable (e.g. a documented manual repro), state that in handoff.md instead \u2014 never report an outcome for a run that did not happen.\n\n**Parsing Structured Input** \u2014 always applicable when implementing a parser for author-facing structured input:\nParse cell-by-cell with explicit rejection, not a permissive whole-string regex. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason at the parse boundary.\n\nRun ALL applicable validation checks before writing handoff. See \"Validation Required\" in each spec.md. The universal change-type \u2192 check-category matrix:\n\n| Change Type | Required Check Categories |\n|---|---|\n| Most changes | Linting, type checking, unit tests |\n| Docs references | Docs references |\n| Routes / config / build | Full build |\n| UI / interaction changes | End-to-end tests |\n| Content / SEO / metadata | Prerender / sitemap / feed regeneration |\n| Schema / migration | Migration runner + manual review |\n| Cross-platform | Subset of the above on each platform |\n\nFor which command runs each category: see `docs/architecture.md` \xA7Validation (project command bindings). Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec's Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or \"Validation Outcomes\" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
-// scripts/run-task/prompts/templates/implement-reroute.md
+// src/orchestrator/prompts/templates/implement-reroute.md
 var implement_reroute_default = "You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n0. If a task's line above marks it EXEMPT, skip steps 1-2 for that task entirely \u2014 its spec has NO Amendment section and its plan has NO Reroute Plan section, by design. For exempt tasks, follow the task-specific line above: approved siblings only need shared-behavior re-verification, while siblings with prior review findings must still address those findings.\n1. For each task above, read `tasks/<id>/spec.md` from your current working directory (the worktree). REPO_ROOT's copy is the pre-implement scaffold and does NOT contain operator amendments. Locate the exact heading named in its entry \u2014 `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.\n2. Check `tasks/<id>/plan.md` for `## Reroute Plan` (round 1) or `## Reroute Plan Round N` (N = that task's reroute round). If present, use that section as the delta guide. If absent (fast-tier reroute with no conversational reroute plan), read the base plan for orientation.\n3. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n4. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n5. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n6. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec's Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n7. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. The reviewer reads handoff.md as the single source of truth, not your prior session's context.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\n**Bug/flake-fix red-first checkpoint** \u2014 if the amendment adds or modifies a red-first regression-test AC: write and run the test against the task's current state **before** making this round's fix edits, and confirm it fails *for the reason the spec states*; then apply the fix and confirm it passes. Report the red run in handoff.md. If it cannot be made to fail for that reason, record a `[wrong-premise]` Blocker instead of implementing on an unconfirmed premise. If the amendment instead relies on the environment-bound-and-impractical escape, run its named deterministic alternative if it is executable in your sandbox and report the outcome in handoff.md; if it is not executable (e.g. a documented manual repro), state that instead \u2014 never report an outcome for a run that did not happen.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
-// scripts/run-task/prompts/templates/implement-revisions.md
+// src/orchestrator/prompts/templates/implement-revisions.md
 var implement_revisions_default = '{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you\'re resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template\'s "On revision rounds" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n{{#hasPreflightFindings}}\nYour prior iteration was rejected by the orchestrator\'s pre-flight gate **before any Claude review ran**. The rejection details are recorded in `review.md` under `## Validation Gate` / `## Pre-Flight Rejection`.\n\nTasks with pre-flight rejection feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the pre-flight block in `tasks/<id>/review.md` and follow **whichever framing it carries**:\n   - **"Fix the handoff"** items \u2192 fix `handoff.md` (Validation Outcomes rows, AC Coverage table, Changes table).\n   - **"Fix the code"** items \u2192 a required check failed on a file you changed. Fix the regression, re-run the check, and update the handoff.\n   - Both framings may be present \u2014 address all items from both before resubmitting.\n2. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}`. Include the delta: which items you addressed and how.\n{{/hasPreflightFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\n\n**Iteration rules:**\n\n- **Reverting a file**: For a byte-perfect revert to the task baseline, use `git show origin/<base-branch>:<path>` (read-only git, always allowed) and write the output to the file.\n  - *Perfect revert* (file no longer in `git diff base...HEAD`): delete it from all prior iteration Changes tables in `handoff.md`.\n  - *Imperfect revert* (trailing newline or other residual remains): add it to the current iteration\'s Changes table with "Reverted to original (describe residual diff)".\n- **Referencing deleted (or not-yet-created) files in artifacts**: `docs-refs-check` flags a backtick path-ref to a file that does not exist. Referencing deleted paths in the handoff Changes-table first column must use `[path](path)` markdown-link form only \u2014 backtick form fails both checks.\n- **Rerouted / revised tasks \u2014 the pre-flight diff is cumulative**: the verifier checks the union of all Changes tables against `git diff <base>...HEAD`. Before submitting, run `git diff <base>...HEAD --name-only` and confirm every listed path is covered by at least one Changes-table row across ALL iterations.\n- **Bug/flake-fix red-first checkpoint**: if this round adds or modifies the spec\'s red-first regression test, write and run the test **before** making this round\'s fix edits and confirm it fails *for the reason the spec states*; then apply the fix and confirm it passes. Report the red run in the handoff delta. If it cannot be made to fail for that reason, stop and record a `[wrong-premise]` Blocker in handoff.md \u2014 do not implement around an unconfirmed premise. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative if it is executable in your sandbox and report the outcome in the handoff delta; if it is not executable (e.g. a documented manual repro), state that instead \u2014 never report an outcome for a run that did not happen.\n\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
-// scripts/run-task/prompts/templates/plan-reroute.md
+// src/orchestrator/prompts/templates/plan-reroute.md
 var plan_reroute_default = "You are updating the implementation plan for {{taskScope}} for {{projectName}} after a human reroute.\n\n{{{startup}}}\n\nThe spec was amended after human review and Codex has reviewed the amendment. Your job is to **append** a reroute plan section to `plan.md`; do not rewrite or remove existing plan content.\n\n{{{roundBanner}}}Amendment review verdicts:\n{{{verdictLines}}}\n\nFor each task \u2014 EXCEPT tasks whose line above marks them EXEMPT (those have no amendment; skip every step below for them and append NO Reroute Plan section to their plan.md):\n1. Read `tasks/<id>/spec.md` from your current directory, including the amendment for the round listed above.\n2. Read `tasks/<id>/plan.md` to understand the prior plan.\n3. Read `tasks/<id>/handoff.md` to understand what Codex previously shipped.\n4. Read `tasks/<id>/spec-review.md` for the latest reroute amendment review and any nits to incorporate.\n5. Append a new section to `tasks/<id>/plan.md`:\n   - Round 1: `## Reroute Plan`\n   - Round N >= 2: `## Reroute Plan Round N`\n6. Plan only the delta from the amendment. Reference specific files, functions, and existing patterns. Acknowledge prior plan steps that still apply without re-planning them.\n\nDo **not** rewrite or remove existing sections from `plan.md`. The appended reroute plan is what implement-reroute reads as its delta guide.\n\nWhen done, run:\n{{{phaseCommands}}}\n\n<!-- per-round append shape:\n## Reroute Plan [Round N]\n### Delta\n- ...ordered steps for the amendment delta only...\n-->\n";
 
-// scripts/run-task/prompts/templates/plan.md
+// src/orchestrator/prompts/templates/plan.md
 var plan_default = "You are writing implementation plans for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n{{{verdictLines}}}\n\nFor each task, read tasks/<id>/spec.md and tasks/<id>/spec-review.md. Address any `changes_requested` items before writing the plan. If the verdict is `approved_with_nits`, incorporate the nits into the plan \u2014 they don't require spec changes but should inform implementation decisions.\n\nWrite tasks/<id>/plan.md for each task with ordered implementation steps. Reference specific files, existing patterns, and code examples from the codebase. Codex implements directly from this plan.\n\nIf you encounter spec gaps, append to tasks/<id>/notes.md (prefix: [plan]).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
-// scripts/run-task/prompts/templates/qa.md
+// src/orchestrator/prompts/templates/qa.md
 var qa_default = 'You are writing QA summaries for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks:\n{{{taskLines}}}\n\nFor each task:\n1. **Use the Write tool** to create tasks/<id>/done.md \u2014 plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, decisions made, open questions.\n   \u26A0\uFE0F CRITICAL: Use the `Write` tool \u2014 do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.\n2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check\'s latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.\n   - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.\n   - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.\n3. Include a **Proposed Changelog** section in done.md \u2014 the changelog **entry text only**. Do **NOT** include a version number, a "Proposed version" line, or a bump tier (Patch/Minor/Major): the version is decided at the release step (`/canon-changelog` + human), never by QA.\n   - **Canon release rules (non-negotiable)**: (1) Agents do not bump versions or land changelog edits without explicit scope authorization. (2) The QA step proposes a draft changelog entry text only \u2014 not the version number. (3) Changelog + version bump are committed separately from code changes (when a project versions its releases). (4) No major versioning surprises: if a task introduces a breaking change the spec didn\'t flag, raise it before shipping.\n   - Read `docs/decisions.md` \xA7"Versioning and release policy" for this project\'s changelog **scope** (which changes warrant an entry). The bump tier / SemVer interpretation is the release step\'s call, not QA\'s \u2014 do not propose one.\n   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.\n   - Apply the "would a user notice" test to every candidate bullet (or the project\'s equivalent scope test): if a candidate falls outside the project\'s defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change \u2014 omit from changelog") rather than inventing a bullet.\n   - Implementation mechanics belong in the "What Changed" section above \u2014 not in the proposed changelog.\n   The human finalizes the changelog entry.\n4. **For single tasks only \u2014 use the Write tool** to create `tasks/<id>/pr-body.md` \u2014 the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work.\n   {{#prTemplate}}\n   The repo has this PR template. Fill every section with specifics from what shipped. Keep the headings; replace every placeholder:\n\n   {{{prTemplate}}}\n   {{/prTemplate}}\n   {{^prTemplate}}\n   No PR template found. Use this structure:\n\n   ## Summary\n   1\u20133 bullets: what changed and why.\n\n   ## Changes\n   Key files or areas touched, described for a reviewer.\n\n   ## How to Test\n   Steps a reviewer can follow to verify the change.\n\n   ## Notes for Reviewer\n   Any context, caveats, or follow-up items.\n   {{/prTemplate}}\n   \u26A0\uFE0F Write as the human engineer who did the work \u2014 not as the AI or tool that produced it (Claude, Codex, canon, an LLM). \u2705 e.g. "Fix the pagination off-by-one that dropped the last row." \u274C e.g. "\u{1F916} Generated with Claude Code."\n   Skip this step entirely for bundle tasks \u2014 per-task bodies are not combined for bundle PRs.\n\nAfter writing all done.md files:\n- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries \u2014 not this task\'s earlier entries, and never another task\'s. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action \u2014 never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md \u2192 "How to use this doc".)\n- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly \u2014 the qa \u2192 done transition writes or upserts that row automatically from status.json plus this section.\n\n  ```markdown\n  ## Quality Log\n  - Spec verdict: <the FIRST spec_review verdict this task ever received \u2014 approved / approved_with_nits / changes_requested; leave blank only if truly unknown>\n  - Human reroute?: <Yes/No \u2014 did the human reject at human_review and force a re-implement? Do not infer this from any reroute counter; if this is a fresh QA pass with no human_review rejection yet, answer No>\n  - Dropped ACs: <count of ACs the implementation missed, caught in code review>\n  - Validation gaps: <count of validation checks that should have run but did not>\n  - Notes: <one-line summary of anything notable \u2014 single line, no embedded line breaks>\n  ```\n\n  On a re-upsert after a reroute, only fill in cells that changed or that you are correcting \u2014 an omitted cell keeps its previously recorded value. In particular, do not overwrite an already-recorded `Spec verdict` with the current status.json verdict; that column means the first spec_review verdict, and status.json only retains the latest.\n\n**Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):\n- [ ] Version correct (per project policy; skip if unversioned)\n- [ ] Changelog updated if needed (per project policy; skip if unversioned)\n- [ ] PR body current\n- [ ] Final CI/CD checks green\n- [ ] Final diff matches spec intent\n\n**Output Format for Human** \u2014 `done.md` must contain:\n1. One-paragraph plain-English summary\n2. Files changed\n3. How to test (product-level steps, not code)\n4. Test results table\n5. Decisions made during implementation\n6. Open questions needing human input\n\n**Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently \u2014 reference the symbol or path; do not restate the value.\n\n**Commit Ownership** \u2014 three change categories:\n- Code changes \u2192 task branch, committed by the orchestrator after Codex static validation.\n- Pre-implement scaffold \u2192 base branch, committed by the orchestrator before first implement.\n- Changelog + version bump (if versioned) \u2192 separate commit, human + Claude, after human_review.\n\n- **Docs freshness \u2014 Two-checkpoint**: scan the five protected docs (`docs/architecture.md`, `docs/codebase-map.md`, `docs/patterns.md`, `docs/product-context.md`, `docs/decisions.md`) for references that {{docsScope}} *contradicts* \u2014 a renamed symbol, a moved file, a behavior this task changed \u2014 and correct those stale references. That is the only edit QA makes to permanent docs. Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries \u2014 promotion is the human sweep, not Docs freshness.\n- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md now holds more than ~15 entries, add one line to this task\'s done.md \u2014 `Maintenance: lessons-learned.md has N entries; a human lessons sweep is due (see docs/lessons-learned.md \u2192 "How to use this doc").` Do not perform the sweep yourself.\n\nWhen done, run (use the Bash tool \u2014 do not just output the command as text):\n{{{phaseCommands}}}\n';
 
-// scripts/run-task/prompts/templates/spec.md
+// src/orchestrator/prompts/templates/spec.md
 var spec_default = '{{{header}}}\n\n{{{startup}}}\n\n{{{instructions}}}\n{{{bundleNote}}}\n{{#doneNote}}\nNote: {{{doneNote}}}{{/doneNote}}\n\n**Spec-writing rules of thumb** \u2014 apply when writing each spec:\n\n- **Name effects to DELETE** \u2014 frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" \u2014 not separate "Add" and "Remove" bullets.\n- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe; bare prose negation is fragile.\n- **Symbols named in ACs must exist** \u2014 grep for every function or symbol an AC names; verify its return shape matches the spec\'s assumed data contract before marking spec done.\n- **Behavioral contracts, not mechanics** \u2014 ACs describe observable behavior; defer implementation mechanics (signatures, constant names, precise algorithms) to plan/implement.\n- **Bug and flake-fix specs need a confirmed mechanism and red-first test** \u2014 For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed \u2014 not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.\n- **At \u22653 spec_review iterations, read the round-over-round shape** \u2014 label each round *edge-fine-tune* (missed path, single validator) or *scope-expansion* (new sub-problem each round). If scope-expansion, redesign the AC rather than iterate further.\n- **Refactor specs need structural caps** \u2014 provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.\n- **UI spatial / gesture tasks** \u2014 flag "visual positioning \u2014 expect human iteration" or "runtime debugging required" in *Known Risks*.\n- **Sensitive-surface escalation** \u2014 flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.\n\n{{{selfCheck}}}\n\nWhen done, run (one per task):\n{{{phaseCommands}}}\n';
 
-// scripts/run-task/prompts/templates/spec-revision.md
+// src/orchestrator/prompts/templates/spec-revision.md
 var spec_revision_default = 'You are revising specs for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks with review feedback:\n{{{reviewLines}}}\n\nAddress every `changes_requested` finding in each spec.md.{{#combined}}\nAlso update plan.md if spec changes affect the implementation approach.{{/combined}}\n\n**Spec-writing rules of thumb** \u2014 apply when revising each spec:\n\n- **Name effects to DELETE** \u2014 frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" \u2014 not separate "Add" and "Remove" bullets.\n- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe; bare prose negation is fragile.\n- **Symbols named in ACs must exist** \u2014 grep for every function or symbol an AC names; verify its return shape matches the spec\'s assumed data contract before marking spec done.\n- **Behavioral contracts, not mechanics** \u2014 ACs describe observable behavior; defer implementation mechanics (signatures, constant names, precise algorithms) to plan/implement.\n- **Bug and flake-fix specs need a confirmed mechanism and red-first test** \u2014 For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed \u2014 not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.\n- **At \u22653 spec_review iterations, read the round-over-round shape** \u2014 label each round *edge-fine-tune* (missed path, single validator) or *scope-expansion* (new sub-problem each round). If scope-expansion, redesign the AC rather than iterate further.\n- **Refactor specs need structural caps** \u2014 provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.\n- **UI spatial / gesture tasks** \u2014 flag "visual positioning \u2014 expect human iteration" or "runtime debugging required" in *Known Risks*.\n- **Sensitive-surface escalation** \u2014 flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
-// scripts/run-task/prompts/templates/spec-review-reroute.md
+// src/orchestrator/prompts/templates/spec-review-reroute.md
 var spec_review_reroute_default = "You are reviewing {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nA human rerouted this task after human review. The original spec was already reviewed and approved. Your job is to review **the amendment and its integration** with the already-approved spec, not to re-litigate settled findings.\n\n{{{roundBanner}}}Tasks with amendments to review:\n{{{taskLines}}}\n\n**Amendment review scope** (for each task \u2014 EXCEPT tasks whose line above marks them EXEMPT: those have no amendment and require no review work this round; do not request changes for a missing Amendment heading on them):\n1. Read `tasks/<id>/spec.md` from your current directory. Locate the exact amendment heading named above: `## Amendment` for round 1, or `## Amendment Round N` for round 2+.\n2. Read `tasks/<id>/spec-review.md` so you know what was already reviewed and do not re-raise settled findings.\n3. Review the amendment itself: is it implementable as written, are ACs verifiable, and are edge cases handled?\n4. Review integration with approved ACs: does the amendment contradict, weaken, duplicate, or leave gaps against previously approved requirements?\n5. Review overall shape: with the amendment included, is the spec still coherent and in scope?\n6. Do **not** read or audit `handoff.md`, `review.md`, or `done.md`. This phase stays in the spec domain.\n\nGrounding rule: if a finding depends on a symbol or file, re-open it before claiming it exists.\n\n**Cross-review rule**: No agent reviews its own output. Claude writes specs \u2192 Codex reviews specs. Codex writes code \u2192 Claude reviews code.\n\n**Diagnose before you fix \u2014 3-role checkpoint**: For any amendment addressing a bug or flake fix, each role owns a checkpoint: the spec author states the confirmed mechanism and its evidence in *Problem* (a deterministic mechanism \u2014 fixed inputs hit the same wrong branch every run \u2014 may cite a trace with the verified trigger values; a runtime-dependent mechanism \u2014 race, timing, environment/config interaction \u2014 needs executed confirmation: a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro); the reviewer challenges whether that evidence establishes the root cause; the implementer runs the spec's red-first test against the pre-fix code (or, under the environment-bound-and-impractical escape, its named deterministic alternative) and reports the result in the handoff. A mechanism with no confirmation evidence, or evidence below its class's required rung, is a blocking Shape Check concern \u2014 as is a bug/flake amendment carrying neither a red-first regression-test AC nor the explicit environment-bound-and-impractical escape with a named deterministic alternative.\n\n**Verdict rules** (same as normal spec review):\n- `changes_requested` \u2014 one or more blocking findings. The human must revise the amendment and re-run.\n- `approved_with_nits` \u2014 no blockers; non-blocking observations only. Loop exits immediately.\n- `approved` \u2014 no findings.\n\nFor each task, append a new amendment-review section to `tasks/<id>/spec-review.md`; do not overwrite the prior review. Use this exact heading for the section (the orchestrator's evidence gate requires it before advancing):\n   - Round 1: `## Amendment Review`\n   - Round N >= 2: `## Amendment Review Round N`\nRecord your verdict **inside that section** as a checked box \u2014 the evidence gate reads the verdict from this section, not from the original review above it. Check exactly one of:\n`- [x] **Approved**` / `- [x] **Approved with nits**` / `- [x] **Changes requested**`.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n\n<!-- per-round append shape (round 1 omits the round suffix):\n## Amendment Review          (round 1)\n## Amendment Review Round N  (round N >= 2)\n- [x] **Approved**            (check exactly one verdict box)\n> Findings: ...\n-->\n";
 
-// scripts/run-task/prompts/templates/spec-review.md
+// src/orchestrator/prompts/templates/spec-review.md
 var spec_review_default = "You are reviewing {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks to review:\n{{{taskLines}}}\n\n{{#fullSendActive}}\n**Full-send mode active**: The human grilled Claude to resolve the decision tree but did not read this spec before pipeline execution, so your review is the primary rigor layer before implementation. The silence default, scope boundary, and verdict rules this prompt sets out still apply \u2014 don't manufacture findings. What full-send changes is *where you look*, not how much you flag: give extra attention to (1) missed cases the spec's ACs might overlook, (2) scope drift between the Decision section and the ACs, and (3) ambiguity in AC verification steps, since no human will catch a gap there before implementation.\n{{/fullSendActive}}\nGrounding rule: if a finding depends on code, a symbol, or a validation result, verify the current file or diff before you claim it exists. If you did not re-open it, do not infer it from memory.\n\n**Your objective: catch genuine blocking problems, precisely.** Read the spec as the implementer would: what would break, be ambiguous, or be missing? A spec with no blocking findings is a valid, expected result \u2014 approving a clean spec is not a shortfall in your review.\n\n**First, a strategic read of the spec itself \u2014 shape before implementability.** Ask:\n- Is the problem real? (Would doing nothing be fine? Is this a symptom of something else?)\n- For a bug or flake fix: does the stated evidence actually establish the targeted mechanism, at the rung its class requires? A deterministic mechanism (fixed inputs hit the same wrong branch every run) may be confirmed by a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) requires executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro (fault injection, forced race, targeted repro). A paper argument can rule out a wrong hypothesis but doesn't by itself verify a runtime-dependent cause. Blocking Shape Check concerns: no confirmation evidence at all, evidence below the mechanism class's required rung, or a missing red-first regression-test AC without the environment-bound-and-impractical escape. Each role owns a checkpoint: the spec author states the confirmed mechanism and its evidence in *Problem*; the reviewer (Codex) challenges whether that evidence establishes the root cause; the implementer runs the spec's red-first test against the pre-fix code (or, under the environment-bound-and-impractical escape, its named deterministic alternative) and reports the result in the handoff.\n- Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)\n- Is there a materially simpler solution that changes the shape of the work?\n- Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)\n\n**Silence is the default \u2014 for this whole review, Shape Check and implementability alike.** Only write a finding where something is actually off; do not manufacture one to fill a section or satisfy an obligation. A real shape concern becomes the lead reason for a `changes_requested` verdict; write it under the Shape Check section in spec-review.md. If none, leave that section as \"no concerns\" and proceed.\n\nThen for each task, apply that same default while probing implementability: Can this be implemented as written? Are ACs testable and unambiguous? Are edge cases handled? Are there type safety gaps? Are there file/interaction dependencies Claude missed? Does this conflict with existing patterns in the codebase? An empty list here is a valid result, not a gap in your review.{{#isBundle}}\nAlso probe for cross-task conflicts or missing dependencies between tasks.{{/isBundle}}\n{{#combined}}\nReview plan.md for each task as well \u2014 flag if the approach is unsound.{{/combined}}\n\n**Scope boundary.** Pre-existing behavior the task's spec *explicitly excludes and verifies as unaffected* (for example, named in Non-Goals) is out of scope for this review \u2014 a nit at most, never blocking. This carve-out does not cover: a change the spec *should* make but omitted (a required caller, parser, migration, or test surface), a transitive effect of the change, or an internal contradiction between spec sections \u2014 those remain **blocking** implementability findings even though the affected code is pre-existing. The test is not \"can I reach this code\" \u2014 it's whether the spec named it out of scope and showed it stays unaffected.\n\n**Classify every finding before deciding your verdict:**\n- **Blocking**: would cause wrong behavior, a silent bug, or make an AC unimplementable as written. Requires `changes_requested`.\n- **Non-blocking (nit)**: an implementation detail Codex can resolve by reading the codebase (prop flow, state threading, naming); a minor ambiguity with an obvious default; a question the plan phase should address. Does NOT require `changes_requested`.\n- *Example*: an under-specification whose intended value the surrounding task context makes obvious (e.g. a field name implied by an adjacent example or existing convention) is a nit for the plan phase, not Blocking.\n\n**Verdict rules:**\n- `changes_requested` \u2014 one or more blocking findings. Spec must be revised before the plan phase.\n- `approved_with_nits` \u2014 no blocking findings, but non-blocking nits worth passing forward. **Loop exits immediately.** Nits are written to spec-review.md and the plan phase picks them up.\n- `approved` \u2014 no findings worth noting.\n\n**Batch related nits.** If you have multiple non-blocking observations, include them all in one `approved_with_nits` verdict rather than raising one per round.\n\n**Cross-review rule**: No agent reviews its own output. Claude writes specs \u2192 Codex reviews specs. Codex writes code \u2192 Claude reviews code.\n\nIf you encounter surprising codebase behavior, append to tasks/<id>/notes.md (prefix: [spec_review]).\n\nFor each task, write tasks/<id>/spec-review.md using the template. Set your verdict: approved, approved_with_nits, or changes_requested.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n";
 
-// scripts/run-task/prompts/index.ts
+// src/orchestrator/prompts/index.ts
 var TEMPLATES = {
   "code-review-foreman.md": code_review_foreman_default,
   "implement.md": implement_default,
@@ -4776,7 +4776,7 @@ import { spawnSync as spawnSync5 } from "child_process";
 import fs12 from "fs";
 import path12 from "path";
 
-// scripts/run-task/canon-snapshot.ts
+// src/orchestrator/canon-snapshot.ts
 import { spawnSync as spawnSync4 } from "child_process";
 import fs10 from "fs";
 import path10 from "path";
@@ -4879,7 +4879,7 @@ function refreshCanonSnapshotsAtPaths(statusFilePaths, options = {}) {
   return statusFilePaths.map((statusFilePath) => refreshCanonSnapshotAtPath(statusFilePath, options));
 }
 
-// scripts/run-task/quality-log.ts
+// src/orchestrator/quality-log.ts
 import fs11 from "fs";
 import path11 from "path";
 var CANON_LOG_HEADERS = [
@@ -5371,7 +5371,7 @@ function taskPhasePreflightRejected(id, phaseArg) {
   console.log(`Updated ${id}: ${phaseArg} \u2192 done (verdict: changes_requested, pre-flight; iteration counters preserved)`);
 }
 
-// scripts/run-task/phases/code-review.ts
+// src/orchestrator/phases/code-review.ts
 var defaultDeps = {
   verifyBranch,
   getBaseBranch,
@@ -5628,7 +5628,7 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
   return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
-// scripts/run-task/phases/implement.ts
+// src/orchestrator/phases/implement.ts
 function shouldUseImplementRevision(tasks) {
   return tasks.some((t) => {
     const preflightCount = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
@@ -5717,7 +5717,7 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
   return { agent: "codex", sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
-// scripts/run-task/phases/plan.ts
+// src/orchestrator/phases/plan.ts
 import fs14 from "fs";
 import path14 from "path";
 async function runPlanPhase(state, interactive) {
@@ -5748,7 +5748,7 @@ async function runPlanPhase(state, interactive) {
   return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
-// scripts/run-task/phases/qa.ts
+// src/orchestrator/phases/qa.ts
 import fs15 from "fs";
 import path15 from "path";
 async function runQaPhase(state, interactive, resolvedPrTemplate) {
@@ -5784,7 +5784,7 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
   return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
-// scripts/run-task/phases/spec.ts
+// src/orchestrator/phases/spec.ts
 async function runSpecPhase(state, interactive, resumeId) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
@@ -5822,7 +5822,7 @@ async function runSpecPhase(state, interactive, resumeId) {
   return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
-// scripts/run-task/phases/spec-review.ts
+// src/orchestrator/phases/spec-review.ts
 import fs16 from "fs";
 import path16 from "path";
 function autoBlockSpecReview(taskIds, iterationCount, reason) {
@@ -5922,7 +5922,7 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
   return { agent: "codex", sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
-// scripts/run-task/detach.ts
+// src/orchestrator/detach.ts
 import { spawn as spawn3 } from "child_process";
 import fs17 from "fs";
 import path17 from "path";
@@ -6050,7 +6050,7 @@ function removeCanonPid(taskDir) {
   }
 }
 
-// scripts/run-task/main.ts
+// src/orchestrator/main.ts
 var REPO_ROOT2 = REPO_ROOT;
 var TASKS_DIR2 = TASKS_DIR;
 var PHASE_ORDER2 = PHASE_ORDER;
@@ -8549,7 +8549,7 @@ async function main() {
   }
 }
 
-// scripts/run-task.ts
+// src/orchestrator/run-task.ts
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main().catch((err) => {
     console.error(err instanceof Error ? err.stack ?? err.message : err);

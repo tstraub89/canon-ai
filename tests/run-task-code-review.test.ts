@@ -4,12 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runCodex, runColdCodexReview } from '../scripts/run-task/agents/codex.js';
-import { recordMetric } from '../scripts/run-task/metrics.js';
-import { runCodeReviewPhase, type CodeReviewPhaseDeps } from '../scripts/run-task/phases/code-review.js';
-import { evaluateCodeReviewLoop, evaluateSpecReviewLoop } from '../scripts/run-task/review-loop.js';
-import { readStatus, writeStatusToFile } from '../scripts/run-task/state.js';
-import type { PipelineState, StatusJson, TaskContext } from '../scripts/run-task/types.js';
+import { runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
+import { recordMetric } from '../src/orchestrator/metrics.js';
+import { runCodeReviewPhase, type CodeReviewPhaseDeps } from '../src/orchestrator/phases/code-review.js';
+import { evaluateCodeReviewLoop, evaluateSpecReviewLoop } from '../src/orchestrator/review-loop.js';
+import { readStatus, writeStatusToFile } from '../src/orchestrator/state.js';
+import type { PipelineState, StatusJson, TaskContext } from '../src/orchestrator/types.js';
 
 async function withTempTasksAsync<T>(fn: (tasksRoot: string, activeCwd: string) => Promise<T>): Promise<T> {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-code-review-'));

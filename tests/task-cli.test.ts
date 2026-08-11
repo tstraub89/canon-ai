@@ -6,9 +6,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskSet, taskStatus } from '../src/task/index.js';
-import { parseTable } from '../scripts/run-task/markdown-table.js';
-import type { StatusJson } from '../scripts/run-task/types.js';
-import { extractDoneMdFromStdout, isDoneMdTemplate } from '../scripts/run-task/validation.js';
+import { parseTable } from '../src/orchestrator/markdown-table.js';
+import type { StatusJson } from '../src/orchestrator/types.js';
+import { extractDoneMdFromStdout, isDoneMdTemplate } from '../src/orchestrator/validation.js';
 
 const WORKSPACE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKSPACE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -2557,8 +2557,8 @@ void test('docs telemetry files stay clean after the suite', () => {
 });
 
 void test('bundled orchestrator help is invocable once from dist', () => {
-    const runTaskBundle = path.join(WORKSPACE_ROOT, 'dist', 'scripts', 'run-task.js');
-    assert.equal(fs.existsSync(runTaskBundle), true, 'run npm run build before npm test so dist/scripts/run-task.js exists');
+    const runTaskBundle = path.join(WORKSPACE_ROOT, 'dist', 'orchestrator', 'run-task.js');
+    assert.equal(fs.existsSync(runTaskBundle), true, 'run npm run build before npm test so dist/orchestrator/run-task.js exists');
     const result = spawnSync(process.execPath, [runTaskBundle, '--help'], {
         cwd: WORKSPACE_ROOT,
         encoding: 'utf8',

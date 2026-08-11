@@ -9,7 +9,7 @@ import { getActiveCwd } from '../worktree.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptPlan } from '../prompts/index.js';
 import { isTemplateUnfilled } from '../validation.js';
-import { taskPhase } from '../../../src/task/index.js';
+import { taskPhase } from '../../task/index.js';
 
 export async function runPlanPhase(
     state: PipelineState,

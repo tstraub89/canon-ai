@@ -5,10 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { classifyAttach, classifyIdle, orchestratorStillProgressing, watchCmd } from '../src/cli/commands/watch.js';
-import type { HeartbeatReadResult, HeartbeatRecord } from '../scripts/run-task/heartbeat.js';
-import { gatherRunContext } from '../scripts/run-task/run-context.js';
-import type { RunContext } from '../scripts/run-task/run-context.js';
-import { type StatusJson } from '../scripts/run-task/types.js';
+import type { HeartbeatReadResult, HeartbeatRecord } from '../src/orchestrator/heartbeat.js';
+import { gatherRunContext } from '../src/orchestrator/run-context.js';
+import type { RunContext } from '../src/orchestrator/run-context.js';
+import { type StatusJson } from '../src/orchestrator/types.js';
 
 const NOW = 1_700_000_000_000;
 

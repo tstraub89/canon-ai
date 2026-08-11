@@ -7,7 +7,7 @@ import type {
     PolicyConfig,
     PolicyInput,
     TaskSize,
-} from '../pipeline-policy.js';
+} from '../lib/pipeline-policy.js';
 
 export const PHASE_ORDER = ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review'] as const;
 export const _PHASE_STATUS_VALUES = ['pending', 'in_progress', 'done', 'changes_requested', 'blocked'] as const;

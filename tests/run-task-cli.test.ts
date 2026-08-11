@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseArgs } from '../scripts/run-task/cli.ts';
+import { parseArgs } from '../src/orchestrator/cli.ts';
 
 function runParseArgs(args: string[]): { status: number | null; stdout: string; stderr: string } {
     const stdout: string[] = [];

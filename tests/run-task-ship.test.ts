@@ -10,7 +10,7 @@ const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
 const MD_LOADER = path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs');
 
-const MAIN_HREF = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'main.ts')).href;
+const MAIN_HREF = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'main.ts')).href;
 
 type RunResult = { status: number | null; stdout: string; stderr: string };
 

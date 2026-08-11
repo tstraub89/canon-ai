@@ -13,7 +13,7 @@ import { classifyPreflightBlockers, isTemplateUnfilled, verifyHandoffAgainstDiff
 import type { ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { promptCodeReview } from '../prompts/index.js';
-import { taskPhase, taskPhasePreflightRejected } from '../../../src/task/index.js';
+import { taskPhase, taskPhasePreflightRejected } from '../../task/index.js';
 
 export type PreflightRoute = 'implement' | 'auto_block';
 

@@ -2,10 +2,10 @@ import { execSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join, relative, sep as pathSep } from 'path';
-import { HEARTBEAT_STALE_AFTER_MS, isHeartbeatStale } from '../../../scripts/run-task/heartbeat.js';
-import { getQualityLogFile, locateLogTable } from '../../../scripts/run-task/quality-log.js';
-import { gatherRunContext, isStatusJson } from '../../../scripts/run-task/run-context.js';
-import { type StatusJson } from '../../../scripts/run-task/types.js';
+import { HEARTBEAT_STALE_AFTER_MS, isHeartbeatStale } from '../../orchestrator/heartbeat.js';
+import { getQualityLogFile, locateLogTable } from '../../orchestrator/quality-log.js';
+import { gatherRunContext, isStatusJson } from '../../orchestrator/run-context.js';
+import { type StatusJson } from '../../orchestrator/types.js';
 import { CANON_RUNTIME_GITIGNORE_PATTERNS } from '../../lib/canon-block.js';
 import { isAvailable } from '../deps.js';
 
@@ -646,8 +646,8 @@ export function checkActiveOrchestrators(cwd: string, now: number = Date.now()):
         // their own status to in_progress at start and to done/blocked/
         // changes_requested at end; a stuck in_progress phase is exactly the
         // post-kill state we want to detect. See PHASE_STATUS_VALUES in
-        // scripts/run-task/types.ts for the set; "phase X started in_progress"
-        // is set in scripts/run-task/phases/<phase>.ts at phase entry.
+        // src/orchestrator/types.ts for the set; "phase X started in_progress"
+        // is set in src/orchestrator/phases/<phase>.ts at phase entry.
         const phases = status.phases ?? {};
         const hasInProgressPhase = Object.values(phases).some(
             (entry) => entry?.status === 'in_progress',

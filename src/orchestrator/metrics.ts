@@ -16,7 +16,7 @@ export function recordMetric(entry: MetricEntry): void {
         fs.writeFileSync(metricsFile, [
             '# Workflow Metrics',
             '',
-            '> Auto-logged by `scripts/run-task.ts`. One row per agent invocation.',
+            '> Auto-logged by canon\'s orchestrator. One row per agent invocation.',
             '> Tokens: per-invocation total (input + cache + output). Parsed from the agent\'s structured output — `claude -p --output-format stream-json` for Claude, `codex exec --json` for Codex. Interactive-mode invocations are not tracked.',
             '',
             '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',

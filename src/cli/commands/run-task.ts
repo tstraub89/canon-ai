@@ -5,7 +5,7 @@ import { checkDepForFlag } from '../deps.js';
 
 // dist/cli/index.js → ../../ = package root (node_modules/canon-ai/ when installed)
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const runTaskScript = join(packageDir, 'dist/scripts/run-task.js');
+const runTaskScript = join(packageDir, 'dist/orchestrator/run-task.js');
 
 export function runCmd(args: string[]): void {
     for (const arg of args) {

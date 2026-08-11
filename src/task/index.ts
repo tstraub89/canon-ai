@@ -2,19 +2,19 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { refreshCanonSnapshotAtPath } from '../../scripts/run-task/canon-snapshot.js';
-import { writeQualityLogForTask } from '../../scripts/run-task/quality-log.js';
+import { refreshCanonSnapshotAtPath } from '../orchestrator/canon-snapshot.js';
+import { writeQualityLogForTask } from '../orchestrator/quality-log.js';
 import {
     checkPhaseGate,
     parseDiffNameStatus,
     parseHandoffChangesRows,
     verifyHandoffAgainstDiffFromData,
-} from '../../scripts/run-task/validation.js';
-import { filterGitIgnoredPaths } from '../../scripts/run-task/git.js';
-import { assertManagedInvocationRoot, deriveTopLevelStatus, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../../scripts/run-task/state.js';
-import { PIPELINE_TELEMETRY_FILES } from '../../scripts/run-task/worktree.js';
-import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../../scripts/run-task/types.js';
-import { type TaskSize } from '../../scripts/pipeline-policy.js';
+} from '../orchestrator/validation.js';
+import { filterGitIgnoredPaths } from '../orchestrator/git.js';
+import { assertManagedInvocationRoot, deriveTopLevelStatus, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
+import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
+import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
+import { type TaskSize } from '../lib/pipeline-policy.js';
 
 const VALID_PHASES = new Set<string>(PHASE_ORDER);
 const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);

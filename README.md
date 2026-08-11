@@ -282,11 +282,11 @@ Drop this into any repo and you have:
 ✅ **Built and working:**
 
 - `canon` CLI — `init`, `doctor`, `run`, `stop`, `task`, `update`, `upgrade`
-- Full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`. Bundled into `dist/scripts/run-task.js` and invoked via `canon run`.
+- Full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`. Bundled into `dist/orchestrator/run-task.js` and invoked via `canon run`.
 - Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
 - `canon task` lifecycle CLI (new / list / status / phase / accept / reset-spec-review / post-merge-sync), in-process TS.
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
-- Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`scripts/run-task/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
+- Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`src/orchestrator/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/settings.json` — Claude Code permissions + SessionStart hook
 - Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)

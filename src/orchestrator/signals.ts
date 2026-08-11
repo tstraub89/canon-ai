@@ -1,7 +1,7 @@
 // Signal handlers installed at module-evaluation time, BEFORE any importing
 // module's transitive dependencies finish loading. This file is imported FIRST
-// (as a side-effect import) from scripts/run-task.ts so its module body runs
-// before scripts/run-task/main.ts and its deps — most notably env.ts, which
+// (as a side-effect import) from src/orchestrator/run-task.ts so its module body runs
+// before src/orchestrator/main.ts and its deps — most notably env.ts, which
 // runs `git rev-parse --git-common-dir` synchronously at module load.
 //
 // ES module evaluation is post-order DFS on the dependency graph: imports'

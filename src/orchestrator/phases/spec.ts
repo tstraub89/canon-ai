@@ -1,7 +1,7 @@
 import { info, warn } from '../cli.js';
 import { getClaudeConfig, getMaxReviewLoops } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
-import { taskPhase } from '../../../src/task/index.js';
+import { taskPhase } from '../../task/index.js';
 import { promptSpec, promptSpecRevision } from '../prompts/index.js';
 import { getActiveCwd } from '../worktree.js';
 import { autoBlockPhase } from '../state.js';

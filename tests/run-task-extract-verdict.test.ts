@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCheckedVerdict } from '../scripts/run-task/main.js';
+import { extractCheckedVerdict } from '../src/orchestrator/main.js';
 
 void test('extractCheckedVerdict: single-round review returns the checked verdict', () => {
     const content = [

@@ -44,8 +44,8 @@ import {
     RECOMMENDED_NUDGE,
 } from '../src/cli/commands/doctor.js';
 import { CANON_OWNED } from '../src/lib/canon-owned.js';
-import { HEARTBEAT_STALE_AFTER_MS } from '../scripts/run-task/heartbeat.js';
-import { REPO_ROOT } from '../scripts/run-task/env.js';
+import { HEARTBEAT_STALE_AFTER_MS } from '../src/orchestrator/heartbeat.js';
+import { REPO_ROOT } from '../src/orchestrator/env.js';
 
 const WORKTREE_ROOT = process.cwd();
 const CLI_ENTRYPOINT = path.join(WORKTREE_ROOT, 'src', 'cli', 'index.ts');
@@ -3541,7 +3541,7 @@ const ADOPTER_SHIPPED_PATHS = [
     // dist/*.js and ship to every adopter via `npm install canon-ai`.
     // Scan both build entries.
     'dist/cli/index.js',
-    'dist/scripts/run-task.js',
+    'dist/orchestrator/run-task.js',
     // README.md is canon-ai's own marketing page (origin story, install
     // instructions for the canon-ai package), NOT a CANON_OWNED file that
     // `canon init` or `canon upgrade` ships to adopter repos. Adopters write
@@ -3559,8 +3559,8 @@ void test('adopter-shipped content does not leak canon-development tokens', () =
 
     const failures: string[] = [];
     for (const rel of ADOPTER_SHIPPED_PATHS) {
-        const fullPath = path.join(REPO_ROOT, rel);
-        if (!fs.existsSync(fullPath)) continue;
+        const fullPath = path.join(WORKTREE_ROOT, rel);
+        assert.equal(fs.existsSync(fullPath), true, `expected adopter-shipped path to exist: ${rel}`);
         const content = fs.readFileSync(fullPath, 'utf8');
         for (const token of banned) {
             if (content.includes(token)) {
@@ -3608,7 +3608,7 @@ const MIN_VALID_STATUS = {
 
 // Helper: build a status shape where one phase is in_progress. Real status.json
 // files set phase-level status to 'in_progress' at phase entry (see
-// scripts/run-task/phases/*.ts); doctor's stale-orchestrator check keys off
+// src/orchestrator/phases/*.ts); doctor's stale-orchestrator check keys off
 // this, not a top-level "in_progress" string.
 function statusWithInProgressPhase(): object {
     return {

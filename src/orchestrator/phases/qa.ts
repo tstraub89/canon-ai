@@ -10,7 +10,7 @@ import { verifyBranch } from '../git.js';
 import { readStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptQa } from '../prompts/index.js';
-import { taskPhase } from '../../../src/task/index.js';
+import { taskPhase } from '../../task/index.js';
 
 export async function runQaPhase(
     state: PipelineState,

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { isSynchronousMode } from '../scripts/run-task/cli.js';
+import { isSynchronousMode } from '../src/orchestrator/cli.js';
 import {
     DETACH_CHILD_FLAG,
     DETACH_DISABLE_FLAG,
@@ -15,7 +15,7 @@ import {
     removeCanonPid,
     runLogPathFor,
     shouldAutoDetach,
-} from '../scripts/run-task/detach.js';
+} from '../src/orchestrator/detach.js';
 
 // ── shouldAutoDetach ─────────────────────────────────────────────────────────
 

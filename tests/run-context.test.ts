@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { classifyAttach } from '../src/cli/commands/watch.js';
-import { gatherRunContext, probePidAlive } from '../scripts/run-task/run-context.js';
+import { gatherRunContext, probePidAlive } from '../src/orchestrator/run-context.js';
 
 function withTempDir(fn: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-run-context-'));

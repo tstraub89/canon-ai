@@ -21,7 +21,7 @@ export function invalidCodexEffortMessage(effort: string): string | null {
         `and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ` +
         `${VALID_CODEX_EFFORTS.join('|')}. This per-invocation override supersedes any user-level ` +
         `model_reasoning_effort set in ~/.codex/config.toml — fix the resolved value in ` +
-        `scripts/pipeline-policy.ts, not the user's Codex config.`
+        `src/lib/pipeline-policy.ts, not the user's Codex config.`
     );
 }
 

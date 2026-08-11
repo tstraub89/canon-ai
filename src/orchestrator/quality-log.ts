@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { TaskSize } from '../pipeline-policy.js';
+import type { TaskSize } from '../lib/pipeline-policy.js';
 import { warn } from './cli.js';
 import { extractSectionBodies } from './markdown-table.js';
 import type { StatusJson } from './types.js';

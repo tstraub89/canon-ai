@@ -5,11 +5,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { checkRerouteEvidence, sliceRerouteRoundSection } from '../scripts/run-task/validation.js';
+import { checkRerouteEvidence, sliceRerouteRoundSection } from '../src/orchestrator/validation.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
-const MAIN_URL = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'main.ts')).href;
+const MAIN_URL = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'main.ts')).href;
 const MD_LOADER = path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs');
 
 function withTempDir<T>(prefix: string, fn: (dir: string) => T): T {
@@ -287,7 +287,7 @@ function probeActiveCwd(cwd: string, taskId: string): string {
         TSX_LOADER,
         '-e',
         [
-            `import { getActiveCwd } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'worktree.ts')).href)};`,
+            `import { getActiveCwd } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'worktree.ts')).href)};`,
             `console.log(getActiveCwd([${JSON.stringify(taskId)}]));`,
         ].join('\n'),
     ], {

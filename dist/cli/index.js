@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, relative, sep as pathSep } from "path";
 
-// scripts/run-task/heartbeat.ts
+// src/orchestrator/heartbeat.ts
 import fs from "fs";
 import path from "path";
 var HEARTBEAT_FILENAME = ".heartbeat.json";
@@ -45,11 +45,11 @@ function isHeartbeatStale(record, now = Date.now()) {
   return now - record.last_update_ms > HEARTBEAT_STALE_AFTER_MS;
 }
 
-// scripts/run-task/quality-log.ts
+// src/orchestrator/quality-log.ts
 import fs3 from "fs";
 import path2 from "path";
 
-// scripts/run-task/cli.ts
+// src/orchestrator/cli.ts
 import fs2 from "fs";
 var exitReason = null;
 var originalProcessExit = process.exit.bind(process);
@@ -65,7 +65,7 @@ function warn(message) {
   console.error(`\u26A0\uFE0F  ${message}`);
 }
 
-// scripts/run-task/markdown-table.ts
+// src/orchestrator/markdown-table.ts
 function splitTableLine(line) {
   const cells = [];
   let cell = "";
@@ -228,7 +228,7 @@ function parseTable(markdown, sectionHeading) {
   return rows;
 }
 
-// scripts/run-task/quality-log.ts
+// src/orchestrator/quality-log.ts
 var CANON_LOG_HEADERS = [
   "Date",
   "Task",
@@ -514,10 +514,10 @@ function writeQualityLogForTask(taskId, activeCwd, donePath, status) {
   }
 }
 
-// scripts/run-task/run-context.ts
+// src/orchestrator/run-context.ts
 import path6 from "path";
 
-// scripts/run-task/detach.ts
+// src/orchestrator/detach.ts
 import { spawn } from "child_process";
 import fs4 from "fs";
 import path3 from "path";
@@ -543,12 +543,12 @@ function runLogPathFor(taskDir) {
   return path3.join(taskDir, LOG_FILENAME);
 }
 
-// scripts/run-task/state.ts
+// src/orchestrator/state.ts
 import fs6 from "fs";
 import { spawnSync as spawnSync2 } from "child_process";
 import path5 from "path";
 
-// scripts/run-task/env.ts
+// src/orchestrator/env.ts
 import { spawnSync } from "child_process";
 import fs5 from "fs";
 import path4 from "path";
@@ -613,10 +613,10 @@ var config = {
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
 
-// scripts/run-task/types.ts
+// src/orchestrator/types.ts
 var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
 
-// scripts/run-task/state.ts
+// src/orchestrator/state.ts
 function effectiveWorktreesRoot() {
   return process.env.CANON_WORKTREES_ROOT ? path5.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
 }
@@ -871,7 +871,7 @@ function deriveTopLevelStatus(status) {
   return "complete";
 }
 
-// scripts/run-task/run-context.ts
+// src/orchestrator/run-context.ts
 function statusReadResult(taskId, statusFile, readImpl) {
   try {
     if (readImpl) {
@@ -1734,7 +1734,7 @@ import { spawnSync as spawnSync3 } from "child_process";
 import { fileURLToPath as fileURLToPath3 } from "url";
 import { dirname as dirname3, join as join3 } from "path";
 var packageDir2 = join3(dirname3(fileURLToPath3(import.meta.url)), "../..");
-var runTaskScript = join3(packageDir2, "dist/scripts/run-task.js");
+var runTaskScript = join3(packageDir2, "dist/orchestrator/run-task.js");
 function runCmd(args2) {
   for (const arg of args2) {
     checkDepForFlag(arg);
@@ -2648,16 +2648,16 @@ import { spawnSync as spawnSync6 } from "child_process";
 import fs11 from "fs";
 import path11 from "path";
 
-// scripts/run-task/canon-snapshot.ts
+// src/orchestrator/canon-snapshot.ts
 import { spawnSync as spawnSync5 } from "child_process";
 import fs9 from "fs";
 import path9 from "path";
 
-// scripts/run-task/git.ts
+// src/orchestrator/git.ts
 import { spawnSync as spawnSync4 } from "child_process";
 import path8 from "path";
 
-// scripts/run-task/worktree.ts
+// src/orchestrator/worktree.ts
 import fs8 from "fs";
 import path7 from "path";
 var PIPELINE_TELEMETRY_FILES = [
@@ -2675,7 +2675,7 @@ var PIPELINE_MANAGED_DOCS = [
 ];
 var PIPELINE_SHARED_DOCS = [...PIPELINE_TELEMETRY_FILES, ...PIPELINE_MANAGED_DOCS];
 
-// scripts/run-task/git.ts
+// src/orchestrator/git.ts
 function gitSafeAt(cwd, ...args2) {
   const result = spawnSync4("git", args2, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
@@ -2696,7 +2696,7 @@ function filterGitIgnoredPaths(paths, cwd) {
   return new Set(stdout.split("\0").filter((p) => p.length > 0));
 }
 
-// scripts/run-task/canon-snapshot.ts
+// src/orchestrator/canon-snapshot.ts
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
 function isInstalledSourcePath(sourcePath) {
   return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
@@ -2793,7 +2793,7 @@ function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
   return canon;
 }
 
-// scripts/run-task/validation.ts
+// src/orchestrator/validation.ts
 import fs10 from "fs";
 import path10 from "path";
 function computeLatestValidationResults(handoffContent) {

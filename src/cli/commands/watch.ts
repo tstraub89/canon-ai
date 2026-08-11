@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 
-import { runLogPathFor } from '../../../scripts/run-task/detach.js';
-import { HEARTBEAT_INTERVAL_MS, isHeartbeatStale, type HeartbeatReadResult } from '../../../scripts/run-task/heartbeat.js';
-import { gatherRunContext, isStatusJson, probePidAlive, tolerantTaskDir, type RunContext } from '../../../scripts/run-task/run-context.js';
-import { deriveTopLevelStatus } from '../../../scripts/run-task/state.js';
-import { PHASE_ORDER, type CurrentPhase, type Phase, type Verdict, type StatusJson } from '../../../scripts/run-task/types.js';
+import { runLogPathFor } from '../../orchestrator/detach.js';
+import { HEARTBEAT_INTERVAL_MS, isHeartbeatStale, type HeartbeatReadResult } from '../../orchestrator/heartbeat.js';
+import { gatherRunContext, isStatusJson, probePidAlive, tolerantTaskDir, type RunContext } from '../../orchestrator/run-context.js';
+import { deriveTopLevelStatus } from '../../orchestrator/state.js';
+import { PHASE_ORDER, type CurrentPhase, type Phase, type Verdict, type StatusJson } from '../../orchestrator/types.js';
 import { formatAge } from './doctor.js';
 import { STOP_WAIT_DEFAULT_MS, STOP_WAIT_POLL_INTERVAL_MS, waitForHeartbeat } from './stop.js';
 

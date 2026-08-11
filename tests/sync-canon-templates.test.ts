@@ -68,6 +68,20 @@ function runCheckCli(root: string) {
     });
 }
 
+void test('internal-only template discovery retains the complete orchestrator baseline', () => {
+    assert.ok(internalOnlyTemplateBasenames.size > 0, 'internal-only template discovery must not be empty');
+    assert.deepEqual([...internalOnlyTemplateBasenames].sort(), [
+        'code-review-foreman.md',
+        'implement-reroute.md',
+        'implement-revisions.md',
+        'implement.md',
+        'plan-reroute.md',
+        'qa.md',
+        'spec-review-reroute.md',
+        'spec-revision.md',
+    ]);
+});
+
 void test('wholesale sync moves root content to templates and stays one-way', () => {
     withTempDir(root => {
         seedCanonFixture(root);
@@ -271,7 +285,7 @@ void test('checkSync CLI exits 1 when a wholesale source is missing but the targ
 });
 
 // --- Canon-internal-leak guard ------------------------------------------
-// Backtick refs to canon's orchestrator source (`scripts/run-task/...`)
+// Backtick refs to canon's orchestrator source (`src/orchestrator/...`)
 // must not appear in canon-managed shipped content — adopter repos don't
 // have those files, and the leak surfaces as broken refs in their
 // `docs-refs-check.mjs` at upgrade time. Pre-1.6.1, four such refs leaked
@@ -284,17 +298,17 @@ void test('findSyncErrors flags canon-internal leak in a wholesale-synced markdo
         writeFile(
             root,
             'docs/pipeline-orchestrator.md',
-            'See `commitHumanReviewFiles` in `scripts/run-task/main.ts` for details.\n',
+            'See `commitHumanReviewFiles` in `src/orchestrator/main.ts` for details.\n',
         );
         writeFile(
             root,
             'templates/docs/pipeline-orchestrator.md',
-            'See `commitHumanReviewFiles` in `scripts/run-task/main.ts` for details.\n',
+            'See `commitHumanReviewFiles` in `src/orchestrator/main.ts` for details.\n',
         );
 
         const errors = syncCanonTemplates.findSyncErrors(root);
         assert.ok(
-            errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*scripts\/run-task\/main\.ts/.test(e)),
+            errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*src\/orchestrator\/main\.ts/.test(e)),
             `expected canon-internal-leak error for docs/pipeline-orchestrator.md; got: ${errors.join(' | ')}`,
         );
     });
@@ -366,8 +380,8 @@ void test('findSyncErrors does NOT flag canon-internal refs inside fenced code b
             'Example only — do not copy:',
             '',
             '```',
-            'grep scripts/run-task/main.ts',
-            'cat `scripts/run-task/git.ts`',
+            'grep src/orchestrator/main.ts',
+            'cat `src/orchestrator/git.ts`',
             '```',
             '',
         ].join('\n');
@@ -387,18 +401,18 @@ void test('findSyncErrors does NOT flag canon-internal refs inside fenced code b
 void test('findSyncErrors flags canon-internal leaks reached via source-file-relative refs', () => {
     // Codex P2 finding on the 1.6.1 hotfix-leak diff: a maintainer can
     // bypass the literal-prefix check by writing the ref as a relative
-    // path from a nested doc, e.g., `../scripts/run-task/main.ts` from
+    // path from a nested doc, e.g., `../src/orchestrator/main.ts` from
     // `docs/pipeline-orchestrator.md`. Normalization resolves both forms
     // to the same canon-internal file.
     withTempDir(root => {
         seedCanonFixture(root);
-        const relativeLeak = 'See `../scripts/run-task/main.ts` for the impl.\n';
+        const relativeLeak = 'See `../src/orchestrator/main.ts` for the impl.\n';
         writeFile(root, 'docs/pipeline-orchestrator.md', relativeLeak);
         writeFile(root, 'templates/docs/pipeline-orchestrator.md', relativeLeak);
 
         const errors = syncCanonTemplates.findSyncErrors(root);
         assert.ok(
-            errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*\.\.\/scripts\/run-task\/main\.ts/.test(e)),
+            errors.some(e => /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*\.\.\/src\/orchestrator\/main\.ts/.test(e)),
             `expected canon-internal-leak error for relative ref; got: ${errors.join(' | ')}`,
         );
     });
@@ -427,7 +441,7 @@ void test('findSyncErrors does NOT flag refs that resolve outside the repo root'
 void test('checkSync CLI exits 1 with a canon-internal-leak message when a leak is present', () => {
     withTempDir(root => {
         seedCanonFixture(root);
-        const leaky = 'See `scripts/run-task/validation.ts` for base-drift checks.\n';
+        const leaky = 'See `src/orchestrator/validation.ts` for base-drift checks.\n';
         writeFile(root, 'docs/pipeline-orchestrator.md', leaky);
         writeFile(root, 'templates/docs/pipeline-orchestrator.md', leaky);
 
@@ -435,7 +449,7 @@ void test('checkSync CLI exits 1 with a canon-internal-leak message when a leak 
         assert.equal(result.status, 1, result.stdout);
         assert.match(
             result.stderr,
-            /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*scripts\/run-task\/validation\.ts/,
+            /\[canon-internal-leak\] docs\/pipeline-orchestrator\.md:1 .*src\/orchestrator\/validation\.ts/,
         );
         assert.doesNotMatch(result.stdout, /All canon-managed files in sync/);
     });

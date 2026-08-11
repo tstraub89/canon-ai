@@ -1,4 +1,4 @@
-// scripts/run-task/detach.ts
+// src/orchestrator/detach.ts
 //
 // Orchestrator detach mode. When canon run is invoked with stdout NOT a TTY
 // (the typical case inside Claude Code's Bash tool, CI, piped invocations),

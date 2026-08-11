@@ -8,9 +8,9 @@ import {
     findUncoveredTrackedChanges,
     isDoneMdTemplate,
     extractDoneMdFromStdout,
-} from '../scripts/run-task/validation.js';
-import { parsePorcelain } from '../scripts/run-task/git.js';
-import { PIPELINE_TELEMETRY_FILES } from '../scripts/run-task/worktree.js';
+} from '../src/orchestrator/validation.js';
+import { parsePorcelain } from '../src/orchestrator/git.js';
+import { PIPELINE_TELEMETRY_FILES } from '../src/orchestrator/worktree.js';
 
 void test('parsePorcelain expands new directories when fed -uall output', () => {
     // `git status --porcelain -uall` emits one line per untracked file.
@@ -129,7 +129,7 @@ void test('findStagedFilesOutsideHandoff catches files git commit would otherwis
 // ── PIPELINE_TELEMETRY_FILES ────────────────────────────────────────────────
 
 void test('PIPELINE_TELEMETRY_FILES covers the two files the pipeline itself writes', () => {
-    // docs/pipeline-invocations.md is appended by scripts/run-task.ts after
+    // docs/pipeline-invocations.md is appended by src/orchestrator/run-task.ts after
     // every agent invocation (duration + tokens). docs/task-quality-log.md is
     // appended by QA sub-Claude (per the QA prompt) with per-task quality
     // signals. Both get dirty between phases and must not block auto-commit.

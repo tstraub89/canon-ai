@@ -22,7 +22,7 @@ const CANON_START_RE = /<!-- canon:start[^>]* -->/;
 // canon-internal source tree. Adopter-visible paths (`tasks/<id>/...`,
 // `docs/patterns.md`, `status.json`, etc.) are NOT canon-internal and
 // must not be added here.
-export const CANON_INTERNAL_PATH_PREFIXES = ['scripts/run-task/'];
+export const CANON_INTERNAL_PATH_PREFIXES = ['src/orchestrator/'];
 
 const CANON_AI_ROOT = path.resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -39,7 +39,7 @@ function readMarkdownBasenames(dir) {
 
 export const INTERNAL_ONLY_TEMPLATE_BASENAMES = new Set(
     (() => {
-        const internalBasenames = readMarkdownBasenames(join(CANON_AI_ROOT, 'scripts/run-task/prompts/templates'));
+        const internalBasenames = readMarkdownBasenames(join(CANON_AI_ROOT, 'src/orchestrator/prompts/templates'));
         const canonBasenames = new Set(readMarkdownBasenames(join(CANON_AI_ROOT, '.canon/templates')));
         return internalBasenames.filter(name => !canonBasenames.has(name));
     })(),
@@ -76,14 +76,14 @@ function hasCanonMarkers(content) {
 
 function isCanonInternalTarget(target, sourceRel) {
     // Canon-ai-dev convention: refs are repo-root-relative
-    // (e.g., `scripts/run-task/main.ts` in any doc, at any depth).
+    // (e.g., `src/orchestrator/main.ts` in any doc, at any depth).
     if (CANON_INTERNAL_PATH_PREFIXES.some(prefix => target.startsWith(prefix))) {
         return true;
     }
     if (!target.includes('/') && INTERNAL_ONLY_TEMPLATE_BASENAMES.has(target)) {
         return true;
     }
-    // Also normalize source-file-relative refs (e.g., `../scripts/run-task/...`
+    // Also normalize source-file-relative refs (e.g., `../src/orchestrator/...`
     // from a nested doc like `docs/pipeline-orchestrator.md`). Codex P2 on the
     // 1.6.1 hotfix-leak diff flagged this bypass — without normalization, a
     // maintainer could slip a canon-internal ref past the literal-prefix
@@ -104,7 +104,7 @@ function isCanonInternalTarget(target, sourceRel) {
  * the start of `content`. Skips code-fenced blocks (``` and ~~~) so example
  * snippets in fenced regions are not flagged. `sourceRel` is the
  * repo-relative POSIX path of the file the content came from — used to
- * resolve source-file-relative refs (`../scripts/run-task/...`) before
+ * resolve source-file-relative refs (`../src/orchestrator/...`) before
  * the canon-internal prefix check. Callers that scan only a subset of a
  * file (e.g., the canon:start..canon:end region) must offset the
  * returned line numbers themselves.
@@ -313,7 +313,7 @@ function buildSyncPlan(repoRoot) {
     }
 
     // Third pass: canon-internal-leak scan. Catches the class of mistake
-    // where a maintainer adds a `scripts/run-task/...` ref to a canon-managed
+    // where a maintainer adds a `src/orchestrator/...` ref to a canon-managed
     // doc (good for canon-ai-dev navigation, broken for adopters since
     // those files don't ship). Pre-1.6.1 release path: 4 such refs leaked
     // into 1.6.0 and broke `docs-refs-check.mjs` on first adopter upgrade.

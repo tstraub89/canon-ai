@@ -15,7 +15,7 @@ import {
     type PolicyConfig,
     type PolicyInput,
     type TaskSize,
-} from '../scripts/pipeline-policy.ts';
+} from '../src/lib/pipeline-policy.ts';
 
 const TEST_CONFIG: PolicyConfig = {
     claudeModelSpec: 'opus',
@@ -32,7 +32,7 @@ const TEST_CONFIG: PolicyConfig = {
 const s = (task_size: TaskSize, delicate = false): PolicyInput => ({ task_size, delicate });
 
 function loadPolicyConfig(raw: string): { config: PolicyConfig; stderr: string } {
-    const policyUrl = pathToFileURL(path.join(process.cwd(), 'scripts/run-task/policy.ts')).href;
+    const policyUrl = pathToFileURL(path.join(process.cwd(), 'src/orchestrator/policy.ts')).href;
     const result = spawnSync(process.execPath, ['--import', 'tsx', '--eval', [
         `import(${JSON.stringify(policyUrl)})`,
         ".then(m => console.log(JSON.stringify(m.policyConfig())))",

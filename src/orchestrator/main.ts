@@ -2930,7 +2930,7 @@ interface EvidenceResult {
     note: string;
 }
 
-// `extractCheckedVerdict` was moved to scripts/run-task/validation.ts so the
+// `extractCheckedVerdict` was moved to src/orchestrator/validation.ts so the
 // phase gate (1a-2) can call it without creating a circular import from
 // main.ts. Re-exported here for back-compat with `tests/run-task-extract-verdict.test.ts`.
 export const extractCheckedVerdict = splitValidation.extractCheckedVerdict;
@@ -3454,7 +3454,7 @@ function checkDeps(taskIds: string[], skipAgentDeps = false): void {
 /**
  * Register all heartbeat-shutdown + `.canon-pid` cleanup hooks BEFORE writing
  * the first heartbeat. `startHeartbeat` writes synchronously on its first
- * call ([scripts/run-task/heartbeat.ts](./heartbeat.ts)) — if a signal lands
+ * call ([src/orchestrator/heartbeat.ts](./heartbeat.ts)) — if a signal lands
  * between that write and a later hook registration, the file leaks. Bundling
  * both steps into one helper enforces the right ordering by construction
  * and gives every call site (early child path, original post-validation
@@ -3503,7 +3503,7 @@ export async function main(): Promise<void> {
 
     // Early-start the heartbeat for detached children. By the time we reach
     // this point:
-    //   - validateTaskId (inside parseArgs, scripts/run-task/cli.ts:133)
+    //   - validateTaskId (inside parseArgs, src/orchestrator/cli.ts:133)
     //     has rejected malformed IDs
     //   - checkDeps has rejected missing claude/codex/gh
     // So writing a heartbeat here represents a real, going-to-run
@@ -3620,7 +3620,7 @@ export async function main(): Promise<void> {
     //   Full tier: canon run <id> --reroute --step --expect spec_review
     //   Fast tier: canon run <id> --reroute --step --expect implement
     //
-    // See scripts/run-task/detach.ts and docs/BACKLOG.md "Orchestrator dies
+    // See src/orchestrator/detach.ts and docs/BACKLOG.md "Orchestrator dies
     // silently in background mode" for the failure-mode story.
     if (!splitCli.isSynchronousMode(cliArgs) && shouldAutoDetach()) {
         detachAndExit({

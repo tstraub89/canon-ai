@@ -9,11 +9,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { fileURLToPath } from 'node:url';
 
-import { REPO_ROOT } from '../scripts/run-task/env.js';
+import { REPO_ROOT } from '../src/orchestrator/env.js';
 
 const TSX_LOADER = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
 const MD_LOADER = path.join(REPO_ROOT, 'tests', 'md-loader-register.mjs');
-const ENTRY_URL = new URL('../scripts/run-task.ts', import.meta.url).href;
+const ENTRY_URL = new URL('../src/orchestrator/run-task.ts', import.meta.url).href;
 
 // Resolve source paths from THIS file's location rather than REPO_ROOT. In a
 // linked-worktree run, REPO_ROOT resolves to the main checkout (env.ts uses
@@ -22,9 +22,9 @@ const ENTRY_URL = new URL('../scripts/run-task.ts', import.meta.url).href;
 // us the right checkout regardless of worktree state.
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CHECKOUT_ROOT = path.resolve(TEST_DIR, '..');
-const SIGNALS_TS = path.join(CHECKOUT_ROOT, 'scripts', 'run-task', 'signals.ts');
-const RUN_TASK_TS = path.join(CHECKOUT_ROOT, 'scripts', 'run-task.ts');
-const STREAM_TS = path.join(CHECKOUT_ROOT, 'scripts', 'run-task', 'agents', 'stream.ts');
+const SIGNALS_TS = path.join(CHECKOUT_ROOT, 'src', 'orchestrator', 'signals.ts');
+const RUN_TASK_TS = path.join(CHECKOUT_ROOT, 'src', 'orchestrator', 'run-task.ts');
+const STREAM_TS = path.join(CHECKOUT_ROOT, 'src', 'orchestrator', 'agents', 'stream.ts');
 
 function makeHarness(signal: 'SIGHUP' | 'SIGINT'): {
     cleanup: () => void;
@@ -114,16 +114,16 @@ void test('signals.ts imports only node:* built-ins', () => {
     );
 });
 
-// Structural guard: scripts/run-task.ts must import signals.js BEFORE any
+// Structural guard: src/orchestrator/run-task.ts must import signals.js BEFORE any
 // other project import. ES post-order DFS evaluates dependencies in source
 // order; if a heavier import appears first, signals.ts's handler installs
 // too late.
 void test('run-task.ts imports signals.js before main.js', () => {
     const src = fs.readFileSync(RUN_TASK_TS, 'utf8');
-    const signalsIdx = src.indexOf("import './run-task/signals.js'");
-    const mainIdx = src.indexOf("from './run-task/main.js'");
-    assert.notEqual(signalsIdx, -1, 'run-task.ts must side-effect-import ./run-task/signals.js');
-    assert.notEqual(mainIdx, -1, 'run-task.ts must import main from ./run-task/main.js');
+    const signalsIdx = src.indexOf("import './signals.js'");
+    const mainIdx = src.indexOf("from './main.js'");
+    assert.notEqual(signalsIdx, -1, 'run-task.ts must side-effect-import ./signals.js');
+    assert.notEqual(mainIdx, -1, 'run-task.ts must import main from ./main.js');
     assert.ok(
         signalsIdx < mainIdx,
         `signals.js import (offset ${signalsIdx}) must precede main.js import (offset ${mainIdx})`,
@@ -183,8 +183,8 @@ void test('SIGINT to orchestrator kills tracked streamProcess children', async (
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-shutdown-'));
     const harnessPath = path.join(root, 'harness.mjs');
     const pidFile = path.join(root, 'child.pid');
-    const signalsUrl = new URL('../scripts/run-task/signals.ts', import.meta.url).href;
-    const streamUrl = new URL('../scripts/run-task/agents/stream.ts', import.meta.url).href;
+    const signalsUrl = new URL('../src/orchestrator/signals.ts', import.meta.url).href;
+    const streamUrl = new URL('../src/orchestrator/agents/stream.ts', import.meta.url).href;
 
     fs.writeFileSync(harnessPath, [
         // Side-effect import: installs SIGINT/SIGTERM forwarders.
@@ -275,8 +275,8 @@ void test('SIGINT to orchestrator kills tracked streamProcess children', async (
 void test('SIGTERM shutdown writes exactly one exit marker before the re-raise', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-signal-marker-'));
     const harnessPath = path.join(root, 'harness.mjs');
-    const signalsUrl = new URL('../scripts/run-task/signals.ts', import.meta.url).href;
-    const cliUrl = new URL('../scripts/run-task/cli.ts', import.meta.url).href;
+    const signalsUrl = new URL('../src/orchestrator/signals.ts', import.meta.url).href;
+    const cliUrl = new URL('../src/orchestrator/cli.ts', import.meta.url).href;
     fs.writeFileSync(harnessPath, [
         `const signals = await import(${JSON.stringify(signalsUrl)});`,
         `const cli = await import(${JSON.stringify(cliUrl)});`,

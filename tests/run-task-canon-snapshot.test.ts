@@ -4,15 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { REPO_ROOT } from '../scripts/run-task/env.js';
+import { REPO_ROOT } from '../src/orchestrator/env.js';
 import {
     CANON_UPSTREAM_REPO,
     captureCanonSnapshot,
     refreshCanonSnapshotAtPath,
-} from '../scripts/run-task/canon-snapshot.js';
+} from '../src/orchestrator/canon-snapshot.js';
 import { taskNew } from '../src/task/index.js';
-import type { CanonSnapshotOptions } from '../scripts/run-task/canon-snapshot.js';
-import type { CommandResult, StatusJson } from '../scripts/run-task/types.js';
+import type { CanonSnapshotOptions } from '../src/orchestrator/canon-snapshot.js';
+import type { CommandResult, StatusJson } from '../src/orchestrator/types.js';
 
 function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): StatusJson {
     return {
@@ -194,7 +194,7 @@ void test('captureCanonSnapshot marks canon commit unavailable for an installed-
             ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
             ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
         }),
-        canonSourcePath: '/tmp/adopter/project/node_modules/canon-ai/dist/scripts',
+        canonSourcePath: '/tmp/adopter/project/node_modules/canon-ai/dist/orchestrator',
         canonVersion: '2.2.0',
     });
     assert.equal(snapshot.upstream_commit, '<unavailable>');
@@ -215,7 +215,7 @@ void test('captureCanonSnapshot never stamps the adopter commit as canon commit 
             ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
             ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
         }),
-        canonSourcePath: '/tmp/adopter/other-project/node_modules/canon-ai/dist/scripts',
+        canonSourcePath: '/tmp/adopter/other-project/node_modules/canon-ai/dist/orchestrator',
         canonVersion: '3.0.0',
     });
     assert.equal(snapshot.upstream_commit, '<unavailable>');
@@ -235,7 +235,7 @@ void test('captureCanonSnapshot preserves the upstream override for an installed
                 ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
                 ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
             }),
-            canonSourcePath: '/tmp/adopter/override-project/node_modules/canon-ai/dist/scripts',
+            canonSourcePath: '/tmp/adopter/override-project/node_modules/canon-ai/dist/orchestrator',
             canonVersion: '2.2.0',
         });
         assert.equal(snapshot.upstream_repo, 'my-fork/canon-ai');
@@ -266,7 +266,7 @@ void test('captureCanonSnapshot classifies a linked-worktree source path as nati
             ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
             ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
         }),
-        canonSourcePath: '/Users/dev/canon-ai/dev-worktrees/some-task/scripts/run-task',
+        canonSourcePath: '/Users/dev/canon-ai/dev-worktrees/some-task/src/orchestrator',
         canonVersion: 'dev',
     });
     assert.equal(snapshot.upstream_commit, 'worktree-native-sha');
@@ -287,7 +287,7 @@ void test('captureCanonSnapshot records host commit and unavailable canon commit
             ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
             ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
         }),
-        canonSourcePath: '/tmp/host/adopter-submodule/node_modules/canon-ai/dist/scripts',
+        canonSourcePath: '/tmp/host/adopter-submodule/node_modules/canon-ai/dist/orchestrator',
         canonVersion: '2.2.0',
     });
     assert.equal(snapshot.upstream_commit, '<unavailable>');
@@ -311,7 +311,7 @@ void test('refreshCanonSnapshotAtPath keeps installed canon identity stable whil
                 ['codex :: --version']: { ok: true, stdout: 'codex 1.0.0', stderr: '' },
                 ['claude :: --version']: { ok: true, stdout: 'claude 1.0.0', stderr: '' },
             }),
-            canonSourcePath: '/tmp/adopter/refresh/node_modules/canon-ai/dist/scripts',
+            canonSourcePath: '/tmp/adopter/refresh/node_modules/canon-ai/dist/orchestrator',
             canonVersion: '2.2.0',
         };
 

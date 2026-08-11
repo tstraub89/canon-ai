@@ -1,0 +1,1 @@
+The relocation updates source imports, bundle paths, CLI spawning, package contents, tests, and documentation consistently. Type-checking, linting, tests, build, template sync, and docs-reference validation all pass.

@@ -1,4 +1,4 @@
-// scripts/run-task/heartbeat.ts
+// src/orchestrator/heartbeat.ts
 //
 // Per-task heartbeat file. Every 30s the orchestrator writes a JSON record
 // to `<taskDir>/.heartbeat.json` containing `pid`, `started_at_ms`, and

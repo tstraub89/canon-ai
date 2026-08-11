@@ -53,7 +53,7 @@ low-confidence ones, tagged with confidence + severity, and filter downstream.
   report-low-confidence instruction and no confidence field.
 - `.claude/agents/code-review-anchored.md` emits findings by category with no
   severity and no confidence.
-- The foreman (`scripts/run-task/prompts/templates/code-review-foreman.md`) is
+- The foreman (`src/orchestrator/prompts/templates/code-review-foreman.md`) is
   the right place to filter, but cannot rank by confidence because the lenses
   don't pass it.
 
@@ -112,7 +112,7 @@ reasoning that forced the Opus bump.
 
 ### P2 — Stale rationale in matrix comments / decisions
 
-`scripts/pipeline-policy.ts` / `scripts/run-task/env.ts` carry 4.5-era comments
+`src/lib/pipeline-policy.ts` / `src/orchestrator/env.ts` carry 4.5-era comments
 ("sonnet doesn't support xhigh" — false for 4.6, which added the effort param; the
 REVIEW_LARGE justification above). No behavior impact, but misleads the next
 tuner. Refresh comments; add a `docs/decisions.md` entry noting the matrix was

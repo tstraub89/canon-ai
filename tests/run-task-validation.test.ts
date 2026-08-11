@@ -6,16 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import {
     parseNameStatusOutput,
-} from '../scripts/run-task/git.js';
+} from '../src/orchestrator/git.js';
 import {
     autoBlockPhase,
     deriveTopLevelStatus,
     readStatus,
     validateStatus,
     writeStatusToFile,
-} from '../scripts/run-task/state.js';
-import { _VERDICT_VALUES } from '../scripts/run-task/types.js';
-import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
+} from '../src/orchestrator/state.js';
+import { _VERDICT_VALUES } from '../src/orchestrator/types.js';
+import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
 import {
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
@@ -41,13 +41,13 @@ import {
     verifyHandoffAgainstDiffFromData,
     sliceRerouteRoundSection,
     verifyRerouteAmendment,
-} from '../scripts/run-task/validation.js';
-import { checkAndRoute, resolveQaPrBody } from '../scripts/run-task/main.js';
+} from '../src/orchestrator/validation.js';
+import { checkAndRoute, resolveQaPrBody } from '../src/orchestrator/main.js';
 import {
     buildPreflightReviewBlock,
     determinePreflightRoute,
     writePreflightReviewArtifacts,
-} from '../scripts/run-task/phases/code-review.js';
+} from '../src/orchestrator/phases/code-review.js';
 import { taskPhasePreflightRejected, VALID_VERDICTS } from '../src/task/index.js';
 
 function withTempPair(
@@ -882,14 +882,14 @@ void test('parseAffectedFilesFromSpec returns valid paths from the Design Affect
         '',
         '| File | Change |',
         '|---|---|',
-        '| `scripts/run-task/main.ts` | update allow-list |',
+        '| `src/orchestrator/main.ts` | update allow-list |',
         '| [tests/run-task-safety.test.ts](https://github.com/example/repo/blob/main/tests/run-task-safety.test.ts) | add safety tests |',
         '| `docs/pipeline-orchestrator.md` | document behavior |',
         '',
     ].join('\n'), () => {
         assert.deepEqual(parseAffectedFilesFromSpec('affected-task'), {
             files: [
-                'scripts/run-task/main.ts',
+                'src/orchestrator/main.ts',
                 'tests/run-task-safety.test.ts',
                 'docs/pipeline-orchestrator.md',
             ],
@@ -1916,8 +1916,8 @@ void test('verifyBaseDriftFromData: telemetry file in allowlist is accepted', ()
 void test('verifyBaseDriftFromData: bundle unions disjoint task allowlists', () => {
     assert.deepEqual(
         verifyBaseDriftFromData(
-            ['docs/codebase-map.md', 'scripts/run-task/main.ts'],
-            new Set(['docs/codebase-map.md', 'scripts/run-task/main.ts']),
+            ['docs/codebase-map.md', 'src/orchestrator/main.ts'],
+            new Set(['docs/codebase-map.md', 'src/orchestrator/main.ts']),
             ['task-a', 'task-b'],
         ),
         [],
@@ -2075,7 +2075,7 @@ void test('verifyBaseDrift: QA-done task auto-allowlists PIPELINE_MANAGED_DOCS',
         gitIn(localDir, 'add', 'docs/patterns.md');
         gitIn(localDir, 'commit', '-m', 'QA promotes lesson into patterns');
 
-        withTempTaskSpecs({ 'task-a': ['`scripts/run-task/main.ts`'] }, (tasksRoot) => {
+        withTempTaskSpecs({ 'task-a': ['`src/orchestrator/main.ts`'] }, (tasksRoot) => {
             writeMinimalStatus(tasksRoot, 'task-a', { qaStatus: 'done' });
             const result = verifyBaseDrift(['task-a'], 'main', localDir);
             assert.deepEqual(result.drift, []);
@@ -2096,7 +2096,7 @@ void test('verifyBaseDrift: QA-pending task does NOT auto-allowlist managed docs
         gitIn(localDir, 'add', 'docs/patterns.md');
         gitIn(localDir, 'commit', '-m', 'edit before QA completes');
 
-        withTempTaskSpecs({ 'task-a': ['`scripts/run-task/main.ts`'] }, (tasksRoot) => {
+        withTempTaskSpecs({ 'task-a': ['`src/orchestrator/main.ts`'] }, (tasksRoot) => {
             writeMinimalStatus(tasksRoot, 'task-a', { qaStatus: 'pending' });
             const result = verifyBaseDrift(['task-a'], 'main', localDir);
             assert.deepEqual(result.drift, ['docs/patterns.md']);
@@ -2210,10 +2210,10 @@ void test('verifyBaseDrift: two-dot diff catches base-advance drift that three-d
     try {
         const { localDir, originDir } = makeGitFixture(dir);
         gitIn(localDir, 'checkout', '-b', 'task/demo');
-        const taskFile = path.join(localDir, 'scripts', 'run-task', 'main.ts');
+        const taskFile = path.join(localDir, 'src', 'orchestrator', 'main.ts');
         fs.mkdirSync(path.dirname(taskFile), { recursive: true });
         fs.writeFileSync(taskFile, 'task content\n', 'utf8');
-        gitIn(localDir, 'add', 'scripts/run-task/main.ts');
+        gitIn(localDir, 'add', 'src/orchestrator/main.ts');
         gitIn(localDir, 'commit', '-m', 'task change');
 
         const thirdPartyDir = path.join(dir, 'third-party');
@@ -2227,7 +2227,7 @@ void test('verifyBaseDrift: two-dot diff catches base-advance drift that three-d
         gitIn(thirdPartyDir, 'commit', '-m', 'third-party base advance');
         gitIn(thirdPartyDir, 'push', 'origin', 'main');
 
-        withTempTaskSpecs({ 'task-a': ['`scripts/run-task/main.ts`'] }, () => {
+        withTempTaskSpecs({ 'task-a': ['`src/orchestrator/main.ts`'] }, () => {
             const result = verifyBaseDrift(['task-a'], 'main', localDir);
             assert.equal(result.fetchFailed, false);
             assert.equal(result.diffFailed, false);
@@ -2663,7 +2663,7 @@ void test('verifyHandoffAgainstDiffFromData: rename whose either side is a pipel
 // this function; integration test via canon task would duplicate the unit
 // coverage.
 
-import { checkPhaseGate } from '../scripts/run-task/validation.js';
+import { checkPhaseGate } from '../src/orchestrator/validation.js';
 
 function withTempTaskDir(
     fn: (taskId: string, taskDirRoot: string) => void,
@@ -2994,7 +2994,7 @@ import {
     isNotConfiguredResult,
     isPendingResult,
     isUnrelatedFailResult,
-} from '../scripts/run-task/validation.js';
+} from '../src/orchestrator/validation.js';
 
 void test('result enum: state-detector helpers recognize each new value (case + delim variants)', () => {
     assert.ok(isHumanPendingResult('human_pending'));

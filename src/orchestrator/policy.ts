@@ -10,7 +10,7 @@ import {
     type PolicyConfig,
     type PolicyInput,
     type TaskSize,
-} from '../pipeline-policy.js';
+} from '../lib/pipeline-policy.js';
 
 import type { StatusJson, TaskContext } from './types.js';
 import { parseMaxReviewLoops } from './env.js';

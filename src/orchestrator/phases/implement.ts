@@ -7,7 +7,7 @@ import { getActiveCwd, TASK_ARTIFACT_FILES } from '../worktree.js';
 import { autoBlockPhase, readStatus, writeStatus } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
-import { taskPhase } from '../../../src/task/index.js';
+import { taskPhase } from '../../task/index.js';
 
 export function shouldUseImplementRevision(
     tasks: readonly Pick<TaskContext, 'iterations_current_loop' | 'status'>[],
@@ -38,7 +38,7 @@ export async function runImplementPhase(
     // implementation run. count >= cap alone would also trip at count=0,
     // turning "zero retries after review requests changes" into "zero
     // implementation, ever" — a real Codex PR finding on this task
-    // (scripts/run-task/phases/implement.ts). The retained review-entry
+    // (src/orchestrator/phases/implement.ts). The retained review-entry
     // backstop in code-review.ts is unaffected and keeps blocking the
     // first review round for cap=0, matching pre-relocation behavior.
     const codeReviewCheck = evaluateCodeReviewLoop(tasks, getMaxReviewLoops(tasks));

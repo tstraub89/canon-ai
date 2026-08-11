@@ -4,10 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { autoBlockPhase, readStatus } from '../scripts/run-task/state.js';
-import { autoBlockSpecReview } from '../scripts/run-task/phases/spec-review.js';
+import { autoBlockPhase, readStatus } from '../src/orchestrator/state.js';
+import { autoBlockSpecReview } from '../src/orchestrator/phases/spec-review.js';
 import { taskPhase, taskPhasePreflightRejected, taskResetSpecReview } from '../src/task/index.js';
-import type { StatusJson } from '../scripts/run-task/types.js';
+import type { StatusJson } from '../src/orchestrator/types.js';
 
 function makeStatus(taskId: string, overrides: Partial<StatusJson> = {}): StatusJson {
     return {
@@ -131,7 +131,7 @@ void test('taskPhase increments all counters on changes_requested and keeps the 
 });
 
 void test('taskPhasePreflightRejected bumps preflight_rejections counters for auto-block visibility', () => {
-    // The auto-block check in scripts/run-task/phases/code-review.ts sums
+    // The auto-block check in src/orchestrator/phases/code-review.ts sums
     // iterations_current_loop + preflight_rejections_current_loop against
     // MAX_REVIEW_LOOPS. Without bumping preflight_rejections_current_loop,
     // persistent pre-flight failures (e.g., malformed Validation Outcomes

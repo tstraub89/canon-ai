@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseTable, parseAllTablesH3, scanAllTables } from '../scripts/run-task/markdown-table.js';
+import { parseTable, parseAllTablesH3, scanAllTables } from '../src/orchestrator/markdown-table.js';
 
 void test('parseTable maps named columns in a basic markdown table', () => {
     const rows = parseTable([

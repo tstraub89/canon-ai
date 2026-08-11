@@ -1,15 +1,15 @@
 {
   "id": "relocate-orchestrator-to-src",
   "title": "Relocate the pipeline orchestrator from scripts/ to src/orchestrator/",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-08-11",
   "updated": "2026-08-11",
-  "branch": "",
+  "branch": "task/relocate-orchestrator-to-src",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "c315af8019ba4db3e3c8440a2724a6734df8b837",
+    "orchestrator_commit": "8cd0cb730696fa71955494bb78bc99e5a1473d93",
     "canon_version": "2.7.0",
     "codex_cli": "codex-cli 0.147.0",
     "claude_code": "2.1.226 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "019fee71-d3a4-7ae2-9033-b70f1e81db8c",
-    "claude_spec": "a254c637-4716-4937-9251-b4f9e52798b3"
+    "claude_spec": "a254c637-4716-4937-9251-b4f9e52798b3",
+    "codex": "019fee9f-af6e-78c1-8fb9-5f7f79e2f763",
+    "claude_review": "a5726d76-e789-44f0-9c71-5462aa761d18"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

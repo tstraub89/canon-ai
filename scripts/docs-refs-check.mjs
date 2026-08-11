@@ -522,7 +522,7 @@ function isNoisySourceFile(relPath, skipPaths = []) {
 }
 
 // Batched `git check-ignore --stdin -z` lookup. Mirrors the pattern from
-// `scripts/run-task/git.ts:filterGitIgnoredPaths`. Returns empty on any
+// `src/orchestrator/git.ts:filterGitIgnoredPaths`. Returns empty on any
 // failure (including running outside a git repo, where git exits 128) so
 // behavior degrades to the pre-1.5 "no skip" mode rather than failing
 // closed. Doc refs to paths that legitimately exist in the working tree

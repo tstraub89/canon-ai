@@ -89,7 +89,7 @@ export function warnLegacyEnvVars(): void {
     }
     for (const { old, reason } of LEGACY_IGNORED_ENV_VARS) {
         if (process.env[old]) {
-            console.error(`⚠️  ${old} is no longer honored — ${reason}. Update the matrix in scripts/run-task.ts if you need different effort.`);
+            console.error(`⚠️  ${old} is no longer honored — ${reason}. Update the matrix in src/lib/pipeline-policy.ts if you need different effort.`);
         }
     }
 }

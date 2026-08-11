@@ -49,15 +49,15 @@ Anything that would change if you migrated to a different framework belongs here
 └──────────────────────────────────────────────────────────────┘
         │ canon run <id>
         ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Orchestrator (scripts/run-task/main.ts via scripts/run-task.ts) │
-│   • Reads status.json → determines current phase              │
-│   • Resolves model/effort/loop-cap via pipeline-policy.ts     │
-│   • Spawns agent CLIs (claude / codex) with per-phase prompts │
-│   • Auto-commits code after implement passes validation       │
-│   • Validates handoff at code_review entry                    │
-│   • Reroutes on changes_requested; auto-blocks on loop cap    │
-└──────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│  Orchestrator (src/orchestrator/main.ts via src/orchestrator/run-task.ts) │
+│   • Reads status.json → determines current phase                          │
+│   • Resolves model/effort/loop-cap via pipeline-policy.ts                 │
+│   • Spawns agent CLIs (claude / codex) with per-phase prompts             │
+│   • Auto-commits code after implement passes validation                   │
+│   • Validates handoff at code_review entry                                │
+│   • Reroutes on changes_requested; auto-blocks on loop cap                │
+└───────────────────────────────────────────────────────────────────────────┘
         │
         ├──── invokes ────┐                       ┌──── invokes ────┐
         ▼                 ▼                       ▼                 ▼
@@ -107,7 +107,7 @@ Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json`
 
 ### File-based handoff (not in-memory)
 
-Agents do not pass data to each other through memory or stdout. Every handoff is a markdown file with a stable name (`spec.md`, `handoff.md`, `review.md`, etc.) and a documented schema (the `.canon/templates/` versions). Codex parses `spec.md` headings; Claude parses `handoff.md`'s Changes table via regex (`parseHandoffFiles()` in `scripts/run-task/validation.ts`). The orchestrator parses verdict lines.
+Agents do not pass data to each other through memory or stdout. Every handoff is a markdown file with a stable name (`spec.md`, `handoff.md`, `review.md`, etc.) and a documented schema (the `.canon/templates/` versions). Codex parses `spec.md` headings; Claude parses `handoff.md`'s Changes table via regex (`parseHandoffFiles()` in `src/orchestrator/validation.ts`). The orchestrator parses verdict lines.
 
 This is deliberate. File-based handoff means:
 - Sessions can be resumed cold (re-running `run-task.ts` recovers full state).
@@ -136,12 +136,12 @@ The bindings below say what each category means concretely for canon-ai. The uni
 | Linting | `npm run lint` (= `eslint scripts/ tests/ src/`) — required for all changes |
 | Type checking | `npm run type-check` (= `tsc -p tsconfig.json --noEmit`) |
 | Unit tests | `npm test` (= `node --test --import tsx tests/*.test.ts`) |
-| Full build | `npm run build` (= `tsup` + `scripts/normalize-dist-paths.mjs` postbuild). Emits the published `canon-ai` CLI bundle from two entry points: `src/cli/index.ts` and `scripts/run-task.ts`. **Required for any change that affects `dist/` output** — i.e., changes to `src/**`, `scripts/run-task.ts`, `scripts/run-task/**`, `scripts/pipeline-policy.ts`, or anything they transitively import. **Committed `dist/` must match a fresh build** — CI runs `npm run build && git diff --exit-code -- dist/` (`.github/workflows/ci.yml`) and fails if the committed `dist/` is stale. When in doubt: run `npm run build` and commit any `dist/` deltas alongside source changes. A single shared source file (e.g. under `scripts/run-task/`) commonly bundles into **both** entry-point artifacts — a spec's Affected Files must declare every dist artifact the build rewrites, or the `--pr` base-drift gate rejects the undeclared one. |
+| Full build | `npm run build` (= `tsup` + `scripts/normalize-dist-paths.mjs` postbuild). Emits `dist/cli/index.js` and `dist/orchestrator/run-task.js` from the two source entry points under `src/`. **Required for any change that affects `dist/` output** — i.e., changes to `src/**` or anything it transitively imports. **Committed `dist/` must match a fresh build** — CI runs `npm run build && git diff --exit-code -- dist/` (`.github/workflows/ci.yml`) and fails if the committed `dist/` is stale. When in doubt: run `npm run build` and commit any `dist/` deltas alongside source changes. A single shared source file (e.g. under `src/orchestrator/`) commonly bundles into **both** entry-point artifacts — a spec's Affected Files must declare every dist artifact the build rewrites, or the `--pr` base-drift gate rejects the undeclared one. |
 | Docs references | `npm run docs-refs-check` (= `node scripts/docs-refs-check.mjs`). Validates broken refs in markdown docs (file paths, symbols, sections, anchors). Required for any change touching `docs/`, `tasks/`, `templates/`, or root-level agent files; also required when source files referenced from docs are renamed or moved. Adopter-tunable paths live in `scripts/docs-refs-config.mjs`; the checker keeps canon defaults and merges that sibling config at load time. |
 | Canon-managed template sync | `npm run sync-templates:check` (= `tsx scripts/sync-canon-templates.mjs --check`). Required for any change touching canon-managed root/template pairs so the `templates/` mirror stays aligned before docs refs validation runs. |
-| End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `scripts/run-task/git.ts` and `scripts/run-task/validation.ts`. |
+| End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `src/orchestrator/git.ts` and `src/orchestrator/validation.ts`. |
 | Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
-| Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `.canon/templates/status.json`, update parsers in `scripts/run-task/state.ts`, `scripts/run-task/git.ts`, and `scripts/run-task/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
+| Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `.canon/templates/status.json`, update parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, and `src/orchestrator/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
 | Cross-platform | Node 24.x is the supported version (declared in `package.json` `engines`). CI runs 24.x via `.github/workflows/ci.yml`. |
 
 **Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.

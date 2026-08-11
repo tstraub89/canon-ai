@@ -38,15 +38,15 @@
 
 import { existsSync } from 'fs';
 
-import { readCanonPid, removeCanonPid, runLogPathFor } from '../../../scripts/run-task/detach.js';
+import { readCanonPid, removeCanonPid, runLogPathFor } from '../../orchestrator/detach.js';
 import {
     type HeartbeatReadResult,
     type HeartbeatRecord,
     isHeartbeatStale,
     readHeartbeatStatus,
     removeHeartbeat,
-} from '../../../scripts/run-task/heartbeat.js';
-import { probePidAlive, tolerantTaskDir } from '../../../scripts/run-task/run-context.js';
+} from '../../orchestrator/heartbeat.js';
+import { probePidAlive, tolerantTaskDir } from '../../orchestrator/run-context.js';
 import { formatAge } from './doctor.js';
 
 const SIGTERM_GRACE_MS = 10_000;

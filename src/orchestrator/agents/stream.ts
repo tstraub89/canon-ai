@@ -36,7 +36,7 @@ export function streamProcess(
         // detached: true → setsid() on the child, placing it in a new session
         // and process group. Process-group SIGHUP from the supervising shell
         // stops at this boundary, so Codex/Claude survive shell-exit just like
-        // the orchestrator does (see run-task/signals.ts). We deliberately do
+        // the orchestrator does (see src/orchestrator/signals.ts). We deliberately do
         // NOT call child.unref() — the orchestrator must continue to wait for
         // the agent to finish; detaching is purely for signal isolation.
         //

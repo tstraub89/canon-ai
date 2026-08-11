@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { decideStopAction, stopCmd, waitForHeartbeat } from '../src/cli/commands/stop.js';
-import { HEARTBEAT_STALE_AFTER_MS, type HeartbeatReadResult, type HeartbeatRecord } from '../scripts/run-task/heartbeat.js';
+import { HEARTBEAT_STALE_AFTER_MS, type HeartbeatReadResult, type HeartbeatRecord } from '../src/orchestrator/heartbeat.js';
 
 // ── decideStopAction ─────────────────────────────────────────────────────────
 //

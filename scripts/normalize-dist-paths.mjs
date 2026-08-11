@@ -4,7 +4,7 @@
 // Why: tsup embeds the relative source path of each bundled module as a
 // `// <path>` comment. When canon-ai is built from a git worktree whose
 // `node_modules` is symlinked to the main checkout (canon's worktree setup
-// does this for speed — see scripts/run-task/worktree.ts:147), tsup resolves
+// does this for speed — see src/orchestrator/worktree.ts:265), tsup resolves
 // the symlink and emits `// ../../canon-ai-dev/node_modules/foo/bar.js`.
 // A clean CI checkout has a regular `node_modules` and emits `// node_modules/
 // foo/bar.js`. Same bundle, two different byte sequences — fails the

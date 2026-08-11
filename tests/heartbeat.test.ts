@@ -14,7 +14,7 @@ import {
     stopAllHeartbeats,
     tickAllHeartbeats,
     type HeartbeatRecord,
-} from '../scripts/run-task/heartbeat.js';
+} from '../src/orchestrator/heartbeat.js';
 
 function withTempDir(fn: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'heartbeat-test-'));

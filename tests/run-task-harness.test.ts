@@ -6,20 +6,19 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { REPO_ROOT } from '../scripts/run-task/env.js';
-import { extractAcSummary, extractAffectedFiles, extractValidationChecks } from '../scripts/run-task/context.js';
-import { validateTaskId } from '../scripts/run-task/cli.js';
-import { deriveTopLevelStatus } from '../scripts/run-task/state.js';
+import { extractAcSummary, extractAffectedFiles, extractValidationChecks } from '../src/orchestrator/context.js';
+import { validateTaskId } from '../src/orchestrator/cli.js';
+import { deriveTopLevelStatus } from '../src/orchestrator/state.js';
 import {
     parseValidationOutcomeRows,
     parseValidationRequiredChecks,
-} from '../scripts/run-task/validation.js';
-import type { StatusJson } from '../scripts/run-task/types.js';
+} from '../src/orchestrator/validation.js';
+import type { StatusJson } from '../src/orchestrator/types.js';
 
-const TSX_LOADER = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+const TSX_LOADER = path.join(process.cwd(), 'node_modules', 'tsx', 'dist', 'loader.mjs');
 
 function loadEnvMaxReviewLoops(raw: string): { value: number | null; stderr: string } {
-    const envUrl = pathToFileURL(path.join(process.cwd(), 'scripts/run-task/env.ts')).href;
+    const envUrl = pathToFileURL(path.join(process.cwd(), 'src/orchestrator/env.ts')).href;
     const result = spawnSync(process.execPath, ['--import', 'tsx', '--eval', [
         `import(${JSON.stringify(envUrl)})`,
         '.then(m => console.log(JSON.stringify(m.config.maxReviewLoops)))',
@@ -77,11 +76,11 @@ function withTempTaskSpec<T>(specContent: string, fn: (taskId: string, taskRoot:
 
 function runValidateTaskId(taskId: string): { status: number | null; stdout: string; stderr: string } {
     const result = spawnSync(process.execPath, ['--import', TSX_LOADER, '-e', [
-        `import(${JSON.stringify(path.join(REPO_ROOT, 'scripts/run-task/cli.ts'))})`,
+        `import(${JSON.stringify(path.join(process.cwd(), 'src/orchestrator/cli.ts'))})`,
         `.then(m => { m.validateTaskId(${JSON.stringify(taskId)}); console.log('ok'); })`,
         '.catch(err => { console.error(err); process.exit(1); });',
     ].join('')], {
-        cwd: REPO_ROOT,
+        cwd: process.cwd(),
         encoding: 'utf8',
         env: process.env,
     });

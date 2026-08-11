@@ -23,3 +23,15 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec] Discovered while checking the handoff token form: `isNoisySourceFile()` (`scripts/docs-refs-check.mjs:512`) exempts only `spec|plan|notes|spec-review.md` under `tasks/<id>/` — `handoff.md` is deliberately NOT exempt. So the same rename must be written two DIFFERENT ways: backticks on both sides in spec.md (exempt, and `parseAffectedFilesFromSpec` requires backticked tokens), but `[old](old)` markdown-link + `` `new` `` in handoff.md (a backticked deleted path is a broken ref there). Collapsing the asymmetry in either direction breaks a gate. Strong `docs/patterns.md` candidate if it survives QA — it generalizes to any rename-heavy task, not just this one.
 
 [spec] Re-ran `parseAffectedFilesFromSpec` after every edit round: 0 malformed, 144 paths, 46/46 source and destination present. The added prose inside the Affected Files section (blockquote note) does not affect the parse — only table rows are read.
+
+[implement] The approved Affected Files manifest omits `tests/run-task-ship.test.ts`, whose `MAIN_HREF` constructs the retired module path as separate `path.join(..., 'scripts', 'run-task', 'main.ts')` cells. Literal-family greps do not see that split spelling. The full suite therefore reports 29 `ERR_MODULE_NOT_FOUND` failures from that one file; all 1,117 non-ship tests pass. Scope discipline forbids editing it without a spec amendment.
+
+[implement] `npm pack --dry-run` initially hit the host's unwritable npm cache (`EPERM` under the user cache). Re-running with a task-scoped cache under `/tmp` passed and showed exactly one packaged `scripts/` file: `scripts/install-git-hooks.mjs`.
+
+[implement] Resumed implementation explicitly authorized finishing the omitted `tests/run-task-ship.test.ts` path fixture. Added an Amendment Affected Files row before editing it so the base-drift and handoff manifests remain complete.
+
+[implement-revision] Round 1 confirmed the active-checkout test-path pitfall in two remaining sites: a supervising-root import made a worktree regression load stale code, while an `existsSync` guard silently skipped the newly relocated bundle. Active test targets now resolve from `process.cwd()` / `WORKTREE_ROOT`, and declared shipped paths fail closed when absent.
+
+[implement-revision] The reviewer-authored `review.md` used nine checker-invalid backtick refs (deleted paths plus extensionless live paths). Because review artifacts are intentionally scanned, those refs broke `docs-refs-check` and six full-suite subprocess cases. Repaired only reference formatting/path completeness without changing review substance.
+
+

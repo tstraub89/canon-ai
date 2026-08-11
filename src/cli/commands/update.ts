@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 
-import { CANON_UPSTREAM_REPO } from '../../../scripts/run-task/canon-snapshot.js';
+import { CANON_UPSTREAM_REPO } from '../../orchestrator/canon-snapshot.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 

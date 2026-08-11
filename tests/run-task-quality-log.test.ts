@@ -4,12 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { parseTable } from '../scripts/run-task/markdown-table.js';
+import { parseTable } from '../src/orchestrator/markdown-table.js';
 import {
     parseQualityLogJudgmentBlock,
     serializeQualityLogCell,
     upsertQualityLogRow,
-} from '../scripts/run-task/quality-log.js';
+} from '../src/orchestrator/quality-log.js';
 
 const HEADERS = [
     'Date',

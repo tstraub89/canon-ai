@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
 
-import { REPO_ROOT } from '../scripts/run-task/env.js';
+import { REPO_ROOT } from '../src/orchestrator/env.js';
 import {
     promptCodeReview,
     promptImplement,
@@ -15,9 +15,9 @@ import {
     promptSpec,
     promptSpecRevision,
     promptSpecReview,
-} from '../scripts/run-task/prompts/index.js';
-import { runClaude } from '../scripts/run-task/agents/claude.js';
-import type { PipelineState, StatusJson, TaskContext } from '../scripts/run-task/types.js';
+} from '../src/orchestrator/prompts/index.js';
+import { runClaude } from '../src/orchestrator/agents/claude.js';
+import type { PipelineState, StatusJson, TaskContext } from '../src/orchestrator/types.js';
 
 const TASK_ID = 'test-pf-001';
 const PATTERNS_STUB_PATH = path.resolve('tests/fixtures/patterns.stub.md');
@@ -55,7 +55,7 @@ const handoffTemplate = [
     '',
     '| File | What Changed |',
     '|---|---|',
-    '| `scripts/run-task/state.ts` | fixture handoff |',
+    '| `src/orchestrator/state.ts` | fixture handoff |',
     '',
     '## Iteration 1 — addressing review round 0',
     '',
@@ -670,7 +670,7 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
         return fs.readFileSync(path.join(worktreeRoot, relPath), 'utf8');
     }
 
-    const impl = readRepoFile('scripts/run-task/prompts/templates/implement.md');
+    const impl = readRepoFile('src/orchestrator/prompts/templates/implement.md');
     assert.match(impl, /ship the safer guarded behavior first/);
     assert.match(impl, /No unauthorized new abstractions/);
     assert.match(impl, /No incidental dependency changes/);
@@ -678,16 +678,16 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     assert.match(impl, /Parse cell-by-cell with explicit rejection/);
     assert.match(impl, /Migration runner \+ manual review/);
 
-    const implRev = readRepoFile('scripts/run-task/prompts/templates/implement-revisions.md');
+    const implRev = readRepoFile('src/orchestrator/prompts/templates/implement-revisions.md');
     assert.match(implRev, /git show origin\//);
     assert.match(implRev, /the pre-flight diff is cumulative/);
     assert.match(implRev, /Referencing deleted/);
 
-    const specRevTpl = readRepoFile('scripts/run-task/prompts/templates/spec-review.md');
+    const specRevTpl = readRepoFile('src/orchestrator/prompts/templates/spec-review.md');
     assert.match(specRevTpl, /No agent reviews its own output/);
     assert.match(specRevTpl, /Each role owns a checkpoint/);
 
-    const qa = readRepoFile('scripts/run-task/prompts/templates/qa.md');
+    const qa = readRepoFile('src/orchestrator/prompts/templates/qa.md');
     assert.match(qa, /Agents do not bump versions/);
     assert.match(qa, /Handoff Validation/);
     assert.match(qa, /One-paragraph plain-English summary/);
@@ -695,11 +695,11 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     assert.match(qa, /Code is Canonical/);
     assert.match(qa, /Commit Ownership/);
 
-    const specJit = readRepoFile('scripts/run-task/prompts/templates/spec.md');
+    const specJit = readRepoFile('src/orchestrator/prompts/templates/spec.md');
     assert.match(specJit, /Name effects to DELETE/);
     assert.match(specJit, /Prefer positive or structural assertions/);
 
-    const specRevJit = readRepoFile('scripts/run-task/prompts/templates/spec-revision.md');
+    const specRevJit = readRepoFile('src/orchestrator/prompts/templates/spec-revision.md');
     assert.match(specRevJit, /Name effects to DELETE/);
     assert.match(specRevJit, /Prefer positive or structural assertions/);
 
@@ -722,7 +722,7 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     assert.match(canonSpecReview, /Name effects to DELETE/);
     assert.match(canonSpecReview, /Prefer positive or structural assertions/);
 
-    const helpers = readRepoFile('scripts/run-task/prompts/helpers.ts');
+    const helpers = readRepoFile('src/orchestrator/prompts/helpers.ts');
     assert.match(helpers, /honest signal is canon/);
     assert.match(helpers, /pull --rebase/);
 
@@ -737,7 +737,7 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     assert.doesNotMatch(specRevTpl, /task baseline/);
     assert.doesNotMatch(specRevTpl, /git -C/);
 
-    const foreman = readRepoFile('scripts/run-task/prompts/templates/code-review-foreman.md');
+    const foreman = readRepoFile('src/orchestrator/prompts/templates/code-review-foreman.md');
     assert.doesNotMatch(foreman, /Name effects to DELETE/);
     assert.doesNotMatch(foreman, /Prefer positive or structural assertions/);
 

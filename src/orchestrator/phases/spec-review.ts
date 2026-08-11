@@ -10,7 +10,7 @@ import { promptSpecReview } from '../prompts/index.js';
 import { extractCheckedVerdict, isTemplateUnfilled } from '../validation.js';
 import { getActiveCwd } from '../worktree.js';
 import { evaluateSpecReviewLoop } from '../review-loop.js';
-import { taskPhase } from '../../../src/task/index.js';
+import { taskPhase } from '../../task/index.js';
 
 export function autoBlockSpecReview(taskIds: string[], iterationCount: number, reason: string): void {
     autoBlockPhase(taskIds, 'spec_review', iterationCount, reason);

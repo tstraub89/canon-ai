@@ -922,3 +922,10 @@
 | 2026-08-11T01:56:21.078Z | relocate-orchestrator-to-src | spec | claude | opus | 0 | 402.3s | 3335137 | ok |
 | 2026-08-11T01:58:30.506Z | relocate-orchestrator-to-src | spec_review | codex | gpt-5.6-sol | 2 | 129.3s | 6603003 | ok |
 | 2026-08-11T02:21:08.937Z | relocate-orchestrator-to-src | plan | claude | sonnet | 0 | 287.4s | 1719467 | ok |
+| 2026-08-11T02:40:54.866Z | relocate-orchestrator-to-src | implement | codex | gpt-5.6-sol | 0 | 1184.9s | 14382561 | ok |
+| 2026-08-11T02:51:19.561Z | relocate-orchestrator-to-src | code_review | codex | gpt-5.6-luna | 0 | 334.0s | - | ok |
+| 2026-08-11T03:15:04.255Z | relocate-orchestrator-to-src | code_review | claude | opus | 0 | 1424.6s | 2920408 | ok |
+| 2026-08-11T03:26:10.205Z | relocate-orchestrator-to-src | implement | codex | gpt-5.6-sol | 1 | 665.9s | 24079356 | ok |
+| 2026-08-11T03:34:44.051Z | relocate-orchestrator-to-src | code_review | codex | gpt-5.6-luna | 1 | 510.7s | - | ok |
+| 2026-08-11T03:59:20.030Z | relocate-orchestrator-to-src | code_review | claude | opus | 1 | 1475.9s | 4547555 | ok |
+| 2026-08-11T04:01:54.675Z | relocate-orchestrator-to-src | qa | claude | sonnet | 0 | 154.6s | 1560149 | ok |

@@ -268,6 +268,16 @@ Structure is preserved verbatim; each row is one rename pair. Unless the Change 
 
 None. No `status.json` field, schema, artifact format, or prompt template content changes.
 
+## Amendment
+
+The initial Affected Files inventory missed a split-token fixture path that the retired-path literal searches could not see. The resumed implementation instruction authorizes completing this path-only test update.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `tests/run-task-ship.test.ts` | Re-point the `MAIN_HREF` fixture from the retired orchestrator module location to `src/orchestrator/main.ts`; no assertion or test-logic change |
+
 ## Validation Required
 
 | Change Type | Required Check Categories |
@@ -288,7 +298,7 @@ Additional manual verification, not covered by any npm script:
 
 - [x] `node dist/orchestrator/run-task.js --help` (AC-3)
 - [x] `npm pack --dry-run` contents check (AC-7)
-- [x] `parseAffectedFilesFromSpec('relocate-orchestrator-to-src')` returns zero `malformed` entries and a `files` set covering both sides of every rename (AC-14, Gate 3). Re-confirmed by execution after the round-2 revision: 0 malformed, 144 paths, all 46 source and 46 destination paths present. Re-run after any Affected Files amendment
+- [x] `parseAffectedFilesFromSpec('relocate-orchestrator-to-src')` returns zero `malformed` entries and a `files` set covering both sides of every rename (AC-14, Gate 3). Re-confirmed after the implementation amendment: 0 malformed, 145 paths, all 46 source and 46 destination paths present
 - [x] Auto-commit clears at `implement` close (AC-14, Gate 1) — the phase ends with a commit, not with the "source changes not covered by handoff.md" abort. This is the strictest of the three gates and the first to fire
 
 ## Docs Impact

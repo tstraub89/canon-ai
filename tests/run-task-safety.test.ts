@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 
-import { REPO_ROOT } from '../scripts/run-task/env.js';
+import { REPO_ROOT } from '../src/orchestrator/env.js';
 import {
     buildHumanReviewStagePaths,
     classifyMergeOutcome,
@@ -19,18 +19,18 @@ import {
     resolveCanonPrBody,
     resolveQaPrBody,
     shouldParkCrashedReview,
-} from '../scripts/run-task/main.js';
-import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../scripts/run-task/git.js';
-import { commitArchiveChanges, stageArchiveChanges } from '../scripts/run-task/main.js';
-import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../scripts/run-task/state.js';
+} from '../src/orchestrator/main.js';
+import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../src/orchestrator/git.js';
+import { commitArchiveChanges, stageArchiveChanges } from '../src/orchestrator/main.js';
+import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../src/orchestrator/state.js';
 import {
     classifyNodeModulesLinkFromData,
     isContainedIn,
     PIPELINE_MANAGED_DOCS,
     resolveWorkspaceDirs,
-} from '../scripts/run-task/worktree.js';
-import { evaluateCodeReviewLoop } from '../scripts/run-task/review-loop.js';
-import type { StatusJson, TaskContext } from '../scripts/run-task/types.js';
+} from '../src/orchestrator/worktree.js';
+import { evaluateCodeReviewLoop } from '../src/orchestrator/review-loop.js';
+import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
 import { taskCmd } from '../src/task/index.js';
 
 const WORKTREE_ROOT = process.cwd();
@@ -478,7 +478,7 @@ function runReviewLoopMain(
     extraEnv: NodeJS.ProcessEnv = {},
     step = true,
 ): { status: number | null; stderr: string; stdout: string } {
-    const mainHref = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'main.ts')).href;
+    const mainHref = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'main.ts')).href;
     const argv = ['node', 'canon', taskId, ...(step ? ['--step'] : []), ...extraArgs];
     return runNodeInline([
         `import(${JSON.stringify(mainHref)})`,
@@ -1001,7 +1001,7 @@ function runShipTask(
     cwd: string,
     env: Record<string, string>,
 ): { status: number | null; stderr: string; stdout: string } {
-    const mainHref = pathToFileURL(path.join(process.cwd(), 'scripts/run-task/main.ts')).href;
+    const mainHref = pathToFileURL(path.join(process.cwd(), 'src/orchestrator/main.ts')).href;
     const childEnv: NodeJS.ProcessEnv = {
         ...process.env,
         PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
@@ -1060,7 +1060,7 @@ function runHumanReviewCommit(
     env: Record<string, string>,
 ): { status: number | null; stderr: string; stdout: string } {
     return runNodeInline([
-        "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+        "import { commitHumanReviewFiles } from './src/orchestrator/main.ts';",
         `commitHumanReviewFiles(${JSON.stringify(taskIds)}, ${JSON.stringify(harness.dir)}, false);`,
     ].join('\n'), {
         ...process.env,
@@ -1090,7 +1090,7 @@ function writeQaArtifacts(repoDir: string, taskId: string): void {
 
 function runCommitQaArtifactsInline(taskId: string, cwd: string): { status: number | null; stderr: string; stdout: string } {
     return runNodeInline([
-        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
         `.then(m => { m.commitQaArtifacts([${JSON.stringify(taskId)}], ${JSON.stringify(cwd)}); })`,
         `.catch(err => { console.error(err); process.exit(1); });`,
     ].join('\n'), childEnvWithoutTasksOverride(), cwd);
@@ -1103,7 +1103,7 @@ function runEnsureWorktreeInline(
     worktreesRoot: string,
 ): { status: number | null; stderr: string; stdout: string } {
     return runNodeInline([
-        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/worktree.ts')).href)})`,
         `.then(m => { m.ensureWorktree(${JSON.stringify(taskId)}, ${JSON.stringify(branch)}); })`,
         `.catch(err => { console.error(err); process.exit(1); });`,
     ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), cwd);
@@ -1114,7 +1114,7 @@ function runIsExemptNodeModulesEntryInline(
     cwd: string,
 ): { status: number | null; stderr: string; stdout: string } {
     return runNodeInline([
-        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
         `.then(m => { console.log(String(m.isExemptNodeModulesEntry(${JSON.stringify(entry)}, ${JSON.stringify(cwd)}))); })`,
         `.catch(err => { console.error(err); process.exit(1); });`,
     ].join('\n'), childEnvWithoutTasksOverride(), cwd);
@@ -1126,7 +1126,7 @@ function runTeardownWorktreeInline(
     worktreesRoot: string,
 ): { status: number | null; stderr: string; stdout: string } {
     return runNodeInline([
-        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/worktree.ts')).href)})`,
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/worktree.ts')).href)})`,
         `.then(m => { m.teardownWorktree(${JSON.stringify(taskId)}); })`,
         `.catch(err => { console.error(err); process.exit(1); });`,
     ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), cwd);
@@ -1275,7 +1275,7 @@ void test('ensureBranch rejects first worktree creation when REPO_ROOT has dirty
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { ensureBranch } from './scripts/run-task/git.js';",
+            "import { ensureBranch } from './src/orchestrator/git.js';",
             `ensureBranch(${JSON.stringify([taskId])});`,
         ].join('\n'), env));
 
@@ -1321,7 +1321,7 @@ void test('ensureBranch allows first worktree creation when only task artifacts 
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { ensureBranch } from './scripts/run-task/git.js';",
+            "import { ensureBranch } from './src/orchestrator/git.js';",
             `ensureBranch(${JSON.stringify([taskId])});`,
         ].join('\n'), env));
 
@@ -1363,8 +1363,8 @@ void test('ensureBranch ticks active heartbeats into the worktree task dir after
         const childScript = [
             "import fs from 'node:fs';",
             "import path from 'node:path';",
-            "import { startHeartbeat } from './scripts/run-task/heartbeat.js';",
-            "import { ensureBranch } from './scripts/run-task/git.js';",
+            "import { startHeartbeat } from './src/orchestrator/heartbeat.js';",
+            "import { ensureBranch } from './src/orchestrator/git.js';",
             `const taskId = ${JSON.stringify(taskId)};`,
             `const worktreesRoot = ${JSON.stringify(worktreesRoot)};`,
             `const sourceHeartbeatFile = ${JSON.stringify(sourceHeartbeatFile)};`,
@@ -1450,8 +1450,8 @@ void test('ensureBranch ticks active heartbeats into every bundled worktree task
         const childScript = [
             "import fs from 'node:fs';",
             "import path from 'node:path';",
-            "import { startHeartbeat } from './scripts/run-task/heartbeat.js';",
-            "import { ensureBranch } from './scripts/run-task/git.js';",
+            "import { startHeartbeat } from './src/orchestrator/heartbeat.js';",
+            "import { ensureBranch } from './src/orchestrator/git.js';",
             `const taskIds = ${JSON.stringify(taskIds)};`,
             `const primaryTaskId = ${JSON.stringify(primaryTaskId)};`,
             `const tasksRoot = ${JSON.stringify(tasksRoot)};`,
@@ -1548,7 +1548,7 @@ void test('ensureBranch force-bypasses dirty source guard for first worktree cre
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { ensureBranch } from './scripts/run-task/git.js';",
+            "import { ensureBranch } from './src/orchestrator/git.js';",
             `ensureBranch(${JSON.stringify([taskId])}, { force: true });`,
         ].join('\n'), env));
 
@@ -1702,7 +1702,7 @@ void test('ensureBranch records a bundle secondary\'s branch in the worktree, ne
         gitIn(localDir, 'add', 'tasks');
         gitIn(localDir, 'commit', '-m', 'task artifacts pre-pipeline');
 
-        const gitModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/git.ts')).href;
+        const gitModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/git.ts')).href;
         const ensureResult = runNodeInline([
             `import(${JSON.stringify(gitModuleUrl)})`,
             `.then(m => { m.ensureBranch(${JSON.stringify([leaderId, secondaryId])}); })`,
@@ -1726,7 +1726,7 @@ void test('ensureBranch records a bundle secondary\'s branch in the worktree, ne
         });
         assert.equal(mainStatus, '');
 
-        const stateModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/state.ts')).href;
+        const stateModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/state.ts')).href;
         const resolveResult = runNodeInline([
             `import(${JSON.stringify(stateModuleUrl)})`,
             `.then(m => { console.log(m.resolveTaskCwd(${JSON.stringify(secondaryId)})); })`,
@@ -1964,7 +1964,7 @@ void test('resolveTaskCwd dies naming candidates when two worktrees both claim o
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            "import { resolveTaskCwd } from './src/orchestrator/state.js';",
             `resolveTaskCwd(${JSON.stringify(taskId)});`,
         ].join('\n'), env));
 
@@ -1999,7 +1999,7 @@ void test('resolveTaskCwd dies when git worktree list enumeration fails', () => 
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            "import { resolveTaskCwd } from './src/orchestrator/state.js';",
             `resolveTaskCwd(${JSON.stringify(taskId)});`,
         ].join('\n'), env));
 
@@ -2043,7 +2043,7 @@ void test('resolveTaskCwd dies when a candidate status.json is present but unpar
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            "import { resolveTaskCwd } from './src/orchestrator/state.js';",
             `resolveTaskCwd(${JSON.stringify(taskId)});`,
         ].join('\n'), env));
 
@@ -2089,7 +2089,7 @@ void test('resolveTaskCwd dies when a candidate status.json has a schema-invalid
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            "import { resolveTaskCwd } from './src/orchestrator/state.js';",
             `resolveTaskCwd(${JSON.stringify(taskId)});`,
         ].join('\n'), env));
 
@@ -2125,7 +2125,7 @@ void test('resolveTaskCwd fails closed when a worktree-backed task has no availa
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { resolveTaskCwd } from './scripts/run-task/state.js';",
+            "import { resolveTaskCwd } from './src/orchestrator/state.js';",
             `console.log(resolveTaskCwd(${JSON.stringify(taskId)}));`,
         ].join('\n'), env));
 
@@ -2157,7 +2157,7 @@ void test('getActiveCwd fails closed when a worktree-backed bundle has no availa
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
         }, env => runNodeInline([
-            "import { getActiveCwd } from './scripts/run-task/worktree.js';",
+            "import { getActiveCwd } from './src/orchestrator/worktree.js';",
             `console.log(getActiveCwd(${JSON.stringify([taskId])}));`,
         ].join('\n'), env));
 
@@ -2196,7 +2196,7 @@ void test('REPO_ROOT stays anchored to the supervising checkout when imported fr
 
         try {
             const result = runNodeInline([
-                `import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, 'scripts/run-task/env.ts')).href)})`,
+                `import(${JSON.stringify(pathToFileURL(path.join(process.cwd(), 'src/orchestrator/env.ts')).href)})`,
                 '.then(m => { console.log(m.REPO_ROOT); })',
                 '.catch(err => { console.error(err); process.exit(1); });',
             ].join(''), process.env, worktreeDir);
@@ -2855,7 +2855,7 @@ void test('commitHumanReviewFiles pushes a tree dirty only with the verified nod
         setupFakeCliTools(fakeBins);
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -2902,7 +2902,7 @@ void test('commitHumanReviewFiles treats N verified node_modules symlinks as a c
         fs.mkdirSync(fakeBins, { recursive: true });
         setupFakeCliTools(fakeBins);
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -2948,7 +2948,7 @@ void test('commitHumanReviewFiles never lets an Affected Files directory prefix 
         fs.mkdirSync(fakeBins, { recursive: true });
         setupFakeCliTools(fakeBins);
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -3010,7 +3010,7 @@ for (const variant of ['ineligible', 'task-branch', 'staged'] as const) {
             fs.mkdirSync(fakeBins, { recursive: true });
             setupFakeCliTools(fakeBins);
             const result = runNodeInline([
-                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
                 `.then(m => {`,
                 `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
                 `  return m.main();`,
@@ -3063,7 +3063,7 @@ void test('directory-prefix staging tolerates an ignored real workspace install 
         fs.mkdirSync(fakeBins, { recursive: true });
         setupFakeCliTools(fakeBins);
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -3107,7 +3107,7 @@ void test('directory-form staging normalizes a C-quoted non-ASCII prefix', () =>
         fs.mkdirSync(fakeBins, { recursive: true });
         setupFakeCliTools(fakeBins);
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -3151,7 +3151,7 @@ void test('directory-prefix staging does not sweep canon workspace links into th
         fs.mkdirSync(fakeBins, { recursive: true });
         setupFakeCliTools(fakeBins);
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -3201,7 +3201,7 @@ void test('commitHumanReviewFiles still blocks a force-staged node_modules symli
         setupFakeCliTools(fakeBins);
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -3762,7 +3762,7 @@ void test('commitQaArtifacts rejects dirty files outside the QA-end allowlist', 
         writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
 
         const result = runNodeInline([
-            "import { commitQaArtifacts } from './scripts/run-task/main.ts';",
+            "import { commitQaArtifacts } from './src/orchestrator/main.ts';",
             `commitQaArtifacts(['task-a'], ${JSON.stringify(dir)});`,
         ].join('\n'), {
             ...process.env,
@@ -3791,7 +3791,7 @@ void test('taskDirFor returns REPO_ROOT task dir before a worktree branch is rec
         });
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/state.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/state.ts')).href)})`,
             `.then(m => { console.log(m.taskDirFor(${JSON.stringify(taskId)})); })`,
             '.catch(err => { console.error(err); process.exit(1); });',
         ].join(''), childEnvWithoutTasksOverride({
@@ -3818,7 +3818,7 @@ void test('taskDirFor returns the task worktree dir after worktree status exists
         writeTaskStatus(path.join(worktreeDir, 'tasks'), taskId, status);
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/state.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/state.ts')).href)})`,
             `.then(m => { console.log(m.taskDirFor(${JSON.stringify(taskId)})); })`,
             '.catch(err => { console.error(err); process.exit(1); });',
         ].join(''), childEnvWithoutTasksOverride({
@@ -3847,7 +3847,7 @@ void test('parseAffectedFilesFromSpec reads the worktree spec when one exists', 
         writeAffectedFilesSpec(path.join(worktreeDir, 'tasks'), taskId, ['`docs/codebase-map.md`']);
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/validation.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/validation.ts')).href)})`,
             `.then(m => { console.log(JSON.stringify(m.parseAffectedFilesFromSpec(${JSON.stringify(taskId)}))); })`,
             '.catch(err => { console.error(err); process.exit(1); });',
         ].join(''), childEnvWithoutTasksOverride({
@@ -3871,7 +3871,7 @@ void test('commitTaskArtifactsToBase absorbs dirty pre-implement telemetry in a 
         fs.writeFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'pre-implement row\n', 'utf8');
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/git.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/git.ts')).href)})`,
             `.then(m => { m.commitTaskArtifactsToBase([${JSON.stringify(taskId)}], new Set()); })`,
             '.catch(err => { console.error(err); process.exit(1); });',
         ].join(''), childEnvWithoutTasksOverride(), localDir);
@@ -3944,7 +3944,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
             TSX_LOADER,
             '-e',
             [
-                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/phases/implement.ts')).href)})`,
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/implement.ts')).href)})`,
                 '.then(async m => {',
                 '  const fs = await import("node:fs");',
                 `  const status = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(localDir, 'tasks', taskId, 'status.json'))}, 'utf8'));`,
@@ -3981,7 +3981,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
             TSX_LOADER,
             '-e',
             [
-                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/phases/implement.ts')).href)})`,
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/implement.ts')).href)})`,
                 '.then(async m => {',
                 '  const fs = await import("node:fs");',
                 `  const status = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(worktreeDir, 'tasks', taskId, 'status.json'))}, 'utf8'));`,
@@ -4176,7 +4176,7 @@ void test('main prints the complete-phase banner when the task is already comple
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', 'task-b'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4213,7 +4213,7 @@ void test('main prints the state-aware pushed_no_pr banner when the task is comp
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4248,7 +4248,7 @@ void test('main prints the state-aware unpushed banner when the task is complete
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4283,7 +4283,7 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4332,7 +4332,7 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
         const prStateFile = path.join(dir, 'gh-pr-state.txt');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4376,7 +4376,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4423,7 +4423,7 @@ void test('main --pr does NOT match an open PR on the wrong base (Codex P2 on re
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4474,7 +4474,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4522,7 +4522,7 @@ void test('main --pr on complete still rejects dirty files outside the human_rev
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -4565,7 +4565,7 @@ void test('main --ship still works when the task is already complete', () => {
 
         try {
             const result = runNodeInline([
-                "import { main } from './scripts/run-task/main.ts';",
+                "import { main } from './src/orchestrator/main.ts';",
                 `process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--ship'];`,
                 "main().catch(err => { console.error(err); process.exit(1); });",
             ].join('\n'), {
@@ -4737,8 +4737,8 @@ void test('fast-tier spec review keeps the gate when a bundle mixes full-send an
         }
 
         const result = runNodeInline([
-            "import { buildPipelineState } from './scripts/run-task/main.ts';",
-            "import { runSpecReviewPhase } from './scripts/run-task/phases/spec-review.ts';",
+            "import { buildPipelineState } from './src/orchestrator/main.ts';",
+            "import { runSpecReviewPhase } from './src/orchestrator/phases/spec-review.ts';",
             '(async () => {',
             "  const state = buildPipelineState(['task-a', 'task-b']);",
             '  await runSpecReviewPhase(state, false, null);',
@@ -4791,8 +4791,8 @@ void test('fast-tier spec review skips the gate when every task is full-send', (
         }
 
         const result = runNodeInline([
-            "import { buildPipelineState } from './scripts/run-task/main.ts';",
-            "import { runSpecReviewPhase } from './scripts/run-task/phases/spec-review.ts';",
+            "import { buildPipelineState } from './src/orchestrator/main.ts';",
+            "import { runSpecReviewPhase } from './src/orchestrator/phases/spec-review.ts';",
             '(async () => {',
             "  const state = buildPipelineState(['task-a', 'task-b']);",
             '  await runSpecReviewPhase(state, false, null);',
@@ -4855,7 +4855,7 @@ void test('commitHumanReviewFiles(createPR = false) pushes without opening a PR'
         const ghLogPath = path.join(dir, 'gh.log');
 
         const result = runNodeInline([
-            "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+            "import { commitHumanReviewFiles } from './src/orchestrator/main.ts';",
             `commitHumanReviewFiles(['task-a'], ${JSON.stringify(dir)}, false);`,
         ].join('\n'), {
             ...process.env,
@@ -4908,7 +4908,7 @@ void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree re
         const prStateFile = path.join(dir, 'gh-pr-state.txt');
 
         const result = runNodeInline([
-            "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+            "import { commitHumanReviewFiles } from './src/orchestrator/main.ts';",
             `commitHumanReviewFiles(['task-a'], ${JSON.stringify(dir)}, true);`,
         ].join('\n'), {
             ...process.env,
@@ -4976,7 +4976,7 @@ void test('main --push blocks when local base has unpushed commits', () => {
         setupFakeCliTools(fakeBins);
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
             `  return m.main();`,
@@ -5002,7 +5002,7 @@ void test('main --push --allow-divergent-base warns and proceeds past the diverg
         setupFakeCliTools(fakeBins);
 
         const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => {`,
             `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push', '--allow-divergent-base'];`,
             `  return m.main();`,
@@ -5053,7 +5053,7 @@ void test('main --full-send --force advances to draft PR and marks human_review 
         const prStateFile = path.join(dir, 'gh-pr-state.txt');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--full-send', '--force'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5124,7 +5124,7 @@ void test('main full-send tail reports the PR URL after pinning pr.number', () =
         const prStateFile = path.join(dir, 'gh-pr-state.txt');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5177,7 +5177,7 @@ void test('main full-tier mixed bundle keeps the spec gate when not every task i
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', 'task-b', '--step'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5240,7 +5240,7 @@ void test('main full-tier all-full-send bundle skips the spec gate', () => {
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', 'task-b', '--step'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5293,7 +5293,7 @@ void test('main --full-send on a delicate task without --force dies before phase
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5458,7 +5458,7 @@ void test('directory-form staging handles C-quoted filenames and staged renames'
             fs.mkdirSync(fakeBins, { recursive: true });
             setupFakeCliTools(fakeBins);
             const result = runNodeInline([
-                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'scripts/run-task/main.ts')).href)})`,
+                `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
                 `.then(m => {`,
                 `  process.argv = ['node', 'canon', ${JSON.stringify(taskId)}, '--push'];`,
                 `  return m.main();`,
@@ -5518,7 +5518,7 @@ void test('commitHumanReviewFiles base-drift gate accepts files listed in Affect
 void test('commitHumanReviewFiles base-drift gate dies on drift outside the allowlist', () => {
     withTempDir('run-task-base-drift-die-', dir => {
         const harness = setupHumanReviewHarness(dir, ['task-a']);
-        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`src/orchestrator/main.ts`']);
 
         // Use a non-managed-doc drift file: PIPELINE_MANAGED_DOCS like
         // docs/decisions.md are auto-allowlisted once qa.status === 'done'
@@ -5546,10 +5546,10 @@ void test('commitHumanReviewFiles base-drift gate dies on drift outside the allo
 void test('commitHumanReviewFiles base-drift gate warns and proceeds with --force', () => {
     withTempDir('run-task-base-drift-force-', dir => {
         const harness = setupHumanReviewHarness(dir, ['task-a']);
-        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`src/orchestrator/main.ts`']);
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--push', '--force'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5603,13 +5603,13 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         const tasksRoot = path.join(dir, 'tasks');
         const { localDir, originDir } = makeGitFixture(dir);
         writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/demo'));
-        writeAffectedFilesSpec(tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+        writeAffectedFilesSpec(tasksRoot, 'task-a', ['`src/orchestrator/main.ts`']);
 
         gitIn(localDir, 'checkout', '-b', 'task/demo');
-        const taskFile = path.join(localDir, 'scripts', 'run-task', 'main.ts');
+        const taskFile = path.join(localDir, 'src', 'orchestrator', 'main.ts');
         fs.mkdirSync(path.dirname(taskFile), { recursive: true });
         fs.writeFileSync(taskFile, 'task content\n', 'utf8');
-        gitIn(localDir, 'add', 'scripts/run-task/main.ts');
+        gitIn(localDir, 'add', 'src/orchestrator/main.ts');
         gitIn(localDir, 'commit', '-m', 'task change');
 
         const thirdPartyDir = path.join(dir, 'third-party');
@@ -5626,7 +5626,7 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         gitIn(thirdPartyDir, 'push', 'origin', 'main');
 
         const result = runNodeInline([
-            "import { commitHumanReviewFiles } from './scripts/run-task/main.ts';",
+            "import { commitHumanReviewFiles } from './src/orchestrator/main.ts';",
             `commitHumanReviewFiles(['task-a'], ${JSON.stringify(localDir)}, false);`,
         ].join('\n'), {
             ...process.env,
@@ -5637,7 +5637,7 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         const output = combinedOutput(result);
         assert.match(output, /base-drift detected/);
         assert.match(output, /docs\/BACKLOG\.md/);
-        assert.doesNotMatch(output, /scripts\/run-task\/main\.ts\s*$/m);
+        assert.doesNotMatch(output, /src\/orchestrator\/main\.ts\s*$/m);
     });
 });
 
@@ -5681,10 +5681,10 @@ void test('commitHumanReviewFiles warns on malformed affected-file rows without 
 void test('commitHumanReviewFiles does not allow non-managed affected-file entries', () => {
     withTempDir('run-task-human-review-source-out-', dir => {
         const harness = setupHumanReviewHarness(dir, ['task-a']);
-        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`scripts/run-task/main.ts`']);
+        writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`src/orchestrator/main.ts`']);
 
         const result = runHumanReviewCommit(harness, ['task-a'], {
-            FAKE_GIT_STATUS_OUTPUT: ' M scripts/run-task/main.ts',
+            FAKE_GIT_STATUS_OUTPUT: ' M src/orchestrator/main.ts',
             FAKE_GIT_DIFF_OUTPUT: '',
         });
 
@@ -5692,7 +5692,7 @@ void test('commitHumanReviewFiles does not allow non-managed affected-file entri
         assert.match(result.stderr, /working tree has dirty files outside the human_review allowlist/);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
         assert.doesNotMatch(gitLog, /^commit /m);
-        assert.doesNotMatch(gitLog, /^add -A -- scripts\/run-task\/main\.ts$/m);
+        assert.doesNotMatch(gitLog, /^add -A -- src\/orchestrator\/main\.ts$/m);
     });
 });
 
@@ -5744,7 +5744,7 @@ void test('main full-send tail fails closed when human_review gate rejects the t
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5796,7 +5796,7 @@ void test('main --full-send rejects multi-branch bundles before gate or PR creat
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', 'task-b', '--full-send'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5854,7 +5854,7 @@ void test('main rejects hand-edited full_send plus delicate without --force', ()
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5915,7 +5915,7 @@ void test('main full-send tail fails closed when draft PR creation fails', () =>
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -5980,7 +5980,7 @@ void test('main --reroute clears full_send', () => {
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--reroute'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -6030,7 +6030,7 @@ void test('checkAndRoute parks a crashed Codex spec_review before stale-verdict 
         });
 
         const result = runNodeInline([
-            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './src/orchestrator/main.ts';",
             'setLastCodexExitStatusForTest(1);',
             `await checkAndRoute('spec_review', [${JSON.stringify(taskId)}]);`,
         ].join('\n'), {
@@ -6080,7 +6080,7 @@ void test('checkAndRoute accepts a self-bookkept spec_review despite a trailing 
         });
 
         const result = runNodeInline([
-            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './src/orchestrator/main.ts';",
             'setLastCodexExitStatusForTest(1);',
             `await checkAndRoute('spec_review', [${JSON.stringify(taskId)}]);`,
         ].join('\n'), {
@@ -6109,7 +6109,7 @@ void test('checkAndRoute still auto-advances a clean-exit spec_review from its f
         });
 
         const result = runNodeInline([
-            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './src/orchestrator/main.ts';",
             'setLastCodexExitStatusForTest(0);',
             `await checkAndRoute('spec_review', [${JSON.stringify(taskId)}]);`,
         ].join('\n'), {
@@ -6154,7 +6154,7 @@ void test('crashed-review park is spec_review-only and code_review recovery rema
         writeReviewRecoveryTask(tasksRoot, taskId, 'code_review', 'in_progress', 'approved');
 
         const result = runNodeInline([
-            "import { checkAndRoute, setLastCodexExitStatusForTest } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute, setLastCodexExitStatusForTest } from './src/orchestrator/main.ts';",
             'setLastCodexExitStatusForTest(0);',
             `await checkAndRoute('code_review', [${JSON.stringify(taskId)}]);`,
         ].join('\n'), {
@@ -6334,7 +6334,7 @@ void test('main runs the first spec write when MAX_REVIEW_LOOPS=0 on a genuinely
     // all". A fresh task's spec_review.iterations_current_loop is 0, same as
     // a capped-out task's threshold, so gating the revision-entry checkpoint
     // on count >= cap alone would also block the very first spec write.
-    // Real Codex PR finding (scripts/run-task/phases/implement.ts; mirrored
+    // Real Codex PR finding (src/orchestrator/phases/implement.ts; mirrored
     // here on the spec side).
     withTempDir('preroute-spec-zero-cap-', dir => {
         const { localDir } = makeGitFixture(dir);
@@ -6668,7 +6668,7 @@ void test('a human reroute clears loop-local code-review attempts before impleme
             '',
         ].join('\n'), 'utf8');
 
-        const mainHref = pathToFileURL(path.join(WORKTREE_ROOT, 'scripts', 'run-task', 'main.ts')).href;
+        const mainHref = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'main.ts')).href;
         const result = runNodeInline([
             `import(${JSON.stringify(mainHref)})`,
             '.then(m => {',
@@ -6725,7 +6725,7 @@ void test('checkAndRoute commits QA artifacts for every task in a completed QA b
         const qualityLogPath = path.join(dir, 'task-quality-log.md');
 
         const result = runNodeInline([
-            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
             '(async () => {',
             "  await checkAndRoute('qa', ['task-a', 'task-b']);",
             '})().catch(err => { console.error(err); process.exit(1); });',
@@ -6787,7 +6787,7 @@ void test('checkAndRoute commits QA artifacts after evidence-advancing qa to don
         const gitLogPath = path.join(dir, 'git.log');
 
         const result = runNodeInline([
-            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
             '(async () => {',
             `  await checkAndRoute('qa', [${JSON.stringify(taskId)}]);`,
             '})().catch(err => { console.error(err); process.exit(1); });',
@@ -6850,7 +6850,7 @@ void test('checkAndRoute blocks code_review on spec_gap without advancing qa', (
         });
 
         const result = runNodeInline([
-            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
             "checkAndRoute('code_review', ['task-a']).catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
             ...process.env,
@@ -6941,7 +6941,7 @@ void test('checkAndRoute revalidates implement done evidence before recovery and
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
             '(async () => {',
             `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
             '})().catch(err => { console.error(err); process.exit(1); });',
@@ -7005,7 +7005,7 @@ void test('checkAndRoute honors valid implement evidence and proceeds without a 
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
             '(async () => {',
             `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
             '})().catch(err => { console.error(err); process.exit(1); });',
@@ -7066,7 +7066,7 @@ void test('checkAndRoute honors deletion-only implement evidence (listed file ab
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
             '(async () => {',
             `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
             '})().catch(err => { console.error(err); process.exit(1); });',
@@ -7168,7 +7168,7 @@ void test('checkAndRoute logs Retry succeeded when implement retry produces vali
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { checkAndRoute } from './scripts/run-task/main.ts';",
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
             '(async () => {',
             `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
             '})().catch(err => { console.error(err); process.exit(1); });',
@@ -7267,7 +7267,7 @@ void test('main writes one exit marker with code=0 and an ISO timestamp on a suc
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'task-a', '--step'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -7299,7 +7299,7 @@ void test('main die exits write a marker whose reason contains the die message',
         writeExecutable(fakeBins, 'codex', ['exit 0']);
 
         const result = runNodeInline([
-            "import { main } from './scripts/run-task/main.ts';",
+            "import { main } from './src/orchestrator/main.ts';",
             "process.argv = ['node', 'canon', 'BadID'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
@@ -7317,7 +7317,7 @@ void test('main die exits write a marker whose reason contains the die message',
 
 void test('multi-line exit reasons collapse to a single marker line', () => {
     const result = runNodeInline([
-        "import { registerExitHandlers, setExitReason } from './scripts/run-task/cli.js';",
+        "import { registerExitHandlers, setExitReason } from './src/orchestrator/cli.js';",
         'registerExitHandlers();',
         "setExitReason('first line\\nsecond line\\nthird line');",
         'process.exit(1);',
@@ -7340,8 +7340,8 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
 
         writeExecutable(fakeBins, 'claude', ['exit 1']);
         const claudeResult = runNodeInline([
-            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
-            "import { runClaude } from './scripts/run-task/agents/claude.js';",
+            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+            "import { runClaude } from './src/orchestrator/agents/claude.js';",
             'registerExitHandlers();',
             '(async () => {',
             "  await runClaude('prompt', false, null, 'model', 'effort', '10', undefined, process.cwd());",
@@ -7359,8 +7359,8 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
         const codexSpawnErrorDir = path.join(dir, 'codex-spawn-error-bin');
         fs.mkdirSync(codexSpawnErrorDir, { recursive: true });
         const spawnErrorResult = runNodeInline([
-            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
-            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+            "import { runCodex } from './src/orchestrator/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
             "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
@@ -7376,8 +7376,8 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
 
         writeExecutable(fakeBins, 'codex', ['exit 1']);
         const codexNoExitResult = runNodeInline([
-            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
-            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+            "import { runCodex } from './src/orchestrator/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
             "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
@@ -7394,8 +7394,8 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
 
         writeExecutable(fakeBins, 'codex', ['sleep 2']);
         const stallResult = runNodeInline([
-            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
-            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+            "import { runCodex } from './src/orchestrator/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
             "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
@@ -7412,8 +7412,8 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
 
         writeExecutable(fakeBins, 'codex', ['kill -TERM $$']);
         const signalResult = runNodeInline([
-            "import { registerExitHandlers } from './scripts/run-task/cli.js';",
-            "import { runCodex } from './scripts/run-task/agents/codex.js';",
+            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+            "import { runCodex } from './src/orchestrator/agents/codex.js';",
             'registerExitHandlers();',
             '(async () => {',
             "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
@@ -7431,7 +7431,7 @@ void test('Claude failure ladders set exit reasons and Codex non-zero exits do n
 
 void test('uncaught exceptions and unhandled rejections write one exit marker and exit 1', () => {
     const uncaughtResult = runNodeInline([
-        "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+        "import { registerExitHandlers } from './src/orchestrator/cli.js';",
         'registerExitHandlers();',
         "setTimeout(() => { throw new Error('boom'); }, 0);",
         'await new Promise(() => {});',
@@ -7446,7 +7446,7 @@ void test('uncaught exceptions and unhandled rejections write one exit marker an
     assert.match(uncaughtResult.stderr, /at .*:/);
 
     const rejectionResult = runNodeInline([
-        "import { registerExitHandlers } from './scripts/run-task/cli.js';",
+        "import { registerExitHandlers } from './src/orchestrator/cli.js';",
         'registerExitHandlers();',
         "setTimeout(() => { Promise.reject(new Error('oops')); }, 0);",
         'await new Promise(() => {});',
@@ -7465,7 +7465,7 @@ void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
     withTempDir('run-task-metrics-override-', dir => {
         const telemetryFile = path.join(dir, 'pipeline-invocations.md');
         const result = runNodeInline([
-            "import { recordMetric } from './scripts/run-task/metrics.ts';",
+            "import { recordMetric } from './src/orchestrator/metrics.ts';",
             "recordMetric({ taskId: 'metrics-override', phase: 'implement', agent: 'codex', model: 'gpt-5.4-mini', durationMs: 0, status: 'ok', tokens: null, iteration: 0 });",
         ].join('\n'), {
             ...process.env,

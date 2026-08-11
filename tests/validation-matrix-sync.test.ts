@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const MATRIX_HEADER = '| Change Type | Required Check Categories |';
-const IMPLEMENT_MATRIX_PATH = path.join(process.cwd(), 'scripts/run-task/prompts/templates/implement.md');
+const IMPLEMENT_MATRIX_PATH = path.join(process.cwd(), 'src/orchestrator/prompts/templates/implement.md');
 const SPEC_MATRIX_PATH = path.join(process.cwd(), '.canon/templates/spec.md');
 
 function extractMatrixBlock(filePath: string): string {
