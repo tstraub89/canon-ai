@@ -1304,7 +1304,7 @@ function checkQualityLog(cwd) {
   return {
     label,
     status: "warn",
-    detail: `${relativePath} has no well-formed '## Log' table with all required columns \u2014 compare with templates/docs/task-quality-log.md`
+    detail: `${relativePath} has no well-formed '## Log' table \u2014 every header cell must be unique, and the header must include all of: ${CANON_LOG_HEADERS.join(", ")}`
   };
 }
 function parseCodexProjectTrust(tomlContent) {
@@ -1443,7 +1443,7 @@ function checkRecommendedPermissions(cwd) {
     return {
       label,
       status: "warn",
-      detail: 'not present \u2014 see README "Skip the permission prompts" for the recommended allowlist, or rerun `/canon-init`'
+      detail: 'not present \u2014 see the canon-ai README "Skip the permission prompts" for the recommended allowlist, or rerun `/canon-init`'
     };
   }
   const allow = /* @__PURE__ */ new Set([...committed.allow, ...local.allow]);
@@ -1455,7 +1455,7 @@ function checkRecommendedPermissions(cwd) {
     return {
       label,
       status: "warn",
-      detail: 'no recommended canon perms allowlisted \u2014 see README "Skip the permission prompts"'
+      detail: 'no recommended canon perms allowlisted \u2014 see the canon-ai README "Skip the permission prompts"'
     };
   }
   const preview = missing.slice(0, 3).join(", ");
@@ -1463,7 +1463,7 @@ function checkRecommendedPermissions(cwd) {
   return {
     label,
     status: "warn",
-    detail: `missing ${missing.length} recommended perm(s): ${preview}${more} \u2014 see README`
+    detail: `missing ${missing.length} recommended perm(s): ${preview}${more} \u2014 see the canon-ai README`
   };
 }
 function checkLocalSettingsGitignored(cwd) {

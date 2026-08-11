@@ -16,6 +16,7 @@ import {
     resolveStable,
 } from '../src/cli/commands/update.js';
 import { existingAgentFilesNoticeLines, hasExistingAgentFiles, scaffoldTemplates } from '../src/cli/commands/init.js';
+import { CANON_LOG_HEADERS } from '../src/orchestrator/quality-log.js';
 import {
     CANON_GITIGNORE_BLOCK,
     CANON_RUNTIME_GITIGNORE_PATTERNS,
@@ -1157,7 +1158,34 @@ void test('checkQualityLog: malformed header → warn with file and reference sh
         const check = checkQualityLog(dir);
         assert.equal(check.status, 'warn');
         assert.match(check.detail ?? '', /docs[\\/]task-quality-log\.md/);
-        assert.match(check.detail ?? '', /templates[\\/]docs[\\/]task-quality-log\.md/);
+        // The reference shape must be the required columns themselves, not a
+        // `templates/docs/...` path — that path exists only in canon-ai's own
+        // repo, so an adopter reading this warning would be sent nowhere.
+        for (const header of CANON_LOG_HEADERS) {
+            assert.match(check.detail ?? '', new RegExp(header.replace('?', '\\?')));
+        }
+        assert.doesNotMatch(check.detail ?? '', /templates[\\/]docs/);
+        assert.match(check.detail ?? '', /unique/);
+    });
+});
+
+// `locateLogTable` rejects a duplicate header cell even when every required
+// column is present, so the warning has to name uniqueness as its own
+// requirement — listing the required columns alone would describe a table
+// that still fails the check.
+void test('checkQualityLog: duplicate header cell with all required columns present → warn naming uniqueness', () => {
+    withTempDir(dir => {
+        const docsDir = path.join(dir, 'docs');
+        fs.mkdirSync(docsDir, { recursive: true });
+        const source = fs.readFileSync(path.join(WORKTREE_ROOT, 'docs', 'task-quality-log.md'), 'utf8');
+        // Append a duplicate of an existing required column; all of
+        // CANON_LOG_HEADERS remain present.
+        const duplicated = source.replace(' | Notes |', ' | Notes | Notes |');
+        fs.writeFileSync(path.join(docsDir, 'task-quality-log.md'), duplicated);
+
+        const check = checkQualityLog(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /unique/);
     });
 });
 

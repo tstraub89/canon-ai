@@ -4,15 +4,16 @@ import type { TaskContext } from '../types.js';
 export const CLAUDE_STARTUP =
     'Read docs/patterns.md before starting.\n' +
     'Skim docs/lessons-learned.md for entries relevant to your task area.\n' +
-    'Read docs/architecture.md if the task touches core data flow or state management.\n' +
-    'Read docs/product-context.md if the task touches user-visible behavior or Pro features.\n' +
-    'Skip docs/decisions.md unless the task involves explicit UX tradeoffs.\n' +
+    'Read docs/architecture.md when orienting for the first time, or if the task touches the tech stack, a load-bearing dependency, core data flow, or an architectural boundary.\n' +
+    'Read docs/product-context.md if the task touches user-visible behavior, product terminology, or a business rule.\n' +
+    'Read docs/decisions.md if a settled decision governs the area you are changing, or if the task would revisit one; skip it otherwise.\n' +
     'Communication: tone is project taste; honest signal is canon discipline — surface real disagreement rather than yielding to politeness.';
 
 export const CODEX_STARTUP =
     'Read docs/patterns.md and docs/codebase-map.md before starting.\n' +
     'Skim docs/lessons-learned.md for entries relevant to your task area.\n' +
-    'Skip docs/decisions.md, docs/product-context.md unless the task explicitly involves product or UX decisions.\n' +
+    'Read docs/decisions.md if a settled decision governs the area you are changing, or if the task would revisit one.\n' +
+    'Read docs/product-context.md if the task touches user-visible behavior, product terminology, or a business rule.\n' +
     'Ground every claim in the current file, diff, or artifact before you state it. Do not rely on prior-session memory for code existence, validation results, or completion status.\n' +
     'On resumed sessions, re-read the task-specific files named in the prompt and inspect the current working tree before saying anything is already done.\n' +
     '\n' +
@@ -24,7 +25,7 @@ export const CODEX_STARTUP =
     'Branch sync (non-pipeline sessions): `git fetch origin && git pull --rebase origin <branch>` before starting work. If `origin/<base>` is ahead, sync and rerun local validation before PR handoff. If `<base>` moves during review, resync and rerun validation. In pipeline sessions the orchestrator manages branch state — read the worktree state as-is; do not run pull/push.';
 
 export const QA_STARTUP =
-    'Read CHANGELOG.md for voice and version reference.\n' +
+    'Read CHANGELOG.md for voice and version reference, if the project keeps one.\n' +
     'Read docs/lessons-learned.md for recent insights to distill.\n' +
     'No full codebase context needed for QA — read each task\'s spec.md, handoff.md, and notes.md directly.';
 

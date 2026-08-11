@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join, relative, sep as pathSep } from 'path';
 import { HEARTBEAT_STALE_AFTER_MS, isHeartbeatStale } from '../../orchestrator/heartbeat.js';
-import { getQualityLogFile, locateLogTable } from '../../orchestrator/quality-log.js';
+import { CANON_LOG_HEADERS, getQualityLogFile, locateLogTable } from '../../orchestrator/quality-log.js';
 import { gatherRunContext, isStatusJson } from '../../orchestrator/run-context.js';
 import { type StatusJson } from '../../orchestrator/types.js';
 import { CANON_RUNTIME_GITIGNORE_PATTERNS } from '../../lib/canon-block.js';
@@ -319,7 +319,7 @@ export function checkQualityLog(cwd: string): Check {
     return {
         label,
         status: 'warn',
-        detail: `${relativePath} has no well-formed '## Log' table with all required columns — compare with templates/docs/task-quality-log.md`,
+        detail: `${relativePath} has no well-formed '## Log' table — every header cell must be unique, and the header must include all of: ${CANON_LOG_HEADERS.join(', ')}`,
     };
 }
 
@@ -516,7 +516,7 @@ export function checkRecommendedPermissions(cwd: string): Check {
         return {
             label,
             status: 'warn',
-            detail: 'not present — see README "Skip the permission prompts" for the recommended allowlist, or rerun `/canon-init`',
+            detail: 'not present — see the canon-ai README "Skip the permission prompts" for the recommended allowlist, or rerun `/canon-init`',
         };
     }
 
@@ -529,7 +529,7 @@ export function checkRecommendedPermissions(cwd: string): Check {
         return {
             label,
             status: 'warn',
-            detail: 'no recommended canon perms allowlisted — see README "Skip the permission prompts"',
+            detail: 'no recommended canon perms allowlisted — see the canon-ai README "Skip the permission prompts"',
         };
     }
     const preview = missing.slice(0, 3).join(', ');
@@ -537,7 +537,7 @@ export function checkRecommendedPermissions(cwd: string): Check {
     return {
         label,
         status: 'warn',
-        detail: `missing ${missing.length} recommended perm(s): ${preview}${more} — see README`,
+        detail: `missing ${missing.length} recommended perm(s): ${preview}${more} — see the canon-ai README`,
     };
 }
 
