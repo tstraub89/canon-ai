@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The invalid-Codex-effort error no longer sends adopters to a canon-ai source file.** When canon resolved a reasoning effort the Codex CLI won't accept, the resulting failure told the operator to "fix the resolved value in `src/lib/pipeline-policy.ts`" — a path that exists only in canon-ai's own checkout, never in a repo that installed canon from npm. Reasoning effort is not configurable from outside canon: no environment variable feeds it, and every value in the phase/size matrix is a literal, so this condition can only arise from a bug in canon itself. The message now says that plainly and asks for a report naming the task size and phase, while keeping the one actionable fact the old wording carried — that editing `model_reasoning_effort` in `~/.codex/config.toml` cannot fix it, because canon's per-invocation override supersedes it.
+- **The deprecated-`CODEX_EFFORT_*` warning no longer contradicts itself or names canon-ai internals.** Setting `CODEX_EFFORT_DEFAULT` or `CODEX_EFFORT_DELICATE` printed "no equivalent knob" and then, in the same line, told the reader to "update the matrix in `src/lib/pipeline-policy.ts` if you need different effort" — advice both unavailable to an adopter and at odds with the clause preceding it. The trailing sentence is gone, and the reason text no longer cites a canon-internal function name.
+
 ## [2.7.1] — 2026-08-11
 
 > Spec-authoring guidance distilled from a `docs/lessons-learned.md` sweep, plus a pass removing canon-ai-only references from what canon ships to adopters.

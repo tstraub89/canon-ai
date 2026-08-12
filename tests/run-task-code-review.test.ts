@@ -229,8 +229,14 @@ async function captureDie(fn: () => Promise<unknown>): Promise<string> {
 function assertInvalidEffortMessage(message: string): void {
     assert.match(message, /ultra/);
     assert.match(message, /none\|minimal\|low\|medium\|high\|xhigh/);
-    assert.match(message, /per-invocation override supersedes any user-level model_reasoning_effort/);
+    // The actionable negative: editing the user's own Codex config cannot fix
+    // this, because canon's `-c model_reasoning_effort=` supersedes it.
+    assert.match(message, /per-invocation override supersedes it/);
     assert.match(message, /~\/\.codex\/config\.toml/);
+    // Effort comes only from canon's fixed phase/size matrix — no env var or
+    // adopter config feeds it — so the message must not send the reader to a
+    // canon-ai source path they don't have when installed from npm.
+    assert.doesNotMatch(message, /\bsrc\//);
 }
 
 function makeDeps(options: {

@@ -4,6 +4,15 @@ canon-ai is a TypeScript/Node CLI published as an npm package. It scaffolds a Cl
 
 This is canon-ai's shared project overview. It gives both agents the same starting picture; detailed operating rules arrive just in time through skills, prompt templates, and the docs below.
 
+## Adopter Scope
+
+Every string in `src/` that reaches an adopter at runtime — CLI output, error and warning text, and agent prompts (including the `.md` templates in `src/orchestrator/prompts/templates/`, which `tsup` bundles into `dist/`) — must make sense in an arbitrary repo. Before naming a path, file, or convention in one, check that an adopter has it:
+
+- **They do:** the docs in `templates/docs/`, `.canon/templates/*`, the rest of `CANON_OWNED`, task artifacts canon creates (`spec.md`, `handoff.md`, `status.json`, …), and adopter-owned files canon expects (`AGENTS.md`, `CLAUDE.md`, `package.json`, `.claude/settings.json`).
+- **They do not:** canon-ai's own tree (`src/**`, `scripts/**`, `tests/**`), `templates/` as a literal path, `docs/` files with no `templates/docs/` mirror (`BACKLOG.md`, `release-process.md`), and `CHANGELOG.md` — `canon init` does not scaffold one.
+
+Describe what to change rather than citing a canon-ai file the reader cannot open; write "the canon-ai README" so it can't read as the adopter's own; gate anything optional on its existence ("if the project keeps one"). Watch for predicates inherited from the project canon was extracted from — a doc-read condition like "if the task touches Pro features" is unmeetable in a repo with no such concept. The test is whether an adopter can *read* the string, so source comments are exempt — `tsup` strips them (the `// <path>` module separators left in `dist/` are esbuild's own and are never printed).
+
 ## Roles
 
 | Agent | Primary Role | Writes | Reviews |

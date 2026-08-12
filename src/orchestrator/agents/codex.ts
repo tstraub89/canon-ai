@@ -19,9 +19,10 @@ export function invalidCodexEffortMessage(effort: string): string | null {
     return (
         `Invalid Codex reasoning effort "${effort}" — canon resolved this value for the current phase/size ` +
         `and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ` +
-        `${VALID_CODEX_EFFORTS.join('|')}. This per-invocation override supersedes any user-level ` +
-        `model_reasoning_effort set in ~/.codex/config.toml — fix the resolved value in ` +
-        `src/lib/pipeline-policy.ts, not the user's Codex config.`
+        `${VALID_CODEX_EFFORTS.join('|')}. Effort is not configurable — canon resolves it from a fixed ` +
+        `phase/size matrix, so this is a bug in canon rather than in your setup. Editing ` +
+        `model_reasoning_effort in ~/.codex/config.toml will not help: the per-invocation override ` +
+        `supersedes it. Please report this along with the task size and phase.`
     );
 }
 

@@ -77,8 +77,8 @@ export const LEGACY_FALLBACK_ENV_VARS: Array<{ old: string; replacement: string 
 ];
 
 export const LEGACY_IGNORED_ENV_VARS: Array<{ old: string; reason: string }> = [
-    { old: 'CODEX_EFFORT_DEFAULT', reason: 'effort is now matrix-driven by task size in getCodexConfig() — no equivalent knob' },
-    { old: 'CODEX_EFFORT_DELICATE', reason: 'effort is now matrix-driven by task size in getCodexConfig() — no equivalent knob' },
+    { old: 'CODEX_EFFORT_DEFAULT', reason: 'reasoning effort is now driven by task size — no equivalent knob' },
+    { old: 'CODEX_EFFORT_DELICATE', reason: 'reasoning effort is now driven by task size — no equivalent knob' },
 ];
 
 export function warnLegacyEnvVars(): void {
@@ -89,7 +89,7 @@ export function warnLegacyEnvVars(): void {
     }
     for (const { old, reason } of LEGACY_IGNORED_ENV_VARS) {
         if (process.env[old]) {
-            console.error(`⚠️  ${old} is no longer honored — ${reason}. Update the matrix in src/lib/pipeline-policy.ts if you need different effort.`);
+            console.error(`⚠️  ${old} is no longer honored — ${reason}.`);
         }
     }
 }

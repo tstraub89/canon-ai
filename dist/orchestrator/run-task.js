@@ -333,8 +333,8 @@ var LEGACY_FALLBACK_ENV_VARS = [
   { old: "CODEX_MODEL_DELICATE", replacement: "CODEX_MODEL_FULL (still honored as fallback)" }
 ];
 var LEGACY_IGNORED_ENV_VARS = [
-  { old: "CODEX_EFFORT_DEFAULT", reason: "effort is now matrix-driven by task size in getCodexConfig() \u2014 no equivalent knob" },
-  { old: "CODEX_EFFORT_DELICATE", reason: "effort is now matrix-driven by task size in getCodexConfig() \u2014 no equivalent knob" }
+  { old: "CODEX_EFFORT_DEFAULT", reason: "reasoning effort is now driven by task size \u2014 no equivalent knob" },
+  { old: "CODEX_EFFORT_DELICATE", reason: "reasoning effort is now driven by task size \u2014 no equivalent knob" }
 ];
 function warnLegacyEnvVars() {
   for (const { old, replacement } of LEGACY_FALLBACK_ENV_VARS) {
@@ -344,7 +344,7 @@ function warnLegacyEnvVars() {
   }
   for (const { old, reason } of LEGACY_IGNORED_ENV_VARS) {
     if (process.env[old]) {
-      console.error(`\u26A0\uFE0F  ${old} is no longer honored \u2014 ${reason}. Update the matrix in src/lib/pipeline-policy.ts if you need different effort.`);
+      console.error(`\u26A0\uFE0F  ${old} is no longer honored \u2014 ${reason}.`);
     }
   }
 }
@@ -2086,7 +2086,7 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
 var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
 function invalidCodexEffortMessage(effort) {
   if (VALID_CODEX_EFFORTS.includes(effort)) return null;
-  return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. This per-invocation override supersedes any user-level model_reasoning_effort set in ~/.codex/config.toml \u2014 fix the resolved value in src/lib/pipeline-policy.ts, not the user's Codex config.`;
+  return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. Effort is not configurable \u2014 canon resolves it from a fixed phase/size matrix, so this is a bug in canon rather than in your setup. Editing model_reasoning_effort in ~/.codex/config.toml will not help: the per-invocation override supersedes it. Please report this along with the task size and phase.`;
 }
 async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
   const invalidEffort = invalidCodexEffortMessage(effort);
