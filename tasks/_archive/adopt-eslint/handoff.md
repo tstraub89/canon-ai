@@ -39,8 +39,8 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: `eslint`, `typescript-eslint` are in `devDependencies` in `package.json`. | Met | Both deps were added to [package.json](/Users/tstraub/dev-worktrees/adopt-eslint/package.json), and the lockfile reflects them. |
-| AC-2: `eslint.config.mjs` exists at the repo root with the specified flat-config shape. | Met | [eslint.config.mjs](/Users/tstraub/dev-worktrees/adopt-eslint/eslint.config.mjs) uses `typescript-eslint.configs.recommendedTypeChecked` and `projectService: true`. |
+| AC-1: `eslint`, `typescript-eslint` are in `devDependencies` in `package.json`. | Met | Both deps were added to `package.json`, and the lockfile reflects them. |
+| AC-2: `eslint.config.mjs` exists at the repo root with the specified flat-config shape. | Met | `eslint.config.mjs` uses `typescript-eslint.configs.recommendedTypeChecked` and `projectService: true`. |
 | AC-3: `package.json` has a `lint` script: `eslint scripts/ tests/`. | Met | The script is present and used by validation. |
 | AC-4: `npm run lint` exits 0 with no errors or warnings. | Met | Final run passed clean after the runtime tuple guards were added. |
 | AC-5: `npm test` still passes with the same test count. | Met | Final run passed with 66 tests, matching the current suite count. |

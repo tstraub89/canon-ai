@@ -9,7 +9,7 @@
 
 This is correct on the first implement cycle (no prior QA commits exist on the task branch). It fails post-reroute, because `--reroute` resets `phases.implement.status` to pending but leaves the prior cycle's QA commits on the branch. The next implement+code_review run sees QA's earlier commits to `docs/lessons-learned.md`, `docs/pipeline-invocations.md`, `docs/task-quality-log.md` in `baseRef...HEAD`, demands handoff coverage for them, and rejects Codex's handoff — even though Codex did not write those files on this implement run.
 
-Observed in production on gallery_wall PR #107 (2026-05-26, task `a-gallery-wall-task`). After `--reroute` with a spec amendment, the next code_review pre-flight failed with:
+Observed in production on gallery_wall PR #107 (2026-05-26). After `--reroute` with a spec amendment, the next code_review pre-flight failed with:
 
 ```
 diff→handoff: docs/lessons-learned.md in diff but not in any bundle handoff
