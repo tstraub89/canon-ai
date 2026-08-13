@@ -9,4 +9,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] In --ship cleanup-only runs, switching to base can make unmerged non-worktree task status absent from the working tree; proof needs the pre-switch status as fallback for failure reporting.
 [implement-reroute] The amended ancestor proof needs two separate negative fixtures: an existing unrelated head for branch-reuse ancestry failure, and a missing head object for AC-15 materialization failure.
 
-

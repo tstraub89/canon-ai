@@ -39,4 +39,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec_review] Telemetry absorption commits whole dirty files, so a gate that only inspects added lines silently absorbs deletion-only changes and ignored preamble edits.
 [spec_review] `getActiveCwd()` only selects an existing worktree or dies; first-implement worktree creation happens in `ensureBranch()` via `ensureWorktree()`.
 [implement] Subprocess tests in a linked worktree must import source files from `process.cwd()` / the active worktree, not `REPO_ROOT`; `REPO_ROOT` intentionally resolves to the supervising checkout and can load stale code.
-

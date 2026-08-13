@@ -34,4 +34,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 
 [implement-revision] The reviewer-authored `review.md` used nine checker-invalid backtick refs (deleted paths plus extensionless live paths). Because review artifacts are intentionally scanned, those refs broke `docs-refs-check` and six full-suite subprocess cases. Repaired only reference formatting/path completeness without changing review substance.
 
-

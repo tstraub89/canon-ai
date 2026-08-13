@@ -23,4 +23,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec_review] `resolveTaskCwd` is below repeated status/artifact helpers and the heartbeat directory resolver, so a subprocess-based secondary scan repeats per resolution rather than once per phase. Any performance assessment should measure that actual call pattern and avoid an uninvalidated cross-phase cache.
 
 [implement] A real-git worktree path on macOS is reported canonically under `/private/var` even when `os.tmpdir()` supplied the `/var` alias. Routing assertions that compare fixture paths should normalize with `fs.realpathSync`; otherwise correct worktree resolution fails only on path spelling.
-

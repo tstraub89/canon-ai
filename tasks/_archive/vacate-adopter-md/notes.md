@@ -12,4 +12,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement-reroute] Prompt startup constants are snapshot-tested through `tests/run-task-prompts.golden.json`; removing root-agent-file references from `helpers.ts` requires both golden regeneration and a clean follow-up `npm test`.
 
 
-

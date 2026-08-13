@@ -8,4 +8,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] README drift tests in `tests/cli.test.ts` had to read `WORKTREE_ROOT` instead of `REPO_ROOT`; in this linked worktree, `REPO_ROOT` pointed at the supervising checkout and missed the edited README.
 [implement-reroute] `codex review --uncommitted --sandbox read-only` is not accepted by the installed CLI; `codex exec review --help` is the live source of truth and the wrapper form rejects the extra flag.
 
-

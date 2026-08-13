@@ -13,4 +13,3 @@ Plan-time resolution (see plan.md Step 4): keep the "adopter fully owns tracked-
 [implement] Required `npm run build` regenerated tracked `dist/cli/index.js`, even though the spec Affected Files table omitted generated dist output. Kept it in the handoff because `package.json` publishes that file as the `canon` bin; called out as `[scope]` in Blockers for reviewer confirmation.
 [implement-revision] Round 1 exposed that `git rm` removes a path from `git ls-files` while `git status --porcelain` still reports `D  <path>`; destination classification must let dirty status win before trackedness/exists checks. While touching that parser, switched `ls-files` and status parsing to NUL-delimited output and made unknown classification values fail closed.
 
-

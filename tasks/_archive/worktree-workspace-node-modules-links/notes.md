@@ -22,7 +22,6 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 
 [implement] The guard-specific red runs reproduced both delicate failures against the actual new paths: omitting destination containment added `node_modules` beside an outside sentinel, and omitting the active-worktree comparison let an adopter-created workspace symlink pass the QA gate with exit 0. Restoring the guards made both targeted tests green; the fresh build touched only `dist/scripts/run-task.js`, not `dist/cli/index.js`.
 
-
 [implement-revision] A directory-form Affected Files entry is a second staging authority, not only an allowlist predicate: filtering a verified workspace link out of `dirtyEntries` is insufficient if a later `git add -A -- <prefix>` can sweep it back in. Stage the admitted dirty descendants individually and reject every path containing a `node_modules` segment at both decisions.
 
 [implement-revision] Repair-on-rerun makes existing worktrees an active verification path. Tests that advertise an existing worktree through fake `git worktree list` output must create the directory too; the old placeholder passed only because `ensureWorktree()` returned before touching it.
@@ -42,6 +41,4 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 
 
 
-
 [implement-reroute] The AC-8 amendment replaces an impossible bare-directory porcelain claim with the fixture shape Git actually emits under `-uall`: an untracked child inside the real `node_modules` directory. The existing test already asserts that exact child entry before exercising the gate, so the reroute required fresh verification and handoff correction but no production or test edit.
-

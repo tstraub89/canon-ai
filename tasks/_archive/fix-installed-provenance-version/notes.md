@@ -23,4 +23,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [2026-07-22] Operator accepted spec_review via `canon task accept` — sanctioned (agent verdict overridden). Reason: Operator sanction: 6 spec_review rounds, Shape Check clean throughout; all in-scope findings addressed. Round 6 targeted pre-existing untouched vendored code (out of scope). Churn diagnosed as a 5.6-reviewer/prompt-calibration artifact, not a spec defect. code_review is the downstream backstop..
 [implement] `refreshCanonSnapshotAtPath` deliberately captures git state from `REPO_ROOT`, so installed refresh fixtures must key fake git responses to the active supervising checkout rather than the temporary status-file directory.
 [implement] `docs-refs-check` treats literal backtick paths as references; the decisions note describes the updater's `.canon` receipt without naming the non-existent file path directly so the required docs check remains clean.
-

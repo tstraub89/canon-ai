@@ -10,4 +10,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] `npm run docs-refs-check` still surfaces 6 pre-existing refs in `CLAUDE.md`, `docs/decisions.md`, `docs/lessons-learned.md`, `docs/pipeline-orchestrator.md`, and `README.md`; those files are outside this task's Affected Files table, so I left them for follow-up rather than widening scope.
 [implement-revision] The gate is easier to keep green when intentionally-retired or absent targets are rewritten as prose instead of path citations; the validator only needs one stale path to fail the whole check.
 [implement-revision] Round 3 review text repeated the pre-flight validation complaint even though `spec.md` already has `## Validation Required`; re-check the spec before treating that finding as authoritative.
-

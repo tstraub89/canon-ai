@@ -11,4 +11,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec_review] Prompt-template tasks that change `promptCodeReview()` need the golden fixture `tests/run-task-prompts.golden.json` in scope alongside `tests/run-task-prompts.test.ts`.
 
 [implement] No `runClaude()` runner change was needed for lens spawning; `.claude/agents` definitions inherit the foreman's selected `code_review` model/effort, so tier routing stays in pipeline policy rather than a new runner branch.
-

@@ -11,6 +11,4 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] `npm run build` regenerated `dist/scripts/run-task.js`; `dist/cli/index.js` stayed byte-identical in the worktree even though the spec listed it as a possible generated artifact.
 
 
-
 [implement-reroute] Round 2's porcelain-first rule changes untracked telemetry from the old "HEAD unreadable" observable reason to an immediate `git status` `??` abort; the residual HEAD-read-failure unit row now covers only the defensive case where porcelain reports safe shape (`' M'`) but `git show HEAD:<path>` fails.
-

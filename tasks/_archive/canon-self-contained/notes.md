@@ -17,4 +17,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] The `dist/` freshness gate is committed-state validation: after the required local rebuild, `git diff --exit-code -- dist/` remains nonzero until the orchestrator commits the regenerated bundle.
 
 [implement] Temp-prefix simulations of `npm install -g git+file://...` needed `npm_config_install_links=true`; without it, npm linked to a pruned cache clone under the custom prefix. The raw tarball extraction smoke still passed without `node_modules`.
-

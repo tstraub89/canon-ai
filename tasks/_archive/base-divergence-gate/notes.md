@@ -9,4 +9,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec_review] `findMergedPRNumber(branch, baseBranch)` proves some exact-head/base PR is merged, not necessarily the just-attempted `prNum`; merge-failure tolerance must bind confirmation to the attempted PR.
 
 [implement] Adding a `CliArgs` field also requires updating parser shape tests in `tests/run-task-cli.test.ts`; otherwise the full suite fails even though that file is outside this task's Affected Files table.
-

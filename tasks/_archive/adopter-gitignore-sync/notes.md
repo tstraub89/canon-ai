@@ -9,4 +9,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec_review] Revised AC-13 makes root `.gitignore` behave like a sync source, which conflicts with AC-7's constant-source `templates/.gitignore` model; choose one before implementation.
 
 [implement] In linked worktree test runs, `REPO_ROOT` resolves to the supervising checkout by design; root-file self-hosting guards should read the active checkout root when validating files changed by the task branch.
-

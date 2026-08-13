@@ -31,4 +31,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] In linked worktrees, resolving repo root via `git rev-parse --git-common-dir` points at the supervising checkout's `.git` parent, not the active worktree. Use `git rev-parse --show-toplevel` when paths/artifacts must be worktree-local.
 
 [implement] Cleanup tests that assert `git status` delta behavior must write non-ignored fixture paths; ignored `*.tmp` files do not appear in porcelain output and therefore cannot exercise scoped delta cleanup.
-

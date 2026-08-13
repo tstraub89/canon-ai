@@ -11,4 +11,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec_review] Mixed-bundle spec_gap recovery must cover both fix and bless paths; accepting only the gap task leaves non-gap blocked siblings stranded.
 
 [implement] Review accept validates `--reason` with trim-empty semantics but writes the original string to notes.md so the audit line preserves operator text.
-

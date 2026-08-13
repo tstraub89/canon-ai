@@ -59,12 +59,10 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement-revision] The full suite's PR-flow fixtures run docs reference validation over live task artifacts. A malformed multi-location citation in reviewer-owned review.md can therefore preempt otherwise unrelated PR tests; the artifact is outside this task's implementation scope and was not edited.
 
 
-
 [implement-reroute] A plain raised-cap integration fixture must update the review artifact as well as status.json: clean-exit evidence recovery can legitimately replace a fake agent's status-only verdict with the cumulative artifact verdict. The logging fake also needs to run its completer for a phase sequence, not only a single fixed phase.
 
 [implement-revision] Recovery guidance must disclose every state-normalizing write, not just archived artifacts and counters. Here, `reset-code-review` distinguishes two materially different operator choices: reset accepts the current implementation as-is for re-review, while raising the cap requests another implementation pass.
 
 [implement-revision] Reset disclosure is a cross-loop invariant, but cap-raise guidance is state-dependent: it can promise the deferred revision only while `spec` / `implement` is pending. A shared helper must own both facts so primary and backstop reasons cannot contradict their resume clause.
-
 
 

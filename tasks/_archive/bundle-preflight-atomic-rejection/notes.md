@@ -9,4 +9,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] Plan requested a `src/task/index.ts` docstring update, but the spec's Affected Files table did not authorize that file; left it untouched under the scope cap.
 [implement] `npm run build` changed `dist/scripts/run-task.js` only; `dist/cli/index.js` stayed byte-identical despite being listed as an expected generated artifact.
 [implement] `npm run docs-refs-check` fails on pre-existing missing refs in `docs/decisions.md` to archived `tasks/codex-code-review-phase/*` files outside this task's diff.
-

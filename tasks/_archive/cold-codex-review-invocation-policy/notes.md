@@ -9,4 +9,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] Adding fail-fast validation to a shared agent runner can invalidate existing failure-ladder fixtures that used placeholder policy values while targeting a later subprocess branch. Here, four `runCodex` calls in `tests/run-task-safety.test.ts` use the invalid literal `effort`; that file was omitted from the spec's Affected Files even though AC-5 changes the shared runner contract.
 
 [implement] Follow-up authorization allowed the safety fixture correction: the four Codex calls now use valid `high` effort, preserving their intended spawn-error, non-zero, stall, and signal coverage; the full suite passes.
-

@@ -32,4 +32,3 @@ Deliberate tradeoff for the human_spec_gate: a genuine verdict + non-zero exit (
 [implement] Kept the crash regressions in `tests/run-task-safety.test.ts` rather than the plan's proposed direct-import validation suite. Running `checkAndRoute()` in a child process makes exit `2` observable directly and keeps the test-only `lastCodexExitStatus` mutation process-local. The explicit red-first run confirmed the test fails without the park (`result.status` was `0`, expected `2`) because the stale verdict auto-advanced.
 
 [implement] A fresh build changed only `dist/scripts/run-task.js`; `dist/cli/index.js` stayed byte-identical. Repeating the build reproduced SHA-256 `e974b66bca14233a2eeffe0450ba6de13522c7a6d79e4a857186236d37a1669c`.
-

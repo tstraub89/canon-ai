@@ -9,6 +9,4 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] AC-3 needed the fake worktree-add harness to copy `tasks/<id>/status.json` into the new worktree so the heartbeat resolver could flip on creation the same way the real repo does.
 [implement-reroute] `WORKTREES_ROOT` is captured when `scripts/run-task/env.ts` loads, so the bundle AC-6 harness had to spawn a child process with the override set before importing the run-task modules.
 
-
 [implement-revision] Pre-flight handoff checks compare the cumulative Changes tables to the branch diff, so a reverted file must be removed from every prior table, not just the newest section.
-

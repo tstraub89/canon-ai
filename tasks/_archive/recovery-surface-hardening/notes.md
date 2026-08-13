@@ -10,4 +10,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 
 [implement-reroute] Exempt-sibling prompt flavoring needs both state and template changes: storing the prior verdict is not enough if the generic implement-reroute template still says every exempt task only re-verifies shared behavior.
 
-

@@ -7,4 +7,3 @@
 [implement-revision] Review preflight is sensitive to stale iteration rows in `handoff.md`; if a file is no longer part of the current diff, the row needs to be removed from the revision section instead of being carried forward.
 [implement-revision] Review preflight also keys off the baseline Changes table, not just the latest iteration block; if a file drops out of the committed diff, delete its baseline row too.
 
-

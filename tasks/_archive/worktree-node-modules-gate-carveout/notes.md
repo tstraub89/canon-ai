@@ -11,4 +11,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement] Red-first run of the new node_modules gate tests against pre-fix code failed as expected: QA-end aborted on `?? node_modules` outside the QA-end allowlist, and human-review aborted on `?? node_modules` outside the human_review allowlist before pushing. The package-script form `npm test -- --test-name-pattern "node_modules"` also triggered an unrelated Node/tsx loader attempt to treat `node_modules` as a test target; direct/full test runs were used after implementation.
 
 [implement] Required `npm run build` rewrote `dist/scripts/run-task.js`; the spec's Affected Files table omitted generated dist output even though `docs/architecture.md` requires committed dist to match a fresh build for `scripts/run-task/**` changes.
-

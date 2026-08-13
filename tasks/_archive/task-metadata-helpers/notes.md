@@ -9,4 +9,3 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [implement-reroute] `worktree` and `base_branch` need the branch-recorded lock before value parsing, or a valid topology change can brick the task state before the guard has a chance to stop it.
 
 
-
