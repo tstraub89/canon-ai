@@ -189,8 +189,8 @@ export function guardConcurrentRun(
             if (alive) {
                 dieImpl(
                     `Task '${taskId}' is already running (PID ${pid}).\n` +
-                    `  Stop:  canon stop ${taskId}\n` +
-                    `  Watch: canon watch ${taskId}`,
+                    `  Watch: canon watch ${taskId}  (blocks until it settles — do not poll status.json)\n` +
+                    `  Stop:  canon stop ${taskId}`,
                 );
             }
         }
@@ -201,8 +201,8 @@ export function guardConcurrentRun(
             dieImpl(
                 `Task '${taskId}' appears to have a live orchestrator` +
                 ` (PID ${hb.pid}, heartbeat ${ageSec}s ago).\n` +
-                `  Stop:  canon stop ${taskId}\n` +
-                `  Watch: canon watch ${taskId}`,
+                `  Watch: canon watch ${taskId}  (blocks until it settles — do not poll status.json)\n` +
+                `  Stop:  canon stop ${taskId}`,
             );
         }
     }

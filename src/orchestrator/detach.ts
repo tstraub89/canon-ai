@@ -244,14 +244,33 @@ export function detachAndExit(options: DetachAndExitOptions): never {
     // by isCanonProcess() — a process-cmdline check that verifies the PID
     // actually belongs to canon. See src/cli/commands/stop.ts.
 
+    // The watch directive below is deliberately loud and imperative. Operators
+    // are usually agents; a quiet "Watch: ..." menu line gets skimmed past and
+    // they fall back to hand-rolled sleep/status.json poll loops, which miss
+    // halt states `canon watch` classifies (auto-block, crash, checkpoint).
+    const primaryTask = options.taskIds[0];
+    const rule = '='.repeat(72);
     stdoutWrite(
         `\nDetached canon run.\n` +
         `  PID:   ${child.pid}\n` +
         `  Tasks: ${options.taskIds.join(', ')}\n` +
         `  Log:   ${logPath}\n` +
-        `  Stop:  canon stop ${options.taskIds[0]}\n` +
-        `  Watch: canon watch ${options.taskIds[0]}\n` +
-        `  Tail:  tail -f ${logPath}\n\n`,
+        `\n` +
+        `${rule}\n` +
+        `  NEXT STEP — the pipeline is now running in the background.\n` +
+        `\n` +
+        `      canon watch ${primaryTask}\n` +
+        `\n` +
+        `  It blocks until the run settles, halts, or needs a human — then\n` +
+        `  prints why. If your shell tool caps command duration, add a\n` +
+        `  --timeout under that cap (e.g. --timeout 5m); exit code 5 means\n` +
+        `  the timeout elapsed — re-invoke to keep watching.\n` +
+        `\n` +
+        `  Do NOT hand-roll a poll loop (sleep + status.json or log reads):\n` +
+        `  it misses halt states canon watch classifies for you.\n` +
+        `\n` +
+        `  Stop the run:  canon stop ${primaryTask}\n` +
+        `${rule}\n\n`,
     );
 
     // Detach the child from the parent's event loop so the parent can exit

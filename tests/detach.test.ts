@@ -156,8 +156,13 @@ void test('detachAndExit: writes .canon-pid for each task in the bundle', () => 
         assert.equal(fake.last().args.env[DETACH_CHILD_FLAG], '1');
         // Stdout banner mentions PID, the primary log path, and `canon stop`.
         assert.match(stdoutBuf, /PID:\s+12345/);
-        assert.match(stdoutBuf, /Stop:\s+canon stop alpha/);
+        assert.match(stdoutBuf, /canon stop alpha/);
         assert.match(stdoutBuf, /\.canon-run\.log/);
+        // The NEXT STEP directive is the agent-facing contract: an imperative
+        // `canon watch` instruction plus an explicit no-poll-loop prohibition.
+        assert.match(stdoutBuf, /NEXT STEP/);
+        assert.match(stdoutBuf, /canon watch alpha/);
+        assert.match(stdoutBuf, /Do NOT hand-roll a poll loop/);
     });
 });
 
