@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The detach banner is now an imperative `canon watch` directive, not a command menu.** v2.7.0 added `canon watch` to the banner as one line among `Stop:`/`Watch:`/`Tail:` peers — and agent operators kept skimming past it into hand-rolled `sleep` + `status.json` poll loops, which miss halt states `canon watch` classifies (auto-block, crash, checkpoint). The banner now ends in a ruled **NEXT STEP** block: the `canon watch <id>` command on its own line, its blocking semantics, `--timeout` guidance for shell tools that cap command duration (exit code 5 = timeout elapsed, re-invoke), and an explicit "do not hand-roll a poll loop" prohibition. The `tail -f` suggestion is gone — it invited exactly the log-polling the directive forbids. The "task already running" errors lead with the same watch-first, do-not-poll note.
+
 ### Fixed
 
 - **The invalid-Codex-effort error no longer sends adopters to a canon-ai source file.** When canon resolved a reasoning effort the Codex CLI won't accept, the resulting failure told the operator to "fix the resolved value in `src/lib/pipeline-policy.ts`" — a path that exists only in canon-ai's own checkout, never in a repo that installed canon from npm. Reasoning effort is not configurable from outside canon: no environment variable feeds it, and every value in the phase/size matrix is a literal, so this condition can only arise from a bug in canon itself. The message now says that plainly and asks for a report naming the task size and phase, while keeping the one actionable fact the old wording carried — that editing `model_reasoning_effort` in `~/.codex/config.toml` cannot fix it, because canon's per-invocation override supersedes it.
