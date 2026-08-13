@@ -6018,15 +6018,30 @@ function detachAndExit(options) {
 `
     );
   }
+  const primaryTask = options.taskIds[0];
+  const rule = "=".repeat(72);
   stdoutWrite(
     `
 Detached canon run.
   PID:   ${child.pid}
   Tasks: ${options.taskIds.join(", ")}
   Log:   ${logPath}
-  Stop:  canon stop ${options.taskIds[0]}
-  Watch: canon watch ${options.taskIds[0]}
-  Tail:  tail -f ${logPath}
+
+${rule}
+  NEXT STEP \u2014 the pipeline is now running in the background.
+
+      canon watch ${primaryTask}
+
+  It blocks until the run settles, halts, or needs a human \u2014 then
+  prints why. If your shell tool caps command duration, add a
+  --timeout under that cap (e.g. --timeout 5m); exit code 5 means
+  the timeout elapsed \u2014 re-invoke to keep watching.
+
+  Do NOT hand-roll a poll loop (sleep + status.json or log reads):
+  it misses halt states canon watch classifies for you.
+
+  Stop the run:  canon stop ${primaryTask}
+${rule}
 
 `
   );
@@ -6129,8 +6144,8 @@ function guardConcurrentRun(taskIds, resolveTaskDir, dieImpl = die2) {
       if (alive) {
         dieImpl(
           `Task '${taskId}' is already running (PID ${pid}).
-  Stop:  canon stop ${taskId}
-  Watch: canon watch ${taskId}`
+  Watch: canon watch ${taskId}  (blocks until it settles \u2014 do not poll status.json)
+  Stop:  canon stop ${taskId}`
         );
       }
     }
@@ -6139,8 +6154,8 @@ function guardConcurrentRun(taskIds, resolveTaskDir, dieImpl = die2) {
       const ageSec = Math.round((Date.now() - hb.last_update_ms) / 1e3);
       dieImpl(
         `Task '${taskId}' appears to have a live orchestrator (PID ${hb.pid}, heartbeat ${ageSec}s ago).
-  Stop:  canon stop ${taskId}
-  Watch: canon watch ${taskId}`
+  Watch: canon watch ${taskId}  (blocks until it settles \u2014 do not poll status.json)
+  Stop:  canon stop ${taskId}`
       );
     }
   }
@@ -6178,40 +6193,16 @@ function assertSamePhase(taskIds) {
   }
   return phases[0];
 }
-function appendAutoCommitDebug(taskIds, details) {
-  const notesPath = path18.join(taskDirFor2(taskIds[0]), "notes.md");
-  try {
-    fs18.mkdirSync(path18.dirname(notesPath), { recursive: true });
-    fs18.appendFileSync(
-      notesPath,
-      `
-`,
-      "utf8"
-    );
-  } catch {
-  }
-}
-function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
+function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles) {
   const baseRef = getBaseBranch2(taskIds);
   const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
   const verifiableHandoffFiles = handoffFiles.filter((f) => !gitIgnoredHandoffFiles.has(f));
-  Object.assign(debug, {
-    verifyGitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles]
-  });
   if (verifiableHandoffFiles.length === 0) {
-    appendAutoCommitDebug(taskIds, { ...debug, result: "verify-all-gitignored" });
     return;
   }
   const postStatus = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall", "--", ...verifiableHandoffFiles);
   const missing = [];
   if (!postStatus.ok) {
-    Object.assign(debug, {
-      baseRef,
-      postCommitStatusOk: postStatus.ok,
-      postCommitStatusRaw: postStatus.stdout,
-      postCommitStatusError: postStatus.stderr
-    });
-    appendAutoCommitDebug(taskIds, debug);
     die2(`Auto-commit coverage check failed: could not inspect post-commit status: ${postStatus.stderr || "unknown error"}`);
   }
   const stillDirty = parsePorcelain(postStatus.stdout);
@@ -6227,8 +6218,6 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
   }
   const wtDiff = gitSafeAtRaw2(cwd, "diff", "HEAD", "--name-only", "--", ...verifiableHandoffFiles);
   if (!wtDiff.ok) {
-    Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
-    appendAutoCommitDebug(taskIds, debug);
     die2(`Auto-commit coverage check failed: \`git diff HEAD\` failed: ${wtDiff.stderr || "unknown error"}`);
   }
   if (wtDiff.stdout.trim()) {
@@ -6238,14 +6227,7 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug) {
       missing.push(`${f} \u2014 working tree differs from HEAD (status reported clean \u2014 silent-omission failure mode)`);
     }
   }
-  Object.assign(debug, {
-    baseRef,
-    postCommitStatusRaw: postStatus.stdout,
-    postCommitWtDiffRaw: wtDiff.stdout,
-    postCommitMissingCoverage: missing
-  });
   if (missing.length > 0) {
-    appendAutoCommitDebug(taskIds, debug);
     die2(
       `Auto-commit coverage check failed: handoff.md lists files that are neither committed nor cleanly staged for review.
 ` + missing.map((m) => `    ${m}`).join("\n") + `
@@ -6306,22 +6288,13 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     );
   }
   if (allHandoffFiles.size === 0) {
-    const emptyDebug = { cwd, handoffFiles: [] };
     const dirtyCheck = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
-    Object.assign(emptyDebug, {
-      dirtyStatusOk: dirtyCheck.ok,
-      dirtyStatusRaw: dirtyCheck.stdout,
-      dirtyStatusError: dirtyCheck.stderr
-    });
     if (!dirtyCheck.ok) {
-      appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-dirty-check-failed" });
       die(`Auto-commit aborted: handoff.md Changes table empty AND failed to inspect dirty files: ${dirtyCheck.stderr || "unknown error"}`);
     }
     const allDirty = [...parsePorcelain(dirtyCheck.stdout)];
     const sourceDirty = allDirty.filter((f) => !isPipelineOwnedPath(f, taskIds));
-    Object.assign(emptyDebug, { allDirty, sourceDirty });
     if (sourceDirty.length > 0) {
-      appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-but-source-dirty" });
       die(
         `Auto-commit aborted: handoff.md Changes table is empty but the working tree has
   source-file changes outside the pipeline-owned paths.
@@ -6333,38 +6306,21 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   Resolve manually: fix handoff.md or commit/discard the dirty files.`
       );
     }
-    appendAutoCommitDebug(taskIds, { ...emptyDebug, result: "empty-handoff-clean-or-pipeline-only" });
     return;
   }
   const handoffFiles = [...allHandoffFiles];
-  const debug = {
-    cwd,
-    handoffFiles
-  };
   const dirtyResult = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
-  Object.assign(debug, {
-    dirtyStatusOk: dirtyResult.ok,
-    dirtyStatusRaw: dirtyResult.stdout,
-    dirtyStatusError: dirtyResult.stderr
-  });
   if (!dirtyResult.ok) {
-    appendAutoCommitDebug(taskIds, { ...debug, result: "dirty-status-failed" });
     die(`Auto-commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || "unknown error"}`);
   }
   if (!dirtyResult.stdout.trim()) {
-    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "no-uncommitted-changes" });
+    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
     info("No uncommitted changes to auto-commit.");
     return;
   }
   const dirtyFiles = parsePorcelain(dirtyResult.stdout);
   const toStage = handoffFiles.filter((f) => dirtyFiles.has(f));
   const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
-  Object.assign(debug, {
-    dirtyFiles: [...dirtyFiles],
-    toStage,
-    gitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles]
-  });
   const missing = [];
   const settledDeletions = /* @__PURE__ */ new Set();
   const baseRefForLog = getBaseBranch(taskIds);
@@ -6386,9 +6342,7 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
       missing.push(`${f} \u2014 untracked on disk but git status did not report it (report this as a bug)`);
     }
   }
-  Object.assign(debug, { settledDeletions: [...settledDeletions] });
   if (missing.length > 0) {
-    appendAutoCommitDebug(taskIds, { ...debug, missing });
     die(
       `Auto-commit aborted: handoff.md lists files that can't be staged:
 ` + missing.map((m) => `    ${m}`).join("\n") + `
@@ -6397,17 +6351,10 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   }
   const stagedBefore = gitSafeAt(cwd, "diff", "--cached", "--name-only");
   const stagedBeforeUnexpected = stagedBefore.ok ? findStagedFilesOutsideHandoff(stagedBefore.stdout, allHandoffFiles) : [];
-  Object.assign(debug, {
-    stagedBeforeOk: stagedBefore.ok,
-    stagedBeforeRaw: stagedBefore.stdout,
-    stagedBeforeUnexpected
-  });
   if (!stagedBefore.ok) {
-    appendAutoCommitDebug(taskIds, { ...debug, result: "staged-before-failed" });
     die(`Auto-commit aborted: failed to inspect staged files: ${stagedBefore.stderr || "unknown error"}`);
   }
   if (stagedBeforeUnexpected.length > 0) {
-    appendAutoCommitDebug(taskIds, { ...debug, result: "preexisting-staged-outside-handoff" });
     die(
       `Auto-commit aborted: staged files are not covered by handoff.md.
   Staged files:
@@ -6416,45 +6363,28 @@ ${stagedBeforeUnexpected.map((f) => `    ${f}`).join("\n")}
     );
   }
   if (toStage.length === 0) {
-    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "already-committed-or-unchanged" });
+    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
     info("Handoff files are already committed or unchanged \u2014 skipping auto-commit.");
     return;
   }
   const stageable = handoffFiles.filter((f) => !settledDeletions.has(f));
-  Object.assign(debug, { stageable });
   if (stageable.length === 0) {
-    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "all-handoff-files-already-settled" });
+    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
     info("All handoff files are already settled in history \u2014 skipping auto-commit.");
     return;
   }
   const addResult = gitSafeAt(cwd, "add", "-A", "--", ...stageable);
-  Object.assign(debug, {
-    addOk: addResult.ok,
-    addError: addResult.stderr
-  });
   if (!addResult.ok) die2(`Failed to stage files: ${addResult.stderr || "unknown error"}`);
   const preCheck = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
   const remaining = preCheck.ok ? findUncoveredTrackedChanges(preCheck.stdout, allHandoffFiles) : [];
   const stagedAfter = gitSafeAt(cwd, "diff", "--cached", "--name-only");
   const stagedAfterUnexpected = stagedAfter.ok ? findStagedFilesOutsideHandoff(stagedAfter.stdout, allHandoffFiles) : [];
-  Object.assign(debug, {
-    preCheckOk: preCheck.ok,
-    preCheckRaw: preCheck.stdout,
-    remaining,
-    stagedAfterOk: stagedAfter.ok,
-    stagedAfterRaw: stagedAfter.stdout,
-    stagedAfterUnexpected
-  });
   if (!preCheck.ok) {
     gitSafeAt(cwd, "reset", "HEAD", "--", ...handoffFiles);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "precheck-failed" });
     die(`Auto-commit aborted: failed to inspect working tree after staging: ${preCheck.stderr || "unknown error"}`);
   }
   if (remaining.length > 0) {
     gitSafeAt(cwd, "reset", "HEAD", "--", ...handoffFiles);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "uncovered-source-changes" });
     die(
       `Auto-commit aborted: working tree has source changes not covered by handoff.md.
   Dirty files:
@@ -6465,12 +6395,10 @@ ${remaining.map((l) => `    ${l}`).join("\n")}
   }
   if (!stagedAfter.ok) {
     gitSafeAt(cwd, "reset", "HEAD", "--", ...handoffFiles);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "staged-after-failed" });
     die(`Auto-commit aborted: failed to inspect staged files: ${stagedAfter.stderr || "unknown error"}`);
   }
   if (stagedAfterUnexpected.length > 0) {
     gitSafeAt(cwd, "reset", "HEAD", "--", ...handoffFiles);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "staged-after-outside-handoff" });
     die(
       `Auto-commit aborted: staged files are not covered by handoff.md.
   Staged files:
@@ -6479,25 +6407,17 @@ ${stagedAfterUnexpected.map((f) => `    ${f}`).join("\n")}
     );
   }
   if (!stagedAfter.stdout.trim()) {
-    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-    appendAutoCommitDebug(taskIds, { ...debug, result: "nothing-staged-after-add" });
+    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
     info("Handoff files are already committed or unchanged \u2014 skipping auto-commit.");
     return;
   }
   const idSuffix = taskIds.length > 1 ? `[${taskIds.join(", ")}]` : `[${taskIds[0]}]`;
   const message = `${title} ${idSuffix}`;
   const commitResult = gitSafeAt(cwd, "commit", "-m", message);
-  Object.assign(debug, {
-    commitOk: commitResult.ok,
-    commitStdout: commitResult.stdout,
-    commitError: commitResult.stderr
-  });
   if (!commitResult.ok) {
-    appendAutoCommitDebug(taskIds, { ...debug, result: "commit-failed" });
     die(`Auto-commit failed: ${commitResult.stderr || "unknown error"}`);
   }
-  verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-  appendAutoCommitDebug(taskIds, { ...debug, result: "committed" });
+  verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
   const stagedCount = stagedAfter.stdout.trim().split("\n").filter(Boolean).length;
   info2(`Auto-committed ${stagedCount} file(s): ${message}`);
 }

@@ -247,25 +247,10 @@ function assertSamePhase(taskIds: string[]): CurrentPhase {
     return phases[0];
 }
 
-function appendAutoCommitDebug(taskIds: string[], details: Record<string, unknown>): void {
-    const notesPath = path.join(taskDirFor(taskIds[0]), 'notes.md');
-    try {
-        fs.mkdirSync(path.dirname(notesPath), { recursive: true });
-        fs.appendFileSync(
-            notesPath,
-            `\n[auto-commit-debug] ${new Date().toISOString()} ${JSON.stringify(details)}\n`,
-            'utf8'
-        );
-    } catch {
-        // Debug logging must never mask the real auto-commit result.
-    }
-}
-
 function verifyHandoffFilesCommitted(
     taskIds: string[],
     cwd: string,
     handoffFiles: readonly string[],
-    debug: Record<string, unknown>,
 ): void {
     const baseRef = getBaseBranch(taskIds);
     // Gitignored handoff entries (build-generated artifacts) skip the post-commit
@@ -276,24 +261,13 @@ function verifyHandoffFilesCommitted(
     // after staging on a perfectly-valid generator+artifact handoff.
     const gitIgnoredHandoffFiles = splitGit.filterGitIgnoredPaths(handoffFiles, cwd);
     const verifiableHandoffFiles = handoffFiles.filter(f => !gitIgnoredHandoffFiles.has(f));
-    Object.assign(debug, {
-        verifyGitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles],
-    });
     if (verifiableHandoffFiles.length === 0) {
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'verify-all-gitignored' });
         return;
     }
     const postStatus = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall', '--', ...verifiableHandoffFiles);
     const missing: string[] = [];
 
     if (!postStatus.ok) {
-        Object.assign(debug, {
-            baseRef,
-            postCommitStatusOk: postStatus.ok,
-            postCommitStatusRaw: postStatus.stdout,
-            postCommitStatusError: postStatus.stderr,
-        });
-        appendAutoCommitDebug(taskIds, debug);
         die(`Auto-commit coverage check failed: could not inspect post-commit status: ${postStatus.stderr || 'unknown error'}`);
     }
 
@@ -323,8 +297,6 @@ function verifyHandoffFilesCommitted(
     // success path.
     const wtDiff = gitSafeAtRaw(cwd, 'diff', 'HEAD', '--name-only', '--', ...verifiableHandoffFiles);
     if (!wtDiff.ok) {
-        Object.assign(debug, { wtDiffOk: false, wtDiffError: wtDiff.stderr });
-        appendAutoCommitDebug(taskIds, debug);
         die(`Auto-commit coverage check failed: \`git diff HEAD\` failed: ${wtDiff.stderr || 'unknown error'}`);
     }
     if (wtDiff.stdout.trim()) {
@@ -336,15 +308,7 @@ function verifyHandoffFilesCommitted(
         }
     }
 
-    Object.assign(debug, {
-        baseRef,
-        postCommitStatusRaw: postStatus.stdout,
-        postCommitWtDiffRaw: wtDiff.stdout,
-        postCommitMissingCoverage: missing,
-    });
-
     if (missing.length > 0) {
-        appendAutoCommitDebug(taskIds, debug);
         die(
             `Auto-commit coverage check failed: handoff.md lists files that are neither committed nor cleanly staged for review.\n` +
             missing.map(m => `    ${m}`).join('\n') +
@@ -456,22 +420,13 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
         // source-dirty class slipped through silently; surfaced via the
         // pr-at-complete pipeline run where Codex's handoff used markdown-link
         // path syntax that the parser missed.)
-        const emptyDebug: Record<string, unknown> = { cwd, handoffFiles: [] };
         const dirtyCheck = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
-        Object.assign(emptyDebug, {
-            dirtyStatusOk: dirtyCheck.ok,
-            dirtyStatusRaw: dirtyCheck.stdout,
-            dirtyStatusError: dirtyCheck.stderr,
-        });
         if (!dirtyCheck.ok) {
-            appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-dirty-check-failed' });
             splitCli.die(`Auto-commit aborted: handoff.md Changes table empty AND failed to inspect dirty files: ${dirtyCheck.stderr || 'unknown error'}`);
         }
         const allDirty = [...splitGit.parsePorcelain(dirtyCheck.stdout)];
         const sourceDirty = allDirty.filter(f => !isPipelineOwnedPath(f, taskIds));
-        Object.assign(emptyDebug, { allDirty, sourceDirty });
         if (sourceDirty.length > 0) {
-            appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-but-source-dirty' });
             splitCli.die(
                 `Auto-commit aborted: handoff.md Changes table is empty but the working tree has\n` +
                 `  source-file changes outside the pipeline-owned paths.\n` +
@@ -483,33 +438,21 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
                 `\n  Resolve manually: fix handoff.md or commit/discard the dirty files.`,
             );
         }
-        appendAutoCommitDebug(taskIds, { ...emptyDebug, result: 'empty-handoff-clean-or-pipeline-only' });
         return;
     }
 
     const handoffFiles = [...allHandoffFiles];
-    const debug: Record<string, unknown> = {
-        cwd,
-        handoffFiles,
-    };
 
     // `-uall` expands new directories into individual file entries. Without it,
     // `git status --porcelain` emits one `?? dir/` line per new directory, which
     // drops every file inside from the staged set (wall-textures regression,
     // 2026-04-17).
     const dirtyResult = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
-    Object.assign(debug, {
-        dirtyStatusOk: dirtyResult.ok,
-        dirtyStatusRaw: dirtyResult.stdout,
-        dirtyStatusError: dirtyResult.stderr,
-    });
     if (!dirtyResult.ok) {
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'dirty-status-failed' });
         splitCli.die(`Auto-commit aborted: failed to inspect dirty files: ${dirtyResult.stderr || 'unknown error'}`);
     }
     if (!dirtyResult.stdout.trim()) {
-        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'no-uncommitted-changes' });
+        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
         splitCli.info('No uncommitted changes to auto-commit.');
         return;
     }
@@ -524,11 +467,6 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // existence/tracked checks below — the script that generated them is the
     // real change and should be listed alongside.
     const gitIgnoredHandoffFiles = splitGit.filterGitIgnoredPaths(handoffFiles, cwd);
-    Object.assign(debug, {
-        dirtyFiles: [...dirtyFiles],
-        toStage,
-        gitIgnoredHandoffFiles: [...gitIgnoredHandoffFiles],
-    });
 
     // Verify every handoff file is accounted for. If a handoff entry isn't
     // dirty, it must either (a) exist on disk AND be tracked (= already
@@ -569,9 +507,7 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
             missing.push(`${f} — untracked on disk but git status did not report it (report this as a bug)`);
         }
     }
-    Object.assign(debug, { settledDeletions: [...settledDeletions] });
     if (missing.length > 0) {
-        appendAutoCommitDebug(taskIds, { ...debug, missing });
         splitCli.die(
             `Auto-commit aborted: handoff.md lists files that can't be staged:\n` +
             missing.map(m => `    ${m}`).join('\n') +
@@ -583,17 +519,10 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const stagedBeforeUnexpected = stagedBefore.ok
         ? splitValidation.findStagedFilesOutsideHandoff(stagedBefore.stdout, allHandoffFiles)
         : [];
-    Object.assign(debug, {
-        stagedBeforeOk: stagedBefore.ok,
-        stagedBeforeRaw: stagedBefore.stdout,
-        stagedBeforeUnexpected,
-    });
     if (!stagedBefore.ok) {
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'staged-before-failed' });
         splitCli.die(`Auto-commit aborted: failed to inspect staged files: ${stagedBefore.stderr || 'unknown error'}`);
     }
     if (stagedBeforeUnexpected.length > 0) {
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'preexisting-staged-outside-handoff' });
         splitCli.die(
             `Auto-commit aborted: staged files are not covered by handoff.md.\n` +
             `  Staged files:\n${stagedBeforeUnexpected.map(f => `    ${f}`).join('\n')}\n` +
@@ -602,8 +531,7 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     }
 
     if (toStage.length === 0) {
-        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'already-committed-or-unchanged' });
+        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
         splitCli.info('Handoff files are already committed or unchanged — skipping auto-commit.');
         return;
     }
@@ -618,18 +546,12 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // bulk operation. The deletion is already in the commit history, so
     // there's nothing to stage for them anyway.
     const stageable = handoffFiles.filter(f => !settledDeletions.has(f));
-    Object.assign(debug, { stageable });
     if (stageable.length === 0) {
-        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'all-handoff-files-already-settled' });
+        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
         splitCli.info('All handoff files are already settled in history — skipping auto-commit.');
         return;
     }
     const addResult = splitGit.gitSafeAt(cwd, 'add', '-A', '--', ...stageable);
-    Object.assign(debug, {
-        addOk: addResult.ok,
-        addError: addResult.stderr,
-    });
     if (!addResult.ok) die(`Failed to stage files: ${addResult.stderr || 'unknown error'}`);
 
     const preCheck = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
@@ -638,22 +560,12 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const stagedAfterUnexpected = stagedAfter.ok
         ? splitValidation.findStagedFilesOutsideHandoff(stagedAfter.stdout, allHandoffFiles)
         : [];
-    Object.assign(debug, {
-        preCheckOk: preCheck.ok,
-        preCheckRaw: preCheck.stdout,
-        remaining,
-        stagedAfterOk: stagedAfter.ok,
-        stagedAfterRaw: stagedAfter.stdout,
-        stagedAfterUnexpected,
-    });
     if (!preCheck.ok) {
         splitGit.gitSafeAt(cwd, 'reset', 'HEAD', '--', ...handoffFiles);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'precheck-failed' });
         splitCli.die(`Auto-commit aborted: failed to inspect working tree after staging: ${preCheck.stderr || 'unknown error'}`);
     }
     if (remaining.length > 0) {
         splitGit.gitSafeAt(cwd, 'reset', 'HEAD', '--', ...handoffFiles);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'uncovered-source-changes' });
         splitCli.die(
             `Auto-commit aborted: working tree has source changes not covered by handoff.md.\n` +
             `  Dirty files:\n${remaining.map(l => `    ${l}`).join('\n')}\n` +
@@ -663,12 +575,10 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     }
     if (!stagedAfter.ok) {
         splitGit.gitSafeAt(cwd, 'reset', 'HEAD', '--', ...handoffFiles);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'staged-after-failed' });
         splitCli.die(`Auto-commit aborted: failed to inspect staged files: ${stagedAfter.stderr || 'unknown error'}`);
     }
     if (stagedAfterUnexpected.length > 0) {
         splitGit.gitSafeAt(cwd, 'reset', 'HEAD', '--', ...handoffFiles);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'staged-after-outside-handoff' });
         splitCli.die(
             `Auto-commit aborted: staged files are not covered by handoff.md.\n` +
             `  Staged files:\n${stagedAfterUnexpected.map(f => `    ${f}`).join('\n')}\n` +
@@ -676,8 +586,7 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
         );
     }
     if (!stagedAfter.stdout.trim()) {
-        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'nothing-staged-after-add' });
+        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
         splitCli.info('Handoff files are already committed or unchanged — skipping auto-commit.');
         return;
     }
@@ -685,20 +594,13 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const idSuffix = taskIds.length > 1 ? `[${taskIds.join(', ')}]` : `[${taskIds[0]}]`;
     const message = `${title} ${idSuffix}`;
     const commitResult = splitGit.gitSafeAt(cwd, 'commit', '-m', message);
-    Object.assign(debug, {
-        commitOk: commitResult.ok,
-        commitStdout: commitResult.stdout,
-        commitError: commitResult.stderr,
-    });
     if (!commitResult.ok) {
-        appendAutoCommitDebug(taskIds, { ...debug, result: 'commit-failed' });
         splitCli.die(`Auto-commit failed: ${commitResult.stderr || 'unknown error'}`);
     }
     // verifyHandoffFilesCommitted now also runs `git diff HEAD` and aborts if any
     // handoff file's working-tree state still differs from HEAD — covering both the
     // success path (here) and every early-return path above.
-    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles, debug);
-    appendAutoCommitDebug(taskIds, { ...debug, result: 'committed' });
+    verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
     const stagedCount = stagedAfter.stdout.trim().split('\n').filter(Boolean).length;
     info(`Auto-committed ${stagedCount} file(s): ${message}`);
 }
