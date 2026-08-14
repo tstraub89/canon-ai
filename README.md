@@ -162,6 +162,8 @@ For below-pipeline changes or trivial inline work, do not self-review. Use `/can
 
 ### Skip the permission prompts (optional)
 
+If you run Claude Code in auto mode you'll see few prompts regardless; this allowlist matters most in the default permission mode, and `canon doctor` checks your coverage against it.
+
 Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short shell pipelines for inspecting task state (`cat tasks/X/status.json | jq '.phases'`). To avoid a Claude Code permission prompt on every step, drop these into `.claude/settings.json` under `permissions.allow`:
 
 ```json
