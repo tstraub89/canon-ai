@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-08-13
+
 ### Changed
 
 - **canon-ai is now MIT-licensed.** The proprietary placeholder license is replaced with MIT ahead of the public open-source release. `package.json` gains the npm registry metadata (`repository`, `homepage`, `bugs`, `author`, `keywords`), the README drops its private-distribution framing in favor of npm as the primary install path, and a `CONTRIBUTING.md` documents the build/validation workflow and the repo's derived-mirror and committed-`dist/` rules.

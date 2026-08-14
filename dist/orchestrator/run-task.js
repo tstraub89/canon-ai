@@ -4785,7 +4785,7 @@ function isInstalledSourcePath(sourcePath) {
   return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
 }
 function resolveCanonVersion(explicit) {
-  return explicit ?? "2.7.1" ?? "dev";
+  return explicit ?? "2.8.0" ?? "dev";
 }
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
