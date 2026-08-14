@@ -6,6 +6,8 @@
 
 ### Changed
 
+- **canon-ai is now MIT-licensed.** The proprietary placeholder license is replaced with MIT ahead of the public open-source release. `package.json` gains the npm registry metadata (`repository`, `homepage`, `bugs`, `author`, `keywords`), the README drops its private-distribution framing in favor of npm as the primary install path, and a `CONTRIBUTING.md` documents the build/validation workflow and the repo's derived-mirror and committed-`dist/` rules.
+
 - **The detach banner is now an imperative `canon watch` directive, not a command menu.** v2.7.0 added `canon watch` to the banner as one line among `Stop:`/`Watch:`/`Tail:` peers — and agent operators kept skimming past it into hand-rolled `sleep` + `status.json` poll loops, which miss halt states `canon watch` classifies (auto-block, crash, checkpoint). The banner now ends in a ruled **NEXT STEP** block: the `canon watch <id>` command on its own line, its blocking semantics, `--timeout` guidance for shell tools that cap command duration (exit code 5 = timeout elapsed, re-invoke), and an explicit "do not hand-roll a poll loop" prohibition. The `tail -f` suggestion is gone — it invited exactly the log-polling the directive forbids. The "task already running" errors lead with the same watch-first, do-not-poll note.
 
 ### Removed

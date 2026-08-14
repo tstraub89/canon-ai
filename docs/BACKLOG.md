@@ -382,6 +382,22 @@
 
 ## 📦 Distribution & Portability
 
+- [ ] **Wire `npm publish` into `auto-release.yml`** *(filed 2026-08-13 as part of open-source prep; the placeholder `canon-ai@0.0.1` already holds the registry name under tstraub89.)*
+  - **Scope**: after the existing tag + GitHub-release steps succeed, publish the package to npm from the version-bump commit's tree. Add `NPM_TOKEN` (granular automation token, Tim creates it) as an Actions secret; use `npm publish --provenance` if the runner supports it. Must be idempotent like the rest of the workflow — skip silently if the version is already on the registry (mirrors the existing release-object gate). The real first publish must bump past the `0.0.1` placeholder.
+  - **Sequencing**: do NOT enable before the public launch — publishing open-sources `dist/` + `templates/` + README ahead of the repo flip. Land the workflow change with the step gated or as part of the launch-day release.
+  - **Effort**: `XS`–`S`. One workflow job step + secret; the care is in the idempotency and sequencing.
+
+- [ ] **Open-source launch sequence (Path B — fresh public repo)** *(decided 2026-08-13: the private repo can never be flipped public — its ~148 `refs/pull/*` permanently pin pre-rewrite history, including third-party content that must stay private. History on `main` was rewritten with `git filter-repo` and force-pushed 2026-08-13; pristine pre-rewrite backup at `canon-ai-main-backup`, remote-detached — never push from it or any stale clone.)*
+  - **Launch-day steps, in order**:
+    1. Confirm with James (name/TokenAnxiety mentions stay; he must re-clone, never push from a stale checkout).
+    2. Rename `tstraub89/canon-ai` → private archive name (keeps issues/PRs, stays private forever).
+    3. Create fresh public `tstraub89/canon-ai`; push rewritten `main` + all tags.
+    4. Recreate the GitHub releases on the new repo (scriptable: copy title/notes per tag from the archive repo).
+    5. Final gate: probe the new repo for old pre-rewrite SHAs (list derivable from the backup) — all must 404.
+    6. Enable branch protection, secret scanning, Dependabot; add topics + description.
+    7. Add `NPM_TOKEN` secret; land/enable the npm-publish workflow step (entry above); cut the first public release (bumps past the `0.0.1` name-holder).
+  - **Effort**: `S` as a supervised checklist session.
+
 - [x] **`canon upgrade` overwrites untracked managed targets without `--force`, and fails open on git errors** *(filed 2026-07-11 from James's issue [#187](https://github.com/tstraub89/canon-ai/issues/187); both claims verified against source this session. **Priority: tackle soon — silent, git-unrecoverable data loss on a routine command.**)* **(SHIPPED as task `upgrade-destination-classification`, PR [#199](https://github.com/tstraub89/canon-ai/pull/199), released in v2.3.0; issue closed 2026-07-13 — targets are classified before writing, untracked/gitignored-but-present refuse without `--force`, git-state errors fail closed, `--check` reports the identical classification)**
   - **Problem**: `isPathDirty` in `src/cli/commands/upgrade.ts` (a) explicitly skips `??` untracked paths — so an existing untracked file at a managed target (e.g. an adopter's hand-made `.canon/templates/spec.md`) is overwritten by a plain `canon upgrade` with no `--force`, and git cannot restore it; and (b) returns `false` (clean) when `git status` errors, so the safety boundary fails open exactly when git — the thing being used as the boundary — is broken.
   - **Decision (proposed)**: per the issue — classify destinations as absent / canon-identical / tracked-clean / tracked-dirty / untracked-existing; refuse tracked-dirty AND untracked-existing by default; treat git-state errors as fatal when git is the safety boundary; keep `--check` classification identical to the real run. Regression fixtures: untracked sentinel, forced git failure, absent target, explicit `--force`.
