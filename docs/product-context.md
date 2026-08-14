@@ -105,14 +105,14 @@ Adopters of canon-ai add their own project-specific delicate domains to this lis
 
 ## Free vs Paid
 
-> Not applicable. canon-ai is currently proprietary, single-tier, and not commercially distributed. If a future product (e.g., a hosted bootstrap service) ships, this section gets a real entry.
+> Not applicable. canon-ai is free and open source (MIT), single-tier, and not commercially distributed. If a future product (e.g., a hosted bootstrap service) ships, this section gets a real entry.
 
 ## Business Rules
 
-- **Repo visibility**: canon-ai is a private GitHub repository. The `canon-ai` npm package ships from `main`. Future open-source release would be a separate decision.
+- **Repo visibility**: canon-ai is a public GitHub repository (`tstraub89/canon-ai`). The `canon-ai` npm package ships from `main`.
 - **Branch policy**: canon-ai is **trunk-based** — task work accumulates on `main` (the source of the published `canon-ai` npm package), and a release is cut from `main` via a version-bump commit when there's enough to ship (see `docs/release-process.md`). There are no `dev` or `release/v*` branches.
 - **Changelog**: `CHANGELOG.md` lives on `main` and ships with the package. Audience is canon-ai contributors and adopters who want to know what changed between versions. Format follows Keep a Changelog conventions.
-- **License**: Proprietary (`LICENSE` file at repo root). Reconsidered when/if a public release happens.
+- **License**: MIT (`LICENSE` file at repo root).
 
 ## Voice & Tone
 

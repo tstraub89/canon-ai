@@ -39,5 +39,26 @@
   },
   "simple-git-hooks": {
     "pre-commit": "npm run sync-templates -- --stage"
-  }
+  },
+  "license": "MIT",
+  "author": "Tim Straub",
+  "homepage": "https://github.com/tstraub89/canon-ai#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tstraub89/canon-ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tstraub89/canon-ai/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "claude",
+    "codex",
+    "pipeline",
+    "spec-driven",
+    "code-review",
+    "cli",
+    "orchestration"
+  ]
 }

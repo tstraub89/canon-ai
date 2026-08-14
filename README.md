@@ -87,12 +87,16 @@ Multiple task IDs in one invocation activates **bundle mode** — `canon run id1
 ### Install
 
 ```bash
+npm install -g canon-ai
+```
+
+Or install straight from GitHub:
+
+```bash
 npm install -g --install-links github:tstraub89/canon-ai
 ```
 
-> **Private distribution.** canon-ai is distributed from a private GitHub repo and requires access to `tstraub89/canon-ai` (run `gh auth login` first or have git configured for that repo). It is **not** published on the public npm registry. The license is proprietary during this phase — see [License](#license).
-
-> `--install-links` is required because npm otherwise symlinks the global install to its git cache rather than copying the committed `dist/`, which leaves the `canon` bin pointing at a transient path and command-not-found after the install reports success. The flag packs+installs as a regular dependency, which is what you want for a stable global CLI.
+> When installing from GitHub, `--install-links` is required because npm otherwise symlinks the global install to its git cache rather than copying the committed `dist/`, which leaves the `canon` bin pointing at a transient path and command-not-found after the install reports success. The flag packs+installs as a regular dependency, which is what you want for a stable global CLI.
 
 > **Updating.** Once installed, use `canon update` rather than re-running `npm install` by hand — it resolves the exact install this binary is running from, pins to the latest tagged release by default (or a labeled development commit via `--channel main` / `--ref <ref|sha>`), and records what it installed in `provenance.json` under `.canon` for future tooling to read.
 
@@ -328,15 +332,15 @@ The implication: **the value of canon compounds with use**. A 6-month-old canon 
 
 ## Roadmap
 
-**Phase 1 (now)**: Layer 1 + Layer 2 ship. Full CLI installable from private GitHub. `/canon-init` skill for interactive project bootstrap. Validate against real projects. Public npm publication is *not* part of Phase 1 — distribution stays private while the surface stabilizes.
+**Phase 1 (now)**: Layer 1 + Layer 2 ship. Full CLI, open source, installable from npm or GitHub. `/canon-init` skill for interactive project bootstrap. Validate against real projects.
 
 **Phase 2 (next)**: Make the implementer slot pluggable — adapter interface for Codex CLI, Gemini CLI, Aider, others. Architect slot stays Claude Code (skills are load-bearing).
 
-**Phase 3 (research)**: Productize. Public npm release? Hosted bootstrap service? Per-language scaffolds? Marketplace for `docs/patterns.md` starter packs (Next.js patterns, Rails patterns, etc.)? TBD based on Phase 1 validation.
+**Phase 3 (research)**: Productize. Hosted bootstrap service? Per-language scaffolds? Marketplace for `docs/patterns.md` starter packs (Next.js patterns, Rails patterns, etc.)? TBD based on Phase 1 validation.
 
 ## License
 
-Proprietary and confidential during this phase — see [`LICENSE`](LICENSE). Distribution is private (access to `tstraub89/canon-ai` required); canon-ai is **not** published on the public npm registry. Reuse and redistribution rights are intentionally constrained while the surface stabilizes. Open-sourcing remains possible downstream of Phase 1 validation, but is not committed.
+[MIT](LICENSE).
 
 ## Origin
 
