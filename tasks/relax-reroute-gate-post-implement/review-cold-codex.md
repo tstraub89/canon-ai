@@ -1,0 +1,1 @@
+The reroute admission change is consistent across implementation, prompts, documentation, generated artifacts, and tests. Validation suites, type-checking, linting, template synchronization, and build all pass.

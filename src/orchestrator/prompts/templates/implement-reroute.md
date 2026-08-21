@@ -1,4 +1,4 @@
-You are addressing **human-review feedback** on {{taskScope}} for {{projectName}}.
+A human wrote a spec amendment and rerouted {{taskScope}} for {{projectName}}.
 
 {{{stateHeader}}}
 {{{roundBanner}}}{{{preamble}}}

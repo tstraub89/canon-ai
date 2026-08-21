@@ -2,7 +2,7 @@ You are updating the implementation plan for {{taskScope}} for {{projectName}} a
 
 {{{startup}}}
 
-The spec was amended after human review and Codex has reviewed the amendment. Your job is to **append** a reroute plan section to `plan.md`; do not rewrite or remove existing plan content.
+A human amended the spec and rerouted the task after a completed implementation round. Codex has reviewed the amendment. Your job is to **append** a reroute plan section to `plan.md`; do not rewrite or remove existing plan content.
 
 {{{roundBanner}}}Amendment review verdicts:
 {{{verdictLines}}}

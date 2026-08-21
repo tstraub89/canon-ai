@@ -379,13 +379,12 @@ export function promptImplementReroute(
     const roundBanner = tasks.length === 1
         ? (() => {
             const rerouteCount = tasks[0].rerouteCount;
-            const humanReviewRound = rerouteCount + 1;
             const priorReroutes = rerouteCount - 1;
             return rerouteCount >= 2
-                ? `⚠️  **THIS IS ROUND ${humanReviewRound} OF HUMAN REVIEW — REROUTE #${rerouteCount}.** You have already been sent back ${priorReroutes} time${priorReroutes === 1 ? '' : 's'} before this one. This prompt is **not** a duplicate of the previous reroute you already addressed — the human has provided **new** feedback beyond what you fixed in reroute #${priorReroutes}. If your session memory says "I just finished this," that memory is from the PRIOR round. The spec has additional amendments since then. If your handoff.md references "round ${rerouteCount}" or earlier, it is out-of-date — the current round is ${humanReviewRound}.\n\n`
-                : `**This is round 2 of human review — the first reroute for this task.** The human has reviewed your original implementation and sent it back with feedback that requires spec amendments.\n\n`;
+                ? `⚠️  **THIS IS REROUTE ROUND ${rerouteCount} FOR THIS TASK.** You have already been sent back ${priorReroutes} time${priorReroutes === 1 ? '' : 's'} before this one. This prompt is **not** a duplicate of the previous reroute you already addressed — a human decided to reroute this task and wrote **new** amendment feedback beyond what you fixed in reroute #${priorReroutes}. If your session memory says "I just finished this," that memory is from the PRIOR round. The spec has additional amendments since then. If your handoff.md references reroute round ${rerouteCount - 1} or earlier, it is out-of-date — the current round is ${rerouteCount}.\n\n`
+                : `**This is the first reroute for this task.** A human decided this task needed a spec amendment after a completed implementation round, wrote it into spec.md, and rerouted the task.\n\n`;
         })()
-        : `⚠️  **This is a reroute round for a bundle of tasks.** Each task carries its own reroute count — see the per-task lines below for the round number and amendment heading specific to each task. Do **not** assume a single bundle-wide round: a bundle can mix tasks on different reroute rounds. The human has reviewed prior implementations and sent the bundle back with **new** feedback that requires spec amendments. If your session memory says "I just finished this," that memory is from a prior round — re-read each task's amended spec before changing anything.\n\n`;
+        : `⚠️  **This is a reroute round for a bundle of tasks.** Each task carries its own reroute count — see the per-task lines below for the round number and amendment heading specific to each task. Do **not** assume a single bundle-wide round: a bundle can mix tasks on different reroute rounds. A human decided these tasks needed spec amendments after completed implementation rounds, wrote the amendments, and rerouted the bundle with **new** feedback. If your session memory says "I just finished this," that memory is from a prior round — re-read each task's amended spec before changing anything.\n\n`;
     // Per-task heading direction. Each task carries its OWN reroute_count
     // (mixed-count bundles are legal), so the prompt names the exact heading
     // each task's amendment lives under rather than relying on a single
@@ -403,12 +402,12 @@ export function promptImplementReroute(
         const expectedHeading = t.rerouteCount <= 1
             ? '`## Amendment`'
             : `\`## Amendment Round ${t.rerouteCount}\``;
-        return `- \`${t.taskId}\`: "${t.title}" (entering reroute round ${t.rerouteCount}) — the spec was amended after human review. Locate ${expectedHeading} in tasks/${t.taskId}/spec.md and treat that section's content as the new requirements. Ignore prior-round sections when implementing this one. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
+        return `- \`${t.taskId}\`: "${t.title}" (entering reroute round ${t.rerouteCount}) — a human amended the spec and rerouted this task after a completed implementation round. Locate ${expectedHeading} in tasks/${t.taskId}/spec.md and treat that section's content as the new requirements. Ignore prior-round sections when implementing this one. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
     }).join('\n');
 
     const preamble = isResumedSession
         ? 'Your session is being continued with spec amendments. The spec has been updated since your last turn — new ACs, new sections, or revised requirements have been added. Your existing code and codebase context are still valid; only the spec has changed.'
-        : 'A human reviewed your previous implementation and sent it back with additional feedback. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is **not** a resume of an interrupted session: your previous work shipped, the human tried it, and now there\'s more to do.';
+        : 'A human decided this task needed a spec amendment after your implementation shipped, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is **not** a resume of an interrupted session: your previous work is complete and shipped, and now there\'s a delta to implement.';
     const startup = isResumedSession ? '' : CODEX_STARTUP;
     const groundingRule = isResumedSession
         ? 'Grounding rule: re-read the amended spec.md and your handoff.md before changing anything. Your codebase context is current, but the spec has new requirements — do not assume your prior memory of the spec is complete.'

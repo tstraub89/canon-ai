@@ -145,11 +145,13 @@ Tasks land on the default branch; no version numbers, no CHANGELOG, no tags.
 2. Run the pipeline. `--ship` merges to the default branch.
 3. Skip all versioning, changelog, and tagging steps. Use `/canon-changelog` only if and when your project adopts a CHANGELOG.
 
-### 6. Reroute after human rejection
+### 6. Reroute after review feedback
 
-`--reroute` is allowed from `human_review` and from a `code_review` block with a `spec_gap` verdict.
+`--reroute` is allowed from any phase reached after a completed `implement` round: `code_review`, `qa`, or `human_review` — for any status or verdict on that phase.
 
-1. Write the new requirements into `spec.md` as an Amendment section — **required**, not optional: the reroute pre-flight gate aborts unless the heading `## Amendment` (round 1) or `## Amendment Round N` (round 2+) exists. A note elsewhere doesn't count. Edit the worktree copy if a worktree exists.
+**Deciding to reroute a task is a human decision, not something an agent driving canon infers on its own** — even under `--full-send` or another autonomous mode, get an explicit human decision before invoking `--reroute`.
+
+1. Write the new requirements into `spec.md` as an Amendment section — **required**, not optional (unless this is a spec_gap-entry reroute, where only the `spec_gap` tasks need one; approved siblings ride along): the reroute pre-flight gate aborts unless the heading `## Amendment` (round 1) or `## Amendment Round N` (round 2+) exists. A note elsewhere doesn't count. Edit the worktree copy if a worktree exists.
 2. Reroute re-enters at the tier's review altitude:
    ```bash
    canon run <task-id> --reroute

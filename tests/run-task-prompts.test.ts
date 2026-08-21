@@ -488,10 +488,8 @@ void test('promptImplementReroute mixed-bundle banner is neutral and per-task li
     assert.match(output, /Each task carries its own reroute count/);
     assert.match(output, /a bundle can mix tasks on different reroute rounds/);
 
-    // The misstatement form the bug produced must not appear (case-sensitive — the
-    // state header legitimately contains lowercase `reroute #N`).
-    assert.doesNotMatch(output, /THIS IS ROUND \d+ OF HUMAN REVIEW/);
-    assert.doesNotMatch(output, /REROUTE #\d+\.\*\*/);
+    // A bundle must not inherit the single-task strong anchor.
+    assert.doesNotMatch(output, /THIS IS REROUTE ROUND \d+ FOR THIS TASK/);
 
     // Per-task lines name the correct heading for each task's own reroute count.
     assert.match(output, /test-pf-001.*entering reroute round 1.*`## Amendment`/);
@@ -505,7 +503,7 @@ void test('promptImplementReroute single-task at reroute #2 retains strong-ancho
     const state: PipelineState = { tasks: [task], tier: 'full', isBundle: false };
     const output = normalize(promptImplementReroute(state, false, [], 'main'));
 
-    assert.match(output, /THIS IS ROUND 3 OF HUMAN REVIEW — REROUTE #2/);
+    assert.match(output, /THIS IS REROUTE ROUND 2 FOR THIS TASK/);
     assert.match(output, /sent back 1 time before this one/);
     // Per-task line for round 2 uses the `## Amendment Round 2` heading form.
     assert.match(output, new RegExp(`${TASK_ID}.*entering reroute round 2.*\`## Amendment Round 2\``));

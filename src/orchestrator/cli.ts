@@ -148,9 +148,10 @@ export function printUsage(): void {
     console.log('                      already merged externally, --ship detects the merged state and resumes');
     console.log('                      at cleanup.');
     console.log('  --dry-run           Print each planned phase and exit without spawning any LLM');
-    console.log('  --reroute           Reset a task from human_review back into the post-review fix path after');
-    console.log('                      human feedback. Full-tier tasks (S/M/L/XL or delicate) re-enter at');
-    console.log('                      spec_review; fast-tier tasks (XS) re-enter at implement.');
+    console.log('  --reroute           Reset a task from any phase reached after a completed implement round');
+    console.log('                      (code_review, qa, or human_review) back into the post-review fix path.');
+    console.log('                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier');
+    console.log('                      tasks (XS) re-enter at implement.');
     console.log('                      Feedback channel: append a new section to tasks/<id>/spec.md describing');
     console.log('                      what to address. Codex re-reads spec.md only — additions to review.md');
     console.log('                      or PR comments are NOT consulted on reroute.');

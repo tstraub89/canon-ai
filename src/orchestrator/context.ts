@@ -164,7 +164,7 @@ export function buildImplementStateHeader(state: PipelineState, mode: ImplementM
     const modeExplain: Record<ImplementMode, string> = {
         fresh: 'first implementation pass — no prior work on this phase',
         revision: revisionExplain,
-        reroute: `spec was amended after human_review (reroute #${primary.rerouteCount}) — re-read spec.md for new sections`,
+        reroute: `a human amended the spec and rerouted the task after a completed implementation round (reroute #${primary.rerouteCount}) — re-read spec.md for new sections`,
         resume: 'previous implement pass was interrupted after code changes were made — finish validation + handoff only',
     };
 

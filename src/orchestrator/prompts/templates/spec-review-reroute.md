@@ -2,7 +2,7 @@ You are reviewing {{taskScope}} for {{projectName}}.
 
 {{{startup}}}
 
-A human rerouted this task after human review. The original spec was already reviewed and approved. Your job is to review **the amendment and its integration** with the already-approved spec, not to re-litigate settled findings.
+A human amended the spec and rerouted this task after a completed implementation round. The original spec was already reviewed and approved. Your job is to review **the amendment and its integration** with the already-approved spec, not to re-litigate settled findings.
 
 {{{roundBanner}}}Tasks with amendments to review:
 {{{taskLines}}}

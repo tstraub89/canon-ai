@@ -14,115 +14,140 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+
+Every check was **re-run independently by the anchored lens**, not accepted from the handoff:
+
+| Check | Independent result | Evidence |
+|---|---|---|
+| `npm run lint` | Pass | exit 0 |
+| `npm run type-check` | Pass | exit 0 |
+| `npm test` | Pass | `tests 1167 / pass 1167 / fail 0 / skipped 0` |
+| `npm run build` | Pass | exit 0, then `git status --porcelain -- dist/` **empty** → both tracked bundles reproduce byte-identically from a fresh build |
+| `npm run sync-templates:check` | Pass | `All canon-managed files in sync` |
+| `npm run docs-refs-check` | Pass | `All refs OK` |
+| Focused reroute-preflight suite | Pass | `tests 42 / pass 42 / skipped 0` — the handoff's "42 tests" claim verified |
+| `git diff main...HEAD --check` | Pass | no whitespace errors |
+
+Two notes that matter for trusting this gate:
+
+- **`skipped 0`.** No `gitDirWritable`-gated worktree test hid behind a skip, so no test relevant to these ACs silently failed to run. The usually-expected `run-task-safety "main die exits"` failure also did not occur; the suite is genuinely green rather than green-modulo-a-known-failure.
+- **New tests are not vacuous.** The cold lens replayed the new `tests/run-task-reroute-preflight.test.ts` against `main`'s source in a scratch copy: **12 of the new tests fail there**. The added coverage genuinely exercises the widened gate and would not survive a revert of the fix.
+
+All 18 changed files appear in the handoff Changes table, and no undeclared file appears in the diff.
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: admission widened | Pass | All 8 required rows present. 6 parameterized rows (`code_review` blocked+`changes_requested`, `changes_requested`, `in_progress`, `pending`+`''`, `done`+`approved` with `qa` pending, `qa` `in_progress`) at `tests/run-task-reroute-preflight.test.ts:553-620`, each asserting exit 0 plus `implement.status === 'pending'`, `rerouted === true`, and `reroute_count` 2→3. Pre-existing `human_review` row at `:399` and `code_review blocked spec_gap` row at `:441` still pass. Every one of the 6 new rows is a state the old `allAtHumanReview \|\| isSpecGapReroute` gate rejected. |
+| AC-2: pre-implement and completed states rejected without mutation | Pass | 5 parameterized rows (`spec`, `spec_review`, `plan`, `implement`, `complete`) at `:622-700` plus the off-phase-sibling bundle at `:524`. Rejection precedes every write: `splitCli.die()` at `src/orchestrator/main.ts:2484` runs before the amendment loop and before the reset loop's only `writeStatus` at `:2634`. The byte check is a real full-file string compare. Fixtures deliberately keep a stale top-level `status: 'human_review'` pointer while phases say `spec: pending`, so a passing row *proves* the code derives the phase rather than trusting the pointer. |
+| AC-3: mixed-phase bundles normalised | Pass | `:701` — `qa` + `human_review` bundle, both members derive `spec_review` after the reset, banner names both entry phases. |
+| AC-4: exemption predicate unchanged | Pass | (a) All three pre-existing exemption tests are untouched by the diff — `git diff main...HEAD -- tests/run-task-reroute-preflight.test.ts \| grep '^-' \| grep -i exempt` returns nothing — and all pass. (b) New no-exemption test at `:729`. Code argument verified: the exemption write at `main.ts:2579` still gates on `isSpecGapReroute`, which requires `getCurrentPhase === 'code_review' && status === 'blocked' && someSpecGap` — every such state was admitted by the *old* gate too, so widening admission cannot feed the predicate a new state. |
+| AC-5: spec_gap never rerouted unamended | Pass | `:756` (spec_gap-entry bundle, gap task unamended) and `:783` (`code_review changes_requested` + verdict `spec_gap`, so the exemption predicate does not apply). Both abort naming the gap task and leave `status.json` byte-identical. See nit N-11 on the assertion shape. |
+| AC-6: Amendment scope and `--force` unchanged | Pass | `:817` runs the paired abort/`--force` case from a `qa in_progress` entry: full per-task failure block (task id, spec path, required round, expected heading, reason), byte-identical status on abort, one warning per failing task with `--force`, exit 0, and no `reroute_exempt` in the written status. |
+| AC-7: banner reflects real entry state | Pass | `:848` is a genuine state-varying pair and it *does* isolate the entry-state label: `banner.match(/Rerouting: (.*?) →/)` then asserts on `match[1]` only, so the reset list after the arrow cannot satisfy or break it. `match` **and** `doesNotMatch` in both directions — `code_review blocked (changes_requested)` label excludes `human_review`/`spec_gap`; `human_review` label excludes `code_review`. Not `match`-only, not a whole-line `doesNotMatch`. Nits N-3/N-4/N-5 concern label *detail*, not AC compliance. |
+| AC-8: old predicate gone | Pass | `grep -n 'allAtHumanReview' src/orchestrator/main.ts` → no output. `allCodeReviewBlocked` / `someSpecGap` / `isSpecGapReroute` retained at `main.ts:2468/2472/2473`, now serving only the exemption decision and the banner. |
+| AC-9: every current-contract surface states the new rule; no dated record rewritten | Pass | (a) All five surfaces rewritten: `src/cli/index.ts:104`, `src/orchestrator/cli.ts:151` (character-identical admission wording between the two independently-authored blocks), `docs/pipeline-orchestrator.md:94` + §"Human Reroute", `.claude/skills/canon-pipeline/SKILL.md:150` + the `### 6.` heading rename, `README.md:73` + `:238`. `## Human Reroute` heading text unchanged per Non-Goals. (b) Sweep re-derived independently by the foreman *and* the anchored lens across `src/ docs/ .claude/ README.md templates/`: every surviving hit falls under Rule 1 or Rule 2, and no surviving prose presents `human_review` or a `spec_gap` verdict as a precondition for `--reroute`. Rule 1 mechanically satisfied — `git diff main...HEAD --name-only` contains neither `docs/BACKLOG.md` nor `CHANGELOG.md`; telemetry docs are additive-only. The handoff's sweep classification is complete and honest. Grep for the old error text and for "all tasks at human_review" returns zero live hits. See nit N-6 on the renamed heading. |
+| AC-10: prompts describe a human-directed amendment | Pass | (a) Sentence-split scan over all six golden reroute values (run independently by both the foreman and the anchored lens): **0** occurrences of `human` co-occurring with `review`/`reviewed`/`tried`/`rejected`, with both required survivors intact — "The human must revise the amendment and re-run" and "after a human reroute". (b) `grep -n 'humanReviewRound' src/orchestrator/prompts/index.ts` → no output; zero repo-wide. (c) Both assertions rewritten, not deleted: the single-task round-2 test now asserts `/THIS IS REROUTE ROUND 2 FOR THIS TASK/` and `/sent back 1 time before this one/` **positively**, and the bundle test's negative assertion is re-pointed at `THIS IS REROUTE ROUND \d+ FOR THIS TASK`, which genuinely exists at `src/orchestrator/prompts/index.ts:384` — **not** a tautology. (d) All nine surfaces enumerated one by one; every one names a `human` as the actor who decided to reroute and wrote the amendment. None degraded to "the operator" or "the pipeline". Round-banner renumbering (`rerouteCount` instead of `rerouteCount + 1`) is internally consistent — `priorReroutes`, "reroute #N", and "references reroute round N-1 or earlier" all agree, with no off-by-one. |
+| AC-11: generated artifacts declared and regenerated | Pass | Programmatic key-level compare of `tests/run-task-prompts.golden.json` against `main`: exactly **6** changed keys, 0 added, 0 removed; the changed set is precisely the six reroute entries; `promptQa` and `promptQa_withTemplate` are **byte-identical**. Value-level diff of the six shows only AC-10 wording lines. `sync-templates:check` clean; both mirrors byte-identical to their roots. Both `dist/` bundles reproduce byte-identically from `npm run build`, and they carry the real gate change (`REROUTE_ADMITTED_PHASES`, `describeRerouteEntryPhase`, the new die message) — the old error string is absent from both. All five generated artifacts declared in the handoff. |
+| AC-12: suite green | Pass | See the Validation Gate table. |
+| AC-13: human-decision guardrail on the two agent-consulted surfaces | Pass | `docs/pipeline-orchestrator.md:458` and `.claude/skills/canon-pipeline/SKILL.md:152` each carry `human decision` as its **own** sentence, distinct from the AC-9 admission-rule statement. Read for intent, not just grep: both actually convey "an agent must not decide this on its own" (naming `--full-send` and autonomous modes explicitly), not merely "humans exist in this workflow". |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
+
+Non-Goals verified individually: no new CLI verb/flag/`--reason`, no new `status.json` field, no persisted entry phase, no generalised sibling exemption, reroute from `implement`/earlier and from `complete` still rejected, `## Human Reroute` heading unchanged, and `docs/BACKLOG.md` / `CHANGELOG.md` / `src/orchestrator/quality-log.ts` / `src/orchestrator/prompts/templates/qa.md` / `docs/task-quality-log.md` all absent from the diff. The two documented Deviations are both correct calls — in particular, dropping the planned `docs/patterns.md` cross-reference is right: that heading exists only in canon-ai's own root doc and not in the adopter scaffold copy, so shipping the reference would have broken adopter scope.
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+This is a disciplined, well-scoped implementation of a `delicate` orchestrator change. The admission rewrite is small and reads as one idea: a `ReadonlySet` membership test over the *derived* current phase, failing closed, with the rejection emitted before any state write. The load-bearing safety argument — that widening admission cannot feed the exemption predicate a state it could not already see — holds against the code, not just against the spec's prose. The old `allAtHumanReview` predicate is gone rather than left dangling, and the three retained predicates are genuinely reduced to exemption-and-banner duty. Test coverage is the strongest part: parameterized admit/reject matrices, byte-identical-`status.json` assertions on every rejection, fixtures whose stale top-level pointer proves derivation is used, and a state-varying banner pair that isolates the label instead of the whole line. All three lenses independently confirmed the generated artifacts are in scope and reproducible.
+
+The surviving findings are all nits, and none of them is a defect in what this diff set out to do. Worth separating, though: three of them (S-1, S-2, S-3) are **pre-existing hazards in files this spec deliberately fenced off**, which this change makes materially more reachable. They are not this task's bugs and blocking on them would be scope creep into someone else's task — but they are real, verified, and worth filing before the next reroute lands on one of them.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
+- **N-1 — `docs/patterns.md:134` now states something this change makes false.** *(anchored lens; verified by foreman)* The sentence "That means `--reroute` and `--pr` start from committed post-QA state" is no longer true for `--reroute`: from `code_review` or `qa`-pending it starts from *un*committed pre-QA state — the spec's own Known Risk, and the reason the new §"Human Reroute" warning was added. The guardrail Rule two lines below it (`don't git reset --hard … before the first QA-end commit`) is still correct, so the danger is a reader treating the stale scoping sentence as licence to think the rule no longer covers reroute. **Correctly out of implement scope**: AC-9(b) Rule 2 excludes it (not admission-rule prose), the handoff classified it honestly, and `patterns.md` is not in Affected Files. The spec's Docs Impact designates QA as the home for `patterns.md` edits — **so fix it at QA** with a one-clause correction (`--pr` still does; `--reroute` no longer necessarily does). Flagged here so it isn't lost in the handoff-to-QA gap.
 
-(none / list items)
+- **N-2 — `guardConcurrentRun()` is newly load-bearing for `--reroute`.** *(flagged by 2 lenses: anchored + cold-Claude; both low confidence)* Ordering is **correct** — `guardConcurrentRun` at `main.ts:3469` precedes `rerouteFromHumanReview` at `:3493` with no early return between them — so the spec's Interaction-Dependencies argument stands. But the guard self-documents as a read-only pre-flight with a boot-window race, and admitting `code_review in_progress` / `qa in_progress` means losing that race now resets `implement`/`code_review` underneath a live agent whose next `writeStatus` clobbers the reset. Previously `--reroute` was only issuable from phases where no orchestrator runs by construction. Not a defect in this diff and explicitly reasoned about in the spec; recorded because the `delicate` charter asks for a guard audit at each newly reachable mutation entry point.
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
+- **N-3 — the rejection message's rationale is self-contradictory for a `complete` task, and offers no next action.** *(flagged by 2 lenses)* `main.ts:2485-2487` reads "requires every named task's current phase to be code_review, qa, or human_review — a phase reached only after a completed implement round." A `complete` task *satisfies* the stated rationale but is rejected (deliberately, per Non-Goals, and pinned by the test at `:672`), so the operator is handed a reason their state meets. It also carries no `docs/pipeline-orchestrator.md` §"Human Reroute" pointer and no next-action hint, unlike the sibling amendment abort at `:2526`. (Checked the base: the spec's "retain the existing §'Human Reroute' pointer" refers to the *amendment* abort, which is retained unchanged — so this is not an AC miss.) Suggest naming the real exclusion ("…and a task that has not yet been closed out") and pointing at the doc.
 
-(none / list items)
+- **N-4 — `describeRerouteEntryPhase()` gives status detail only for `code_review`.** *(flagged by 2 lenses)* `main.ts:2456-2464` returns the bare phase for `qa` and `human_review`, so `qa pending` and `qa in_progress` print identical banners, and a `code_review done (approved) → qa pending` reroute prints just `qa`. AC-7 only requires the phase be named, so this is compliant — but Known Risks' stated purpose for the banner ("what makes the widening *visible*") argues for uniform status detail across all three admitted phases.
+
+- **N-5 — the spec_gap label bypasses the shared clause builder.** *(anchored)* `main.ts:2541` keeps `isSpecGapReroute ? 'code_review spec_gap' : …` as a hand-authored literal outside `describeRerouteEntryPhase()`, which is exactly the drift shape `docs/patterns.md` §"Build a state-dependent operator message from one parameterized clause builder — and pin it with a state-varying pair" warns about: adding detail to the builder silently would not reach the spec_gap path, and the pinning assertion at `tests/run-task-reroute-preflight.test.ts:465` would not catch it. Related: for a spec_gap **bundle** the single literal replaces per-task labels, so a mixed `spec_gap` + `approved` bundle never surfaces which sibling is riding along unamended. The plan chose this deliberately to keep the pre-existing spec_gap test unmodified — a knowing tradeoff, recorded rather than disputed.
+
+- **N-6 — the renamed skill heading re-asserts a weaker form of the premise the rename existed to remove.** *(anchored)* `.claude/skills/canon-pipeline/SKILL.md:148` (+ mirror) is now `### 6. Reroute after review feedback`. It satisfies AC-9(a) literally — it names no phase — but a reroute from `code_review pending` (review never ran) or `qa pending` has no review feedback at all, which is precisely the false premise AC-10 spent its whole budget purging from the prompts. The correct rule is stated unambiguously on the very next line, so navigational risk is low. Inherited from `plan.md:360`, so a plan-level choice rather than an implementation deviation. Suggest `### 6. Reroute after a completed implement round`.
+
+- **N-7 — doc/skill admission wording slightly overstates the gate.** *(cold-Claude; verified)* "for any status or verdict on that phase" / "regardless of that phase's status or verdict" — a `done` `code_review` makes the current phase `qa`, so `done` is never admissible *as* `code_review`; and the common mid-loop state (`code_review` returns `changes_requested` → `routeBackTo('implement')`) derives to `implement` and is rejected. An operator reading "any status" and trying `--reroute` while Codex iterates gets the `implement` rejection with no doc explaining why. Relatedly, `docs/pipeline-orchestrator.md:464` enumerates only `qa` `pending`/`in_progress`, but `PhaseStatus` (`src/orchestrator/types.ts:13`) also allows `blocked` and `changes_requested`, and those `qa` states are equally admitted.
+
+- **N-8 — the exported function name is now stale.** *(cold-Claude)* `rerouteFromHumanReview` at `main.ts:2466` no longer reroutes only from `human_review` — `describeRerouteEntryPhase` exists precisely because the entry phase is variable. Referenced from `main.ts:3493`, `src/orchestrator/validation.ts:268`, and 15+ test names, so a rename is a real (if mechanical) diff; not required by any AC.
+
+- **N-9 — three prompt surfaces assert an amendment exists, which `--force` falsifies.** *(cold-Claude; verified)* `src/orchestrator/prompts/templates/implement-reroute.md:1`, `src/orchestrator/prompts/index.ts:410`, and `src/orchestrator/context.ts:167` all now state a human *wrote the amendment*. Under the `--force` bypass (`main.ts:2620-2624`) no amendment exists — the warn there says so explicitly. Codex is then told to locate `## Amendment`, finds nothing, and has no instruction for that case. Pre-existing in shape (the old wording also assumed an amendment), and the spec's Known Risks accept `--force` as a sharp tool; recorded because the new wording is more specific about the amendment than the old.
+
+- **N-10 — bundle banner formatting collides with the sentence.** *(cold-Claude)* `main.ts:2541-2548` joins per-task labels with `", "`, producing `Rerouting: task-a: qa, task-b: human_review → spec_review (resetting …)`. The inner comma-and-colon list is hard to parse; a bracketed or newline-per-task form would read better. Separately, the `(resetting …)` list omits `human_review` even though the reset loop writes it (`:2611-2612`) — harmless today since every admitted entry phase leaves `human_review` already `pending`, but the message under-reports what it changes.
+
+- **N-11 — two AC-5 assertions read the pre-run snapshot.** *(cold-Claude; verified)* `tests/run-task-reroute-preflight.test.ts:779` and `:813` are `assert.doesNotMatch(gapBefore, /reroute_exempt/)` — `gapBefore` is fixture content read *before* `runReroute`, so the assertion cannot fail on its own. **AC-5 is still genuinely verified**, because the immediately preceding line asserts the file is byte-identical to that snapshot after the run; the invariant holds by transitivity. But the assertion as written would not catch a change that wrote `reroute_exempt` before the amendment `die`, whereas the sibling test at `:751` (which re-reads after the run) would. Match the `:751` shape.
+
+- **N-12 — one rejected-state assertion is unanchored.** *(anchored)* `:695` builds `new RegExp(`'${taskId}': ${expectedPhase}`)`, so the `spec pending` row's effective pattern `/'task-a': spec/` also matches `'task-a': spec_review`. The fixture forces `spec`, so the row passes for the right reason today, but it could not distinguish a `deriveTopLevelStatus` regression between those two phases. Anchoring on a trailing ` (` fixes it.
+
+- **N-13 — AC-3 checks normalisation against a test-local reimplementation.** *(anchored)* `derivePhase()` at `:140-146` re-implements production `deriveTopLevelStatus()`, so "every member derives the same current phase" is verified against a copy that could drift. The helper is pre-existing, but AC-3 is the first AC to lean on it for a normalisation assertion rather than a phase label.
+
+- **N-14 — a third bundle-banner assertion was deleted rather than re-pointed.** *(flagged by 2 lenses)* `tests/run-task-prompts.test.ts:491` dropped `assert.doesNotMatch(output, /REROUTE #\d+\.\*\*/)`. It had genuinely become a tautology (the uppercase `REROUTE #N.**` form no longer exists anywhere), so deleting it is defensible and AC-10(c) — which names only the two `THIS IS ROUND \d+ OF HUMAN REVIEW` assertions — is satisfied. Noted because the bundle test's guard is now one assertion where it was two, and the spec's Affected-Files line for this file says "No other test in this file needs to change."
+
+- **N-15 — nothing pins the new admission-rule message.** *(anchored)* The rewritten tests assert `Current state:` plus per-task derived phases; the deleted test *did* pin the old wording (`/all tasks at code_review blocked with at least one spec_gap verdict/`). AC-2 requires only `Current state:`, so not an AC miss, but there is now no regression guard on the one string that states the widened contract to operators.
+
+- **N-16 — the skill's stepped-reroute examples omit `--reroute`.** *(cold-Claude; verified)* `.claude/skills/canon-pipeline/SKILL.md:156-162` shows `canon run <task-id> --step --expect spec_review` / `--expect implement` as the stepped forms. `main.ts:2657-2659` explicitly instructs combining the flags in one command (`canon run <id> --reroute --step --expect spec_review`), `main.ts:2650` warns against starting a second `canon run` on an active task, and `docs/pipeline-orchestrator.md:476-483` has the correct combined form. Pre-existing, but it sits four lines below the block this diff edited.
+
+- **N-17 — duplicate task IDs double-increment `reroute_count`.** *(cold-Claude)* `parseArgs` (`src/orchestrator/cli.ts:227-228`) only pushes positionals with no dedup, so `canon run t1 t1 --reroute` yields `entryStatuses.length === 2` — taking the multi-task banner branch and incrementing `reroute_count` twice via two independent read-modify-write passes. Pre-existing; newly *visible* because the banner now branches on `entryStatuses.length`.
+
+- **N-18 — the two CLI help blocks still differ in content.** *(cold-Claude)* `src/cli/index.ts:104-111` and `src/orchestrator/cli.ts:151-160` now agree on the admission wording (AC-9 satisfied), but `printUsage` carries two extra lines the top-level help omits. Pre-existing divergence that survived a parallel edit — exactly the drift the spec's Known Risks predicts will recur. A shared constant would prevent the next one; explicitly out of scope here.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
+> None of the three items below is classified as a `spec_gap` finding for this task. In each case the implementation matches the spec, the spec is neither wrong nor ambiguous about anything the implementer had to do, and the affected file is one the spec **deliberately fenced off in Non-Goals**. They are pre-existing defects whose *reachability* this change increases, and each needs its own task with its own design — sending this task back to `spec_review` would neither fix them nor be the right instrument. Recorded here, prominently, so they get filed.
 
-(none / list items)
+- **S-1 — post-reroute `code_review` can wedge on a stale trailing round verdict.** *(cold-Claude; mechanism verified end-to-end by foreman)* `extractCheckedVerdict` (`src/orchestrator/validation.ts:832-833`) scopes to the **last** `## Round N` section, falling back to whole-file only when no `## Round` heading exists. A reroute resets `code_review.iterations_current_loop = 0` (`main.ts:2599`), which makes `promptCodeReview` select the Round-1 prompt, and the foreman prompt tells Round 1 to fill the template structure directly and **not** wrap it in a `## Round N` section. Reroute does **not** touch `review.md` (confirmed: no `review.md` handling anywhere in the reset loop), so pre-reroute `## Round 2`/`## Round 3` sections survive. The fresh round-1 `## Final Verdict` is then invisible to the parser, which reads the stale trailing round instead — `checkPhaseGate` (`validation.ts:947-948`) dies with `verdict mismatch: status.json wants 'approved', review.md has 'changes_requested'` and the phase wedges; `tryEvidenceAdvance` for `code_review` (`main.ts:2966-2969`) can likewise auto-advance on the stale verdict. **Why it matters more now:** the loop-cap auto-block state this task promotes to a first-class entry point *guarantees* a multi-round `review.md`. **Why it's not this task's bug:** identical exposure already exists for any `human_review` reroute of a task whose code review took ≥2 rounds, and both `validation.ts` and the reroute prompts' structure are explicit Non-Goals. Confidence: medium — a foreman facing a populated `review.md` may well append a new round section anyway, which reads correctly.
+
+- **S-2 — `--full-send` tasks can never be rerouted.** *(cold-Claude; verified)* The full-send tail sets `human_review.status = 'done'` for every task after opening the auto-PR (`main.ts:2768-2772`), so every `--full-send` task lands at `complete` — permanently outside `REROUTE_ADMITTED_PHASES`. The flow with the *most* need for reroute (spec gate skipped, no human read the spec before implementation) is the one locked out, and the human reading the resulting draft PR and wanting changes has no `--reroute` path. Reroute-from-`complete` is an explicit Non-Goal and this is pre-existing behaviour, not a regression — but the spec's Non-Goal reasoning ("a task whose every phase is `done`") reads as "task closed out" and did not account for `--full-send` marking `human_review` done while the PR is still open awaiting review. See N-3 for the in-scope half (the message wording).
+
+- **S-3 — `checkRerouteEvidence` guards only two of the four reroute-reset phases.** *(cold-Claude)* `tryEvidenceAdvance` applies the "don't accept the stale first-pass artifact after a reroute" guard for `spec_review` (`main.ts:2985-2995`) and `plan` (`:3004-3007`) but not for `code_review` (`:2966-2972`: any checked verdict advances) or `qa` (`:3019-3025`: any non-template `done.md` advances). Reroute-from-`code_review`/`qa` is now a supported entry point, so those two phases' post-reroute re-runs are part of the reroute contract while lacking the guard the other two reset phases have. Failure scenario: reroute from `qa`, the post-reroute QA agent crashes, the salvage path sees the stale pre-reroute `done.md` (populated, not the template) and stamps `qa = done` — shipping the new implementation with the previous round's QA summary. Pre-existing shape (reroute-from-`human_review` had the same exposure) and `checkRerouteEvidence()` is an explicit Non-Goal; the cold lens itself flagged it "for completeness."
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
+- **Dismissed (cold-Claude): the implement-reroute prompt never surfaces outstanding `code_review` findings for a non-exempt reroute, so N rounds of blocking findings are silently dropped** *(rated high/high by the lens)* — the mechanism is described accurately, but it is a **deliberate, twice-reviewed design decision**, not a gap. The spec's Non-Goals forbid changing "the reroute prompts' *routing* or *structure* (which template renders when, their step lists, their heading contracts)" and forbid any generalised sibling exemption. That exemption question was litigated across two `spec_review` rounds: the spec records Codex blocking a generalised exemption precisely because auto-exempting a widened-state task would tell Codex "your prior review findings at `review.md` remain binding" for tasks whose `code_review` never ran, pointing it at an untouched scaffold stub — "unfollowable at best and an invitation to invent findings at worst." The chosen design is a clean slate: the reset zeroes `iterations_current_loop`/`iterations` so the next review starts fresh, and the spec's Problem section frames the auto-block state as evidence "the *spec* is wrong, not just the implementation" — under which prior findings against an implementation of a wrong spec are of uncertain validity and a fresh review is the correct instrument, not a binding carry-forward. The findings are not destroyed: `review.md` survives on disk and the fresh review round re-derives whatever is still real. The cold lens, being spec-blind, could not see the litigation history. Cost is one review round, not lost correctness.
 
-(none / list items)
+- **Dismissed (cold-Claude): `qa.md:52`'s `Human reroute?` guidance still encodes the old rule, so QA will answer "No" for a real reroute and `docs/task-quality-log.md` under-reports** *(rated medium/high)* — the described behaviour is exactly correct and intended. The metric does not mean "any reroute"; it means "a human rejected at `human_review`." The spec's Non-Goals state it in the strongest available terms: "**No change of any kind to the `Human reroute?` quality-log metric** — not its label, not its parser, not its historical rows, and not the QA prompt's answer guidance. It is a human-review-rejection metric by settled decision, and it stays one." AC-9(b) Rule 2 names `qa.md` as a leave-as-is live contract, `docs/decisions.md` carries the settled rule "Do not derive `Human reroute?` from a reroute counter," and Docs Impact states the outcome explicitly: "A rerouted task that was never rejected at `human_review` still records `No`, which is what the column means." A round-3 `spec_review` contraction exists specifically so this task does not touch it. Editing any of the three surfaces would have been the scope drift the spec's Interaction Dependencies tells the implementer to stop at.
+
+- **Dismissed (cold-Claude): the `admits code_review in_progress` / `admits qa in_progress` tests bypass `guardConcurrentRun` and so "demonstrate less than their names claim"** — does not hold as a test-integrity defect. The unit under test is the admission gate, and AC-1's requirement is that the *gate* admit those states; `guardConcurrentRun` is a separate guard applied in `main()` and correctly ordered ahead of the reroute call (verified: `main.ts:3469` before `:3493`). Testing the gate in isolation is the right shape for AC-1. The genuine residual concern — that the guard is now load-bearing where it previously was not — is retained as N-2 rather than dropped.
+
+- **Dismissed (cold-Codex): no findings returned.** The cold-Codex lens reported the change consistent across implementation, prompts, documentation, generated artifacts, and tests, with validation, type-checking, linting, template sync, and build all passing. Nothing to adjudicate; recorded so the third lens's coverage is visible. Note that its silence is *agreement* with the two Claude lenses on Stage 1 — no cross-model disagreement had to be resolved on any finding.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
+> All 13 ACs pass on independent verification, no correctness bug survived adjudication, and the two guardrail items (N-1, N-2) are a QA-time doc correction and a recorded audit note respectively. N-1 is the one item with a concrete owner: **fix `docs/patterns.md:134` at QA** — this change falsified it, and the spec's Docs Impact designates QA as the place. S-1, S-2, and S-3 are pre-existing defects in Non-Goal'd files whose reachability this change increases; they belong in follow-up tasks and are surfaced for the human rather than blocking this one.

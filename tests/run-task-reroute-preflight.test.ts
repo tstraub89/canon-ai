@@ -41,6 +41,7 @@ type RerouteStatusOptions = {
     worktree?: boolean;
     humanSpecGate?: boolean;
     sessions?: Record<string, string>;
+    spec?: Record<string, unknown>;
     specReview?: Record<string, unknown>;
     plan?: Record<string, unknown>;
     implement?: Record<string, unknown>;
@@ -67,7 +68,7 @@ function makeRerouteStatus(
         full_send: false,
         worktree: options.worktree ?? true,
         phases: {
-            spec: { status: 'done', agent: 'claude' },
+            spec: { status: 'done', agent: 'claude', ...options.spec },
             spec_review: {
                 status: 'done',
                 agent: 'codex',
@@ -497,38 +498,383 @@ void test('rerouteFromHumanReview accepts code_review blocked spec_gap and clean
     });
 });
 
-void test('rerouteFromHumanReview rejects non-spec-gap code_review and off-phase bundle siblings without mutation', () => {
-    withTempDir('reroute-preflight-spec-gap-reject-', dir => {
+void test('rerouteFromHumanReview admits a lone non-spec-gap code_review-blocked task', () => {
+    withTempDir('reroute-preflight-non-gap-admitted-', dir => {
         initGitRepo(dir);
         const tasksRoot = path.join(dir, 'tasks');
         const worktreesRoot = path.join(dir, 'worktrees');
-        const taskA = makeCodeReviewBlockedStatus('task-a', 'task/task-a', 'spec_gap');
-        const approvedOnly = makeCodeReviewBlockedStatus('task-b', 'task/task-b', 'approved');
+        const taskId = 'task-b';
+        const status = makeCodeReviewBlockedStatus(taskId, `task/${taskId}`, 'approved');
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nAllowed.\n');
+
+        const result = runReroute(dir, [taskId], false);
+
+        assert.equal(result.status, 0, result.stderr);
+        const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
+            phases?: { implement?: { status?: string; rerouted?: boolean; reroute_count?: number } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'pending');
+        assert.equal(updated.phases?.implement?.rerouted, true);
+        assert.equal(updated.phases?.implement?.reroute_count, 1);
+    });
+});
+
+void test('rerouteFromHumanReview rejects an off-phase sibling in an otherwise-admitted bundle without mutation', () => {
+    withTempDir('reroute-preflight-off-phase-sibling-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const admitted = makeCodeReviewBlockedStatus('task-a', 'task/task-a', 'spec_gap');
         const offPhase = makeRerouteStatus('task-c', 'task/task-c', 0, {
             codeReview: { status: 'pending', verdict: '' },
             implement: { status: 'pending' },
             qa: { status: 'pending' },
         });
-        for (const [taskId, status] of [['task-a', taskA], ['task-b', approvedOnly], ['task-c', offPhase]] as const) {
+        for (const [taskId, status] of [['task-a', admitted], ['task-c', offPhase]] as const) {
             writeTaskStatus(tasksRoot, taskId, status);
             writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
             writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nAllowed.\n');
         }
-
-        const beforeB = fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b', 'status.json'), 'utf8');
-        const noGap = runReroute(dir, ['task-b'], false);
-        assert.notEqual(noGap.status, 0);
-        assert.match(noGap.stderr, /all tasks at code_review blocked with at least one spec_gap verdict/);
-        assert.equal(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b', 'status.json'), 'utf8'), beforeB);
 
         const beforeA = fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'status.json'), 'utf8');
         const beforeC = fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-c'), 'task-c', 'status.json'), 'utf8');
         const mixed = runReroute(dir, ['task-a', 'task-c'], false);
         assert.notEqual(mixed.status, 0);
         assert.match(mixed.stderr, /Current state:/);
+        assert.match(mixed.stderr, /'task-a': code_review/);
+        assert.match(mixed.stderr, /'task-c': implement/);
         assert.equal(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'status.json'), 'utf8'), beforeA);
         assert.equal(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-c'), 'task-c', 'status.json'), 'utf8'), beforeC);
     });
+});
+
+const admittedStateRows: Array<{
+    name: string;
+    options: RerouteStatusOptions;
+}> = [
+    {
+        name: 'code_review blocked changes_requested',
+        options: {
+            codeReview: { status: 'blocked', verdict: 'changes_requested' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'code_review changes_requested',
+        options: {
+            codeReview: { status: 'changes_requested', verdict: 'changes_requested' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'code_review in_progress',
+        options: {
+            codeReview: { status: 'in_progress', verdict: '' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'code_review pending',
+        options: {
+            codeReview: { status: 'pending', verdict: '' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'qa pending after approved code_review',
+        options: {
+            codeReview: { status: 'done', verdict: 'approved' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'qa in_progress',
+        options: { qa: { status: 'in_progress' } },
+    },
+];
+
+for (const { name, options } of admittedStateRows) {
+    void test(`rerouteFromHumanReview admits ${name}`, () => {
+        withTempDir('reroute-preflight-admitted-state-', dir => {
+            initGitRepo(dir);
+            const tasksRoot = path.join(dir, 'tasks');
+            const worktreesRoot = path.join(dir, 'worktrees');
+            const taskId = 'task-a';
+            const status = makeRerouteStatus(taskId, `task/${taskId}`, 2, options);
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment Round 3\n\nAllowed.\n');
+
+            const result = runReroute(dir, [taskId], false);
+
+            assert.equal(result.status, 0, result.stderr);
+            const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
+                phases?: { implement?: { status?: string; rerouted?: boolean; reroute_count?: number } };
+            };
+            assert.equal(updated.phases?.implement?.status, 'pending');
+            assert.equal(updated.phases?.implement?.rerouted, true);
+            assert.equal(updated.phases?.implement?.reroute_count, 3);
+        });
+    });
+}
+
+const rejectedStateRows: Array<{
+    name: string;
+    expectedPhase: string;
+    options: RerouteStatusOptions;
+}> = [
+    {
+        name: 'spec pending',
+        expectedPhase: 'spec',
+        options: {
+            spec: { status: 'pending' },
+            specReview: { status: 'pending' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'spec_review pending',
+        expectedPhase: 'spec_review',
+        options: {
+            specReview: { status: 'pending', verdict: '' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'plan pending',
+        expectedPhase: 'plan',
+        options: {
+            plan: { status: 'pending' },
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'implement pending',
+        expectedPhase: 'implement',
+        options: {
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '' },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'complete',
+        expectedPhase: 'complete',
+        options: { humanReview: { status: 'done' } },
+    },
+];
+
+for (const { name, expectedPhase, options } of rejectedStateRows) {
+    void test(`rerouteFromHumanReview rejects ${name} without mutation`, () => {
+        withTempDir('reroute-preflight-rejected-state-', dir => {
+            initGitRepo(dir);
+            const tasksRoot = path.join(dir, 'tasks');
+            const worktreesRoot = path.join(dir, 'worktrees');
+            const taskId = 'task-a';
+            const status = makeRerouteStatus(taskId, `task/${taskId}`, 0, options);
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nShould not be reached.\n');
+            const statusPath = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json');
+            const before = fs.readFileSync(statusPath, 'utf8');
+
+            const result = runReroute(dir, [taskId], false);
+
+            assert.notEqual(result.status, 0);
+            assert.match(result.stderr, /Current state:/);
+            assert.match(result.stderr, new RegExp(`'${taskId}': ${expectedPhase}`));
+            assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
+        });
+    });
+}
+
+void test('rerouteFromHumanReview accepts and normalizes a mixed admitted-phase bundle', () => {
+    withTempDir('reroute-preflight-mixed-admitted-bundle-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const statuses = {
+            'task-a': makeRerouteStatus('task-a', 'task/task-a', 0, { qa: { status: 'pending' } }),
+            'task-b': makeRerouteStatus('task-b', 'task/task-b'),
+        };
+        for (const [taskId, status] of Object.entries(statuses)) {
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nAllowed.\n');
+        }
+
+        const result = runReroute(dir, Object.keys(statuses), false);
+
+        assert.equal(result.status, 0, result.stderr);
+        const updatedA = readStatus(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a');
+        const updatedB = readStatus(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b');
+        assert.equal(derivePhase(updatedA), 'spec_review');
+        assert.equal(derivePhase(updatedB), 'spec_review');
+        const banner = result.stdout.split('\n').find(line => line.includes('Rerouting:')) ?? '';
+        assert.match(banner, /task-a: qa/);
+        assert.match(banner, /task-b: human_review/);
+    });
+});
+
+void test('rerouteFromHumanReview does not grant exemptions to a non-spec-gap bundle', () => {
+    withTempDir('reroute-preflight-no-general-exemption-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        for (const taskId of ['task-a', 'task-b']) {
+            const status = makeCodeReviewBlockedStatus(taskId, `task/${taskId}`, 'changes_requested');
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        }
+        writeSpec(path.join(worktreesRoot, 'task-a'), 'task-a', '# Spec\n\n## Amendment\n\nOnly task A changed.\n');
+        writeSpec(path.join(worktreesRoot, 'task-b'), 'task-b', '# Spec\n\nNo amendment.\n');
+        const paths = ['task-a', 'task-b'].map(taskId => path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json'));
+        const before = paths.map(statusPath => fs.readFileSync(statusPath, 'utf8'));
+
+        const result = runReroute(dir, ['task-a', 'task-b'], false);
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /task-b:/);
+        paths.forEach((statusPath, index) => {
+            const after = fs.readFileSync(statusPath, 'utf8');
+            assert.equal(after, before[index]);
+            assert.doesNotMatch(after, /reroute_exempt/);
+        });
+    });
+});
+
+void test('rerouteFromHumanReview never exempts an unamended spec_gap task', () => {
+    withTempDir('reroute-preflight-unamended-gap-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const statuses = {
+            'task-a': makeCodeReviewBlockedStatus('task-a', 'task/task-a', 'spec_gap'),
+            'task-b': makeCodeReviewBlockedStatus('task-b', 'task/task-b', 'approved'),
+        };
+        for (const [taskId, status] of Object.entries(statuses)) {
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\nNo amendment.\n');
+        }
+        const gapStatusPath = path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'status.json');
+        const gapBefore = fs.readFileSync(gapStatusPath, 'utf8');
+
+        const result = runReroute(dir, ['task-a', 'task-b'], false);
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /task-a:/);
+        assert.doesNotMatch(result.stderr, /task-b:/);
+        assert.equal(fs.readFileSync(gapStatusPath, 'utf8'), gapBefore);
+        assert.doesNotMatch(gapBefore, /reroute_exempt/);
+    });
+});
+
+void test('rerouteFromHumanReview requires an amendment for a non-blocked task carrying spec_gap', () => {
+    withTempDir('reroute-preflight-non-blocked-gap-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const statuses = {
+            'task-a': makeRerouteStatus('task-a', 'task/task-a', 0, {
+                codeReview: { status: 'changes_requested', verdict: 'spec_gap' },
+                qa: { status: 'pending' },
+            }),
+            'task-b': makeRerouteStatus('task-b', 'task/task-b', 0, {
+                codeReview: { status: 'changes_requested', verdict: 'changes_requested' },
+                qa: { status: 'pending' },
+            }),
+        };
+        for (const [taskId, status] of Object.entries(statuses)) {
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        }
+        writeSpec(path.join(worktreesRoot, 'task-a'), 'task-a', '# Spec\n\nNo amendment.\n');
+        writeSpec(path.join(worktreesRoot, 'task-b'), 'task-b', '# Spec\n\n## Amendment\n\nSibling amendment.\n');
+        const gapStatusPath = path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'status.json');
+        const gapBefore = fs.readFileSync(gapStatusPath, 'utf8');
+
+        const result = runReroute(dir, ['task-a', 'task-b'], false);
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /task-a:/);
+        assert.doesNotMatch(result.stderr, /task-b:/);
+        assert.equal(fs.readFileSync(gapStatusPath, 'utf8'), gapBefore);
+        assert.doesNotMatch(gapBefore, /reroute_exempt/);
+    });
+});
+
+void test('rerouteFromHumanReview keeps the amendment gate and --force behavior at qa', () => {
+    withTempDir('reroute-preflight-qa-force-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, `task/${taskId}`, 0, { qa: { status: 'in_progress' } });
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\nNo amendment.\n');
+        const statusPath = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json');
+        const before = fs.readFileSync(statusPath, 'utf8');
+
+        const rejected = runReroute(dir, [taskId], false);
+
+        assert.notEqual(rejected.status, 0);
+        assert.match(rejected.stderr, /task-a:[\s\S]*tasks\/task-a\/spec\.md/);
+        assert.match(rejected.stderr, /required round: 1/);
+        assert.match(rejected.stderr, /expected heading: ## Amendment/);
+        assert.match(rejected.stderr, /reason: no `## Amendment` heading found/);
+        assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
+
+        const forced = runReroute(dir, [taskId], true);
+
+        assert.equal(forced.status, 0, forced.stderr);
+        assert.match(forced.stderr, /--force bypass: task-a spec\.md missing required ## Amendment heading for round 1/);
+        const updated = fs.readFileSync(statusPath, 'utf8');
+        assert.doesNotMatch(updated, /reroute_exempt/);
+    });
+});
+
+void test('rerouteFromHumanReview banner names the real entry state', () => {
+    const runBannerCase = (prefix: string, status: Record<string, unknown>): string => withTempDir(prefix, dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const taskId = 'task-a';
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nAllowed.\n');
+        const result = runReroute(dir, [taskId], false);
+        assert.equal(result.status, 0, result.stderr);
+        const banner = result.stdout.split('\n').find(line => line.includes('Rerouting:')) ?? '';
+        const match = banner.match(/Rerouting: (.*?) →/);
+        assert.ok(match, `missing reroute banner in stdout:\n${result.stdout}`);
+        return match[1];
+    });
+
+    const codeReviewLabel = runBannerCase(
+        'reroute-preflight-banner-code-review-',
+        makeCodeReviewBlockedStatus('task-a', 'task/task-a', 'changes_requested'),
+    );
+    assert.match(codeReviewLabel, /code_review blocked \(changes_requested\)/);
+    assert.doesNotMatch(codeReviewLabel, /human_review|spec_gap/);
+
+    const humanReviewLabel = runBannerCase(
+        'reroute-preflight-banner-human-review-',
+        makeRerouteStatus('task-a', 'task/task-a'),
+    );
+    assert.match(humanReviewLabel, /human_review/);
+    assert.doesNotMatch(humanReviewLabel, /code_review/);
 });
 
 void test('rerouteFromHumanReview reroutes mixed spec_gap bundle when only gap task is amended', () => {

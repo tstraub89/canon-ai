@@ -2447,16 +2447,32 @@ function shipTasks(taskIds: string[]): void {
 
 // ── Reroute ────────────────────────────────────────────────────────────────
 
+const REROUTE_ADMITTED_PHASES: ReadonlySet<CurrentPhase> = new Set([
+    'code_review',
+    'qa',
+    'human_review',
+]);
+
+function describeRerouteEntryPhase(status: StatusJson): string {
+    const phase = getCurrentPhase(status);
+    if (phase === 'code_review') {
+        const codeReviewStatus = status.phases.code_review?.status ?? 'pending';
+        const verdict = getVerdict(status, 'code_review');
+        return verdict ? `code_review ${codeReviewStatus} (${verdict})` : `code_review ${codeReviewStatus}`;
+    }
+    return phase;
+}
+
 export function rerouteFromHumanReview(taskIds: string[]): void {
     const entryStatuses = taskIds.map(taskId => ({ taskId, status: splitState.readStatus(taskId) }));
-    const allAtHumanReview = entryStatuses.every(({ status }) => getCurrentPhase(status) === 'human_review');
     const allCodeReviewBlocked = entryStatuses.every(({ status }) => {
         const codeReview = status.phases.code_review;
         return getCurrentPhase(status) === 'code_review' && codeReview?.status === 'blocked';
     });
     const someSpecGap = entryStatuses.some(({ status }) => getVerdict(status, 'code_review') === 'spec_gap');
     const isSpecGapReroute = allCodeReviewBlocked && someSpecGap;
-    if (!allAtHumanReview && !isSpecGapReroute) {
+    const allAdmitted = entryStatuses.every(({ status }) => REROUTE_ADMITTED_PHASES.has(getCurrentPhase(status)));
+    if (!allAdmitted) {
         const summary = entryStatuses
             .map(({ taskId, status }) => {
                 const currentPhase = getCurrentPhase(status);
@@ -2466,7 +2482,8 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             })
             .join(', ');
         splitCli.die(
-            `--reroute requires either all tasks at human_review, or all tasks at code_review blocked with at least one spec_gap verdict. ` +
+            `--reroute requires every named task's current phase to be code_review, qa, or human_review — ` +
+            `a phase reached only after a completed implement round. ` +
             `Current state: ${summary}`
         );
     }
@@ -2521,7 +2538,13 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     const rerouteStatuses = taskIds.map(splitState.readStatus);
     const reroutableTier = splitPolicy.detectTier(rerouteStatuses);
     const isFullTierReroute = reroutableTier === 'full';
-    const rerouteSource = isSpecGapReroute ? 'code_review spec_gap' : 'human_review';
+    const rerouteSource = isSpecGapReroute
+        ? 'code_review spec_gap'
+        : entryStatuses.length === 1
+            ? describeRerouteEntryPhase(entryStatuses[0].status)
+            : entryStatuses
+                .map(({ taskId, status }) => `${taskId}: ${describeRerouteEntryPhase(status)}`)
+                .join(', ');
     splitCli.info(isFullTierReroute
         ? `Rerouting: ${rerouteSource} → spec_review (resetting spec_review, plan, implement, code_review, qa)`
         : `Rerouting: ${rerouteSource} → implement (resetting implement, code_review, qa)`);

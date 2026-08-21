@@ -37,3 +37,5 @@ Raw observations from any phase. Prefix with phase name. Distilled into `docs/le
 [spec] Heading renames are not uniformly safe or unsafe — the discriminator is whether shipped code cites the text. `docs/pipeline-orchestrator.md` §"Human Reroute" is pinned by three paths (`src/cli/index.ts:110`, `src/orchestrator/cli.ts:159`, `src/orchestrator/main.ts:2511`) and keeps its heading; `.claude/skills/canon-pipeline/SKILL.md:148` is pinned by nothing but its own `templates/` mirror and gets renamed. Grep the exact heading text before deciding either way.
 
 [spec] Line numbers in a spec AC drift under the implementer's own edits. Kept them as locators but declared the quoted current text the binding anchor, so the AC stays checkable after the first file is touched.
+
+[implement] The plan's suggested Human Reroute warning cited a canon-ai-only `docs/patterns.md` heading that does not exist in the adopter scaffold; `docs-refs-check` rejected both the root doc and its mirror. Kept the safety warning self-contained so the shipped guidance remains valid in arbitrary adopter repos.
