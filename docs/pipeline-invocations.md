@@ -929,3 +929,13 @@
 | 2026-08-11T03:34:44.051Z | relocate-orchestrator-to-src | code_review | codex | gpt-5.6-luna | 1 | 510.7s | - | ok |
 | 2026-08-11T03:59:20.030Z | relocate-orchestrator-to-src | code_review | claude | opus | 1 | 1475.9s | 4547555 | ok |
 | 2026-08-11T04:01:54.675Z | relocate-orchestrator-to-src | qa | claude | sonnet | 0 | 154.6s | 1560149 | ok |
+| 2026-08-20T06:01:52.564Z | relax-reroute-gate-post-implement | spec_review | codex | gpt-5.6-sol | 0 | 220.3s | 1496869 | ok |
+| 2026-08-20T06:11:45.261Z | relax-reroute-gate-post-implement | spec | claude | opus | 0 | 592.5s | 5286858 | ok |
+| 2026-08-20T06:16:29.959Z | relax-reroute-gate-post-implement | spec_review | codex | gpt-5.6-sol | 1 | 284.5s | 4127705 | ok |
+| 2026-08-20T06:25:22.268Z | relax-reroute-gate-post-implement | spec | claude | opus | 0 | 532.1s | 2779269 | ok |
+| 2026-08-20T06:28:06.105Z | relax-reroute-gate-post-implement | spec_review | codex | gpt-5.6-sol | 2 | 163.7s | 5242438 | ok |
+| 2026-08-20T06:34:28.404Z | relax-reroute-gate-post-implement | spec | claude | opus | 0 | 267.1s | 1787989 | ok |
+| 2026-08-20T06:39:21.302Z | relax-reroute-gate-post-implement | spec_review | codex | gpt-5.6-sol | 3 | 292.8s | 7786914 | ok |
+| 2026-08-20T06:44:27.637Z | relax-reroute-gate-post-implement | spec | claude | opus | 0 | 306.2s | 1858017 | ok |
+| 2026-08-20T06:46:48.041Z | relax-reroute-gate-post-implement | spec_review | codex | gpt-5.6-sol | 4 | 140.3s | 10555440 | ok |
+| 2026-08-21T03:05:56.002Z | relax-reroute-gate-post-implement | plan | claude | sonnet | 0 | 446.7s | 4288080 | ok |
