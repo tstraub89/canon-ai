@@ -1,7 +1,7 @@
 {
   "id": "relax-reroute-gate-post-implement",
   "title": "Allow --reroute from any phase after a completed implement round (code_review, qa, human_review)",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-08-14",
   "updated": "2026-08-21",
   "branch": "task/relax-reroute-gate-post-implement",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
