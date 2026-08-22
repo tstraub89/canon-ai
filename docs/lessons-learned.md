@@ -50,21 +50,11 @@ When a spec AC verifies "no live surface states the old rule" via a repo-wide gr
 
 ---
 
-### Independently-authored duplicate presentation surfaces drift silently — grep for every renderer, not the one you remember
-
-*(2026-08-20, source: relax-reroute-gate-post-implement)*
-
-A spec that names "update the `--reroute` help text" and points at `src/cli/index.ts` missed that `src/orchestrator/cli.ts`'s `printUsage()` renders its own, separately-authored `--reroute` help block reached through a different code path (`canon run --help` vs. top-level `canon --help`) — round 1 shipped the fix to one and left the other stating the old rule, caught only in round 2. The general shape: when a spec's Affected Files lists one file for a piece of operator-facing text, grep the whole surface class (all CLI help renderers, all error-message builders, all banner strings) for the same substring before finalizing the file list — "the canonical place this is stated" is often two or more independently-maintained places that happen to agree today. Even after this fix shipped, code review flagged (N-18) that the two `--reroute` blocks still differ in unrelated ways nothing forces them to share — the underlying drift risk is structural, not resolved by one alignment pass.
-
----
-
-### A post-mutation message can only describe pre-mutation state if it's captured before the mutation runs
-
-*(2026-08-20, source: relax-reroute-gate-post-implement)*
-
-`--reroute`'s reset loop returns `code_review`/`qa`/`human_review` to `pending` before any reroute prompt renders, so a prompt rendered after the reset cannot name which of those three phases the task actually entered from — that information is simply gone by then, and making the prompt phase-aware would require persisting a new field, which was ruled out of scope. The banner emitted *before* the reset is the one surface that could still name the real entry state, and the spec deliberately scoped "name the actual entry phase" to that banner only, while making the post-reset prompts phase-*neutral* instead of trying to fake phase-awareness. General rule: before asking a post-mutation message to describe pre-mutation state, check whether anything upstream still captures that state at render time — if the answer is "only if we persist something new," either add that capture point explicitly (a real scope decision) or scope the message to phase-neutral wording rather than let it silently reference state that's already gone.
-
----
+<!-- Buffer swept 2026-08-22 (3 entries reviewed: 1 promoted, 1 kept in buffer, 1 pruned).
+     Promotion → docs/patterns.md: "Operator-facing text is often rendered by independently-authored duplicates — grep the surface class" as a new pitfall + Trigger Table row (from the duplicate-presentation-surfaces entry; strengthened by a second same-week instance in archive-review-on-reroute's dual review.md prompt pointers).
+     Kept in buffer: the grep-AC-exception-list-growth entry — adjacent to two existing canon-spec SKILL rules (≥3-iterations read-content, permitted-to-remain buckets); re-evaluate for a one-sentence SKILL graft if it recurs.
+     Pruned: the post-mutation-message entry — near-truism, single task pair, adjacent territory already covered by patterns.md's state-dependent-operator-message pitfall; detail survives in tasks/_archive/relax-reroute-gate-post-implement/notes.md.
+     Prior entries are in git history. -->
 
 <!-- Buffer swept 2026-08-11 (14 entries reviewed: 12 promoted, 2 pruned; buffer now empty).
      Promotions → .claude/skills/canon-spec/SKILL.md rules of thumb: (1) the "≥3 spec_review iterations" bullet rewritten to read round *content* not count — new-structural-case vs narrowing-an-existing-one — and to prefer dropping the mechanism class / deferring to a layer that already owns the concern over another round of hardening (merged from the review-verdict-freshness-guard, stable-validation-ids, and fix-installed-provenance-version entries); (2) "Behavioral contracts, not mechanics" extended with the code-altitude symptom and the non-binding Implementation Notes remedy (update-install-root-provenance); (3) "Codebase-wide term renames" extended with the paraphrase-sweep and permitted-to-remain-bucket checks (allow-comma-separated-multipath-cells + default-codex-models-to-5-6-generation); (4) new bullet: enumerate every caller and classify agent-vs-orchestrator execution context before asserting a mechanism (reconcile-qa-quality-log-summary).
