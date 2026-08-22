@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`--reroute` now works from any point after a completed `implement` round, not just `human_review` or a `spec_gap`-blocked `code_review`.** It now also covers a task auto-blocked at `code_review` after too many review rounds, or one simply waiting on `qa`. Same mechanism as before — write an `## Amendment` section and reroute, `--force` still bypasses the check.
+
 ## [2.8.0] — 2026-08-13
 
 ### Changed
