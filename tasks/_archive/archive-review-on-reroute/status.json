@@ -1,7 +1,7 @@
 {
   "id": "archive-review-on-reroute",
   "title": "Reroute archives review.md so a fresh round-1 review can't wedge on a stale trailing round verdict",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-08-22",
   "updated": "2026-08-22",
   "branch": "task/archive-review-on-reroute",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
