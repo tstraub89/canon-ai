@@ -947,3 +947,7 @@
 | 2026-08-22T04:53:30.028Z | archive-review-on-reroute | spec | claude | opus | 0 | 312.8s | 1478953 | ok |
 | 2026-08-22T04:56:07.089Z | archive-review-on-reroute | spec_review | codex | gpt-5.6-sol | 1 | 156.9s | 1557734 | ok |
 | 2026-08-22T05:04:39.766Z | archive-review-on-reroute | plan | claude | sonnet | 0 | 512.5s | 7282302 | ok |
+| 2026-08-22T05:18:54.789Z | archive-review-on-reroute | implement | codex | gpt-5.6-sol | 0 | 854.2s | 8149029 | ok |
+| 2026-08-22T05:22:54.794Z | archive-review-on-reroute | code_review | codex | gpt-5.6-luna | 0 | 239.5s | - | ok |
+| 2026-08-22T05:43:03.545Z | archive-review-on-reroute | code_review | claude | opus | 0 | 1208.7s | 4064638 | ok |
+| 2026-08-22T05:45:19.913Z | archive-review-on-reroute | qa | claude | sonnet | 0 | 136.4s | 1071520 | ok |

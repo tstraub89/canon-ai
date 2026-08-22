@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskSet, taskStatus } from '../src/task/index.js';
@@ -12,6 +13,8 @@ import { extractDoneMdFromStdout, isDoneMdTemplate } from '../src/orchestrator/v
 
 const WORKSPACE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKSPACE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+const MD_LOADER = path.join(WORKSPACE_ROOT, 'tests', 'md-loader-register.mjs');
+const MAIN_URL = pathToFileURL(path.join(WORKSPACE_ROOT, 'src', 'orchestrator', 'main.ts')).href;
 
 function withTempDir<T>(prefix: string, fn: (dir: string) => T): T {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -2392,6 +2395,73 @@ void test('task reset-code-review routes to the task worktree status.json', () =
         assert.equal(worktreeStatus.phases.code_review?.preflight_rejections_current_loop, 0);
         assert.equal(worktreeStatus.sessions?.claude_review, undefined);
         assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review-prior-1.md')), true);
+    });
+});
+
+void test('reroute archives only the worktree-canonical review artifact', () => {
+    withTempDir('task-worktree-reroute-review-', root => {
+        const repo = path.join(root, 'repo');
+        const worktreesRoot = path.join(root, 'worktrees');
+        const worktree = path.join(worktreesRoot, 'worktree-reroute-review');
+        const taskId = 'worktree-reroute-review';
+        fs.mkdirSync(worktreesRoot, { recursive: true });
+        git(root, ['init', '-b', 'main', repo]);
+        git(repo, ['config', 'user.email', 'test@example.com']);
+        git(repo, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n', 'utf8');
+        git(repo, ['add', 'README.md']);
+        git(repo, ['commit', '-m', 'init']);
+        git(repo, ['worktree', 'add', '-b', `task/${taskId}`, worktree, 'main']);
+
+        const phases: StatusJson['phases'] = {
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'done', agent: 'codex', reroute_count: 0 },
+            code_review: { status: 'done', agent: 'claude', verdict: 'approved', iterations: 1, iterations_current_loop: 1, iterations_total: 1, changes_requested_total: 0, auto_block_count: 0 },
+            qa: { status: 'done', agent: 'claude' },
+            human_review: { status: 'pending', agent: 'human' },
+        };
+        const status = makeStatus(taskId, {
+            branch: `task/${taskId}`,
+            worktree: true,
+            status: 'human_review',
+            phases,
+        });
+        const mainTaskDir = path.join(repo, 'tasks', taskId);
+        const worktreeTaskDir = path.join(worktree, 'tasks', taskId);
+        fs.mkdirSync(mainTaskDir, { recursive: true });
+        fs.mkdirSync(worktreeTaskDir, { recursive: true });
+        fs.writeFileSync(path.join(mainTaskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'spec.md'), '# Spec\n\n## Amendment\n\nReroute safely.\n', 'utf8');
+        const mainReview = Buffer.from('# Filled review\n\nmain checkout must remain untouched\n');
+        const worktreeReview = Buffer.from('# Filled review\n\nworktree review must be archived\n');
+        fs.writeFileSync(path.join(mainTaskDir, 'review.md'), mainReview);
+        fs.writeFileSync(path.join(worktreeTaskDir, 'review.md'), worktreeReview);
+
+        const env: NodeJS.ProcessEnv = {
+            ...process.env,
+            CANON_WORKTREES_ROOT: worktreesRoot,
+            CANON_METRICS_FILE_OVERRIDE: path.join(root, 'metrics.md'),
+        };
+        delete env.CANON_TASKS_DIR_OVERRIDE;
+        const result = spawnSync(process.execPath, [
+            '--import', MD_LOADER,
+            '--import', TSX_LOADER,
+            '-e',
+            [
+                `import { rerouteFromHumanReview, setCliArgsForTest } from ${JSON.stringify(MAIN_URL)};`,
+                'setCliArgsForTest({ force: false });',
+                `rerouteFromHumanReview([${JSON.stringify(taskId)}]);`,
+            ].join('\n'),
+        ], { cwd: repo, env, encoding: 'utf8' });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(fs.readFileSync(path.join(mainTaskDir, 'review.md')), mainReview);
+        assert.equal(fs.existsSync(path.join(mainTaskDir, 'review-prior-1.md')), false);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review.md')), false);
+        assert.deepEqual(fs.readFileSync(path.join(worktreeTaskDir, 'review-prior-1.md')), worktreeReview);
     });
 });
 

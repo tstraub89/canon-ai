@@ -366,12 +366,12 @@ for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
         const exemptDir = path.join(tmpRoot, exemptId);
         fs.mkdirSync(exemptDir, { recursive: true });
         fs.writeFileSync(path.join(exemptDir, 'status.json'), JSON.stringify(exemptTask.status, null, 2));
-        fs.writeFileSync(path.join(exemptDir, 'review.md'), reviewTemplate);
+        fs.writeFileSync(path.join(exemptDir, 'review-prior-1.md'), reviewTemplate);
         const state: PipelineState = { tasks: [gapTask, exemptTask], tier: 'full', isBundle: true };
 
         const specReviewLine = outputLineFor(normalize(promptSpecReview(state)), exemptId);
         assert.match(specReviewLine, new RegExp(priorVerdict));
-        assert.match(specReviewLine, /review\.md/);
+        assert.match(specReviewLine, /review-prior-1\.md/);
         assert.doesNotMatch(specReviewLine, /approved/i);
 
         const planLine = outputLineFor(normalize(promptPlan(state)), exemptId);
@@ -380,7 +380,7 @@ for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
 
         const implementLine = outputLineFor(normalize(promptImplementReroute(state, false, [], 'main')), exemptId);
         assert.match(implementLine, new RegExp(priorVerdict));
-        assert.match(implementLine, /review\.md/);
+        assert.match(implementLine, /review-prior-1\.md/);
         assert.match(implementLine, /address ALL findings/);
         assert.doesNotMatch(implementLine, /approved/i);
     });

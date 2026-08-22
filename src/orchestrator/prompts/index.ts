@@ -5,6 +5,7 @@ import { config } from '../env.js';
 import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
 import { taskDirFor } from '../state.js';
+import { findNewestReviewArchive } from '../review-archive.js';
 import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
 import type { PipelineState, TaskContext } from '../types.js';
@@ -165,7 +166,7 @@ export function promptSpecReview(state: PipelineState): string {
                 if (isAdvancingPriorVerdict(exemptInfo.priorVerdict)) {
                     return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from this reroute's amendment (its prior code review approved; it rides the bundle). There is NO Amendment section in tasks/${t.taskId}/spec.md and none is required — review the spec as-is under first-pass rules.`;
                 }
-                return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from amendment (verdict was \`${exemptInfo.priorVerdict}\`; spec was not amended). No Amendment section exists — review the spec as-is under first-pass rules. Prior review findings in tasks/${t.taskId}/review.md remain binding; do NOT describe this task as passing.`;
+                return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from amendment (verdict was \`${exemptInfo.priorVerdict}\`; spec was not amended). No Amendment section exists — review the spec as-is under first-pass rules. Prior review findings in ${priorReviewReference(t.taskId)} remain binding; do NOT describe this task as passing.`;
             }
             const expectedHeading = t.rerouteCount <= 1
                 ? '`## Amendment`'
@@ -397,7 +398,7 @@ export function promptImplementReroute(
             if (isAdvancingPriorVerdict(exemptInfo.priorVerdict)) {
                 return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from this reroute's amendment: its spec was NOT amended (prior code review approved this task; it rides the bundle while a sibling's spec gap is fixed). Do NOT look for an Amendment section in tasks/${t.taskId}/spec.md. Re-verify this task only where a sibling's amendment changes shared behavior. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
             }
-            return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from amendment (verdict was \`${exemptInfo.priorVerdict}\`). There is no Amendment section in tasks/${t.taskId}/spec.md. Your prior review findings at tasks/${t.taskId}/review.md remain binding — read that file and address ALL findings from the most recent review round before submitting. Do NOT treat this task as passing. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
+            return `- \`${t.taskId}\`: "${t.title}" — EXEMPT from amendment (verdict was \`${exemptInfo.priorVerdict}\`). There is no Amendment section in tasks/${t.taskId}/spec.md. Your prior review findings at ${priorReviewReference(t.taskId)} remain binding — read that file and address ALL findings from the most recent review round before submitting. Do NOT treat this task as passing. Your previous handoff is at tasks/${t.taskId}/handoff.md.`;
         }
         const expectedHeading = t.rerouteCount <= 1
             ? '`## Amendment`'
@@ -428,6 +429,17 @@ export function promptImplementReroute(
         taskLines,
         phaseCommands: phaseCommands(taskIds, 'implement', 'done'),
     });
+}
+
+// Resolve the archive from disk at render time: a process may die after the
+// reroute reset and a later plain `canon run` must still point at the durable
+// prior findings. A stub-only or incomplete reset has no archive, so retain
+// the binding-findings wording without inventing a filename that does not exist.
+function priorReviewReference(taskId: string): string {
+    const archivedReview = findNewestReviewArchive(taskDirFor(taskId));
+    return archivedReview
+        ? `tasks/${taskId}/${archivedReview}`
+        : `tasks/${taskId}/review.md`;
 }
 
 /**

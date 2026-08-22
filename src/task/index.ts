@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { refreshCanonSnapshotAtPath } from '../orchestrator/canon-snapshot.js';
 import { writeQualityLogForTask } from '../orchestrator/quality-log.js';
+import { archivePriorReview } from '../orchestrator/review-archive.js';
 import {
     checkPhaseGate,
     parseDiffNameStatus,
@@ -1117,12 +1118,9 @@ export function taskResetCodeReview(id: string): void {
         throw new Error(`Error: reset-code-review only operates on tasks currently at code_review. Current phase: ${currentPhase}.`);
     }
 
-    const reviewPath = path.join(taskDir, 'review.md');
-    if (fs.existsSync(reviewPath)) {
-        let n = 1;
-        while (fs.existsSync(path.join(taskDir, `review-prior-${n}.md`))) n += 1;
-        fs.renameSync(reviewPath, path.join(taskDir, `review-prior-${n}.md`));
-        console.log(`Archived prior review.md → review-prior-${n}.md`);
+    const archivedReview = archivePriorReview(taskDir);
+    if (archivedReview) {
+        console.log(`Archived prior review.md → ${archivedReview}`);
     }
 
     const implement = ensurePhaseEntry(status, 'implement');

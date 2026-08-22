@@ -23,6 +23,7 @@ import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
 import { detachAndExit, readCanonPid, removeCanonPid, shouldAutoDetach } from './detach.js';
 import { isHeartbeatStale, readHeartbeat, startHeartbeat, stopAllHeartbeats } from './heartbeat.js';
 import { registerShutdownHook } from './signals.js';
+import { archivePriorReview } from './review-archive.js';
 import { taskPhase } from '../../src/task/index.js';
 
 const REPO_ROOT = splitEnv.REPO_ROOT;
@@ -2548,6 +2549,31 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     splitCli.info(isFullTierReroute
         ? `Rerouting: ${rerouteSource} → spec_review (resetting spec_review, plan, implement, code_review, qa)`
         : `Rerouting: ${rerouteSource} → implement (resetting implement, code_review, qa)`);
+    const archivedReviewByTask = new Map<string, string | null>();
+    for (const taskId of taskIds) {
+        let archivedReview: string | null = null;
+        try {
+            archivedReview = archivePriorReview(taskDirFor(taskId), { skipUnfilledTemplate: true });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const completedArchives = [...archivedReviewByTask.entries()]
+                .filter((entry): entry is [string, string] => entry[1] !== null)
+                .map(([completedTaskId, archiveName]) => `${completedTaskId} → ${archiveName}`)
+                .join(', ') || 'none';
+            die(
+                `--reroute aborted: failed to archive tasks/${taskId}/review.md: ${message}\n` +
+                `  No task's status.json was modified. Already-completed archives before the failure ` +
+                `(nothing was lost — content is preserved on disk): ${completedArchives}.`
+            );
+        }
+        archivedReviewByTask.set(taskId, archivedReview);
+        if (archivedReview) {
+            splitCli.info(
+                `Archived tasks/${taskId}/review.md → ${archivedReview} ` +
+                `(post-reroute review starts a fresh round 1).`
+            );
+        }
+    }
     let clearedFullSend = false;
     for (const taskId of taskIds) {
         const status = splitState.readStatus(taskId);
@@ -2605,6 +2631,9 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             // before the new Claude session runs.
             codeReview.preflight_rejections_current_loop = 0;
             clearPhaseOperatorAcceptance(codeReview);
+        }
+        if (status.sessions && Object.hasOwn(status.sessions, 'claude_review')) {
+            delete status.sessions.claude_review;
         }
         const qa = status.phases.qa;
         if (qa) qa.status = 'pending';

@@ -5,11 +5,13 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { checkRerouteEvidence, sliceRerouteRoundSection } from '../src/orchestrator/validation.js';
+import { archivePriorReview, findNewestReviewArchive } from '../src/orchestrator/review-archive.js';
+import { checkPhaseGate, checkRerouteEvidence, sliceRerouteRoundSection } from '../src/orchestrator/validation.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
 const MAIN_URL = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'main.ts')).href;
+const PROMPTS_URL = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'prompts', 'index.ts')).href;
 const MD_LOADER = path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs');
 
 function withTempDir<T>(prefix: string, fn: (dir: string) => T): T {
@@ -96,10 +98,24 @@ function writeSpec(root: string, taskId: string, content: string): void {
     fs.writeFileSync(specPath, content, 'utf8');
 }
 
+function writeReview(root: string, taskId: string, content: string): void {
+    const reviewPath = path.join(root, 'tasks', taskId, 'review.md');
+    fs.mkdirSync(path.dirname(reviewPath), { recursive: true });
+    let existing = '';
+    try {
+        existing = fs.readFileSync(reviewPath, 'utf8');
+    } catch {
+        // An absent artifact is a fresh round-1 write.
+    }
+    const next = existing ? `${existing.replace(/\s*$/, '')}\n\n${content}` : content;
+    fs.writeFileSync(reviewPath, next, 'utf8');
+}
+
 function runReroute(
     cwd: string,
     taskIds: readonly string[],
     force: boolean,
+    failRenameForTaskId?: string,
 ): { status: number | null; stdout: string; stderr: string } {
     const telemetryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reroute-preflight-metrics-'));
     const telemetryFile = path.join(telemetryDir, 'pipeline-invocations.md');
@@ -116,6 +132,9 @@ function runReroute(
         TSX_LOADER,
         '-e',
         [
+            failRenameForTaskId
+                ? `import fs from 'node:fs';\nconst originalRenameSync = fs.renameSync;\nfs.renameSync = (from, to) => { if (String(from).includes(${JSON.stringify(failRenameForTaskId)})) throw new Error(${JSON.stringify(`EACCES: injected rename failure for ${failRenameForTaskId}`)}); return originalRenameSync(from, to); };`
+                : '',
             `import { rerouteFromHumanReview, setCliArgsForTest } from ${JSON.stringify(MAIN_URL)};`,
             `setCliArgsForTest({ force: ${force ? 'true' : 'false'} });`,
             `rerouteFromHumanReview(${JSON.stringify([...taskIds])});`,
@@ -131,6 +150,38 @@ function runReroute(
         stdout: result.stdout ?? '',
         stderr: result.stderr ?? '',
     };
+}
+
+function renderReroutePrompts(
+    cwd: string,
+    taskIds: readonly string[],
+): { specReview: string; implement: string } {
+    const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        CANON_WORKTREES_ROOT: path.join(cwd, 'worktrees'),
+    };
+    delete env.CANON_TASKS_DIR_OVERRIDE;
+    const result = spawnSync(process.execPath, [
+        '--import',
+        MD_LOADER,
+        '--import',
+        TSX_LOADER,
+        '-e',
+        [
+            `import { buildPipelineState } from ${JSON.stringify(MAIN_URL)};`,
+            `import { promptImplementReroute, promptSpecReview } from ${JSON.stringify(PROMPTS_URL)};`,
+            `const state = buildPipelineState(${JSON.stringify([...taskIds])});`,
+            `console.log('__PROMPTS__' + JSON.stringify({ specReview: promptSpecReview(state), implement: promptImplementReroute(state, false, [], 'main') }));`,
+        ].join('\n'),
+    ], {
+        cwd,
+        encoding: 'utf8',
+        env,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const marker = (result.stdout ?? '').split('\n').find(line => line.startsWith('__PROMPTS__'));
+    assert.ok(marker, `missing prompt marker in stdout:\n${result.stdout ?? ''}`);
+    return JSON.parse(marker.slice('__PROMPTS__'.length)) as { specReview: string; implement: string };
 }
 
 function readStatus(tasksRoot: string, taskId: string): Record<string, unknown> {
@@ -314,6 +365,227 @@ function replaceCodexPrompt(args: readonly string[]): string[] {
     assert.ok(modelFlagIndex > 0, `missing model flag in Codex argv: ${JSON.stringify(args)}`);
     return args.map((arg, index) => index === modelFlagIndex - 1 ? '<prompt>' : arg);
 }
+
+void test('reroute archives stale review rounds before a fresh round-1 verdict is written', () => {
+    withTempDir('reroute-review-archive-wedge-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, 'task-a');
+        const worktreeTaskRoot = worktreeTasksRoot(worktreesRoot, 'task-a');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a');
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTaskRoot, taskId, status);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nFix the stale review routing.\n');
+        writeReview(worktreeRoot, taskId, [
+            '# Code Review: task-a',
+            '',
+            '## Stage 1 — Spec Compliance (gate)',
+            '',
+            'Filled first-round findings.',
+            '',
+            '## Final Verdict',
+            '',
+            '- [ ] **Approved**',
+            '- [x] **Changes requested**',
+            '',
+            '## Round 2 — verifying iteration 1',
+            '',
+            '### Verdict for this round',
+            '',
+            '- [ ] Approved',
+            '- [x] Changes requested',
+            '',
+        ].join('\n'));
+
+        const reroute = runReroute(dir, [taskId], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        const reviewPath = path.join(worktreeTaskRoot, taskId, 'review.md');
+        const archivePath = path.join(worktreeTaskRoot, taskId, 'review-prior-1.md');
+        const reviewWasAbsentImmediatelyAfterReroute = !fs.existsSync(reviewPath);
+
+        writeReview(worktreeRoot, taskId, [
+            '# Code Review: task-a',
+            '',
+            '## Stage 1 — Spec Compliance (gate)',
+            '',
+            'Fresh round-1 review.',
+            '',
+            '## Final Verdict',
+            '',
+            '- [x] **Approved**',
+            '- [ ] **Changes requested**',
+            '',
+        ].join('\n'));
+
+        const gate = checkPhaseGate(taskId, 'code_review', 'approved', worktreeTaskRoot);
+        assert.deepEqual(gate, { ok: true });
+        assert.equal(reviewWasAbsentImmediatelyAfterReroute, true);
+        assert.equal(fs.existsSync(archivePath), true);
+        assert.match(fs.readFileSync(archivePath, 'utf8'), /## Round 2/);
+    });
+});
+
+void test('review archive allocator and lookup share a numeric highest-plus-one invariant', () => {
+    withTempDir('review-archive-invariant-', taskDir => {
+        const priorTwo = Buffer.from('archive two\n');
+        const priorTen = Buffer.from('archive ten\n');
+        const current = Buffer.from('# Filled review\n\n## Final Verdict\n\n- [x] **Changes requested**\n');
+        fs.writeFileSync(path.join(taskDir, 'review-prior-2.md'), priorTwo);
+        fs.writeFileSync(path.join(taskDir, 'review-prior-10.md'), priorTen);
+        fs.writeFileSync(path.join(taskDir, 'review.md'), current);
+
+        const archived = archivePriorReview(taskDir);
+
+        assert.equal(archived, 'review-prior-11.md');
+        assert.equal(findNewestReviewArchive(taskDir), archived);
+        assert.deepEqual(fs.readFileSync(path.join(taskDir, 'review-prior-2.md')), priorTwo);
+        assert.deepEqual(fs.readFileSync(path.join(taskDir, 'review-prior-10.md')), priorTen);
+        assert.deepEqual(fs.readFileSync(path.join(taskDir, archived)), current);
+        assert.equal(fs.existsSync(path.join(taskDir, 'review.md')), false);
+    });
+});
+
+void test('reroute leaves a pristine review template in place without creating an archive', () => {
+    withTempDir('reroute-review-template-stub-', dir => {
+        initGitRepo(dir);
+        const taskId = 'task-a';
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, taskId);
+        const worktreeTaskDir = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId);
+        const status = makeRerouteStatus(taskId, 'task/task-a', 0, {
+            codeReview: { status: 'pending', verdict: '' },
+            qa: { status: 'pending' },
+            humanReview: { status: 'pending' },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nReview was still pending.\n');
+        const pristineTemplate = fs.readFileSync(path.join(WORKTREE_ROOT, '.canon', 'templates', 'review.md'));
+        fs.writeFileSync(path.join(worktreeTaskDir, 'review.md'), pristineTemplate);
+
+        const reroute = runReroute(dir, [taskId], false);
+
+        assert.equal(reroute.status, 0, reroute.stderr);
+        assert.deepEqual(fs.readFileSync(path.join(worktreeTaskDir, 'review.md')), pristineTemplate);
+        assert.equal(findNewestReviewArchive(worktreeTaskDir), null);
+    });
+});
+
+void test('repeat reroutes allocate monotonically even after an older archive is deleted', () => {
+    withTempDir('reroute-review-repeat-', dir => {
+        initGitRepo(dir);
+        const taskId = 'task-a';
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, taskId);
+        const worktreeTaskDir = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId);
+        const prepareRound = (priorReroutes: number, heading: string, reviewMarker: string): void => {
+            const status = makeRerouteStatus(taskId, 'task/task-a', priorReroutes);
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(worktreeRoot, taskId, `# Spec\n\n${heading}\n\nNext correction.\n`);
+            writeReview(worktreeRoot, taskId, `# Filled review\n\n${reviewMarker}\n\n## Final Verdict\n\n- [x] **Changes requested**\n`);
+        };
+
+        prepareRound(0, '## Amendment', 'review-one');
+        assert.equal(runReroute(dir, [taskId], false).status, 0);
+        const archiveOnePath = path.join(worktreeTaskDir, 'review-prior-1.md');
+        const archiveOne = fs.readFileSync(archiveOnePath);
+
+        prepareRound(1, '## Amendment Round 2', 'review-two');
+        assert.equal(runReroute(dir, [taskId], false).status, 0);
+        const archiveTwoPath = path.join(worktreeTaskDir, 'review-prior-2.md');
+        const archiveTwo = fs.readFileSync(archiveTwoPath);
+        assert.deepEqual(fs.readFileSync(archiveOnePath), archiveOne);
+
+        fs.rmSync(archiveOnePath);
+        prepareRound(2, '## Amendment Round 3', 'review-three');
+        assert.equal(runReroute(dir, [taskId], false).status, 0);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review-prior-3.md')), true);
+        assert.equal(fs.existsSync(archiveOnePath), false);
+        assert.deepEqual(fs.readFileSync(archiveTwoPath), archiveTwo);
+    });
+});
+
+void test('reroute removes stale approved review evidence before code_review restarts', () => {
+    withTempDir('reroute-review-evidence-hole-', dir => {
+        initGitRepo(dir);
+        const taskId = 'task-a';
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, taskId);
+        const worktreeTaskRoot = worktreeTasksRoot(worktreesRoot, taskId);
+        const status = makeRerouteStatus(taskId, 'task/task-a', 0, {
+            codeReview: { status: 'pending', verdict: '' },
+            qa: { status: 'pending' },
+            humanReview: { status: 'pending' },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTaskRoot, taskId, status);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nRestart review without stale evidence.\n');
+        writeReview(worktreeRoot, taskId, '# Filled review\n\n## Final Verdict\n\n- [x] **Approved**\n');
+
+        const reroute = runReroute(dir, [taskId], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        const reviewWasAbsentAfterReroute = !fs.existsSync(path.join(worktreeTaskRoot, taskId, 'review.md'));
+
+        const restarted = readStatus(worktreeTaskRoot, taskId) as {
+            phases: Record<string, { status?: string; verdict?: string }>;
+        };
+        restarted.phases.spec_review.status = 'done';
+        restarted.phases.plan.status = 'done';
+        restarted.phases.implement.status = 'done';
+        restarted.phases.code_review.status = 'pending';
+        restarted.phases.code_review.verdict = '';
+        writeTaskStatus(worktreeTaskRoot, taskId, restarted);
+
+        const evidence = runTryEvidenceAdvance(dir, taskId, 'code_review');
+        assert.equal(evidence.advanced, false);
+        assert.match(evidence.note, /review\.md is missing or still the template/);
+        assert.equal(reviewWasAbsentAfterReroute, true);
+        const afterEvidence = readStatus(worktreeTaskRoot, taskId) as {
+            phases?: { code_review?: { status?: string } };
+        };
+        assert.equal(afterEvidence.phases?.code_review?.status, 'pending');
+    });
+});
+
+void test('reroute archive failure aborts before mutating any task status', () => {
+    withTempDir('reroute-review-archive-failure-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const taskIds = ['task-a', 'task-b'];
+        const statusBefore = new Map<string, Buffer>();
+        for (const taskId of taskIds) {
+            const status = makeRerouteStatus(taskId, `task/${taskId}`);
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nArchive safely.\n');
+            writeReview(path.join(worktreesRoot, taskId), taskId, `# Filled review\n\n${taskId} findings\n`);
+            statusBefore.set(taskId, fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json')));
+        }
+
+        const reroute = runReroute(dir, taskIds, false, 'task-b');
+
+        assert.notEqual(reroute.status, 0);
+        assert.match(reroute.stderr, /task-b/);
+        assert.match(reroute.stderr, /EACCES: injected rename failure for task-b/);
+        assert.match(reroute.stderr, /Already-completed archives.*task-a → review-prior-1\.md/s);
+        for (const taskId of taskIds) {
+            assert.deepEqual(
+                fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json')),
+                statusBefore.get(taskId),
+            );
+        }
+        assert.equal(fs.existsSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'review.md')), false);
+        assert.equal(fs.existsSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-a'), 'task-a', 'review-prior-1.md')), true);
+        assert.equal(fs.existsSync(path.join(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b', 'review.md')), true);
+    });
+});
 
 void test('rerouteFromHumanReview reads worktree spec.md when a task worktree exists', () => {
     withTempDir('reroute-preflight-worktree-source-', dir => {
@@ -963,6 +1235,41 @@ for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
     });
 }
 
+void test('reroute prompts locate the archive created for an exempt failing sibling', () => {
+    withTempDir('reroute-preflight-exempt-archive-prompt-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const statuses = {
+            'task-a': makeCodeReviewBlockedStatus('task-a', 'task/task-a', 'spec_gap'),
+            'task-b': makeCodeReviewBlockedStatus('task-b', 'task/task-b', 'changes_requested'),
+        };
+        for (const [taskId, status] of Object.entries(statuses)) {
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        }
+        writeSpec(path.join(worktreesRoot, 'task-a'), 'task-a', '# Spec\n\n## Amendment\n\nBundle fix.\n');
+        writeSpec(path.join(worktreesRoot, 'task-b'), 'task-b', '# Spec\n\nNo amendment for exempt sibling.\n');
+        const taskBDir = path.join(worktreeTasksRoot(worktreesRoot, 'task-b'), 'task-b');
+        fs.writeFileSync(path.join(taskBDir, 'review-prior-2.md'), 'older two\n');
+        fs.writeFileSync(path.join(taskBDir, 'review-prior-10.md'), 'older ten\n');
+        writeReview(path.join(worktreesRoot, 'task-b'), 'task-b', '# Filled review\n\nfindings under test\n');
+
+        const reroute = runReroute(dir, ['task-a', 'task-b'], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        assert.match(fs.readFileSync(path.join(taskBDir, 'review-prior-11.md'), 'utf8'), /findings under test/);
+
+        const prompts = renderReroutePrompts(dir, ['task-a', 'task-b']);
+        for (const prompt of [prompts.specReview, prompts.implement]) {
+            const taskBLine = prompt.split('\n').find(line => line.includes('`task-b`')) ?? '';
+            assert.match(taskBLine, /tasks\/task-b\/review-prior-11\.md/);
+            assert.doesNotMatch(taskBLine, /tasks\/task-b\/review-prior-10\.md/);
+            assert.doesNotMatch(taskBLine, /tasks\/task-b\/review\.md(?:\s|$)/);
+            assert.match(taskBLine, /remain binding/);
+        }
+    });
+});
+
 void test('rerouteFromHumanReview full-tier resets spec_review and plan, preserves monotonic counters, and clears stale spec_review session', () => {
     withTempDir('reroute-preflight-full-tier-reset-', dir => {
         initGitRepo(dir);
@@ -973,6 +1280,7 @@ void test('rerouteFromHumanReview full-tier resets spec_review and plan, preserv
             taskSize: 'M',
             sessions: {
                 codex_spec_review: 'old-spec-review-session',
+                claude_review: 'old-code-review-session',
                 codex: 'keep-implement-session',
             },
         });
@@ -1022,6 +1330,7 @@ void test('rerouteFromHumanReview full-tier resets spec_review and plan, preserv
         assert.equal(updated.phases?.implement?.rerouted, true);
         assert.equal(updated.phases?.implement?.reroute_count, 3);
         assert.equal(updated.sessions?.codex_spec_review, undefined);
+        assert.equal(updated.sessions?.claude_review, undefined);
         assert.equal(updated.sessions?.codex, 'keep-implement-session');
     });
 });
@@ -1037,6 +1346,7 @@ void test('rerouteFromHumanReview fast-tier leaves spec_review and plan untouche
             delicate: false,
             sessions: {
                 codex_spec_review: 'unchanged-session',
+                claude_review: 'old-code-review-session',
                 codex: 'keep-implement-session',
             },
         });
@@ -1074,6 +1384,7 @@ void test('rerouteFromHumanReview fast-tier leaves spec_review and plan untouche
         assert.equal(updated.phases?.implement?.rerouted, true);
         assert.equal(updated.phases?.implement?.reroute_count, 1);
         assert.equal(updated.sessions?.codex_spec_review, 'unchanged-session');
+        assert.equal(updated.sessions?.claude_review, undefined);
     });
 });
 

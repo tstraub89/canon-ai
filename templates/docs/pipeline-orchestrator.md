@@ -463,6 +463,8 @@ Full-tier reroute (any S/M/L/XL task or any `delicate` task) re-enters at the sa
 
 Rerouting from `code_review` or a `qa` `pending`/`in_progress` entry happens before the QA-end commit, so task artifacts may still be uncommitted in the worktree. `--reroute` performs no git operation itself, so nothing is destroyed by the reroute. Do not run a manual git command that can discard uncommitted state (`reset --hard`, `checkout HEAD~N`, `stash drop`, or equivalent) in that window.
 
+Reroute archives each named task's `review.md` to `review-prior-<n>.md` in the active task directory, where `<n>` is one greater than the highest archive number already present (or 1 when none exist). It archives every task before changing any task's `status.json`; if an archive fails, reroute aborts without mutating any member's status, while any already-completed rename remains safely preserved on disk. A `review.md` that is still the pristine unfilled template is left in place and produces no archive. Reroute also drops the stored `sessions.claude_review` ID, so post-reroute code review starts a genuine round 1 rather than resuming a session that remembers prior rounds. Archived findings remain binding; exempt-sibling prompts point at the archived file instead of the now-absent `review.md`.
+
 If Codex returns `changes_requested` on a full-tier reroute amendment, the pipeline blocks to the human instead of routing to pipeline-Claude spec revision. The block names the rejected task's `spec.md` and `spec-review.md`; revise the amendment in `spec.md`, then re-run the normal command:
 
 ```bash

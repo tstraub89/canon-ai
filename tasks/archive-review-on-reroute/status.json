@@ -1,15 +1,15 @@
 {
   "id": "archive-review-on-reroute",
   "title": "Reroute archives review.md so a fresh round-1 review can't wedge on a stale trailing round verdict",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-08-22",
   "updated": "2026-08-22",
-  "branch": "",
+  "branch": "task/archive-review-on-reroute",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "019b7b4517d846592e643cdb1cf245dcfd63fe15",
+    "orchestrator_commit": "b6e2ea97d7071c45c66b3196d527d7c8e26d6aea",
     "canon_version": "2.8.0",
     "codex_cli": "codex-cli 0.149.0",
     "claude_code": "2.1.239 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "01a027c9-8909-7b11-802c-c13a31c7a54e",
-    "claude_spec": "25bce8dc-d983-4fc8-b489-3676ba09b7ec"
+    "claude_spec": "25bce8dc-d983-4fc8-b489-3676ba09b7ec",
+    "codex": "01a027db-56b8-78e1-8e23-911327d18be3",
+    "claude_review": "0d334372-8b78-4706-a743-d514bca549aa"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
