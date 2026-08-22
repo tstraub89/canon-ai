@@ -943,3 +943,7 @@
 | 2026-08-21T03:20:58.676Z | relax-reroute-gate-post-implement | code_review | codex | gpt-5.6-luna | 0 | 244.7s | - | ok |
 | 2026-08-21T03:43:05.671Z | relax-reroute-gate-post-implement | code_review | claude | opus | 0 | 1327.0s | 2932180 | ok |
 | 2026-08-21T03:46:23.711Z | relax-reroute-gate-post-implement | qa | claude | sonnet | 0 | 198.0s | 2077385 | ok |
+| 2026-08-22T04:48:17.133Z | archive-review-on-reroute | spec_review | codex | gpt-5.6-sol | 0 | 184.3s | 1679656 | ok |
+| 2026-08-22T04:53:30.028Z | archive-review-on-reroute | spec | claude | opus | 0 | 312.8s | 1478953 | ok |
+| 2026-08-22T04:56:07.089Z | archive-review-on-reroute | spec_review | codex | gpt-5.6-sol | 1 | 156.9s | 1557734 | ok |
+| 2026-08-22T05:04:39.766Z | archive-review-on-reroute | plan | claude | sonnet | 0 | 512.5s | 7282302 | ok |
