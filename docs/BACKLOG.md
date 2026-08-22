@@ -223,6 +223,12 @@
   - **Fix shape (not yet designed)**: extend the same stale-artifact-detection pattern `checkRerouteEvidence()` already uses for `spec_review`/`plan` (round-heading freshness) to `code_review` and `qa` — needs a per-phase notion of "what does a fresh round look like" for each, since `code_review`'s round marker (`## Round N`) and `qa`'s (no existing round concept in `done.md`) aren't the same shape.
   - **Affected files (expected)**: `src/orchestrator/validation.ts` (`checkRerouteEvidence` and its phase-specific freshness checks), `tests/run-task-reroute-preflight.test.ts`.
   - **Effort**: `M` — needs a fresh-round convention designed for `qa` before `code_review`'s existing pattern can be extended to it.
+  - **Update 2026-08-22**: the `code_review` half is now largely mitigated by `archive-review-on-reroute` (PR [#229](https://github.com/tstraub89/canon-ai/pull/229)) — reroute archives `review.md`, so the stale-artifact advance can't fire for that phase. The **`qa`/`done.md` half remains fully open** (reconfirmed by #229's code review as the same shape of bug, one artifact over); reroute does not archive `done.md`, so the stale-QA-summary scenario above is still live.
+
+- [ ] **Small-sweep follow-up from PR #229's code review: stub-detection substring match + five non-blocking nits** *(filed 2026-08-22 from the `archive-review-on-reroute` code review (`approved_with_nits`); all verified-real but out of that task's scope. **Priority: low — one small commit, no design work.**)*
+  - **Template-stub detection is a bare substring match**: the reroute's archive-skip predicate (reused per the spec's direction) can misclassify a *real* review that happens to quote the placeholder token as an unfilled template, leaving it un-archived — a narrow reintroduction path for the stale-round wedge, reachable only via the `code_review`-pending entry state #228 admits.
+  - **Five risk/guardrail nits** recorded in `tasks/_archive/archive-review-on-reroute/review.md` §Findings: an unguarded directory scan on a prompt-render path, the no-archive prompt fallback naming a file guaranteed absent, a repo-root-relative path in two operator messages (should print the worktree path via `taskDirFor`, matching the adjacent `:2509` error), and two lower-severity items. The review recommended shipping them as one follow-up commit.
+  - **Effort**: `S` — inline-tier candidate (below-pipeline fix + `codex review`), since every item is already diagnosed with file:line in the archived review.
 
 ## 📦 Distribution & Portability
 

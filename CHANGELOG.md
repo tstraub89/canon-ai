@@ -8,6 +8,10 @@
 
 - **`--reroute` now works from any point after a completed `implement` round, not just `human_review` or a `spec_gap`-blocked `code_review`.** It now also covers a task auto-blocked at `code_review` after too many review rounds, or one simply waiting on `qa`. Same mechanism as before — write an `## Amendment` section and reroute, `--force` still bypasses the check.
 
+### Fixed
+
+- **Rerouting a task with a multi-round `review.md` no longer wedges the next code review on a stale verdict.** Reroute now archives the prior `review.md` to `review-prior-<n>.md` (a blank template is left in place) and drops the carried-over review session, so the post-reroute review starts a genuine round 1; prompts that pointed a bundle sibling at its outstanding findings now point at the archived file.
+
 ## [2.8.0] — 2026-08-13
 
 ### Changed
