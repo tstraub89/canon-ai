@@ -1,7 +1,7 @@
 {
   "id": "worktree-root-in-repo",
   "title": "Move the default worktree root to .canon/worktrees/",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-03",
   "updated": "2026-09-03",
   "branch": "task/worktree-root-in-repo",
@@ -65,7 +65,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
