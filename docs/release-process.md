@@ -92,12 +92,26 @@ Implemented in `.github/workflows/auto-release.yml`. Triggered on push to `main`
 6. Extracts the `## [<version>] — <date>` CHANGELOG block **from the bump SHA's tree** (not the workflow's checkout) — when scope lands after the bump commit, the workflow's HEAD describes a different tree than the SHA being tagged, and reading from HEAD produces release notes that advertise fixes not in the tagged code (the 1.3.0 mismatch). Fails if the block is missing or still has the `unreleased` placeholder.
 7. Creates the tag + GitHub release with the extracted body, targeting the version-bump commit.
 8. **Post-publish verification**: re-extracts the CHANGELOG block from the published tag and diffs it byte-for-byte against the uploaded release notes. Fails if they disagree (regression guard for the 1.3.0 tag/notes mismatch).
+9. **Publishes to npm** (`npm publish --access public`, authenticated by npm Trusted Publishing over OIDC — no token) from the release-cutting push, after the release is verified. Does not run at all unless the repository variable `NPM_TRUSTED_PUBLISHING` is `true`; skips silently when `canon-ai@<version>` is already on the registry. Refuses (fails the step) if the GitHub release is a draft or its tag does not resolve to the bump commit. Skips with a warning if the triggering commit is not the bump commit, because npm's provenance attestation records the triggering commit and must not describe a different tree; that case, and any failed publish, is recovered manually (below), not by re-running. No build or install happens here: `dist/` is committed and CI-verified, and `package.json` has no prepack scripts.
 
 The workflow uses `GITHUB_TOKEN` and runs only on direct push-to-`main` events — pull-request events are ignored so PR previews don't accidentally trigger releases.
 
+**npm publishing setup (one-time, per repository)**: publishing uses npm **Trusted Publishing** (OIDC), not a token. npm announced (July 2026) that granular tokens with 2FA bypass lose direct publishing in January 2027 and become staging-only, so a token-based Actions publish would stop being unattended; trusted publishing is npm's designated replacement. There is nothing to put in an env file or a secret. Setup, in this order: (1) make the GitHub repository public — provenance is generated only from a public repository, and the trusted-publisher record names the repository; (2) on npmjs.com, open the `canon-ai` package → Settings → Trusted Publisher → GitHub Actions, and enter organization or user `tstraub89`, repository `canon-ai`, workflow filename `auto-release.yml` (filename only, not the path), no environment, allowed action "npm publish" (the package must already exist on the registry to configure this; the `0.0.1` placeholder satisfies that); (3) set the repository **Actions variable** `NPM_TRUSTED_PUBLISHING` to `true` (Settings → Secrets and variables → Actions → Variables, or `gh variable set NPM_TRUSTED_PUBLISHING --body true`) — this is the arming switch, and until it is set the publish step does not run; (4) merge the version-bump PR. Requirements the workflow already meets: `id-token: write` on the job, npm ≥ 11.5.1 (checked in the step), and `package.json` `repository` matching the public repo URL. Each package can have one trusted publisher, and only GitHub-hosted runners are supported. **Sequencing matters**: the publish step runs only on the push that creates a GitHub release, and a version whose release already exists is never retried, so steps (1)–(3) must be complete *before* the release-cutting push; a version released before that reaches npm only via the manual fallback below.
+
 ## Manual fallback
 
-If the auto-release workflow fails (workflow disabled, missing CHANGELOG block, etc.), fall back to manual. **Always tag the version-bump commit explicitly** — `main` may have advanced past the release commit by the time you're running the fallback:
+**npm publish failed or was skipped** (trusted publishing not yet configured or not armed at release time, trigger commit was not the bump commit, transient registry error): publish from the tag by hand, from a machine logged in with `npm login` under an account that owns `canon-ai` (interactive 2FA is fine here):
+
+```bash
+git fetch --tags origin
+git worktree add --detach /tmp/canon-publish vX.Y.Z
+(cd /tmp/canon-publish && npm publish --access public)   # no provenance outside Actions
+git worktree remove /tmp/canon-publish
+```
+
+The workflow will not retry a version on a later push, by design; check `npm view canon-ai@X.Y.Z version` before assuming it landed.
+
+**GitHub release failed**: If the auto-release workflow fails (workflow disabled, missing CHANGELOG block, etc.), fall back to manual. **Always tag the version-bump commit explicitly** — `main` may have advanced past the release commit by the time you're running the fallback:
 
 ```bash
 git checkout main && git pull

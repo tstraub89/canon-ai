@@ -7,6 +7,14 @@ name: Auto-release
 # publishing the release can self-heal on the next push, because the skip
 # check looks for the release object — not just the tag.
 #
+# After the release exists, publish the same tree to npm (final step) via
+# npm Trusted Publishing (OIDC — no token; npm's granular tokens lose direct
+# publish in 2027). The step is inert until the NPM_TRUSTED_PUBLISHING
+# repository variable is 'true', skips when the version is already on the
+# registry, and runs only on the release-cutting push whose commit is the
+# bump commit (provenance attests GITHUB_SHA). A failed publish is recovered
+# manually from the tag, not by re-running.
+#
 # Operational doc: docs/release-process.md.
 
 on:
@@ -15,6 +23,10 @@ on:
 
 permissions:
   contents: write
+  # id-token lets the runner mint the OIDC token npm Trusted Publishing
+  # exchanges for a short-lived publish credential, and that provenance
+  # (Sigstore attestation) is generated from.
+  id-token: write
 
 concurrency:
   group: auto-release
@@ -34,7 +46,7 @@ jobs:
           # whatever push triggered this workflow run.
           fetch-depth: 0
 
-      - name: Set up Node (for lockfile regen check)
+      - name: Set up Node (for lockfile regen check and npm publish)
         uses: actions/setup-node@v6
         with:
           node-version: '24.x'
@@ -283,3 +295,59 @@ jobs:
             exit 1
           fi
           echo "Verified: ${TAG}:CHANGELOG.md block for ${VERSION} is byte-identical to published release notes."
+
+      - name: Publish to npm (Trusted Publishing)
+        # Runs only on the push that cut the release, and only when that
+        # push's commit IS the bump commit. npm's provenance attestation
+        # records GITHUB_SHA, so publishing a different tree (e.g. from a
+        # later self-heal push) would attest the wrong commit. A publish
+        # that fails here is recovered manually from the tag — see
+        # docs/release-process.md §"Manual fallback" — not by re-running.
+        # Auth is npm Trusted Publishing: npmjs.com is configured to trust
+        # this repository + workflow filename, and `npm publish` exchanges
+        # the runner's OIDC token for a one-time credential. No NPM_TOKEN.
+        # No build or install: dist/ is committed and verified fresh by CI,
+        # and package.json defines no prepack/prepublish scripts.
+        if: steps.release-check.outputs.skip != 'true' && vars.NPM_TRUSTED_PUBLISHING == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.versions.outputs.version }}"
+          TAG="${{ steps.versions.outputs.tag }}"
+          BUMP_SHA="${{ steps.bump.outputs.sha }}"
+          if npm view "canon-ai@${VERSION}" version >/dev/null 2>&1; then
+            echo "canon-ai@${VERSION} is already on npm — nothing to do."
+            exit 0
+          fi
+          if [ "$GITHUB_SHA" != "$BUMP_SHA" ]; then
+            echo "::warning::Triggering commit ${GITHUB_SHA} is not the version-bump commit ${BUMP_SHA}; skipping npm publish so provenance cannot attest the wrong tree. Publish manually from tag ${TAG} (docs/release-process.md §Manual fallback)."
+            exit 0
+          fi
+          # Trusted Publishing needs npm >= 11.5.1 (Node 24 ships a newer
+          # npm, but pin the floor explicitly so a runner image regression
+          # fails loudly here instead of with an opaque E401).
+          NPM_VERSION="$(npm --version)"
+          if ! node -e "const [a,b,c]=process.argv[1].split('.').map(Number); process.exit((a>11||(a===11&&(b>5||(b===5&&c>=1))))?0:1)" "$NPM_VERSION"; then
+            echo "::error::npm ${NPM_VERSION} is older than 11.5.1, the minimum for Trusted Publishing"
+            exit 1
+          fi
+          # The GitHub release must be published (not draft) and its tag must
+          # resolve to the bump commit, so the npm artifact can never run
+          # ahead of, or describe a different tree than, the release.
+          IS_DRAFT="$(gh release view "$TAG" --json isDraft --jq .isDraft)"
+          if [ "$IS_DRAFT" != "false" ]; then
+            echo "::error::GitHub release ${TAG} is a draft or missing — refusing to publish to npm"
+            exit 1
+          fi
+          git fetch --tags origin
+          TAG_SHA="$(git rev-parse "${TAG}^{commit}")"
+          if [ "$TAG_SHA" != "$BUMP_SHA" ]; then
+            echo "::error::Tag ${TAG} points at ${TAG_SHA}, not the version-bump commit ${BUMP_SHA} — refusing to publish to npm"
+            exit 1
+          fi
+          # Provenance is generated automatically under Trusted Publishing
+          # from a public repository; no --provenance flag.
+          npm publish --access public
+          echo "Published canon-ai@${VERSION} to npm from ${BUMP_SHA}"
+        shell: bash
