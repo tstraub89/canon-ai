@@ -138,7 +138,7 @@ Address the rename-pair finding per the updated AC-2 / AC-2a / AC-3 in `spec.md`
 - [x] **Changes requested**
 - [ ] Needs re-review
 
-> Source of finding: [Codex review comment on PR #1](https://github.com/tstraub89/canon-ai/pull/1) on `scripts/run-task.ts:2534` — "Include rename preimage paths in diff set".
+> Source of finding: Codex review comment on PR #1 on `scripts/run-task.ts:2534` — "Include rename preimage paths in diff set".
 
 ---
 

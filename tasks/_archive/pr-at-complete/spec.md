@@ -12,7 +12,7 @@ Two adopter-visible failures from this:
 1. **Off-script-but-recoverable**: Someone reviews the diff locally, marks `human_review` done thinking that's the next step, then tries `canon run X --pr` to push and open a PR retroactively. Currently dies with an unfriendly "Unknown phase" message.
 2. **Idempotent retry on an already-open PR**: Even within the `human_review` phase today, `commitHumanReviewFiles`'s `--pr` retry path (`:537-549`) only fires when **no open PR exists**. If a PR is already open (which is the normal state after a successful `--pr` ran once), the function falls through to `die("Human review commit aborted: no dirty task artifacts...")` at `:552`. Re-running `--pr` after a successful first run is hostile when it could be a no-op.
 
-Filed as [issue #72](https://github.com/tstraub89/canon-ai/issues/72). James hit (1) on a TokenAnxiety task; (2) is a related sharp edge in the same code path.
+Filed as issue #72. James hit (1) on a TokenAnxiety task; (2) is a related sharp edge in the same code path.
 
 ## Decision
 

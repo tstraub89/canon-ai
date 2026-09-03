@@ -257,7 +257,7 @@ Files: `CHANGELOG.md`
 Under the existing `## [1.1.4] — unreleased` block, add to `### Fixed`:
 
 ```md
-- **`canon run <id> --pr` no longer crashes when the task is at `complete`.** Two related fixes: (1) `runPhase()` now handles the `complete` phase via the same `--pr`/`--push` path as `human_review` instead of dying with `Unknown phase: complete`; (2) `commitHumanReviewFiles()`'s idempotent retry path now detects an already-open PR and returns the existing PR URL instead of dying. `canon run <id>` with no flags at `complete` prints a state-aware status message (open PR / pushed-no-PR / unpushed) with the recommended next command. Closes [#72](https://github.com/tstraub89/canon-ai/issues/72).
+- **`canon run <id> --pr` no longer crashes when the task is at `complete`.** Two related fixes: (1) `runPhase()` now handles the `complete` phase via the same `--pr`/`--push` path as `human_review` instead of dying with `Unknown phase: complete`; (2) `commitHumanReviewFiles()`'s idempotent retry path now detects an already-open PR and returns the existing PR URL instead of dying. `canon run <id>` with no flags at `complete` prints a state-aware status message (open PR / pushed-no-PR / unpushed) with the recommended next command. Closes #72.
 ```
 
 ### Step 7: Rebuild dist/

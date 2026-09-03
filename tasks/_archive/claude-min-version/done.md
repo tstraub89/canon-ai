@@ -62,6 +62,6 @@ None. All ACs met, no deferred items.
 
 The `## [1.1.4] — unreleased` block with the `### Fixed` entry is already committed as part of this task. The entry reads:
 
-> **Claude Code installs older than 2.1.72 no longer crash canon's `--effort` spawns.** `canon doctor` now checks the installed Claude Code version and fails fast below the verified-safe floor, which blocks the orchestrator from handing an unsupported CLI the `--effort` flag that it does not understand. As a fallback for users who skip `canon doctor`, Claude spawn failures that mention the unknown `--effort` option now print a one-line hint directing them back to `canon doctor` and the upgrade command. Closes [#70](https://github.com/tstraub89/canon-ai/issues/70).
+> **Claude Code installs older than 2.1.72 no longer crash canon's `--effort` spawns.** `canon doctor` now checks the installed Claude Code version and fails fast below the verified-safe floor, which blocks the orchestrator from handing an unsupported CLI the `--effort` flag that it does not understand. As a fallback for users who skip `canon doctor`, Claude spawn failures that mention the unknown `--effort` option now print a one-line hint directing them back to `canon doctor` and the upgrade command. Closes #70.
 
 This is user-facing (anyone on an older Claude Code install hits this crash; the fix makes canon recoverable instead of opaquely broken). Patch scope is correct.

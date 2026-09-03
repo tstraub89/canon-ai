@@ -5,7 +5,7 @@
 
 ## Problem
 
-Canon's own worktree setup can hard-stop canon's own QA-end commit gate (adopter report: [GitHub issue #197](https://github.com/tstraub89/canon-ai/issues/197); backlog entry in `docs/BACKLOG.md` §"🐛 Harness Bugs").
+Canon's own worktree setup can hard-stop canon's own QA-end commit gate (adopter report: GitHub issue #197; backlog entry in `docs/BACKLOG.md` §"🐛 Harness Bugs").
 
 **Confirmed mechanism** (source-verified 2026-07-12 on `main`, plus an empirical git-semantics check; not merely plausible):
 

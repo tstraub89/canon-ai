@@ -7,7 +7,7 @@
 
 canon's orchestrator unconditionally passes `--effort <level>` to every `claude` spawn (`scripts/run-task/agents/claude.ts:36` interactive path, `:58` `-p` streaming path). The `--effort` flag was introduced in Claude Code around v2.1.72 (verified via the 2.1.72 changelog). On any Claude Code release earlier than that, every Claude spawn fails immediately with an unknown-flag error — every Claude pipeline phase (spec / plan / code_review / qa) crashes before the agent receives a prompt.
 
-The orchestrator surfaces the failure as a hard exit with no diagnostic pointing at the underlying version mismatch, so the user is left guessing. Filed as [issue #70](https://github.com/tstraub89/canon-ai/issues/70); James reproduced the crash on Claude Code 2.1.34 during a TokenAnxiety dogfood run.
+The orchestrator surfaces the failure as a hard exit with no diagnostic pointing at the underlying version mismatch, so the user is left guessing. Filed as issue #70; James reproduced the crash on Claude Code 2.1.34 during a TokenAnxiety dogfood run.
 
 ## Decision
 

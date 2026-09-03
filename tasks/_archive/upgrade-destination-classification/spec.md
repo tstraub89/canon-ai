@@ -2,7 +2,7 @@
 
 > Written by: Claude | Review by: Codex
 > Status: done
-> Source: GitHub issue [#187](https://github.com/tstraub89/canon-ai/issues/187) (James Hazel, 2026-07-11); triage entry in `docs/BACKLOG.md` §Distribution & Portability
+> Source: GitHub issue #187 (James Hazel, 2026-07-11); triage entry in `docs/BACKLOG.md` §Distribution & Portability
 
 ## Problem
 

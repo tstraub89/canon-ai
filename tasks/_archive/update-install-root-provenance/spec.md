@@ -2,7 +2,7 @@
 
 > Written by: Claude | Review by: Codex
 > Status: done
-> Bundles GitHub issues [#188](https://github.com/tstraub89/canon-ai/issues/188) and [#189](https://github.com/tstraub89/canon-ai/issues/189)'s **updater half** (filed by James Hazel, triaged 2026-07-11). Backlog: `docs/BACKLOG.md` §"📦 Distribution & Portability". **Scope split (round 5, operator decision):** the doctor provenance-*reading* check is a follow-up task — see the "doctor reads install provenance" BACKLOG entry. This task ships the updater fixes and the provenance *write*; `doctor.ts` is untouched.
+> Bundles GitHub issues #188 and #189's **updater half** (filed by James Hazel, triaged 2026-07-11). Backlog: `docs/BACKLOG.md` §"📦 Distribution & Portability". **Scope split (round 5, operator decision):** the doctor provenance-*reading* check is a follow-up task — see the "doctor reads install provenance" BACKLOG entry. This task ships the updater fixes and the provenance *write*; `doctor.ts` is untouched.
 > **Altitude note (round 7, operator decision):** this spec states behavioral contracts. Implementation mechanics (harness layout, command forms, seam shape) live in §Implementation Notes as non-binding guidance for the plan/implement phases — the compiler and tests are the checker for those, not spec review.
 
 ## Problem

@@ -238,7 +238,7 @@ Check whether `## [1.1.4] — unreleased` already exists. If not, insert it abov
 ```md
 ### Fixed
 
-- **Require Claude Code ≥ 2.1.72.** canon's orchestrator unconditionally passes `--effort` to every Claude spawn, but the flag didn't exist before Claude Code 2.1.72 — every Claude pipeline phase (spec / plan / code_review / qa) crashes immediately on older installs with an opaque "unknown option" error. `canon doctor` now enforces the minimum and reports a clear upgrade message. As defense-in-depth, the orchestrator's Claude spawn-failure path detects the unknown-`--effort` error pattern and prints a one-line hint pointing the user at `canon doctor`. No change to runtime `--effort` argument construction — the doctor check is the gate. Reported by James in [#70](https://github.com/tstraub89/canon-ai/issues/70).
+- **Require Claude Code ≥ 2.1.72.** canon's orchestrator unconditionally passes `--effort` to every Claude spawn, but the flag didn't exist before Claude Code 2.1.72 — every Claude pipeline phase (spec / plan / code_review / qa) crashes immediately on older installs with an opaque "unknown option" error. `canon doctor` now enforces the minimum and reports a clear upgrade message. As defense-in-depth, the orchestrator's Claude spawn-failure path detects the unknown-`--effort` error pattern and prints a one-line hint pointing the user at `canon doctor`. No change to runtime `--effort` argument construction — the doctor check is the gate. Reported by James in #70.
 ```
 
 ### Step 8: Rebuild `dist/`

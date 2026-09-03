@@ -8,7 +8,7 @@
 canon-ai-dev's docs (`docs/codebase-map.md`, `docs/architecture.md`, `CLAUDE.md`, `AGENTS.md`, `docs/pipeline-orchestrator.md`, plus per-task spec/plan/handoff/review/done files) reference code symbols, file paths, and document sections heavily. When the orchestrator's TypeScript modules get refactored — functions renamed, files moved, sections retitled — these refs go stale immediately and silently. Per `docs/architecture.md`'s validation matrix today, only `lint` + `type-check` + `test` + `build` gate on changes; no automated check catches doc drift.
 
 The drift is a recurring failure mode:
-- **GP-style adopters** observed it as the symptom that caught canon's own cross-pipeline contamination Mode 2 — their `docs-refs-check` CI gate at [tstraub89/gallery_wall](https://github.com/tstraub89/gallery_wall) flagged a foreign codebase-map entry pointing at a file that only existed on a sibling branch. canon itself didn't catch it.
+- **GP-style adopters** observed it as the symptom that caught canon's own cross-pipeline contamination Mode 2 — their `docs-refs-check` CI gate at the gallery_wall repo flagged a foreign codebase-map entry pointing at a file that only existed on a sibling branch. canon itself didn't catch it.
 - **canon-on-canon dogfood** has accumulated stale refs — the explore audit estimates 2-8 stale refs across canon-ai-dev's high-density docs today (mostly in `docs/pipeline-orchestrator.md` from recent 1.4.0 polish).
 - The **upcoming worktree-canonical-task-state refactor** (parked at spec_review per `tasks/worktree-canonical-task-state/`) will rename functions, delete two sync functions, and rewire `taskDirFor` semantics. Docs that reference the deleted/renamed symbols would go stale without a gate to catch them at PR time.
 
