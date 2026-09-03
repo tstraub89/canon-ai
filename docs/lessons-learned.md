@@ -50,6 +50,14 @@ When a spec AC verifies "no live surface states the old rule" via a repo-wide gr
 
 ---
 
+### When adding a location/scope constraint, add one boundary check rather than teaching every consumer a new state
+
+*(2026-09-03, source: worktree-root-in-repo)*
+
+A spec that needs "X outside the new boundary should stop working" is tempting to implement by narrowing every function that looks X up — scope the lookup, and an out-of-boundary X becomes unfindable, hence "missing," for free. This task tried exactly that for three spec-review rounds: each round found a different consumer (a ship path, a teardown path, a bundle-secondary scan) that the narrowed lookup broke, because none of them was built to receive the newly-invented "out of boundary" state, and one canonical case (a blank-branch record that a scoped lookup can no longer distinguish from "never existed") couldn't be made to fail loudly at all — it silently fell through to the wrong answer. The fix that converged: leave every lookup/consumer alone, and add exactly one boundary check at the single entry point that was going to act on the result (`canon run`, before any phase). Rule of thumb: when N existing consumers each read the same resolved value, and a new constraint should block *acting* on an out-of-bounds result rather than change *what resolves*, put the check at the action's entry point, not inside resolution — resolution redefining an existing state must be re-taught to every consumer, and there are reliably more consumers (and lifecycle states) than the first pass enumerates. See also `docs/lessons-learned.md` → "A grep AC's exception list growing across review rounds signals mis-scoping" for the same convergence-vs-scope-creep tell in a different shape.
+
+---
+
 <!-- Buffer swept 2026-08-22 (3 entries reviewed: 1 promoted, 1 kept in buffer, 1 pruned).
      Promotion → docs/patterns.md: "Operator-facing text is often rendered by independently-authored duplicates — grep the surface class" as a new pitfall + Trigger Table row (from the duplicate-presentation-surfaces entry; strengthened by a second same-week instance in archive-review-on-reroute's dual review.md prompt pointers).
      Kept in buffer: the grep-AC-exception-list-growth entry — adjacent to two existing canon-spec SKILL rules (≥3-iterations read-content, permitted-to-remain buckets); re-evaluate for a one-sentence SKILL graft if it recurs.

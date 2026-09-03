@@ -4,4 +4,5 @@ tasks/**/.canon-pid
 tasks/**/.canon-run.log
 tasks/**/.heartbeat.json
 tasks/**/.pr-number
+.canon/worktrees/
 # canon:end

@@ -145,7 +145,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | Claude permissions + SessionStart hook | `.claude/settings.json` | Auto-shows in-progress tasks at session start |
 | Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | `--sandbox workspace-write` passed on fresh exec |
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
-| Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | `../dev-worktrees` |
+| Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | `../dev-worktrees` (legacy grant retained until in-flight pre-3.0.0 worktrees drain) |
 | Git ignores | `.gitignore` | |
 | Postinstall git-hooks setup | `scripts/install-git-hooks.mjs` | Conditional `simple-git-hooks` wrapper; skips gracefully when no `.git/` present (e.g. adopter CI) |
 | Build dist/ path normalizer | `scripts/normalize-dist-paths.mjs` | Post-build step that normalizes worktree symlink path comments in `dist/` |

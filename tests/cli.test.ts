@@ -1318,6 +1318,21 @@ void test('checkRuntimeFilesGitignored: missing pattern is named in warning', ()
     });
 });
 
+void test('checkRuntimeFilesGitignored: pre-3.0.0 ignore block names the new worktree pattern', () => {
+    withTempDir(dir => {
+        fs.writeFileSync(path.join(dir, '.gitignore'), [
+            'tasks/**/.canon-pid',
+            'tasks/**/.canon-run.log',
+            'tasks/**/.heartbeat.json',
+            'tasks/**/.pr-number',
+            '',
+        ].join('\n'));
+        const check = checkRuntimeFilesGitignored(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /\.canon\/worktrees\//);
+    });
+});
+
 // ── checkRecommendedPermissions ──────────────────────────────────────────────
 
 function writeSettings(dir: string, obj: unknown): void {

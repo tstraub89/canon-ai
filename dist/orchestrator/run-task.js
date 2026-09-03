@@ -325,7 +325,7 @@ function resolveRepoRoot() {
 }
 var REPO_ROOT = resolveRepoRoot();
 var TASKS_DIR = path.join(REPO_ROOT, "tasks");
-var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path.resolve(REPO_ROOT, "../dev-worktrees");
+var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path.resolve(REPO_ROOT, ".canon/worktrees");
 var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
 var STALL_KILL_GRACE_MS = 3e3;
 var LEGACY_FALLBACK_ENV_VARS = [
@@ -575,7 +575,62 @@ worktree-safety checks would all evaluate the wrong tree.
 Run canon from the main checkout instead:
   ${classification.mainRoot}
 and let canon create the task's worktree. If you intend THIS directory to be
-canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.`
+canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.
+
+This also covers a worktree canon itself created under an earlier default
+worktrees-root location \u2014 to migrate it, move the directory under the
+current root shown above and, from the main checkout, run
+\`git worktree repair <new path>\` (the path argument is required for a moved worktree).`
+  );
+}
+function shellQuotePath(p) {
+  return `'${p.replace(/'/g, `'\\''`)}'`;
+}
+function assertTaskWorktreeWithinRoot(taskId) {
+  if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
+  const resolved = resolveTaskCwd(taskId);
+  const canonicalResolved = canonicalizePath(resolved);
+  if (canonicalResolved === canonicalizePath(REPO_ROOT)) return;
+  const worktreesRoot = effectiveWorktreesRoot();
+  if (isPathInside(canonicalResolved, canonicalizePath(worktreesRoot))) return;
+  die(
+    `Task '${taskId}' resolves to a worktree outside canon's managed worktrees root:
+  ${resolved}
+
+Canon expects task worktrees under:
+  ${worktreesRoot}
+
+To run this task, either:
+  - move the directory to ${path3.join(worktreesRoot, taskId)} and, from the main checkout, run
+      git worktree repair ${shellQuotePath(path3.join(worktreesRoot, taskId))}
+    (bare \`git worktree repair\` does not find a moved linked worktree), or
+  - set CANON_WORKTREES_ROOT to the directory that CONTAINS this worktree
+      (${path3.dirname(resolved)}), not to the worktree itself.
+`
+  );
+}
+function assertNoMissingCanonWorktrees() {
+  if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
+  const enumeration = listWorktreesWithBranches();
+  if (!enumeration.ok) {
+    die(`git worktree list failed: ${enumeration.stderr}`);
+  }
+  const missing = enumeration.worktrees.filter(
+    (worktree) => worktree.branch !== null && worktree.branch.startsWith("task/") && !fs4.existsSync(worktree.path)
+  );
+  if (missing.length === 0) return;
+  die(
+    `The following canon task worktree(s) are registered with git but missing on disk:
+
+` + missing.map(
+      (worktree) => `  ${worktree.path}  (branch: ${worktree.branch})
+    - restore it:  git worktree add -f ${shellQuotePath(worktree.path)} ${worktree.branch}
+      (anything not yet committed to the branch was lost with the directory)
+    - or discard the registration:  git worktree remove --force ${shellQuotePath(worktree.path)}
+`
+    ).join("\n") + `
+Canon does not restore or discard these automatically \u2014 run one of the two
+commands above for each, then re-run.`
   );
 }
 function listWorktreesWithBranches() {
@@ -584,7 +639,12 @@ function listWorktreesWithBranches() {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
-  if (result.error || result.status !== 0) return { ok: false };
+  if (result.error || result.status !== 0) {
+    return {
+      ok: false,
+      stderr: result.error ? result.error.message : (result.stderr ?? "").trim()
+    };
+  }
   const worktrees = [];
   let currentPath = null;
   let currentBranch = null;
@@ -1037,6 +1097,8 @@ function probeNodeModulesEntry(candidatePath, expectedTargetPath) {
   return { verdict, lstatKind, resolvedTarget };
 }
 function ensureWorktree(taskId, branch, startPoint) {
+  const pruneResult = gitSafe("worktree", "prune");
+  if (!pruneResult.ok) warn(`git worktree prune failed (continuing): ${pruneResult.stderr}`);
   if (!fs5.existsSync(WORKTREES_ROOT)) {
     fs5.mkdirSync(WORKTREES_ROOT, { recursive: true });
   }
@@ -8435,8 +8497,16 @@ async function main() {
   process.env.RUN_TASK_ORCHESTRATOR = "1";
   cliArgs = parseArgs(process.argv.slice(2));
   assertManagedInvocationRoot();
+  if (!cliArgs.ship && !cliArgs.dryRun) {
+    assertNoMissingCanonWorktrees();
+  }
   warnLegacyEnvVars();
   warnWorktreesRootMismatch();
+  if (!cliArgs.ship) {
+    for (const taskId of cliArgs.taskIds) {
+      assertTaskWorktreeWithinRoot(taskId);
+    }
+  }
   const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
   checkDeps(cliArgs.taskIds, skipAgentDeps);
   const earlyHeartbeatTaskIds = cliArgs.taskIds;

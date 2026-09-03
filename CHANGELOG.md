@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+> **Breaking (adopters):** New task worktrees now default to `.canon/worktrees/<id>/` inside the repository. A task still living at the old `../dev-worktrees/<id>` root refuses to run until you move it to `.canon/worktrees/<id>/` and run `git worktree repair .canon/worktrees/<id>` from the main checkout (the path argument is required for a moved worktree), or pin `CANON_WORKTREES_ROOT=../dev-worktrees` (the parent directory, not the task worktree itself). `--ship` still merges and archives an unmigrated task but leaves its old directory and registration behind. If a task worktree directory is deleted by hand, `canon run` (except `--dry-run` and `--ship`) now stops before any phase, names each missing worktree, and gives `git worktree add -f <path> <branch>` to restore it or `git worktree remove --force <path>` to discard its registration; anything not yet committed to the branch was lost with the directory, and canon prunes or recreates nothing at this entry check. Project tooling that walks the repository with root-anchored `**/` globs should exclude `.canon/worktrees/`; `git clean -ffdx` (double force) or removing `.canon` destroys in-flight worktrees, while plain `git clean -fdx` skips them. `canon` commands run from inside an unmigrated worktree directory are refused and must be run from the main checkout instead.
+
 ## [2.9.0] — 2026-08-22
 
 ### Changed

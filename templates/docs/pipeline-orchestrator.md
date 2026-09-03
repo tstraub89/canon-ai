@@ -175,7 +175,7 @@ Claude writes QA summary → Human tests
 
 **Bundle mode**: Pass multiple task IDs to `canon run`. All tasks process together per phase (one agent session each). Tier is set by the most complex task — any S/M/L/XL/delicate pulls the whole bundle to full tier. On code-review `changes_requested`, the entire bundle reroutes to implement. On code-review `spec_gap`, the whole bundle blocks until the operator chooses fix (`canon run <ids> --reroute` after amending the `spec_gap` task specs) or bless (`canon task accept <ids> code_review --reason "<why>"`).
 
-**One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own sibling directory, so concurrent runs are possible if each task has `worktree: true`.
+**One pipeline at a time**: Run only one task or bundle through `canon run` at a time. A second concurrent invocation would share the working tree and corrupt both branches. Worktree mode (see below) is the exception: each task gets its own in-repo directory, so concurrent runs are possible if each task has `worktree: true`.
 
 ## Task Sizing Fields
 
@@ -249,7 +249,7 @@ Claude is tuned for correctness — Opus on phases where false negatives cascade
 | `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
 | `CLAUDE_BUDGET` | _(phase- and size-aware)_ | Max spend per Claude phase (USD). Unset → resolved from the Claude Budget Matrix above (phase × size). Set → flat cap applied uniformly across every phase and size (e.g. `CLAUDE_BUDGET=15.00` overrides every phase to $15). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
-| `CANON_WORKTREES_ROOT` | `../dev-worktrees` | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |
+| `CANON_WORKTREES_ROOT` | .canon/worktrees | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |
 | `CANON_PR_BODY` | _(unset)_ | Literal PR body for `--pr`, overriding the normal resolution chain. Supports `$LABEL` and `$TITLE` placeholders. |
 | `MAX_CONTEXT_BYTES` | `65536` | Byte cap on the spec + Affected Files preload injected into Codex's implement prompt. |
 | `CANON_NO_DETACH` | _(unset)_ | Set to `1` to keep full-auto runs in the foreground (no auto-detach). |
@@ -271,9 +271,13 @@ your CLI exposes rather than changing the orchestrator contract.
 
 ## Worktree Isolation
 
-With `"worktree": true` in `status.json` — the scaffolded default from `canon task new` — implement, code_review, qa, and reroute-time spec_review/plan phases run in a git worktree sibling directory rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree. Set the field to `false` to opt out and run those phases in the main checkout (canon still creates the `task/<id>` branch there itself).
+With `"worktree": true` in `status.json` — the scaffolded default from `canon task new` — implement, code_review, qa, and reroute-time spec_review/plan phases run in a git worktree directory under `.canon/worktrees/` rather than the main repo. This keeps spec files, plan drafts, and other in-flight task artifacts out of the main working tree. Set the field to `false` to opt out and run those phases in the main checkout (canon still creates the `task/<id>` branch there itself).
 
-**Layout**: `../dev-worktrees/<task-id>/` (sibling of the repo root, not a subdirectory). The root is configurable via `CANON_WORKTREES_ROOT`.
+**Layout**: `.canon/worktrees/<task-id>/` (inside the repo). The root is configurable via `CANON_WORKTREES_ROOT`. Project tooling that walks the repository with root-anchored `**/` globs should exclude `.canon/worktrees/`. `git clean -ffdx` (double force), or removing `.canon`, destroys in-flight worktrees; plain `git clean -fdx` skips them.
+
+**Upgrading from the previous default**: A task whose worktree predates this layout refuses to run with `canon run` until its directory is moved under `.canon/worktrees/<task-id>/` and repaired from the main checkout with `git worktree repair .canon/worktrees/<task-id>` (the path argument is required for a moved worktree), or `CANON_WORKTREES_ROOT` is pinned to the old *parent* location (for example `../dev-worktrees`, not the task directory itself). `canon` commands invoked from inside that old directory hit the existing invocation-root refusal and must be run from the main checkout, where `canon task` still reads and writes the task's real state. `--ship` on such a task still merges and archives it, leaving the old directory behind.
+
+**Missing registered worktrees**: If a canon task worktree is deleted by hand while git still registers it, `canon run` checks every registered `task/*` worktree after the invocation-root guard and stops before any phase. This applies to normal runs and other run modes, but not `--dry-run`, `--ship`, or invocations using `CANON_TASKS_DIR_OVERRIDE`. The refusal names each missing path and branch, and gives `git worktree add -f <path> <branch>` to restore a checkout or `git worktree remove --force <path>` to discard the registration. Anything not yet committed to the branch was lost with the deleted directory. The entry check fails closed if git worktree enumeration fails; canon neither prunes nor recreates worktrees there.
 
 **Main repo stays on its base**: In worktree mode, the orchestrator creates the `task/<id>` branch directly in the worktree. The main repo never checks out the task branch.
 

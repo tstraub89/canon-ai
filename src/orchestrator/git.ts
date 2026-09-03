@@ -278,7 +278,7 @@ export function ensureBranch(taskIds: string[], options: EnsureBranchOptions = {
         // worktree from baseBranch. Never mutate the main checkout's HEAD —
         // that would violate the documented isolation model where the main
         // checkout stays on the base branch while implementation, review, and
-        // qa run in ../dev-worktrees/<id>/.
+        // qa run in the task worktree.
         assertRepoRootCleanBeforeFirstWorktree(options.force === true);
         const leaderWorktree = ensureWorktree(taskIds[0], branchName, baseBranch);
         // Write secondaries first and the leader last because the leader branch

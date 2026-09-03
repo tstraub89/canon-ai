@@ -585,7 +585,7 @@ function resolveRepoRoot() {
 }
 var REPO_ROOT = resolveRepoRoot();
 var TASKS_DIR = path4.join(REPO_ROOT, "tasks");
-var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path4.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path4.resolve(REPO_ROOT, "../dev-worktrees");
+var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path4.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path4.resolve(REPO_ROOT, ".canon/worktrees");
 var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
 function resolveProjectName() {
   if (process.env.CANON_PROJECT_NAME) return process.env.CANON_PROJECT_NAME;
@@ -673,7 +673,12 @@ worktree-safety checks would all evaluate the wrong tree.
 Run canon from the main checkout instead:
   ${classification.mainRoot}
 and let canon create the task's worktree. If you intend THIS directory to be
-canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.`
+canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.
+
+This also covers a worktree canon itself created under an earlier default
+worktrees-root location \u2014 to migrate it, move the directory under the
+current root shown above and, from the main checkout, run
+\`git worktree repair <new path>\` (the path argument is required for a moved worktree).`
   );
 }
 function listWorktreesWithBranches() {
@@ -682,7 +687,12 @@ function listWorktreesWithBranches() {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
-  if (result.error || result.status !== 0) return { ok: false };
+  if (result.error || result.status !== 0) {
+    return {
+      ok: false,
+      stderr: result.error ? result.error.message : (result.stderr ?? "").trim()
+    };
+  }
   const worktrees = [];
   let currentPath = null;
   let currentBranch = null;
@@ -966,7 +976,8 @@ var CANON_RUNTIME_GITIGNORE_PATTERNS = [
   "tasks/**/.canon-pid",
   "tasks/**/.canon-run.log",
   "tasks/**/.heartbeat.json",
-  "tasks/**/.pr-number"
+  "tasks/**/.pr-number",
+  ".canon/worktrees/"
 ];
 var CANON_GITIGNORE_BLOCK = [
   "# canon:start",

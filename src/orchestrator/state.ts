@@ -114,22 +114,82 @@ export function assertManagedInvocationRoot(): void {
         `Run canon from the main checkout instead:\n` +
         `  ${classification.mainRoot}\n` +
         `and let canon create the task's worktree. If you intend THIS directory to be\n` +
-        `canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.`,
+        `canon's managed worktrees root, set CANON_WORKTREES_ROOT accordingly.\n\n` +
+        `This also covers a worktree canon itself created under an earlier default\n` +
+        `worktrees-root location — to migrate it, move the directory under the\n` +
+        `current root shown above and, from the main checkout, run\n` +
+        `\`git worktree repair <new path>\` (the path argument is required for a moved worktree).`,
+    );
+}
+
+// Single-quote a path for a copy-paste shell command. Adopter repo paths can
+// contain spaces or shell metacharacters; every operator-facing remedy below
+// must survive being pasted verbatim.
+export function shellQuotePath(p: string): string {
+    return `'${p.replace(/'/g, `'\\''`)}'`;
+}
+
+export function assertTaskWorktreeWithinRoot(taskId: string): void {
+    if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
+    const resolved = resolveTaskCwd(taskId);
+    const canonicalResolved = canonicalizePath(resolved);
+    if (canonicalResolved === canonicalizePath(REPO_ROOT)) return;
+    const worktreesRoot = effectiveWorktreesRoot();
+    if (isPathInside(canonicalResolved, canonicalizePath(worktreesRoot))) return;
+    die(
+        `Task '${taskId}' resolves to a worktree outside canon's managed worktrees root:\n` +
+        `  ${resolved}\n\n` +
+        `Canon expects task worktrees under:\n` +
+        `  ${worktreesRoot}\n\n` +
+        `To run this task, either:\n` +
+        `  - move the directory to ${path.join(worktreesRoot, taskId)} and, from the main checkout, run\n` +
+        `      git worktree repair ${shellQuotePath(path.join(worktreesRoot, taskId))}\n` +
+        `    (bare \`git worktree repair\` does not find a moved linked worktree), or\n` +
+        `  - set CANON_WORKTREES_ROOT to the directory that CONTAINS this worktree\n` +
+        `      (${path.dirname(resolved)}), not to the worktree itself.\n`,
+    );
+}
+
+export function assertNoMissingCanonWorktrees(): void {
+    if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
+    const enumeration = listWorktreesWithBranches();
+    if (!enumeration.ok) {
+        die(`git worktree list failed: ${enumeration.stderr}`);
+    }
+    const missing = enumeration.worktrees.filter(
+        worktree => worktree.branch !== null && worktree.branch.startsWith('task/') && !fs.existsSync(worktree.path),
+    );
+    if (missing.length === 0) return;
+    die(
+        `The following canon task worktree(s) are registered with git but missing on disk:\n\n` +
+        missing.map(worktree =>
+            `  ${worktree.path}  (branch: ${worktree.branch})\n` +
+            `    - restore it:  git worktree add -f ${shellQuotePath(worktree.path)} ${worktree.branch}\n` +
+            `      (anything not yet committed to the branch was lost with the directory)\n` +
+            `    - or discard the registration:  git worktree remove --force ${shellQuotePath(worktree.path)}\n`,
+        ).join('\n') +
+        `\nCanon does not restore or discard these automatically — run one of the two\n` +
+        `commands above for each, then re-run.`,
     );
 }
 
 type WorktreeBranchEntry = { path: string; branch: string | null };
 type WorktreeEnumerationResult =
     | { ok: true; worktrees: WorktreeBranchEntry[] }
-    | { ok: false };
+    | { ok: false; stderr: string };
 
-function listWorktreesWithBranches(): WorktreeEnumerationResult {
+export function listWorktreesWithBranches(): WorktreeEnumerationResult {
     const result = spawnSync('git', ['worktree', 'list', '--porcelain'], {
         cwd: REPO_ROOT,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
     });
-    if (result.error || result.status !== 0) return { ok: false };
+    if (result.error || result.status !== 0) {
+        return {
+            ok: false,
+            stderr: result.error ? result.error.message : (result.stderr ?? '').trim(),
+        };
+    }
 
     const worktrees: WorktreeBranchEntry[] = [];
     let currentPath: string | null = null;
@@ -221,7 +281,7 @@ export function taskDirFor(taskId: string): string {
     // CANON_TASKS_DIR_OVERRIDE is the test-harness escape hatch — when set,
     // it MUST win over worktree resolution. Tests set this to a temp directory
     // and expect both reads and writes to land there regardless of any
-    // `dev-worktrees/<id>/` directory that happens to exist (test setup may
+    // task worktree directory that happens to exist (test setup may
     // construct fake worktree dirs to exercise resolveTaskCwd elsewhere).
     // Without this fast-path, the rewire would route to the worktree and
     // ignore the override, breaking AC-15's CANON_TASKS_DIR_OVERRIDE guarantee.

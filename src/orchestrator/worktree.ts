@@ -295,6 +295,8 @@ export function probeNodeModulesEntry(
 }
 
 export function ensureWorktree(taskId: string, branch: string, startPoint?: string): string {
+    const pruneResult = gitSafe('worktree', 'prune');
+    if (!pruneResult.ok) warn(`git worktree prune failed (continuing): ${pruneResult.stderr}`);
     if (!fs.existsSync(WORKTREES_ROOT)) {
         fs.mkdirSync(WORKTREES_ROOT, { recursive: true });
     }

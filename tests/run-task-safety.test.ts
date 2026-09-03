@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 
-import { REPO_ROOT } from '../src/orchestrator/env.js';
+import { REPO_ROOT, WORKTREES_ROOT } from '../src/orchestrator/env.js';
 import {
     buildHumanReviewStagePaths,
     classifyMergeOutcome,
@@ -28,6 +28,7 @@ import {
     isContainedIn,
     PIPELINE_MANAGED_DOCS,
     resolveWorkspaceDirs,
+    worktreePath,
 } from '../src/orchestrator/worktree.js';
 import { evaluateCodeReviewLoop } from '../src/orchestrator/review-loop.js';
 import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
@@ -35,6 +36,14 @@ import { taskCmd } from '../src/task/index.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+
+function canonicalizeTestPath(candidate: string): string {
+    try {
+        return fs.realpathSync(candidate);
+    } catch {
+        return path.resolve(candidate);
+    }
+}
 
 function withTempDir(prefix: string, fn: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -61,6 +70,14 @@ function setupFakeGit(scriptDir: string): void {
         '#!/bin/sh',
         'set -eu',
         'printf "%s\\n" "$*" >> "$FAKE_GIT_LOG"',
+        'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--git-common-dir" ] && [ -n "${FAKE_GIT_COMMON_DIR:-}" ]; then',
+        '  printf "%s\\n" "$FAKE_GIT_COMMON_DIR"',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--show-toplevel" ] && [ -n "${FAKE_GIT_ACTIVE_TOPLEVEL:-}" ]; then',
+        '  printf "%s\\n" "$FAKE_GIT_ACTIVE_TOPLEVEL"',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "rev-parse" ] && [ "${2:-}" = "--abbrev-ref" ] && [ "${3:-}" = "HEAD" ]; then',
         '  cat "$FAKE_GIT_CURRENT_BRANCH"',
         '  exit 0',
@@ -358,6 +375,76 @@ function setupInvocationLoggingCliTools(scriptDir: string): void {
     }
 }
 
+type FakeRunHarness = {
+    localDir: string;
+    tasksRoot: string;
+    fakeBins: string;
+    fakeGitDir: string;
+    gitLogPath: string;
+    currentBranchPath: string;
+};
+
+function makeFakeRunHarness(dir: string, taskId: string, status: Record<string, unknown>): FakeRunHarness {
+    const localDir = path.join(dir, 'repo');
+    const tasksRoot = path.join(localDir, 'tasks');
+    const fakeBins = path.join(dir, 'fake-bins');
+    const fakeGitDir = path.join(fakeBins, 'git-bin');
+    fs.mkdirSync(fakeGitDir, { recursive: true });
+    fs.mkdirSync(path.join(localDir, '.git'), { recursive: true });
+    setupFakeGit(fakeGitDir);
+    setupFakeCliTools(fakeBins);
+    writeTaskStatus(tasksRoot, taskId, status);
+    const currentBranchPath = path.join(dir, 'current-branch.txt');
+    fs.writeFileSync(currentBranchPath, 'main\n', 'utf8');
+    return {
+        localDir,
+        tasksRoot,
+        fakeBins,
+        fakeGitDir,
+        gitLogPath: path.join(dir, 'git.log'),
+        currentBranchPath,
+    };
+}
+
+function runFakeMain(
+    harness: FakeRunHarness,
+    taskId: string,
+    args: readonly string[] = [],
+    extraEnv: NodeJS.ProcessEnv = {},
+    cwd = harness.localDir,
+): { status: number | null; stderr: string; stdout: string } {
+    const env = childEnvWithoutTasksOverride({
+        PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        FAKE_GIT_LOG: harness.gitLogPath,
+        FAKE_GIT_COMMON_DIR: path.join(harness.localDir, '.git'),
+        FAKE_GIT_ACTIVE_TOPLEVEL: cwd,
+        FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
+        FAKE_GIT_BASE_BRANCH: 'main',
+        FAKE_GIT_TASK_BRANCH: `task/${taskId}`,
+        ...extraEnv,
+    });
+    return runMainInline(taskId, args, env, cwd);
+}
+
+function runRealMainWithFakeAgents(
+    taskId: string,
+    args: readonly string[],
+    localDir: string,
+    dir: string,
+    cwd = localDir,
+): { status: number | null; stderr: string; stdout: string } {
+    const fakeBins = path.join(dir, 'fake-agents');
+    fs.mkdirSync(fakeBins, { recursive: true });
+    setupFakeCliTools(fakeBins);
+    const env = childEnvWithoutTasksOverride({
+        PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        FAKE_AGENT_LOG: path.join(dir, 'agent-invocations.log'),
+        FAKE_AGENT_TASK_ID: taskId,
+    });
+    delete env.CANON_WORKTREES_ROOT;
+    return runMainInline(taskId, args, env, cwd);
+}
+
 function readAgentInvocations(logPath: string): string[] {
     if (!fs.existsSync(logPath)) return [];
     return fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
@@ -553,6 +640,48 @@ function runNodeInline(
     };
 }
 
+function runMainInline(
+    taskId: string,
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+    cwd: string,
+): { status: number | null; stderr: string; stdout: string } {
+    const mainModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href;
+    return runNodeInline([
+        `import(${JSON.stringify(mainModuleUrl)})`,
+        `.then(async m => { process.argv = ${JSON.stringify(['node', 'canon', taskId, ...args])}; await m.main(); })`,
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), { ...env, CANON_NO_DETACH: '1' }, cwd);
+}
+
+function runEnsureBranchInline(
+    taskId: string,
+    cwd: string,
+    worktreesRoot: string,
+): { status: number | null; stderr: string; stdout: string } {
+    const env = childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot });
+    const gitModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/git.ts')).href;
+    return runNodeInline([
+        `import(${JSON.stringify(gitModuleUrl)})`,
+        `.then(m => { m.ensureBranch([${JSON.stringify(taskId)}]); })`,
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), env, cwd);
+}
+
+function runEnsureBundleBranchInline(
+    taskIds: readonly string[],
+    cwd: string,
+    worktreesRoot: string,
+): { status: number | null; stderr: string; stdout: string } {
+    const env = childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot });
+    const gitModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/git.ts')).href;
+    return runNodeInline([
+        `import(${JSON.stringify(gitModuleUrl)})`,
+        `.then(m => { m.ensureBranch(${JSON.stringify(taskIds)}); })`,
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), env, cwd);
+}
+
 function childEnvWithoutTasksOverride(updates: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env, ...updates };
     delete env.CANON_TASKS_DIR_OVERRIDE;
@@ -576,6 +705,39 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     gitIn(localDir, 'commit', '-m', 'initial');
     gitIn(localDir, 'push', '-u', 'origin', 'main');
     return { localDir, originDir };
+}
+
+function makeOutOfRootTaskFixture(dir: string, taskId: string, linkedWorktree: string): {
+    localDir: string;
+    branch: string;
+} {
+    const { localDir } = makeGitFixture(dir);
+    const branch = `task/${taskId}`;
+    const mainStatus = { ...makeCompleteStatus(taskId, ''), worktree: true };
+    writeTaskStatus(path.join(localDir, 'tasks'), taskId, mainStatus);
+    gitIn(localDir, 'add', 'tasks');
+    gitIn(localDir, 'commit', '-m', `add ${taskId} task artifacts`);
+    fs.mkdirSync(path.dirname(linkedWorktree), { recursive: true });
+    gitIn(localDir, 'worktree', 'add', '-q', '-b', branch, linkedWorktree, 'main');
+    writeTaskStatus(path.join(linkedWorktree, 'tasks'), taskId, { ...mainStatus, branch });
+    return { localDir, branch };
+}
+
+function makeBootstrappedTaskWorktreeFixture(dir: string, taskId: string): {
+    localDir: string;
+    worktreeDir: string;
+    branch: string;
+} {
+    const { localDir } = makeGitFixture(dir);
+    const branch = `task/${taskId}`;
+    const status = { ...makeCompleteStatus(taskId, ''), worktree: true };
+    writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+    gitIn(localDir, 'add', 'tasks');
+    gitIn(localDir, 'commit', '-m', `add ${taskId} task artifacts`);
+    const worktreeDir = path.join(localDir, '.canon', 'worktrees', taskId);
+    const setup = runEnsureBranchInline(taskId, localDir, path.join(localDir, '.canon', 'worktrees'));
+    assert.equal(setup.status, 0, setup.stderr);
+    return { localDir, worktreeDir, branch };
 }
 
 function makeNodeModulesGateFixture(
@@ -1100,13 +1262,16 @@ function runEnsureWorktreeInline(
     taskId: string,
     branch: string,
     cwd: string,
-    worktreesRoot: string,
+    worktreesRoot?: string,
 ): { status: number | null; stderr: string; stdout: string } {
+    const env = childEnvWithoutTasksOverride();
+    if (worktreesRoot === undefined) delete env.CANON_WORKTREES_ROOT;
+    else env.CANON_WORKTREES_ROOT = worktreesRoot;
     return runNodeInline([
         `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/worktree.ts')).href)})`,
         `.then(m => { m.ensureWorktree(${JSON.stringify(taskId)}, ${JSON.stringify(branch)}); })`,
         `.catch(err => { console.error(err); process.exit(1); });`,
-    ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), cwd);
+    ].join('\n'), env, cwd);
 }
 
 function runIsExemptNodeModulesEntryInline(
@@ -1123,13 +1288,16 @@ function runIsExemptNodeModulesEntryInline(
 function runTeardownWorktreeInline(
     taskId: string,
     cwd: string,
-    worktreesRoot: string,
+    worktreesRoot?: string,
 ): { status: number | null; stderr: string; stdout: string } {
+    const env = childEnvWithoutTasksOverride();
+    if (worktreesRoot === undefined) delete env.CANON_WORKTREES_ROOT;
+    else env.CANON_WORKTREES_ROOT = worktreesRoot;
     return runNodeInline([
         `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/worktree.ts')).href)})`,
         `.then(m => { m.teardownWorktree(${JSON.stringify(taskId)}); })`,
         `.catch(err => { console.error(err); process.exit(1); });`,
-    ].join('\n'), childEnvWithoutTasksOverride({ CANON_WORKTREES_ROOT: worktreesRoot }), cwd);
+    ].join('\n'), env, cwd);
 }
 
 function writeImplementEvidenceFixture(tasksRoot: string, taskId: string, handoffChanges: readonly string[]): void {
@@ -1587,7 +1755,7 @@ void test('ensureBranch bypasses dirty source guard when worktree branch is alre
             '',
         ].join('\n'), 'utf8');
 
-        withFakeGitEnv({
+        const result = withFakeGitEnv({
             PATH: `${fakeGitDir}${path.delimiter}${process.env.PATH ?? ''}`,
             FAKE_GIT_LOG: logPath,
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
@@ -1597,9 +1765,11 @@ void test('ensureBranch bypasses dirty source guard when worktree branch is alre
             FAKE_GIT_WORKTREE_LIST_FILE: worktreeListFile,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
             CANON_WORKTREES_ROOT: worktreesRoot,
-        }, () => {
-            ensureBranch([taskId]);
-        });
+        }, env => runNodeInline([
+            "import { ensureBranch } from './src/orchestrator/git.js';",
+            `ensureBranch(${JSON.stringify([taskId])});`,
+        ].join('\n'), env));
+        assert.equal(result.status, 0, result.stderr);
 
         const log = fs.readFileSync(logPath, 'utf8');
         assert.doesNotMatch(log, /status --porcelain=v1 -uall/);
@@ -3412,6 +3582,299 @@ void test('ensureWorktree creates and reuses canon node_modules symlinks without
             }
         });
     }
+});
+
+void test('ensureWorktree prunes a hand-deleted worktree before reusing its branch', () => {
+    withTempDir('run-task-ensure-wt-prune-', dir => {
+        const taskId = 'task-prune';
+        const { localDir, worktreesRoot, worktreeDir, branch } =
+            makeEnsureWorktreeNodeModulesFixture(dir, taskId, 'missing');
+
+        const first = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(first.status, 0, first.stderr);
+        assert.equal(fs.existsSync(worktreeDir), true);
+        fs.rmSync(worktreeDir, { recursive: true, force: true });
+        const staleList = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        const canonicalWorktreeDir = path.join(canonicalizeTestPath(worktreesRoot), taskId);
+        assert.match(staleList, new RegExp(`worktree ${canonicalWorktreeDir.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}`));
+
+        const second = runEnsureWorktreeInline(taskId, branch, localDir, worktreesRoot);
+        assert.equal(second.status, 0, second.stderr);
+        assert.equal(fs.existsSync(worktreeDir), true);
+        const repairedList = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.doesNotMatch(repairedList, /prunable/);
+    });
+});
+
+void test('canon run refuses a hand-deleted registered canon worktree', () => {
+    withTempDir('run-task-missing-canon-worktree-', dir => {
+        const taskId = 'missing-canon-worktree';
+        const { localDir, worktreeDir, branch } = makeBootstrappedTaskWorktreeFixture(dir, taskId);
+        const mainStatusPath = path.join(localDir, 'tasks', taskId, 'status.json');
+        const worktreeStatusPath = path.join(worktreeDir, 'tasks', taskId, 'status.json');
+        const mainStatus = JSON.parse(fs.readFileSync(mainStatusPath, 'utf8')) as { branch: string; worktree: boolean };
+        const worktreeStatus = JSON.parse(fs.readFileSync(worktreeStatusPath, 'utf8')) as {
+            branch: string;
+            phases: Record<string, { status: string }>;
+        };
+        assert.equal(mainStatus.branch, '');
+        assert.equal(worktreeStatus.branch, branch);
+        worktreeStatus.phases.implement.status = 'done';
+        worktreeStatus.phases.code_review.status = 'pending';
+        fs.writeFileSync(worktreeStatusPath, `${JSON.stringify(worktreeStatus, null, 2)}\n`, 'utf8');
+        fs.rmSync(worktreeDir, { recursive: true, force: true });
+        const before = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: localDir, encoding: 'utf8' });
+        assert.match(before, new RegExp(`worktree .*${taskId}`));
+
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const result = runMainInline(taskId, [], env, localDir);
+        const output = combinedOutput(result);
+        assert.notEqual(result.status, 0);
+        assert.ok(output.includes(canonicalizeTestPath(worktreeDir)));
+        assert.match(output, new RegExp(`branch: ${branch.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}`));
+        assert.match(output, /git worktree add -f/);
+        assert.match(output, /git worktree remove --force/);
+        assert.doesNotMatch(output, /ENOENT|\n\s+at .*\(/);
+        const after = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: localDir, encoding: 'utf8' });
+        assert.match(after, new RegExp(`worktree .*${taskId}`));
+        for (const runtimeFile of ['.canon-pid', '.heartbeat.json', '.canon-run.log']) {
+            assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, runtimeFile)), false);
+            assert.equal(fs.existsSync(path.join(worktreeDir, 'tasks', taskId, runtimeFile)), false);
+        }
+    });
+});
+
+void test('canon run refuses a hand-deleted registered canon worktree after reroute', () => {
+    withTempDir('run-task-missing-rerouted-worktree-', dir => {
+        const taskId = 'missing-rerouted-worktree';
+        const { localDir, worktreeDir, branch } = makeBootstrappedTaskWorktreeFixture(dir, taskId);
+        const worktreeStatusPath = path.join(worktreeDir, 'tasks', taskId, 'status.json');
+        const worktreeStatus = JSON.parse(fs.readFileSync(worktreeStatusPath, 'utf8')) as {
+            phases: { implement: { status: string; rerouted?: boolean }; code_review: { status: string } };
+        };
+        worktreeStatus.phases.implement.status = 'pending';
+        worktreeStatus.phases.implement.rerouted = true;
+        worktreeStatus.phases.code_review.status = 'pending';
+        fs.writeFileSync(worktreeStatusPath, `${JSON.stringify(worktreeStatus, null, 2)}\n`, 'utf8');
+        fs.rmSync(worktreeDir, { recursive: true, force: true });
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const result = runMainInline(taskId, [], env, localDir);
+        const output = combinedOutput(result);
+        assert.notEqual(result.status, 0);
+        assert.ok(output.includes(canonicalizeTestPath(worktreeDir)));
+        assert.match(output, new RegExp(`branch: ${branch.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}`));
+        assert.match(output, /git worktree add -f/);
+        assert.match(output, /git worktree remove --force/);
+        assert.doesNotMatch(output, /ENOENT|\n\s+at .*\(/);
+    });
+});
+
+void test('missing-worktree refusal clears after restoring the registered checkout', () => {
+    withTempDir('run-task-missing-restore-', dir => {
+        const taskId = 'missing-restore';
+        const { localDir, worktreeDir, branch } = makeBootstrappedTaskWorktreeFixture(dir, taskId);
+        fs.rmSync(worktreeDir, { recursive: true, force: true });
+        gitIn(localDir, 'worktree', 'add', '-f', worktreeDir, branch);
+        const result = runRealMainWithFakeAgents(taskId, [], localDir, dir);
+        assert.doesNotMatch(combinedOutput(result), /registered with git but missing on disk/);
+        gitIn(localDir, 'worktree', 'remove', '--force', worktreeDir);
+    });
+});
+
+void test('missing-worktree refusal clears after discarding the registration', () => {
+    withTempDir('run-task-missing-discard-', dir => {
+        const taskId = 'missing-discard';
+        const { localDir, worktreeDir } = makeBootstrappedTaskWorktreeFixture(dir, taskId);
+        fs.rmSync(worktreeDir, { recursive: true, force: true });
+        gitIn(localDir, 'worktree', 'remove', '--force', worktreeDir);
+        const result = runRealMainWithFakeAgents(taskId, [], localDir, dir);
+        assert.doesNotMatch(combinedOutput(result), /registered with git but missing on disk/);
+    });
+});
+
+void test('an existing task branch without a worktree registration is not a missing-worktree refusal', () => {
+    withTempDir('run-task-orphan-branch-', dir => {
+        const taskId = 'orphan-branch';
+        const { localDir } = makeGitFixture(dir);
+        const status = { ...makeCompleteStatus(taskId, ''), worktree: true } as Record<string, unknown>;
+        const phases = status.phases as Record<string, Record<string, unknown>>;
+        phases.implement.status = 'pending';
+        phases.code_review.status = 'pending';
+        status.status = 'implement';
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', `add ${taskId} task artifacts`);
+        gitIn(localDir, 'branch', `task/${taskId}`, 'main');
+
+        const result = runEnsureBranchInline(taskId, localDir, path.join(localDir, '.canon', 'worktrees'));
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(fs.existsSync(path.join(localDir, '.canon', 'worktrees', taskId)), true);
+        gitIn(localDir, 'worktree', 'remove', '--force', path.join(localDir, '.canon', 'worktrees', taskId));
+        gitIn(localDir, 'branch', '-D', `task/${taskId}`);
+    });
+});
+
+void test('an intact in-root custom worktree is not a missing-worktree refusal', () => {
+    withTempDir('run-task-intact-in-root-', dir => {
+        const taskId = 'intact-in-root';
+        const linkedWorktree = path.join(dir, 'local', '.canon', 'worktrees', 'custom-name');
+        const { localDir } = makeOutOfRootTaskFixture(dir, taskId, linkedWorktree);
+        const result = runRealMainWithFakeAgents(taskId, [], localDir, dir);
+        assert.doesNotMatch(combinedOutput(result), /registered with git but missing on disk/);
+        gitIn(localDir, 'worktree', 'remove', '--force', linkedWorktree);
+    });
+});
+
+void test('a missing non-task worktree registration is ignored by the canon detector', () => {
+    withTempDir('run-task-missing-operator-worktree-', dir => {
+        const taskId = 'missing-operator-worktree';
+        const { localDir } = makeGitFixture(dir);
+        const status = { ...makeCompleteStatus(taskId, ''), worktree: false };
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', `add ${taskId} task artifacts`);
+        const operatorWorktree = path.join(dir, 'operator-worktree');
+        gitIn(localDir, 'worktree', 'add', '-b', 'feature/operator-worktree', operatorWorktree, 'main');
+        fs.rmSync(operatorWorktree, { recursive: true, force: true });
+        const result = runRealMainWithFakeAgents(taskId, [], localDir, dir);
+        assert.doesNotMatch(combinedOutput(result), /registered with git but missing on disk/);
+    });
+});
+
+void test('a missing worktree for another task refuses the current task run', () => {
+    withTempDir('run-task-missing-other-worktree-', dir => {
+        const otherId = 'other-missing';
+        const currentId = 'current-task';
+        const { localDir } = makeGitFixture(dir);
+        writeTaskStatus(path.join(localDir, 'tasks'), currentId, makeCompleteStatus(currentId, ''));
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', `add ${currentId} task artifacts`);
+        const otherWorktree = path.join(dir, 'other-worktree');
+        gitIn(localDir, 'worktree', 'add', '-b', `task/${otherId}`, otherWorktree, 'main');
+        fs.rmSync(otherWorktree, { recursive: true, force: true });
+        const result = runMainInline(currentId, [], childEnvWithoutTasksOverride(), localDir);
+        const output = combinedOutput(result);
+        assert.notEqual(result.status, 0);
+        assert.ok(output.includes(canonicalizeTestPath(otherWorktree)));
+        assert.match(output, new RegExp(`branch: task/${otherId}`));
+    });
+});
+
+void test('bundle runs with an intact leader worktree and refuses after the leader is deleted', () => {
+    withTempDir('run-task-missing-bundle-leader-', dir => {
+        const leaderId = 'bundle-leader-missing';
+        const secondaryId = 'bundle-secondary-missing';
+        const { localDir } = makeGitFixture(dir);
+        writeTaskStatus(path.join(localDir, 'tasks'), leaderId, { ...makeCompleteStatus(leaderId, ''), worktree: true });
+        writeTaskStatus(path.join(localDir, 'tasks'), secondaryId, { ...makeCompleteStatus(secondaryId, ''), worktree: true });
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', 'add bundle task artifacts');
+        const worktreesRoot = path.join(localDir, '.canon', 'worktrees');
+        const setup = runEnsureBundleBranchInline([leaderId, secondaryId], localDir, worktreesRoot);
+        assert.equal(setup.status, 0, setup.stderr);
+        const leaderWorktree = path.join(worktreesRoot, leaderId);
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const intact = runRealMainWithFakeAgents(
+            leaderId,
+            [secondaryId],
+            localDir,
+            dir,
+        );
+        assert.doesNotMatch(combinedOutput(intact), /registered with git but missing on disk/);
+
+        fs.rmSync(leaderWorktree, { recursive: true, force: true });
+        for (const taskIds of [[leaderId, secondaryId], [secondaryId]] as const) {
+            const result = runMainInline(taskIds[0], taskIds.slice(1), env, localDir);
+            const output = combinedOutput(result);
+            assert.notEqual(result.status, 0);
+            assert.ok(output.includes(canonicalizeTestPath(leaderWorktree)));
+            assert.match(output, new RegExp(`branch: task/${leaderId}`));
+        }
+    });
+});
+
+void test('entry detection skips dry-run and ship, and never prunes at entry', () => {
+    for (const args of [['--dry-run'], ['--ship']] as const) {
+        withTempDir(`run-task-entry-scope-${args[0].slice(2)}-`, dir => {
+            const taskId = `entry-scope-${args[0].slice(2)}`;
+            const harness = makeFakeRunHarness(dir, taskId, makeCompleteStatus(taskId, ''));
+            const result = runFakeMain(harness, taskId, args);
+            assert.doesNotMatch(fs.existsSync(harness.gitLogPath) ? fs.readFileSync(harness.gitLogPath, 'utf8') : '', /worktree list --porcelain/);
+            assert.doesNotMatch(fs.existsSync(harness.gitLogPath) ? fs.readFileSync(harness.gitLogPath, 'utf8') : '', /worktree prune/);
+            assert.equal(result.status === null, false);
+        });
+    }
+});
+
+void test('invocation-root refusal runs before missing-worktree detection', () => {
+    withTempDir('run-task-entry-invocation-order-', dir => {
+        const taskId = 'entry-invocation-order';
+        const harness = makeFakeRunHarness(dir, taskId, makeCompleteStatus(taskId, ''));
+        const oldWorktree = path.join(dir, 'old-worktree');
+        fs.mkdirSync(oldWorktree, { recursive: true });
+        const result = runFakeMain(harness, taskId, [], {}, oldWorktree);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /Canon was invoked from a linked git worktree it does not manage/);
+        const log = fs.existsSync(harness.gitLogPath) ? fs.readFileSync(harness.gitLogPath, 'utf8') : '';
+        assert.doesNotMatch(log, /worktree list --porcelain/);
+    });
+});
+
+void test('entry worktree enumeration failure refuses closed with git stderr', () => {
+    withTempDir('run-task-entry-enumeration-failure-', dir => {
+        const taskId = 'entry-enumeration-failure';
+        const harness = makeFakeRunHarness(dir, taskId, makeCompleteStatus(taskId, ''));
+        const result = runFakeMain(harness, taskId, [], { FAKE_GIT_WORKTREE_LIST_FAIL: '1' });
+        const output = combinedOutput(result);
+        assert.notEqual(result.status, 0);
+        assert.match(output, /git worktree list failed/);
+        assert.match(output, /simulated worktree list failure/);
+        for (const runtimeFile of ['.canon-pid', '.heartbeat.json', '.canon-run.log']) {
+            assert.equal(fs.existsSync(path.join(harness.tasksRoot, taskId, runtimeFile)), false);
+        }
+    });
+});
+
+void test('ensureWorktree creates and tears down the default in-repo worktree cleanly', () => {
+    withTempDir('run-task-ensure-wt-default-root-', dir => {
+        const taskId = 'task-default-root';
+        const { localDir } = makeGitFixture(dir);
+        fs.writeFileSync(path.join(localDir, '.gitignore'), 'node_modules\n.env*\n.canon/worktrees/\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'package.json'), '{"name":"fixture"}\n', 'utf8');
+        gitIn(localDir, 'add', '.gitignore', 'package.json');
+        gitIn(localDir, 'commit', '-m', 'add canon runtime ignores');
+        fs.mkdirSync(path.join(localDir, 'node_modules'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'node_modules', 'marker.txt'), 'root install\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, '.env.test'), 'VALUE=1\n', 'utf8');
+
+        const branch = `task/${taskId}`;
+        const expectedWorktree = path.join(localDir, '.canon', 'worktrees', taskId);
+        const setup = runEnsureWorktreeInline(taskId, branch, localDir);
+        assert.equal(setup.status, 0, setup.stderr);
+        assert.equal(fs.existsSync(expectedWorktree), true);
+        assert.equal(fs.lstatSync(path.join(expectedWorktree, 'node_modules')).isSymbolicLink(), true);
+        assert.equal(fs.lstatSync(path.join(expectedWorktree, '.env.test')).isSymbolicLink(), true);
+
+        const registered = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: localDir, encoding: 'utf8' });
+        assert.match(registered, new RegExp(`worktree ${canonicalizeTestPath(expectedWorktree).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}`));
+        assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: localDir, encoding: 'utf8' }), '');
+
+        const teardown = runTeardownWorktreeInline(taskId, localDir);
+        assert.equal(teardown.status, 0, teardown.stderr);
+        assert.equal(fs.existsSync(expectedWorktree), false);
+        const afterTeardown = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: localDir, encoding: 'utf8' });
+        assert.doesNotMatch(afterTeardown, /task\/task-default-root/);
+        assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: localDir, encoding: 'utf8' }), '');
+    });
 });
 
 void test('ensureWorktree fails closed on a wrong-target node_modules symlink', () => {
@@ -7305,6 +7768,7 @@ void test('main die exits write a marker whose reason contains the die message',
         ].join('\n'), {
             ...process.env,
             PATH: `${fakeBins}:${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: path.join(dir, 'tasks'),
         });
 
         assert.equal(result.status, 1, result.stderr);
@@ -7618,6 +8082,33 @@ void test('classifyInvocationRoot: a sibling that only shares a path prefix with
     assert.equal(result.kind, 'foreign-worktree');
 });
 
+void test('classifyInvocationRoot: main checkout remains main with an in-repo worktrees root', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: '/repo',
+        mainRoot: '/repo',
+        worktreesRoot: '/repo/.canon/worktrees',
+    });
+    assert.deepEqual(result, { kind: 'main' });
+});
+
+void test('classifyInvocationRoot: in-repo worktree is managed under the nested root', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: '/repo/.canon/worktrees/task-a',
+        mainRoot: '/repo',
+        worktreesRoot: '/repo/.canon/worktrees',
+    });
+    assert.deepEqual(result, { kind: 'canon-worktree', activeRoot: '/repo/.canon/worktrees/task-a' });
+});
+
+void test('classifyInvocationRoot: in-repo root prefix sibling remains foreign', () => {
+    const result = classifyInvocationRoot({
+        activeToplevel: '/repo/.canon/worktrees-evil/task-a',
+        mainRoot: '/repo',
+        worktreesRoot: '/repo/.canon/worktrees',
+    });
+    assert.equal(result.kind, 'foreign-worktree');
+});
+
 void test('classifyInvocationRoot: unknown when git reports no toplevel (non-git tree)', () => {
     const result = classifyInvocationRoot({
         activeToplevel: null,
@@ -7683,6 +8174,205 @@ void test('classifyInvocationRoot: real linked worktree classifies foreign vs ca
     });
 });
 
+void test('assertManagedInvocationRoot: accepts the main checkout and an in-repo linked worktree', () => {
+    withTempDir('run-task-202-in-repo-worktree-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const linkedWorktree = path.join(localDir, '.canon', 'worktrees', 'custom-name');
+        gitIn(localDir, 'worktree', 'add', '-q', '-b', 'feature/in-repo', linkedWorktree, 'main');
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const stateModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/state.ts')).href;
+        try {
+            const fromWorktree = runNodeInline([
+                `import(${JSON.stringify(stateModuleUrl)})`,
+                '.then(m => m.assertManagedInvocationRoot())',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('\n'), env, linkedWorktree);
+            assert.equal(fromWorktree.status, 0, fromWorktree.stderr);
+
+            const fromMain = runNodeInline([
+                `import(${JSON.stringify(stateModuleUrl)})`,
+                '.then(m => m.assertManagedInvocationRoot())',
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('\n'), env, localDir);
+            assert.equal(fromMain.status, 0, fromMain.stderr);
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', linkedWorktree], {
+                cwd: localDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('resolveTaskCwd remains location-blind for an out-of-root linked worktree', () => {
+    withTempDir('run-task-safety-out-of-root-resolution-', dir => {
+        const linkedWorktree = path.join(dir, 'legacy-worktree');
+        const { localDir } = makeOutOfRootTaskFixture(dir, 'legacy-resolution', linkedWorktree);
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const stateModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/state.ts')).href;
+        try {
+            const result = runNodeInline([
+                `import(${JSON.stringify(stateModuleUrl)})`,
+                `.then(m => console.log(m.resolveTaskCwd(${JSON.stringify('legacy-resolution')})))`,
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('\n'), env, localDir);
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(canonicalizeTestPath(result.stdout.trim()), canonicalizeTestPath(linkedWorktree));
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', linkedWorktree], {
+                cwd: localDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('main refuses canon run before writing runtime files for an out-of-root worktree', () => {
+    withTempDir('run-task-safety-run-out-of-root-', dir => {
+        const taskId = 'run-out-of-root';
+        const linkedWorktree = path.join(dir, 'legacy-worktree');
+        const { localDir } = makeOutOfRootTaskFixture(dir, taskId, linkedWorktree);
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        try {
+            const result = runMainInline(taskId, [], env, localDir);
+            const output = combinedOutput(result);
+            assert.notEqual(result.status, 0);
+            assert.match(output, /resolves to a worktree outside canon's managed worktrees root/);
+            assert.ok(output.includes(canonicalizeTestPath(linkedWorktree)));
+            assert.ok(output.includes(canonicalizeTestPath(path.join(localDir, '.canon', 'worktrees'))));
+            assert.match(output, /move the directory .* run\n\s+git worktree repair '/);
+            assert.match(output, /set CANON_WORKTREES_ROOT to the directory that CONTAINS this worktree/);
+            for (const runtimeFile of ['.canon-pid', '.heartbeat.json']) {
+                assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, runtimeFile)), false);
+                assert.equal(fs.existsSync(path.join(linkedWorktree, 'tasks', taskId, runtimeFile)), false);
+            }
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', linkedWorktree], {
+                cwd: localDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('main --ship skips the out-of-root run refusal', () => {
+    withTempDir('run-task-safety-ship-out-of-root-', dir => {
+        const taskId = 'ship-out-of-root';
+        const linkedWorktree = path.join(dir, 'legacy-worktree');
+        const { localDir } = makeOutOfRootTaskFixture(dir, taskId, linkedWorktree);
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        try {
+            const result = runMainInline(taskId, ['--ship'], env, localDir);
+            assert.doesNotMatch(combinedOutput(result), /resolves to a worktree outside canon's managed worktrees root/);
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', linkedWorktree], {
+                cwd: localDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('main allows an in-root worktree with a non-default directory name past the guard', () => {
+    withTempDir('run-task-safety-run-in-root-', dir => {
+        const taskId = 'run-in-root';
+        const linkedWorktree = path.join(dir, 'local', '.canon', 'worktrees', 'custom-name');
+        const { localDir } = makeOutOfRootTaskFixture(dir, taskId, linkedWorktree);
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        try {
+            const result = runMainInline(taskId, ['--dry-run'], env, localDir);
+            assert.equal(result.status, 0, result.stderr);
+            assert.doesNotMatch(combinedOutput(result), /resolves to a worktree outside canon's managed worktrees root/);
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', linkedWorktree], {
+                cwd: localDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('main allows a fresh worktree task with no worktree yet past the guard', () => {
+    withTempDir('run-task-safety-run-no-worktree-', dir => {
+        const taskId = 'run-no-worktree';
+        const { localDir } = makeGitFixture(dir);
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, { ...makeCompleteStatus(taskId, ''), worktree: true });
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const result = runMainInline(taskId, ['--dry-run'], env, localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(combinedOutput(result), /resolves to a worktree outside canon's managed worktrees root/);
+    });
+});
+
+void test('task commands from an unmigrated worktree use the invocation-root refusal', () => {
+    withTempDir('run-task-safety-task-out-of-root-', dir => {
+        const taskId = 'task-out-of-root';
+        const linkedWorktree = path.join(dir, 'legacy-worktree');
+        const { localDir } = makeOutOfRootTaskFixture(dir, taskId, linkedWorktree);
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const taskModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/task/index.ts')).href;
+        try {
+            const result = runNodeInline([
+                `import(${JSON.stringify(taskModuleUrl)})`,
+                `.then(m => m.taskCmd(['status', ${JSON.stringify(taskId)}]))`,
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('\n'), env, linkedWorktree);
+            const output = combinedOutput(result);
+            assert.notEqual(result.status, 0);
+            assert.ok(output.includes(canonicalizeTestPath(linkedWorktree)));
+            assert.ok(output.includes(canonicalizeTestPath(path.join(localDir, '.canon', 'worktrees'))));
+            assert.match(output, /This also covers a worktree canon itself created under an earlier default/);
+            assert.doesNotMatch(output, /dev-worktrees/);
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', linkedWorktree], {
+                cwd: localDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
+void test('task mutations from the main checkout still target an unmigrated worktree', () => {
+    withTempDir('run-task-safety-task-main-routing-', dir => {
+        const taskId = 'task-main-routing';
+        const linkedWorktree = path.join(dir, 'legacy-worktree');
+        const { localDir } = makeOutOfRootTaskFixture(dir, taskId, linkedWorktree);
+        const env = childEnvWithoutTasksOverride();
+        delete env.CANON_WORKTREES_ROOT;
+        const taskModuleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/task/index.ts')).href;
+        const mainStatusPath = path.join(localDir, 'tasks', taskId, 'status.json');
+        const worktreeStatusPath = path.join(linkedWorktree, 'tasks', taskId, 'status.json');
+        const mainBefore = fs.readFileSync(mainStatusPath, 'utf8');
+        const worktreeBefore = fs.readFileSync(worktreeStatusPath, 'utf8');
+        try {
+            const result = runNodeInline([
+                `import(${JSON.stringify(taskModuleUrl)})`,
+                `.then(m => m.taskCmd(['phase', ${JSON.stringify(taskId)}, 'implement', 'in_progress']))`,
+                '.catch(err => { console.error(err); process.exit(1); });',
+            ].join('\n'), env, localDir);
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(fs.readFileSync(mainStatusPath, 'utf8'), mainBefore);
+            assert.notEqual(fs.readFileSync(worktreeStatusPath, 'utf8'), worktreeBefore);
+            const worktreeStatus = JSON.parse(fs.readFileSync(worktreeStatusPath, 'utf8')) as {
+                phases: { implement: { status: string } };
+            };
+            assert.equal(worktreeStatus.phases.implement.status, 'in_progress');
+        } finally {
+            spawnSync('git', ['worktree', 'remove', '--force', linkedWorktree], {
+                cwd: localDir,
+                encoding: 'utf8',
+            });
+        }
+    });
+});
+
 void test('effectiveWorktreesRoot: relative CANON_WORKTREES_ROOT anchors on REPO_ROOT, not cwd', () => {
     // Regression for the guard falsely rejecting canon's own agents: an agent
     // runs task commands from inside a managed worktree, so process.cwd() is the
@@ -7703,4 +8393,18 @@ void test('effectiveWorktreesRoot: relative CANON_WORKTREES_ROOT anchors on REPO
             else process.env.CANON_WORKTREES_ROOT = prevEnv;
         }
     });
+});
+
+void test('worktree roots default to the in-repo .canon/worktrees directory', () => {
+    const previous = process.env.CANON_WORKTREES_ROOT;
+    try {
+        delete process.env.CANON_WORKTREES_ROOT;
+        const expectedRoot = canonicalizeTestPath(path.join(REPO_ROOT, '.canon/worktrees'));
+        assert.equal(canonicalizeTestPath(WORKTREES_ROOT), expectedRoot);
+        assert.equal(canonicalizeTestPath(effectiveWorktreesRoot()), expectedRoot);
+        assert.equal(canonicalizeTestPath(worktreePath('x')), canonicalizeTestPath(path.join(expectedRoot, 'x')));
+    } finally {
+        if (previous === undefined) delete process.env.CANON_WORKTREES_ROOT;
+        else process.env.CANON_WORKTREES_ROOT = previous;
+    }
 });

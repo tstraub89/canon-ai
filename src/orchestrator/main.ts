@@ -29,13 +29,11 @@ import { taskPhase } from '../../src/task/index.js';
 const REPO_ROOT = splitEnv.REPO_ROOT;
 const TASKS_DIR = splitEnv.TASKS_DIR;
 
-// Worktree root location. Default is a sibling directory `../dev-worktrees`
-// (keeps task worktrees out of the main repo's working tree). Override via
-// CANON_WORKTREES_ROOT env var — useful when the sibling layout doesn't fit
-// (e.g., monorepos, nested checkouts, projects that prefer in-tree worktrees).
-// If you change this, also update `additionalDirectories` in
-// `.claude/settings.json` to match — Claude Code's permission boundary needs
-// the same path the orchestrator writes to.
+// Worktree root location. Default is the in-repo `.canon/worktrees/` directory.
+// Override via CANON_WORKTREES_ROOT env var when a different layout fits better
+// (e.g., monorepos or nested checkouts). If you change this, also update
+// `additionalDirectories` in `.claude/settings.json` to match — Claude Code's
+// permission boundary needs the same path the orchestrator writes to.
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const PHASE_ORDER = splitTypes.PHASE_ORDER;
@@ -3450,8 +3448,16 @@ export async function main(): Promise<void> {
     process.env.RUN_TASK_ORCHESTRATOR = '1';
     cliArgs = splitCli.parseArgs(process.argv.slice(2));
     splitState.assertManagedInvocationRoot();
+    if (!cliArgs.ship && !cliArgs.dryRun) {
+        splitState.assertNoMissingCanonWorktrees();
+    }
     splitEnv.warnLegacyEnvVars();
     splitEnv.warnWorktreesRootMismatch();
+    if (!cliArgs.ship) {
+        for (const taskId of cliArgs.taskIds) {
+            splitState.assertTaskWorktreeWithinRoot(taskId);
+        }
+    }
     const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
     checkDeps(cliArgs.taskIds, skipAgentDeps);
 

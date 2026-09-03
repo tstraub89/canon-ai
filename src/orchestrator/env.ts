@@ -29,8 +29,8 @@ function resolveRepoRoot(): string {
         // stays anchored at the supervising main checkout even when the
         // orchestrator (or a unit test) is invoked from inside a linked
         // worktree. `--show-toplevel` returns the active worktree path, which
-        // makes `WORKTREES_ROOT = REPO_ROOT/../dev-worktrees` resolve to the
-        // wrong sibling tree and otherwise inverts the supervisor-vs-worktree
+        // makes the default in-repo `WORKTREES_ROOT` resolve from the supervising
+        // checkout and otherwise inverts the supervisor-vs-worktree
         // contract. Worktree-aware task-state reads/writes go through
         // `resolveTaskCwd(taskId)` (state.ts) — that's the canonical seam for
         // "where does the task's code currently live"; REPO_ROOT is for
@@ -65,7 +65,7 @@ export const TASKS_DIR = path.join(REPO_ROOT, 'tasks');
 // in lockstep with effectiveWorktreesRoot() in state.ts.
 export const WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT
     ? path.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT)
-    : path.resolve(REPO_ROOT, '../dev-worktrees');
+    : path.resolve(REPO_ROOT, '.canon/worktrees');
 
 export const STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1000;
 export const STALL_KILL_GRACE_MS = 3000;

@@ -214,3 +214,98 @@ No data migration — `status.json` schema is unchanged (Design § Data Model Ch
 - adopters who already migrated (moved worktrees under `.canon/worktrees/`) would need to move them back or set `CANON_WORKTREES_ROOT` explicitly to keep working — document this only if a revert actually becomes necessary, not preemptively.
 - the gitignore pattern addition is harmless to leave in place even after a revert (an unused ignore pattern is a no-op).
 - this ships as a 3.0.0 rider per the spec; a revert before that release cuts is a plain branch revert with no adopter-visible history to unwind.
+
+## Reroute Plan
+
+### Context
+
+The amendment (spec.md `## Amendment`) replaces one promise the original plan made and adds a new mechanism alongside it. It does **not** touch Steps 1, 4–9 above — those stand as implemented (confirmed against the current tree: `env.ts`'s in-repo default, the `.gitignore` pattern, docs, changelog scaffolding, and dist rebuild are all in place per `handoff.md`'s AC-1–AC-13 coverage).
+
+What changes:
+- **Step 2's prune call is unchanged code, but its promise is narrowed.** `ensureWorktree()`'s `git worktree prune` (`worktree.ts:298-299`) still runs, still fail-soft, still fixes AC-5's create-path bug. What's gone is treating it as the operator-facing recovery story for a hand-deleted worktree — that promise now belongs to the new entry refusal below, which fires first for the case that actually worried the review (a task not currently mid-`implement`).
+- **Step 3's guard (`assertTaskWorktreeWithinRoot`, `state.ts:124-139`, called from `main.ts:3453-3457`) is functionally unchanged** — it still refuses only an out-of-root worktree. It gets a new sibling check ahead of it in `main()`, not a rewrite.
+- **New mechanism (AC-14/AC-15/AC-16): refuse at the `canon run` entry, repo-wide, whenever any *registered* canon worktree (branch matching `task/*`) has no directory on disk.** This is orthogonal to Step 3's out-of-root check — it fires regardless of where the missing worktree was registered, and regardless of which task IDs the current invocation names (five amendment-review rounds converged on repo-wide detection specifically because a bundle secondary or an unrelated task's stale registration can silently misdirect resolution for *this* run; see spec.md's "documented secondary-only boundary" finding).
+
+Verified current state before planning the delta (grounds every reference below):
+- `state.ts:141-144` — `WorktreeEnumerationResult` is `{ ok: true; worktrees: WorktreeBranchEntry[] } | { ok: false }`; `listWorktreesWithBranches()` (`state.ts:146-173`, currently module-private) discards `result.stderr` entirely.
+- `state.ts:182-212` — `scanWorktreesForSecondaryOwnership()` is the only current consumer of `listWorktreesWithBranches()` and reads only `enumeration.ok` / `enumeration.worktrees`; widening the failure branch additively does not touch its logic.
+- `state.ts:124-129` — `assertTaskWorktreeWithinRoot()` calls `canonicalizePath(resolved)` twice (once in the `=== canonicalizePath(REPO_ROOT)` check, again inside `isPathInside(...)`) — this is the nit the final `approved_with_nits` review flagged for a fix-in-passing.
+- `main.ts:3449-3458` — current entry sequence is `parseArgs` → `assertManagedInvocationRoot()` (3450) → `warnLegacyEnvVars()` (3451) → `warnWorktreesRootMismatch()` (3452) → the `!cliArgs.ship` loop calling `assertTaskWorktreeWithinRoot()` per task ID (3453-3457) → `checkDeps`. The `--dry-run` exit is much later, at line 3509-3513 (after `checkDeps`, heartbeat setup, and `guardConcurrentRun`) — so, unlike `--ship`, `--dry-run` cannot be excluded by ordering and must be excluded by an explicit condition, exactly as AC-16(a) requires.
+- `git.ts:36-40` (`gitSafe`) and `runCommand()` (`git.ts:11-21`) establish the project's `{ ok, stdout, stderr }` `CommandResult` shape — the new enumeration failure field should follow this naming convention for consistency, even though `WorktreeEnumerationResult` isn't `CommandResult` itself.
+- `CHANGELOG.md:9` and `docs/pipeline-orchestrator.md:278` both currently carry the pre-amendment sentence ("the next run automatically prunes its stale git registration" / equivalent) that AC-12's replacement and the amendment's binding text replacement require rewritten.
+- A fake-git subprocess harness already exists in `tests/run-task-safety.test.ts` (`FAKE_GIT_LOG` and friends, ~line 70+) — AC-16's four fake-git-log assertions reuse this existing harness, not a new one.
+
+### Delta
+
+1. **`state.ts` — export `listWorktreesWithBranches()` and widen its failure shape (Affected Files delta, AC-16(d)).**
+   Change `WorktreeEnumerationResult` (line 142-144) to:
+   ```ts
+   type WorktreeEnumerationResult =
+       | { ok: true; worktrees: WorktreeBranchEntry[] }
+       | { ok: false; stderr: string };
+   ```
+   In `listWorktreesWithBranches()` (line 146-173), capture the failure detail the same way `runCommand()` does: `result.error ? result.error.message : (result.stderr ?? '').trim()`, returned as `{ ok: false, stderr }`. Change `function listWorktreesWithBranches()` to `export function listWorktreesWithBranches()`. This is additive only — `scanWorktreesForSecondaryOwnership()` (line 182-212) keeps compiling and behaving identically since it only destructures `ok`/`worktrees`; do not touch its body.
+
+2. **`state.ts` — fix the double-canonicalization nit in `assertTaskWorktreeWithinRoot()` (final review nit, "fix in passing").**
+   Lines 124-139: canonicalize `resolved` once into a local (`const canonicalResolved = canonicalizePath(resolved);`) and reuse it in both the `REPO_ROOT` equality check and the `isPathInside()` call, instead of calling `canonicalizePath(resolved)` twice. No behavior change — purely the redundant-call cleanup the reviewer flagged.
+
+3. **`state.ts` — new exported guard, e.g. `assertNoMissingCanonWorktrees()` (AC-14, AC-15, AC-16; decision items 1-4).**
+   Place it beside `assertTaskWorktreeWithinRoot()` (after line 139), reusing the same self-contained-override pattern:
+   ```ts
+   export function assertNoMissingCanonWorktrees(): void {
+       if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
+       const enumeration = listWorktreesWithBranches();
+       if (!enumeration.ok) {
+           die(`git worktree list failed: ${enumeration.stderr}`);
+       }
+       const missing = enumeration.worktrees.filter(
+           w => w.branch !== null && w.branch.startsWith('task/') && !fs.existsSync(w.path),
+       );
+       if (missing.length === 0) return;
+       die(
+           `The following canon task worktree(s) are registered with git but missing on disk:\n\n` +
+           missing.map(w =>
+               `  ${w.path}  (branch: ${w.branch})\n` +
+               `    - restore it:  git worktree add -f ${w.path} ${w.branch}\n` +
+               `      (anything not yet committed to the branch was lost with the directory)\n` +
+               `    - or discard the registration:  git worktree remove --force ${w.path}\n`
+           ).join('\n') +
+           `\nCanon does not restore or discard these automatically — run one of the two\ncommands above for each, then re-run.`,
+       );
+   }
+   ```
+   Notes:
+   - Detection is deliberately **not** scoped to the current invocation's task IDs — it enumerates every registered `task/*` worktree, matching decision item 1's repo-wide rule and closing AC-15(g)'s bundle-secondary case (a leader's missing worktree refuses a `canon run <secondary>` invocation even though the secondary's own status never mentions the leader's path).
+   - Filtering on `branch.startsWith('task/')` is what makes AC-15(e) (a missing worktree on a non-`task/` branch) pass through untouched — this is decision item 1's "operator's, not canon's" carve-out, and matches the final review's nit-2 framing: this is "no *new* entry-detection refusal" for that case, not a claim that `resolveTaskCwd()`'s own missing-worktree `die()` (state.ts:298-302) is being removed — it isn't touched by this function at all.
+   - No `git worktree prune` call anywhere in this function (decision item 4) — detection must observe the stale registration, not clear it, or AC-14's "still lists it, canon pruned nothing" assertion fails.
+   - Uses `die()`, matching every sibling guard in this file — no thrown `Error`, so the message has no stack trace (AC-14's "contains no `ENOENT` and no stack trace" requirement).
+   - The message must literally contain `git worktree add -f` and `git worktree remove --force` (AC-14) and, on the enumeration-failure branch, the literal substring `git worktree list failed` (AC-16(d)).
+
+4. **`main.ts` — call the new guard (AC-16(a)/(b)/(c)).**
+   Insert immediately after `splitState.assertManagedInvocationRoot();` (line 3450) and before `splitEnv.warnLegacyEnvVars();` (line 3451) — i.e. grouped with the other worktree/root-state guards, still strictly after the invocation-root check (AC-16(c): a refusal from `assertManagedInvocationRoot()` exits via its own `die()` before this line is ever reached, so the fake-git log correctly shows no `worktree list` call from the new detector in that case):
+   ```ts
+   if (!cliArgs.ship && !cliArgs.dryRun) {
+       splitState.assertNoMissingCanonWorktrees();
+   }
+   ```
+   This must be its own condition, not folded into the existing `if (!cliArgs.ship)` block at line 3453 — that block's exemption doesn't cover `--dry-run` (Context above explains why: the `--dry-run` exit happens too late to rely on ordering, unlike `--ship`, which never reaches line 3517 anyway). Keep the existing `assertTaskWorktreeWithinRoot()` loop (3453-3457) exactly as-is, immediately after this new block — the new guard must run first so a repo-wide missing-registration refusal preempts (and is what AC-16(c)/(d) actually pins) rather than racing the per-task out-of-root check. `CANON_TASKS_DIR_OVERRIDE` needs no handling here since `assertNoMissingCanonWorktrees()` self-exempts, matching the pattern of both existing guards it sits beside.
+
+5. **`docs/pipeline-orchestrator.md` (+ `templates/docs/pipeline-orchestrator.md` mirror) — new paragraph, distinct from the existing AC-9 "Upgrading from the previous default" paragraph at line 278.**
+   That existing paragraph covers the out-of-root refusal (Step 3/AC-7/AC-13) and is unaffected. Add a new paragraph near it covering the *registered-but-missing* refusal: scope (every `canon run` mode except `--dry-run` and `--ship`, and except under `CANON_TASKS_DIR_OVERRIDE`), that it runs repo-wide and after the invocation-root check, the two remedy commands verbatim, the lost-uncommitted-artifacts caveat (anything not yet committed to the branch is lost with a hand-deleted directory — `docs/patterns.md:127-129`'s "post-implement artifacts stay uncommitted until QA-end" is the reason this matters), and that canon prunes and recreates nothing itself at this check. Regenerate the mirror with `npm run sync-templates` and verify with `npm run sync-templates:check`.
+
+6. **`CHANGELOG.md` — replace the `[Unreleased]` sentence at line 9 (AC-12's amended text, folding in final-review nit 1).**
+   Replace "If a worktree directory is deleted by hand, the next run automatically prunes its stale git registration." with a sentence stating: a task worktree deleted by hand is no longer auto-pruned; instead `canon run` (every mode except `--dry-run` and `--ship`) now stops before any phase runs, names each missing worktree, and gives the two remedy commands, with the lost-uncommitted-artifacts caveat. Nit 1 specifically requires the `--dry-run`/`--ship` exemption to be stated in this sentence (or clearly cross-referenced) rather than left implied, since this is exactly the "unconditional-sounding" wording the reviewer flagged. Leave the rest of the existing `Breaking (adopters)` blockquote (the in-repo default, the out-of-root refusal and its two migrations, the `--ship` leftover-directory note, the glob/`git clean -ffdx` caveats, the "run from the main checkout" note) as-is — none of that is affected by this amendment.
+
+7. **Tests — `tests/run-task-safety.test.ts` (AC-14, AC-15, AC-16).**
+   Add beside the existing AC-7/AC-13 boundary tests, reusing `childEnvWithoutTasksOverride` (line 556) and the fake-git harness already in this file:
+   - **AC-14** (2 cases): bootstrap a task worktree via `ensureBranch()` so the branch lands only in the worktree copy of `status.json` (assert both copies exactly as `tests/run-task-safety.test.ts:1719-1727` already does), advance the worktree copy to `implement: done` / `code_review: pending`, `fs.rmSync` the worktree directory, confirm `git worktree list --porcelain` still lists it, invoke `canon run <id>` (follow this file's existing subprocess-invocation pattern for `main()`), and assert: non-zero exit; stderr names the path and `task/<id>`; contains `git worktree add -f` and `git worktree remove --force`; contains no `ENOENT` or stack trace; `git worktree list --porcelain` afterward still lists the path; no `.canon-pid`/`.heartbeat.json`/`.canon-run.log` under either copy of `tasks/<id>/`. Repeat with the worktree copy rerouted (`implement: pending`, `implement.rerouted: true`) instead of `code_review: pending`.
+   - **AC-15** (7 cases, continuing from AC-14's end state where useful): (a) `git worktree add -f <root>/<id> task/<id>`, re-run, assert the missing-worktree refusal does not fire (assert nothing about which phase runs next — the amendment's round-2 finding established a fresh checkout from the branch is not equivalent to the deleted state, so this case only pins "the refusal clears," not "recovery is complete"); (b) alternatively `git worktree remove --force`, assert no refusal; (c) `worktree: true`, blank main-checkout branch, no registration, a leftover `refs/heads/task/<id>` — assert no refusal and that `ensureWorktree()` proceeds to create from that branch as today (this is the structural resolution to the amendment's round-2 "branch existence isn't a bootstrap marker" finding: the new detector only ever looks at *registered* worktrees via `listWorktreesWithBranches()`, never at raw branch refs, so an orphan branch with no worktree entry is invisible to it by construction — the test should assert this, not just assume it); (d) an intact in-root worktree is not refused; (e) a registered-but-missing worktree on a non-`task/` branch is not refused; (f) a registered-but-missing worktree on a *different* task's `task/<other>` branch refuses **this** task's run, naming `<other>`'s path/branch; (g) bundle `canon run <leader> <secondary>` with the leader's worktree intact is not refused; delete the leader's worktree directory by hand and assert both `canon run <leader> <secondary>` and `canon run <secondary>` alone are refused, naming the leader's path and branch.
+   - **AC-16** (4 cases, fake-git-log assertions): (a) `--dry-run` and `--ship` do not produce a `worktree list` entry in the fake-git log for the new detector; (b) across all AC-7/AC-14 fixtures, the only `worktree prune` entry in the fake-git log (if any) comes from `ensureWorktree()` during `implement`, never from the entry path; (c) invoking from inside an out-of-root worktree exits with the existing AC-13 invocation-root message and the fake-git log shows no `worktree list` call from the new detector (i.e., `assertManagedInvocationRoot()`'s own `die()` short-circuits before `assertNoMissingCanonWorktrees()` runs); (d) a fake `git worktree list --porcelain` that exits non-zero makes `canon run` exit non-zero with `git worktree list failed` plus git's stderr in the output, and no runtime files written.
+
+8. **Full-suite gate, repeated (unchanged from the original plan's own gate, re-run because of the new code paths):** `npm run lint`, `npm run type-check`, `npm test`, `npm run build` (clean `git diff --exit-code dist/` after), `npm run sync-templates:check`, `npm run docs-refs-check`.
+
+### What does not change
+
+- Step 1 (`env.ts` default), Step 6 (`.canon/worktrees/` gitignore pattern), Step 7's existing "Upgrading from the previous default" paragraph, Step 9 (dist rebuild mechanics) — all already implemented per `handoff.md` and confirmed against the current tree above; nothing here revisits them.
+- Resolution (`resolveTaskCwd`, both `findExistingWorktreeForBranch` copies, `scanWorktreesForSecondaryOwnership`, `isOrphanedWorktreeState`, `getActiveCwd`, `resolveShipCwd`, `teardownWorktree`) stays untouched, per spec Non-Goals and decision item 6 — the new guard sits entirely outside resolution, reading `listWorktreesWithBranches()` directly rather than through any resolver.
+- `assertManagedInvocationRoot()`'s message and logic (Step 4 of the original plan) are unaffected by this amendment — AC-13(i)/(ii) were already implemented and are not reopened.
