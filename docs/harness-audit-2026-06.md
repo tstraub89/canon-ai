@@ -7,8 +7,7 @@
 > was originally tuned on roughly GPT-5.3 / Sonnet 4.5 / Opus 4.5).
 >
 > This is a durable analysis doc, not a spec. Findings are prioritized P0–P2.
-> A companion external-research brief lives (uncommitted) at the repo root as
-> `canon-perplexity-brief.md`.
+> A companion external-research brief informed it but is not part of the repo.
 
 ## Headline
 
@@ -144,7 +143,7 @@ model) where grounding needs tool calls on Opus 4.8.
 
 ## Open questions deferred to external deep research
 
-Captured in `canon-perplexity-brief.md`. The empirical/eval-gated ones my
+Handed to an external research brief (not in the repo). The empirical/eval-gated ones my
 training knowledge can't settle: recall-mitigation prompt structure with evidence;
 whether the spec-blind cold lens still earns its cost given an anchored lens;
 effort-saturation points; whether Sonnet 4.6 / GPT-5.5 moved enough to re-baseline

@@ -2995,7 +2995,7 @@ function findStagedFilesOutsideHandoff(stagedNameOnlyOutput, handoffFiles) {
 var DONE_MD_TEMPLATE_SENTINELS = [
   "[TASK-ID]",
   "One paragraph, plain English. No code jargon.",
-  "`src/...` \u2014 brief note"
+  "`<path>` \u2014 brief note"
 ];
 var PR_BODY_TEMPLATE_SENTINELS = [
   "[pr-body-stub]",

@@ -156,8 +156,8 @@ void test('isDoneMdTemplate detects unfilled template via [TASK-ID] sentinel', (
     });
 });
 
-void test('isDoneMdTemplate detects unfilled template via "src/..." sentinel', () => {
-    withTempFile('# Completion Summary: my-task\n\n## Files Changed\n- `src/...` — brief note\n', p => {
+void test('isDoneMdTemplate detects unfilled template via the "<path>" files-changed sentinel', () => {
+    withTempFile('# Completion Summary: my-task\n\n## Files Changed\n- `<path>` — brief note\n', p => {
         assert.equal(isDoneMdTemplate(p), true);
     });
 });

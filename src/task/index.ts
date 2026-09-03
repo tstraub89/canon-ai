@@ -12,7 +12,7 @@ import {
     verifyHandoffAgainstDiffFromData,
 } from '../orchestrator/validation.js';
 import { filterGitIgnoredPaths } from '../orchestrator/git.js';
-import { assertManagedInvocationRoot, deriveTopLevelStatus, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
+import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { type TaskSize } from '../lib/pipeline-policy.js';
@@ -287,7 +287,7 @@ export function taskList(): void {
             rows.push({
                 id: entry,
                 title,
-                phase: `INVALID: worktree missing — restore dev-worktrees/${entry} or archive the task`,
+                phase: `INVALID: worktree missing — restore ${path.join(effectiveWorktreesRoot(), entry)} or archive the task`,
             });
             continue;
         }

@@ -69,7 +69,6 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Detached-mode isolation | `src/orchestrator/detach.ts` | Process group detachment for SIGHUP-safe background runs |
 | Heartbeat monitor | `src/orchestrator/heartbeat.ts` | Per-task `.heartbeat.json` writes at 30s intervals; used by `canon watch` / `canon doctor` to detect live vs. stale runs |
 | Task quality log | `src/orchestrator/quality-log.ts` | Fail-soft QA row writer plus exported `CANON_LOG_HEADERS` / `locateLogTable` detection helpers used by `canon doctor` |
-| Phase gate validator | `src/orchestrator/check-phase-gate.ts` | Manual-use CLI wrapper; `canon task phase` calls `checkPhaseGate()` in `src/orchestrator/validation.ts` directly |
 | Canon snapshot | `src/orchestrator/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
 | Markdown table parser | `src/orchestrator/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |
 | Prompt rendering | `src/orchestrator/prompts/render.ts` | Mustache rendering with LLM-safe escape-disable; consumed by `src/orchestrator/prompts/index.ts` |

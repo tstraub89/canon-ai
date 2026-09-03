@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { spawnSync } from 'node:child_process';
 
 interface Dep {
     cmd: string;
@@ -16,12 +16,8 @@ const SOFT_DEPS: Dep[] = [
 ];
 
 export function isAvailable(cmd: string): boolean {
-    try {
-        execSync(`which ${cmd}`, { stdio: 'ignore' });
-        return true;
-    } catch {
-        return false;
-    }
+    const result = spawnSync('which', [cmd], { stdio: 'ignore' });
+    return result.status === 0;
 }
 
 export function checkDeps(): void {

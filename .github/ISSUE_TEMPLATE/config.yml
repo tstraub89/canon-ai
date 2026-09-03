@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/tstraub89/canon-ai/security/advisories/new
+    about: Report privately via GitHub's vulnerability reporting, not as an issue.

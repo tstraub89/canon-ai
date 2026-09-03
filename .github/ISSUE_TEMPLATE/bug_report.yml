@@ -1,0 +1,49 @@
+name: Bug report
+description: Something canon did wrong, or a pipeline run that went sideways.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: canon version
+      description: Output of `canon --version`.
+      placeholder: "2.9.0"
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How canon is installed
+      options:
+        - npm install -g canon-ai
+        - npm install -g from the git URL
+        - vendored / submodule
+        - other (describe below)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what canon did instead. Paste CLI output in a code block.
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Task artifacts (pipeline bugs)
+      description: For pipeline bugs, the task's `status.json` and the relevant `tasks/<id>/` files (spec.md, handoff.md, review.md, notes.md) if you can share them. Redact anything private.
+      render: text
+  - type: textarea
+    id: doctor
+    attributes:
+      label: canon doctor output
+      description: Paste the output of `canon doctor` if the problem looks environmental.
+      render: text

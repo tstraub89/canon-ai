@@ -2658,10 +2658,9 @@ void test('verifyHandoffAgainstDiffFromData: rename whose either side is a pipel
 
 // ─── 1a-2 phase gate ───
 // checkPhaseGate fires before canon task advances a phase to `done`. Each
-// case below tests one accept/reject branch of the gate. The CLI wrapper
-// (check-phase-gate.ts) is just argv parsing + exit-code mapping around
-// this function; integration test via canon task would duplicate the unit
-// coverage.
+// case below tests one accept/reject branch of the gate; the task CLI calls
+// checkPhaseGate in-process, so an integration test via canon task would
+// duplicate the unit coverage.
 
 import { checkPhaseGate } from '../src/orchestrator/validation.js';
 

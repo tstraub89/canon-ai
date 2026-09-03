@@ -8,10 +8,6 @@ import { filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSa
 import { readStatus, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
-export function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
     if (!handoffContent.split('\n').some(line => line.trimEnd() === '## AC Coverage')) {
         return ['AC Coverage section is missing'];
@@ -763,7 +759,7 @@ export function findStagedFilesOutsideHandoff(
 const DONE_MD_TEMPLATE_SENTINELS = [
     '[TASK-ID]',
     'One paragraph, plain English. No code jargon.',
-    '`src/...` — brief note',
+    '`<path>` — brief note',
 ];
 
 const PR_BODY_TEMPLATE_SENTINELS = [

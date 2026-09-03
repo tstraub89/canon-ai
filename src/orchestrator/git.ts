@@ -144,13 +144,6 @@ export function getBaseBranch(taskIds?: string[]): string {
     return getDefaultBaseBranch();
 }
 
-export function commitsAheadOfBase(branchName: string, baseBranch: string): number {
-    const result = gitSafe('rev-list', '--count', `${baseBranch}..${branchName}`);
-    if (!result.ok) return 0;
-    const count = Number.parseInt(result.stdout, 10);
-    return Number.isNaN(count) ? 0 : count;
-}
-
 export function getUnpushedBaseCommits(
     baseBranch: string,
     cwd: string,

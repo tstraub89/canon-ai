@@ -221,6 +221,19 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short sh
 
 Claude Code creates `settings.json` on first use — check what's already there before pasting. For a personal "full send" allowlist that doesn't get committed, use your local Claude Code settings file (and make sure it is gitignored — `canon doctor` will warn you if it isn't).
 
+### Trust model
+
+Pipeline sessions are headless, so nobody is at the keyboard to answer a permission prompt. Know what that means before you run `canon run` on a repo you care about. Everything below describes the default headless runs; `--interactive` opens ordinary Claude Code and Codex sessions under your own permission settings instead.
+
+- **Claude Code sessions run with `--dangerously-skip-permissions`.** Every tool call is auto-approved. This is required today because a headless session cannot answer prompts, and your project's validation commands (test suites, builds, linters) cannot be allowlisted in advance. A session can run anything your user account can run.
+- **Fresh headless Codex runs use `--sandbox workspace-write`.** Codex's OS-level sandbox confines those runs' writes to the directory canon launches them in: the task worktree once one exists, otherwise the main checkout (a task's first spec review runs before its worktree is created, and `worktree: false` tasks never get one). Network is off unless your Codex config enables it. The flag is not passed on session resumes, on the `codex exec review` code-review lens, or in interactive Codex sessions, which follow your own Codex sandbox settings.
+- **Worktrees separate branch state by convention, not by enforcement.** Each task, or each bundle when you pass several task ids together, gets its own worktree and branch, and the pipeline's dirty-tree gates inspect the active worktree at phase boundaries. But Claude sessions are also given the main checkout via `--add-dir` and run with permissions skipped, so nothing stops a session from writing there, and an unrelated file dropped into the main checkout is not something those gates look for; tasks with `worktree: false` run in the main checkout outright. Validation commands run with your normal privileges.
+- **Budget caps bound cost, not access.** Each headless Claude phase runs with `--max-budget-usd`; hitting the cap stops the session. It does not narrow what the session may do beforehand, and interactive sessions (`--interactive`) run uncapped.
+- **Your code goes to the model providers.** Each agent phase sends prompts and repository context to the provider running it, Anthropic for Claude phases and OpenAI for Codex phases, with `code_review` using both, all through the Claude Code and Codex CLIs under whatever data terms your accounts have. Treat a `canon run` like any other agent session in that respect.
+- **Git side effects need a flag.** The pipeline never pushes, opens PRs, merges, or publishes on its own. `--pr` pushes the task branch and opens a draft PR, stopping at `human_review`. `--ship` squash-merges that PR; it checks the task's phase, not whether anyone approved, so PR approval is your prerequisite (or your branch protection's), not something canon enforces. `--full-send` skips the human spec gate and opens the draft PR on clean QA, still stopping before merge; on a `delicate` task it refuses without `--force`.
+
+Run canon on repositories where you would be comfortable running your test suite unattended. If that is not your situation, keep it to a machine or container scoped for the purpose. Replacing the blanket permission skip with a narrower confinement is on the roadmap; the constraint to solve is that adopter validation commands legitimately need network and system access the sandbox would block. Security reports go through [SECURITY.md](SECURITY.md).
+
 ### Key commands
 
 | Command | What it does |

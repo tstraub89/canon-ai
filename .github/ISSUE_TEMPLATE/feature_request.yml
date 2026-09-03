@@ -1,0 +1,23 @@
+name: Feature request
+description: A capability canon should have, or a behavior that should change.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do and where canon gets in the way. Concrete pipeline runs beat abstractions.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What canon would do differently. If this touches a settled decision in `docs/decisions.md`, say why the original rationale no longer holds.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "configure my way around it today with…" if that exists.
