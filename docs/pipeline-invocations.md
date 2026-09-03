@@ -951,3 +951,12 @@
 | 2026-08-22T05:22:54.794Z | archive-review-on-reroute | code_review | codex | gpt-5.6-luna | 0 | 239.5s | - | ok |
 | 2026-08-22T05:43:03.545Z | archive-review-on-reroute | code_review | claude | opus | 0 | 1208.7s | 4064638 | ok |
 | 2026-08-22T05:45:19.913Z | archive-review-on-reroute | qa | claude | sonnet | 0 | 136.4s | 1071520 | ok |
+| 2026-09-03T04:47:58.073Z | worktree-root-in-repo | spec_review | codex | gpt-5.6-luna | 0 | 295.7s | 1944059 | ok |
+| 2026-09-03T04:59:21.465Z | worktree-root-in-repo | spec_review | codex | gpt-5.6-luna | 1 | 264.4s | 2941844 | ok |
+| 2026-09-03T05:07:11.267Z | worktree-root-in-repo | spec | claude | opus | 0 | 469.7s | 1885527 | ok |
+| 2026-09-03T05:13:13.334Z | worktree-root-in-repo | spec_review | codex | gpt-5.6-luna | 2 | 361.9s | 2427069 | ok |
+| 2026-09-03T05:23:05.202Z | worktree-root-in-repo | spec | claude | opus | 0 | 515.5s | 2405590 | ok |
+| 2026-09-03T05:25:57.177Z | worktree-root-in-repo | spec_review | codex | gpt-5.6-luna | 3 | 171.8s | 1724707 | ok |
+| 2026-09-03T05:31:25.702Z | worktree-root-in-repo | spec | claude | opus | 0 | 328.4s | 3216754 | ok |
+| 2026-09-03T05:33:52.785Z | worktree-root-in-repo | spec_review | codex | gpt-5.6-luna | 4 | 147.0s | 1727412 | ok |
+| 2026-09-03T05:38:48.170Z | worktree-root-in-repo | plan | claude | sonnet | 0 | 269.9s | 2796514 | ok |
