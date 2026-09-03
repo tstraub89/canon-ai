@@ -64,9 +64,6 @@
       "Skill(canon-spec-review:*)",
       "Skill(canon-inline-review)",
       "Skill(canon-inline-review:*)"
-    ],
-    "additionalDirectories": [
-      "../dev-worktrees"
     ]
   },
   "hooks": {
