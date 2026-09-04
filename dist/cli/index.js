@@ -4782,6 +4782,8 @@ function currentPinFromManifest(manifest) {
     if (typeof value !== "string") continue;
     const match = /#([0-9a-f]{40})$/i.exec(value.trim());
     if (match) return match[1].toLowerCase();
+    const versionMatch = /^[~^]?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?)$/.exec(value.trim());
+    if (versionMatch) return versionMatch[1];
   }
   return "unknown";
 }
@@ -4797,13 +4799,13 @@ function ownPackageName(pkgDir) {
   }
 }
 var NPM_VIEW_TIMEOUT_MS = 3e4;
-function defaultNpmViewRunner(args2) {
-  const result = spawnSync8("npm", args2, { encoding: "utf8", timeout: NPM_VIEW_TIMEOUT_MS });
+function defaultNpmViewRunner(args2, cwd) {
+  const result = spawnSync8("npm", args2, { encoding: "utf8", timeout: NPM_VIEW_TIMEOUT_MS, ...cwd ? { cwd } : {} });
   if (result.error) return { status: null, stdout: "", stderr: result.error.message };
   return { status: result.status, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
 }
-function checkRegistryVersion(pkgName, version, runner) {
-  const result = runner(["view", `${pkgName}@${version}`, "version", "--json"]);
+function checkRegistryVersion(pkgName, version, runner, cwd) {
+  const result = runner(["view", `${pkgName}@${version}`, "version", "--json"], cwd);
   let parsed;
   try {
     parsed = JSON.parse(result.stdout);
@@ -4924,7 +4926,8 @@ function updateCmd(args2, deps = {}) {
     stableVersion = result.version;
   }
   if (usesRegistry) {
-    const registryCheck = checkRegistryVersion(pkgName, stableVersion, npmView);
+    const registryCwd = detection.type === "local" ? detection.installRoot : cwd;
+    const registryCheck = checkRegistryVersion(pkgName, stableVersion, npmView, registryCwd);
     if (!registryCheck.ok) {
       stderr(registryCheck.message);
       return exit(1);

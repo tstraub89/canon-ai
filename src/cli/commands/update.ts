@@ -300,6 +300,8 @@ function currentPinFromManifest(manifest: Record<string, unknown>): string {
         if (typeof value !== 'string') continue;
         const match = /#([0-9a-f]{40})$/i.exec(value.trim());
         if (match) return match[1].toLowerCase();
+        const versionMatch = /^[~^]?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?)$/.exec(value.trim());
+        if (versionMatch) return versionMatch[1];
     }
     return 'unknown';
 }
@@ -317,12 +319,12 @@ function ownPackageName(pkgDir: string): string {
     }
 }
 
-export type NpmViewRunner = (args: string[]) => { status: number | null; stdout: string; stderr: string };
+export type NpmViewRunner = (args: string[], cwd?: string) => { status: number | null; stdout: string; stderr: string };
 
 const NPM_VIEW_TIMEOUT_MS = 30_000;
 
-export function defaultNpmViewRunner(args: string[]): { status: number | null; stdout: string; stderr: string } {
-    const result = spawnSync('npm', args, { encoding: 'utf8', timeout: NPM_VIEW_TIMEOUT_MS });
+export function defaultNpmViewRunner(args: string[], cwd?: string): { status: number | null; stdout: string; stderr: string } {
+    const result = spawnSync('npm', args, { encoding: 'utf8', timeout: NPM_VIEW_TIMEOUT_MS, ...(cwd ? { cwd } : {}) });
     if (result.error) return { status: null, stdout: '', stderr: result.error.message };
     return { status: result.status, stdout: result.stdout ?? '', stderr: (result.stderr ?? '').trim() };
 }
@@ -332,8 +334,8 @@ export type RegistryCheckResult =
     | { ok: false; absent: true; message: string }
     | { ok: false; absent: false; message: string };
 
-export function checkRegistryVersion(pkgName: string, version: string, runner: NpmViewRunner): RegistryCheckResult {
-    const result = runner(['view', `${pkgName}@${version}`, 'version', '--json']);
+export function checkRegistryVersion(pkgName: string, version: string, runner: NpmViewRunner, cwd?: string): RegistryCheckResult {
+    const result = runner(['view', `${pkgName}@${version}`, 'version', '--json'], cwd);
     let parsed: unknown;
     try { parsed = JSON.parse(result.stdout); } catch { parsed = undefined; }
 
@@ -493,7 +495,8 @@ export function updateCmd(args: string[], deps: UpdateCmdDeps = {}): void {
     }
 
     if (usesRegistry) {
-        const registryCheck = checkRegistryVersion(pkgName, stableVersion as string, npmView);
+        const registryCwd = detection.type === 'local' ? detection.installRoot as string : cwd;
+        const registryCheck = checkRegistryVersion(pkgName, stableVersion as string, npmView, registryCwd);
         if (!registryCheck.ok) {
             stderr(registryCheck.message);
             return exit(1);

@@ -206,19 +206,21 @@ function stableNpmViewRunner(args: string[]): { status: number; stdout: string; 
 function runLocalUpdate(dir: string, args: string[] = [], manifest: unknown = {
     name: 'local-project',
     devDependencies: { 'canon-ai': `github:tstraub89/canon-ai#${UPDATE_SHA_A}` },
-}): { output: string[]; errors: string[]; npmArgs: string[]; npmCwd: string[]; npmViewArgs: string[][] } {
+}): { output: string[]; errors: string[]; npmArgs: string[]; npmCwd: string[]; npmViewArgs: string[][]; npmViewCwds: (string | undefined)[] } {
     const root = makeLocalUpdateRoot(dir, manifest);
     const output: string[] = [];
     const errors: string[] = [];
     const npmArgs: string[] = [];
     const npmCwd: string[] = [];
     const npmViewArgs: string[][] = [];
+    const npmViewCwds: (string | undefined)[] = [];
     updateCmd(args, {
         packageDir: path.join(root, 'node_modules', 'canon-ai'),
         cwd: root,
         gitRunner: stableUpdateGitRunner,
-        npmViewRunner: args => {
+        npmViewRunner: (args, cwd) => {
             npmViewArgs.push(args);
+            npmViewCwds.push(cwd);
             return stableNpmViewRunner(args);
         },
         spawnRunner: (_command, commandArgs, options) => {
@@ -231,7 +233,7 @@ function runLocalUpdate(dir: string, args: string[] = [], manifest: unknown = {
         now: () => '2026-07-18T12:00:00.000Z',
         exit: code => { throw new UpdateExitError(code); },
     });
-    return { output, errors, npmArgs, npmCwd, npmViewArgs };
+    return { output, errors, npmArgs, npmCwd, npmViewArgs, npmViewCwds };
 }
 
 const CANON_START = '<!-- canon:start -->';
@@ -565,6 +567,7 @@ void test('canon update: canon-ai in each supported dependency block proceeds', 
             assert.equal(result.npmArgs.length, 1);
             assert.match(result.npmArgs[0], new RegExp(`^install ${expectedSaveFlags[block]} canon-ai@8\\.2\\.0$`));
             assert.deepEqual(result.npmViewArgs, [['view', 'canon-ai@8.2.0', 'version', '--json']]);
+            assert.deepEqual(result.npmViewCwds, [fs.realpathSync(dir)]);
         });
     }
 });
@@ -784,12 +787,20 @@ void test('canon update: announces current and target pins without reading prove
         assert.match(announcement, new RegExp(`target:  8\\.2\\.0 \\(stable\\) @ ${UPDATE_SHA_C}`));
         assert.doesNotMatch(announcement, /target:  v8\.2\.0/);
 
+        withTempDir(registryDir => {
+            const registry = runLocalUpdate(registryDir, [], {
+                name: 'local-project',
+                devDependencies: { 'canon-ai': '^8.1.0' },
+            });
+            assert.match(registry.output[0], /current: .* @ 8\.1\.0/);
+        });
+
         withTempDir(unpinnedDir => {
             const unpinned = runLocalUpdate(unpinnedDir, [], {
                 name: 'local-project',
                 devDependencies: { 'canon-ai': '^2.2.0' },
             });
-            assert.match(unpinned.output[0], /current: .* @ unknown/);
+            assert.match(unpinned.output[0], /current: .* @ 2\.2\.0/);
         });
 
         withTempDir(withProvenanceDir => {
