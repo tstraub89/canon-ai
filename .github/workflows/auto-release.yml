@@ -244,8 +244,29 @@ jobs:
           TAG="${{ steps.versions.outputs.tag }}"
           VERSION="${{ steps.versions.outputs.version }}"
           BUMP_SHA="${{ steps.bump.outputs.sha }}"
+          # Tag the bump commit with git and push the tag, then create the
+          # release against the existing tag WITHOUT --target. Passing
+          # --target <sha> to `gh release create` under GITHUB_TOKEN fails
+          # with "HTTP 403: Resource not accessible by integration" whenever
+          # <sha> is not the branch head (cli/cli#9514) — which is exactly
+          # the self-heal case, and any push where the bump commit is not
+          # the tip. Tag-first gets the same result (release bound to the
+          # bump commit) through an API path the token is allowed to use.
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
+            EXISTING="$(git rev-parse "${TAG}^{commit}")"
+            if [ "$EXISTING" != "$BUMP_SHA" ]; then
+              echo "::error::Tag ${TAG} already exists at ${EXISTING}, not at the version-bump commit ${BUMP_SHA} — refusing to release"
+              exit 1
+            fi
+            echo "Tag ${TAG} already exists at ${BUMP_SHA} (self-heal retry)."
+          else
+            git tag "$TAG" "$BUMP_SHA"
+            git push origin "refs/tags/${TAG}"
+            echo "Tagged ${BUMP_SHA} as ${TAG}."
+          fi
           gh release create "$TAG" \
-            --target "$BUMP_SHA" \
+            --verify-tag \
             --title "$TAG" \
             --notes-file /tmp/release-notes.md
           echo "Released $TAG at $BUMP_SHA"
