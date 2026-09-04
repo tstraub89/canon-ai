@@ -197,7 +197,7 @@ function stableUpdateGitRunner(args: string[]): { ok: boolean; stdout: string; s
 }
 
 function stableNpmViewRunner(args: string[]): { status: number; stdout: string; stderr: string } {
-    const spec = args[1] ?? '';
+    const spec = args.find(arg => arg.includes('@')) ?? '';
     const atIdx = spec.lastIndexOf('@');
     const version = atIdx > 0 ? spec.slice(atIdx + 1) : '';
     return { status: 0, stdout: JSON.stringify(version), stderr: '' };
@@ -924,11 +924,15 @@ void test('canon update: global provenance uses an existing invoking-repo .canon
         fs.mkdirSync(path.join(dir, '.canon'), { recursive: true });
         const output: string[] = [];
         const npmArgs: string[][] = [];
+        const npmViewArgs: string[][] = [];
         updateCmd([], {
             packageDir: '/usr/local/lib/node_modules/canon-ai',
             cwd: dir,
             gitRunner: stableUpdateGitRunner,
-            npmViewRunner: stableNpmViewRunner,
+            npmViewRunner: (args, cwd) => {
+                npmViewArgs.push([cwd ?? '', ...args]);
+                return stableNpmViewRunner(args);
+            },
             spawnRunner: (_command, args) => { npmArgs.push(args); return { status: 0 }; },
             stdout: message => output.push(message),
             exit: code => { throw new UpdateExitError(code); },
@@ -937,6 +941,7 @@ void test('canon update: global provenance uses an existing invoking-repo .canon
         assert.equal(fs.existsSync(path.join(dir, '.canon', 'provenance.json')), true);
         assert.match(output.join('\n'), /global install/);
         assert.deepEqual(npmArgs[0], ['install', '-g', 'canon-ai@8.2.0']);
+        assert.deepEqual(npmViewArgs[0], [dir, 'view', '--global', 'canon-ai@8.2.0', 'version', '--json']);
     });
 
     withTempDir(dir => {

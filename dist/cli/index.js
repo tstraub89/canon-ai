@@ -4804,8 +4804,9 @@ function defaultNpmViewRunner(args2, cwd) {
   if (result.error) return { status: null, stdout: "", stderr: result.error.message };
   return { status: result.status, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
 }
-function checkRegistryVersion(pkgName, version, runner, cwd) {
-  const result = runner(["view", `${pkgName}@${version}`, "version", "--json"], cwd);
+function checkRegistryVersion(pkgName, version, runner, cwd, global = false) {
+  const args2 = global ? ["view", "--global", `${pkgName}@${version}`, "version", "--json"] : ["view", `${pkgName}@${version}`, "version", "--json"];
+  const result = runner(args2, cwd);
   let parsed;
   try {
     parsed = JSON.parse(result.stdout);
@@ -4927,7 +4928,7 @@ function updateCmd(args2, deps = {}) {
   }
   if (usesRegistry) {
     const registryCwd = detection.type === "local" ? detection.installRoot : cwd;
-    const registryCheck = checkRegistryVersion(pkgName, stableVersion, npmView, registryCwd);
+    const registryCheck = checkRegistryVersion(pkgName, stableVersion, npmView, registryCwd, detection.type !== "local");
     if (!registryCheck.ok) {
       stderr(registryCheck.message);
       return exit(1);

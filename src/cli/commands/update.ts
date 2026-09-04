@@ -334,8 +334,11 @@ export type RegistryCheckResult =
     | { ok: false; absent: true; message: string }
     | { ok: false; absent: false; message: string };
 
-export function checkRegistryVersion(pkgName: string, version: string, runner: NpmViewRunner, cwd?: string): RegistryCheckResult {
-    const result = runner(['view', `${pkgName}@${version}`, 'version', '--json'], cwd);
+export function checkRegistryVersion(pkgName: string, version: string, runner: NpmViewRunner, cwd?: string, global = false): RegistryCheckResult {
+    const args = global
+        ? ['view', '--global', `${pkgName}@${version}`, 'version', '--json']
+        : ['view', `${pkgName}@${version}`, 'version', '--json'];
+    const result = runner(args, cwd);
     let parsed: unknown;
     try { parsed = JSON.parse(result.stdout); } catch { parsed = undefined; }
 
@@ -496,7 +499,7 @@ export function updateCmd(args: string[], deps: UpdateCmdDeps = {}): void {
 
     if (usesRegistry) {
         const registryCwd = detection.type === 'local' ? detection.installRoot as string : cwd;
-        const registryCheck = checkRegistryVersion(pkgName, stableVersion as string, npmView, registryCwd);
+        const registryCheck = checkRegistryVersion(pkgName, stableVersion as string, npmView, registryCwd, detection.type !== 'local');
         if (!registryCheck.ok) {
             stderr(registryCheck.message);
             return exit(1);
