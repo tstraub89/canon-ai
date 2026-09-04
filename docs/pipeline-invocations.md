@@ -975,3 +975,5 @@
 | 2026-09-03T15:53:50.157Z | worktree-root-in-repo | code_review | codex | gpt-5.6-luna | 0 | 504.8s | - | ok |
 | 2026-09-03T16:08:15.219Z | worktree-root-in-repo | code_review | claude | sonnet | 0 | 865.0s | 1388693 | ok |
 | 2026-09-03T18:25:01.148Z | worktree-root-in-repo | qa | claude | sonnet | 0 | 117.2s | 1440622 | ok |
+| 2026-09-04T20:04:31.567Z | update-from-npm-registry | spec_review | codex | gpt-5.6-luna | 0 | 115.5s | 611551 | ok |
+| 2026-09-04T20:09:30.094Z | update-from-npm-registry | plan | claude | sonnet | 0 | 279.4s | 2360647 | ok |
