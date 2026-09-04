@@ -4628,7 +4628,6 @@ function defaultGitRunner(args2) {
 var CANON_AI_DEP_KEYS = ["dependencies", "devDependencies", "optionalDependencies"];
 var STRICT_FINAL_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 var FULL_SHA_RE = /^[0-9a-f]{40}$/i;
-var CANONICAL_NPX_SOURCE = "github:tstraub89/canon-ai";
 function layoutGate(installRoot) {
   if (!existsSync4(join4(installRoot, "package.json"))) {
     return {
@@ -4775,10 +4774,6 @@ function resolveNamedRef(slug, refspec, runGit2) {
   }
   return { ok: true, sha: [...distinctShas][0] };
 }
-function resolveEffectiveSlug() {
-  const envSlug = process.env.CANON_UPSTREAM_REPO?.trim();
-  return envSlug ? envSlug : CANON_UPSTREAM_REPO;
-}
 function currentPinFromManifest(manifest) {
   for (const key of CANON_AI_DEP_KEYS) {
     const block = manifest[key];
@@ -4792,6 +4787,42 @@ function currentPinFromManifest(manifest) {
 }
 function bakedVersion() {
   return "3.0.0";
+}
+function ownPackageName(pkgDir) {
+  try {
+    const manifest = JSON.parse(readFileSync3(join4(pkgDir, "package.json"), "utf8"));
+    return typeof manifest.name === "string" && manifest.name ? manifest.name : "canon-ai";
+  } catch {
+    return "canon-ai";
+  }
+}
+var NPM_VIEW_TIMEOUT_MS = 3e4;
+function defaultNpmViewRunner(args2) {
+  const result = spawnSync8("npm", args2, { encoding: "utf8", timeout: NPM_VIEW_TIMEOUT_MS });
+  if (result.error) return { status: null, stdout: "", stderr: result.error.message };
+  return { status: result.status, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
+}
+function checkRegistryVersion(pkgName, version, runner) {
+  const result = runner(["view", `${pkgName}@${version}`, "version", "--json"]);
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    parsed = void 0;
+  }
+  if (result.status === 0 && typeof parsed === "string" && parsed === version) return { ok: true };
+  if (typeof parsed === "object" && parsed !== null && parsed.error?.code === "E404") {
+    return {
+      ok: false,
+      absent: true,
+      message: `canon update: ${pkgName}@${version} is not yet on the npm registry. This release exists on GitHub but has not reached npm yet \u2014 retry shortly, or install it directly with \`canon update --ref v${version}\`.`
+    };
+  }
+  return {
+    ok: false,
+    absent: false,
+    message: `canon update: could not verify ${pkgName}@${version} on the npm registry (${result.stderr || "no output"}). Aborting \u2014 no npm install run.`
+  };
 }
 function formatAnnouncement(input) {
   const where = input.installType === "local" ? `local install at ${input.installRoot}` : "global install";
@@ -4819,6 +4850,7 @@ function updateCmd(args2, deps = {}) {
     console.error(message);
   });
   const pkgDir = deps.packageDir ?? packageDir3;
+  const pkgName = ownPackageName(pkgDir);
   const cwd = deps.cwd ?? process.cwd();
   const spawn2 = deps.spawnRunner ?? ((cmd, cmdArgs, opts) => spawnSync8(cmd, cmdArgs, { stdio: "inherit", cwd: opts.cwd }));
   const runGit2 = deps.gitRunner ?? defaultGitRunner;
@@ -4834,7 +4866,7 @@ function updateCmd(args2, deps = {}) {
   if (detection.type === "npx") {
     stdout("\nRunning via npx \u2014 no persistent install to update.");
     stdout("To apply the latest templates, re-run from the latest source:\n");
-    stdout(`  npx --install-links ${CANONICAL_NPX_SOURCE} upgrade
+    stdout(`  npx ${pkgName}@latest upgrade
 `);
     return;
   }
@@ -4855,7 +4887,10 @@ function updateCmd(args2, deps = {}) {
     manifest = dependency.manifest;
     dependencyBlock = dependency.dependencyBlock;
   }
-  const slug = resolveEffectiveSlug();
+  const upstreamOverride = process.env.CANON_UPSTREAM_REPO?.trim();
+  const slug = upstreamOverride ? upstreamOverride : CANON_UPSTREAM_REPO;
+  const usesRegistry = options.channel !== "main" && !options.ref && !upstreamOverride;
+  const npmView = deps.npmViewRunner ?? defaultNpmViewRunner;
   let channel;
   let resolvedSha;
   let stableVersion;
@@ -4888,7 +4923,14 @@ function updateCmd(args2, deps = {}) {
     resolvedSha = result.sha;
     stableVersion = result.version;
   }
-  const target = `github:${slug}#${resolvedSha}`;
+  if (usesRegistry) {
+    const registryCheck = checkRegistryVersion(pkgName, stableVersion, npmView);
+    if (!registryCheck.ok) {
+      stderr(registryCheck.message);
+      return exit(1);
+    }
+  }
+  const target = usesRegistry ? `${pkgName}@${stableVersion}` : `github:${slug}#${resolvedSha}`;
   const currentSha = manifest ? currentPinFromManifest(manifest) : "unknown";
   stdout(formatAnnouncement({
     installType: detection.type,
@@ -4909,7 +4951,8 @@ function updateCmd(args2, deps = {}) {
   if (detection.type === "local") {
     const installRoot = detection.installRoot;
     const saveFlag = dependencyBlock === "dependencies" ? "--save" : dependencyBlock === "optionalDependencies" ? "--save-optional" : "--save-dev";
-    const result = spawn2("npm", ["install", saveFlag, "--install-links", target], { cwd: installRoot });
+    const installArgs = usesRegistry ? ["install", saveFlag, target] : ["install", saveFlag, "--install-links", target];
+    const result = spawn2("npm", installArgs, { cwd: installRoot });
     if (result.status !== 0) return exit(result.status ?? 1);
     try {
       writeProvenance(installRoot, provenance);
@@ -4918,7 +4961,8 @@ function updateCmd(args2, deps = {}) {
       stderr(`canon update: npm install succeeded, but provenance could not be recorded at ${join4(installRoot, ".canon", "provenance.json")}${detail}.`);
     }
   } else {
-    const result = spawn2("npm", ["install", "-g", "--install-links", target], { cwd });
+    const installArgs = usesRegistry ? ["install", "-g", target] : ["install", "-g", "--install-links", target];
+    const result = spawn2("npm", installArgs, { cwd });
     if (result.status !== 0) return exit(result.status ?? 1);
     if (existsSync4(join4(cwd, ".canon"))) {
       try {
