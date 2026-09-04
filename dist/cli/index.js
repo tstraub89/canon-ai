@@ -4955,7 +4955,7 @@ function updateCmd(args2, deps = {}) {
   if (detection.type === "local") {
     const installRoot = detection.installRoot;
     const saveFlag = dependencyBlock === "dependencies" ? "--save" : dependencyBlock === "optionalDependencies" ? "--save-optional" : "--save-dev";
-    const installArgs = usesRegistry ? ["install", saveFlag, target] : ["install", saveFlag, "--install-links", target];
+    const installArgs = usesRegistry ? ["install", saveFlag, "--save-exact", target] : ["install", saveFlag, "--install-links", target];
     const result = spawn2("npm", installArgs, { cwd: installRoot });
     if (result.status !== 0) return exit(result.status ?? 1);
     try {

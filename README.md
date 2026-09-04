@@ -98,7 +98,7 @@ npm install -g --install-links github:tstraub89/canon-ai
 
 > When installing from GitHub, `--install-links` is required because npm otherwise symlinks the global install to its git cache rather than copying the committed `dist/`, which leaves the `canon` bin pointing at a transient path and command-not-found after the install reports success. The flag packs+installs as a regular dependency, which is what you want for a stable global CLI.
 
-> **Updating.** Once installed, use `canon update` rather than re-running `npm install` by hand — it resolves the exact install this binary is running from and installs the latest release from the npm registry by default. Use `--channel main` or `--ref <ref|sha>` for a GitHub development commit; each update records what it installed in `provenance.json` under `.canon` for future tooling to read.
+> **Updating.** Once installed, use `canon update` rather than re-running `npm install` by hand — it resolves the exact install this binary is running from and installs the latest release from the npm registry by default. Use `--channel main` or `--ref <ref|sha>` for a GitHub development commit; each update records what it installed in `provenance.json` under `.canon` for future tooling to read. A project-local update pins the exact version (`--save-exact`); a global update has no manifest to pin.
 
 ### Set up in a repo
 

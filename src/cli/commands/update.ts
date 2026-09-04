@@ -534,7 +534,7 @@ export function updateCmd(args: string[], deps: UpdateCmdDeps = {}): void {
                 ? '--save-optional'
                 : '--save-dev';
         const installArgs = usesRegistry
-            ? ['install', saveFlag, target]
+            ? ['install', saveFlag, '--save-exact', target]
             : ['install', saveFlag, '--install-links', target];
         const result = spawn('npm', installArgs, { cwd: installRoot });
         if (result.status !== 0) return exit(result.status ?? 1);

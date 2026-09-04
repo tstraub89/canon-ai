@@ -118,6 +118,9 @@ function buildUpdateRedFirstFixture(dir: string): {
         '  version="${2##*@}"',
         '  printf \'"%s"\' "$version"',
         'fi',
+        'if [ "$1" = "install" ]; then',
+        `  node -e ${JSON.stringify("const fs = require('fs'); const file = process.cwd() + '/package.json'; const manifest = JSON.parse(fs.readFileSync(file, 'utf8')); const spec = process.argv.slice(1).find(arg => arg.startsWith('canon-ai@')); if (spec) { const version = spec.slice('canon-ai@'.length); manifest.devDependencies['canon-ai'] = process.argv.slice(1).includes('--save-exact') ? version : '^' + version; fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + '\\n'); }")} "$@"`,
+        'fi',
         'exit 0',
     ]);
 
@@ -457,7 +460,9 @@ void test('canon update (red-first): pins to installRoot cwd and the highest fin
         assert.equal(npmLog.length, 2);
         const [recordedCwd, recordedArgs] = npmLog[1].split('\t');
         assert.equal(fs.realpathSync(recordedCwd), fs.realpathSync(fixture.installRoot));
-        assert.match(recordedArgs, /^install --save-dev canon-ai@8\.2\.0$/);
+        assert.match(recordedArgs, /^install --save-dev --save-exact canon-ai@8\.2\.0$/);
+        const installRootManifest = JSON.parse(fs.readFileSync(path.join(fixture.installRoot, 'package.json'), 'utf8')) as { devDependencies: { 'canon-ai': string } };
+        assert.equal(installRootManifest.devDependencies['canon-ai'], '8.2.0');
 
         assert.equal(fs.readFileSync(path.join(fixture.adopterDir, 'package.json'), 'utf8'), adopterPackageBefore);
         assert.equal(fs.readFileSync(path.join(fixture.adopterDir, 'package-lock.json'), 'utf8'), adopterLockBefore);
@@ -484,7 +489,7 @@ void test('canon update (red-first): falls back to SSH when HTTPS resolution fai
         assert.equal(result.status, 0, `${result.stderr}\nstatus=${result.status}; npmLogExists=${fs.existsSync(fixture.npmLogPath)}`);
 
         const npmLog = fs.readFileSync(fixture.npmLogPath, 'utf8').trim().split('\n');
-        assert.match(npmLog[1].split('\t')[1], /^install --save-dev canon-ai@8\.2\.0$/);
+        assert.match(npmLog[1].split('\t')[1], /^install --save-dev --save-exact canon-ai@8\.2\.0$/);
 
         const gitCalls = fs.readFileSync(fixture.gitLogPath, 'utf8').trim().split('\n').filter(line => line.includes('ls-remote'));
         assert.equal(gitCalls.length, 2);
@@ -565,7 +570,7 @@ void test('canon update: canon-ai in each supported dependency block proceeds', 
             const result = runLocalUpdate(dir, [], { name: 'local-project', [block]: { 'canon-ai': '^2.2.0' } });
             assert.equal(result.errors.length, 0);
             assert.equal(result.npmArgs.length, 1);
-            assert.match(result.npmArgs[0], new RegExp(`^install ${expectedSaveFlags[block]} canon-ai@8\\.2\\.0$`));
+            assert.match(result.npmArgs[0], new RegExp(`^install ${expectedSaveFlags[block]} --save-exact canon-ai@8\\.2\\.0$`));
             assert.deepEqual(result.npmViewArgs, [['view', 'canon-ai@8.2.0', 'version', '--json']]);
             assert.deepEqual(result.npmViewCwds, [fs.realpathSync(dir)]);
         });
@@ -793,6 +798,14 @@ void test('canon update: announces current and target pins without reading prove
                 devDependencies: { 'canon-ai': '^8.1.0' },
             });
             assert.match(registry.output[0], /current: .* @ 8\.1\.0/);
+        });
+
+        withTempDir(exactDir => {
+            const exact = runLocalUpdate(exactDir, [], {
+                name: 'local-project',
+                devDependencies: { 'canon-ai': '8.2.0' },
+            });
+            assert.match(exact.output[0], /current: .* @ 8\.2\.0/);
         });
 
         withTempDir(unpinnedDir => {
