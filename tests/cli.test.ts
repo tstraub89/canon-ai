@@ -573,6 +573,13 @@ void test('canon update: canon-ai in each supported dependency block proceeds', 
             assert.match(result.npmArgs[0], new RegExp(`^install ${expectedSaveFlags[block]} --save-exact canon-ai@8\\.2\\.0$`));
             assert.deepEqual(result.npmViewArgs, [['view', 'canon-ai@8.2.0', 'version', '--json']]);
             assert.deepEqual(result.npmViewCwds, [fs.realpathSync(dir)]);
+            assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '.canon', 'provenance.json'), 'utf8')), {
+                source: 'canon-ai@8.2.0',
+                channel: 'stable',
+                version: '8.2.0',
+                resolved_sha: UPDATE_SHA_C,
+                updated_at: '2026-07-18T12:00:00.000Z',
+            });
         });
     }
 });
@@ -952,6 +959,13 @@ void test('canon update: global provenance uses an existing invoking-repo .canon
             now: () => '2026-07-18T12:00:00.000Z',
         });
         assert.equal(fs.existsSync(path.join(dir, '.canon', 'provenance.json')), true);
+        assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '.canon', 'provenance.json'), 'utf8')), {
+            source: 'canon-ai@8.2.0',
+            channel: 'stable',
+            version: '8.2.0',
+            resolved_sha: UPDATE_SHA_C,
+            updated_at: '2026-07-18T12:00:00.000Z',
+        });
         assert.match(output.join('\n'), /global install/);
         assert.deepEqual(npmArgs[0], ['install', '-g', 'canon-ai@8.2.0']);
         assert.deepEqual(npmViewArgs[0], [dir, 'view', '--global', 'canon-ai@8.2.0', 'version', '--json']);
