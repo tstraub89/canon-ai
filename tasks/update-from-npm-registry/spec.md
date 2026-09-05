@@ -70,6 +70,8 @@ Observable differences:
 | `docs/codebase-map.md` | `canon update` row mentions registry-first for releases; the "Postinstall git-hooks setup" row (line 150) becomes a contributor `npm run hooks` script row. |
 | `dist/cli/index.js` | Rebuilt (bundles `update.ts`, `init.ts`). |
 | `dist/orchestrator/run-task.js` | Rebuilt if the bundle changes; declare so the `--pr` gate accepts it either way. |
+| `package-lock.json` | Regenerated so the root entry's `hasInstallScript` flag matches the manifest without `postinstall`; only that flag changes (amendment nit). |
+| `scripts/install-git-hooks.mjs` | Header comment rewritten for `npm run hooks`; no longer a postinstall wrapper nor in the npm `files` list. Comment-only (amendment nit). |
 
 ### Why a registry pre-check, and why one task
 
@@ -164,6 +166,8 @@ Local registry installs pin exactly. The local-install argv becomes `npm install
 | `tests/cli.test.ts` | AC-1 argv assertions, AC-11 manifest assertion, the announcement test's exact-pin manifest case. |
 | `README.md` | The "Updating" paragraph says a project-local update pins the exact version. |
 | `dist/cli/index.js` | Rebuilt. |
+| `package-lock.json` | Regenerated so the root entry's `hasInstallScript` flag matches the manifest without `postinstall`; only that flag changes. |
+| `scripts/install-git-hooks.mjs` | Header comment rewritten: invoked via `npm run hooks`, no longer a postinstall wrapper, no longer in the npm `files` list. Comment-only. |
 
 ### Nits carried, disposition
 
