@@ -4,13 +4,15 @@
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-09-05
+
 ### Changed
 
-- `canon update` installs stable releases from the npm registry after verifying the tagged version; `--channel main`, `--ref`, and fork overrides continue to use GitHub, and tagged releases not yet published refuse with a retry message and GitHub fallback.
+- **`canon update` installs stable releases from the npm registry.** It resolves the latest release tag on GitHub as before, confirms that version is published to npm, then installs `canon-ai@<version>` from the registry; a project-local install is pinned to the exact version. A tagged release that has not reached npm yet refuses with a retry note and the `--ref v<version>` GitHub fallback. `--channel main`, `--ref`, and `CANON_UPSTREAM_REPO` fork overrides still install from GitHub, since those builds are not on the registry.
 
 ### Removed
 
-- The package no longer runs the contributor hook as an npm postinstall script; contributors can run `npm run hooks` once.
+- **No install scripts in the published package.** The `postinstall` hook installer only ever set up canon-ai's own contributor pre-commit hook and did nothing in adopter repos, but it triggered npm's install-scripts warning on every install. Contributors run `npm run hooks` once after cloning instead.
 
 ## [3.0.0] — 2026-09-04
 
