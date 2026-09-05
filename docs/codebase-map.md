@@ -47,7 +47,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `src/lib/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
 | Task management helper (status.json updates, phase transitions) | `src/task/index.ts` | `taskCmd()` implementation; `src/cli/commands/task.ts` is the thin CLI wrapper |
 | `canon run` CLI dispatch wrapper | `src/cli/commands/run-task.ts` | Spawns the compiled `dist/orchestrator/run-task.js` via `spawnSync`; the installed-package entry point for `canon run` |
-| `canon update` command | `src/cli/commands/update.ts` | Resolves the running install's root (`local`/`global`/`npx`, realpath-canonicalized); gates on manifest presence + `canon-ai` dependency listing; pins to the latest final release (or a labeled `main`/ref/SHA dev channel) via `git ls-remote`; writes `provenance.json` in `.canon` (write-only — no reader yet) |
+| `canon update` command | `src/cli/commands/update.ts` | Resolves the running install's root (`local`/`global`/`npx`, realpath-canonicalized); gates on manifest presence + `canon-ai` dependency listing; installs the latest final release from npm after resolving and verifying its tag, or installs a labeled `main`/ref/SHA development build from GitHub; writes `provenance.json` in `.canon` (write-only — no reader yet) |
 | Phase routing logic (phase order, transitions) | `src/orchestrator/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `src/orchestrator/main.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `src/orchestrator/validation.ts` | |
@@ -147,7 +147,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
 | Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | none needed — task worktrees live in-repo under `.canon/worktrees/`, inside the session cwd |
 | Git ignores | `.gitignore` | |
-| Postinstall git-hooks setup | `scripts/install-git-hooks.mjs` | Conditional `simple-git-hooks` wrapper; skips gracefully when no `.git/` present (e.g. adopter CI) |
+| Contributor git-hooks setup | `scripts/install-git-hooks.mjs` | One-time `npm run hooks` wrapper for contributors; skips gracefully when no `.git/` is present |
 | Build dist/ path normalizer | `scripts/normalize-dist-paths.mjs` | Post-build step that normalizes worktree symlink path comments in `dist/` |
 
 ## Public Assets (README only)

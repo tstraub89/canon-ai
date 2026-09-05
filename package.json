@@ -12,13 +12,12 @@
   "files": [
     "dist/",
     "templates/",
-    "scripts/install-git-hooks.mjs",
     "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup",
     "postbuild": "node scripts/normalize-dist-paths.mjs",
-    "postinstall": "node scripts/install-git-hooks.mjs",
+    "hooks": "node scripts/install-git-hooks.mjs",
     "test": "node --test --import ./tests/md-loader-register.mjs --import tsx tests/*.test.ts",
     "sync-templates": "tsx scripts/sync-canon-templates.mjs",
     "sync-templates:check": "tsx scripts/sync-canon-templates.mjs --check",

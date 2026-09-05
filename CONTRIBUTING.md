@@ -24,9 +24,13 @@ run the pipeline itself, not to build or test.
 git clone https://github.com/tstraub89/canon-ai.git
 cd canon-ai
 npm ci
+npm run hooks
 npm run build
 npm test
 ```
+
+The one-time `npm run hooks` step installs the contributor pre-commit hook;
+CI's template-sync check catches a skipped step.
 
 ## Before you open a PR
 

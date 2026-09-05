@@ -2,8 +2,8 @@
 /**
  * install-git-hooks.mjs
  *
- * Postinstall wrapper around `simple-git-hooks` that handles environments
- * where the bare CLI would fail.
+ * Contributor-only wrapper around `simple-git-hooks`, invoked by `npm run hooks`.
+ * It handles environments where the bare CLI would fail.
  *
  * Skip cases (silent exit 0 — install proceeds, no hooks installed):
  *

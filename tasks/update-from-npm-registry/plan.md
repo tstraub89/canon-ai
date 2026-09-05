@@ -380,3 +380,64 @@ Add under `## [Unreleased]` (currently empty at line 5):
 ## Known plan-level deviations from the spec's non-binding Implementation Notes
 
 - The registry-check classification logic (1.3) does **not** literally follow "treat any non-zero exit as check failed" — verified against real `npm view --json` output that a non-zero exit is the *normal* shape for "absent" (E404 in a still-parseable stdout JSON object), so the plan parses stdout content instead of branching on exit status alone. This is a refinement within the Implementation Notes' explicitly non-binding scope, not a spec change — no `notes.md` entry needed.
+
+## Reroute Plan
+
+> Amendment: Round 1, 2026-09-04 (`--save-exact` on local registry installs). Amendment review verdict: `approved_with_nits`. Codex has already implemented rounds 1-3 of the original spec (registry check, install path, npx message, provenance, docs, postinstall removal — see `handoff.md` Iterations 1-3); `update.ts` currently reads exactly as sections 1.1-1.6 of the plan above describe, confirmed at `src/cli/commands/update.ts:464` (`usesRegistry`), `:509` (`target`), `:536-539` (local install args, no `--save-exact` yet), `:548-549` (global install args). This section plans only the amendment delta: AC-1 (amended), AC-11 (new), and the two carried nits (lockfile regen, hook-header rewrite). Prior plan steps 2.1-2.7 (test fixtures), 3-9 (package.json, CONTRIBUTING, README, init.ts comment, CHANGELOG, codebase-map, build) still apply as already executed; only the deltas below are new work.
+
+### Delta
+
+1. **`src/cli/commands/update.ts` — `--save-exact` on the local registry install only.** At `:536-538`, change the local `installArgs` ternary so the registry branch adds the flag:
+   ```ts
+   const installArgs = usesRegistry
+       ? ['install', saveFlag, '--save-exact', target]
+       : ['install', saveFlag, '--install-links', target];
+   ```
+   Leave the global branch (`:548-549`) untouched — the amendment is explicit that no manifest is written for global installs, so `--save-exact` does not belong there. Leave every git-path branch (`else` arms above) untouched.
+
+2. **`tests/cli.test.ts` — AC-1 amended argv assertions.** Three existing local-path assertions must gain `--save-exact` in the matched pattern (the fourth, global, must positively confirm its *absence* — already true today since the global assertion (`:943`) matches the unchanged `['install', '-g', 'canon-ai@8.2.0']` array exactly, so no edit needed there beyond a confirming read):
+   - `:460` (red-first fixture, "pins to installRoot cwd..."): `/^install --save-dev canon-ai@8\.2\.0$/` → `/^install --save-dev --save-exact canon-ai@8\.2\.0$/`.
+   - `:487` (red-first fixture, SSH-fallback test): same pattern change.
+   - `:568` (three-save-flags loop test): `` new RegExp(`^install ${expectedSaveFlags[block]} canon-ai@8\\.2\\.0$`) `` → `` new RegExp(`^install ${expectedSaveFlags[block]} --save-exact canon-ai@8\\.2\\.0$`) ``.
+
+   Since the mock `npm` binary in `buildUpdateRedFirstFixture` (`:115-122`) and the unit-level `spawnRunner`/`npmArgs` capture used by the loop test (`:568`) both echo argv verbatim rather than parsing individual flags, no mock-script logic changes — only the three regex/pattern literals above.
+
+3. **AC-11 (new) — manifest pin assertion, in the red-first fixture.** The spec-review amendment nit says AC-11 must name the fixture or dependency block so the exact-pin check can't be satisfied by the announcement test alone; use the same red-first fixture as step 2's first two bullets (`buildUpdateRedFirstFixture`, exercised by the `"pins to installRoot cwd and the highest final-tag commit"` test at `:438-464`) since it is the one local-path test that runs against a real `installRoot/package.json` on disk (`devDependencies: { 'canon-ai': 'github:tstraub89/canon-ai' }` seeded at `:97-99`).
+
+   The fixture's mock `npm` (`:115-122`) currently only logs invocations — it never mutates `installRoot/package.json`, so a real manifest-pin assertion needs the mock extended to simulate npm's actual effect for an `install <saveFlag> --save-exact <pkg>@<version>` call: when `$1 = install` and args include a `--save-exact`-adjacent bare `pkg@version` target, rewrite the `canon-ai` entry under the save-flag's corresponding manifest block (`devDependencies` for `--save-dev`, matching this fixture's seeded block) to the bare `<version>` string via a small inline `node -e` or `sed` step in the mock script, alongside the existing `printf`/log lines. Keep the `view` branch and `exit 0` untouched.
+
+   Then in the `"pins to installRoot cwd and the highest final-tag commit"` test body, after the existing `assert.match(recordedArgs, ...)` line (now updated per step 2), add:
+   ```ts
+   const installRootManifest = JSON.parse(fs.readFileSync(path.join(fixture.installRoot, 'package.json'), 'utf8'));
+   assert.equal(installRootManifest.devDependencies['canon-ai'], '8.2.0');
+   ```
+   This is red-first exactly as the amendment states: today's `--save-dev canon-ai@8.2.0` argv (pre-delta) has no `--save-exact`, so a real `npm install` against it would write `^8.2.0`; the assertion fails until both the mock's simulated write and the production argv change (step 1) land together.
+
+4. **AC-4 announcement path — exact-pin manifest case.** In `"canon update: announces current and target pins without reading provenance"` (`:778-814`), add one more nested `withTempDir` block alongside the existing `registryDir`/`unpinnedDir` blocks (after `:796`), using a bare-exact manifest value to prove `currentPinFromManifest()` already renders a no-prefix version without change:
+   ```ts
+   withTempDir(exactDir => {
+       const exact = runLocalUpdate(exactDir, [], {
+           name: 'local-project',
+           devDependencies: { 'canon-ai': '8.2.0' },
+       });
+       assert.match(exact.output[0], /current: .* @ 8\.2\.0/);
+   });
+   ```
+   No production change needed here — `currentPinFromManifest()` already accepts a bare `X.Y.Z` value per the amendment review's own finding; this is a regression-pinning test only.
+
+5. **Carried nit — regenerate `package-lock.json`.** Run `npm install --package-lock-only` after step 1 lands (needs `package.json`'s `postinstall` already removed from the prior round, which it is per `handoff.md` Iteration 1). Confirm via `git diff package-lock.json` that only `hasInstallScript` fields flip from `true` to absent/`false` at the root entry (`:10`) and any other canon-ai self-entries (`:1545`, `:1857`, `:2409`, `:3044` today — line numbers will shift) — no dependency version churn. If the diff touches anything beyond `hasInstallScript`, stop and investigate before committing (a version bump there would be an unrelated, undeclared change).
+
+6. **Carried nit — rewrite `scripts/install-git-hooks.mjs` header.** The header comment (currently: *"Postinstall wrapper around `simple-git-hooks`..."*) still calls itself a postinstall script. Reword to describe it as the contributor-only script invoked by `npm run hooks` (no longer autorun), consistent with the `package.json`/`CONTRIBUTING.md`/`docs/codebase-map.md` changes already shipped in the prior round. Comment-only — the skip-case logic below it (no `.git/`, no devDependencies, worktree `.git` file) is unchanged and still accurate since a contributor invoking the script manually can still hit those same guards.
+
+7. **`README.md` — note the exact pin.** The "Updating" callout at `README.md:101` (already rewritten in the prior round to say registry-vs-GitHub) gets one added clause stating that a project-local update pins the exact version, e.g. append after the existing sentence: "A project-local update pins the exact version (`--save-exact`); a global update has no manifest to pin." Keep the existing registry/GitHub split sentence unchanged.
+
+8. **`dist/cli/index.js` — rebuild.** After step 1, `npm run build` to pick up the `--save-exact` argv change; recommit alongside the source and test changes.
+
+### Order of implementation (delta only)
+
+1. `src/cli/commands/update.ts` (delta 1).
+2. `tests/cli.test.ts` (deltas 2-4) — make `npm test` green against the new argv and manifest behavior.
+3. `package-lock.json` regen (delta 5) and `scripts/install-git-hooks.mjs` header (delta 6) — independent of 1-2.
+4. `README.md` (delta 7) — independent, docs only.
+5. `npm run build` and commit `dist/cli/index.js` (delta 8).
+6. Re-run the full validation set (lint, type-check, test, build, sync-templates:check, docs-refs-check, `npm pack --dry-run`) before handoff — same set already green per `handoff.md` Iteration 3, must stay green after this delta.

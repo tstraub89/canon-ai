@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `canon update` installs stable releases from the npm registry after verifying the tagged version; `--channel main`, `--ref`, and fork overrides continue to use GitHub, and tagged releases not yet published refuse with a retry message and GitHub fallback.
+
+### Removed
+
+- The package no longer runs the contributor hook as an npm postinstall script; contributors can run `npm run hooks` once.
+
 ## [3.0.0] — 2026-09-04
 
 ### Changed

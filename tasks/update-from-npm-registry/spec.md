@@ -70,6 +70,8 @@ Observable differences:
 | `docs/codebase-map.md` | `canon update` row mentions registry-first for releases; the "Postinstall git-hooks setup" row (line 150) becomes a contributor `npm run hooks` script row. |
 | `dist/cli/index.js` | Rebuilt (bundles `update.ts`, `init.ts`). |
 | `dist/orchestrator/run-task.js` | Rebuilt if the bundle changes; declare so the `--pr` gate accepts it either way. |
+| `package-lock.json` | Regenerated so the root entry's `hasInstallScript` flag matches the manifest without `postinstall`; only that flag changes (amendment nit). |
+| `scripts/install-git-hooks.mjs` | Header comment rewritten for `npm run hooks`; no longer a postinstall wrapper nor in the npm `files` list. Comment-only (amendment nit). |
 
 ### Why a registry pre-check, and why one task
 
@@ -137,3 +139,38 @@ Observable differences:
 - [x] Human Test Plan uses product language only (no code, no file names)
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes; N/A for features/refactors) — N/A; the postinstall warning is confirmed by direct observation on 2026-09-04 and AC-6 carries the before/after check
+
+## Amendment
+
+> Round 1, 2026-09-04. Source: `code_review` `spec_gap`, carried across three review rounds; both Claude lenses re-flagged it, no code bugs remain. Approved ACs stand except as amended here.
+
+### What the review found
+
+AC-1 spells out the local-install argv as `npm install <save flag> canon-ai@X.Y.Z`. With npm's default `save-prefix` of `^`, that writes `"canon-ai": "^X.Y.Z"` into a project that depends on canon-ai via `dependencies`/`devDependencies`/`optionalDependencies`. The git path this task replaces wrote `github:<slug>#<sha>`, which is inherently exact. So a registry-based `canon update` would loosen the project's pin from an exact build to a floating range, and a later plain `npm install` in that project could move canon-ai without `canon update` being involved. The spec's own "no fallback to an unpinned source" rule is about resolution, but the same intent applies to what gets written: `canon update` pins.
+
+### Decision change
+
+Local registry installs pin exactly. The local-install argv becomes `npm install <save flag> --save-exact canon-ai@X.Y.Z`, so the manifest records `"canon-ai": "X.Y.Z"`. The global install argv is unchanged (no manifest is written). Git-path installs are unchanged.
+
+### Acceptance criteria amended
+
+- **AC-1 (amended)** — the local argv is `npm install <save flag> --save-exact canon-ai@X.Y.Z`; the three save-flag tests assert `--save-exact` is present and the global test asserts it is absent.
+- **AC-11 (new) — Manifest pin is exact after a local registry update.** In the local red-first integration fixture, after `canon update` the project manifest's `canon-ai` entry equals `X.Y.Z` with no range prefix. Verify: one assertion added to that fixture; red-first because the current argv writes `^X.Y.Z`.
+- **`currentPinFromManifest()`** already reads a bare version spec after the round-1 fix; AC-4's announcement path must show the exact version on the run *after* a registry update. Verify: covered by the existing "announces current and target pins" test extended with a manifest containing `"canon-ai": "X.Y.Z"`.
+
+### Affected Files delta
+
+| File | Change |
+|---|---|
+| `src/cli/commands/update.ts` | `--save-exact` on the local registry argv only. |
+| `tests/cli.test.ts` | AC-1 argv assertions, AC-11 manifest assertion, the announcement test's exact-pin manifest case. |
+| `README.md` | The "Updating" paragraph says a project-local update pins the exact version. |
+| `dist/cli/index.js` | Rebuilt. |
+| `package-lock.json` | Regenerated so the root entry's `hasInstallScript` flag matches the manifest without `postinstall`; only that flag changes. |
+| `scripts/install-git-hooks.mjs` | Header comment rewritten: invoked via `npm run hooks`, no longer a postinstall wrapper, no longer in the npm `files` list. Comment-only. |
+
+### Nits carried, disposition
+
+- `package-lock.json` still says `hasInstallScript: true` at the root entry: regenerate the lockfile (`npm install --package-lock-only`) in this iteration so committed metadata matches the manifest; only that flag should change.
+- `scripts/install-git-hooks.mjs` header still calls itself a postinstall wrapper shipped via `files`: rewrite the header in this iteration; comment-only.
+- The npx test cannot distinguish "read name from manifest" from the default: leave as is; the fork-rename scenario is out of scope per AC-3.

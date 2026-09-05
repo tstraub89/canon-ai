@@ -1,0 +1,1 @@
+The registry and GitHub update paths are correctly separated, exact local pins and provenance are preserved, and lifecycle hook removal is reflected in packaging and documentation. Tests, lint, and type-check pass.

@@ -82,13 +82,11 @@ export function initCmd(_args: string[]): void {
 
     const pkgPath = join(cwd, 'package.json');
     const isJsProject = existsSync(pkgPath);
-    // Package.json mutation disabled — canon-ai isn't on the npm registry, so
-    // writing `"canon-ai": "^<ver>"` to the adopter's devDependencies broke
-    // their `npm install` / CI (resolves to a non-existent registry package).
-    // Adopters install canon globally via `npm install -g --install-links
-    // github:tstraub89/canon-ai`; no per-project devDep needed. The `"canon":
-    // "canon"` script alias was also a no-op once canon is on PATH. Re-enable
-    // (and revisit the URL/auth story) if canon ever ships to npm proper.
+    // Package.json mutation remains disabled — adopters install canon globally
+    // from the npm registry, so no per-project devDependency is needed. The
+    // `"canon": "canon"` script alias was also a no-op once canon is on PATH.
+    // Re-enable the write only if a future project-local installation model
+    // requires it.
     // See `updatePackageJson()` below — body preserved for that future revival.
     // if (isJsProject) {
     //     updatePackageJson(pkgPath);
