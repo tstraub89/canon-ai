@@ -381,6 +381,11 @@
 
 ## 🛠️ Tooling & Dev Experience
 
+- [ ] **`.canon/provenance.json` writes dirty the tree and can block the next worktree bootstrap** *(filed 2026-09-05 after the first registry-path `canon update` in canon-ai's own checkout. **Priority: low — one extra commit per update; only bites repos that run `canon update` from inside a canon-managed checkout.**)*
+  - **Mechanism**: a global-install `canon update` writes `.canon/provenance.json` into the current repo when it has a `.canon/` directory. The file is designed to be committed (README §Updating), so the write leaves the tree dirty until someone commits it. `assertRepoRootCleanBeforeFirstWorktree()` tolerates dirt only under `tasks/` and the pipeline telemetry files, so a task created right after an update refuses to bootstrap its worktree until the record is committed.
+  - **Options**: (a) add `.canon/provenance.json` to `isPipelineOwnedDirtyPath()`'s allowlist so the gate tolerates it (it is canon-written and never hand-edited in practice); (b) have `canon update` commit the record itself when the tree is otherwise clean (a git write the updater does not make today); (c) leave as is and document "commit after updating". Lean (a): smallest change, and the gate's purpose is stray *source* edits, which this is not.
+  - **Effort**: `XS`.
+
 - [ ] **Stale task-template overrides are invisible once the managed baseline is current** *(filed 2026-07-11 from James's issue #191. **Priority: nice-to-have — narrow audience (adopters carrying `tasks/_templates/` overrides), fails visible-at-task-creation rather than silently corrupting.**)*
   - **Problem**: `getStaleOverrides()` in `src/cli/commands/upgrade.ts` only examines templates present in the current run's *changed* operations — once the managed baseline is already current, an obsolete override (e.g. a stale `status.json` restoring removed phases) is reported nowhere; upgrade says "Already up to date" and doctor has no override check.
   - **Suggested shape (from the issue, pick a subset)**: a doctor section or `canon task overrides` inventory of every override; structural validation of `status.json` overrides against the current task schema; required-heading validation for Markdown overrides; reject structurally incompatible overrides in `canon task new` before scaffolding; report byte-identical overrides as redundant.
