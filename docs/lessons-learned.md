@@ -58,6 +58,14 @@ A spec that needs "X outside the new boundary should stop working" is tempting t
 
 ---
 
+### A test asserting file existence is not a test of the file's content
+
+*(2026-09-04, source: update-from-npm-registry)*
+
+An AC that says "verify: assertions added to the provenance tests" can be satisfied by a test that merely checks the file exists (or that some unrelated field is present) while never reading the fields the AC actually cares about (`source`, `channel`, `version`, `resolved_sha`). This task's code review round 1 caught exactly that gap on a brand-new code path (the registry install branch): the production code wrote the right shape, but no test read it back and compared it. The fix cost a full review round that a stricter self-check would have avoided. Rule of thumb: when an AC's verify clause names specific fields or a specific shape, grep the test for an assertion on each named field individually — a passing `existsSync`/"has been written" check is not evidence the shape is right, especially on a path with no prior test coverage to imitate.
+
+---
+
 <!-- Buffer swept 2026-08-22 (3 entries reviewed: 1 promoted, 1 kept in buffer, 1 pruned).
      Promotion → docs/patterns.md: "Operator-facing text is often rendered by independently-authored duplicates — grep the surface class" as a new pitfall + Trigger Table row (from the duplicate-presentation-surfaces entry; strengthened by a second same-week instance in archive-review-on-reroute's dual review.md prompt pointers).
      Kept in buffer: the grep-AC-exception-list-growth entry — adjacent to two existing canon-spec SKILL rules (≥3-iterations read-content, permitted-to-remain buckets); re-evaluate for a one-sentence SKILL graft if it recurs.

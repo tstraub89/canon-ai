@@ -50,3 +50,9 @@ Does the spec's approach work against the actual codebase?
 ### Nits for the plan phase
 
 - The registry-selection predicate should explicitly track whether `CANON_UPSTREAM_REPO` was set, in addition to comparing the effective slug. The decision says any override uses the GitHub path, while the implementation note says the canonical-slug comparison selects the registry path; an explicit override whose value equals `tstraub89/canon-ai` would otherwise be ambiguous. Add the no-override condition to the plan/tests so that this case cannot accidentally select the registry path.
+
+## Amendment Review
+
+- [x] **Approved with nits**
+
+> Findings: The amendment is implementable and remains coherent with the approved registry/GitHub split. Adding `--save-exact` only to local registry installs preserves the existing exact-pin behavior of the replaced Git path; the amendment explicitly leaves global installs and Git-path installs unchanged. The current `currentPinFromManifest()` implementation already accepts a bare `X.Y.Z` dependency value, so the amended announcement assertion is compatible with the current manifest-reading contract. Non-blocking nits: AC-11 should name the local-update fixture or state which dependency block is asserted so the exact-manifest-pin check cannot be implemented only against the announcement; and the carried lockfile/header cleanup should be included in the implementation diff as stated (the current `package-lock.json` root still has `hasInstallScript: true`, and the hook header still describes a postinstall wrapper shipped via `files`).

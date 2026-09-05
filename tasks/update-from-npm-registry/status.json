@@ -1,15 +1,15 @@
 {
   "id": "update-from-npm-registry",
   "title": "canon update installs stable releases from the npm registry; drop the postinstall hook script",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-09-04",
-  "updated": "2026-09-04",
-  "branch": "",
+  "updated": "2026-09-05",
+  "branch": "task/update-from-npm-registry",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "e8b962fe43fba05fe5b153937906fb95caf50e27",
+    "orchestrator_commit": "266ddff4758c48b1cf3aeecb1d95af0454c4f392",
     "canon_version": "3.0.0",
     "codex_cli": "codex-cli 0.153.2",
     "claude_code": "2.1.260 (Claude Code)"
@@ -31,7 +31,7 @@
       "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 1,
+      "iterations_total": 2,
       "changes_requested_total": 0,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
@@ -41,21 +41,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 5,
+      "changes_requested_total": 3,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -63,9 +66,18 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-09-04",
+      "phase": "code_review",
+      "iteration_count": 0,
+      "reason": "Code review surfaced a spec_gap verdict for task(s): update-from-npm-registry. The implementation cannot resolve this — the root cause is in the spec. Recovery options (both operate on the full blocked bundle [update-from-npm-registry]):\n  FIX: amend spec.md with ## Amendment, then: canon run update-from-npm-registry --reroute\n  BLESS: canon task accept update-from-npm-registry code_review --reason \"<why>\""
+    }
+  ],
   "sessions": {
-    "codex_spec_review": "01a06e04-18c6-7811-a7ca-b282596a7aa6"
+    "codex": "01a06e0a-6b02-7093-9624-b8afd2b64228",
+    "codex_spec_review": "01a06ebd-b099-72b0-9e12-f2402eb2fa0b",
+    "claude_review": "225a95cb-b6af-4211-8584-13864a96b1a4"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
