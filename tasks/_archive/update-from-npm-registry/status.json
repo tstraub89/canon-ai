@@ -1,7 +1,7 @@
 {
   "id": "update-from-npm-registry",
   "title": "canon update installs stable releases from the npm registry; drop the postinstall hook script",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-04",
   "updated": "2026-09-05",
   "branch": "task/update-from-npm-registry",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
