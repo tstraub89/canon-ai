@@ -4,9 +4,16 @@
 
 ## [Unreleased]
 
+## [3.1.1] — 2026-09-07
+
 ### Fixed
 
 - **`--reroute` and `canon task reset-code-review` re-scaffold `review.md` after archiving it.** Both commands moved the filled review to `review-prior-<n>.md` and left nothing behind, so the code-review foreman was told to "fill the existing template structure" with no template on disk, and a foreman that failed to write the file left the phase with no artifact to inspect. The archive step now writes a fresh scaffold from the project's `review.md` override under `tasks/_templates/` when it keeps one, otherwise from `.canon/templates/review.md`, rendered exactly as `canon task new` would. The pristine-scaffold check that skips archiving now also recognizes a rendered scaffold (task id substituted), so a repeat reroute no longer archives a blank file.
+- **The code-review foreman no longer ends its turn with the lenses still running.** It now spawns the Claude lenses in the foreground and does not end the turn before `review.md` and the verdict are written.
+- **`canon init` and `canon upgrade` refuse to write through symlinks.** Every destination file and its parent directories are checked before anything is written; a symlink anywhere on the path, including a dangling one, aborts with the path named. `--force` does not bypass this. Replace the symlink with a regular file or directory first.
+- **Ctrl-C and `canon stop` wait for agent processes to actually die before cleaning up.** The orchestrator forwards the signal to every agent process group, waits up to three seconds, SIGKILLs any group still alive, and allows up to one more second for reaping before removing runtime markers and exiting. Repeated signals do not skip this, and an agent stream finishing mid-shutdown no longer resumes phase logic.
+- **`canon watch` follow mode no longer garbles or re-reads log output.** It reads only newly appended bytes in bounded chunks and decodes UTF-8 incrementally, so multibyte characters split across reads render correctly. A replaced or truncated log restarts tailing from the beginning.
+- **The docs reference checker accepts compound line citations with whitespace after the comma.** `` `file.ts:12, 40-52` `` and `#L12, L40` forms now parse, including range, approximate (`~`), and GitHub-anchor variants. The shipped template matches. ([#15](https://github.com/tstraub89/canon-ai/issues/15))
 
 ## [3.1.0] — 2026-09-05
 
