@@ -70,7 +70,7 @@ Every orchestrator exit writes a final `■ orchestrator exit code=<N> [reason=<
 
 ### `canon stop <id>`
 
-Gracefully terminate a detached run. Sends SIGTERM then SIGKILL if needed. Self-heals stale `.canon-pid` / `.heartbeat.json` when the orchestrator is already dead.
+Gracefully terminate a detached run. Sends SIGTERM then SIGKILL if needed. Self-heals stale `.canon-pid` / `.heartbeat.json` when the orchestrator is already dead. The orchestrator forwards the signal to its agent process groups, waits up to three seconds, then sends SIGKILL to surviving groups and allows up to one second for reaping before removing runtime markers and exiting. Phase completion is suppressed during shutdown so it cannot interrupt this cleanup.
 
 ---
 

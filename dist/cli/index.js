@@ -1207,8 +1207,8 @@ ${RECOMMENDED_NUDGE}`
     };
   }
   const mentionsCanon = existingFiles.some((filename) => {
-    const path14 = join(cwd, filename);
-    return /canon/i.test(readFileSync(path14, "utf8"));
+    const path15 = join(cwd, filename);
+    return /canon/i.test(readFileSync(path15, "utf8"));
   });
   if (mentionsCanon) {
     return { label: "canon discovery nudge", status: "pass" };
@@ -1419,10 +1419,10 @@ function checkCodexProjectTrust(cwd) {
         trust_level = "trusted"`
   };
 }
-function readAllowFromSettings(path14) {
-  if (!existsSync(path14)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
+function readAllowFromSettings(path15) {
+  if (!existsSync(path15)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync(path14, "utf8"));
+    const parsed = JSON.parse(readFileSync(path15, "utf8"));
     const raw = parsed?.permissions?.allow;
     const allow = new Set(
       Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : []
@@ -1639,6 +1639,31 @@ import {
 } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { dirname as dirname2, join as join2, relative as relative2 } from "path";
+
+// src/lib/scaffold-paths.ts
+import { lstatSync } from "fs";
+import path7 from "path";
+function assertNoSymlinkDestinations(root, relativePaths) {
+  for (const relativePath of relativePaths) {
+    let current = root;
+    for (const segment of relativePath.split(/[\\/]/)) {
+      current = path7.join(current, segment);
+      let entry;
+      try {
+        entry = lstatSync(current);
+      } catch (error) {
+        const code = error.code;
+        if (code === "ENOENT" || code === "ENOTDIR") break;
+        throw error;
+      }
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Refusing to write ${relativePath}: ${current} is a symlink. Replace it with a regular file or directory before running canon init or upgrade; --force does not bypass this check.`);
+      }
+    }
+  }
+}
+
+// src/cli/commands/init.ts
 var packageDir = join2(dirname2(fileURLToPath2(import.meta.url)), "../..");
 var templatesDir = join2(packageDir, "templates");
 var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md"]);
@@ -1665,6 +1690,7 @@ function walkDir(dir, base = dir) {
 }
 function scaffoldTemplates(cwd, srcTemplatesDir) {
   const templateFiles = walkDir(srcTemplatesDir);
+  assertNoSymlinkDestinations(cwd, templateFiles);
   const scaffolded = [];
   const skipped = [];
   for (const rel of templateFiles) {
@@ -1682,6 +1708,7 @@ function scaffoldTemplates(cwd, srcTemplatesDir) {
 function initCmd(_args) {
   checkDeps();
   const cwd = process.cwd();
+  assertNoSymlinkDestinations(cwd, [".gitignore", ".canon/version"]);
   const { scaffolded, skipped } = scaffoldTemplates(cwd, templatesDir);
   const gitignorePath = join2(cwd, ".gitignore");
   const existingGitignore = existsSync2(gitignorePath) ? readFileSync2(gitignorePath, "utf8") : "";
@@ -1755,6 +1782,7 @@ function runCmd(args2) {
 
 // src/cli/commands/watch.ts
 import fs7 from "fs";
+import { StringDecoder } from "string_decoder";
 
 // src/cli/commands/stop.ts
 import { existsSync as existsSync3 } from "fs";
@@ -2362,25 +2390,39 @@ function primaryLogTaskId(ctx, fallbackTaskId) {
 function tailRunLog(ctx, taskId, deps, tailState) {
   const logTaskDir = tolerantTaskDir(primaryLogTaskId(ctx, taskId));
   const logPath = runLogPathFor(logTaskDir);
+  let fd;
   try {
-    const stat = fs7.statSync(logPath);
-    if (tailState.position == null) {
+    fd = fs7.openSync(logPath, "r");
+    const stat = fs7.fstatSync(fd);
+    const identity = `${logPath}:${stat.dev}:${stat.ino}`;
+    if (tailState.position == null || tailState.path !== logPath) {
       tailState.position = stat.size;
+      tailState.path = logPath;
+      tailState.identity = identity;
+      tailState.decoder = new StringDecoder("utf8");
       return;
     }
-    if (stat.size < tailState.position) {
+    if (identity !== tailState.identity || stat.size < tailState.position) {
       tailState.position = 0;
+      tailState.decoder = new StringDecoder("utf8");
     }
+    tailState.identity = identity;
     if (stat.size === tailState.position) return;
-    const content = fs7.readFileSync(logPath, "utf8");
-    const chunk = content.slice(tailState.position);
-    if (chunk.length > 0) deps.stderr?.(chunk);
-    tailState.position = stat.size;
+    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, stat.size - tailState.position));
+    while (tailState.position < stat.size) {
+      const bytes = fs7.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - tailState.position), tailState.position);
+      if (bytes === 0) break;
+      tailState.position += bytes;
+      const chunk = tailState.decoder.write(buffer.subarray(0, bytes));
+      if (chunk.length > 0) deps.stderr?.(chunk);
+    }
   } catch (error) {
     const code = getErrnoCode2(error);
     if (code === "ENOENT") return;
     deps.stderr?.(`canon watch: failed to tail ${logPath}: ${errorMessage2(error)}
 `);
+  } finally {
+    if (fd !== void 0) fs7.closeSync(fd);
   }
 }
 function gatherContext(taskId, deps) {
@@ -2441,7 +2483,7 @@ function watchCmd(args2, deps = {}) {
   }
   const taskId = parsed.taskId;
   const timeoutDeadline = parsed.timeoutMs == null ? null : now() + parsed.timeoutMs;
-  const tailState = { position: null };
+  const tailState = { position: null, decoder: new StringDecoder("utf8") };
   const withinTimeout = () => timeoutDeadline != null && now() >= timeoutDeadline;
   const remainingTimeoutMs = () => {
     if (timeoutDeadline == null) return null;
@@ -2653,20 +2695,20 @@ function watchCmd(args2, deps = {}) {
 // src/task/index.ts
 import { spawnSync as spawnSync7 } from "child_process";
 import fs13 from "fs";
-import path13 from "path";
+import path14 from "path";
 
 // src/orchestrator/canon-snapshot.ts
 import { spawnSync as spawnSync6 } from "child_process";
 import fs9 from "fs";
-import path9 from "path";
+import path10 from "path";
 
 // src/orchestrator/git.ts
 import { spawnSync as spawnSync5 } from "child_process";
-import path8 from "path";
+import path9 from "path";
 
 // src/orchestrator/worktree.ts
 import fs8 from "fs";
-import path7 from "path";
+import path8 from "path";
 var PIPELINE_TELEMETRY_FILES = [
   "docs/pipeline-invocations.md",
   "docs/task-quality-log.md",
@@ -2714,13 +2756,13 @@ function resolveCanonVersion(explicit) {
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!ownToplevel) return upstreamCommit;
-  const parentDir = path9.dirname(repoRoot);
+  const parentDir = path10.dirname(repoRoot);
   const parentToplevel = captureGitOutput(parentDir, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!parentToplevel) return upstreamCommit;
-  if (path9.resolve(parentToplevel) === path9.resolve(ownToplevel)) {
+  if (path10.resolve(parentToplevel) === path10.resolve(ownToplevel)) {
     return upstreamCommit;
   }
-  return captureGitOutput(path9.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
+  return captureGitOutput(path10.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
 }
 function defaultRunCommand(command2, args2) {
   const result = spawnSync6(command2, args2, {
@@ -2754,7 +2796,7 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const isInstalled = isInstalledSourcePath(canonSourcePath);
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const drivingCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const hostCommit = superprojectWorkingTree ? captureGitOutput(path9.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
+  const hostCommit = superprojectWorkingTree ? captureGitOutput(path10.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
   let upstreamCommit;
   let orchestratorCommit;
   if (isInstalled) {
@@ -2802,24 +2844,24 @@ function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
 
 // src/orchestrator/review-archive.ts
 import fs12 from "fs";
-import path12 from "path";
+import path13 from "path";
 
 // src/task/templates.ts
 import fs10 from "fs";
-import path10 from "path";
+import path11 from "path";
 function tasksRoot() {
   return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
 }
 function templatesRoot() {
-  return path10.join(process.cwd(), ".canon", "templates");
+  return path11.join(process.cwd(), ".canon", "templates");
 }
 function taskTemplateOverrideRoot() {
-  return path10.join(tasksRoot(), "_templates");
+  return path11.join(tasksRoot(), "_templates");
 }
 function resolveTaskTemplateSource(basename2) {
-  const override = path10.join(taskTemplateOverrideRoot(), basename2);
+  const override = path11.join(taskTemplateOverrideRoot(), basename2);
   if (fs10.existsSync(override)) return override;
-  const managed = path10.join(templatesRoot(), basename2);
+  const managed = path11.join(templatesRoot(), basename2);
   return fs10.existsSync(managed) ? managed : null;
 }
 function renderTaskTemplate(source, taskId, title) {
@@ -2828,7 +2870,7 @@ function renderTaskTemplate(source, taskId, title) {
 function scaffoldTaskArtifact(taskDir, basename2, taskId, title) {
   const source = resolveTaskTemplateSource(basename2);
   if (!source) return null;
-  fs10.writeFileSync(path10.join(taskDir, basename2), renderTaskTemplate(source, taskId, title), "utf8");
+  fs10.writeFileSync(path11.join(taskDir, basename2), renderTaskTemplate(source, taskId, title), "utf8");
   return source;
 }
 function isPristineTaskArtifact(content, basename2, taskId, title) {
@@ -2844,7 +2886,7 @@ function isPristineTaskArtifact(content, basename2, taskId, title) {
 
 // src/orchestrator/validation.ts
 import fs11 from "fs";
-import path11 from "path";
+import path12 from "path";
 function computeLatestValidationResults(handoffContent) {
   const latest = /* @__PURE__ */ new Map();
   const baseline = parseTable(handoffContent, "Validation Outcomes");
@@ -3005,13 +3047,13 @@ var PHASE_GATE_CONFIG = {
   human_review: {}
 };
 function resolveTaskDirForValidation(taskId, taskDirOverride) {
-  return taskDirOverride ? path11.join(taskDirOverride, taskId) : taskDirFor(taskId);
+  return taskDirOverride ? path12.join(taskDirOverride, taskId) : taskDirFor(taskId);
 }
 function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
   const config2 = PHASE_GATE_CONFIG[phase];
   const taskDir = resolveTaskDirForValidation(taskId, taskDirOverride);
   if (config2.artifactName) {
-    const artifactPath = path11.join(taskDir, config2.artifactName);
+    const artifactPath = path12.join(taskDir, config2.artifactName);
     let content;
     try {
       content = fs11.readFileSync(artifactPath, "utf8");
@@ -3026,7 +3068,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     if (phase === "spec_review" || phase === "plan") {
       let statusRaw;
       try {
-        statusRaw = fs11.readFileSync(path11.join(taskDir, "status.json"), "utf8");
+        statusRaw = fs11.readFileSync(path12.join(taskDir, "status.json"), "utf8");
       } catch {
         return { ok: false, reason: `cannot determine reroute state for '${phase}': status.json in ${taskDir} is missing or unreadable` };
       }
@@ -3061,7 +3103,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     }
   }
   if (phase === "human_review") {
-    const handoffPath = path11.join(taskDir, "handoff.md");
+    const handoffPath = path12.join(taskDir, "handoff.md");
     let handoffContent;
     try {
       handoffContent = fs11.readFileSync(handoffPath, "utf8");
@@ -3070,7 +3112,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     }
     const pending = countHumanPendingChecks(handoffContent);
     if (pending.length === 0) return { ok: true };
-    const donePath = path11.join(taskDir, "done.md");
+    const donePath = path12.join(taskDir, "done.md");
     let doneContent = "";
     try {
       doneContent = fs11.readFileSync(donePath, "utf8");
@@ -3088,7 +3130,7 @@ ${list}
   return { ok: true };
 }
 function parseHandoffChangesRows(taskId) {
-  const handoffPath = path11.join(taskDirFor(taskId), "handoff.md");
+  const handoffPath = path12.join(taskDirFor(taskId), "handoff.md");
   let content;
   try {
     content = fs11.readFileSync(handoffPath, "utf8");
@@ -3402,7 +3444,7 @@ function newestReviewArchiveNumber(taskDir) {
   return newest;
 }
 function archivePriorReview(taskDir, options = {}) {
-  const reviewPath = path12.join(taskDir, "review.md");
+  const reviewPath = path13.join(taskDir, "review.md");
   if (!fs12.existsSync(reviewPath)) return null;
   if (options.skipUnfilledTemplate) {
     const content = fs12.readFileSync(reviewPath, "utf8");
@@ -3412,12 +3454,12 @@ function archivePriorReview(taskDir, options = {}) {
     }
   }
   const archiveName = `${REVIEW_ARCHIVE_PREFIX}${newestReviewArchiveNumber(taskDir) + 1}.md`;
-  fs12.renameSync(reviewPath, path12.join(taskDir, archiveName));
+  fs12.renameSync(reviewPath, path13.join(taskDir, archiveName));
   return archiveName;
 }
 function rescaffoldReview(taskDir, identity) {
   try {
-    if (fs12.existsSync(path12.join(taskDir, "review.md"))) return { outcome: "exists" };
+    if (fs12.existsSync(path13.join(taskDir, "review.md"))) return { outcome: "exists" };
     const source = scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
     return source ? { outcome: "written", source } : { outcome: "no-template" };
   } catch (error) {
@@ -3472,21 +3514,21 @@ function validateTaskId(id) {
   }
 }
 function taskDirFromRoot(taskId) {
-  return path13.join(tasksRoot(), taskId);
+  return path14.join(tasksRoot(), taskId);
 }
 function taskDirForCwd(_cwd, taskId) {
   const root = tasksRoot();
-  if (path13.isAbsolute(root)) {
-    return path13.join(root, taskId);
+  if (path14.isAbsolute(root)) {
+    return path14.join(root, taskId);
   }
-  return path13.join(resolveTaskCwd(taskId), root, taskId);
+  return path14.join(resolveTaskCwd(taskId), root, taskId);
 }
 function taskStatusFileForCwd(cwd, taskId) {
-  return path13.join(taskDirForCwd(cwd, taskId), "status.json");
+  return path14.join(taskDirForCwd(cwd, taskId), "status.json");
 }
 function taskRootForGate(cwd) {
   const root = tasksRoot();
-  return path13.isAbsolute(root) ? root : path13.join(cwd, root);
+  return path14.isAbsolute(root) ? root : path14.join(cwd, root);
 }
 function readJsonFile(filePath) {
   try {
@@ -3595,10 +3637,10 @@ function taskNew(args2) {
   }
   fs13.mkdirSync(taskDir, { recursive: true });
   for (const basename2 of listTemplateFiles()) {
-    const source = resolveTaskTemplateSource(basename2) ?? path13.join(templatesRoot(), basename2);
-    fs13.writeFileSync(path13.join(taskDir, basename2), renderTaskTemplate(source, id, title), "utf8");
+    const source = resolveTaskTemplateSource(basename2) ?? path14.join(templatesRoot(), basename2);
+    fs13.writeFileSync(path14.join(taskDir, basename2), renderTaskTemplate(source, id, title), "utf8");
   }
-  const statusPath = path13.join(taskDir, "status.json");
+  const statusPath = path14.join(taskDir, "status.json");
   const status = readJsonFile(statusPath);
   status.id = id;
   status.title = title;
@@ -3631,18 +3673,18 @@ function taskList() {
       invalidCount += 1;
       let title = "(untitled)";
       try {
-        const frozen = readJsonFile(path13.join(taskDirForRepoRoot(entry), "status.json"));
+        const frozen = readJsonFile(path14.join(taskDirForRepoRoot(entry), "status.json"));
         title = frozen.title ?? title;
       } catch {
       }
       rows.push({
         id: entry,
         title,
-        phase: `INVALID: worktree missing \u2014 restore ${path13.join(effectiveWorktreesRoot(), entry)} or archive the task`
+        phase: `INVALID: worktree missing \u2014 restore ${path14.join(effectiveWorktreesRoot(), entry)} or archive the task`
       });
       continue;
     }
-    const statusPath = path13.join(taskDirForCwd(process.cwd(), entry), "status.json");
+    const statusPath = path14.join(taskDirForCwd(process.cwd(), entry), "status.json");
     if (!fs13.existsSync(statusPath)) continue;
     try {
       const status = readJsonFile(statusPath);
@@ -3795,7 +3837,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     writeQualityLogForTask(
       id,
       taskCwd,
-      path13.join(taskDirForCwd(taskCwd, id), "done.md"),
+      path14.join(taskDirForCwd(taskCwd, id), "done.md"),
       status
     );
   }
@@ -3977,7 +4019,7 @@ ${rollbackErrors.join("\n")}`
       throw new Error(`Error: bundled review accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
     }
     for (const ctx of ctxByTask.values()) {
-      const notesPath = path13.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+      const notesPath = path14.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
       const entry = ctx.status.phases[phaseArg];
       const sanctioned = entry?.verdict === "sanctioned";
       const bundleNote = ids.length > 1 ? ` Bundle: ${ids.join(", ")}.` : "";
@@ -4156,7 +4198,7 @@ ${noteLine}
     throw new Error(`Error: bundled accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
   }
   for (const ctx of ctxByTask.values()) {
-    const notesPath = path13.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+    const notesPath = path14.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
     const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` \u2014 auto-commit will be skipped.${options.force ? " (--force)" : ""}`;
     try {
       if (fs13.existsSync(notesPath)) {
@@ -4183,15 +4225,15 @@ function taskResetSpecReview(id) {
   validateTaskId(id);
   const taskCwd = resolveTaskCwd(id);
   const taskDir = taskDirForCwd(taskCwd, id);
-  const statusPath = path13.join(taskDir, "status.json");
+  const statusPath = path14.join(taskDir, "status.json");
   if (!fs13.existsSync(statusPath)) {
     throw new Error(`Error: no status.json at ${statusPath}`);
   }
-  const reviewPath = path13.join(taskDir, "spec-review.md");
+  const reviewPath = path14.join(taskDir, "spec-review.md");
   if (fs13.existsSync(reviewPath)) {
     let n = 1;
-    while (fs13.existsSync(path13.join(taskDir, `spec-review-prior-${n}.md`))) n += 1;
-    fs13.renameSync(reviewPath, path13.join(taskDir, `spec-review-prior-${n}.md`));
+    while (fs13.existsSync(path14.join(taskDir, `spec-review-prior-${n}.md`))) n += 1;
+    fs13.renameSync(reviewPath, path14.join(taskDir, `spec-review-prior-${n}.md`));
     console.log(`Archived prior spec-review.md \u2192 spec-review-prior-${n}.md`);
   }
   const status = readJsonFile(statusPath);
@@ -4214,7 +4256,7 @@ function taskResetCodeReview(id) {
   validateTaskId(id);
   const taskCwd = resolveTaskCwd(id);
   const taskDir = taskDirForCwd(taskCwd, id);
-  const statusPath = path13.join(taskDir, "status.json");
+  const statusPath = path14.join(taskDir, "status.json");
   if (!fs13.existsSync(statusPath)) {
     throw new Error(`Error: no status.json at ${statusPath}`);
   }
@@ -4230,7 +4272,7 @@ function taskResetCodeReview(id) {
   }
   const rescaffold = rescaffoldReview(taskDir, { taskId: id, title: status.title ?? "" });
   if (rescaffold.outcome === "written") {
-    console.log(`Re-scaffolded review.md from ${path13.relative(process.cwd(), rescaffold.source)}`);
+    console.log(`Re-scaffolded review.md from ${path14.relative(process.cwd(), rescaffold.source)}`);
   } else if (rescaffold.outcome === "no-template") {
     console.warn(
       "Warning: review.md is missing and no template was found to re-scaffold it (looked for a review.md override under tasks/_templates/ and .canon/templates/review.md); the next code review will write it from scratch."
@@ -4273,16 +4315,16 @@ function parsePorcelainPath(line) {
 }
 function isPipelineOwnedAcceptPath(filePath, taskId, gitCwd) {
   const repoRootForPaths = resolveRepoRootForAccept(gitCwd);
-  const dirtyAbsolute = path13.isAbsolute(filePath) ? filePath : path13.resolve(repoRootForPaths, filePath);
+  const dirtyAbsolute = path14.isAbsolute(filePath) ? filePath : path14.resolve(repoRootForPaths, filePath);
   const canonicalDirty = safeRealpath(dirtyAbsolute);
   const root = tasksRoot();
-  const rootAbsolute = path13.isAbsolute(root) ? root : path13.resolve(repoRootForPaths, root);
+  const rootAbsolute = path14.isAbsolute(root) ? root : path14.resolve(repoRootForPaths, root);
   const canonicalRoot = safeRealpath(rootAbsolute);
-  const taskCanonical = path13.join(canonicalRoot, taskId);
+  const taskCanonical = path14.join(canonicalRoot, taskId);
   if (canonicalDirty === taskCanonical) return true;
-  if (canonicalDirty.startsWith(`${taskCanonical}${path13.sep}`)) return true;
+  if (canonicalDirty.startsWith(`${taskCanonical}${path14.sep}`)) return true;
   for (const telemetry of PIPELINE_TELEMETRY_FILES) {
-    const telemetryAbsolute = path13.resolve(repoRootForPaths, telemetry);
+    const telemetryAbsolute = path14.resolve(repoRootForPaths, telemetry);
     if (safeRealpath(telemetryAbsolute) === canonicalDirty) return true;
   }
   return false;
@@ -4297,16 +4339,16 @@ function resolveMainCheckoutRoot() {
   if (out.error || out.status !== 0) return process.cwd();
   const gitCommonDir = (out.stdout ?? "").trim();
   if (!gitCommonDir) return process.cwd();
-  return path13.dirname(gitCommonDir);
+  return path14.dirname(gitCommonDir);
 }
 function safeRealpath(target) {
   try {
     return fs13.realpathSync(target);
   } catch {
-    const parent = path13.dirname(target);
+    const parent = path14.dirname(target);
     if (parent === target) return target;
     try {
-      return path13.join(fs13.realpathSync(parent), path13.basename(target));
+      return path14.join(fs13.realpathSync(parent), path14.basename(target));
     } catch {
       return target;
     }
@@ -4418,7 +4460,7 @@ function nudgeShippableTasks() {
   const shippable = [];
   for (const entry of fs13.readdirSync(root).sort()) {
     if (entry === "_archive" || entry.startsWith("_")) continue;
-    const statusPath = path13.join(root, entry, "status.json");
+    const statusPath = path14.join(root, entry, "status.json");
     if (!fs13.existsSync(statusPath)) continue;
     let status;
     try {
@@ -5217,6 +5259,14 @@ function printUpgradeRefusals(refusals, prefix) {
   }
 }
 function runUpgrade(cwd, pkgDir, options = {}) {
+  assertNoSymlinkDestinations(cwd, [
+    ...CANON_OWNED,
+    ...DELIMITED,
+    ...HEADER_ONLY_SYNC,
+    ".canon/version",
+    ".gitignore",
+    "scripts/docs-refs-config.mjs"
+  ]);
   const upgraded = [];
   const unchanged = [];
   const skipped = [];
@@ -5379,6 +5429,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
   const reportedWrites = options.force ? pending : clean;
   const staleOverrides = getStaleOverrides(cwd, reportedWrites);
   const toWrite = options.force ? pending : clean;
+  assertNoSymlinkDestinations(cwd, toWrite.map((op) => op.rel));
   for (const op of toWrite) {
     mkdirSync3(dirname5(op.projectPath), { recursive: true });
     writeFileSync3(op.projectPath, op.content);

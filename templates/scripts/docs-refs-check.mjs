@@ -472,13 +472,13 @@ function parseCanonOwnedArray(source) {
 // drift, so the hedge is honest; the suffix is stripped before path
 // validation either way, so accepting it costs the check nothing.
 function isLineCitationTarget(target) {
-    return /(?::~?\d+(?:[-–—]~?\d+)?)$/.test(target) || /#L\d+(?:[-–—]L\d+)?$/.test(target);
+    return stripLineCitation(target) !== target;
 }
 
 function stripLineCitation(target) {
     return target
-        .replace(/:~?\d+(?:[-–—]~?\d+)?(?:,~?\d+(?:[-–—]~?\d+)?)*$/, '')
-        .replace(/#L\d+(?:[-–—]L?\d+)?(?:,L?\d+(?:[-–—]L?\d+)?)*$/, '');
+        .replace(/:~?\d+(?:[-–—]~?\d+)?(?:,[ \t]*~?\d+(?:[-–—]~?\d+)?)*$/, '')
+        .replace(/#L\d+(?:[-–—]L?\d+)?(?:,[ \t]*L?\d+(?:[-–—]L?\d+)?)*$/, '');
 }
 
 // `templates/` markdown is intentionally scanned — those files ship to

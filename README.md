@@ -238,7 +238,7 @@ Run canon on repositories where you would be comfortable running your test suite
 
 | Command | What it does |
 |---|---|
-| `canon init` | Install canon into the current repo |
+| `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
 | `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72) and Codex CLI presence, codex project trust, recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
@@ -253,7 +253,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | `canon run <id> --ship` | After PR approval: squash-merge, delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
 | `canon stop <id>` | Stop a detached canon run (SIGTERM → SIGKILL after 10s). Waits up to 30s — override via `CANON_STOP_WAIT_MS` — for the orchestrator's first heartbeat to verify the PID before signaling. |
-| `canon upgrade` | Sync vendored canon-owned files to match the installed version. It does not touch adopter-owned `AGENTS.md` or `CLAUDE.md`. Refuses to overwrite canon-owned targets that are locally modified, untracked but present, or whose git state cannot be verified unless `--force` is set. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
+| `canon upgrade` | Sync vendored canon-owned files to match the installed version. It does not touch adopter-owned `AGENTS.md` or `CLAUDE.md`. Refuses to overwrite canon-owned targets that are locally modified, untracked but present, or whose git state cannot be verified unless `--force` is set. Symlinks at destination files or parent directories are refused even with `--force`; replace them with regular files/directories first. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
 | `canon update` | Update the canon-ai package itself. Targets the install's own root (never the invocation directory) and installs the latest final release from npm by default. `--channel main` / `--ref <ref\|sha>` install a pinned GitHub development commit instead. Writes `provenance.json` in `.canon` after a successful install — recorded for future tooling, nothing reads it yet. |
 
 Full `canon task` subcommand reference is in `docs/pipeline-orchestrator.md`.

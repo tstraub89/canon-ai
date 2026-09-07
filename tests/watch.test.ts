@@ -1147,3 +1147,52 @@ void test('watchCmd: worktree flip with a fresh heartbeat keeps blocking instead
         assert.doesNotMatch(result.stdout[0], /step_done/);
     });
 });
+
+void test('watch --follow uses byte offsets and preserves UTF-8 across polls and log replacement', () => {
+    withTempDir(root => {
+        const dir = path.join(root, 'tasks', 't1');
+        fs.mkdirSync(dir, { recursive: true });
+        const log = path.join(dir, '.canon-run.log');
+        fs.writeFileSync(log, '→'.repeat(100) + '\n');
+        const clock = makeClock();
+        let polls = 0;
+        const emoji = Buffer.from('😀');
+        const otherDir = path.join(root, 'tasks', 'other');
+        fs.mkdirSync(otherDir);
+        const otherLog = path.join(otherDir, '.canon-run.log');
+        fs.writeFileSync(otherLog, 'historical-other\n'.repeat(30));
+        const result = runWatchCommand(['t1', '--follow', '--timeout', '1s'], {
+            nowImpl: clock.now,
+            pollIntervalMs: 100,
+            sleepImpl: ms => {
+                clock.sleep(ms);
+                polls++;
+                if (polls === 1) fs.appendFileSync(log, Buffer.concat([Buffer.from('new '), emoji.subarray(0, 2)]));
+                if (polls === 2) fs.appendFileSync(log, Buffer.concat([emoji.subarray(2), Buffer.from(' line\n')]));
+                if (polls === 3) {
+                    const size = fs.statSync(log).size;
+                    fs.renameSync(log, `${log}.old`);
+                    fs.writeFileSync(log, 'replacement\n'.padEnd(size, 'x'));
+                }
+                if (polls === 4) fs.writeFileSync(log, 'truncated\n');
+                if (polls === 6) fs.appendFileSync(otherLog, 'new-other\n');
+            },
+            probeAliveImpl: () => {},
+            gatherContextImpl: () => makeContext({
+                taskDir: dir, canonPid: 7777, resolvedPid: 7777,
+                statusResult: { kind: 'ok', file: path.join(dir, 'status.json'), status: makeStatus('implement', { implement: { status: 'in_progress', agent: 'codex' } }) },
+                heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, clock.now(), polls >= 5 ? ['other', 't1'] : ['t1']) },
+            }),
+        });
+        const output = result.stderr.join('');
+        assert.equal(result.exitCode, 5);
+        assert.match(output, /new /);
+        assert.match(output, /😀 line\n/);
+        assert.doesNotMatch(output, /�/);
+        assert.equal(output.split('😀').length - 1, 1);
+        assert.match(output, /replacement\n/);
+        assert.match(output, /truncated\n/);
+        assert.doesNotMatch(output, /historical-other/);
+        assert.match(output, /new-other\n/);
+    });
+});

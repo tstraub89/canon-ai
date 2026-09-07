@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join, relative } from 'path';
 import { checkDeps } from '../deps.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
+import { assertNoSymlinkDestinations } from '../../lib/scaffold-paths.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const templatesDir = join(packageDir, 'templates');
@@ -48,6 +49,7 @@ export function scaffoldTemplates(
     srcTemplatesDir: string,
 ): { scaffolded: string[]; skipped: string[] } {
     const templateFiles = walkDir(srcTemplatesDir);
+    assertNoSymlinkDestinations(cwd, templateFiles);
     const scaffolded: string[] = [];
     const skipped: string[] = [];
 
@@ -69,6 +71,7 @@ export function initCmd(_args: string[]): void {
     checkDeps();
 
     const cwd = process.cwd();
+    assertNoSymlinkDestinations(cwd, ['.gitignore', '.canon/version']);
     const { scaffolded, skipped } = scaffoldTemplates(cwd, templatesDir);
     const gitignorePath = join(cwd, '.gitignore');
     const existingGitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';

@@ -319,3 +319,48 @@ void test('SIGTERM shutdown writes exactly one exit marker before the re-raise',
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
+
+for (const descendant of [false, true]) {
+    void test(`shutdown waits for resistant ${descendant ? 'descendant after leader exit' : 'agent'} before cleanup`, { timeout: 12_000 }, async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-shutdown-grace-'));
+        const pidFile = path.join(root, 'resistant.pid');
+        const cleanupFile = path.join(root, 'cleanup');
+        const resistant = `process.on('SIGTERM', () => {}); require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
+        const agent = descendant
+            ? `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(resistant)}], {stdio:'ignore'}); setInterval(() => {}, 1000);`
+            : resistant;
+        const harness = path.join(root, 'harness.mjs');
+        fs.writeFileSync(harness, [
+            `import fs from 'node:fs';`,
+            `import { registerShutdownHook } from ${JSON.stringify(new URL('../src/orchestrator/signals.ts', import.meta.url).href)};`,
+            `import { streamProcess } from ${JSON.stringify(new URL('../src/orchestrator/agents/stream.ts', import.meta.url).href)};`,
+            `registerShutdownHook(() => fs.writeFileSync(${JSON.stringify(cleanupFile)}, 'done'));`,
+            `streamProcess(process.execPath, ['-e', ${JSON.stringify(agent)}], { cwd: process.cwd(), label: 'test', onLine: () => {} }).then(() => process.exit(99));`,
+        ].join('\n'));
+        const parent = spawn(process.execPath, ['--import', MD_LOADER, '--import', TSX_LOADER, harness], { cwd: CHECKOUT_ROOT, stdio: 'ignore' });
+        const exited = once(parent, 'exit') as Promise<[number | null, NodeJS.Signals | null]>;
+        let pid: number | undefined;
+        try {
+            for (let n = 0; n < 100 && !fs.existsSync(pidFile); n++) await delay(25);
+            assert.ok(fs.existsSync(pidFile), 'resistant child ready');
+            pid = Number(fs.readFileSync(pidFile, 'utf8'));
+            parent.kill('SIGTERM');
+            await delay(100);
+            assert.equal(fs.existsSync(cleanupFile), false, 'cleanup must wait for the child');
+            parent.kill('SIGTERM'); // A repeated stop must not bypass child cleanup.
+            const [code, signal] = await exited;
+            assert.equal(code, null);
+            assert.equal(signal, 'SIGTERM');
+            assert.equal(fs.readFileSync(cleanupFile, 'utf8'), 'done');
+            for (let n = 0; n < 40; n++) {
+                try { process.kill(pid, 0); } catch { return; }
+                await delay(25);
+            }
+            assert.fail('resistant child survived shutdown');
+        } finally {
+            if (pid) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+            try { parent.kill('SIGKILL'); } catch { /* gone */ }
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+}
