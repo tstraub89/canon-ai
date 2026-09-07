@@ -427,6 +427,121 @@ void test('reroute archives stale review rounds before a fresh round-1 verdict i
     });
 });
 
+void test('reroute re-scaffolds review.md after archiving, preferring the adopter override', () => {
+    const scenario = (withOverride: boolean) => withTempDir('reroute-review-rescaffold-', dir => {
+        initGitRepo(dir);
+        const taskId = 'task-a';
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, taskId);
+        const worktreeTaskDir = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId);
+        const status = makeRerouteStatus(taskId, 'task/task-a');
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nRe-scaffold check.\n');
+        writeReview(worktreeRoot, taskId, '# Code Review: task-a\n\n## Final Verdict\n\n- [x] **Changes requested**\n');
+        // The reroute runs from the main checkout, so templates resolve there.
+        fs.cpSync(path.join(WORKTREE_ROOT, '.canon', 'templates'), path.join(dir, '.canon', 'templates'), { recursive: true });
+        const managedTemplate = fs.readFileSync(path.join(dir, '.canon', 'templates', 'review.md'), 'utf8');
+        if (withOverride) {
+            fs.mkdirSync(path.join(tasksRoot, '_templates'), { recursive: true });
+            fs.writeFileSync(path.join(tasksRoot, '_templates', 'review.md'), '# Adopter Review: [TASK-ID]\n\n## Final Verdict\n', 'utf8');
+        }
+
+        const reroute = runReroute(dir, [taskId], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        assert.match(fs.readFileSync(path.join(worktreeTaskDir, 'review-prior-1.md'), 'utf8'), /Changes requested/);
+        const expected = withOverride
+            ? '# Adopter Review: task-a\n\n## Final Verdict\n'
+            : managedTemplate.replaceAll('[TASK-ID]', taskId).replaceAll('[Title]', String(status.title));
+        assert.equal(fs.readFileSync(path.join(worktreeTaskDir, 'review.md'), 'utf8'), expected);
+        assert.match(reroute.stdout + reroute.stderr, /Re-scaffolded tasks\/task-a\/review\.md/);
+
+        // A second reroute must treat the untouched scaffold as pristine:
+        // no blank archive, and the scaffold stays in place.
+        const roundTwo = makeRerouteStatus(taskId, 'task/task-a', 1);
+        writeTaskStatus(tasksRoot, taskId, roundTwo);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, roundTwo);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nRound one.\n\n## Amendment Round 2\n\nRound two.\n');
+        const again = runReroute(dir, [taskId], false);
+        assert.equal(again.status, 0, again.stderr);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review-prior-2.md')), false);
+        assert.equal(fs.readFileSync(path.join(worktreeTaskDir, 'review.md'), 'utf8'), expected);
+    });
+    scenario(false);
+    scenario(true);
+});
+
+void test('reroute re-scaffolds a missing review.md even when there was nothing to archive', () => {
+    withTempDir('reroute-review-missing-', dir => {
+        initGitRepo(dir);
+        const taskId = 'task-a';
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, taskId);
+        const worktreeTaskDir = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId);
+        const status = makeRerouteStatus(taskId, 'task/task-a');
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nRetry after a failed re-scaffold.\n');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'review-prior-1.md'), '# Code Review: task-a\n\n- [x] **Changes requested**\n', 'utf8');
+        fs.cpSync(path.join(WORKTREE_ROOT, '.canon', 'templates'), path.join(dir, '.canon', 'templates'), { recursive: true });
+
+        const reroute = runReroute(dir, [taskId], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review-prior-2.md')), false);
+        assert.match(fs.readFileSync(path.join(worktreeTaskDir, 'review.md'), 'utf8'), /^# Code Review: task-a/);
+        assert.match(reroute.stdout + reroute.stderr, /Re-scaffolded tasks\/task-a\/review\.md/);
+    });
+});
+
+void test('reroute warns and continues when the re-scaffold template cannot be read', () => {
+    withTempDir('reroute-review-io-fail-', dir => {
+        initGitRepo(dir);
+        const taskId = 'task-a';
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, taskId);
+        const worktreeTaskDir = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId);
+        const status = makeRerouteStatus(taskId, 'task/task-a');
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nUnreadable template.\n');
+        writeReview(worktreeRoot, taskId, '# Code Review: task-a\n\n## Final Verdict\n\n- [x] **Changes requested**\n');
+        fs.mkdirSync(path.join(tasksRoot, '_templates', 'review.md'), { recursive: true });
+
+        const reroute = runReroute(dir, [taskId], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review-prior-1.md')), true);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review.md')), false);
+        assert.match(reroute.stderr, /could not be re-scaffolded/);
+        const rerouted = JSON.parse(fs.readFileSync(path.join(worktreeTaskDir, 'status.json'), 'utf8')) as { phases: { implement: { rerouted?: boolean } } };
+        assert.equal(rerouted.phases.implement.rerouted, true);
+    });
+});
+
+void test('reroute warns instead of failing when no review template exists to re-scaffold', () => {
+    withTempDir('reroute-review-no-template-', dir => {
+        initGitRepo(dir);
+        const taskId = 'task-a';
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const worktreeRoot = path.join(worktreesRoot, taskId);
+        const worktreeTaskDir = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId);
+        const status = makeRerouteStatus(taskId, 'task/task-a');
+        writeTaskStatus(tasksRoot, taskId, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+        writeSpec(worktreeRoot, taskId, '# Spec\n\n## Amendment\n\nNo template here.\n');
+        writeReview(worktreeRoot, taskId, '# Code Review: task-a\n\n## Final Verdict\n\n- [x] **Changes requested**\n');
+
+        const reroute = runReroute(dir, [taskId], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review-prior-1.md')), true);
+        assert.equal(fs.existsSync(path.join(worktreeTaskDir, 'review.md')), false);
+        assert.match(reroute.stderr, /no template was found to re-scaffold/);
+    });
+});
+
 void test('review archive allocator and lookup share a numeric highest-plus-one invariant', () => {
     withTempDir('review-archive-invariant-', taskDir => {
         const priorTwo = Buffer.from('archive two\n');

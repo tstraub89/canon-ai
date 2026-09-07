@@ -53,7 +53,7 @@ No cold-Codex findings were provided to this prompt. In production code_review, 
 
 ### 1. Spawn Claude Lenses In Parallel
 
-Use the Task tool to spawn the Claude lenses simultaneously:
+Spawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in older harnesses) in a single message so they run concurrently, and run them **in the foreground** (`run_in_background: false`) so the call returns their findings. Do not spawn them in the background and do not end your turn to wait for them: a turn that ends while a lens is still running ends the code review with no `review.md` and no verdict, and the phase is retried from scratch. Your turn ends only after step 5 below has run.
 
 **Anchored lens** (`subagent_type: code-review-anchored`)
 - Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.

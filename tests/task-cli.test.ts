@@ -889,9 +889,98 @@ void test('task reset-code-review archives prior review, resets loop-local field
         assert.equal(updated.status, 'code_review');
         assert.equal(updated.sessions?.claude_review, undefined);
         assert.equal(fs.existsSync(path.join(taskDir, 'review-prior-1.md')), true);
-        assert.equal(fs.existsSync(path.join(taskDir, 'review.md')), false);
+        // The archived review is replaced by a fresh scaffold rendered exactly
+        // as `canon task new` would have written it (task id substituted).
+        const expectedScaffold = fs.readFileSync(path.join(WORKSPACE_ROOT, '.canon', 'templates', 'review.md'), 'utf8')
+            .replaceAll('[TASK-ID]', 'reset-cr-task');
+        assert.equal(fs.readFileSync(path.join(taskDir, 'review.md'), 'utf8'), expectedScaffold);
         assert.throws(() => taskResetCodeReview(''), /usage: canon task reset-code-review <TASK-ID>/);
         assert.throws(() => taskResetCodeReview('missing-reset-cr'), /no status\.json/);
+    });
+});
+
+void test('task reset-code-review re-scaffolds review.md from the adopter override when present', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-override', makeStatus('reset-cr-override', {
+            status: 'code_review',
+            phases: {
+                ...makeStatus('reset-cr-override').phases,
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'blocked', agent: 'claude', verdict: 'changes_requested', iterations: 3 },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        }));
+        fs.writeFileSync(path.join(taskDir, 'review.md'), '# Review\nold content\n', 'utf8');
+        fs.mkdirSync(path.join(tasksRoot, '_templates'), { recursive: true });
+        fs.writeFileSync(path.join(tasksRoot, '_templates', 'review.md'), '# Adopter Review: [TASK-ID]\n\n## Final Verdict\n', 'utf8');
+
+        captureStdout(() => taskCmd(['reset-code-review', 'reset-cr-override']));
+        assert.equal(fs.readFileSync(path.join(taskDir, 'review-prior-1.md'), 'utf8'), '# Review\nold content\n');
+        assert.equal(fs.readFileSync(path.join(taskDir, 'review.md'), 'utf8'), '# Adopter Review: reset-cr-override\n\n## Final Verdict\n');
+    });
+});
+
+function captureWarnings(fn: () => void): string {
+    const lines: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+        fn();
+    } finally {
+        console.warn = original;
+    }
+    return `${lines.join('\n')}\n`;
+}
+
+function codeReviewBlockedStatus(taskId: string): StatusJson {
+    return makeStatus(taskId, {
+        status: 'code_review',
+        phases: {
+            ...makeStatus(taskId).phases,
+            spec: { status: 'done', agent: 'claude' },
+            spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+            plan: { status: 'done', agent: 'claude' },
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'blocked', agent: 'claude', verdict: 'changes_requested', iterations: 3 },
+            qa: { status: 'pending', agent: 'claude' },
+            human_review: { status: 'pending', agent: 'human' },
+        },
+    });
+}
+
+void test('task reset-code-review warns and still resets state when the re-scaffold template cannot be read', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-io-fail', codeReviewBlockedStatus('reset-cr-io-fail'));
+        fs.writeFileSync(path.join(taskDir, 'review.md'), '# Review\nold content\n', 'utf8');
+        // A directory where the override template should be: resolves as
+        // existing, then fails at read time.
+        fs.mkdirSync(path.join(tasksRoot, '_templates', 'review.md'), { recursive: true });
+
+        const warnings = captureWarnings(() => captureStdout(() => taskCmd(['reset-code-review', 'reset-cr-io-fail'])));
+        assert.match(warnings, /review\.md is missing and could not be re-scaffolded/);
+        assert.equal(fs.readFileSync(path.join(taskDir, 'review-prior-1.md'), 'utf8'), '# Review\nold content\n');
+        assert.equal(fs.existsSync(path.join(taskDir, 'review.md')), false);
+        const updated = readStatusFile(taskDir);
+        assert.equal(updated.phases.code_review?.status, 'pending');
+        assert.equal(updated.phases.code_review?.verdict, '');
+    });
+});
+
+void test('task reset-code-review re-scaffolds a missing review.md even when there was nothing to archive', () => {
+    withTasksRoot(tasksRoot => {
+        const taskDir = writeTask(tasksRoot, 'reset-cr-missing', codeReviewBlockedStatus('reset-cr-missing'));
+        // Retry scenario: a prior attempt archived review.md and the
+        // re-scaffold failed, leaving the task with no review artifact.
+        fs.writeFileSync(path.join(taskDir, 'review-prior-1.md'), '# Review\nold content\n', 'utf8');
+
+        const output = captureStdout(() => taskCmd(['reset-code-review', 'reset-cr-missing']));
+        assert.match(output, /Re-scaffolded review\.md/);
+        assert.equal(fs.existsSync(path.join(taskDir, 'review-prior-2.md')), false);
+        assert.match(fs.readFileSync(path.join(taskDir, 'review.md'), 'utf8'), /^# Code Review: reset-cr-missing/);
     });
 });
 
@@ -957,7 +1046,7 @@ void test('task reset-code-review accepts a loop-cap block at implement entry an
         assert.equal(updated.phases.code_review?.auto_block_count, 2);
         assert.equal(updated.sessions?.claude_review, undefined);
         assert.equal(fs.existsSync(path.join(taskDir, 'review-prior-1.md')), true);
-        assert.equal(fs.existsSync(path.join(taskDir, 'review.md')), false);
+        assert.match(fs.readFileSync(path.join(taskDir, 'review.md'), 'utf8'), /^# Code Review: /);
         assert.match(output, /implement → done, code_review → pending/);
     });
 });
