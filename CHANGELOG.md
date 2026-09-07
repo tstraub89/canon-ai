@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--reroute` and `canon task reset-code-review` re-scaffold `review.md` after archiving it.** Both commands moved the filled review to `review-prior-<n>.md` and left nothing behind, so the code-review foreman was told to "fill the existing template structure" with no template on disk, and a foreman that failed to write the file left the phase with no artifact to inspect. The archive step now writes a fresh scaffold from the project's `review.md` override under `tasks/_templates/` when it keeps one, otherwise from `.canon/templates/review.md`, rendered exactly as `canon task new` would. The pristine-scaffold check that skips archiving now also recognizes a rendered scaffold (task id substituted), so a repeat reroute no longer archives a blank file.
+
 ## [3.1.0] — 2026-09-05
 
 ### Changed

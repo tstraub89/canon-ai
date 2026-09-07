@@ -52,13 +52,13 @@ import { pathToFileURL } from "url";
 
 // src/orchestrator/main.ts
 import { spawnSync as spawnSync6 } from "child_process";
-import fs19 from "fs";
+import fs20 from "fs";
 import os from "os";
-import path19 from "path";
+import path20 from "path";
 
 // src/orchestrator/phases/code-review.ts
-import fs14 from "fs";
-import path14 from "path";
+import fs15 from "fs";
+import path15 from "path";
 
 // src/orchestrator/cli.ts
 import fs from "fs";
@@ -3733,8 +3733,8 @@ function buildSharedDocAbortMessage(abortedFiles) {
 }
 
 // src/orchestrator/prompts/index.ts
-import fs10 from "fs";
-import path10 from "path";
+import fs11 from "fs";
+import path11 from "path";
 
 // src/orchestrator/context.ts
 import fs8 from "fs";
@@ -3963,13 +3963,49 @@ ${acSection}`;
 }
 
 // src/orchestrator/review-archive.ts
+import fs10 from "fs";
+import path10 from "path";
+
+// src/task/templates.ts
 import fs9 from "fs";
 import path9 from "path";
+function tasksRoot() {
+  return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
+}
+function templatesRoot() {
+  return path9.join(process.cwd(), ".canon", "templates");
+}
+function taskTemplateOverrideRoot() {
+  return path9.join(tasksRoot(), "_templates");
+}
+function resolveTaskTemplateSource(basename) {
+  const override = path9.join(taskTemplateOverrideRoot(), basename);
+  if (fs9.existsSync(override)) return override;
+  const managed = path9.join(templatesRoot(), basename);
+  return fs9.existsSync(managed) ? managed : null;
+}
+function renderTaskTemplate(source, taskId, title) {
+  return fs9.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
+}
+function scaffoldTaskArtifact(taskDir, basename, taskId, title) {
+  const source = resolveTaskTemplateSource(basename);
+  if (!source) return null;
+  fs9.writeFileSync(path9.join(taskDir, basename), renderTaskTemplate(source, taskId, title), "utf8");
+  return source;
+}
+function isPristineTaskArtifact(content, basename, taskId, title) {
+  if (content.includes("[TASK-ID]")) return true;
+  const source = resolveTaskTemplateSource(basename);
+  if (!source) return false;
+  return content === renderTaskTemplate(source, taskId, title);
+}
+
+// src/orchestrator/review-archive.ts
 var REVIEW_ARCHIVE_PREFIX = "review-prior-";
 var REVIEW_ARCHIVE_RE = new RegExp(`^${REVIEW_ARCHIVE_PREFIX}(\\d+)\\.md$`);
 function newestReviewArchiveNumber(taskDir) {
   let newest = 0;
-  for (const name of fs9.readdirSync(taskDir)) {
+  for (const name of fs10.readdirSync(taskDir)) {
     const match = REVIEW_ARCHIVE_RE.exec(name);
     if (match) newest = Math.max(newest, Number(match[1]));
   }
@@ -3980,15 +4016,22 @@ function findNewestReviewArchive(taskDir) {
   return newest === 0 ? null : `${REVIEW_ARCHIVE_PREFIX}${newest}.md`;
 }
 function archivePriorReview(taskDir, options = {}) {
-  const reviewPath = path9.join(taskDir, "review.md");
-  if (!fs9.existsSync(reviewPath)) return null;
+  const reviewPath = path10.join(taskDir, "review.md");
+  if (!fs10.existsSync(reviewPath)) return null;
   if (options.skipUnfilledTemplate) {
-    const content = fs9.readFileSync(reviewPath, "utf8");
+    const content = fs10.readFileSync(reviewPath, "utf8");
     if (isTemplateUnfilled(content)) return null;
+    if (options.scaffold && isPristineTaskArtifact(content, "review.md", options.scaffold.taskId, options.scaffold.title)) {
+      return null;
+    }
   }
   const archiveName = `${REVIEW_ARCHIVE_PREFIX}${newestReviewArchiveNumber(taskDir) + 1}.md`;
-  fs9.renameSync(reviewPath, path9.join(taskDir, archiveName));
+  fs10.renameSync(reviewPath, path10.join(taskDir, archiveName));
   return archiveName;
+}
+function rescaffoldReview(taskDir, identity) {
+  if (fs10.existsSync(path10.join(taskDir, "review.md"))) return null;
+  return scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
 }
 
 // node_modules/mustache/mustache.mjs
@@ -4457,7 +4500,7 @@ function renderTemplate(template, view) {
 }
 
 // src/orchestrator/prompts/templates/code-review-foreman.md
-var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n## Code-Review Rules of Thumb (Foreman)\n\n- **Reviewer diffs against the task baseline, not `main`, on release branches**: on a shared release branch ahead of `main`, always diff against the task's baseline \u2014 diffing against `main` attributes unrelated work to the task.\n- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: when operating across REPO_ROOT and a task worktree, `git -C /absolute/path` avoids silent cwd reversion between tool calls.\n- **Don't infer one git invariant from another**: `git status --porcelain` empty \u2260 origin matches HEAD; `origin/<branch>` exists \u2260 origin matches HEAD; PR exists \u2260 PR is in the expected state. Do the actual check directly.\n- **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At \u22653 sites, extract the shared helper and route all sites through it.\n\nYour job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. The lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give the Claude lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold-Claude lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Injected Cold-Codex Findings\n\n{{#hasColdCodexFindings}}\nThe orchestrator ran `codex review` over the task's branch diff before spawning you. Its findings are reproduced below. These are unanchored: Codex reviewed adversarially without the spec as a checklist. Treat them as the third lens input. Do not re-run Codex; synthesize these findings alongside the Claude lens outputs.\n\n{{{coldCodexFindings}}}\n{{/hasColdCodexFindings}}\n{{^hasColdCodexFindings}}\nNo cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.\n{{/hasColdCodexFindings}}\n\n## Foreman Protocol\n\n### 1. Spawn Claude Lenses In Parallel\n\nUse the Task tool to spawn the Claude lenses simultaneously:\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold-Claude lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nThe injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.\n\n### 2. Adjudicate\n\nUse the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record \"flagged by N lenses.\" A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement \u2014 the same behavior flagged by cold-Claude and cold-Codex \u2014 must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.\n2. Keep the two reconciliation checks separate:\n   - Does it hold against the code? For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.\n   - Is it in spec scope? Apply this only to anchored-lens findings as part of the Stage 1 / Stage 2 charter.\n   - Forbidden: do not dismiss a verified cold-Claude or cold-Codex finding merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Optional nits or cleanup without blocking findings -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
+var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n## Code-Review Rules of Thumb (Foreman)\n\n- **Reviewer diffs against the task baseline, not `main`, on release branches**: on a shared release branch ahead of `main`, always diff against the task's baseline \u2014 diffing against `main` attributes unrelated work to the task.\n- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: when operating across REPO_ROOT and a task worktree, `git -C /absolute/path` avoids silent cwd reversion between tool calls.\n- **Don't infer one git invariant from another**: `git status --porcelain` empty \u2260 origin matches HEAD; `origin/<branch>` exists \u2260 origin matches HEAD; PR exists \u2260 PR is in the expected state. Do the actual check directly.\n- **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At \u22653 sites, extract the shared helper and route all sites through it.\n\nYour job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. The lenses re-run from scratch. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give the Claude lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold-Claude lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n\n## Injected Cold-Codex Findings\n\n{{#hasColdCodexFindings}}\nThe orchestrator ran `codex review` over the task's branch diff before spawning you. Its findings are reproduced below. These are unanchored: Codex reviewed adversarially without the spec as a checklist. Treat them as the third lens input. Do not re-run Codex; synthesize these findings alongside the Claude lens outputs.\n\n{{{coldCodexFindings}}}\n{{/hasColdCodexFindings}}\n{{^hasColdCodexFindings}}\nNo cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.\n{{/hasColdCodexFindings}}\n\n## Foreman Protocol\n\n### 1. Spawn Claude Lenses In Parallel\n\nSpawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in older harnesses) in a single message so they run concurrently, and run them **in the foreground** (`run_in_background: false`) so the call returns their findings. Do not spawn them in the background and do not end your turn to wait for them: a turn that ends while a lens is still running ends the code review with no `review.md` and no verdict, and the phase is retried from scratch. Your turn ends only after step 5 below has run.\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold-Claude lens** (`subagent_type: code-review-cold`)\n- Give it the full diff and base ref only.\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nThe injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.\n\n### 2. Adjudicate\n\nUse the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record \"flagged by N lenses.\" A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement \u2014 the same behavior flagged by cold-Claude and cold-Codex \u2014 must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.\n2. Keep the two reconciliation checks separate:\n   - Does it hold against the code? For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.\n   - Is it in spec scope? Apply this only to anchored-lens findings as part of the Stage 1 / Stage 2 charter.\n   - Forbidden: do not dismiss a verified cold-Claude or cold-Codex finding merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Optional nits or cleanup without blocking findings -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n";
 
 // src/orchestrator/prompts/templates/implement.md
 var implement_default = "You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session's memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what's in the plan, use it. Document every deviation in handoff.md under \"Deviations\" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\n## Implementation Rules\n\n**Safe-First Rules** \u2014 always applicable regardless of stack:\n1. For storage, reload, sync, or data-affecting flows: ship the safer guarded behavior first.\n2. Behavior that reloads the app, replaces local state, or dismisses user work must be gated by explicit user action.\n3. Prefer shared types over duplicating signatures.\n\n**Scope Discipline** \u2014 always applicable; the spec is the contract:\n1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec's *Affected Files* table, stop, document the gap in `handoff.md` under *Blockers*, and surface it for human attention. Do not silently expand scope.\n2. **No unauthorized new abstractions.** Do not introduce new top-level modules, services, packages, or routing layers that the spec did not authorize. Minor refactors within an authorized file are fine; new abstractions are an architecture decision and belong in the spec.\n3. **No incidental dependency changes.** Do not add, remove, upgrade, or downgrade dependencies (or their pinned versions) unless the spec explicitly requests it.\n\n**Lint & Type Safety Policy** \u2014 always applicable:\n1. **Suppressing a lint or type error is a last resort**, not a convenience escape hatch. Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*.\n2. **`any` / dynamic typing**: When the shape is truly unknown at the boundary, type as `unknown` and narrow explicitly.\n\n**Bug/Flake-Fix Red-First Checkpoint** \u2014 applicable when a spec's ACs include a red-first regression test:\nWrite the test and run it against the pre-fix code first; confirm it fails *for the reason the spec states*, then apply the fix and confirm it passes. Report the red run (command + observed failure) in handoff.md. If the test cannot be made to fail on the pre-fix code for the stated reason, stop \u2014 the spec's mechanism is wrong. Document it in handoff.md under Blockers with label `[wrong-premise]` and do not implement a fix on a premise you could not reproduce. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative before fixing if it is executable in your sandbox (e.g. an integration fixture) and report the outcome in handoff.md the same way; if it is not executable (e.g. a documented manual repro), state that in handoff.md instead \u2014 never report an outcome for a run that did not happen.\n\n**Parsing Structured Input** \u2014 always applicable when implementing a parser for author-facing structured input:\nParse cell-by-cell with explicit rejection, not a permissive whole-string regex. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason at the parse boundary.\n\nRun ALL applicable validation checks before writing handoff. See \"Validation Required\" in each spec.md. The universal change-type \u2192 check-category matrix:\n\n| Change Type | Required Check Categories |\n|---|---|\n| Most changes | Linting, type checking, unit tests |\n| Docs references | Docs references |\n| Routes / config / build | Full build |\n| UI / interaction changes | End-to-end tests |\n| Content / SEO / metadata | Prerender / sitemap / feed regeneration |\n| Schema / migration | Migration runner + manual review |\n| Cross-platform | Subset of the above on each platform |\n\nFor which command runs each category: see `docs/architecture.md` \xA7Validation (project command bindings). Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec's Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or \"Validation Outcomes\" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
@@ -4795,9 +4838,9 @@ function priorReviewReference(taskId) {
 }
 function bundleHasRealPriorReview(taskIds) {
   return taskIds.every((taskId) => {
-    const reviewPath = path10.join(taskDirFor(taskId), "review.md");
+    const reviewPath = path11.join(taskDirFor(taskId), "review.md");
     try {
-      const content = fs10.readFileSync(reviewPath, "utf8");
+      const content = fs11.readFileSync(reviewPath, "utf8");
       const hasH2 = /^## Stage 1\b/m.test(content);
       const hasNested = /^## Round \d+\b/m.test(content) && /^### Stage 1\b/m.test(content);
       return (hasH2 || hasNested) && !content.includes("[TASK-ID]");
@@ -4868,13 +4911,13 @@ function promptQa(state, prTemplate) {
 
 // src/task/index.ts
 import { spawnSync as spawnSync5 } from "child_process";
-import fs13 from "fs";
-import path13 from "path";
+import fs14 from "fs";
+import path14 from "path";
 
 // src/orchestrator/canon-snapshot.ts
 import { spawnSync as spawnSync4 } from "child_process";
-import fs11 from "fs";
-import path11 from "path";
+import fs12 from "fs";
+import path12 from "path";
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
 function isInstalledSourcePath(sourcePath) {
   return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
@@ -4885,13 +4928,13 @@ function resolveCanonVersion(explicit) {
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!ownToplevel) return upstreamCommit;
-  const parentDir = path11.dirname(repoRoot);
+  const parentDir = path12.dirname(repoRoot);
   const parentToplevel = captureGitOutput(parentDir, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!parentToplevel) return upstreamCommit;
-  if (path11.resolve(parentToplevel) === path11.resolve(ownToplevel)) {
+  if (path12.resolve(parentToplevel) === path12.resolve(ownToplevel)) {
     return upstreamCommit;
   }
-  return captureGitOutput(path11.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
+  return captureGitOutput(path12.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
 }
 function defaultRunCommand(command, args) {
   const result = spawnSync4(command, args, {
@@ -4925,7 +4968,7 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const isInstalled = isInstalledSourcePath(canonSourcePath);
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const drivingCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const hostCommit = superprojectWorkingTree ? captureGitOutput(path11.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
+  const hostCommit = superprojectWorkingTree ? captureGitOutput(path12.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
   let upstreamCommit;
   let orchestratorCommit;
   if (isInstalled) {
@@ -4959,14 +5002,14 @@ function applyCanonSnapshot(status, canon) {
   return next;
 }
 function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
-  const status = JSON.parse(fs11.readFileSync(statusFilePath, "utf8"));
+  const status = JSON.parse(fs12.readFileSync(statusFilePath, "utf8"));
   const canon = captureCanonSnapshot(REPO_ROOT, options);
   const next = applyCanonSnapshot(status, canon);
   const serialized = `${JSON.stringify(next, null, 2)}
 `;
-  const current = fs11.readFileSync(statusFilePath, "utf8");
+  const current = fs12.readFileSync(statusFilePath, "utf8");
   if (current !== serialized) {
-    fs11.writeFileSync(statusFilePath, serialized, "utf8");
+    fs12.writeFileSync(statusFilePath, serialized, "utf8");
   }
   return canon;
 }
@@ -4975,8 +5018,8 @@ function refreshCanonSnapshotsAtPaths(statusFilePaths, options = {}) {
 }
 
 // src/orchestrator/quality-log.ts
-import fs12 from "fs";
-import path12 from "path";
+import fs13 from "fs";
+import path13 from "path";
 var CANON_LOG_HEADERS = [
   "Date",
   "Task",
@@ -5017,7 +5060,7 @@ var JUDGMENT_LABELS = {
   "notes": "Notes"
 };
 function getQualityLogFile(activeCwd) {
-  return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path12.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path12.join(activeCwd, "docs/task-quality-log.md");
+  return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path13.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path13.join(activeCwd, "docs/task-quality-log.md");
 }
 function normalizeCellValue(value) {
   return value.replace(/\r\n|\n/g, " ");
@@ -5170,11 +5213,11 @@ function renderRowLine(headerCells, row) {
 function writeFileAtomic(filePath, content) {
   const tempPath = `${filePath}.tmp`;
   try {
-    fs12.writeFileSync(tempPath, content, "utf8");
-    fs12.renameSync(tempPath, filePath);
+    fs13.writeFileSync(tempPath, content, "utf8");
+    fs13.renameSync(tempPath, filePath);
   } finally {
     try {
-      fs12.unlinkSync(tempPath);
+      fs13.unlinkSync(tempPath);
     } catch {
     }
   }
@@ -5183,7 +5226,7 @@ function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
   try {
     let content;
     try {
-      content = fs12.readFileSync(logFilePath, "utf8");
+      content = fs13.readFileSync(logFilePath, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") {
         content = STANDARD_QUALITY_LOG_SKELETON;
@@ -5242,7 +5285,7 @@ function writeQualityLogForTask(taskId, activeCwd, donePath, status) {
   try {
     let doneContent = "";
     try {
-      doneContent = fs12.readFileSync(donePath, "utf8");
+      doneContent = fs13.readFileSync(donePath, "utf8");
     } catch {
     }
     upsertQualityLogRow(
@@ -5280,26 +5323,23 @@ function validateTaskId2(id) {
     throw new Error(`Error: invalid task ID '${id}'. Must not contain '..'.`);
   }
 }
-function tasksRoot() {
-  return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
-}
 function taskDirForCwd(_cwd, taskId) {
   const root = tasksRoot();
-  if (path13.isAbsolute(root)) {
-    return path13.join(root, taskId);
+  if (path14.isAbsolute(root)) {
+    return path14.join(root, taskId);
   }
-  return path13.join(resolveTaskCwd(taskId), root, taskId);
+  return path14.join(resolveTaskCwd(taskId), root, taskId);
 }
 function taskStatusFileForCwd(cwd, taskId) {
-  return path13.join(taskDirForCwd(cwd, taskId), "status.json");
+  return path14.join(taskDirForCwd(cwd, taskId), "status.json");
 }
 function taskRootForGate(cwd) {
   const root = tasksRoot();
-  return path13.isAbsolute(root) ? root : path13.join(cwd, root);
+  return path14.isAbsolute(root) ? root : path14.join(cwd, root);
 }
 function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs13.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs14.readFileSync(filePath, "utf8"));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Error: failed to read ${filePath}: ${message}`);
@@ -5307,9 +5347,9 @@ function readJsonFile(filePath) {
 }
 function writeJsonAtomic(filePath, data) {
   const tmpFile = `${filePath}.tmp`;
-  fs13.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
+  fs14.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
 `, "utf8");
-  fs13.renameSync(tmpFile, filePath);
+  fs14.renameSync(tmpFile, filePath);
 }
 function writeStatusAtomic(filePath, status) {
   status.status = deriveTopLevelStatus(status);
@@ -5382,7 +5422,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   assertValidVerdict(phaseArg, verdictArg);
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs13.existsSync(statusPath)) {
+  if (!fs14.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
   }
   const status = readJsonFile(statusPath);
@@ -5424,7 +5464,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     writeQualityLogForTask(
       id,
       taskCwd,
-      path13.join(taskDirForCwd(taskCwd, id), "done.md"),
+      path14.join(taskDirForCwd(taskCwd, id), "done.md"),
       status
     );
   }
@@ -5444,7 +5484,7 @@ function taskPhasePreflightRejected(id, phaseArg) {
   }
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs13.existsSync(statusPath)) {
+  if (!fs14.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
   }
   const status = readJsonFile(statusPath);
@@ -5599,10 +5639,10 @@ function writePreflightReviewArtifacts(tasks, preflightFailed, route) {
   const failuresByTask = new Map(preflightFailed.map((failure) => [failure.taskId, failure]));
   const siblingTaskIds = preflightFailed.map((failure) => failure.taskId);
   for (const t of tasks) {
-    const reviewPath = path14.join(taskDirFor(t.taskId), "review.md");
+    const reviewPath = path15.join(taskDirFor(t.taskId), "review.md");
     let existing = "";
     try {
-      existing = fs14.readFileSync(reviewPath, "utf8");
+      existing = fs15.readFileSync(reviewPath, "utf8");
     } catch {
     }
     const hasH2Stage1 = /^## Stage 1\b/m.test(existing);
@@ -5618,7 +5658,7 @@ function writePreflightReviewArtifacts(tasks, preflightFailed, route) {
 ${blockedBlock}` : `# Code Review: ${t.taskId}
 
 ${blockedBlock}`;
-      fs14.writeFileSync(reviewPath, reviewContent2, "utf8");
+      fs15.writeFileSync(reviewPath, reviewContent2, "utf8");
       continue;
     }
     const currentPreflight = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
@@ -5629,7 +5669,7 @@ ${blockedBlock}`;
 ---
 
 ${stub}` : stub;
-    fs14.writeFileSync(reviewPath, reviewContent, "utf8");
+    fs15.writeFileSync(reviewPath, reviewContent, "utf8");
   }
   return true;
 }
@@ -5692,8 +5732,8 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
     process.exit(1);
   }
   for (const t of tasks) {
-    fs14.writeFileSync(
-      path14.join(taskDirFor(t.taskId), "review-cold-codex.md"),
+    fs15.writeFileSync(
+      path15.join(taskDirFor(t.taskId), "review-cold-codex.md"),
       coldReview.findings,
       "utf8"
     );
@@ -5709,10 +5749,10 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
     activeCwd
   }, activeCwd);
   for (const t of tasks) {
-    const reviewPath = path14.join(taskDirFor(t.taskId), "review.md");
+    const reviewPath = path15.join(taskDirFor(t.taskId), "review.md");
     let reviewContent = null;
     try {
-      reviewContent = fs14.readFileSync(reviewPath, "utf8");
+      reviewContent = fs15.readFileSync(reviewPath, "utf8");
     } catch {
     }
     if (isTemplateUnfilled(reviewContent)) {
@@ -5813,8 +5853,8 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
 }
 
 // src/orchestrator/phases/plan.ts
-import fs15 from "fs";
-import path15 from "path";
+import fs16 from "fs";
+import path16 from "path";
 async function runPlanPhase(state, interactive) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
@@ -5829,10 +5869,10 @@ async function runPlanPhase(state, interactive) {
     activeCwd
   }, activeCwd);
   for (const t of tasks) {
-    const planPath = path15.join(taskDirFor(t.taskId), "plan.md");
+    const planPath = path16.join(taskDirFor(t.taskId), "plan.md");
     let planContent = null;
     try {
-      planContent = fs15.readFileSync(planPath, "utf8");
+      planContent = fs16.readFileSync(planPath, "utf8");
     } catch {
     }
     if (isTemplateUnfilled(planContent)) {
@@ -5844,8 +5884,8 @@ async function runPlanPhase(state, interactive) {
 }
 
 // src/orchestrator/phases/qa.ts
-import fs16 from "fs";
-import path16 from "path";
+import fs17 from "fs";
+import path17 from "path";
 async function runQaPhase(state, interactive, resolvedPrTemplate) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
@@ -5862,11 +5902,11 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
   }, activeCwd);
   if (!state.isBundle && result.capturedStdout) {
     const taskId = taskIds[0];
-    const donePath = path16.join(activeCwd, "tasks", taskId, "done.md");
+    const donePath = path17.join(activeCwd, "tasks", taskId, "done.md");
     if (isDoneMdTemplate(donePath)) {
       const salvaged = extractDoneMdFromStdout(result.capturedStdout);
       if (salvaged) {
-        fs16.writeFileSync(donePath, salvaged);
+        fs17.writeFileSync(donePath, salvaged);
         warn(`Salvaged tasks/${taskId}/done.md from captured stdout \u2014 QA sub-agent streamed content instead of using the Write tool.`);
         const phaseStatus = readStatus(taskId).phases.qa?.status ?? "pending";
         if (phaseStatus !== "done") {
@@ -5918,23 +5958,23 @@ async function runSpecPhase(state, interactive, resumeId) {
 }
 
 // src/orchestrator/phases/spec-review.ts
-import fs17 from "fs";
-import path17 from "path";
+import fs18 from "fs";
+import path18 from "path";
 function autoBlockSpecReview(taskIds, iterationCount, reason) {
   autoBlockPhase(taskIds, "spec_review", iterationCount, reason);
 }
 function recordFastTierSpecApproval(taskId) {
-  const artifactPath = path17.join(taskDirFor(taskId), "spec-review.md");
+  const artifactPath = path18.join(taskDirFor(taskId), "spec-review.md");
   let content;
   try {
-    content = fs17.readFileSync(artifactPath, "utf8");
+    content = fs18.readFileSync(artifactPath, "utf8");
   } catch {
     return;
   }
   if (extractCheckedVerdict(content)) return;
   const checked = content.replace(/^- \[ \] (\*\*Approved\*\*)/m, "- [x] $1");
   const note = "\n> Fast tier: Codex spec review skipped \u2014 human conversational spec approval recorded by the orchestrator.\n";
-  fs17.writeFileSync(
+  fs18.writeFileSync(
     artifactPath,
     (checked !== content ? checked : `${content}
 ## Verdict
@@ -6003,10 +6043,10 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
     activeCwd
   }, activeCwd);
   for (const t of tasks) {
-    const reviewPath = path17.join(resolveTaskCwd(t.taskId), "tasks", t.taskId, "spec-review.md");
+    const reviewPath = path18.join(resolveTaskCwd(t.taskId), "tasks", t.taskId, "spec-review.md");
     let reviewContent = null;
     try {
-      reviewContent = fs17.readFileSync(reviewPath, "utf8");
+      reviewContent = fs18.readFileSync(reviewPath, "utf8");
     } catch {
     }
     if (isTemplateUnfilled(reviewContent)) {
@@ -6019,8 +6059,8 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
 
 // src/orchestrator/detach.ts
 import { spawn as spawn3 } from "child_process";
-import fs18 from "fs";
-import path18 from "path";
+import fs19 from "fs";
+import path19 from "path";
 var DETACH_CHILD_FLAG = "CANON_DETACHED";
 var DETACH_DISABLE_FLAG = "CANON_NO_DETACH";
 var PID_FILENAME = ".canon-pid";
@@ -6056,16 +6096,16 @@ function detachAndExit(options) {
   }
   const primaryDir = options.resolveTaskDir(options.taskIds[0]);
   try {
-    fs18.mkdirSync(primaryDir, { recursive: true });
+    fs19.mkdirSync(primaryDir, { recursive: true });
   } catch (error) {
     stderrWrite(`canon: cannot create task dir for log file: ${error.message}
 `);
     return exit(1);
   }
-  const logPath = path18.join(primaryDir, LOG_FILENAME);
+  const logPath = path19.join(primaryDir, LOG_FILENAME);
   let logFd;
   try {
-    logFd = fs18.openSync(logPath, "a");
+    logFd = fs19.openSync(logPath, "a");
   } catch (error) {
     stderrWrite(`canon: cannot open ${logPath}: ${error.message}
 `);
@@ -6078,7 +6118,7 @@ function detachAndExit(options) {
     env: { ...process.env, [DETACH_CHILD_FLAG]: "1" }
   });
   try {
-    fs18.closeSync(logFd);
+    fs19.closeSync(logFd);
   } catch {
   }
   if (child.pid == null) {
@@ -6089,8 +6129,8 @@ function detachAndExit(options) {
   for (const taskId of options.taskIds) {
     try {
       const dir = options.resolveTaskDir(taskId);
-      fs18.mkdirSync(dir, { recursive: true });
-      fs18.writeFileSync(path18.join(dir, PID_FILENAME), `${child.pid}
+      fs19.mkdirSync(dir, { recursive: true });
+      fs19.writeFileSync(path19.join(dir, PID_FILENAME), `${child.pid}
 `, "utf8");
     } catch (error) {
       pidWriteFailures.push({
@@ -6144,9 +6184,9 @@ ${rule}
   return exit(0);
 }
 function readCanonPid(taskDir) {
-  const file = path18.join(taskDir, PID_FILENAME);
+  const file = path19.join(taskDir, PID_FILENAME);
   try {
-    const raw = fs18.readFileSync(file, "utf8").trim();
+    const raw = fs19.readFileSync(file, "utf8").trim();
     const pid = Number.parseInt(raw, 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -6155,7 +6195,7 @@ function readCanonPid(taskDir) {
 }
 function removeCanonPid(taskDir) {
   try {
-    fs18.unlinkSync(path18.join(taskDir, PID_FILENAME));
+    fs19.unlinkSync(path19.join(taskDir, PID_FILENAME));
   } catch {
   }
 }
@@ -6422,7 +6462,7 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   for (const f of allHandoffFiles) {
     if (dirtyFiles.has(f)) continue;
     if (gitIgnoredHandoffFiles.has(f)) continue;
-    const exists = fs19.existsSync(path19.join(cwd, f));
+    const exists = fs20.existsSync(path20.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);
       if (committed.ok && committed.stdout.trim()) {
@@ -6612,30 +6652,30 @@ function exemptNodeModulesPath(entry, cwd, resolvedWorkspaceDirs) {
   if (entryPath === null) return null;
   if (matchesPorcelainPath(entryPath, "node_modules")) {
     return probeNodeModulesEntry(
-      path19.join(cwd, entryPath),
-      path19.join(REPO_ROOT2, entryPath)
+      path20.join(cwd, entryPath),
+      path20.join(REPO_ROOT2, entryPath)
     ).verdict === "verified-symlink" ? "node_modules" : null;
   }
   if (!isNodeModulesEntryPath(entryPath)) return null;
   let cwdReal;
   let repoRootReal;
   try {
-    cwdReal = fs19.realpathSync(cwd);
-    repoRootReal = fs19.realpathSync(REPO_ROOT2);
+    cwdReal = fs20.realpathSync(cwd);
+    repoRootReal = fs20.realpathSync(REPO_ROOT2);
   } catch {
     return null;
   }
   if (cwdReal === repoRootReal) return null;
   const workspaceDirs = resolvedWorkspaceDirs ?? resolveWorkspaceDirs(REPO_ROOT2);
   for (const workspace of workspaceDirs) {
-    const resolvedDestination = resolveContainedPath(path19.join(cwd, workspace), cwd);
+    const resolvedDestination = resolveContainedPath(path20.join(cwd, workspace), cwd);
     if (resolvedDestination === null) continue;
-    const relativeDestination = path19.relative(cwdReal, resolvedDestination).split(path19.sep).join("/");
+    const relativeDestination = path20.relative(cwdReal, resolvedDestination).split(path20.sep).join("/");
     const expectedEntryPath = `${relativeDestination}/node_modules`;
     if (!matchesPorcelainPath(entryPath, expectedEntryPath)) continue;
     return probeNodeModulesEntry(
-      path19.join(resolvedDestination, "node_modules"),
-      path19.join(REPO_ROOT2, workspace, "node_modules")
+      path20.join(resolvedDestination, "node_modules"),
+      path20.join(REPO_ROOT2, workspace, "node_modules")
     ).verdict === "verified-symlink" ? expectedEntryPath : null;
   }
   return null;
@@ -6677,15 +6717,15 @@ function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, 
 }
 function findPullRequestTemplate(repoRoot) {
   const candidates = [
-    path19.join(repoRoot, ".github", "pull_request_template.md"),
-    path19.join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
-    path19.join(repoRoot, "docs", "pull_request_template.md"),
-    path19.join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
-    path19.join(repoRoot, "pull_request_template.md"),
-    path19.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
+    path20.join(repoRoot, ".github", "pull_request_template.md"),
+    path20.join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
+    path20.join(repoRoot, "docs", "pull_request_template.md"),
+    path20.join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
+    path20.join(repoRoot, "pull_request_template.md"),
+    path20.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
   ];
   for (const candidate of candidates) {
-    if (fs19.existsSync(candidate)) return candidate;
+    if (fs20.existsSync(candidate)) return candidate;
   }
   return null;
 }
@@ -6699,13 +6739,13 @@ function resolveQaPrBody(taskIds, activeCwd) {
   if (taskIds.length !== 1) {
     return { kind: "fallback", reason: "bundle: per-task pr-body.md files are not combined in this version" };
   }
-  const prBodyPath = path19.join(activeCwd, "tasks", taskIds[0], "pr-body.md");
+  const prBodyPath = path20.join(activeCwd, "tasks", taskIds[0], "pr-body.md");
   if (!isPrBodyTemplate(prBodyPath)) {
     return { kind: "body-file", path: prBodyPath };
   }
   return {
     kind: "fallback",
-    reason: fs19.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
+    reason: fs20.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
   };
 }
 function commitQaArtifacts(taskIds, cwd) {
@@ -6826,15 +6866,15 @@ function formatExistingPRMessage(prNum, prUrl) {
   return `Existing draft PR: #${prNum} (${prUrl})`;
 }
 function sidecarPathFor(taskId, taskDir = taskDirFor2(taskId)) {
-  return path19.join(taskDir, ".pr-number");
+  return path20.join(taskDir, ".pr-number");
 }
 function recordPinnedPRNumber(taskIds, prNum) {
   const alreadyPinned = taskIds.every((taskId) => readSidecarPRNumber(taskId) === prNum);
   if (alreadyPinned) return;
   for (const taskId of taskIds) {
     const sidecarPath = sidecarPathFor(taskId);
-    fs19.mkdirSync(path19.dirname(sidecarPath), { recursive: true });
-    fs19.writeFileSync(sidecarPath, String(prNum), "utf8");
+    fs20.mkdirSync(path20.dirname(sidecarPath), { recursive: true });
+    fs20.writeFileSync(sidecarPath, String(prNum), "utf8");
   }
 }
 function reportOrCreatePR(taskIds, branchName) {
@@ -6954,8 +6994,8 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
 ` + baseDivergenceResult.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
     );
   }
-  const docsRefsScript = path19.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
-  if (fs19.existsSync(docsRefsScript)) {
+  const docsRefsScript = path20.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
+  if (fs20.existsSync(docsRefsScript)) {
     const docsRefsResult = spawnSync6("node", [docsRefsScript], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -7317,7 +7357,7 @@ function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
   const sidecarPath = sidecarPathFor(taskId, taskDir);
   let raw;
   try {
-    raw = fs19.readFileSync(sidecarPath, "utf8").trim();
+    raw = fs20.readFileSync(sidecarPath, "utf8").trim();
   } catch {
     return null;
   }
@@ -7328,7 +7368,7 @@ function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
 }
 function resolveProofPRNumberForPrefetch(taskId, branchName, baseBranch, taskCwd) {
   if (!ghAvailable) return null;
-  const pinnedPrNum = readSidecarPRNumber(taskId, path19.join(taskCwd, "tasks", taskId));
+  const pinnedPrNum = readSidecarPRNumber(taskId, path20.join(taskCwd, "tasks", taskId));
   if (pinnedPrNum !== null) return pinnedPrNum;
   return findOpenPRNumber(branchName, baseBranch) ?? findMergedPRNumber(branchName, baseBranch);
 }
@@ -7359,7 +7399,7 @@ function establishPRHeadAncestryProof(cwd, prNum, prHead, localTip) {
   return { proven: true };
 }
 function establishMergeProof(taskId, branchName, localTip, baseBranch, cwd, prefetchedHeads) {
-  const pinnedPrNum = readSidecarPRNumber(taskId, path19.join(cwd, "tasks", taskId));
+  const pinnedPrNum = readSidecarPRNumber(taskId, path20.join(cwd, "tasks", taskId));
   if (ghAvailable && pinnedPrNum !== null) {
     if (!isPRMerged(pinnedPrNum)) {
       return { proven: false, reason: `Pinned PR #${pinnedPrNum} is not in MERGED state.` };
@@ -7463,8 +7503,8 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
   return anyMerged;
 }
 function runPostMergeHook() {
-  const hookPath = path19.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
-  if (!fs19.existsSync(hookPath)) return;
+  const hookPath = path20.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
+  if (!fs20.existsSync(hookPath)) return;
   info2("Running .canon/hooks/post-merge.sh...");
   const result = runCommand2("bash", [hookPath]);
   if (!result.ok) {
@@ -7488,12 +7528,12 @@ function commitArchiveChanges(taskIds, baseBranch) {
 }
 function rewriteArchivedTaskRefs(taskIds) {
   const targets = [
-    path19.join(REPO_ROOT2, "docs", "lessons-learned.md"),
-    path19.join(REPO_ROOT2, "docs", "task-quality-log.md")
+    path20.join(REPO_ROOT2, "docs", "lessons-learned.md"),
+    path20.join(REPO_ROOT2, "docs", "task-quality-log.md")
   ];
   for (const filePath of targets) {
-    if (!fs19.existsSync(filePath)) continue;
-    let content = fs19.readFileSync(filePath, "utf8");
+    if (!fs20.existsSync(filePath)) continue;
+    let content = fs20.readFileSync(filePath, "utf8");
     let changed = false;
     for (const taskId of taskIds) {
       const stale = `tasks/${taskId}/`;
@@ -7504,8 +7544,8 @@ function rewriteArchivedTaskRefs(taskIds) {
       }
     }
     if (changed) {
-      fs19.writeFileSync(filePath, content, "utf8");
-      info2(`Updated stale task refs in ${path19.relative(REPO_ROOT2, filePath)}.`);
+      fs20.writeFileSync(filePath, content, "utf8");
+      info2(`Updated stale task refs in ${path20.relative(REPO_ROOT2, filePath)}.`);
     }
   }
 }
@@ -7538,7 +7578,7 @@ function classifyAndPreserveSharedDocDirt() {
     if (porcelainCode !== " M") {
       return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
     }
-    const workingContent = fs19.readFileSync(path19.join(REPO_ROOT2, relPath), "utf8");
+    const workingContent = fs20.readFileSync(path20.join(REPO_ROOT2, relPath), "utf8");
     const headResult = gitSafeAtRaw(REPO_ROOT2, "show", `HEAD:${relPath}`);
     return {
       relPath,
@@ -7555,11 +7595,11 @@ function classifyAndPreserveSharedDocDirt() {
   }
   const preserve = verdict.preserve;
   if (preserve.length === 0) return [];
-  const backupDir = fs19.mkdtempSync(path19.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
+  const backupDir = fs20.mkdtempSync(path20.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
   const preserved = [];
   for (const { relPath, suffix } of preserve) {
-    const backupPath = path19.join(backupDir, relPath.replace(/[\\/]/g, "__"));
-    fs19.writeFileSync(backupPath, suffix, "utf8");
+    const backupPath = path20.join(backupDir, relPath.replace(/[\\/]/g, "__"));
+    fs20.writeFileSync(backupPath, suffix, "utf8");
     info2(`Preserving uncommitted ${relPath} dirt during --ship; backup: ${backupPath}`);
     const checkoutResult = gitSafe("checkout", "HEAD", "--", relPath);
     if (!checkoutResult.ok) {
@@ -7573,21 +7613,21 @@ function shipTasks(taskIds) {
   const resolveShipCwd = (taskId) => {
     const tasksDirOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
     if (tasksDirOverride) {
-      return path19.dirname(tasksDirOverride);
+      return path20.dirname(tasksDirOverride);
     }
     if (isOrphanedWorktreeState(taskId)) return REPO_ROOT2;
-    return path19.dirname(path19.dirname(taskDirFor2(taskId)));
+    return path20.dirname(path20.dirname(taskDirFor2(taskId)));
   };
   const taskStatuses = /* @__PURE__ */ new Map();
   const readShipStatus = (taskId) => {
     const taskCwd = resolveShipCwd(taskId);
     const candidates = [
-      path19.join(taskCwd, "tasks", taskId, "status.json"),
-      path19.join(taskCwd, taskId, "status.json"),
-      path19.join(taskDirForRepoRoot2(taskId), "status.json")
+      path20.join(taskCwd, "tasks", taskId, "status.json"),
+      path20.join(taskCwd, taskId, "status.json"),
+      path20.join(taskDirForRepoRoot2(taskId), "status.json")
     ];
     for (const candidate of candidates) {
-      if (fs19.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
+      if (fs20.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
     }
     const snapshot = taskStatuses.get(taskId);
     if (snapshot) return snapshot;
@@ -7619,7 +7659,7 @@ function shipTasks(taskIds) {
     const currentPhase = getCurrentPhase(readShipStatus(taskId));
     if (currentPhase !== "human_review") continue;
     const taskCwd = resolveShipCwd(taskId);
-    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path19.join(taskCwd, "tasks");
+    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path20.join(taskCwd, "tasks");
     const gateResult = checkPhaseGate(
       taskId,
       "human_review",
@@ -7654,7 +7694,7 @@ function shipTasks(taskIds) {
   if (taskIds.some((id) => taskSnapshot(id).worktree)) {
     preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
   }
-  const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path19.join("tasks", taskId, "status.json"));
+  const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path20.join("tasks", taskId, "status.json"));
   if (orphanedStatusPaths.length > 0) {
     gitSafe("checkout", "HEAD", "--", ...orphanedStatusPaths);
   }
@@ -7727,8 +7767,8 @@ Recovery:
   - --force does not bypass this gate.`
     );
   }
-  const archiveDir = path19.join(TASKS_DIR2, "_archive");
-  if (!fs19.existsSync(archiveDir)) fs19.mkdirSync(archiveDir, { recursive: true });
+  const archiveDir = path20.join(TASKS_DIR2, "_archive");
+  if (!fs20.existsSync(archiveDir)) fs20.mkdirSync(archiveDir, { recursive: true });
   const localBranchesToDelete = [];
   for (const taskId of taskIds) {
     const { worktree: hasWorktree } = taskSnapshot(taskId);
@@ -7737,27 +7777,27 @@ Recovery:
     status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const humanReview = status.phases.human_review;
     if (humanReview) humanReview.status = "done";
-    writeStatusToFile(path19.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
+    writeStatusToFile(path20.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
     const src = taskDirForRepoRoot2(taskId);
-    const dest = path19.join(archiveDir, taskId);
-    fs19.renameSync(src, dest);
+    const dest = path20.join(archiveDir, taskId);
+    fs20.renameSync(src, dest);
     info2(`\u{1F4E6} ${taskId} \u2192 tasks/_archive/${taskId}`);
     const branchName = taskSnapshot(taskId).branch;
     if (branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
   }
   rewriteArchivedTaskRefs(taskIds);
   const stagedPaths = taskIds.flatMap((id) => [
-    path19.join(TASKS_DIR2, id),
+    path20.join(TASKS_DIR2, id),
     // deleted source (if not cleaned up)
-    path19.join(TASKS_DIR2, "_archive", id),
+    path20.join(TASKS_DIR2, "_archive", id),
     // new archive destination
-    path19.join(REPO_ROOT2, "docs", "lessons-learned.md"),
-    path19.join(REPO_ROOT2, "docs", "task-quality-log.md")
+    path20.join(REPO_ROOT2, "docs", "lessons-learned.md"),
+    path20.join(REPO_ROOT2, "docs", "task-quality-log.md")
   ]);
   stageArchiveChanges(stagedPaths);
   for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-    fs19.appendFileSync(path19.join(REPO_ROOT2, relPath), suffix, "utf8");
-    fs19.rmSync(backupPath, { force: true });
+    fs20.appendFileSync(path20.join(REPO_ROOT2, relPath), suffix, "utf8");
+    fs20.rmSync(backupPath, { force: true });
     info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
   }
   const archiveCommit = commitArchiveChanges(taskIds, baseBranch);
@@ -7818,7 +7858,7 @@ function rerouteFromHumanReview(taskIds) {
     if (!result.amended) {
       amendmentFailures.push({
         taskId,
-        specPath: path19.join(taskDirFor2(taskId), "spec.md"),
+        specPath: path20.join(taskDirFor2(taskId), "spec.md"),
         requiredRound,
         expectedHeading: requiredRound === 1 ? "## Amendment" : `## Amendment Round ${requiredRound}`,
         reason: result.reason
@@ -7855,8 +7895,9 @@ function rerouteFromHumanReview(taskIds) {
   const archivedReviewByTask = /* @__PURE__ */ new Map();
   for (const taskId of taskIds) {
     let archivedReview = null;
+    const scaffoldIdentity = { taskId, title: readStatus2(taskId).title ?? "" };
     try {
-      archivedReview = archivePriorReview(taskDirFor2(taskId), { skipUnfilledTemplate: true });
+      archivedReview = archivePriorReview(taskDirFor2(taskId), { skipUnfilledTemplate: true, scaffold: scaffoldIdentity });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const completedArchives = [...archivedReviewByTask.entries()].filter((entry) => entry[1] !== null).map(([completedTaskId, archiveName]) => `${completedTaskId} \u2192 ${archiveName}`).join(", ") || "none";
@@ -7870,6 +7911,14 @@ function rerouteFromHumanReview(taskIds) {
       info(
         `Archived tasks/${taskId}/review.md \u2192 ${archivedReview} (post-reroute review starts a fresh round 1).`
       );
+      const scaffoldSource = rescaffoldReview(taskDirFor2(taskId), scaffoldIdentity);
+      if (scaffoldSource) {
+        info(`Re-scaffolded tasks/${taskId}/review.md from ${path20.relative(process.cwd(), scaffoldSource)}.`);
+      } else {
+        warn2(
+          `tasks/${taskId}/review.md was archived but no template was found to re-scaffold it (looked for tasks/_templates/review.md and .canon/templates/review.md). The code-review foreman will have to write the file from scratch.`
+        );
+      }
     }
   }
   let clearedFullSend = false;
@@ -7995,7 +8044,7 @@ async function runPhase(phase, state) {
   if (phase === "qa") {
     const activeCwd = getActiveCwd(taskIds);
     const qaTemplatePath = state.isBundle ? null : findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
-    const resolvedPrTemplate = qaTemplatePath ? fs19.readFileSync(qaTemplatePath, "utf8") : null;
+    const resolvedPrTemplate = qaTemplatePath ? fs20.readFileSync(qaTemplatePath, "utf8") : null;
     return runQaPhase(state, cliArgs.interactive, resolvedPrTemplate);
   }
   if (phase === "human_review") {
@@ -8009,7 +8058,7 @@ async function runPhase(phase, state) {
       }
       const branch = [...branches][0];
       const cwd = getActiveCwd(taskIds2);
-      const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path19.join(cwd, "tasks");
+      const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path20.join(cwd, "tasks");
       for (const taskId of taskIds2) {
         const gateResult = checkPhaseGate(taskId, "human_review", void 0, tasksRootForGate);
         if (!gateResult.ok) {
@@ -8076,9 +8125,9 @@ async function runPhase(phase, state) {
 }
 var extractCheckedVerdict2 = extractCheckedVerdict;
 function readArtifact(taskId, name) {
-  const p = path19.join(taskDirFor2(taskId), name);
+  const p = path20.join(taskDirFor2(taskId), name);
   try {
-    return fs19.readFileSync(p, "utf8");
+    return fs20.readFileSync(p, "utf8");
   } catch {
     return null;
   }
@@ -8094,15 +8143,15 @@ function checkImplementEvidence(taskId) {
     return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
   }
   const issues = validateHandoffAgainstSpec(
-    path19.join(taskDirFor2(taskId), "spec.md"),
-    path19.join(taskDirFor2(taskId), "handoff.md")
+    path20.join(taskDirFor2(taskId), "spec.md"),
+    path20.join(taskDirFor2(taskId), "handoff.md")
   );
   if (issues.length > 0) return { advanced: false, note: `handoff.md validation failed: ${issues.join("; ")}` };
   const checkRoots = [REPO_ROOT2];
   const sForEvidence = readStatus(taskId);
   if (sForEvidence.worktree === true) {
     const wt = worktreePath(taskId);
-    if (fs19.existsSync(wt)) checkRoots.push(wt);
+    if (fs20.existsSync(wt)) checkRoots.push(wt);
   }
   const ignoreCwd = checkRoots[checkRoots.length - 1];
   const gitIgnored = filterGitIgnoredPaths(files, ignoreCwd);
@@ -8114,7 +8163,7 @@ function checkImplementEvidence(taskId) {
     };
   }
   const existingFiles = verifiableFiles.filter(
-    (f) => checkRoots.some((root) => fs19.existsSync(path19.join(root, f)))
+    (f) => checkRoots.some((root) => fs20.existsSync(path20.join(root, f)))
   );
   if (existingFiles.length === 0) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
@@ -8198,7 +8247,7 @@ function tryEvidenceAdvance(taskId, phase) {
       return { advanced: true, note: "spec.md is populated" };
     }
     case "qa": {
-      const donePath = path19.join(taskDirFor(taskId), "done.md");
+      const donePath = path20.join(taskDirFor(taskId), "done.md");
       if (isDoneMdTemplate(donePath)) return { advanced: false, note: "done.md is still the template" };
       taskPhase(taskId, "qa", "done");
       return { advanced: true, note: "done.md is populated" };
@@ -8469,9 +8518,9 @@ function checkDeps(taskIds, skipAgentDeps = false) {
   }
   for (const taskId of taskIds) {
     validateTaskId(taskId);
-    const repoRootStatusFile = path19.join(REPO_ROOT2, "tasks", taskId, "status.json");
-    const statusFile = cliArgs.ship && fs19.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
-    if (!fs19.existsSync(statusFile)) {
+    const repoRootStatusFile = path20.join(REPO_ROOT2, "tasks", taskId, "status.json");
+    const statusFile = cliArgs.ship && fs20.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
+    if (!fs20.existsSync(statusFile)) {
       die(`No status.json at tasks/${taskId}/status.json \u2014 run canon task new ${taskId} first`);
     }
   }
@@ -8512,8 +8561,8 @@ async function main() {
   const earlyHeartbeatTaskIds = cliArgs.taskIds;
   let heartbeatStarted = false;
   const earlyHeartbeatResolver = (id) => {
-    const repoRootStatusFile = path19.join(REPO_ROOT2, "tasks", id, "status.json");
-    return path19.dirname(cliArgs.ship && fs19.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
+    const repoRootStatusFile = path20.join(REPO_ROOT2, "tasks", id, "status.json");
+    return path20.dirname(cliArgs.ship && fs20.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
   };
   if (!cliArgs.ship && !cliArgs.dryRun) {
     guardConcurrentRun(cliArgs.taskIds, earlyHeartbeatResolver);
@@ -8549,7 +8598,7 @@ async function main() {
   }
   refreshCanonSnapshotsAtPaths(taskIds.map(statusFileFor));
   const initialState = buildPipelineState(taskIds);
-  const heartbeatDirResolver = (id) => path19.dirname(statusFileFor(id));
+  const heartbeatDirResolver = (id) => path20.dirname(statusFileFor(id));
   if (!isSynchronousMode(cliArgs) && shouldAutoDetach()) {
     detachAndExit({
       taskIds,

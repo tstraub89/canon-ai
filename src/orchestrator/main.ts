@@ -23,7 +23,7 @@ import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
 import { detachAndExit, readCanonPid, removeCanonPid, shouldAutoDetach } from './detach.js';
 import { isHeartbeatStale, readHeartbeat, startHeartbeat, stopAllHeartbeats } from './heartbeat.js';
 import { registerShutdownHook } from './signals.js';
-import { archivePriorReview } from './review-archive.js';
+import { archivePriorReview, rescaffoldReview } from './review-archive.js';
 import { taskPhase } from '../../src/task/index.js';
 
 const REPO_ROOT = splitEnv.REPO_ROOT;
@@ -2550,8 +2550,9 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     const archivedReviewByTask = new Map<string, string | null>();
     for (const taskId of taskIds) {
         let archivedReview: string | null = null;
+        const scaffoldIdentity = { taskId, title: readStatus(taskId).title ?? '' };
         try {
-            archivedReview = archivePriorReview(taskDirFor(taskId), { skipUnfilledTemplate: true });
+            archivedReview = archivePriorReview(taskDirFor(taskId), { skipUnfilledTemplate: true, scaffold: scaffoldIdentity });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             const completedArchives = [...archivedReviewByTask.entries()]
@@ -2570,6 +2571,20 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
                 `Archived tasks/${taskId}/review.md → ${archivedReview} ` +
                 `(post-reroute review starts a fresh round 1).`
             );
+            // The code-review foreman is told to fill the existing template
+            // structure; give it one. A failed re-scaffold is not fatal —
+            // every review.md reader tolerates a missing file — but the
+            // foreman then has to reconstruct the verdict layout unaided.
+            const scaffoldSource = rescaffoldReview(taskDirFor(taskId), scaffoldIdentity);
+            if (scaffoldSource) {
+                splitCli.info(`Re-scaffolded tasks/${taskId}/review.md from ${path.relative(process.cwd(), scaffoldSource)}.`);
+            } else {
+                warn(
+                    `tasks/${taskId}/review.md was archived but no template was found to re-scaffold it ` +
+                    `(looked for tasks/_templates/review.md and .canon/templates/review.md). ` +
+                    `The code-review foreman will have to write the file from scratch.`
+                );
+            }
         }
     }
     let clearedFullSend = false;

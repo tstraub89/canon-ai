@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { refreshCanonSnapshotAtPath } from '../orchestrator/canon-snapshot.js';
 import { writeQualityLogForTask } from '../orchestrator/quality-log.js';
-import { archivePriorReview } from '../orchestrator/review-archive.js';
+import { archivePriorReview, rescaffoldReview } from '../orchestrator/review-archive.js';
 import {
     checkPhaseGate,
     parseDiffNameStatus,
@@ -16,6 +16,9 @@ import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRo
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { type TaskSize } from '../lib/pipeline-policy.js';
+import { renderTaskTemplate, resolveTaskTemplateSource, tasksRoot, templatesRoot } from './templates.js';
+
+export { taskTemplateOverrideRoot } from './templates.js';
 
 const VALID_PHASES = new Set<string>(PHASE_ORDER);
 const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
@@ -68,10 +71,6 @@ export function validateTaskId(id: string): void {
     }
 }
 
-function tasksRoot(): string {
-    return process.env.CANON_TASKS_DIR_OVERRIDE ?? 'tasks';
-}
-
 function taskDirFromRoot(taskId: string): string {
     return path.join(tasksRoot(), taskId);
 }
@@ -91,14 +90,6 @@ function taskStatusFileForCwd(cwd: string, taskId: string): string {
 function taskRootForGate(cwd: string): string {
     const root = tasksRoot();
     return path.isAbsolute(root) ? root : path.join(cwd, root);
-}
-
-function templatesRoot(): string {
-    return path.join(process.cwd(), '.canon', 'templates');
-}
-
-export function taskTemplateOverrideRoot(): string {
-    return path.join(tasksRoot(), '_templates');
 }
 
 function readJsonFile<T>(filePath: string): T {
@@ -156,13 +147,6 @@ function currentBranchOrEmpty(): string {
     const result = runGit(['branch', '--show-current']);
     if (result.error || result.status !== 0) return '';
     return (result.stdout ?? '').trim();
-}
-
-function copyTemplateFile(source: string, destination: string, taskId: string, title: string): void {
-    const content = fs.readFileSync(source, 'utf8')
-        .replaceAll('[TASK-ID]', taskId)
-        .replaceAll('[Title]', title);
-    fs.writeFileSync(destination, content, 'utf8');
 }
 
 function listTemplateFiles(): string[] {
@@ -229,11 +213,11 @@ export function taskNew(args: string[]): void {
     }
 
     fs.mkdirSync(taskDir, { recursive: true });
-    const overrideRoot = taskTemplateOverrideRoot();
     for (const basename of listTemplateFiles()) {
-        const override = path.join(overrideRoot, basename);
-        const source = fs.existsSync(override) ? override : path.join(templatesRoot(), basename);
-        copyTemplateFile(source, path.join(taskDir, basename), id, title);
+        // listTemplateFiles guarantees the managed template exists, so the
+        // resolver only ever returns null for a race with a concurrent delete.
+        const source = resolveTaskTemplateSource(basename) ?? path.join(templatesRoot(), basename);
+        fs.writeFileSync(path.join(taskDir, basename), renderTaskTemplate(source, id, title), 'utf8');
     }
 
     const statusPath = path.join(taskDir, 'status.json');
@@ -1121,6 +1105,16 @@ export function taskResetCodeReview(id: string): void {
     const archivedReview = archivePriorReview(taskDir);
     if (archivedReview) {
         console.log(`Archived prior review.md → ${archivedReview}`);
+        const scaffoldSource = rescaffoldReview(taskDir, { taskId: id, title: status.title ?? '' });
+        if (scaffoldSource) {
+            console.log(`Re-scaffolded review.md from ${path.relative(process.cwd(), scaffoldSource)}`);
+        } else {
+            console.warn(
+                'Warning: no template found to re-scaffold review.md ' +
+                '(looked for tasks/_templates/review.md and .canon/templates/review.md); ' +
+                'the next code review will write it from scratch.'
+            );
+        }
     }
 
     const implement = ensurePhaseEntry(status, 'implement');
