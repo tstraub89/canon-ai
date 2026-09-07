@@ -2835,7 +2835,11 @@ function isPristineTaskArtifact(content, basename2, taskId, title) {
   if (content.includes("[TASK-ID]")) return true;
   const source = resolveTaskTemplateSource(basename2);
   if (!source) return false;
-  return content === renderTaskTemplate(source, taskId, title);
+  try {
+    return content === renderTaskTemplate(source, taskId, title);
+  } catch {
+    return false;
+  }
 }
 
 // src/orchestrator/validation.ts
@@ -3412,8 +3416,13 @@ function archivePriorReview(taskDir, options = {}) {
   return archiveName;
 }
 function rescaffoldReview(taskDir, identity) {
-  if (fs12.existsSync(path12.join(taskDir, "review.md"))) return null;
-  return scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
+  try {
+    if (fs12.existsSync(path12.join(taskDir, "review.md"))) return { outcome: "exists" };
+    const source = scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
+    return source ? { outcome: "written", source } : { outcome: "no-template" };
+  } catch (error) {
+    return { outcome: "error", message: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 // src/task/index.ts
@@ -4218,14 +4227,18 @@ function taskResetCodeReview(id) {
   const archivedReview = archivePriorReview(taskDir);
   if (archivedReview) {
     console.log(`Archived prior review.md \u2192 ${archivedReview}`);
-    const scaffoldSource = rescaffoldReview(taskDir, { taskId: id, title: status.title ?? "" });
-    if (scaffoldSource) {
-      console.log(`Re-scaffolded review.md from ${path13.relative(process.cwd(), scaffoldSource)}`);
-    } else {
-      console.warn(
-        "Warning: no template found to re-scaffold review.md (looked for tasks/_templates/review.md and .canon/templates/review.md); the next code review will write it from scratch."
-      );
-    }
+  }
+  const rescaffold = rescaffoldReview(taskDir, { taskId: id, title: status.title ?? "" });
+  if (rescaffold.outcome === "written") {
+    console.log(`Re-scaffolded review.md from ${path13.relative(process.cwd(), rescaffold.source)}`);
+  } else if (rescaffold.outcome === "no-template") {
+    console.warn(
+      "Warning: review.md is missing and no template was found to re-scaffold it (looked for a review.md override under tasks/_templates/ and .canon/templates/review.md); the next code review will write it from scratch."
+    );
+  } else if (rescaffold.outcome === "error") {
+    console.warn(
+      `Warning: review.md is missing and could not be re-scaffolded: ${rescaffold.message}; the next code review will write it from scratch.`
+    );
   }
   const implement = ensurePhaseEntry(status, "implement");
   const codeReview = ensurePhaseEntry(status, "code_review");

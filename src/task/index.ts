@@ -1105,16 +1105,23 @@ export function taskResetCodeReview(id: string): void {
     const archivedReview = archivePriorReview(taskDir);
     if (archivedReview) {
         console.log(`Archived prior review.md → ${archivedReview}`);
-        const scaffoldSource = rescaffoldReview(taskDir, { taskId: id, title: status.title ?? '' });
-        if (scaffoldSource) {
-            console.log(`Re-scaffolded review.md from ${path.relative(process.cwd(), scaffoldSource)}`);
-        } else {
-            console.warn(
-                'Warning: no template found to re-scaffold review.md ' +
-                '(looked for tasks/_templates/review.md and .canon/templates/review.md); ' +
-                'the next code review will write it from scratch.'
-            );
-        }
+    }
+    // Re-scaffold whenever review.md is missing, not only when this call
+    // archived it, so a retry after a failed re-scaffold restores the file.
+    const rescaffold = rescaffoldReview(taskDir, { taskId: id, title: status.title ?? '' });
+    if (rescaffold.outcome === 'written') {
+        console.log(`Re-scaffolded review.md from ${path.relative(process.cwd(), rescaffold.source)}`);
+    } else if (rescaffold.outcome === 'no-template') {
+        console.warn(
+            'Warning: review.md is missing and no template was found to re-scaffold it ' +
+            '(looked for a review.md override under tasks/_templates/ and .canon/templates/review.md); ' +
+            'the next code review will write it from scratch.'
+        );
+    } else if (rescaffold.outcome === 'error') {
+        console.warn(
+            `Warning: review.md is missing and could not be re-scaffolded: ${rescaffold.message}; ` +
+            'the next code review will write it from scratch.'
+        );
     }
 
     const implement = ensurePhaseEntry(status, 'implement');

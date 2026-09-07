@@ -58,16 +58,28 @@ export function archivePriorReview(
     return archiveName;
 }
 
+export type RescaffoldReviewResult =
+    | { outcome: 'written'; source: string }
+    | { outcome: 'exists' }
+    | { outcome: 'no-template' }
+    | { outcome: 'error'; message: string };
+
 /**
- * Restores a fresh review.md scaffold after the filled one was archived, so
+ * Restores a fresh review.md scaffold when the task has none — after the
+ * filled one was archived, or after an earlier attempt left it missing — so
  * the next code_review round has the same template `canon task new` gave the
- * task. Resolves the adopter's `tasks/_templates/review.md` override first,
- * then `.canon/templates/review.md`. Returns the template path used, or null
- * when neither exists (the caller warns; the phase still runs, since every
- * review.md reader tolerates a missing file). Never overwrites an existing
- * review.md.
+ * task. Resolves the adopter's review.md override under tasks/_templates/
+ * first, then .canon/templates/review.md. Never overwrites an existing
+ * review.md and never throws: the callers have already renamed the prior
+ * review by the time this runs, and every review.md reader tolerates a
+ * missing file, so a failed re-scaffold is a warning, not an abort.
  */
-export function rescaffoldReview(taskDir: string, identity: ReviewScaffoldIdentity): string | null {
-    if (fs.existsSync(path.join(taskDir, 'review.md'))) return null;
-    return scaffoldTaskArtifact(taskDir, 'review.md', identity.taskId, identity.title);
+export function rescaffoldReview(taskDir: string, identity: ReviewScaffoldIdentity): RescaffoldReviewResult {
+    try {
+        if (fs.existsSync(path.join(taskDir, 'review.md'))) return { outcome: 'exists' };
+        const source = scaffoldTaskArtifact(taskDir, 'review.md', identity.taskId, identity.title);
+        return source ? { outcome: 'written', source } : { outcome: 'no-template' };
+    } catch (error) {
+        return { outcome: 'error', message: error instanceof Error ? error.message : String(error) };
+    }
 }

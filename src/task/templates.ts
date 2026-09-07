@@ -69,5 +69,11 @@ export function isPristineTaskArtifact(
     if (content.includes('[TASK-ID]')) return true;
     const source = resolveTaskTemplateSource(basename);
     if (!source) return false;
-    return content === renderTaskTemplate(source, taskId, title);
+    // An unreadable template must not fail the caller (the archive step runs
+    // before any status mutation); treat it as "cannot prove pristine".
+    try {
+        return content === renderTaskTemplate(source, taskId, title);
+    } catch {
+        return false;
+    }
 }

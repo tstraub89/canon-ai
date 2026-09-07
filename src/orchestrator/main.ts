@@ -2571,20 +2571,27 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
                 `Archived tasks/${taskId}/review.md → ${archivedReview} ` +
                 `(post-reroute review starts a fresh round 1).`
             );
-            // The code-review foreman is told to fill the existing template
-            // structure; give it one. A failed re-scaffold is not fatal —
-            // every review.md reader tolerates a missing file — but the
-            // foreman then has to reconstruct the verdict layout unaided.
-            const scaffoldSource = rescaffoldReview(taskDirFor(taskId), scaffoldIdentity);
-            if (scaffoldSource) {
-                splitCli.info(`Re-scaffolded tasks/${taskId}/review.md from ${path.relative(process.cwd(), scaffoldSource)}.`);
-            } else {
-                warn(
-                    `tasks/${taskId}/review.md was archived but no template was found to re-scaffold it ` +
-                    `(looked for tasks/_templates/review.md and .canon/templates/review.md). ` +
-                    `The code-review foreman will have to write the file from scratch.`
-                );
-            }
+        }
+        // The code-review foreman is told to fill the existing template
+        // structure; give it one whenever review.md is missing — not only
+        // when this run archived it, so a retry after a failed re-scaffold
+        // still restores the artifact. A failed re-scaffold is not fatal:
+        // every review.md reader tolerates a missing file, the foreman just
+        // has to reconstruct the verdict layout unaided.
+        const rescaffold = rescaffoldReview(taskDirFor(taskId), scaffoldIdentity);
+        if (rescaffold.outcome === 'written') {
+            splitCli.info(`Re-scaffolded tasks/${taskId}/review.md from ${path.relative(process.cwd(), rescaffold.source)}.`);
+        } else if (rescaffold.outcome === 'no-template') {
+            warn(
+                `tasks/${taskId}/review.md is missing and no template was found to re-scaffold it ` +
+                `(looked for a review.md override under tasks/_templates/ and .canon/templates/review.md). ` +
+                `The code-review foreman will have to write the file from scratch.`
+            );
+        } else if (rescaffold.outcome === 'error') {
+            warn(
+                `tasks/${taskId}/review.md is missing and could not be re-scaffolded: ${rescaffold.message}. ` +
+                `The code-review foreman will have to write the file from scratch.`
+            );
         }
     }
     let clearedFullSend = false;

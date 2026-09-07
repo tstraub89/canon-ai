@@ -3997,7 +3997,11 @@ function isPristineTaskArtifact(content, basename, taskId, title) {
   if (content.includes("[TASK-ID]")) return true;
   const source = resolveTaskTemplateSource(basename);
   if (!source) return false;
-  return content === renderTaskTemplate(source, taskId, title);
+  try {
+    return content === renderTaskTemplate(source, taskId, title);
+  } catch {
+    return false;
+  }
 }
 
 // src/orchestrator/review-archive.ts
@@ -4030,8 +4034,13 @@ function archivePriorReview(taskDir, options = {}) {
   return archiveName;
 }
 function rescaffoldReview(taskDir, identity) {
-  if (fs10.existsSync(path10.join(taskDir, "review.md"))) return null;
-  return scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
+  try {
+    if (fs10.existsSync(path10.join(taskDir, "review.md"))) return { outcome: "exists" };
+    const source = scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
+    return source ? { outcome: "written", source } : { outcome: "no-template" };
+  } catch (error) {
+    return { outcome: "error", message: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 // node_modules/mustache/mustache.mjs
@@ -7911,14 +7920,18 @@ function rerouteFromHumanReview(taskIds) {
       info(
         `Archived tasks/${taskId}/review.md \u2192 ${archivedReview} (post-reroute review starts a fresh round 1).`
       );
-      const scaffoldSource = rescaffoldReview(taskDirFor2(taskId), scaffoldIdentity);
-      if (scaffoldSource) {
-        info(`Re-scaffolded tasks/${taskId}/review.md from ${path20.relative(process.cwd(), scaffoldSource)}.`);
-      } else {
-        warn2(
-          `tasks/${taskId}/review.md was archived but no template was found to re-scaffold it (looked for tasks/_templates/review.md and .canon/templates/review.md). The code-review foreman will have to write the file from scratch.`
-        );
-      }
+    }
+    const rescaffold = rescaffoldReview(taskDirFor2(taskId), scaffoldIdentity);
+    if (rescaffold.outcome === "written") {
+      info(`Re-scaffolded tasks/${taskId}/review.md from ${path20.relative(process.cwd(), rescaffold.source)}.`);
+    } else if (rescaffold.outcome === "no-template") {
+      warn2(
+        `tasks/${taskId}/review.md is missing and no template was found to re-scaffold it (looked for a review.md override under tasks/_templates/ and .canon/templates/review.md). The code-review foreman will have to write the file from scratch.`
+      );
+    } else if (rescaffold.outcome === "error") {
+      warn2(
+        `tasks/${taskId}/review.md is missing and could not be re-scaffolded: ${rescaffold.message}. The code-review foreman will have to write the file from scratch.`
+      );
     }
   }
   let clearedFullSend = false;
