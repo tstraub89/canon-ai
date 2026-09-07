@@ -1717,3 +1717,28 @@ void test('docs-refs-check exits non-zero and reports a broken ref on stderr', (
         },
     );
 });
+
+void test('line-citation refs: comma-space compound ranges resolve the existing file', () => {
+    makeTempRepo(root => {
+        writeFile(root, 'scripts/fixture-target.ts', 'export {};\n');
+        writeFile(root, 'docs/spaced-citations.md', [
+            'See `scripts/fixture-target.ts:191-197, 103-110`.',
+            'See `scripts/fixture-target.ts:~191–~197, ~103—110`.',
+            'See `scripts/fixture-target.ts#L191-L197, L103-L110`.',
+        ].join('\n'));
+    }, root => assert.deepEqual(runChecks(root), []));
+});
+
+void test('line-citation refs: spaced ranges work in symbol, section and link carriers', () => {
+    makeTempRepo(root => {
+        writeFile(root, 'scripts/fixture-target.ts', 'export function example() {}\n');
+        writeFile(root, 'docs/fixture-target.md', '## Example\n');
+        writeFile(root, 'docs/citation-carriers.md', [
+            '`example()` in `scripts/fixture-target.ts:1-2, 3-4`.',
+            '`docs/fixture-target.md` §"Example".',
+            '`docs/fixture-target.md:1-2, 3-4` §"Example".',
+            '[Example](scripts/fixture-target.ts#L1-L2, L3-L4)',
+            '[Example](scripts/fixture-target.ts#L1-L2,L3-L4)',
+        ].join('\n'));
+    }, root => assert.deepEqual(runChecks(root), []));
+});

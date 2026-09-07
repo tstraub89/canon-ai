@@ -3931,3 +3931,68 @@ void test('formatAge: hours + remainder for >= 1h', () => {
 void test('formatAge: never returns negative', () => {
     assert.equal(formatAge(-1000), '0s');
 });
+
+for (const shape of ['file', 'dangling', 'parent'] as const) {
+    void test(`runUpgrade refuses ${shape} symlinks even with --force, before writing`, () => {
+        withTempDir(root => {
+            const repo = path.join(root, 'repo');
+            const pkg = path.join(root, 'pkg');
+            const external = path.join(root, 'external');
+            const rel = '.canon/templates/spec.md';
+            fs.mkdirSync(path.join(repo, '.canon'), { recursive: true });
+            fs.mkdirSync(path.join(pkg, 'templates', '.canon', 'templates'), { recursive: true });
+            fs.mkdirSync(external);
+            fs.writeFileSync(path.join(pkg, 'templates', rel), 'new template');
+            const victim = path.join(external, 'spec.md');
+            if (shape !== 'dangling') fs.writeFileSync(victim, 'external data');
+            if (shape === 'parent') {
+                fs.symlinkSync(external, path.join(repo, '.canon', 'templates'));
+            } else {
+                fs.mkdirSync(path.join(repo, '.canon', 'templates'));
+                fs.symlinkSync(victim, path.join(repo, rel));
+            }
+            gitInit(repo);
+            gitAddCommit(repo, 'tracked symlink');
+            for (const options of [{}, { check: true }, { force: true }]) {
+                assert.throws(() => runUpgrade(repo, pkg, options), /symlink/i);
+                assert.equal(fs.existsSync(path.join(repo, '.canon', 'version')), false);
+                if (shape === 'dangling') assert.equal(fs.existsSync(victim), false);
+                else assert.equal(fs.readFileSync(victim, 'utf8'), 'external data');
+            }
+        });
+    });
+}
+
+void test('scaffoldTemplates refuses symlinked parents before copying other files', () => {
+    withTempDir(root => {
+        const repo = path.join(root, 'repo');
+        const src = path.join(root, 'templates');
+        const external = path.join(root, 'external');
+        fs.mkdirSync(repo);
+        fs.mkdirSync(external);
+        fs.mkdirSync(path.join(src, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(src, 'a.md'), 'first');
+        fs.writeFileSync(path.join(src, 'docs', 'new.md'), 'outside write');
+        fs.symlinkSync(external, path.join(repo, 'docs'));
+        assert.throws(() => scaffoldTemplates(repo, src), /symlink/i);
+        assert.deepEqual(fs.readdirSync(external), []);
+        assert.equal(fs.existsSync(path.join(repo, 'a.md')), false);
+    });
+});
+
+void test('runUpgrade --check tolerates a regular file at an expected parent directory', () => {
+    withTempDir(root => {
+        const repo = path.join(root, 'repo');
+        const pkg = path.join(root, 'pkg');
+        fs.mkdirSync(repo);
+        fs.mkdirSync(path.join(pkg, 'templates', 'scripts'), { recursive: true });
+        fs.writeFileSync(path.join(repo, 'scripts'), 'existing file');
+        fs.writeFileSync(path.join(pkg, 'templates', 'scripts', 'docs-refs-check.mjs'), 'export {};');
+        gitInit(repo);
+        gitAddCommit(repo, 'regular file parent');
+        const result = runUpgrade(repo, pkg, { check: true });
+        assert.ok(result.wouldUpgrade.includes('scripts/docs-refs-check.mjs'));
+        assert.equal(fs.readFileSync(path.join(repo, 'scripts'), 'utf8'), 'existing file');
+        assert.equal(fs.existsSync(path.join(repo, '.canon')), false);
+    });
+});

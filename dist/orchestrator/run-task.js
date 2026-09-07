@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 // src/orchestrator/signals.ts
+import { setTimeout as delay } from "timers/promises";
 var activeChildren = /* @__PURE__ */ new Set();
+var shuttingDown = false;
+function isShuttingDown() {
+  return shuttingDown;
+}
 var shutdownHooks = [];
 function registerShutdownHook(hook) {
   shutdownHooks.push(hook);
@@ -31,10 +36,28 @@ function killChildGroup(child, sig) {
 process.on("SIGHUP", () => {
   process.stderr.write("WARN: SIGHUP received; ignoring (orchestrator survives supervising-shell exit).\n");
 });
-function forwardAndExit(sig) {
-  for (const child of activeChildren) {
+function childGroupAlive(child) {
+  if (child.pid == null) return false;
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "EPERM") return true;
+    return child.exitCode === null && child.signalCode === null;
+  }
+}
+async function forwardAndExit(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const children = [...activeChildren];
+  for (const child of children) {
     killChildGroup(child, sig);
   }
+  const graceDeadline = Date.now() + 3e3;
+  while (children.some(childGroupAlive) && Date.now() < graceDeadline) await delay(50);
+  for (const child of children.filter(childGroupAlive)) killChildGroup(child, "SIGKILL");
+  const reapDeadline = Date.now() + 1e3;
+  while (children.some(childGroupAlive) && Date.now() < reapDeadline) await delay(50);
   for (const hook of shutdownHooks) {
     try {
       hook(sig);
@@ -44,8 +67,12 @@ function forwardAndExit(sig) {
   process.removeAllListeners(sig);
   process.kill(process.pid, sig);
 }
-process.on("SIGINT", () => forwardAndExit("SIGINT"));
-process.on("SIGTERM", () => forwardAndExit("SIGTERM"));
+process.on("SIGINT", () => {
+  void forwardAndExit("SIGINT");
+});
+process.on("SIGTERM", () => {
+  void forwardAndExit("SIGTERM");
+});
 
 // src/orchestrator/run-task.ts
 import { pathToFileURL } from "url";
@@ -1883,6 +1910,7 @@ function streamProcess(command, args, options) {
     child.on("error", (err) => {
       if (stallTimer) clearTimeout(stallTimer);
       if (killTimer) clearTimeout(killTimer);
+      if (isShuttingDown()) return;
       resolve({
         exitCode: null,
         signal: null,
@@ -1896,6 +1924,7 @@ function streamProcess(command, args, options) {
       closed = true;
       if (stallTimer) clearTimeout(stallTimer);
       if (killTimer) clearTimeout(killTimer);
+      if (isShuttingDown()) return;
       resolve({
         exitCode: code,
         signal,

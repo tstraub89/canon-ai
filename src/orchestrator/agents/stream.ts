@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import readline from 'node:readline';
 
 import { STALL_KILL_GRACE_MS, STALL_TIMEOUT_MS } from '../env.js';
-import { killChildGroup, registerActiveChild } from '../signals.js';
+import { isShuttingDown, killChildGroup, registerActiveChild } from '../signals.js';
 import type { StreamResult } from '../types.js';
 import { warn } from '../cli.js';
 
@@ -101,6 +101,7 @@ export function streamProcess(
         child.on('error', (err) => {
             if (stallTimer) clearTimeout(stallTimer);
             if (killTimer) clearTimeout(killTimer);
+            if (isShuttingDown()) return;
             resolve({
                 exitCode: null,
                 signal: null,
@@ -115,6 +116,9 @@ export function streamProcess(
             closed = true;
             if (stallTimer) clearTimeout(stallTimer);
             if (killTimer) clearTimeout(killTimer);
+            // Shutdown owns termination; resolving would let phase wrappers exit
+            // before resistant descendants have received the final group kill.
+            if (isShuttingDown()) return;
             resolve({
                 exitCode: code,
                 signal,

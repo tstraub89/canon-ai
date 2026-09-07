@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 
 import { runLogPathFor } from '../../orchestrator/detach.js';
 import { HEARTBEAT_INTERVAL_MS, isHeartbeatStale, type HeartbeatReadResult } from '../../orchestrator/heartbeat.js';
@@ -501,32 +502,53 @@ function primaryLogTaskId(ctx: RunContext, fallbackTaskId: string): string {
     return fallbackTaskId;
 }
 
+type LogTailState = {
+    position: number | null;
+    path?: string;
+    identity?: string;
+    decoder: StringDecoder;
+};
+
 function tailRunLog(
     ctx: RunContext,
     taskId: string,
     deps: Pick<WatchCmdDeps, 'stderr'>,
-    tailState: { position: number | null },
+    tailState: LogTailState,
 ): void {
     const logTaskDir = tolerantTaskDir(primaryLogTaskId(ctx, taskId));
     const logPath = runLogPathFor(logTaskDir);
+    let fd: number | undefined;
     try {
-        const stat = fs.statSync(logPath);
-        if (tailState.position == null) {
+        fd = fs.openSync(logPath, 'r');
+        const stat = fs.fstatSync(fd);
+        const identity = `${logPath}:${stat.dev}:${stat.ino}`;
+        if (tailState.position == null || tailState.path !== logPath) {
             tailState.position = stat.size;
+            tailState.path = logPath;
+            tailState.identity = identity;
+            tailState.decoder = new StringDecoder('utf8');
             return;
         }
-        if (stat.size < tailState.position) {
+        if (identity !== tailState.identity || stat.size < tailState.position) {
             tailState.position = 0;
+            tailState.decoder = new StringDecoder('utf8');
         }
+        tailState.identity = identity;
         if (stat.size === tailState.position) return;
-        const content = fs.readFileSync(logPath, 'utf8');
-        const chunk = content.slice(tailState.position);
-        if (chunk.length > 0) deps.stderr?.(chunk);
-        tailState.position = stat.size;
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, stat.size - tailState.position));
+        while (tailState.position < stat.size) {
+            const bytes = fs.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - tailState.position), tailState.position);
+            if (bytes === 0) break;
+            tailState.position += bytes;
+            const chunk = tailState.decoder.write(buffer.subarray(0, bytes));
+            if (chunk.length > 0) deps.stderr?.(chunk);
+        }
     } catch (error: unknown) {
         const code = getErrnoCode(error);
         if (code === 'ENOENT') return;
         deps.stderr?.(`canon watch: failed to tail ${logPath}: ${errorMessage(error)}\n`);
+    } finally {
+        if (fd !== undefined) fs.closeSync(fd);
     }
 }
 
@@ -586,7 +608,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
 
     const taskId = parsed.taskId;
     const timeoutDeadline = parsed.timeoutMs == null ? null : now() + parsed.timeoutMs;
-    const tailState = { position: null as number | null };
+    const tailState: LogTailState = { position: null, decoder: new StringDecoder('utf8') };
 
     const withinTimeout = (): boolean => timeoutDeadline != null && now() >= timeoutDeadline;
     const remainingTimeoutMs = (): number | null => {

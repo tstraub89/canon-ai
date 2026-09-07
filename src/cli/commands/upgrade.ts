@@ -5,6 +5,7 @@ import { spawnSync } from 'child_process';
 import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
 import { taskTemplateOverrideRoot } from '../../task/index.js';
+import { assertNoSymlinkDestinations } from '../../lib/scaffold-paths.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -276,6 +277,10 @@ export function printUpgradeRefusals(refusals: UpgradeResult['refusals'], prefix
 }
 
 export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions = {}): UpgradeResult {
+    assertNoSymlinkDestinations(cwd, [
+        ...CANON_OWNED, ...DELIMITED, ...HEADER_ONLY_SYNC,
+        '.canon/version', '.gitignore', 'scripts/docs-refs-config.mjs',
+    ]);
     const upgraded: string[] = [];
     const unchanged: string[] = [];
     const skipped: string[] = [];
@@ -516,6 +521,7 @@ export function runUpgrade(cwd: string, pkgDir: string, options: UpgradeOptions 
     // Write — every pending op when --force, else only the clean ones (no
     // dirty since the early-return above already covered that path).
     const toWrite = options.force ? pending : clean;
+    assertNoSymlinkDestinations(cwd, toWrite.map(op => op.rel));
     for (const op of toWrite) {
         mkdirSync(dirname(op.projectPath), { recursive: true });
         writeFileSync(op.projectPath, op.content);

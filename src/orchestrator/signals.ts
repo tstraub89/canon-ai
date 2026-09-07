@@ -1,47 +1,20 @@
-// Signal handlers installed at module-evaluation time, BEFORE any importing
-// module's transitive dependencies finish loading. This file is imported FIRST
-// (as a side-effect import) from src/orchestrator/run-task.ts so its module body runs
-// before src/orchestrator/main.ts and its deps — most notably env.ts, which
-// runs `git rev-parse --git-common-dir` synchronously at module load.
-//
-// ES module evaluation is post-order DFS on the dependency graph: imports'
-// module bodies run BEFORE the importing module's body. If we installed the
-// handler inline in run-task.ts (as a top-level statement after the imports),
-// the heavy import graph would evaluate first, leaving a startup window
-// where SIGHUP from a dying supervising shell would terminate the orchestrator
-// with Node's default action.
-//
-// `node:*` built-in imports are allowed here because they're effectively
-// leaves — they have no further canon-side transitive dependencies. The
-// structural test in tests/run-task-signals.test.ts enforces "no project
-// imports" while permitting `node:*`.
-//
-// Beyond installing SIGHUP-ignore on the orchestrator, this module also owns
-// the live-child registry used by agents/stream.ts. With `detached: true`
-// on the spawned agent children (the P1 fix from Codex review of PR #105),
-// they no longer share the orchestrator's POSIX process group. That isolates
-// them from supervising-shell SIGHUP — but it also means they won't die with
-// the orchestrator if it exits via SIGINT/SIGTERM/crash. The shutdown
-// handlers below close that gap by explicitly forwarding the terminating
-// signal to every registered child before exiting. Ctrl-C and `kill` now
-// behave the same way they did before `detached: true` — both children
-// die with the parent.
+// Imported before the orchestrator module graph so SIGHUP handling is active
+// during synchronous startup work. Keep this module free of project imports.
+// Agent children use separate process groups; shutdown must supervise those
+// groups through termination before removing runtime markers and exiting.
 
 import type { ChildProcess } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const activeChildren = new Set<ChildProcess>();
+let shuttingDown = false;
 
-// Shutdown-hook registry. Modules with cleanup work (heartbeat file removal,
-// PID-file cleanup for future detach mode, etc.) register a callback that
-// fires before the signal forwarder re-raises. Registry-style keeps signals.ts
-// leaf-pure — the structural test in tests/run-task-signals.test.ts forbids
-// project imports here so the SIGHUP handler installs before the heavier
-// transitive graph evaluates. Callers do `import { registerShutdownHook }
-// from './signals.js'` from inside the project tree; signals.ts itself stays
-// dependency-free.
-// Hooks receive the terminating signal when shutdown is signal-driven —
-// the exit-marker writer needs it to log WHICH signal ended the run.
-// Existing zero-arg hooks ignore the parameter.
+export function isShuttingDown(): boolean {
+    return shuttingDown;
+}
+
+// Hooks run after child-group shutdown. Keep the registry here so callers can
+// register cleanup without adding project dependencies to this early import.
 type ShutdownHook = (sig?: NodeJS.Signals) => void;
 const shutdownHooks: ShutdownHook[] = [];
 
@@ -92,12 +65,32 @@ process.on('SIGHUP', () => {
     process.stderr.write('WARN: SIGHUP received; ignoring (orchestrator survives supervising-shell exit).\n');
 });
 
-function forwardAndExit(sig: 'SIGINT' | 'SIGTERM'): void {
-    for (const child of activeChildren) {
+function childGroupAlive(child: ChildProcess): boolean {
+    if (child.pid == null) return false;
+    try {
+        process.kill(-child.pid, 0);
+        return true;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
+        return child.exitCode === null && child.signalCode === null;
+    }
+}
+
+async function forwardAndExit(sig: 'SIGINT' | 'SIGTERM'): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // Keep group identities after their leaders close: descendants may still run.
+    const children = [...activeChildren];
+    for (const child of children) {
         killChildGroup(child, sig);
     }
+    const graceDeadline = Date.now() + 3000;
+    while (children.some(childGroupAlive) && Date.now() < graceDeadline) await delay(50);
+    for (const child of children.filter(childGroupAlive)) killChildGroup(child, 'SIGKILL');
+    const reapDeadline = Date.now() + 1000;
+    while (children.some(childGroupAlive) && Date.now() < reapDeadline) await delay(50);
     // Run registered shutdown hooks before re-raising. Heartbeat-file cleanup
-    // and (future) detach PID-file removal live here so a clean Ctrl-C / SIGTERM
+    // and detach PID-file removal live here so a clean Ctrl-C / SIGTERM
     // doesn't leave runtime files looking stale. Hooks run best-effort — a
     // throw from one hook must not block the others or the re-raise.
     for (const hook of shutdownHooks) {
@@ -114,5 +107,5 @@ function forwardAndExit(sig: 'SIGINT' | 'SIGTERM'): void {
     process.kill(process.pid, sig);
 }
 
-process.on('SIGINT', () => forwardAndExit('SIGINT'));
-process.on('SIGTERM', () => forwardAndExit('SIGTERM'));
+process.on('SIGINT', () => { void forwardAndExit('SIGINT'); });
+process.on('SIGTERM', () => { void forwardAndExit('SIGTERM'); });
