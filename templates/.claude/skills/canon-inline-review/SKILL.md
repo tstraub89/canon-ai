@@ -1,7 +1,7 @@
 ---
 name: canon-inline-review
 description: Use when the human wants an independent cross-review of below-pipeline work - uncommitted changes, one commit, or a whole branch before a PR. Triggers on "/canon-inline-review", "review my uncommitted changes", "codex review this", "cross-review before I commit", "review the last commit", and "review my branch". Not for spec compliance (use canon run / --reroute) or the pipeline's own code_review phase.
-allowed-tools: Bash(git status *) Bash(git log *) Bash(git rev-parse *) Bash(git symbolic-ref *) Bash(codex review *) Bash(codex exec review *)
+allowed-tools: Read Bash(git status *) Bash(git log *) Bash(git rev-parse *) Bash(git symbolic-ref *) Bash(mktemp) Bash(mktemp *) Bash(codex review *) Bash(codex exec review *)
 effort: medium
 ---
 
@@ -49,20 +49,20 @@ The practical consequence: **the only target you can steer is the uncommitted tr
 
 `codex review` is the shorthand for `codex exec review`. Use the shorthand when you want the concise form; treat `codex exec review` as the documented form.
 
-Run non-interactively with the chosen selector:
+Run non-interactively with the chosen selector, and always add `-o <path>` (a fresh path from `mktemp`) to capture the agent's final response in isolation. Raw stdout is the full exec transcript — a session banner, config block, and every shell command the review itself runs, with the actual review text buried somewhere inside — not just the final message. `-o` writes only that final message, cleanly:
 
-- `codex exec review --uncommitted`
-- `codex exec review --commit <SHA>`
-- `codex exec review --base <branch>`
-- `codex exec review "<PROMPT>"` to steer an uncommitted review (prompt-only; do not add `--uncommitted`)
+- `codex exec review --uncommitted -o <path>`
+- `codex exec review --commit <SHA> -o <path>`
+- `codex exec review --base <branch> -o <path>`
+- `codex exec review "<PROMPT>" -o <path>` to steer an uncommitted review (prompt-only; do not add `--uncommitted`)
 
-Do not pipe stdin into the command. The `review` subcommand already runs non-interactively.
+Do not pipe stdin into the command. The `review` subcommand already runs non-interactively. A successful review always produces text in the `-o` file — even a clean result is a summary sentence, never nothing. Treat an empty or missing `-o` file as a failed invocation, regardless of exit code: check exit status and stderr for the cause, surface the failure, and stop. Never read empty output as "no findings."
 
 ## Reporting findings
 
-Summarize the review output concisely. Group findings by severity, then stop. Do not dump raw output into the session.
+Only proceed here if `<path>` (the `-o` file) is non-empty. Read it for the review content. Do not grep, parse, or otherwise inspect raw stdout — it's the full transcript, not the result, and findings can be anywhere inside it. Summarize the file's content concisely. Group findings by severity, then stop. Do not dump raw output into the session.
 
-- Stdout is already formatted prose, not JSON: a summary line, then each finding as `Review comment: - [P0]`-`[P3] <title> — <file>:<line>` with its body below. Relay the existing `[P0]`-`[P3]` tags and summary line as-is — don't re-derive severity from wording.
+- The `-o` file is already formatted prose, not JSON: a summary line, then each finding as `Review comment: - [P0]`-`[P3] <title> — <file>:<line>` with its body below. Relay the existing `[P0]`-`[P3]` tags and summary line as-is — don't re-derive severity from wording.
 - If there are findings, report the important ones first and keep the summary short.
 - If there are no findings, say so in one line.
 
