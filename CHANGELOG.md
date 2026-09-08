@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.1.2] — 2026-09-08
+
+### Fixed
+
+- **`canon-inline-review` no longer misreads Codex's review output.** The skill now captures Codex's final response directly instead of scanning its full execution transcript, and treats a missing or empty result as a failed review rather than silently reporting "no issues found."
+
 ## [3.1.1] — 2026-09-07
 
 ### Fixed
