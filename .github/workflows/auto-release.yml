@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main with full history
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Full history is needed so `git blame` can identify the commit
           # that last set the current package.json version — that's the
