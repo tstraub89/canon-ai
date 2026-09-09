@@ -34,6 +34,7 @@ Report every issue you find, including ones you are uncertain about or consider 
 - **Verify handoff claims by running `git diff HEAD -- <file>`**: the auto-commit step can silently drop edits not in the handoff Changes table — don't trust the handoff claim; diff the working tree to confirm fixes landed.
 - **Delicate-task review must audit cross-cutting guards at every mutation entry point**: when a `delicate: true` task refactors a state/data layer, explicitly verify that auth, gating, and payment guards still hold at every mutation chokepoint — not just at the call sites the spec called out.
 - **Don't infer one git invariant from another**: `git status --porcelain` empty ≠ origin matches HEAD; `origin/<branch>` exists ≠ origin matches HEAD. Do the actual check directly, not a proxy.
+- **A cross-cutting invariant fix isn't verified until every sibling call site with the same shape has been checked**: a captured reference that must be revalidated, or a guard that must run, because an intervening `await` can invalidate it, is the kind of defect that recurs wherever the same shape appears. Once a round establishes the violation is real at one call site, a byte-identical-to-base sibling branch elsewhere in the same file is not "out of scope" — it shares the same shape. Grep the file for every other site matching the pattern before accepting the fix and closing the round.
 
 ## Return Format
 

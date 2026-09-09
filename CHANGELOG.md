@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [3.1.3] — 2026-09-08
+
+### Added
+
+- **Code review and handoff guidance now cover three adopter-hit traps.** The anchored code-review lens checks sibling call sites sharing a fixed cross-cutting invariant before closing a round; the handoff template warns against backticking bare directory paths and against citing in-diff files in an out-of-diff `Fail` row's notes.
+
+### Changed
+
+- **Spec-authoring guidance now calls out ACs that pin exact operation counts across an unrelated async subsystem's own activity**, extending the existing "behavioral contracts, not mechanics" rule of thumb.
+
 ## [3.1.2] — 2026-09-08
 
 ### Fixed
