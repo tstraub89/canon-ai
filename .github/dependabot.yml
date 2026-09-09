@@ -1,5 +1,12 @@
 # Dependabot version updates. Security updates are enabled separately in the
-# repository settings and do not depend on this file.
+# repository settings, but they are NOT independent of this file: Dependabot
+# filters ignored dependencies out of security updates too, so the
+# semver-major `ignore` below also silences a security fix that only lands in
+# a major. That is acceptable here because every dependency in this repo is
+# dev-only and none of it ships — `files` publishes dist/, templates/, and
+# CHANGELOG.md, so a dev-dependency advisory has no adopter blast radius.
+# (It also means CI's `npm audit --omit=dev` has nothing left to audit in
+# this repo; it stays as a guard against a runtime dependency appearing.)
 version: 2
 updates:
   - package-ecosystem: npm
@@ -12,8 +19,41 @@ updates:
     groups:
       dev-tooling:
         patterns: ["*"]
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
     open-pull-requests-limit: 3
+    # Major npm bumps need real testing time a weekly bot cadence can't
+    # provide, so upgrade them deliberately by hand. With a single
+    # `patterns: ["*"]` group, one unmergeable major also strands every safe
+    # bump alongside it: `typescript` 5 -> 7 blocked four clean minor/patch
+    # updates because typescript-eslint still peers on `typescript <6.1.0`.
+    #
+    # Two consequences of ignoring majors here:
+    #   - `@types/node` no longer follows the runtime on its own. It must
+    #     track `engines.node` (and the CI matrix) by hand — a types major
+    #     ahead of the runtime describes APIs that aren't there, and one
+    #     behind hides APIs that are.
+    #   - `typescript` stays on 5.x until typescript-eslint's peer range
+    #     admits the next major. TS 7 is the native port and has no
+    #     TypeScript API yet, which is what typescript-eslint needs.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    # One PR for the week's action bumps rather than one per action. Majors
+    # are NOT ignored here: a workflow bump is validated by the PR's own CI
+    # run, which executes the bumped action.
+    groups:
+      github-actions:
+        patterns: ["*"]
+    labels:
+      - dependencies
+      - github_actions
