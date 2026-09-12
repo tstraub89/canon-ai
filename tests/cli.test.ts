@@ -1187,9 +1187,9 @@ void test('EXPECTED_TEMPLATES covers every canon-owned .canon/templates entry', 
 
 // ── checkSkills ──────────────────────────────────────────────────────────────
 
-void test('checkSkills: all seven skills present → pass', () => {
+void test('checkSkills: all eight skills present → pass', () => {
     withTempDir(dir => {
-        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review']) {
+        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review', 'canon-sweep']) {
             const skillDir = path.join(dir, '.claude', 'skills', skill);
             fs.mkdirSync(skillDir, { recursive: true });
             fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '');
@@ -1218,6 +1218,7 @@ void test('checkSkills: canon-init present but all operational skills missing �
         assert.match(check.detail ?? '', /canon-status/);
         assert.match(check.detail ?? '', /canon-changelog/);
         assert.match(check.detail ?? '', /canon-inline-review/);
+        assert.match(check.detail ?? '', /canon-sweep/);
     });
 });
 

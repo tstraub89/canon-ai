@@ -130,6 +130,7 @@ The other installed skills (auto-trigger on natural-language phrases — see eac
 | `/canon-spec` | Authoring a new task — "let's add X", "start a task for…" |
 | `/canon-spec-review` | Pre-flighting a spec before invoking the pipeline |
 | `/canon-inline-review` | Independent cross-review of inline or below-pipeline changes before commit or PR |
+| `/canon-sweep` | Triaging `docs/lessons-learned.md` — promote, keep, or prune, human-approved |
 | `/canon-pipeline` | Driving an existing task forward (`canon run`, `--pr`, `--ship`, recovery) |
 | `/canon-status` | "Where are we?" — surfaces phases and blockers across in-flight tasks |
 | `/canon-changelog` | Drafting release notes (projects that version their releases) |
@@ -211,7 +212,9 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short sh
       "Skill(canon-spec-review)",
       "Skill(canon-spec-review:*)",
       "Skill(canon-inline-review)",
-      "Skill(canon-inline-review:*)"
+      "Skill(canon-inline-review:*)",
+      "Skill(canon-sweep)",
+      "Skill(canon-sweep:*)"
     ]
   }
 }
@@ -308,7 +311,7 @@ Drop this into any repo and you have:
 - Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`src/orchestrator/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/settings.json` — Claude Code permissions + SessionStart hook
-- Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects)
+- Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects), `/canon-sweep` (triage the lessons-learned buffer)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 
 ## Where to Go Deeper
