@@ -52,9 +52,8 @@ npm install --package-lock-only
 # .canon/version and dies if they diverge.
 echo "X.Y.Z" > .canon/version
 
-# Rebuild dist/. The version string is baked into dist/cli/index.js at four
-# call sites (doctor's checkCanonVersion, init's writeCanonVersion, runUpgrade,
-# printVersion). CI runs `git diff --exit-code -- dist/` on every PR to main and
+# Rebuild dist/. The version string is baked into multiple call sites across
+# dist/. CI runs `git diff --exit-code -- dist/` on every PR to main and
 # fails until dist matches the new version — rebuild AS PART OF the bump commit,
 # atomic with package.json. Don't skip even if dist looks clean locally: a fresh
 # tsup run may reorder output and a later PR will produce the spurious diff anyway.
