@@ -9,6 +9,7 @@ export const CANON_OWNED = [
     '.claude/skills/canon-changelog/SKILL.md',
     '.claude/skills/canon-spec-review/SKILL.md',
     '.claude/skills/canon-inline-review/SKILL.md',
+    '.claude/skills/canon-sweep/SKILL.md',
     '.claude/agents/code-review-anchored.md',
     '.claude/agents/code-review-cold.md',
     '.canon/templates/status.json',

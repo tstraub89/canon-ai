@@ -63,7 +63,9 @@
       "Skill(canon-spec-review)",
       "Skill(canon-spec-review:*)",
       "Skill(canon-inline-review)",
-      "Skill(canon-inline-review:*)"
+      "Skill(canon-inline-review:*)",
+      "Skill(canon-sweep)",
+      "Skill(canon-sweep:*)"
     ]
   },
   "hooks": {
