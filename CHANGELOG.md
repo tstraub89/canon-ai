@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-09-11
+
 ### Added
 
 - **New `/canon-sweep` skill triages the lessons-learned buffer.** It walks every entry with a prune-or-keep default, prefers the smallest carrier (a site comment, a test, or a clause on an existing rule) over a new rule, and proposes a per-entry verdict table for human approval before writing anything. Installed by `canon init` / `canon upgrade` and checked by `canon doctor`.
