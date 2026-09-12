@@ -1,7 +1,7 @@
 ---
 name: canon-sweep
 description: Use when the human asks to sweep, triage, or prune `docs/lessons-learned.md` — phrases like "sweep the lessons buffer", "let's do a lessons sweep", "promote or prune lessons learned", or explicit `/canon-sweep` invocation. Human-invoked only. A QA "buffer exceeds ~15 entries" note in a task's `done.md` or a just-closed release milestone are reasons to *suggest* a sweep to the human, never to start one. The skill proposes a verdict and the exact promoted text per entry and writes nothing until the human confirms. Not for appending new lessons (the QA phase does that) or for editing task notes.
-allowed-tools: Read Glob Grep Edit Write Bash(git log *) Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git show *)
+allowed-tools: Read Glob Grep Edit Write Bash(git log *) Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git show *) Bash(git worktree list) Bash(canon task list)
 effort: medium
 ---
 
@@ -18,7 +18,11 @@ Use this skill to triage the lessons-learned buffer: decide, entry by entry, whe
 
 ## Preconditions
 
-Triage (Steps 1 to 3) is read-only and can run from any checkout. Before **applying** anything (Step 4), confirm with `git status` and `git branch --show-current` that you are on a clean, dedicated non-default branch, not in a task worktree and not mid-pipeline. The sweep touches shared docs and should ship as its own small change through the normal review path.
+Triage (Steps 1 to 3) is read-only and can run from any checkout. Before **applying** anything (Step 4), run this preflight and stop if any check fails:
+
+- `git status` is clean and `git branch --show-current` is a dedicated non-default branch.
+- `git worktree list` shows the current directory as the main working tree, not a linked worktree. A task worktree is where a pipeline edits code; shared docs must not change there.
+- `canon task list` shows no task with a phase in progress. A pipeline running in another worktree would otherwise pick up or collide with the sweep's edits to shared docs at merge time. If one is in flight, wait for it to reach `human_review` or stop it before applying. The sweep touches shared docs and should ship as its own small change through the normal review path.
 
 Read before triaging:
 
@@ -99,7 +103,7 @@ Then ask for approval with `AskUserQuestion`, offering: approve all, approve wit
 
 ## Step 4 — Apply
 
-Check the branch precondition above, then for each approved row:
+Run the preflight above, then for each approved row:
 
 - **Promote:** land the approved carrier, then delete the entry from the buffer. For a doc, make the edit exactly as approved. For a site comment, write the comment at the approved location. For a test, lint check, or gate, the entry leaves the buffer only once the check is actually in place; if it is deferred, the row is a keep, not a promote.
 - **Prune:** delete the entry.
