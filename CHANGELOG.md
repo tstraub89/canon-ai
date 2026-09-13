@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.2.1] — 2026-09-13
+
+### Changed
+
+- **The project is clearly identified as an independent AI coding tool.** The README and npm package description now distinguish canon-ai from Canon's camera, printer, and imaging businesses; canon-ai does not control or interact with Canon hardware.
+
 ## [3.2.0] — 2026-09-11
 
 ### Added
