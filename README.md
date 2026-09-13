@@ -6,6 +6,8 @@
 >
 > A spec-first, multi-agent coding pipeline you drop into any repo.
 
+> **Affiliation notice:** Canon is an independent open-source developer tool for orchestrating AI coding agents. It is not affiliated with, endorsed by, sponsored by, or otherwise connected to Canon Inc., Canon U.S.A., or their camera, printer, imaging, or other product lines. It does not control or interact with Canon hardware.
+
 ---
 
 ## What this is
