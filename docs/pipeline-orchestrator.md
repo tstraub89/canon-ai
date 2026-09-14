@@ -386,7 +386,7 @@ canon task reset-code-review <id>
 
 Both reset commands run directly from the loop-cap block state and mark the corresponding predecessor (`spec` or `implement`) done, accepting it as-is so the next run starts review without another revision. To run the deferred revision before review, raise the cap instead. No intermediate phase edit is required.
 
-`task_size` and `delicate` are also live levers here, not just creation-time settings — `canon task set <id> task_size <size>` (or `delicate true`) takes effect on the very next `canon run` (see `canon task set` above). If rounds keep producing new findings clustered in the same file or mechanism rather than a runaway-scope loop, that's a case for bumping the tier instead of just raising the cap again — see "Findings keep clustering in the same mechanism" in `/canon-pipeline`'s `recovery.md`.
+`task_size` is also a live lever here, not just a creation-time setting — `canon task set <id> task_size <size>` takes effect on the very next `canon run` (see `canon task set` above). If rounds keep producing new findings clustered in the same file or mechanism rather than a runaway-scope loop, that's a case for bumping the tier instead of just raising the cap again — see "Findings keep clustering in the same mechanism" in `/canon-pipeline`'s `recovery.md`. `delicate` is a separate blast-radius flag, not an interchangeable lever for this — see that same section for why.
 
 ## Session Resumption
 
