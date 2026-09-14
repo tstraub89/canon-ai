@@ -50,6 +50,15 @@ canon run <task-id>
 
 Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks).
 
+**If the task is already auto-blocked, the bump alone won't move it — pair it with a cap raise above the current count.** The loop cap is keyed off *nominal* `task_size`, not the model/effort tier: `delicate` never changes it (it only raises `effectiveSize` for model selection), and even a `task_size` bump only changes the cap's *bracket* (3 for XS/S/M, 5 for L/XL) — if the persisted iteration count already meets or exceeds the new bracket's cap, the task re-blocks immediately on the next run regardless of which model tier it would now get. Set `MAX_REVIEW_LOOPS` above the current count in the same invocation:
+
+```bash
+canon task set <task-id> delicate true
+MAX_REVIEW_LOOPS=<current-count + 1 or more> canon run <task-id>
+```
+
+This is the same env var from the plain loop-cap fix above — the difference here is you're also changing the model tier for that next round, not just extending the budget on the existing one.
+
 **Why this is worth trying despite being an ambiguous signal:** canon's own code review is already an expensive multi-lens stack per round — a cold-Codex diff pass plus a Claude foreman that spawns an anchored lens and a cold lens and synthesizes all three. Spending that same expensive stack a third time against a mechanism that's kept generating findings for two rounds running is a worse bet than trying the escalation once, even without certainty it's a genuine ceiling rather than a legitimately gnarly piece of code. There is no controlled comparison proving a stronger model holds a mechanism's whole picture better than mini/Sonnet does — canon has hit this same kind of unprovable-in-aggregate tuning question before (see the M-vs-L `spec_review` effort hypothesis in `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix section) and treated it as a hypothesis to act on cheaply rather than something to prove first.
 
 **Log the outcome.** Whichever way it goes, append a line to `tasks/<id>/notes.md` noting whether the bump broke the clustering or the same mechanism kept generating findings at the higher tier too. That's how this graduates from anecdote to evidence — if bumps keep breaking the clustering, it's worth writing up as a durable pattern in `docs/lessons-learned.md`; if bumps keep *not* helping, that's worth knowing too before recommending this more broadly.
