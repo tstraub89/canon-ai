@@ -2,6 +2,10 @@
 
 ![Canon](public/canon-logo.webp)
 
+[![npm version](https://img.shields.io/npm/v/canon-ai.svg)](https://www.npmjs.com/package/canon-ai)
+[![CI](https://github.com/tstraub89/canon-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/tstraub89/canon-ai/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > **The law your agents work under.**
 >
 > A spec-first, multi-agent coding pipeline you drop into any repo.
@@ -9,6 +13,24 @@
 > **Affiliation notice:** Canon is an independent open-source developer tool for orchestrating AI coding agents. It is not affiliated with, endorsed by, sponsored by, or otherwise connected to Canon Inc., Canon U.S.A., or their camera, printer, imaging, or other product lines. It does not control or interact with Canon hardware.
 
 ---
+
+## Quick start
+
+```bash
+npm install -g @anthropic-ai/claude-code @openai/codex canon-ai
+
+cd your-project
+canon init          # scaffold canon into the repo
+```
+
+Open Claude Code in `your-project` and run `/canon-init` to generate the `docs/` knowledge corpus, then:
+
+```bash
+canon task new my-first-feature "Short description"
+canon run my-first-feature
+```
+
+Needs Node 24.x and git. See [Getting started](#getting-started) below for prerequisites, permission allowlists, and the trust model before running this on a repo you care about.
 
 ## What this is
 
@@ -80,7 +102,7 @@ Multiple task IDs in one invocation activates **bundle mode** — `canon run id1
 
 ### Prerequisites
 
-- **Node 24+**
+- **Node 24.x**
 - **git**
 - **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
 - **Codex CLI** — `npm install -g @openai/codex`
