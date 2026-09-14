@@ -37,36 +37,31 @@ Stop the reviewer loop once findings turn wording-only. Self-grep for flagged ph
 
 ## Findings keep clustering in the same mechanism (possible model/effort ceiling — try a size bump)
 
-**Distinguish this from healthy convergence first.** Most multi-round tasks are fine — each round closing findings scattered across genuinely different, previously-untouched parts of the diff is normal iterative discovery, not a sizing problem. Task-history analysis found 25-round and 17-round tasks that were entirely healthy this way: an S/M-sized task turned out to have more real, distinct bugs than the spec anticipated, spread across the change, and the mini model found and fixed every one of them. Raising the loop cap (above) is the right tool for that shape.
+**Distinguish this from healthy convergence first.** Most multi-round tasks are fine — each round closing findings scattered across genuinely different, previously-untouched parts of the diff is normal iterative discovery, not a sizing problem. A task can turn out to have more real, distinct bugs than the spec anticipated, spread across the change — a smaller model finding and fixing every one of them across many rounds is healthy, not evidence of undersizing. Raising the loop cap (above) is the right tool for that shape.
 
 **The actual signal is messier than "the same finding comes back."** Codex rarely leaves a finding flatly unfixed — the more common failure is whack-a-mole: the fix for round N's finding introduces or exposes a *new* problem in the same component in round N+1, or (since review is non-deterministic) a fresh lens simply notices something else nearby that was there all along. Either way, this is hard to tell apart in the moment from healthy scope discovery — you often can't be sure which it is until after the fact. The pattern worth watching for isn't "identical finding recurs," it's: **two-plus consecutive rounds keep producing new findings clustered in the same file or mechanism**, as opposed to new findings landing in different, previously-clean parts of the diff. Same neighborhood repeatedly, not same finding literally.
 
-**Suggested response when that clustering shows up**, before burning a third bare cap-raise on the same tier: bump the task's size (or `delicate`) so the *next* implement round gets the full Codex model and the *next* code_review round gets the Opus Claude lens, then resume:
+**Suggested response when that clustering shows up**, before burning a third bare cap-raise on the same tier: bump the task's `task_size` up **one** step (S→M, M→L, L→XL) so the *next* implement round and the *next* code_review round run at that tier's settings, then resume. Model, effort, and budget all scale with size, but not every single step moves all three — check `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix for what your specific step actually changes before assuming it swapped to a stronger model:
 
 ```bash
-canon task set <task-id> task_size XL       # or: canon task set <task-id> delicate true
+canon task set <task-id> task_size <next-tier>
 canon run <task-id>
 ```
 
-Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks).
+Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks). Step up one tier at a time rather than jumping straight to XL — this is an experiment, not a fix you know works, and a task that turns out fine at M shouldn't get billed at XL rates on a hunch.
 
-**If the task is already auto-blocked, the bump alone won't move it — pair it with a cap raise above the current count.** The loop cap is keyed off *nominal* `task_size`, not the model/effort tier: `delicate` never changes it (it only raises `effectiveSize` for model selection), and even a `task_size` bump only changes the cap's *bracket* (3 for XS/S/M, 5 for L/XL) — if the persisted iteration count already meets or exceeds the new bracket's cap, the task re-blocks immediately on the next run regardless of which model tier it would now get. Set `MAX_REVIEW_LOOPS` above the current count in the same invocation:
+`delicate` is not the lever here — it's a blast-radius flag (see the sizing guide above), not an interchangeable "make it stronger" switch, and reaching for it as a substitute for a size bump has real gotchas: it forces `effectiveSize` to XL for model selection but never changes the loop-cap bracket (which stays keyed to nominal `task_size`), and if the task was ever launched under `--full-send`, setting `delicate` on it makes every later `canon run` die without `--force` — `status.full_send` persists once set, regardless of whether you pass `--full-send` again. Use `task_size` for this; reserve `delicate` for genuine blast-radius calls.
+
+**Already at XL and still clustering?** There's no stronger tier to escalate to — canon's already spending its best model/effort on this task. That's a different, stronger signal than "try a bigger model": it's worth treating as a probable spec or architecture problem rather than a capability one — consider whether the mechanism actually needs a `spec_gap` verdict and a reroute (see Phase Routing + Auto-Block in `docs/pipeline-orchestrator.md`) instead of another implement round at the same tier.
+
+**If the task is already auto-blocked, the size bump alone won't move it — pair it with a cap raise above the current count.** The loop cap is keyed off *nominal* `task_size`: bumping one tier only changes the cap's *bracket* when the step crosses M→L (3 → 5); S→M and L→XL stay in the same bracket. And even a bracket increase doesn't help if the persisted iteration count already meets or exceeds the new cap. Set `MAX_REVIEW_LOOPS` above the current count in the same invocation, regardless of which step you're taking:
 
 ```bash
-canon task set <task-id> delicate true
+canon task set <task-id> task_size <next-tier>
 MAX_REVIEW_LOOPS=<current-count + 1 or more> canon run <task-id>
 ```
 
 This is the same env var from the plain loop-cap fix above — the difference here is you're also changing the model tier for that next round, not just extending the budget on the existing one.
-
-**If the task was ever launched under `--full-send`, setting `delicate` requires `--force` on every run after, not just the one that re-enables full-send.** `status.full_send` is a persisted flag, not a per-invocation one — once it's `true`, any later plain `canon run <task-id>` dies with "`--full-send` on delicate task ... requires `--force`" the moment `delicate` is also `true`, whether or not you're passing `--full-send` again:
-
-```bash
-canon task set <task-id> delicate true
-canon run <task-id> --force
-```
-
-This guard is specific to `delicate`; a `task_size XL` bump alone never trips it, so prefer the size bump over `delicate` for a task that ran under `--full-send` unless the task's blast radius genuinely also warrants `delicate`.
 
 **Why this is worth trying despite being an ambiguous signal:** canon's own code review is already an expensive multi-lens stack per round — a cold-Codex diff pass plus a Claude foreman that spawns an anchored lens and a cold lens and synthesizes all three. Spending that same expensive stack a third time against a mechanism that's kept generating findings for two rounds running is a worse bet than trying the escalation once, even without certainty it's a genuine ceiling rather than a legitimately gnarly piece of code. There is no controlled comparison proving a stronger model holds a mechanism's whole picture better than mini/Sonnet does — canon has hit this same kind of unprovable-in-aggregate tuning question before (see the M-vs-L `spec_review` effort hypothesis in `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix section) and treated it as a hypothesis to act on cheaply rather than something to prove first.
 
