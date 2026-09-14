@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`/canon-pipeline`'s recovery guide covers a new escalation pattern: findings clustering in the same mechanism across code-review rounds.** When consecutive review rounds keep surfacing new-but-related findings in the same file or component — rather than scattered across the diff — operators are now pointed at bumping the task's size, one tier at a time, before spending another expensive review round at the same tier. `docs/pipeline-orchestrator.md`'s auto-block section now cross-references this guidance.
+
 ## [3.2.1] — 2026-09-13
 
 ### Changed

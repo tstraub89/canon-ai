@@ -386,6 +386,8 @@ canon task reset-code-review <id>
 
 Both reset commands run directly from the loop-cap block state and mark the corresponding predecessor (`spec` or `implement`) done, accepting it as-is so the next run starts review without another revision. To run the deferred revision before review, raise the cap instead. No intermediate phase edit is required.
 
+`task_size` is also a live lever here, not just a creation-time setting — `canon task set <id> task_size <size>` takes effect on the very next `canon run` (see `canon task set` above). If rounds keep producing new findings clustered in the same file or mechanism rather than a runaway-scope loop, that's a case for bumping the tier as well as the cap, not the cap alone — see "Findings keep clustering in the same mechanism" in `/canon-pipeline`'s `recovery.md`.
+
 ## Session Resumption
 
 The orchestrator resumes agent sessions across phases instead of spawning fresh ones — for the phases that participate in a resumption cluster. Plan and QA sessions are intentionally one-offs (never stored), and code-review round 1 always starts fresh even when a prior `claude_review` session exists; only round 2+ resumes it. For participating phases, the session ID is discovered and stored in `status.json` under one of four slots: `sessions.claude_spec`, `sessions.claude_review`, `sessions.codex`, or `sessions.codex_spec_review` (Codex spec review uses its own slot so it never clobbers the implement session). Subsequent phases for the same agent pass `--resume <id>` (Claude) or `codex exec resume <id>` (Codex), preserving conversation context and skipping doc re-reads.

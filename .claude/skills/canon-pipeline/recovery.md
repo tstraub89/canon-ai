@@ -5,6 +5,7 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 ## Contents
 
 - Auto-block on `spec_review` or `code_review` (loop cap hit)
+- Findings keep clustering in the same mechanism (try a size bump before another loop)
 - Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 - `--ship` refuses: wrong phase
 - Local branch diverged from origin after a squash-merge
@@ -33,6 +34,18 @@ MAX_REVIEW_LOOPS=6 canon run <task-id>
 Stop the reviewer loop once findings turn wording-only. Self-grep for flagged phrases in the current spec/code before running another expensive review pass.
 
 **Never reset the iteration counter** to bypass the cap. Counter is durable signal of how many review rounds the task has burned — losing it hides cost from future operators.
+
+## Findings keep clustering in the same mechanism (try a size bump before another loop)
+
+Most multi-round tasks are healthy — each round closes findings scattered across different, previously-untouched parts of the diff. That's normal iterative discovery, not a sizing problem; raising the loop cap (above) is the right tool for it.
+
+Watch for a different shape instead: two or more consecutive rounds keep producing new findings clustered in the same file or mechanism, rather than scattered across the diff. That's a plausible sign the model assigned to this task has hit a capability ceiling on this specific piece of code, not that the task simply has more work in it than expected.
+
+When that happens, before spending another expensive review round at the same tier: let the smaller, cheaper model keep trying at low sizes, but bring in the big guns once a mechanism keeps generating findings at it. Bump `task_size` up a step and resume, using the normal `canon task set` / `canon run` mechanics. A one-step bump often raises effort or budget rather than swapping the underlying model — only reaching the top tier guarantees that — and it interacts with the loop cap, `delicate`, `--full-send`, and bundle membership in ways worth checking in `docs/pipeline-orchestrator.md` rather than assuming.
+
+**If the task is already auto-blocked, the bump alone may not clear it** — the cap only widens on some steps, so if the count is still at or past the new cap, raise `MAX_REVIEW_LOOPS` above it in the same run too, same as a plain cap-raise above. And if the task is already at the top tier and still clustering, that's a stronger signal worth treating as a probable spec or architecture problem rather than a capability one.
+
+This is a cheap experiment, not a fix known to work — there's no controlled comparison proving a stronger model converges faster on a recurring finding specifically. Try it, and don't be surprised either way.
 
 ## Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 
