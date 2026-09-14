@@ -50,6 +50,13 @@ canon run <task-id>
 
 Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks). Step up one tier at a time rather than jumping straight to XL — this is an experiment, not a fix you know works, and a task that turns out fine at M shouldn't get billed at XL rates on a hunch.
 
+**If the clustering task is part of a bundle, resume with the full original ID list, not just that one task.** Bundle membership is whatever IDs you pass on the invocation — there's no persisted membership — and the tier is resolved as the max size across whichever IDs you pass. Bumping one member's `task_size` and then resuming with only that ID drops the others out of the bundle for that run, against a branch they still share; resume all of them together so the tier bump actually applies to the shared review and preflight doesn't reject sibling-owned changes as unaccounted for:
+
+```bash
+canon task set <task-id-1> task_size <next-tier>
+canon run <task-id-1> <task-id-2> <task-id-3>
+```
+
 `delicate` is not the lever here — it's a blast-radius flag (see the sizing guide above), not an interchangeable "make it stronger" switch, and reaching for it as a substitute for a size bump has real gotchas: it forces `effectiveSize` to XL for model selection but never changes the loop-cap bracket (which stays keyed to nominal `task_size`), and if the task was ever launched under `--full-send`, setting `delicate` on it makes every later `canon run` die without `--force` — `status.full_send` persists once set, regardless of whether you pass `--full-send` again. Use `task_size` for this; reserve `delicate` for genuine blast-radius calls.
 
 **Already at XL and still clustering?** There's no stronger tier to escalate to — canon's already spending its best model/effort on this task. That's a different, stronger signal than "try a bigger model": it's worth treating as a probable spec or architecture problem rather than a capability one — consider whether the mechanism actually needs a `spec_gap` verdict and a reroute (see Phase Routing + Auto-Block in `docs/pipeline-orchestrator.md`) instead of another implement round at the same tier.
