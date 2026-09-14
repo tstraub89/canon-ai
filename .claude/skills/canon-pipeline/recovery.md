@@ -41,21 +41,14 @@ Stop the reviewer loop once findings turn wording-only. Self-grep for flagged ph
 
 **The actual signal is messier than "the same finding comes back."** Codex rarely leaves a finding flatly unfixed — the more common failure is whack-a-mole: the fix for round N's finding introduces or exposes a *new* problem in the same component in round N+1, or (since review is non-deterministic) a fresh lens simply notices something else nearby that was there all along. Either way, this is hard to tell apart in the moment from healthy scope discovery — you often can't be sure which it is until after the fact. The pattern worth watching for isn't "identical finding recurs," it's: **two-plus consecutive rounds keep producing new findings clustered in the same file or mechanism**, as opposed to new findings landing in different, previously-clean parts of the diff. Same neighborhood repeatedly, not same finding literally.
 
-**Suggested response when that clustering shows up**, before burning a third bare cap-raise on the same tier: bump the task's `task_size` up **one** step (S→M, M→L, L→XL) so the *next* implement round and the *next* code_review round run at that tier's settings, then resume. Model, effort, and budget all scale with size, but not every single step moves all three — check `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix for what your specific step actually changes before assuming it swapped to a stronger model:
-
-```bash
-canon task set <task-id> task_size <next-tier>
-canon run <task-id>
-```
-
-Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks). Step up one tier at a time rather than jumping straight to XL — this is an experiment, not a fix you know works, and a task that turns out fine at M shouldn't get billed at XL rates on a hunch.
-
-**If the clustering task is part of a bundle, resume with the full original ID list, not just that one task.** Bundle membership is whatever IDs you pass on the invocation — there's no persisted membership — and the tier is resolved as the max size across whichever IDs you pass. Bumping one member's `task_size` and then resuming with only that ID drops the others out of the bundle for that run, against a branch they still share; resume all of them together so the tier bump actually applies to the shared review and preflight doesn't reject sibling-owned changes as unaccounted for:
+**Suggested response when that clustering shows up**, before burning a third bare cap-raise on the same tier: bump the task's `task_size` up **one** step (S→M, M→L, L→XL) so the *next* implement round and the *next* code_review round run at that tier's settings, then resume with the same ID(s) you originally ran together. **If the clustering task is part of a bundle, that means the full original set, not just the bumped member** — bundle membership is whatever IDs you pass on the invocation, there's no persisted membership, and the tier resolves as the max size across whichever IDs you pass; dropping siblings here strands them against a branch they still share. Model, effort, and budget all scale with size, but not every single step moves all three — check `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix for what your specific step actually changes before assuming it swapped to a stronger model:
 
 ```bash
 canon task set <task-id-1> task_size <next-tier>
-canon run <task-id-1> <task-id-2> <task-id-3>
+canon run <task-id-1> [<task-id-2> ...]      # the full bundle, if this task runs as one
 ```
+
+Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks). Step up one tier at a time rather than jumping straight to XL — this is an experiment, not a fix you know works, and a task that turns out fine at M shouldn't get billed at XL rates on a hunch.
 
 `delicate` is not the lever here — it's a blast-radius flag (see the sizing guide above), not an interchangeable "make it stronger" switch, and reaching for it as a substitute for a size bump has real gotchas: it forces `effectiveSize` to XL for model selection but never changes the loop-cap bracket (which stays keyed to nominal `task_size`), and if the task was ever launched under `--full-send`, setting `delicate` on it makes every later `canon run` die without `--force` — `status.full_send` persists once set, regardless of whether you pass `--full-send` again. Use `task_size` for this; reserve `delicate` for genuine blast-radius calls.
 
@@ -64,8 +57,8 @@ canon run <task-id-1> <task-id-2> <task-id-3>
 **If the task is already auto-blocked, the size bump alone won't move it — pair it with a cap raise above the current count.** The loop cap is keyed off *nominal* `task_size`: bumping one tier only changes the cap's *bracket* when the step crosses M→L (3 → 5); S→M and L→XL stay in the same bracket. And even a bracket increase doesn't help if the persisted iteration count already meets or exceeds the new cap. Set `MAX_REVIEW_LOOPS` above the current count in the same invocation, regardless of which step you're taking:
 
 ```bash
-canon task set <task-id> task_size <next-tier>
-MAX_REVIEW_LOOPS=<current-count + 1 or more> canon run <task-id>
+canon task set <task-id-1> task_size <next-tier>
+MAX_REVIEW_LOOPS=<current-count + 1 or more> canon run <task-id-1> [<task-id-2> ...]      # full bundle, same rule as above
 ```
 
 This is the same env var from the plain loop-cap fix above — the difference here is you're also changing the model tier for that next round, not just extending the budget on the existing one.
