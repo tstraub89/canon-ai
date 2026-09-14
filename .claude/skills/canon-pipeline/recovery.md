@@ -5,7 +5,7 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 ## Contents
 
 - Auto-block on `spec_review` or `code_review` (loop cap hit)
-- Same finding surviving 2+ rounds (possible model/effort ceiling — try a size bump)
+- Findings keep clustering in the same mechanism (try a size bump before another loop)
 - Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 - `--ship` refuses: wrong phase
 - Local branch diverged from origin after a squash-merge
@@ -35,37 +35,17 @@ Stop the reviewer loop once findings turn wording-only. Self-grep for flagged ph
 
 **Never reset the iteration counter** to bypass the cap. Counter is durable signal of how many review rounds the task has burned — losing it hides cost from future operators.
 
-## Findings keep clustering in the same mechanism (possible model/effort ceiling — try a size bump)
+## Findings keep clustering in the same mechanism (try a size bump before another loop)
 
-**Distinguish this from healthy convergence first.** Most multi-round tasks are fine — each round closing findings scattered across genuinely different, previously-untouched parts of the diff is normal iterative discovery, not a sizing problem. A task can turn out to have more real, distinct bugs than the spec anticipated, spread across the change — a smaller model finding and fixing every one of them across many rounds is healthy, not evidence of undersizing. Raising the loop cap (above) is the right tool for that shape.
+Most multi-round tasks are healthy — each round closes findings scattered across different, previously-untouched parts of the diff. That's normal iterative discovery, not a sizing problem; raising the loop cap (above) is the right tool for it.
 
-**The actual signal is messier than "the same finding comes back."** Codex rarely leaves a finding flatly unfixed — the more common failure is whack-a-mole: the fix for round N's finding introduces or exposes a *new* problem in the same component in round N+1, or (since review is non-deterministic) a fresh lens simply notices something else nearby that was there all along. Either way, this is hard to tell apart in the moment from healthy scope discovery — you often can't be sure which it is until after the fact. The pattern worth watching for isn't "identical finding recurs," it's: **two-plus consecutive rounds keep producing new findings clustered in the same file or mechanism**, as opposed to new findings landing in different, previously-clean parts of the diff. Same neighborhood repeatedly, not same finding literally.
+Watch for a different shape instead: two or more consecutive rounds keep producing new findings clustered in the same file or mechanism, rather than scattered across the diff. That's a plausible sign the model assigned to this task has hit a capability ceiling on this specific piece of code, not that the task simply has more work in it than expected.
 
-**Suggested response when that clustering shows up**, before burning a third bare cap-raise on the same tier: bump the task's `task_size` up **one** step (S→M, M→L, L→XL) so the *next* implement round and the *next* code_review round run at that tier's settings, then resume with the same ID(s) you originally ran together. **If the clustering task is part of a bundle, that means the full original set, not just the bumped member** — bundle membership is whatever IDs you pass on the invocation, there's no persisted membership, and the tier resolves as the max size across whichever IDs you pass; dropping siblings here strands them against a branch they still share. Model, effort, and budget all scale with size, but not every single step moves all three — check `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix for what your specific step actually changes before assuming it swapped to a stronger model:
+When that happens, before spending another expensive review round at the same tier: let the smaller, cheaper model keep trying at low sizes, but bring in the big guns once a mechanism keeps generating findings at it. Bump `task_size` up a step and resume, using the normal `canon task set` / `canon run` mechanics. A one-step bump often raises effort or budget rather than swapping the underlying model — only reaching the top tier guarantees that — and it interacts with the loop cap, `delicate`, `--full-send`, and bundle membership in ways worth checking in `docs/pipeline-orchestrator.md` rather than assuming.
 
-```bash
-canon task set <task-id-1> task_size <next-tier>
-canon run <task-id-1> [<task-id-2> ...]      # the full bundle, if this task runs as one
-```
+**If the task is already auto-blocked, the bump alone may not clear it** — the cap only widens on some steps, so if the count is still at or past the new cap, raise `MAX_REVIEW_LOOPS` above it in the same run too, same as a plain cap-raise above. And if the task is already at the top tier and still clustering, that's a stronger signal worth treating as a probable spec or architecture problem rather than a capability one.
 
-Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks). Step up one tier at a time rather than jumping straight to XL — this is an experiment, not a fix you know works, and a task that turns out fine at M shouldn't get billed at XL rates on a hunch.
-
-`delicate` is not the lever here — it's a blast-radius flag (see the sizing guide above), not an interchangeable "make it stronger" switch, and reaching for it as a substitute for a size bump has real gotchas: it forces `effectiveSize` to XL for model selection but never changes the loop-cap bracket (which stays keyed to nominal `task_size`), and if the task was ever launched under `--full-send`, setting `delicate` on it makes every later `canon run` die without `--force` — `status.full_send` persists once set, regardless of whether you pass `--full-send` again. Use `task_size` for this; reserve `delicate` for genuine blast-radius calls.
-
-**Already at XL and still clustering?** There's no stronger tier to escalate to — canon's already spending its best model/effort on this task. That's a different, stronger signal than "try a bigger model": it's worth treating as a probable spec or architecture problem rather than a capability one — consider whether the mechanism actually needs a `spec_gap` verdict and a reroute (see Phase Routing + Auto-Block in `docs/pipeline-orchestrator.md`) instead of another implement round at the same tier.
-
-**If the task is already auto-blocked, the size bump alone won't move it — pair it with a cap raise above the current count.** The loop cap is keyed off *nominal* `task_size`: bumping one tier only changes the cap's *bracket* when the step crosses M→L (3 → 5); S→M and L→XL stay in the same bracket. And even a bracket increase doesn't help if the persisted iteration count already meets or exceeds the new cap. Set `MAX_REVIEW_LOOPS` above the current count in the same invocation, regardless of which step you're taking:
-
-```bash
-canon task set <task-id-1> task_size <next-tier>
-MAX_REVIEW_LOOPS=<current-count + 1 or more> canon run <task-id-1> [<task-id-2> ...]      # full bundle, same rule as above
-```
-
-This is the same env var from the plain loop-cap fix above — the difference here is you're also changing the model tier for that next round, not just extending the budget on the existing one.
-
-**Why this is worth trying despite being an ambiguous signal:** canon's own code review is already an expensive multi-lens stack per round — a cold-Codex diff pass plus a Claude foreman that spawns an anchored lens and a cold lens and synthesizes all three. Spending that same expensive stack a third time against a mechanism that's kept generating findings for two rounds running is a worse bet than trying the escalation once, even without certainty it's a genuine ceiling rather than a legitimately gnarly piece of code. There is no controlled comparison proving a stronger model holds a mechanism's whole picture better than mini/Sonnet does — canon has hit this same kind of unprovable-in-aggregate tuning question before (see the M-vs-L `spec_review` effort hypothesis in `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix section) and treated it as a hypothesis to act on cheaply rather than something to prove first.
-
-**Log the outcome.** Whichever way it goes, append a line to `tasks/<id>/notes.md` noting whether the bump broke the clustering or the same mechanism kept generating findings at the higher tier too. That's how this graduates from anecdote to evidence — if bumps keep breaking the clustering, it's worth writing up as a durable pattern in `docs/lessons-learned.md`; if bumps keep *not* helping, that's worth knowing too before recommending this more broadly.
+This is a cheap experiment, not a fix known to work — there's no controlled comparison proving a stronger model converges faster on a recurring finding specifically. Try it, and don't be surprised either way.
 
 ## Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 
