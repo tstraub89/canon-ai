@@ -5,6 +5,7 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 ## Contents
 
 - Auto-block on `spec_review` or `code_review` (loop cap hit)
+- Same finding surviving 2+ rounds (possible model/effort ceiling — try a size bump)
 - Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 - `--ship` refuses: wrong phase
 - Local branch diverged from origin after a squash-merge
@@ -33,6 +34,25 @@ MAX_REVIEW_LOOPS=6 canon run <task-id>
 Stop the reviewer loop once findings turn wording-only. Self-grep for flagged phrases in the current spec/code before running another expensive review pass.
 
 **Never reset the iteration counter** to bypass the cap. Counter is durable signal of how many review rounds the task has burned — losing it hides cost from future operators.
+
+## Findings keep clustering in the same mechanism (possible model/effort ceiling — try a size bump)
+
+**Distinguish this from healthy convergence first.** Most multi-round tasks are fine — each round closing findings scattered across genuinely different, previously-untouched parts of the diff is normal iterative discovery, not a sizing problem. Task-history analysis found 25-round and 17-round tasks that were entirely healthy this way: an S/M-sized task turned out to have more real, distinct bugs than the spec anticipated, spread across the change, and the mini model found and fixed every one of them. Raising the loop cap (above) is the right tool for that shape.
+
+**The actual signal is messier than "the same finding comes back."** Codex rarely leaves a finding flatly unfixed — the more common failure is whack-a-mole: the fix for round N's finding introduces or exposes a *new* problem in the same component in round N+1, or (since review is non-deterministic) a fresh lens simply notices something else nearby that was there all along. Either way, this is hard to tell apart in the moment from healthy scope discovery — you often can't be sure which it is until after the fact. The pattern worth watching for isn't "identical finding recurs," it's: **two-plus consecutive rounds keep producing new findings clustered in the same file or mechanism**, as opposed to new findings landing in different, previously-clean parts of the diff. Same neighborhood repeatedly, not same finding literally.
+
+**Suggested response when that clustering shows up**, before burning a third bare cap-raise on the same tier: bump the task's size (or `delicate`) so the *next* implement round gets the full Codex model and the *next* code_review round gets the Opus Claude lens, then resume:
+
+```bash
+canon task set <task-id> task_size XL       # or: canon task set <task-id> delicate true
+canon run <task-id>
+```
+
+Per `docs/pipeline-orchestrator.md`'s `canon task set` notes, this takes effect on the very next `canon run` — no restart of the run needed, and the change survives across the remaining phases of this task only (it doesn't alter sizing defaults for future tasks).
+
+**Why this is worth trying despite being an ambiguous signal:** canon's own code review is already an expensive multi-lens stack per round — a cold-Codex diff pass plus a Claude foreman that spawns an anchored lens and a cold lens and synthesizes all three. Spending that same expensive stack a third time against a mechanism that's kept generating findings for two rounds running is a worse bet than trying the escalation once, even without certainty it's a genuine ceiling rather than a legitimately gnarly piece of code. There is no controlled comparison proving a stronger model holds a mechanism's whole picture better than mini/Sonnet does — canon has hit this same kind of unprovable-in-aggregate tuning question before (see the M-vs-L `spec_review` effort hypothesis in `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix section) and treated it as a hypothesis to act on cheaply rather than something to prove first.
+
+**Log the outcome.** Whichever way it goes, append a line to `tasks/<id>/notes.md` noting whether the bump broke the clustering or the same mechanism kept generating findings at the higher tier too. That's how this graduates from anecdote to evidence — if bumps keep breaking the clustering, it's worth writing up as a durable pattern in `docs/lessons-learned.md`; if bumps keep *not* helping, that's worth knowing too before recommending this more broadly.
 
 ## Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 
