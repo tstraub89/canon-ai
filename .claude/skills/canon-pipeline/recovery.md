@@ -59,6 +59,15 @@ MAX_REVIEW_LOOPS=<current-count + 1 or more> canon run <task-id>
 
 This is the same env var from the plain loop-cap fix above — the difference here is you're also changing the model tier for that next round, not just extending the budget on the existing one.
 
+**If the task was ever launched under `--full-send`, setting `delicate` requires `--force` on every run after, not just the one that re-enables full-send.** `status.full_send` is a persisted flag, not a per-invocation one — once it's `true`, any later plain `canon run <task-id>` dies with "`--full-send` on delicate task ... requires `--force`" the moment `delicate` is also `true`, whether or not you're passing `--full-send` again:
+
+```bash
+canon task set <task-id> delicate true
+canon run <task-id> --force
+```
+
+This guard is specific to `delicate`; a `task_size XL` bump alone never trips it, so prefer the size bump over `delicate` for a task that ran under `--full-send` unless the task's blast radius genuinely also warrants `delicate`.
+
 **Why this is worth trying despite being an ambiguous signal:** canon's own code review is already an expensive multi-lens stack per round — a cold-Codex diff pass plus a Claude foreman that spawns an anchored lens and a cold lens and synthesizes all three. Spending that same expensive stack a third time against a mechanism that's kept generating findings for two rounds running is a worse bet than trying the escalation once, even without certainty it's a genuine ceiling rather than a legitimately gnarly piece of code. There is no controlled comparison proving a stronger model holds a mechanism's whole picture better than mini/Sonnet does — canon has hit this same kind of unprovable-in-aggregate tuning question before (see the M-vs-L `spec_review` effort hypothesis in `docs/pipeline-orchestrator.md`'s Codex Model/Effort Matrix section) and treated it as a hypothesis to act on cheaply rather than something to prove first.
 
 **Log the outcome.** Whichever way it goes, append a line to `tasks/<id>/notes.md` noting whether the bump broke the clustering or the same mechanism kept generating findings at the higher tier too. That's how this graduates from anecdote to evidence — if bumps keep breaking the clustering, it's worth writing up as a durable pattern in `docs/lessons-learned.md`; if bumps keep *not* helping, that's worth knowing too before recommending this more broadly.
