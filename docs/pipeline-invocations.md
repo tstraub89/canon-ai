@@ -995,3 +995,5 @@
 | 2026-09-04T23:54:55.508Z | update-from-npm-registry | code_review | codex | gpt-5.6-luna | 1 | 324.3s | - | ok |
 | 2026-09-05T00:02:44.178Z | update-from-npm-registry | code_review | claude | sonnet | 1 | 468.6s | 2202657 | ok |
 | 2026-09-05T00:04:50.655Z | update-from-npm-registry | qa | claude | sonnet | 0 | 126.5s | 1473635 | ok |
+| 2026-09-24T02:30:12.988Z | default-codex-models-to-gpt-6-generation | spec_review | codex | gpt-6-luna | 0 | 50.7s | 233185 | ok |
+| 2026-09-24T02:36:29.978Z | default-codex-models-to-gpt-6-generation | plan | claude | sonnet | 0 | 112.7s | 1081029 | ok |
