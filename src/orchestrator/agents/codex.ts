@@ -2,7 +2,7 @@ import { REPO_ROOT } from '../env.js';
 import { die, info, setExitReason, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
 import { runCommandOrDie } from '../git.js';
-import { toResumePrompt } from '../prompts/helpers.js';
+import { CODEX_HEADLESS, toResumePrompt } from '../prompts/helpers.js';
 import { formatLiveTick, streamProcess } from './stream.js';
 import type { CodexRunResult } from '../types.js';
 
@@ -39,7 +39,8 @@ export async function runCodex(
     const invalidEffort = invalidCodexEffortMessage(effort);
     if (invalidEffort) die(invalidEffort);
 
-    const effectivePrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
+    const renderedPrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
+    const effectivePrompt = interactive ? renderedPrompt : `${CODEX_HEADLESS}\n\n${renderedPrompt}`;
     info(resumeId ? `Calling Codex (resuming ${resumeId.slice(0, 8)}...)...` : 'Calling Codex...');
     info(`Model: ${model} | Effort: ${effort}`);
 

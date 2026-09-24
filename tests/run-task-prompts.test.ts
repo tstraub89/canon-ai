@@ -736,6 +736,8 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     const helpers = readRepoFile('src/orchestrator/prompts/helpers.ts');
     assert.match(helpers, /honest signal is canon/);
     assert.match(helpers, /Branch state: the orchestrator manages it — do not fetch, pull, rebase, or push/);
+    assert.doesNotMatch(helpers.match(/export const CODEX_STARTUP =[\s\S]*?;\n/)?.[0] ?? '', /Headless session|wait for approval/);
+    assert.match(helpers, /export const CODEX_HEADLESS =/);
 
     const scaffoldSpec = readRepoFile('.canon/templates/spec.md');
     assert.match(scaffoldSpec, /Migration runner \+ manual review/);
