@@ -342,7 +342,9 @@ export function checkRegistryVersion(pkgName: string, version: string, runner: N
     let parsed: unknown;
     try { parsed = JSON.parse(result.stdout); } catch { parsed = undefined; }
 
-    if (result.status === 0 && typeof parsed === 'string' && parsed === version) return { ok: true };
+    // npm <= 11 prints a bare JSON string; npm 12 prints a single-element array.
+    const published = parsed === version || (Array.isArray(parsed) && parsed.includes(version));
+    if (result.status === 0 && published) return { ok: true };
     if (typeof parsed === 'object' && parsed !== null
         && (parsed as { error?: { code?: unknown } }).error?.code === 'E404') {
         return {
