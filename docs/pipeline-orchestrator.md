@@ -258,8 +258,8 @@ Codex model overrides:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CODEX_MODEL_MINI` | `gpt-5.6-luna` | Codex model for XS/S/M/L non-delicate phases. |
-| `CODEX_MODEL_FULL` | `gpt-5.6-sol` | Codex model for XL or delicate phases. |
+| `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for XS/S/M/L non-delicate phases. |
+| `CODEX_MODEL_FULL` | `gpt-6-sol` | Codex model for XL or delicate phases. |
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for XS/S/M, 5 for L/XL. |
 
 These are canon's shipped defaults at the time of release and may lag

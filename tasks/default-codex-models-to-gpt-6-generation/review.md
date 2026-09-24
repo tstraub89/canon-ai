@@ -14,74 +14,74 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
+This spec was amended after Round-1 implementation and reroute (round 1, human-approved). AC-11/12/13 supersede AC-3/AC-4's original location; all other ACs stand. Verified against the current diff and code, not just handoff claims.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: Defaults bumped in both config copies | Pass | `src/orchestrator/env.ts` and `src/orchestrator/policy.ts` both fall back to `gpt-6-luna` / `gpt-6-sol`; override chains byte-identical; `git grep -n "gpt-6-luna\|gpt-6-sol"` on the two files returns exactly 4 lines. |
+| AC-2: No current-state surface names retired defaults | Pass | Spec's grep for `gpt-5\.6-(luna\|sol)` across the named surfaces returns zero; `docs/pipeline-orchestrator.md` table and its `templates/` mirror show the new defaults; `npm run sync-templates:check` passes per handoff. |
+| AC-3: Headless paragraph conveys (a)-(d) | Pass (relocated per Amendment) | Content lives in the new exported `CODEX_HEADLESS` in `src/orchestrator/prompts/helpers.ts`, not `CODEX_STARTUP`, per the amendment's Decision. All four sub-points present. |
+| AC-4: Narrow ask/approval precedence | Pass (relocated) | Precedence line is in `CODEX_HEADLESS`; `git grep -n "AGENTS.md\|CLAUDE.md" -- src/orchestrator/prompts/helpers.ts` returns zero. |
+| AC-5: Dead branch-sync instruction replaced | Pass | `CODEX_STARTUP` now reads "Branch state: the orchestrator manages it — do not fetch, pull, rebase, or push; read the working tree as-is."; grep for `Branch sync\|git fetch\|git pull` across `helpers.ts` and the golden returns zero. |
+| AC-6: Three "stop" instructions reworded | Pass | `implement.md` Scope Discipline rule 1 and its Red-First Checkpoint, plus `implement-revisions.md`'s red-first bullet, all now read "do not make that edit / do not implement on the premise — record the labelled Blocker … then finish the remaining in-scope work, the handoff, and the phase command." Banned original phrases absent (grep confirmed). |
+| AC-7: Resume stripping still works | Pass | New test in `tests/run-task-prompts.test.ts` asserts `toResumePrompt` strips `CODEX_STARTUP` and starts with `[Resumed session` for spec-review, fresh-implement, and implement-revisions prompts; passes. |
+| AC-8: Stale "5.6-generation" pointers updated | Pass | `docs/product-context.md` and the `codexMatrix` comment in `src/lib/pipeline-policy.ts` now name the GPT-6 generation; grep for `5\.6-generation` returns zero. |
+| AC-9: Dated `docs/decisions.md` entry | Pass | New "Model-generation re-baseline (2026-09)" entry covers (a) minor-change framing, (b) Astra rejection on cost, (c) Luna trade-off numbers, (d) the M/L code_review follow-up measurement, (e) the `CODEX_MODEL_MINI`/`CODEX_MODEL_FULL` rollback, (f) the prompt-audit outcome (4 fixes, `spec-review.md` unchanged), (g) effort-tier re-eval as a separate future task. The 2026-07 5.6 entry is left intact. |
+| AC-10: Build and goldens current | Pass | `npm run build` produces zero `dist/` drift post-diff; goldens regenerated (`UPDATE_GOLDENS=1 npm test`) and `npm test` then passes clean (1224/1224 in this review's own run; handoff records 1223/1 skipped — see nit below, not a regression). |
+| AC-11: Headless block gated on non-interactive runs | Pass | `CODEX_STARTUP` no longer contains "Headless session" — only `CODEX_HEADLESS` does. `runCodex` (`src/orchestrator/agents/codex.ts:42-43`) prepends `CODEX_HEADLESS` to `renderedPrompt` only when `!interactive`, for both fresh and resumed calls, before dispatch. Because the block is prepended to the fully-rendered prompt (whose own last lines are the phase command instructions), "listed at the end of this prompt" stays literally true. `retryAgentForPhase`'s non-interactive call routes through this same `runCodex`, so it inherits the gate without a separate call-site change. |
+| AC-12: Test coverage for both modes | Pass | `tests/run-task-code-review.test.ts:592` exercises real `runCodex` via a fake `codex` binary on `PATH` capturing `process.argv`, covering fresh non-interactive (headless block present, prompt ends with the original text), resumed non-interactive (headless block present alongside the `[Resumed session` banner), and interactive (headless block absent, prompt passed through verbatim). |
+| AC-13: Amendment artifacts current | Pass | Golden JSON contains zero "Headless session" occurrences (relocated to the new constant, not exercised by template-render goldens); AC-7's resume-strip test still passes; the `docs/decisions.md` entry's closing sentence states the headless block applies only to non-interactive runs and that `--interactive`/`-I` keeps operator-present behavior; build and required checks pass. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work) — no changes to `spec-review.md`, `implement-reroute.md`, `code-review-foreman.md`, Claude lens charters, `runColdCodexReview`, or Claude model defaults.
+- [x] Known Risks addressed or documented as accepted — bias-to-action wording ties completion to *authorized* work (AC-3c intact); precedence line stays narrowly scoped (AC-4 intact); resume-strip whitespace risk covered by AC-7's test; goldens diff was reviewed for scope, not just regenerated blindly.
+- [x] Human Test Plan is satisfiable by the implementation — an unattended run now gets the headless/bias-to-action framing and the reworded scope-cap language, and an `--interactive` run does not.
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Clean, well-scoped change. The amendment's relocation of headless guidance out of `CODEX_STARTUP` into a call-site-gated `CODEX_HEADLESS` is the right shape: it's enforced once inside `runCodex` rather than patched at each caller, so every non-interactive invocation (including `retryAgentForPhase`) inherits it automatically. All three lenses (anchored Claude, cold-Claude, cold-Codex) independently signed off with no correctness bugs, guardrail violations, or spec gaps; the only findings are two low-severity test-fragility nits and one immaterial numeric discrepancy in a handoff table.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- **Test selector fragility in the new `runCodex` argv test** (flagged by 2 lenses: anchored Claude, cold-Claude) — `tests/run-task-code-review.test.ts:~611` locates the captured prompt via `args.find(arg => arg.includes('prompt'))`, a substring match against argv rather than a positional or flag-aware extraction. It works today because no other argv element (model id, effort flag, cwd, sandbox flags) happens to contain the literal substring "prompt," but a future flag name or model id containing that substring would make `.find()` silently pick the wrong element instead of failing loudly. Low severity — the test is well-covered in spirit (fault-injection-verified per the cold-Claude lens) and this is a robustness nit, not a bug in production code or in what the test currently proves.
+- **Regex-scoped structural assertion** (anchored Claude, low confidence) — `tests/run-task-prompts.test.ts:737-739` extracts the `CODEX_STARTUP` export body via a non-greedy `[\s\S]*?;\n` regex to check it excludes headless text. Currently correct (no mid-string `;` followed by a literal newline), but coupled to incidental formatting rather than a named export boundary. Purely a future-maintenance nit.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Codex): none — the injected cold-Codex summary reported no actionable regressions and covered fresh/resumed/interactive test coverage; nothing to reconcile.
+- Dismissed (cold-Claude): handoff.md Iteration 2 test-count claim ("1,223 passed, 1 skipped") vs. this review's own `npm test` run showing 1,224 passed, 0 skipped — not dismissed as a false claim, but not blocking: more tests passed and nothing failed, consistent with the known environment-dependent `gitDirWritable`-gated skip (see `docs/lessons-learned.md`'s "a `skipped` test in a handoff is unverified" caution). Recorded here as a note for the record, not as a finding that drives verdict.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 

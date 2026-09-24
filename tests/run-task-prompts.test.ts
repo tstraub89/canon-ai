@@ -17,6 +17,7 @@ import {
     promptSpecReview,
 } from '../src/orchestrator/prompts/index.js';
 import { runClaude } from '../src/orchestrator/agents/claude.js';
+import { CODEX_STARTUP, toResumePrompt } from '../src/orchestrator/prompts/helpers.js';
 import type { PipelineState, StatusJson, TaskContext } from '../src/orchestrator/types.js';
 
 const TASK_ID = 'test-pf-001';
@@ -410,6 +411,18 @@ void test('promptImplementRevisions', () => {
     recordOrAssert('promptImplementRevisions', actual);
 });
 
+void test('toResumePrompt strips CODEX_STARTUP from spec-review, fresh-implement, and implement-revisions prompts', () => {
+    const specReview = promptSpecReview(baseState);
+    const implementFresh = promptImplement(baseState, 'fresh', [], 'main');
+    const implementRevisions = promptImplementRevisions(iterState, [], 'main');
+
+    for (const rendered of [specReview, implementFresh, implementRevisions]) {
+        const resumed = toResumePrompt(rendered);
+        assert.ok(!resumed.includes(CODEX_STARTUP));
+        assert.ok(resumed.startsWith('[Resumed session'));
+    }
+});
+
 void test('promptImplementRevisions selects review-findings branch when preflight counter is 0 and iterations >= 1', () => {
     const reviewFindingsTask = makeTask({
         iterations: 1,
@@ -722,7 +735,9 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
 
     const helpers = readRepoFile('src/orchestrator/prompts/helpers.ts');
     assert.match(helpers, /honest signal is canon/);
-    assert.match(helpers, /pull --rebase/);
+    assert.match(helpers, /Branch state: the orchestrator manages it — do not fetch, pull, rebase, or push/);
+    assert.doesNotMatch(helpers.match(/export const CODEX_STARTUP =[\s\S]*?;\n/)?.[0] ?? '', /Headless session|wait for approval/);
+    assert.match(helpers, /export const CODEX_HEADLESS =/);
 
     const scaffoldSpec = readRepoFile('.canon/templates/spec.md');
     assert.match(scaffoldSpec, /Migration runner \+ manual review/);

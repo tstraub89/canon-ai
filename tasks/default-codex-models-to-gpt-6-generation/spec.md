@@ -115,6 +115,8 @@ This is a **minor** change under §"Versioning and release policy" (changed cano
 | `src/orchestrator/prompts/templates/implement-revisions.md` | Reword the red-first bullet's "stop" instruction (AC-6). |
 | `src/lib/pipeline-policy.ts` | `codexMatrix` comment: "5.6-generation re-eval" → GPT-6 generation (AC-8). Comment only; no matrix change. |
 | `tests/run-task-prompts.test.ts` | New resume-stripping test (AC-7). |
+| `src/orchestrator/agents/codex.ts` | Amendment: `runCodex` includes the headless block only on non-interactive invocations (AC-11). |
+| `tests/run-task-code-review.test.ts` | Amendment: tests that non-interactive `runCodex` calls carry the headless block and interactive calls do not (AC-12). |
 | `tests/run-task-prompts.golden.json` | Regenerated goldens (AC-10). |
 | `dist/cli/index.js` | Rebuilt bundle (inlines `env.ts`) (AC-10). |
 | `dist/orchestrator/run-task.js` | Rebuilt bundle (inlines `env.ts`, `policy.ts`, prompts) (AC-10). |
@@ -191,3 +193,50 @@ None.
 - [x] Human Test Plan uses product language only (no code, no file names)
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes) — N/A: feature/default change, not a bug fix
+
+## Amendment
+
+> Source: PR #54 review (P1, Codex PR bot, `src/orchestrator/prompts/helpers.ts:22`). Human-approved reroute, 2026-09-24.
+
+### Problem
+
+The original *Problem* claimed every Codex pipeline session is headless. That is false. The supported `canon run --interactive` (`-I`) path passes the same prompt into a live interactive Codex session, and `runCodex` then prints "Prompt loaded. You're in the driver's seat." Because AC-3/AC-4 put the headless paragraph and the ask/approval precedence line inside `CODEX_STARTUP`, interactive runs receive both.
+
+- "nobody reads your messages or answers questions" is untrue when an operator is present.
+- The precedence line tells Codex to bypass ask-first and approval requirements. Those requirements are the main reason an operator picks interactive mode.
+
+The default detached/non-interactive path is correct as shipped. The AC-5 branch-state line and the AC-6 "stop" rewordings are correct in both modes and are unchanged.
+
+### Decision
+
+- Move the headless paragraph (AC-3's content) and the ask/approval precedence line (AC-4's content) out of `CODEX_STARTUP` into a separate headless block.
+- `runCodex` includes the block only when invoked non-interactively, and omits it on interactive invocations. This covers both fresh and resumed sessions.
+- AC-3 and AC-4's content requirements (a)–(d) and their narrow-scope constraints are unchanged. They now apply to the headless block instead of `CODEX_STARTUP`.
+- Every other AC stands.
+
+### Acceptance Criteria
+
+- [ ] AC-11: **Headless block is gated on non-interactive runs.**
+  - `CODEX_STARTUP` no longer contains the headless paragraph or the precedence line. The content lives in a separate exported headless block that satisfies AC-3 (a)–(d) and AC-4's scope constraints, including zero `AGENTS.md`/`CLAUDE.md` mentions.
+  - `runCodex` delivers that block to Codex on every non-interactive invocation, fresh and resumed, and never on an interactive invocation.
+  - When the block is added, the phase command(s) must remain at the end of the prompt Codex receives, so the block's "listed at the end of this prompt" wording stays true. Adding the block before the rendered prompt satisfies this.
+  - `retryAgentForPhase`'s non-interactive `runCodex` call receives the block like any other non-interactive call.
+  - Verify by reading `runCodex`, and with `git grep -n "Headless session" -- src/orchestrator/prompts/helpers.ts`, which shows the text only in the new block, not inside `CODEX_STARTUP`.
+- [ ] AC-12: **Test coverage for both modes.** A test asserts both of the following. Any test seam needed to observe the prompt without spawning real `codex` is allowed, provided production behavior is unchanged.
+  - (a) The prompt a non-interactive `runCodex` call passes to Codex contains the headless block, for both a fresh call and a resumed call.
+  - (b) The prompt an interactive `runCodex` call passes to Codex does not contain it.
+- [ ] AC-13: **Artifacts current.**
+  - The goldens are regenerated and no longer contain the headless paragraph, since it has left `CODEX_STARTUP`. AC-7's resume-stripping test still passes.
+  - The `docs/decisions.md` entry from AC-9 states that the headless block applies to non-interactive runs only, and that interactive (`--interactive`) runs keep the operator-present behavior.
+  - `npm run build` leaves no `dist/` drift. All Validation Required checks pass.
+
+### Non-Goals
+
+- No interactive-specific replacement text. Interactive runs get the prompts without the headless block, which is the pre-task behavior.
+- No change to AC-5 or AC-6 wording.
+- No change to `runColdCodexReview`, which uses Codex's built-in review prompt.
+
+### Known Risks
+
+- **Resumed sessions.** Adding the block after `toResumePrompt` wrapping means resumed non-interactive turns re-receive it. That is intended and harmless. Stripping it from resumes would recreate the fragility AC-7 guards against.
+- **Test seams.** A seam that replaces `streamProcess` or `runCommandOrDie` must not change the argument order the real CLI receives. The existing `runCodex` tests that pin argument shape must still pass.

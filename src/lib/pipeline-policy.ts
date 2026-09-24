@@ -158,7 +158,7 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                the smallest changes). XL/delicate: full model at high. Not
     //                xhigh — the prior generation overthought at xhigh with
     //                open-ended tool access (cost without quality gain); tier
-    //                inherited pending 5.6-generation re-eval, and canon's thesis
+    //                inherited pending GPT-6-generation re-eval, and canon's thesis
     //                is token discipline over reflexive max-effort. Raise via
     //                env only if eval shows under-reasoning on delicate work.
     //   code_review: the mandatory cold-Codex lens stays on mini at every

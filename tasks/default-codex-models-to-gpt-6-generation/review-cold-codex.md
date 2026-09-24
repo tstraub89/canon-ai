@@ -1,0 +1,1 @@
+The changes consistently update the Codex defaults and gate headless guidance to non-interactive runs. The associated tests cover fresh, resumed, and interactive prompts; no actionable regressions were identified.

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { CODEX_HEADLESS } from '../src/orchestrator/prompts/helpers.js';
 import { runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
 import { recordMetric } from '../src/orchestrator/metrics.js';
 import { runCodeReviewPhase, type CodeReviewPhaseDeps } from '../src/orchestrator/phases/code-review.js';
@@ -581,6 +582,43 @@ void test('runCodex rejects an invalid effort before spawning on the resumed pat
 
         assert.equal(fs.existsSync(sentinel), false);
         assertInvalidEffortMessage(message);
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runCodex adds headless guidance to fresh and resumed non-interactive prompts only', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-headless-gate-'));
+    const previousPath = process.env.PATH;
+    try {
+        const argsFile = path.join(dir, 'args.jsonl');
+        const binary = path.join(dir, 'codex');
+        fs.writeFileSync(binary, [
+            '#!/usr/bin/env node',
+            `require('node:fs').appendFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+        ].join('\n'), { mode: 0o755 });
+        process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ''}`;
+
+        await runCodex('fresh prompt', false, null, 'gpt-mini', 'high', undefined, dir);
+        await runCodex('resumed prompt', false, 'resume-id', 'gpt-mini', 'high', undefined, dir);
+        await runCodex('interactive prompt', true, null, 'gpt-mini', 'high', undefined, dir);
+
+        const capturedArgs = fs.readFileSync(argsFile, 'utf8')
+            .trim().split('\n').map(line => JSON.parse(line) as string[]);
+        const prompts = capturedArgs.map(args => args.find(arg => arg.includes('prompt')) ?? '');
+        assert.equal(prompts.length, 3);
+        const freshPrompt = prompts[0] ?? '';
+        const resumedPrompt = prompts[1] ?? '';
+        const interactivePrompt = prompts[2] ?? '';
+        assert.ok(freshPrompt.startsWith(CODEX_HEADLESS));
+        assert.ok(freshPrompt.endsWith('fresh prompt'));
+        assert.match(resumedPrompt, /Headless session: this runs non-interactively/);
+        assert.match(resumedPrompt, /\[Resumed session/);
+        assert.ok(resumedPrompt.endsWith('resumed prompt'));
+        assert.doesNotMatch(interactivePrompt, /Headless session: this runs non-interactively/);
+        assert.equal(interactivePrompt, 'interactive prompt');
     } finally {
         if (previousPath === undefined) delete process.env.PATH;
         else process.env.PATH = previousPath;
