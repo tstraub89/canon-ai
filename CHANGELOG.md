@@ -4,9 +4,16 @@
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-09-24
+
 ### Added
 
 - **`/canon-pipeline`'s recovery guide covers a new escalation pattern: findings clustering in the same mechanism across code-review rounds.** When consecutive review rounds keep surfacing new-but-related findings in the same file or component — rather than scattered across the diff — operators are now pointed at bumping the task's size, one tier at a time, before spending another expensive review round at the same tier. `docs/pipeline-orchestrator.md`'s auto-block section now cross-references this guidance.
+
+### Changed
+
+- **Canon's shipped Codex model defaults move to the GPT-6 generation.** Without `CODEX_MODEL_MINI` / `CODEX_MODEL_FULL` set, pipeline runs now use `gpt-6-luna` (mini) and `gpt-6-sol` (full) instead of the 5.6-generation models — both cheaper per token, with Sol also stronger on coding benchmarks. Effort tiers and the override env vars are unchanged; set `CODEX_MODEL_MINI=gpt-5.6-luna` / `CODEX_MODEL_FULL=gpt-5.6-sol` to roll back.
+- **Detached Codex pipeline sessions now know they're headless.** Codex no longer ends a phase early to ask a clarifying question nobody will answer; it records the ambiguity as a Blocker in the phase artifact and finishes the authorized work. Prompt instructions that said "stop" in a way a literal model could read as "end the session" now say "skip that edit, record the Blocker, and keep going." `canon run --interactive` sessions are unaffected and keep their operator-present, ask-first behavior.
 
 ## [3.2.1] — 2026-09-13
 
