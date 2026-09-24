@@ -31,3 +31,9 @@ none
 - [ ] **Approved** — spec is implementable as written
 - [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase
+
+## Amendment Review
+
+- [x] **Approved**
+
+> Findings: No blocking findings. The amendment corrects a confirmed mismatch between the prompt and the supported `canon run --interactive` path: `runCodex` branches on `interactive`, but both modes currently receive the same prompt. AC-11's runtime gate cleanly separates the headless/ask-precedence guidance while preserving the shared startup guidance, and its fresh/resumed coverage includes the retry call by requiring every non-interactive invocation to receive the block. Prepending the block keeps the phase command at the end as required. AC-12 makes both sides of the behavioral boundary verifiable; AC-13 carries the change through goldens, the decision record, and the build. The amendment explicitly supersedes the original Interaction Dependencies statement that resumed sessions do not re-receive headless guidance, so there is no unresolved contradiction. No new issue is raised against the approved base ACs.

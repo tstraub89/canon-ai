@@ -159,3 +159,55 @@ Run in order: `npm run lint`, `npm run type-check`, `npm run docs-refs-check`, `
 ## Step 10 — Handoff bookkeeping
 
 List every file touched (both root docs and the `templates/` mirror row) in `handoff.md`'s Changes table: `src/orchestrator/env.ts`, `src/orchestrator/policy.ts`, `src/orchestrator/prompts/helpers.ts`, `src/orchestrator/prompts/templates/implement.md`, `src/orchestrator/prompts/templates/implement-revisions.md`, `src/lib/pipeline-policy.ts`, `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json`, `dist/cli/index.js`, `dist/orchestrator/run-task.js`, `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md`, `docs/product-context.md`, `docs/decisions.md` — matching the spec's Affected Files table exactly (AC-2/AC-8's docs edits plus AC-9's new entry plus the mirror).
+
+## Reroute Plan
+
+> Human-approved reroute after PR #54 review (P1, Codex PR bot, `src/orchestrator/prompts/helpers.ts:22`). Amendment review verdict: approved (see spec.md `## Amendment` and spec-review.md `## Amendment Review`). Iteration 1's implementation (see handoff.md, all ACs "Met") baked the headless paragraph and precedence line permanently into `CODEX_STARTUP`, so both interactive and non-interactive Codex sessions receive them. The delta below moves that content into a new, runtime-gated block. Everything already shipped in Iteration 1 that the amendment doesn't touch — AC-1 model defaults, AC-2 doc sweep, AC-5 branch-state sentence, AC-6 "stop" rewordings, AC-8 stale-pointer updates — stays as implemented; do not re-touch those files except where this section says to.
+
+### Delta (AC-11, AC-12, AC-13)
+
+1. **Split `CODEX_STARTUP` in `src/orchestrator/prompts/helpers.ts`.** Currently (see file as implemented) the headless/bias-to-action paragraph and the ask/approval precedence line live inline inside `CODEX_STARTUP`, between the grounding/resumed-session lines and the Git-ownership paragraph:
+   ```ts
+   '\n' +
+   'Headless session: this runs non-interactively — nobody reads your messages or answers questions until the phase ends. ...' +
+   '\n' +
+   'If a project instruction file or other repository guidance tells you to ask the user or wait for approval before acting, there is no one to ask in this session: record the question in the phase artifact and continue with the authorized work.\n' +
+   '\n' +
+   'Git ownership: ...'
+   ```
+   Remove exactly those two paragraphs (and their two surrounding blank-line separators — keep `CODEX_STARTUP`'s remaining paragraphs joined the same way they were before this content was ever inserted, i.e. the resumed-session line directly followed by a blank line then `Git ownership:`) from `CODEX_STARTUP`.
+
+2. **Add a new exported constant, `CODEX_HEADLESS`,** in the same file, holding exactly the two paragraphs just removed (unchanged wording — they already satisfy AC-3(a)-(d) and AC-4's scope constraints per the original AC-3/AC-4 sign-off; the amendment only relocates them, per spec.md `## Amendment` → Decision: "AC-3 and AC-4's content requirements ... are unchanged. They now apply to the headless block instead of `CODEX_STARTUP`."):
+   ```ts
+   export const CODEX_HEADLESS =
+       'Headless session: this runs non-interactively — nobody reads your messages or answers questions until the phase ends. Don\'t stop to ask for confirmation or clarification. When something is ambiguous, record the question and the interpretation you chose in this phase\'s artifact (in implement, a handoff Blocker labelled `[ambiguity]`) and proceed on it. Finish all the work this prompt authorizes before ending — acting on your own judgment never widens scope; the Affected Files cap and every other scope rule still bind. Always end by writing the phase artifact and running the phase command(s) listed at the end of this prompt, including when you recorded Blockers — a session that ends without them stalls the pipeline.\n' +
+       '\n' +
+       'If a project instruction file or other repository guidance tells you to ask the user or wait for approval before acting, there is no one to ask in this session: record the question in the phase artifact and continue with the authorized work.';
+   ```
+   Confirm afterward with `git grep -n "Headless session" -- src/orchestrator/prompts/helpers.ts` → exactly one hit, inside `CODEX_HEADLESS`, not inside `CODEX_STARTUP` (AC-11's verify clause).
+
+3. **Update `toResumePrompt`** in the same file. It currently strips `CLAUDE_STARTUP`, `CODEX_STARTUP`, `QA_STARTUP` by exact-match `\n\n${block}\n\n`. Leave `CODEX_STARTUP`'s entry as-is (AC-7 already covers it and must keep passing unchanged — the amendment's Known Risks note says resumed non-interactive turns are meant to *re-receive* `CODEX_HEADLESS`, so it must NOT be added to the strip list). Do not add `CODEX_HEADLESS` to the array of blocks `toResumePrompt` strips.
+
+4. **Gate delivery in `runCodex`** (`src/orchestrator/agents/codex.ts`). The function already branches on the `interactive: boolean` parameter (line 52, `if (interactive) { ... }`, using `runCommandOrDie` for the interactive path and `streamProcess` for the non-interactive path starting around line 70). Prepend `CODEX_HEADLESS` to the prompt only on the non-interactive branch, for both fresh and resumed calls, and before the resume-wrapping/effective-prompt logic so the block still lands ahead of `toResumePrompt`'s `[Resumed session ...]` banner insertion — the spec's ordering requirement (AC-11: "the phase command(s) must remain at the end of the prompt Codex receives... Adding the block before the rendered prompt satisfies this") is about the block's position relative to the *phase command*, which already sits at the very end of every rendered template; prepending is sufficient and simplest.
+   - Import `CODEX_HEADLESS` alongside the existing `toResumePrompt` import from `../prompts/helpers.js` (line 5).
+   - Change the `effectivePrompt` construction (currently line 42: `const effectivePrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;`) to build the non-interactive prompt as `CODEX_HEADLESS + '\n\n' + <existing resume-or-plain logic>` when `!interactive`, and leave `prompt` untouched (no `CODEX_HEADLESS`) when `interactive` is true. Concretely:
+     ```ts
+     const basePrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
+     const effectivePrompt = interactive ? basePrompt : `${CODEX_HEADLESS}\n\n${basePrompt}`;
+     ```
+   - This covers `retryAgentForPhase`'s non-interactive calls automatically — it's a caller of `runCodex`, not a separate code path (confirm by reading its call site: it must already pass `interactive: false`; no change needed there unless the read shows otherwise).
+   - The interactive branch (lines 52-68) must receive `effectivePrompt` unchanged from today (still just `prompt` or `toResumePrompt(prompt)` — never `CODEX_HEADLESS`-prefixed). Verify by reading the branch after the edit: it still passes `effectivePrompt` to `runCommandOrDie(...)`, and `effectivePrompt` for `interactive === true` never contains `CODEX_HEADLESS`.
+
+5. **Test coverage (AC-12).** In `tests/run-task-code-review.test.ts` (per spec Affected Files — this is an *amendment* addition to that file, not `run-task-prompts.test.ts`), add or extend a test-seam-based test asserting:
+   - (a) A non-interactive `runCodex` call (fresh, no `resumeId`) results in the captured/streamed prompt containing `CODEX_HEADLESS`'s content (or import `CODEX_HEADLESS` and assert `.includes(CODEX_HEADLESS)` on the seam-captured argument).
+   - (b) A non-interactive `runCodex` call with a `resumeId` (resumed) also contains it.
+   - (c) An interactive `runCodex` call (`interactive: true`) does NOT contain it.
+   - Check this test file's existing patterns for how it seams `streamProcess`/`runCommandOrDie` (grep `tests/run-task-code-review.test.ts` for existing `runCodex` invocations or mocks first) — reuse whatever interception point already exists rather than inventing a new one, per the spec's Known Risks: "A seam that replaces `streamProcess` or `runCommandOrDie` must not change the argument order the real CLI receives. The existing `runCodex` tests that pin argument shape must still pass." Run the existing `runCodex`-argument-shape tests in this file after the edit to confirm no regression.
+
+6. **Re-render goldens (AC-13).** Because `CODEX_STARTUP` shrinks (the two paragraphs move out) and `CODEX_HEADLESS` is now prepended only at `runCodex` call time (not part of any `promptX()` template render), the golden fixtures in `tests/run-task-prompts.golden.json` — which snapshot `promptSpecReview`, `promptImplement`, `promptImplementRevisions`, `promptImplementReroute` output, not `runCodex`'s final wire payload — must no longer contain the headless paragraph or precedence line text. Re-run `UPDATE_GOLDENS=1 npm test`, then diff the golden JSON to confirm: (a) `CODEX_STARTUP`'s rendered footprint in every golden shrinks by exactly the two removed paragraphs, (b) no other unrelated text moved, (c) the AC-7 resume-stripping test (added in Step 8 of the original plan) still passes unchanged — it only ever asserted on `CODEX_STARTUP`, which remains stripped exactly as before.
+
+7. **`docs/decisions.md` amendment (AC-13).** The AC-9 entry added in Step 6 already exists in the worktree (see the entry's final paragraph in `decisions.md`, headed `## Model-generation re-baseline (2026-09): Codex defaults → GPT-6 generation`). Add one clause to its "Rule" or "Why" paragraph (whichever reads more naturally given the live text) stating that the headless block applies to non-interactive runs only, and that `canon run --interactive` (`-I`) sessions keep the operator-present prompt without it — per spec.md `## Amendment` → Decision and AC-13's second bullet. Do not otherwise edit the entry (Astra rejection, Luna trade-off, rollback path, prompt-audit summary all stand as implemented).
+
+8. **Full validation re-run.** Same commands as the original plan's Step 9 (`npm run lint`, `npm run type-check`, `npm run docs-refs-check`, `npm run sync-templates:check`, `npm test`, `npm run build`), plus confirm `git status` on `dist/` shows no drift after rebuild. These must all be re-run because the golden regeneration and the `codex.ts`/`helpers.ts` edits touch compiled bundle content.
+
+9. **Handoff update.** Append an `## Iteration 2 — addressing reroute round 1` section to `handoff.md` (per the file's own cumulative-append convention) listing: `src/orchestrator/prompts/helpers.ts` (split `CODEX_STARTUP` → add `CODEX_HEADLESS`), `src/orchestrator/agents/codex.ts` (gate `CODEX_HEADLESS` on `!interactive`), `tests/run-task-code-review.test.ts` (new AC-12 coverage), `tests/run-task-prompts.golden.json` (re-regenerated), `dist/cli/index.js` and `dist/orchestrator/run-task.js` (rebuilt), `docs/decisions.md` (interactive-scope clause added). Update the AC Coverage table with new rows for AC-11, AC-12, AC-13 (all "Met") and re-confirm AC-3/AC-4's rows still read "Met" against their new home in `CODEX_HEADLESS` rather than `CODEX_STARTUP`.

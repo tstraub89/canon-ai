@@ -1001,3 +1001,9 @@
 | 2026-09-24T02:47:22.376Z | default-codex-models-to-gpt-6-generation | code_review | codex | gpt-6-luna | 0 | 31.2s | - | ok |
 | 2026-09-24T02:51:44.159Z | default-codex-models-to-gpt-6-generation | code_review | claude | sonnet | 0 | 261.7s | 1275064 | ok |
 | 2026-09-24T02:52:53.064Z | default-codex-models-to-gpt-6-generation | qa | claude | sonnet | 0 | 68.9s | 604704 | ok |
+| 2026-09-24T03:15:13.523Z | default-codex-models-to-gpt-6-generation | spec_review | codex | gpt-6-luna | 0 | 45.0s | 362406 | ok |
+| 2026-09-24T03:16:36.656Z | default-codex-models-to-gpt-6-generation | plan | claude | sonnet | 0 | 83.1s | 928316 | ok |
+| 2026-09-24T03:27:37.836Z | default-codex-models-to-gpt-6-generation | implement | codex | gpt-6-luna | 0 | 661.1s | 6015929 | ok |
+| 2026-09-24T03:28:24.004Z | default-codex-models-to-gpt-6-generation | code_review | codex | gpt-6-luna | 0 | 45.4s | - | ok |
+| 2026-09-24T03:34:19.826Z | default-codex-models-to-gpt-6-generation | code_review | claude | sonnet | 0 | 355.8s | 1410226 | ok |
+| 2026-09-24T03:35:59.717Z | default-codex-models-to-gpt-6-generation | qa | claude | sonnet | 0 | 99.9s | 1374599 | ok |
