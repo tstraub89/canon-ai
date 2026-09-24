@@ -1,7 +1,7 @@
 {
   "id": "default-codex-models-to-gpt-6-generation",
   "title": "Default Codex models to GPT-6 Luna/Sol and harden prompts for headless runs",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-24",
   "updated": "2026-09-24",
   "branch": "task/default-codex-models-to-gpt-6-generation",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
