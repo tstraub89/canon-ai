@@ -16,6 +16,19 @@
 
 | File | What Changed |
 |---|---|
+| `src/orchestrator/env.ts` | Updated Codex mini/full fallback defaults to GPT-6 Luna/Sol. |
+| `src/orchestrator/policy.ts` | Updated duplicated Codex fallback defaults to GPT-6 Luna/Sol. |
+| `src/orchestrator/prompts/helpers.ts` | Added headless and narrowly scoped ask/approval guidance; replaced obsolete branch-sync instruction. |
+| `src/orchestrator/prompts/templates/implement.md` | Clarified scope-gap and wrong-premise handling so implementation continues through handoff and phase command. |
+| `src/orchestrator/prompts/templates/implement-revisions.md` | Clarified wrong-premise handling through handoff and phase command. |
+| `src/lib/pipeline-policy.ts` | Updated the pending model-generation re-evaluation comment. |
+| `tests/run-task-prompts.test.ts` | Added resume-stripping coverage and updated the structural assertion for branch-state guidance. |
+| `tests/run-task-prompts.golden.json` | Regenerated prompt snapshots for startup and template wording changes. |
+| `dist/cli/index.js` | Rebuilt generated CLI bundle. |
+| `dist/orchestrator/run-task.js` | Rebuilt generated orchestrator bundle. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Updated documented defaults and synchronized managed mirror. |
+| `docs/product-context.md` | Updated the GPT-6 re-evaluation pointer. |
+| `docs/decisions.md` | Added the dated GPT-6 model-generation re-baseline decision. |
 
 ## Canon Governance
 
@@ -33,13 +46,15 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 Brief explanation of the approach taken and why.
 
+Updated both fallback config copies and all current-state model references, then hardened shared Codex startup and implement-phase guidance. Added a regression test for startup-block removal in resumed prompts and regenerated the prompt goldens.
+
 ## Deviations from Plan
 
 **Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Updated the existing structural assertion in `tests/run-task-prompts.test.ts` to assert the replacement branch-state instruction. | The old assertion required `pull --rebase`, which contradicted AC-5 after removing the dead branch-sync text; the replacement assertion pins the new rule. | No AC change; strengthens AC-5 verification. |
 
 ## AC Coverage
 
@@ -47,17 +62,24 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: Defaults bumped in both config copies | Met | Both fallback chains now end in `gpt-6-luna` / `gpt-6-sol`; override precedence is unchanged. |
+| AC-2: No current-state surface names retired defaults | Met | Targeted grep returned no retired defaults; docs table and managed mirror show GPT-6 defaults. |
+| AC-3: Headless paragraph in Codex startup | Met | Covers non-interactivity, artifact-based ambiguity handling, authorized scope, and required phase completion. |
+| AC-4: Narrow ask/approval precedence | Met | Applies only when guidance says to ask or wait for approval; no adopter instruction filenames are named. |
+| AC-5: Dead branch-sync instruction replaced | Met | Startup says orchestrator manages branch state; obsolete fetch/pull wording is absent. |
+| AC-6: Three stop instructions mean stop the edit | Met | Each records the labelled Blocker and continues remaining work through handoff and phase command. |
+| AC-7: Resume stripping works | Met | New test confirms startup removal and resumed banner for spec review, fresh implement, and implement revisions. |
+| AC-8: Stale generation pointers updated | Met | Product-context and pipeline-policy now name GPT-6-generation re-evaluation. |
+| AC-9: Dated decision entry | Met | Added decision with default rationale, Astra rejection, Luna trade-off/follow-up/rollback, prompt audit, and separate effort-tier follow-up. |
+| AC-10: Build and goldens current | Met | Goldens regenerated; standard suite passes; fresh build updated both declared bundles. |
 
 ## Edge Cases Considered
 
-- ...
+- Preserved the exact leading/trailing edges of `CODEX_STARTUP`; resume stripping is explicitly tested on three prompt types.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
@@ -78,13 +100,20 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `UPDATE_GOLDENS=1 npm test` | Pass | 1,222 passed, 1 skipped; regenerated prompt snapshots. |
+| `npm test` | Pass | 1,222 passed, 1 skipped. |
+| `npm run build` | Pass | Fresh build updated `dist/cli/index.js` and `dist/orchestrator/run-task.js`. |
+| E2E | N/A | Spec explicitly marks E2E N/A for this repo. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 

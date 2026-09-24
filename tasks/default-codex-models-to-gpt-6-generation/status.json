@@ -1,10 +1,10 @@
 {
   "id": "default-codex-models-to-gpt-6-generation",
   "title": "Default Codex models to GPT-6 Luna/Sol and harden prompts for headless runs",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-09-24",
   "updated": "2026-09-24",
-  "branch": "",
+  "branch": "task/default-codex-models-to-gpt-6-generation",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a0d13f-02b3-7c03-a2cd-308c04301840"
+    "codex_spec_review": "01a0d13f-02b3-7c03-a2cd-308c04301840",
+    "codex": "01a0d145-8f60-7e83-85ed-18c2c223937b",
+    "claude_review": "62c2bb7e-66df-4263-a734-949394ea138e"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

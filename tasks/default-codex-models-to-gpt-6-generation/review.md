@@ -14,74 +14,67 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: Defaults bumped in both config copies | Pass | `env.ts`/`policy.ts` fall back to `gpt-6-luna`/`gpt-6-sol`; override chains byte-identical. Grep returns exactly 4 lines. |
+| AC-2: No current-state surface names retired defaults | Pass | Required grep returns zero results; `docs/pipeline-orchestrator.md` + synced `templates/` mirror show GPT-6 defaults; `sync-templates:check` passes. |
+| AC-3: Headless paragraph present | Pass | `CODEX_STARTUP` conveys all four required elements (non-interactive, ambiguity → artifact + `[ambiguity]` Blocker, finish authorized work without scope expansion, always end by writing artifact + running phase command). New resume-strip test covers `promptSpecReview`, fresh `promptImplement`, `promptImplementRevisions`. |
+| AC-4: Narrow ask/approval precedence | Pass | Line present, scoped to ask/wait-for-approval only; `git grep "AGENTS.md\|CLAUDE.md" -- src/orchestrator/prompts/helpers.ts` returns zero results. |
+| AC-5: Dead branch-sync instruction replaced | Pass | "Branch sync", `git fetch`, `git pull` all removed; replaced with the orchestrator-manages-branch-state sentence. Git-ownership rule and `[pipeline]` Blocker text unchanged. |
+| AC-6: Three "stop" instructions reworded | Pass | All three literal phrases removed (grep confirms); each now says don't make the edit/fix, record the labelled Blocker, finish remaining in-scope work, handoff, and phase command. Surrounding rules (no-fabricated-outcome, environment-bound escape, no-silent-scope-expansion) preserved verbatim. |
+| AC-7: Resume stripping test | Pass | New test asserts `toResumePrompt` strips `CODEX_STARTUP` and output starts with `[Resumed session` for the three named prompt types; passes. |
+| AC-8: Stale "5.6-generation" pointers updated | Pass | `docs/product-context.md` and `pipeline-policy.ts` comment both say GPT-6-generation; product-context points at the new decisions.md heading. Grep returns zero results. |
+| AC-9: Dated decisions.md entry | Pass | New entry covers all seven required sub-points (a)–(g); 2026-07 entry left intact as history. |
+| AC-10: Build and goldens current | Pass | `npm run build` produces no dist drift; `UPDATE_GOLDENS=1 npm test` then `npm test` both clean (1223/1223); only the 7 expected golden keys changed. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work — effort tiers, reviewer prompts, `implement-reroute.md`, Claude models, CHANGELOG, adopter-file assertions, historical `5.6` references all untouched)
+- [x] Known Risks addressed or documented as accepted (bias-to-action wording ties completion to *authorized* work; precedence line is narrowly scoped per AC-4; goldens diff was checked, not blindly trusted)
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+A narrow, mechanical rebaseline: two duplicated config fallback strings updated identically in both source copies and both `dist/` bundles, one shared `CODEX_STARTUP` prompt block rewritten and correctly propagated into every golden-tested prompt variant that includes it, three "stop"-worded escape hatches reworded consistently across two templates, and docs/decisions updated to match. Anchored, cold-Claude, and cold-Codex lenses all agree the change is correct and well-scoped; the only surviving finding is a cosmetic markdown-structure slip introduced alongside an otherwise-correct wording edit.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- **List-nesting slip in `src/orchestrator/prompts/templates/implement-revisions.md:43`** (flagged by 2 lenses: anchored + cold-Claude). The reworded "Bug/flake-fix red-first checkpoint" bullet gained a 3-space indent it didn't have before, nesting it under the unrelated "Rerouted / revised tasks — the pre-flight diff is cumulative" bullet on line 42, instead of remaining a sibling top-level item in the "Iteration rules" list. The spec only asked for a wording change to the "stop" phrase (AC-6); this indentation shift wasn't requested and isn't covered by any AC's grep check. Low severity: this is a plain-text prompt Codex reads verbatim, not rendered HTML, so the model is unlikely to misparse the rule's applicability — but it's an unintended structural diff that degrades the template's own markdown correctness for human readers and should be fixed to keep the bullet at the top level.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+(none — cold-Codex reported no actionable issues; cold-Claude's sole finding is the nit above, kept rather than dismissed)
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 

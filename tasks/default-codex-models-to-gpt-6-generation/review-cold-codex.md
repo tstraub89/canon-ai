@@ -1,0 +1,1 @@
+The changes consistently update the Codex model defaults and add headless-session guidance; the resume-prompt test covers the updated startup block. I found no actionable correctness issues in the diff.
