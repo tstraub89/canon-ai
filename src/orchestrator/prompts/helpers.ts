@@ -17,12 +17,16 @@ export const CODEX_STARTUP =
     'Ground every claim in the current file, diff, or artifact before you state it. Do not rely on prior-session memory for code existence, validation results, or completion status.\n' +
     'On resumed sessions, re-read the task-specific files named in the prompt and inspect the current working tree before saying anything is already done.\n' +
     '\n' +
+    'Headless session: this runs non-interactively — nobody reads your messages or answers questions until the phase ends. Don\'t stop to ask for confirmation or clarification. When something is ambiguous, record the question and the interpretation you chose in this phase\'s artifact (in implement, a handoff Blocker labelled `[ambiguity]`) and proceed on it. Finish all the work this prompt authorizes before ending — acting on your own judgment never widens scope; the Affected Files cap and every other scope rule still bind. Always end by writing the phase artifact and running the phase command(s) listed at the end of this prompt, including when you recorded Blockers — a session that ends without them stalls the pipeline.\n' +
+    '\n' +
+    'If a project instruction file or other repository guidance tells you to ask the user or wait for approval before acting, there is no one to ask in this session: record the question in the phase artifact and continue with the authorized work.\n' +
+    '\n' +
     'Git ownership: the pipeline orchestrator handles staging, committing, and pushing — do NOT run `git add`, `git commit`, or `git push`. Edit files in the working tree only; the orchestrator reads `git status` after your session and stages every file listed in handoff.md\'s Changes table. Read-only git is fine (`git status`, `git diff`, `git log`, `git show`).\n' +
     '\n' +
     'If a code review claims a file is "missing from the commit" or "staged but not committed," that is a pipeline-orchestration issue, not an implementation issue. Record it as a Blocker in handoff.md with the `[pipeline]` label and do not retry `git add`/`git commit` to recover — the sandbox blocks `.git` writes by design, and the orchestrator owns the recovery path.\n' +
     '\n' +
     'Communication: tone is project taste; honest signal is canon discipline — surface real disagreement rather than yielding to politeness.\n' +
-    'Branch sync (non-pipeline sessions): `git fetch origin && git pull --rebase origin <branch>` before starting work. If `origin/<base>` is ahead, sync and rerun local validation before PR handoff. If `<base>` moves during review, resync and rerun validation. In pipeline sessions the orchestrator manages branch state — read the worktree state as-is; do not run pull/push.';
+    'Branch state: the orchestrator manages it — do not fetch, pull, rebase, or push; read the working tree as-is.';
 
 export const QA_STARTUP =
     'Read CHANGELOG.md for voice and version reference, if the project keeps one.\n' +
