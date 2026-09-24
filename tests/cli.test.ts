@@ -11,6 +11,7 @@ import {
     layoutGate,
     parseUpdateArgs,
     updateCmd,
+    checkRegistryVersion,
     defaultGitRunner,
     resolveNamedRef,
     resolveStable,
@@ -622,6 +623,19 @@ void test('canon update: registry check failure refuses with the npm error, no i
         assert.match(errors[0], /ENOTFOUND/);
         assert.deepEqual(npmCalls, []);
     });
+});
+
+void test('checkRegistryVersion: accepts both npm view --json output shapes', () => {
+    const viewing = (stdout: string) => () => ({ status: 0, stdout, stderr: '' });
+    // npm <= 11 prints a bare JSON string; npm 12 prints a single-element array.
+    assert.deepEqual(checkRegistryVersion('canon-ai', '3.3.0', viewing('"3.3.0"\n')), { ok: true });
+    assert.deepEqual(checkRegistryVersion('canon-ai', '3.3.0', viewing('["3.3.0"]\n')), { ok: true });
+    assert.deepEqual(checkRegistryVersion('canon-ai', '3.3.0', viewing('["3.3.0"]\n'), undefined, true), { ok: true });
+    for (const stdout of ['"3.2.0"', '["3.2.0"]', '[]', '']) {
+        const result = checkRegistryVersion('canon-ai', '3.3.0', viewing(stdout));
+        assert.equal(result.ok, false, stdout);
+        assert.match((result as { message: string }).message, /could not verify/);
+    }
 });
 
 void test('resolveStable: selects the highest final tag and peeled commit', () => {

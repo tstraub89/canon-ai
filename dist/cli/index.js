@@ -1247,7 +1247,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "3.3.0";
+  const installedVersion = "3.3.1";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -1744,7 +1744,7 @@ function initCmd(_args) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "3.3.0";
+  const version = "3.3.1";
   mkdirSync(dirname2(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -2753,7 +2753,7 @@ function isInstalledSourcePath(sourcePath) {
   return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
 }
 function resolveCanonVersion(explicit) {
-  return explicit ?? "3.3.0" ?? "dev";
+  return explicit ?? "3.3.1" ?? "dev";
 }
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
@@ -4879,7 +4879,7 @@ function currentPinFromManifest(manifest) {
   return "unknown";
 }
 function bakedVersion() {
-  return "3.3.0";
+  return "3.3.1";
 }
 function ownPackageName(pkgDir) {
   try {
@@ -4904,7 +4904,8 @@ function checkRegistryVersion(pkgName, version, runner, cwd, global = false) {
   } catch {
     parsed = void 0;
   }
-  if (result.status === 0 && typeof parsed === "string" && parsed === version) return { ok: true };
+  const published = parsed === version || Array.isArray(parsed) && parsed.includes(version);
+  if (result.status === 0 && published) return { ok: true };
   if (typeof parsed === "object" && parsed !== null && parsed.error?.code === "E404") {
     return {
       ok: false,
@@ -5354,7 +5355,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "3.3.0";
+  const newVersion = "3.3.1";
   const currentVersion = existsSync5(versionPath) ? readFileSync4(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -5662,7 +5663,7 @@ Global:
 `);
 }
 function printVersion() {
-  console.log("3.3.0");
+  console.log("3.3.1");
 }
 switch (command) {
   case "doctor":

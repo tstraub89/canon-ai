@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.3.1] — 2026-09-24
+
+### Fixed
+
+- **`canon update` works on npm 12.** npm 12 prints `npm view <pkg>@<version> version --json` as a one-element array instead of a bare string, so the pre-install registry check rejected every published version with "could not verify canon-ai@<version> on the npm registry (no output)". The check now accepts both output shapes; an unpublished version still gets the "not yet on the npm registry" message. Because the broken check is in the installed version, reach 3.3.1 by installing it with npm directly once (`npm install -g canon-ai@3.3.1` for a global install).
+
 ## [3.3.0] — 2026-09-24
 
 ### Added
