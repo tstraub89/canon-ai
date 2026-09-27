@@ -1,15 +1,15 @@
 {
   "id": "affected-files-preflight-at-code-review",
   "title": "Catch files outside Affected Files at the code_review pre-flight instead of --pr",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-09-27",
   "updated": "2026-09-27",
-  "branch": "",
+  "branch": "task/affected-files-preflight-at-code-review",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "145a02deda2c4527147aff45afc6a3974c7118ee",
-    "orchestrator_commit": "145a02deda2c4527147aff45afc6a3974c7118ee",
+    "upstream_commit": "52a1d28d0a8ec4639e1d98756fefe80e3f015469",
+    "orchestrator_commit": "52a1d28d0a8ec4639e1d98756fefe80e3f015469",
     "canon_version": "3.3.1",
     "codex_cli": "codex-cli 0.157.1",
     "claude_code": "2.1.283 (Claude Code)"
@@ -41,21 +41,25 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
-      "iterations": 0,
-      "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "verdict": "sanctioned",
+      "iterations": 3,
+      "iterations_current_loop": 3,
+      "iterations_total": 3,
+      "changes_requested_total": 3,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0,
+      "operator_accepted": true,
+      "operator_accepted_at": "2026-09-27",
+      "operator_accepted_sha": "4a23fac4d2cf9aa2678f8f669e7bf62d3faaa108"
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -63,10 +67,19 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-09-27",
+      "phase": "code_review",
+      "iteration_count": 3,
+      "reason": "Code review hit 3 attempts in a row for task affected-files-preflight-at-code-review (3 reviewer rounds + 0 pre-flight rejections; limit: 3). Pipeline auto-blocked before the next re-implementation. Read tasks/<id>/review.md — if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If review is still converging, raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run affected-files-preflight-at-code-review. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To rescope instead, run canon task reset-code-review affected-files-preflight-at-code-review to archive the prior review and clear the loop-local counters. Resetting accepts the current implementation as-is, so the next run enters `code_review` without another implementation pass. Raise the cap instead if you want the deferred implementation pass to run before review. Resuming after raising the cap runs `implement` first — the deferred revision — then `code_review` again."
+    }
+  ],
   "sessions": {
     "codex_spec_review": "01a0e230-fde3-7251-afa7-22a50717c70f",
-    "claude_spec": "19c0fda2-3e6e-443e-b19d-6350bacff527"
+    "claude_spec": "19c0fda2-3e6e-443e-b19d-6350bacff527",
+    "codex": "01a0e2f9-c097-71e2-a87d-5d935838d0d0",
+    "claude_review": "f4649553-c84f-4f30-acad-b07866ae03b3"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

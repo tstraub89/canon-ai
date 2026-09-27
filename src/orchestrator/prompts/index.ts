@@ -496,6 +496,7 @@ export function promptCodeReview(
     scopedDiff: ScopedDiff | null = null,
     coldCodexFindings: string | null = null,
     scopeInfo: CodeReviewScopeForPrompt | null = null,
+    outOfScopeFiles: readonly string[] = [],
 ): string {
     const { tasks } = state;
     // Force Round 1 if any task's review.md lacks a real prior Stage 1 review —
@@ -555,6 +556,8 @@ export function promptCodeReview(
         deltaDiffTruncated: scopeInfo?.deltaDiff?.truncated ?? false,
         coldCodexFindings: coldCodexFindings ?? '',
         hasColdCodexFindings: coldCodexFindings !== null,
+        hasOutOfScopeFiles: outOfScopeFiles.length > 0,
+        outOfScopeFilesList: outOfScopeFiles.map(file => `- \`${file}\``).join('\n'),
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
     });
 }

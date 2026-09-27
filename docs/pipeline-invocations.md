@@ -1040,3 +1040,13 @@
 | 2026-09-27T11:47:33.335Z | fix-staged-deletion-autocommit-and-dir-refs | code_review | claude | opus | 2 | 1014.7s | 2720461 | ok |
 | 2026-09-27T11:50:30.486Z | fix-staged-deletion-autocommit-and-dir-refs | qa | claude | sonnet | 0 | 177.1s | 1686927 | ok |
 | 2026-09-27T13:06:51.020Z | affected-files-preflight-at-code-review | plan | claude | sonnet | 0 | 763.0s | 5768483 | ok |
+| 2026-09-27T13:20:19.012Z | affected-files-preflight-at-code-review | implement | codex | gpt-6-sol | 0 | 806.0s | 9193389 | ok |
+| 2026-09-27T13:21:56.893Z | affected-files-preflight-at-code-review | code_review | codex | gpt-6-luna | 0 | 97.1s | - | ok |
+| 2026-09-27T13:43:54.984Z | affected-files-preflight-at-code-review | code_review | claude | opus | 0 | 1318.1s | 2496826 | ok |
+| 2026-09-27T13:56:42.442Z | affected-files-preflight-at-code-review | implement | codex | gpt-6-sol | 1 | 767.4s | 21399702 | ok |
+| 2026-09-27T13:58:37.335Z | affected-files-preflight-at-code-review | code_review | codex | gpt-6-luna | 1 | 114.2s | - | ok |
+| 2026-09-27T14:16:25.971Z | affected-files-preflight-at-code-review | code_review | claude | opus | 1 | 1068.6s | 2707436 | ok |
+| 2026-09-27T14:24:17.171Z | affected-files-preflight-at-code-review | implement | codex | gpt-6-sol | 2 | 471.1s | 25985055 | ok |
+| 2026-09-27T14:25:52.469Z | affected-files-preflight-at-code-review | code_review | codex | gpt-6-luna | 2 | 94.5s | - | ok |
+| 2026-09-27T14:38:07.846Z | affected-files-preflight-at-code-review | code_review | claude | opus | 2 | 735.3s | 1926226 | ok |
+| 2026-09-27T14:51:30.791Z | affected-files-preflight-at-code-review | qa | claude | sonnet | 0 | 365.7s | 3406349 | ok |

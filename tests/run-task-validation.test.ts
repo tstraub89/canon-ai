@@ -24,6 +24,9 @@ import {
     classifySharedDocDirtFromData,
     classifySharedDocSetFromData,
     classifyPreflightBlockersFromData,
+    classifyBaseDriftFilesFromData,
+    buildAffectedFilesAllowlist,
+    buildBaseDriftAbortMessage,
     collectUnscannedTableHits,
     computeLatestValidationResults,
     extractCheckedVerdict,
@@ -43,6 +46,7 @@ import {
     sliceRerouteRoundSection,
     verifyRerouteAmendment,
 } from '../src/orchestrator/validation.js';
+import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES } from '../src/orchestrator/worktree.js';
 import { checkAndRoute, resolveQaPrBody } from '../src/orchestrator/main.js';
 import {
     buildPreflightReviewBlock,
@@ -1949,6 +1953,71 @@ void test('verifyBaseDriftFromData: empty diff returns no drift', () => {
     assert.deepEqual(verifyBaseDriftFromData([], new Set(), ['task-a']), []);
 });
 
+void test('base-only drift is classified as base advancement', () => {
+    assert.deepEqual(classifyBaseDriftFilesFromData(['docs/base-only.md'], new Set()), {
+        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: [],
+    });
+});
+
+void test('classifyBaseDriftFilesFromData partitions task and base changes', () => {
+    assert.deepEqual(classifyBaseDriftFilesFromData([], new Set()), {
+        baseAdvanced: [], taskChangedOutOfScope: [],
+    });
+    assert.deepEqual(classifyBaseDriftFilesFromData(['a', 'b'], new Set(['a', 'b'])), {
+        baseAdvanced: [], taskChangedOutOfScope: ['a', 'b'],
+    });
+    assert.deepEqual(classifyBaseDriftFilesFromData(['a', 'b'], new Set(['b'])), {
+        baseAdvanced: ['a'], taskChangedOutOfScope: ['b'],
+    });
+});
+
+void test('base-drift abort message varies with drift cause', () => {
+    const baseOnly = buildBaseDriftAbortMessage('main', {
+        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: [],
+    });
+    assert.match(baseOnly, /base branch advanced/);
+    assert.match(baseOnly, /git fetch origin main && git rebase origin\/main/);
+    assert.doesNotMatch(baseOnly, /not in the spec's Affected Files/);
+
+    const taskOnly = buildBaseDriftAbortMessage('main', {
+        baseAdvanced: [], taskChangedOutOfScope: ['src/task-only.ts'],
+    });
+    assert.match(taskOnly, /not in the spec's Affected Files/);
+    assert.doesNotMatch(taskOnly, /base branch advanced/);
+
+    const mixed = buildBaseDriftAbortMessage('main', {
+        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: ['src/task-only.ts'],
+    });
+    assert.match(mixed, /docs\/base-only\.md/);
+    assert.match(mixed, /src\/task-only\.ts/);
+});
+
+void test('buildAffectedFilesAllowlist unions Design and Amendment paths with managed-doc option', () => {
+    withTempTaskSpecs({ 'task-a': ['`src/initial.ts`', '`dist/`'], 'task-b': [] }, tasksRoot => {
+        fs.appendFileSync(path.join(tasksRoot, 'task-b', 'spec.md'), [
+            '## Amendment', '', '### Affected Files', '', '| File | Change |', '|---|---|',
+            '| `src/amended.ts` | reason |', '',
+        ].join('\n'));
+        const normal = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admitManagedDocs: false });
+        assert.equal(normal.paths.has('src/initial.ts'), true);
+        assert.equal(normal.paths.has('src/amended.ts'), true);
+        assert.deepEqual(normal.prefixes, ['dist/']);
+        for (const file of PIPELINE_TELEMETRY_FILES) assert.equal(normal.paths.has(file), true);
+        for (const file of PIPELINE_MANAGED_DOCS) assert.equal(normal.paths.has(file), false);
+        const review = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admitManagedDocs: true });
+        for (const file of PIPELINE_MANAGED_DOCS) assert.equal(review.paths.has(file), true);
+        assert.deepEqual(verifyBaseDriftFromData(
+            ['dist/cli/index.js', 'tasks/task-a/handoff.md', PIPELINE_MANAGED_DOCS[0]],
+            review.paths, ['task-a', 'task-b'], review.prefixes,
+        ), []);
+    });
+});
+
+void test('scope check reports the new side of an unlisted rename', () => {
+    const paths = parseNameStatusOutput('R100\0src/old.ts\0src/new.ts\0');
+    assert.deepEqual(verifyBaseDriftFromData(paths, new Set(['src/old.ts']), ['task-a']), ['src/new.ts']);
+});
+
 void test('verifyBaseDriftFromData: file listed in spec allowlist is accepted', () => {
     assert.deepEqual(
         verifyBaseDriftFromData(['docs/codebase-map.md'], new Set(['docs/codebase-map.md']), ['task-a']),
@@ -2314,6 +2383,20 @@ void test('verifyRerouteAmendment: round 1 accepts `## Amendment`', () => {
         const result = verifyRerouteAmendment('reroute-round-1-amendment', 1);
         assert.equal(result.amended, true);
         assert.equal(result.reason, '');
+    });
+});
+
+void test('verifyRerouteAmendment: a foreman full-send scope amendment is not a human amendment', () => {
+    const scopeOnly = [
+        '# Spec', '', '## Amendment (full-send scope)', '', '### Affected Files', '',
+        '| File | Change |', '|---|---|', '| `src/helper.ts` | full-send scope expansion |', '',
+    ].join('\n');
+    withTempTaskSpec('reroute-scope-only', scopeOnly, () => {
+        assert.equal(verifyRerouteAmendment('reroute-scope-only', 1).amended, false);
+        assert.deepEqual(parseAffectedFilesFromSpec('reroute-scope-only').files, ['src/helper.ts']);
+    });
+    withTempTaskSpec('reroute-scope-and-human', `${scopeOnly}\n## Amendment\n\nHuman fix for the spec gap.\n`, () => {
+        assert.equal(verifyRerouteAmendment('reroute-scope-and-human', 1).amended, true);
     });
 });
 

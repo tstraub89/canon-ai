@@ -1,0 +1,1 @@
+The changes consistently apply the affected-files allowlist before code review and enforce full-send scope judgments before routing to QA. Type-checking and the test suite completed without reported failures.

@@ -25,7 +25,7 @@ Grounding rule: before you write handoff.md, re-open the files you changed and v
 3. Prefer shared types over duplicating signatures.
 
 **Scope Discipline** — always applicable; the spec is the contract:
-1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec's *Affected Files* table, do not make that edit. Record the gap in `handoff.md` under *Blockers* — the handoff is how it reaches a human — then finish the remaining in-scope work, the handoff, and the phase command. Do not silently expand scope.
+1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec's *Affected Files* table, do not make that edit. Record the gap in `handoff.md` under *Blockers* — the handoff is how it reaches a human — then finish the remaining in-scope work, the handoff, and the phase command. Do not silently expand scope. New helpers, fixtures, and test files introduced during implementation count against this cap too.
 2. **No unauthorized new abstractions.** Do not introduce new top-level modules, services, packages, or routing layers that the spec did not authorize. Minor refactors within an authorized file are fine; new abstractions are an architecture decision and belong in the spec.
 3. **No incidental dependency changes.** Do not add, remove, upgrade, or downgrade dependencies (or their pinned versions) unless the spec explicitly requests it.
 

@@ -9,8 +9,8 @@ import { runColdCodexReview } from '../agents/codex.js';
 import { getActiveCwd, PIPELINE_TELEMETRY_FILES } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
-import { classifyPreflightBlockers, isTemplateUnfilled, verifyHandoffAgainstDiff } from '../validation.js';
-import type { ClassifiedBlocker } from '../validation.js';
+import { buildAffectedFilesAllowlist, classifyPreflightBlockers, isTemplateUnfilled, verifyBaseDriftFromData, verifyHandoffAgainstDiff } from '../validation.js';
+import type { AffectedFilesAllowlist, ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { promptCodeReview, resolveCodeReviewRound } from '../prompts/index.js';
 import { findColdCodexArchiveForRound, hasMalformedColdCodexArchive, writeColdCodexArchive } from '../review-archive.js';
@@ -23,6 +23,32 @@ export type PreflightFailure = {
     taskId: string;
     classified: ClassifiedBlocker[];
 };
+
+/** The same scope matcher is used before and after the foreman, including directory entries. */
+export function findUnjudgedFullSendFilesFromData(
+    changedFiles: readonly string[],
+    allowlist: AffectedFilesAllowlist,
+    taskIds: readonly string[],
+    verdicts: readonly (string | null)[],
+): string[] {
+    // A bundle reroutes together. One changes_requested (or its legacy alias)
+    // prevents an unamended file from advancing to QA; the next review checks
+    // every still-out-of-scope file again. A spec_gap blocks at its own gate.
+    if (verdicts.some(verdict =>
+        verdict === 'changes_requested' || verdict === 'needs_re_review' || verdict === 'spec_gap')) return [];
+    return verifyBaseDriftFromData(changedFiles, allowlist.paths, taskIds, allowlist.prefixes);
+}
+
+export function fullSendScopeBlockReason(
+    taskIds: readonly string[], files: readonly string[], recordedVerdicts: readonly string[],
+): string {
+    const verdictNote = recordedVerdicts.length > 0
+        ? ` Recorded code-review verdict(s): ${recordedVerdicts.join(', ')}; inspect the review before resuming.`
+        : '';
+    return `Full-send code review left out-of-scope files unjudged: ${files.join(', ')}. ` +
+        `Add them to a task spec's ### Affected Files table, then re-run \`canon run ${taskIds.join(' ')}\`; ` +
+        `or reroute with a note telling the implementer to remove them.${verdictNote}`;
+}
 
 export type CodeReviewPhaseDeps = {
     verifyBranch: typeof verifyBranch;
@@ -314,6 +340,23 @@ export async function runCodeReviewPhase(
         return { agent: 'claude', sessionId: null, exitCode: 0 };
     }
 
+    const allowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+    const outOfScopeFiles = verifyBaseDriftFromData(
+        [...changedFiles], allowlist.paths, taskIds, allowlist.prefixes,
+    );
+    const scopeFullSend = tasks.every(t => t.status.full_send === true);
+    if (outOfScopeFiles.length > 0 && !scopeFullSend) {
+        const reason =
+            `Code review pre-flight found files outside the spec's Affected Files for ${taskIds.join(', ')}:\n` +
+            outOfScopeFiles.map(file => `  ${file}`).join('\n') + '\n' +
+            `Add them to the affected task spec's ### Affected Files table in the active checkout, ` +
+            `then re-run \`canon run ${taskIds.join(' ')}\`; ` +
+            `or reroute with a note telling the implementer to remove them.`;
+        warn(reason);
+        autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, reason);
+        process.exit(2);
+    }
+
     const headSha = deps.resolveCommit('HEAD', activeCwd);
     if (!headSha) {
         setExitReason(`Cannot start code_review for task(s) ${taskIds.join(', ')}: HEAD does not resolve to a commit.`);
@@ -391,7 +434,7 @@ export async function runCodeReviewPhase(
     const cfg = deps.getClaudeConfig('code_review', tasks);
     const reviewResumeId = maxIter > 0 ? resumeId : null;
     const scopedDiff = scope.scope === 'delta' ? null : deps.getScopedDiff(baseBranch, activeCwd);
-    const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
+    const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,

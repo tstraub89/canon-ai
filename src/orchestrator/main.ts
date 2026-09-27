@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runCodeReviewPhase } from './phases/code-review.js';
+import { findUnjudgedFullSendFilesFromData, fullSendScopeBlockReason, runCodeReviewPhase } from './phases/code-review.js';
 import { runImplementPhase } from './phases/implement.js';
 import { runPlanPhase } from './phases/plan.js';
 import { runQaPhase } from './phases/qa.js';
@@ -1223,27 +1223,11 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         );
     } else if (baseDriftResult.drift.length > 0) {
         if (!cliArgs.force) {
-            die(
-                `--pr aborted: base-drift detected. Files in the tree diff between origin/${baseBranch}\n` +
-                `and HEAD that are not in the spec's Affected Files (and not task-dir/telemetry):\n` +
-                `${baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
-                `The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, files listed in\n` +
-                `your spec's '### Affected Files' table (directory-form entries like 'dist/' match\n` +
-                `subpaths), and PIPELINE_MANAGED_DOCS (auto-allowlisted once qa.status = done).\n` +
-                `If this is a legitimate task change, add the path to spec.md '### Affected Files'\n` +
-                `and rerun. For a rename, list BOTH the old and new paths. If the drift is\n` +
-                `unexpected (likely cross-pipeline contamination from a sibling worktree's\n` +
-                `managed-doc sync, OR a third-party commit landed on origin/${baseBranch} while\n` +
-                `this pipeline was running), recover with one of:\n` +
-                `  - rebase onto current origin/${baseBranch} to absorb the base advance:\n` +
-                `      git fetch origin ${baseBranch} && git rebase origin/${baseBranch}\n` +
-                `  - reset a specific file to base's content if a stray task-branch commit\n` +
-                `    introduced it:\n` +
-                `      git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'\n` +
-                `  - revert the offending task-branch commit entirely:\n` +
-                `      git revert <sha>\n` +
-                `Bypass with --force if you've verified the drift is intentional.`
+            const taskChangedFiles = new Set(splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd));
+            const classification = splitValidation.classifyBaseDriftFilesFromData(
+                baseDriftResult.drift, taskChangedFiles,
             );
+            die(splitValidation.buildBaseDriftAbortMessage(baseBranch, classification));
         }
         warn(
             `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +
@@ -3231,6 +3215,32 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
     // see the fresh state.
     statuses = taskIds.map(splitState.readStatus);
 
+    // A Claude session can finish code_review during one-shot recovery after an
+    // unfilled review. Enforce the same full-send scope rule here before QA.
+    let specGapScopeFiles: string[] = [];
+    if (phase === 'code_review' && statuses.every(status => status.full_send === true)) {
+        const cwd = splitWorktree.getActiveCwd(taskIds);
+        const baseBranch = splitGit.getBaseBranch(taskIds);
+        const changedFiles = splitGit.getAffectedFiles(baseBranch, cwd);
+        const allowlist = splitValidation.buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+        const verdicts = statuses.map(status => getVerdict(status, 'code_review'));
+        if (verdicts.includes('spec_gap')) {
+            specGapScopeFiles = splitValidation.verifyBaseDriftFromData(
+                changedFiles, allowlist.paths, taskIds, allowlist.prefixes,
+            );
+        }
+        const unjudged = findUnjudgedFullSendFilesFromData(
+            changedFiles, allowlist, taskIds, verdicts,
+        );
+        if (unjudged.length > 0) {
+            const reason = fullSendScopeBlockReason(taskIds, unjudged, verdicts.filter(Boolean));
+            warn(reason);
+            const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
+            splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
+            process.exit(2);
+        }
+    }
+
     if (lastCodexExitStatus !== 0) {
         warn(`Phase '${phase}' completed despite Codex exit status ${lastCodexExitStatus} (likely MCP warnings). Continuing.`);
         lastCodexExitStatus = 0;
@@ -3316,9 +3326,14 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], 'code_review') === 'spec_gap');
             if (specGapIds.length > 0) {
                 const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
+                const scopeNote = specGapScopeFiles.length > 0
+                    ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
+                        `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch.`
+                    : '';
                 const reason =
                     `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(', ')}. ` +
                     `The implementation cannot resolve this — the root cause is in the spec. ` +
+                    scopeNote +
                     `Recovery options (both operate on the full blocked bundle [${taskIds.join(' ')}]):\n` +
                     `  FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(' ')} --reroute\n` +
                     `  BLESS: canon task accept ${taskIds.join(' ')} code_review --reason "<why>"`;
@@ -3329,6 +3344,12 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 console.log('  The code review found a problem in the spec, not a fixable');
                 console.log('  implementation bug. Review the findings:');
                 for (const id of specGapIds) console.log(`    tasks/${id}/review.md`);
+                if (specGapScopeFiles.length > 0) {
+                    console.log('  Full-send files still outside Affected Files:');
+                    for (const file of specGapScopeFiles) console.log(`    ${file}`);
+                    console.log('  BLESS does not amend the spec, so --pr will still reject these files.');
+                    console.log('  Before blessing, add them to Affected Files (## Amendment) or remove them.');
+                }
                 console.log('');
                 console.log('  Two recovery options:');
                 console.log('');

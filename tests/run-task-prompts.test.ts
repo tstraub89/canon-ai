@@ -527,6 +527,13 @@ void test('promptCodeReview_round1', () => {
     recordOrAssert('promptCodeReview_round1', actual);
 });
 
+void test('promptCodeReview_fullSendOutOfScope', () => {
+    const actual = normalize(promptCodeReview(baseState, 'main', null, null, null, ['src/extra-helper.ts']));
+    recordOrAssert('promptCodeReview_fullSendOutOfScope', actual);
+    assert.match(actual, /src\/extra-helper\.ts/);
+    assert.match(actual, /### Affected Files/);
+});
+
 void test('promptCodeReview renders the synthesis foreman, Claude subagents, and injected cold-Codex lens', () => {
     const actual = normalize(promptCodeReview(baseState, 'main', null, 'P2 - null deref at src/foo.ts:10'));
     assert.match(actual, /synthesis foreman/);

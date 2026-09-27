@@ -52,7 +52,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `src/orchestrator/main.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `src/orchestrator/validation.ts` | |
 | Handoff Changes-table parser | `src/orchestrator/validation.ts` | Extracts comma-separated backtick-path / markdown-link tokens per cell |
-| Spec Affected Files parser | `src/orchestrator/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; used by `commitHumanReviewFiles` (managed-doc allow-list) and `verifyBaseDrift` (base-drift allow-list) |
+| Spec Affected Files parser | `src/orchestrator/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; feeds `buildAffectedFilesAllowlist()`, the shared allow-list builder used by both `verifyBaseDrift` (`--push`/`--pr`) and the `code_review` pre-flight scope check (`src/orchestrator/phases/code-review.ts`) |
 | Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts` | `verifyBaseDivergence` / `verifyBaseDivergenceFromData` in `validation.ts` checks commit divergence first and blocks at `--push`, `--pr`, and `--ship`; `verifyBaseDrift` / `verifyBaseDriftFromData` remains the file-allow-list gate for `--push`/`--pr`; `getUnpushedBaseCommits` / `getTreeDriftFiles` in `git.ts` are the low-level helpers |
 
 ## Internal Orchestrator Modules
