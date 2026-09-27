@@ -66,6 +66,14 @@ An AC that says "verify: assertions added to the provenance tests" can be satisf
 
 ---
 
+### Pin state before a long-running external process, not after
+
+*(2026-09-27, source: code-review-delta-rerounds)*
+
+When an orchestrator step needs to record "what the process reviewed/acted on" (a commit SHA, a file list, a snapshot), reading that state after invoking a long-running external agent lets it drift: the state can move mid-run and the recorded value ends up describing more than the process actually saw. This task's round-1 code review caught exactly that gap (F3): the reviewed HEAD SHA was read after `codex exec review` returned, so a commit landing mid-run would be silently credited to a review that never saw it. The fix: resolve and pin the value once, before starting the external process, and thread that pinned value through every downstream step (ancestry checks, diff probes, the artifact header) instead of re-reading live state later. The regression test that pins this moves HEAD between invoking the process and archiving, and asserts the archive still names the pre-move commit — a good template for any future "pin state, then run a long external step" invariant in this orchestrator.
+
+---
+
 <!-- Buffer swept 2026-08-22 (3 entries reviewed: 1 promoted, 1 kept in buffer, 1 pruned).
      Promotion → docs/patterns.md: "Operator-facing text is often rendered by independently-authored duplicates — grep the surface class" as a new pitfall + Trigger Table row (from the duplicate-presentation-surfaces entry; strengthened by a second same-week instance in archive-review-on-reroute's dual review.md prompt pointers).
      Kept in buffer: the grep-AC-exception-list-growth entry — adjacent to two existing canon-spec SKILL rules (≥3-iterations read-content, permitted-to-remain buckets); re-evaluate for a one-sentence SKILL graft if it recurs.
