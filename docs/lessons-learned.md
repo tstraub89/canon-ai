@@ -90,6 +90,22 @@ When a gate's underlying git probe changes (e.g. from `git ls-files --deleted` t
 
 ---
 
+### Enforce a new gate after the retry/recovery path settles, not immediately after the session that might leave partial state
+
+*(2026-09-27, source: affected-files-preflight-at-code-review)*
+
+A gate added right after an agent session ends ("check the result, block if it fails") looks like the natural place to enforce a new invariant, but if that same session can legitimately produce partial, recoverable output — a review artifact with some content but no checked verdict, a handoff with some but not all rows filled — enforcing there treats "not finished yet" the same as "finished and wrong." This task's Round 2 review caught exactly that: a post-foreman scope check placed directly after the foreman's session called `process.exit(2)` on a partial `review.md` that had no checked verdict, when the existing recovery path would have retried the same session and let it finish normally. The fix: enforce the new invariant once, at the router/`checkAndRoute` boundary that already runs *after* recovery has decided the session is actually done — not inside the phase, right after the session call. Rule of thumb: before adding a check after an agent-session call, first find out whether that call site has an existing retry-on-incomplete-output path: if it does, the new check belongs after that path resolves, not before it.
+
+---
+
+### Run `npm run build` to completion before `npm test`, never concurrently
+
+*(2026-09-27, source: affected-files-preflight-at-code-review)*
+
+Running the full test suite in parallel with a rebuild lets `tsup`'s clean step delete `dist/` while CLI-fixture tests are mid-import, producing spurious failures (missing module / stale bundle) that have nothing to do with the change under test — and a timing-sensitive process-signal test can flake the same way. This task's first full-suite run hit both: two CLI fixtures failed to load a temporarily-absent bundle, and a signal-timing test failed; a sequential rerun (build finishes, then `npm test` starts) passed clean. Rule of thumb: when validating a change that touches `dist/`, always run `npm run build` to completion before `npm test`, not as a backgrounded/concurrent step — a failure that only reproduces under concurrent build+test is not a real regression, but confirm that by rerunning sequentially before dismissing it.
+
+---
+
 <!-- Buffer swept 2026-08-22 (3 entries reviewed: 1 promoted, 1 kept in buffer, 1 pruned).
      Promotion → docs/patterns.md: "Operator-facing text is often rendered by independently-authored duplicates — grep the surface class" as a new pitfall + Trigger Table row (from the duplicate-presentation-surfaces entry; strengthened by a second same-week instance in archive-review-on-reroute's dual review.md prompt pointers).
      Kept in buffer: the grep-AC-exception-list-growth entry — adjacent to two existing canon-spec SKILL rules (≥3-iterations read-content, permitted-to-remain buckets); re-evaluate for a one-sentence SKILL graft if it recurs.
