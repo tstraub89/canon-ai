@@ -1039,3 +1039,4 @@
 | 2026-09-27T11:30:38.647Z | fix-staged-deletion-autocommit-and-dir-refs | code_review | codex | gpt-6-luna | 2 | 106.0s | - | ok |
 | 2026-09-27T11:47:33.335Z | fix-staged-deletion-autocommit-and-dir-refs | code_review | claude | opus | 2 | 1014.7s | 2720461 | ok |
 | 2026-09-27T11:50:30.486Z | fix-staged-deletion-autocommit-and-dir-refs | qa | claude | sonnet | 0 | 177.1s | 1686927 | ok |
+| 2026-09-27T13:06:51.020Z | affected-files-preflight-at-code-review | plan | claude | sonnet | 0 | 763.0s | 5768483 | ok |
