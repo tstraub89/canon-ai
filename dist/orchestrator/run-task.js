@@ -8780,7 +8780,7 @@ async function checkAndRoute(phase, taskIds) {
       const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], "code_review") === "spec_gap");
       if (specGapIds.length > 0) {
         const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
-        const scopeNote = specGapScopeFiles.length > 0 ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec; inspect these files before blessing.` : "";
+        const scopeNote = specGapScopeFiles.length > 0 ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch.` : "";
         const reason = `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(", ")}. The implementation cannot resolve this \u2014 the root cause is in the spec. ` + scopeNote + `Recovery options (both operate on the full blocked bundle [${taskIds.join(" ")}]):
   FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(" ")} --reroute
   BLESS: canon task accept ${taskIds.join(" ")} code_review --reason "<why>"`;
@@ -8794,7 +8794,8 @@ async function checkAndRoute(phase, taskIds) {
         if (specGapScopeFiles.length > 0) {
           console.log("  Full-send files still outside Affected Files:");
           for (const file of specGapScopeFiles) console.log(`    ${file}`);
-          console.log("  BLESS does not amend the spec; inspect these files before blessing.");
+          console.log("  BLESS does not amend the spec, so --pr will still reject these files.");
+          console.log("  Before blessing, add them to Affected Files (## Amendment) or remove them.");
         }
         console.log("");
         console.log("  Two recovery options:");

@@ -476,6 +476,8 @@ for (const outcome of ['amended', 'directory_amended', 'changes_requested', 'spe
                 assert.equal(result.status, 2, result.output);
                 assert.match(result.output, /src\/a\.ts/);
                 assert.match(result.output, /BLESS does not amend/);
+                assert.match(result.output, /--pr will still reject/);
+                assert.match(result.output, /add them to Affected Files/);
             } else {
                 assert.equal(result.status, 0, result.output);
                 assert.notEqual(readStatus('router-scope').phases.code_review?.status, 'blocked');
