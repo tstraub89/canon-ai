@@ -327,6 +327,16 @@ function realGitDeps(activeCwd: string, events: string[], onClaude?: (prompt: st
     return deps;
 }
 
+function writeRoundTwoTask(tasksRoot: string, taskId: string): void {
+    writeTask(tasksRoot, taskId);
+    const dir = path.join(tasksRoot, taskId);
+    fs.writeFileSync(path.join(dir, 'review.md'), '# Review\n\n## Stage 1\n\nfilled\n');
+    const status = readStatus(taskId);
+    status.phases.code_review!.iterations = 1;
+    status.phases.code_review!.iterations_current_loop = 1;
+    writeStatusToFile(path.join(dir, 'status.json'), status);
+}
+
 function isProcessExitError(error: unknown, code: number): boolean {
     return error instanceof Error &&
         error.message === 'process.exit' &&
@@ -1078,5 +1088,106 @@ void test('missing, malformed, and unresolved previous records force full review
         await runCodeReviewPhase(makeState([id]), false, null, deps);
         assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-5.md'), 'utf8'), /does not resolve/);
         assert.deepEqual(bases, ['main', 'main', 'main']);
+    });
+});
+
+void test('failed delta facts force full scope before cold-Codex runs', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        const prior = 'b'.repeat(40);
+        for (const [name, failedProbe, expectedReason] of [
+            ['delta-paths', 'delta', /delta path probe failed/],
+            ['prior-paths', 'prior', /previous change-set path probe failed/],
+            ['line-stats', 'lines', /delta line-stat probe failed/],
+        ] as const) {
+            writeRoundTwoTask(tasksRoot, name);
+            const bases: string[] = [];
+            const deps = makeDeps({ activeCwd, events: [] });
+            deps.findColdCodexArchiveForRound = () => ({
+                round: 1, reviewedSha: prior, scope: 'full', base: 'main', reason: 'Round 1',
+            });
+            deps.getPathsInRange = range => {
+                if (failedProbe === 'delta' && !range.includes('...')) return null;
+                if (failedProbe === 'prior' && range.includes('...')) return null;
+                return ['src/foo.ts'];
+            };
+            deps.getDeltaLineStats = () => failedProbe === 'lines'
+                ? null : [{ path: 'src/foo.ts', added: 1, deleted: 0 }];
+            const cold = deps.runColdCodexReview;
+            deps.runColdCodexReview = (base, ...rest) => { bases.push(base); return cold(base, ...rest); };
+            await runCodeReviewPhase(makeState([name]), false, null, deps);
+            assert.deepEqual(bases, ['main']);
+            assert.match(fs.readFileSync(path.join(tasksRoot, name, 'review-cold-codex-run-1.md'), 'utf8'), expectedReason);
+        }
+    });
+});
+
+void test('git range helpers distinguish failed probes from empty diffs', { concurrency: false }, async () => {
+    await withTempTasksAsync((_tasksRoot, activeCwd) => {
+        const head = initReviewRepo(activeCwd);
+        assert.deepEqual(getPathsInRange(`${head}..${head}`, activeCwd), []);
+        assert.deepEqual(getDeltaLineStats(head, activeCwd), []);
+        assert.equal(getPathsInRange('missing-ref..HEAD', activeCwd), null);
+        assert.equal(getDeltaLineStats('missing-ref', activeCwd), null);
+        return Promise.resolve();
+    });
+});
+
+void test('bundle disagreement is named as the full-scope reason', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        for (const id of ['member-a', 'member-b']) writeRoundTwoTask(tasksRoot, id);
+        const deps = makeDeps({ activeCwd, events: [] });
+        deps.findColdCodexArchiveForRound = dir => ({
+            round: 1, reviewedSha: path.basename(dir) === 'member-a' ? 'b'.repeat(40) : 'c'.repeat(40),
+            scope: 'full', base: 'main', reason: 'Round 1',
+        });
+        await runCodeReviewPhase(makeState(['member-a', 'member-b']), false, null, deps);
+        assert.match(fs.readFileSync(path.join(tasksRoot, 'member-a', 'review-cold-codex-run-1.md'), 'utf8'), /bundle members disagree/);
+        deps.findColdCodexArchiveForRound = dir => path.basename(dir) === 'member-a'
+            ? { round: 1, reviewedSha: 'b'.repeat(40), scope: 'full', base: 'main', reason: 'Round 1' }
+            : null;
+        await runCodeReviewPhase(makeState(['member-a', 'member-b']), false, null, deps);
+        assert.match(fs.readFileSync(path.join(tasksRoot, 'member-a', 'review-cold-codex-run-2.md'), 'utf8'), /no cold-Codex archive record/);
+    });
+});
+
+void test('HEAD must resolve before cold-Codex and no review artifact is written on failure', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        writeTask(tasksRoot, 'no-head');
+        const events: string[] = [];
+        const deps = makeDeps({ activeCwd, events });
+        deps.resolveCommit = () => null;
+        const originalExit: typeof process.exit = process.exit.bind(process);
+        process.exit = (code?: string | number | null): never => {
+            throw Object.assign(new Error('process.exit'), { code });
+        };
+        try {
+            await assert.rejects(
+                () => runCodeReviewPhase(makeState(['no-head']), false, null, deps),
+                (error: unknown) => isProcessExitError(error, 1),
+            );
+        } finally {
+            process.exit = originalExit;
+        }
+        assert.deepEqual(events, ['verifyBranch']);
+        assert.equal(fs.readdirSync(path.join(tasksRoot, 'no-head')).some(name => name.startsWith('review-cold-codex')), false);
+    });
+});
+
+void test('archive records the SHA captured before cold-Codex if HEAD moves during the run', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        writeTask(tasksRoot, 'moving-head');
+        const pinnedSha = initReviewRepo(activeCwd);
+        const deps = realGitDeps(activeCwd, []);
+        const cold = deps.runColdCodexReview;
+        deps.runColdCodexReview = (...args) => {
+            fs.appendFileSync(path.join(activeCwd, 'src/a.ts'), 'arrived during review\n');
+            gitAt(activeCwd, 'add', '.');
+            gitAt(activeCwd, 'commit', '-m', 'concurrent');
+            return cold(...args);
+        };
+        await runCodeReviewPhase(makeState(['moving-head']), false, null, deps);
+        const archive = findColdCodexArchiveForRound(path.join(tasksRoot, 'moving-head'), 1);
+        assert.equal(archive?.reviewedSha, pinnedSha);
+        assert.notEqual(gitAt(activeCwd, 'rev-parse', 'HEAD'), pinnedSha);
     });
 });

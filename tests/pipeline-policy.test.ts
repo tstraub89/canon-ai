@@ -33,12 +33,16 @@ for (const [name, override, reason] of [
     ['XL', { effectiveSize: 'XL' }, /XL task size/],
     ['delicate', { effectiveSize: 'XL', delicate: true }, /delicate/],
     ['missing archive', { prevRecord: null }, /no cold-Codex archive record/],
+    ['disagreeing records', { prevRecord: null, previousRecordsDisagree: true }, /bundle members disagree/],
     ['unparseable archive', { prevRecord: null, previousArchiveMalformed: true }, /unparseable cold-Codex archive record/],
     ['bad SHA', { prevRecord: { reviewedSha: 'bad', exists: false, isAncestor: false, equalsHead: false } }, /does not resolve/],
     ['non-ancestor', { prevRecord: { reviewedSha: 'a', exists: true, isAncestor: false, equalsHead: false } }, /not an ancestor/],
     ['same HEAD', { prevRecord: { reviewedSha: 'a', exists: true, isAncestor: true, equalsHead: true } }, /equals HEAD/],
     ['outside path', { deltaPaths: ['src/b.ts'] }, /outside the previous round's change set/],
     ['over threshold', { deltaFileStats: [{ path: 'src/a.ts', added: CODE_REVIEW_DELTA_LINE_THRESHOLD + 1, deleted: 0 }] }, /exceeds 400/],
+    ['failed delta path probe', { deltaPaths: null }, /delta path probe failed/],
+    ['failed prior path probe', { priorChangeSetPaths: null }, /previous change-set path probe failed/],
+    ['failed line-stat probe', { deltaFileStats: null }, /delta line-stat probe failed/],
 ] as const) {
     void test(`code-review scope: ${name} forces full`, () => {
         const result = resolveCodeReviewScope({ ...reviewFacts, ...override });

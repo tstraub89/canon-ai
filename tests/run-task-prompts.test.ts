@@ -556,6 +556,16 @@ void test('promptCodeReview_deltaRound', () => {
     assert.match(actual, /delta diff/);
     assert.doesNotMatch(actual, /```diff\nfull diff\n```/);
     assert.match(actual, /git diff main\.\.\.HEAD/);
+    assert.match(actual, /Retrieve the full task diff with `git diff main\.\.\.HEAD` and give it that full diff, not the delta above/);
+    assert.match(actual, /sibling-site sweep may search other code files/);
+});
+
+void test('promptCodeReview delta round retrieves the diff when injection fails', () => {
+    const actual = promptCodeReview(codeReviewRoundNState, 'main', null, 'cold findings', {
+        scope: 'delta', base: 'a'.repeat(40), reason: 'delta', deltaDiff: null,
+    });
+    assert.match(actual, /The delta diff could not be injected\. Retrieve it with `git diff a{40}\.\.HEAD`/);
+    assert.doesNotMatch(actual, /```diff\s*```/);
 });
 
 // Defense in depth against the historical pre-flight-rejection-counts-as-round

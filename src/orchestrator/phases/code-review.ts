@@ -314,6 +314,12 @@ export async function runCodeReviewPhase(
         return { agent: 'claude', sessionId: null, exitCode: 0 };
     }
 
+    const headSha = deps.resolveCommit('HEAD', activeCwd);
+    if (!headSha) {
+        setExitReason(`Cannot start code_review for task(s) ${taskIds.join(', ')}: HEAD does not resolve to a commit.`);
+        process.exit(1);
+    }
+
     info(`Phase: code_review (Claude${state.isBundle ? ' bundle' : ''}, iteration ${maxIter + 1})`);
     for (const t of tasks) taskPhase(t.taskId, 'code_review', 'in_progress');
 
@@ -325,26 +331,28 @@ export async function runCodeReviewPhase(
         : [];
     const agreed = records.length === tasks.length && records.every(record =>
         record !== null && record.reviewedSha === records[0]?.reviewedSha);
+    const previousRecordsDisagree = records.length === tasks.length &&
+        records.every(record => record !== null) && !agreed;
     const previousArchiveMalformed = records.some((record, index) =>
         record === null && deps.hasMalformedColdCodexArchive(taskDirFor(tasks[index].taskId)));
     const reviewedSha = agreed ? records[0]?.reviewedSha : undefined;
     const resolved = reviewedSha ? deps.resolveCommit(reviewedSha, activeCwd) : null;
-    const head = resolved ? deps.resolveCommit('HEAD', activeCwd) : null;
     const prevRecord = reviewedSha ? {
         reviewedSha,
         exists: resolved !== null,
-        isAncestor: resolved !== null && deps.isAncestorCommit(reviewedSha, 'HEAD', activeCwd),
-        equalsHead: resolved !== null && head !== null && resolved === head,
+        isAncestor: resolved !== null && deps.isAncestorCommit(reviewedSha, headSha, activeCwd),
+        equalsHead: resolved !== null && resolved === headSha,
     } : null;
+    const canProbe = prevRecord?.exists === true && prevRecord.isAncestor && !prevRecord.equalsHead;
     const scope = resolveCodeReviewScope({
-        isRound1, effectiveSize, delicate, baseBranch, prevRecord, previousArchiveMalformed,
-        deltaPaths: resolved ? deps.getPathsInRange(`${reviewedSha}..HEAD`, activeCwd) : [],
-        priorChangeSetPaths: resolved ? deps.getPathsInRange(`${baseBranch}...${reviewedSha}`, activeCwd) : [],
-        deltaFileStats: resolved && reviewedSha ? deps.getDeltaLineStats(reviewedSha, activeCwd) : [],
+        isRound1, effectiveSize, delicate, baseBranch, prevRecord, previousArchiveMalformed, previousRecordsDisagree,
+        deltaPaths: canProbe ? deps.getPathsInRange(`${reviewedSha}..${headSha}`, activeCwd) : [],
+        priorChangeSetPaths: canProbe ? deps.getPathsInRange(`${baseBranch}...${reviewedSha}`, activeCwd) : [],
+        deltaFileStats: canProbe && reviewedSha ? deps.getDeltaLineStats(reviewedSha, activeCwd, headSha) : [],
         taskIds, telemetryFiles: PIPELINE_TELEMETRY_FILES,
     });
     const deltaDiff = scope.scope === 'delta'
-        ? deps.getScopedDiffInRange(`${scope.base}..HEAD`, activeCwd)
+        ? deps.getScopedDiffInRange(`${scope.base}..${headSha}`, activeCwd)
         : null;
 
     const coldCfg = deps.getCodexConfig('code_review', tasks);
@@ -373,8 +381,6 @@ export async function runCodeReviewPhase(
             'utf8',
         );
     }
-    const headSha = deps.resolveCommit('HEAD', activeCwd);
-    if (!headSha) throw new Error('Cannot archive cold-Codex findings: HEAD does not resolve to a commit');
     for (const t of tasks) {
         deps.writeColdCodexArchive(taskDirFor(t.taskId), {
             round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
@@ -384,7 +390,7 @@ export async function runCodeReviewPhase(
 
     const cfg = deps.getClaudeConfig('code_review', tasks);
     const reviewResumeId = maxIter > 0 ? resumeId : null;
-    const scopedDiff = deps.getScopedDiff(baseBranch, activeCwd);
+    const scopedDiff = scope.scope === 'delta' ? null : deps.getScopedDiff(baseBranch, activeCwd);
     const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'code_review',

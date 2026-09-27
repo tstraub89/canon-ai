@@ -24,9 +24,10 @@ export type CodeReviewScopeFacts = {
     baseBranch: string;
     prevRecord: CodeReviewPrevRecord;
     previousArchiveMalformed?: boolean;
-    deltaPaths: readonly string[];
-    priorChangeSetPaths: readonly string[];
-    deltaFileStats: readonly { path: string; added: number; deleted: number }[];
+    previousRecordsDisagree?: boolean;
+    deltaPaths: readonly string[] | null;
+    priorChangeSetPaths: readonly string[] | null;
+    deltaFileStats: readonly { path: string; added: number; deleted: number }[] | null;
     taskIds: readonly string[];
     telemetryFiles: readonly string[];
 };
@@ -43,12 +44,17 @@ export function resolveCodeReviewScope(facts: CodeReviewScopeFacts): CodeReviewS
     if (facts.isRound1) return full('Round 1 (initial review)');
     if (facts.effectiveSize === 'XL') return full(facts.delicate ? 'delicate' : 'XL task size');
     const prev = facts.prevRecord;
-    if (prev === null) return full(facts.previousArchiveMalformed
-        ? 'unparseable cold-Codex archive record for the previous round'
-        : 'no cold-Codex archive record for the previous round');
+    if (prev === null) return full(facts.previousRecordsDisagree
+        ? 'bundle members disagree on the previous reviewed commit'
+        : facts.previousArchiveMalformed
+            ? 'unparseable cold-Codex archive record for the previous round'
+            : 'no cold-Codex archive record for the previous round');
     if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
     if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
     if (prev.equalsHead) return full('previous reviewed commit equals HEAD');
+    if (facts.deltaPaths === null) return full('delta path probe failed');
+    if (facts.priorChangeSetPaths === null) return full('previous change-set path probe failed');
+    if (facts.deltaFileStats === null) return full('delta line-stat probe failed');
 
     const priorPaths = new Set(facts.priorChangeSetPaths.filter(p => !isReviewOwnedPath(p, facts)));
     const outside = facts.deltaPaths.find(p => !isReviewOwnedPath(p, facts) && !priorPaths.has(p));

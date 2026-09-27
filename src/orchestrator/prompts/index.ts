@@ -550,6 +550,7 @@ export function promptCodeReview(
         deltaBase: scopeInfo?.base ?? '',
         deltaReason: scopeInfo?.reason ?? '',
         deltaDiffContent: scopeInfo?.deltaDiff?.diff ?? '',
+        hasDeltaDiff: scopeInfo?.deltaDiff !== null && scopeInfo?.deltaDiff !== undefined,
         deltaDiffTruncated: scopeInfo?.deltaDiff?.truncated ?? false,
         coldCodexFindings: coldCodexFindings ?? '',
         hasColdCodexFindings: coldCodexFindings !== null,

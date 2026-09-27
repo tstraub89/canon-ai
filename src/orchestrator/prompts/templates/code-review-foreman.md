@@ -40,6 +40,8 @@ Task diff against {{{baseBranch}}}:
 Retrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.
 {{/hasDiff}}
 {{#isDeltaScope}}
+
+{{#hasDeltaDiff}}
 Delta diff (`{{{deltaBase}}}..HEAD`) — give this delta to the cold-Claude lens:
 
 ```diff
@@ -48,6 +50,10 @@ Delta diff (`{{{deltaBase}}}..HEAD`) — give this delta to the cold-Claude lens
 {{#deltaDiffTruncated}}
 > Delta diff truncated at 50 000 bytes. Give the cold-Claude lens the visible delta first; for the remainder, direct it to `git diff {{{deltaBase}}}..HEAD`.
 {{/deltaDiffTruncated}}
+{{/hasDeltaDiff}}
+{{^hasDeltaDiff}}
+The delta diff could not be injected. Retrieve it with `git diff {{{deltaBase}}}..HEAD` and give it to the cold-Claude lens before it reviews.
+{{/hasDeltaDiff}}
 {{/isDeltaScope}}
 
 ## Injected Cold-Codex Findings
@@ -71,7 +77,12 @@ No cold-Codex findings were provided to this prompt. In production code_review, 
 Spawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in older harnesses) in a single message so they run concurrently, and run them **in the foreground** (`run_in_background: false`) so the call returns their findings. Do not spawn them in the background and do not end your turn to wait for them: a turn that ends while a lens is still running ends the code review with no `review.md` and no verdict, and the phase is retried from scratch. Your turn ends only after step 5 below has run.
 
 **Anchored lens** (`subagent_type: code-review-anchored`)
+{{#isDeltaScope}}
+- Retrieve the full task diff with `git diff {{{baseBranch}}}...HEAD` and give it that full diff, not the delta above, plus `spec.md`, `handoff.md`, and prior `review.md`.
+{{/isDeltaScope}}
+{{^isDeltaScope}}
 - Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.
+{{/isDeltaScope}}
 - It applies canon's anchored Stage 1 / Stage 2 code-review charter.
 - It returns structured findings to you. It must not write `review.md` or run `canon task phase`.
 
@@ -84,6 +95,9 @@ Spawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in olde
 {{/isDeltaScope}}
 - Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.
 - If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.
+{{#isDeltaScope}}
+- Separately, its sibling-site sweep may search other code files for guards, checks, and invariants that need the same treatment. Keep the search spec-blind.
+{{/isDeltaScope}}
 - It returns structured findings to you. It must not write `review.md` or run `canon task phase`.
 
 The injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.
