@@ -9,7 +9,7 @@ import { runColdCodexReview } from '../agents/codex.js';
 import { getActiveCwd, PIPELINE_TELEMETRY_FILES } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
-import { buildAffectedFilesAllowlist, classifyPreflightBlockers, extractCheckedVerdict, isTemplateUnfilled, verifyBaseDriftFromData, verifyHandoffAgainstDiff } from '../validation.js';
+import { buildAffectedFilesAllowlist, classifyPreflightBlockers, isTemplateUnfilled, verifyBaseDriftFromData, verifyHandoffAgainstDiff } from '../validation.js';
 import type { AffectedFilesAllowlist, ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { promptCodeReview, resolveCodeReviewRound } from '../prompts/index.js';
@@ -39,10 +39,15 @@ export function findUnjudgedFullSendFilesFromData(
     return verifyBaseDriftFromData(changedFiles, allowlist.paths, taskIds, allowlist.prefixes);
 }
 
-export function fullSendScopeBlockReason(taskIds: readonly string[], files: readonly string[]): string {
+export function fullSendScopeBlockReason(
+    taskIds: readonly string[], files: readonly string[], recordedVerdicts: readonly string[],
+): string {
+    const verdictNote = recordedVerdicts.length > 0
+        ? ` Recorded code-review verdict(s): ${recordedVerdicts.join(', ')}; inspect the review before resuming.`
+        : '';
     return `Full-send code review left out-of-scope files unjudged: ${files.join(', ')}. ` +
         `Add them to a task spec's ### Affected Files table, then re-run \`canon run ${taskIds.join(' ')}\`; ` +
-        `or request changes to remove them.`;
+        `or reroute with a note telling the implementer to remove them.${verdictNote}`;
 }
 
 export type CodeReviewPhaseDeps = {
@@ -436,33 +441,14 @@ export async function runCodeReviewPhase(
         activeCwd,
     }, activeCwd);
 
-    let anyUnfilled = false;
-    const reviewContents = new Map<string, string | null>();
     for (const t of tasks) {
         // Read from the same active task directory that Claude just wrote.
         const reviewPath = path.join(taskDirFor(t.taskId), 'review.md');
         let reviewContent: string | null = null;
         try { reviewContent = fs.readFileSync(reviewPath, 'utf8'); } catch { /* missing */ }
-        reviewContents.set(t.taskId, reviewContent);
         if (isTemplateUnfilled(reviewContent)) {
             warn(`[${t.taskId}] review.md is still the template after code_review run — sub-agent did not write it. Resetting to pending for retry.`);
             taskPhase(t.taskId, 'code_review', 'pending');
-            anyUnfilled = true;
-        }
-    }
-
-    if (scopeFullSend && !anyUnfilled) {
-        const afterAllowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
-        const verdicts = [...reviewContents.values()].map(content =>
-            content === null ? null : extractCheckedVerdict(content));
-        const unjudged = findUnjudgedFullSendFilesFromData(
-            [...changedFiles], afterAllowlist, taskIds, verdicts,
-        );
-        if (unjudged.length > 0) {
-            const reason = fullSendScopeBlockReason(taskIds, unjudged);
-            warn(reason);
-            autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, reason);
-            process.exit(2);
         }
     }
 

@@ -3217,16 +3217,23 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
 
     // A Claude session can finish code_review during one-shot recovery after an
     // unfilled review. Enforce the same full-send scope rule here before QA.
+    let specGapScopeFiles: string[] = [];
     if (phase === 'code_review' && statuses.every(status => status.full_send === true)) {
         const cwd = splitWorktree.getActiveCwd(taskIds);
         const baseBranch = splitGit.getBaseBranch(taskIds);
         const changedFiles = splitGit.getAffectedFiles(baseBranch, cwd);
         const allowlist = splitValidation.buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+        const verdicts = statuses.map(status => getVerdict(status, 'code_review'));
+        if (verdicts.includes('spec_gap')) {
+            specGapScopeFiles = splitValidation.verifyBaseDriftFromData(
+                changedFiles, allowlist.paths, taskIds, allowlist.prefixes,
+            );
+        }
         const unjudged = findUnjudgedFullSendFilesFromData(
-            changedFiles, allowlist, taskIds, statuses.map(status => getVerdict(status, 'code_review')),
+            changedFiles, allowlist, taskIds, verdicts,
         );
         if (unjudged.length > 0) {
-            const reason = fullSendScopeBlockReason(taskIds, unjudged);
+            const reason = fullSendScopeBlockReason(taskIds, unjudged, verdicts.filter(Boolean));
             warn(reason);
             const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
             splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
@@ -3319,9 +3326,14 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], 'code_review') === 'spec_gap');
             if (specGapIds.length > 0) {
                 const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
+                const scopeNote = specGapScopeFiles.length > 0
+                    ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
+                        `A BLESS accepts the verdict but does not amend the spec; inspect these files before blessing.`
+                    : '';
                 const reason =
                     `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(', ')}. ` +
                     `The implementation cannot resolve this — the root cause is in the spec. ` +
+                    scopeNote +
                     `Recovery options (both operate on the full blocked bundle [${taskIds.join(' ')}]):\n` +
                     `  FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(' ')} --reroute\n` +
                     `  BLESS: canon task accept ${taskIds.join(' ')} code_review --reason "<why>"`;
@@ -3332,6 +3344,11 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 console.log('  The code review found a problem in the spec, not a fixable');
                 console.log('  implementation bug. Review the findings:');
                 for (const id of specGapIds) console.log(`    tasks/${id}/review.md`);
+                if (specGapScopeFiles.length > 0) {
+                    console.log('  Full-send files still outside Affected Files:');
+                    for (const file of specGapScopeFiles) console.log(`    ${file}`);
+                    console.log('  BLESS does not amend the spec; inspect these files before blessing.');
+                }
                 console.log('');
                 console.log('  Two recovery options:');
                 console.log('');

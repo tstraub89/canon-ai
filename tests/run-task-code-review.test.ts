@@ -315,6 +315,19 @@ function initReviewRepo(cwd: string): string {
     return gitAt(cwd, 'rev-parse', 'HEAD');
 }
 
+function runCheckAndRouteInFixture(tasksRoot: string, activeCwd: string, taskId: string): { status: number | null; output: string } {
+    const script = `import { checkAndRoute } from ${JSON.stringify(path.join(process.cwd(), 'src/orchestrator/main.ts'))}; await checkAndRoute('code_review', [${JSON.stringify(taskId)}]);`;
+    const result = spawnSync(process.execPath, [
+        '--import', path.join(process.cwd(), 'tests/md-loader-register.mjs'),
+        '--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script,
+    ], {
+        cwd: activeCwd,
+        env: { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot },
+        encoding: 'utf8',
+    });
+    return { status: result.status, output: String(result.stdout) + String(result.stderr) };
+}
+
 function realGitDeps(activeCwd: string, events: string[], onClaude?: (prompt: string) => void): CodeReviewPhaseDeps {
     const deps = makeDeps({ activeCwd, events, onClaude });
     deps.getPathsInRange = getPathsInRange;
@@ -434,17 +447,67 @@ void test('full-send scope is enforced after an unfilled review retries to appro
         retried.phases.code_review!.status = 'done';
         retried.phases.code_review!.verdict = 'approved';
         writeStatusToFile(statusPath, retried);
-        const script = `import { checkAndRoute } from ${JSON.stringify(path.join(process.cwd(), 'src/orchestrator/main.ts'))}; await checkAndRoute('code_review', ['retry-scope']);`;
-        const result = spawnSync(process.execPath, [
-            '--import', path.join(process.cwd(), 'tests/md-loader-register.mjs'),
-            '--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script,
-        ], {
-            cwd: activeCwd,
-            env: { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot },
-            encoding: 'utf8',
-        });
-        assert.equal(result.status, 2, result.stdout + result.stderr);
+        const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, 'retry-scope');
+        assert.equal(result.status, 2, result.output);
         assert.equal(readStatus('retry-scope').phases.code_review?.status, 'blocked');
+        assert.match((readStatus('retry-scope').escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /src\/a\.ts/);
+    });
+});
+
+for (const outcome of ['amended', 'changes_requested', 'spec_gap'] as const) {
+    void test(`full-send router accepts ${outcome} after the foreman`, { concurrency: false }, async () => {
+        await withTempTasksAsync((tasksRoot, activeCwd) => {
+            initReviewRepo(activeCwd);
+            writeTask(tasksRoot, 'router-scope');
+            const statusPath = path.join(tasksRoot, 'router-scope', 'status.json');
+            const status = readStatus('router-scope');
+            status.full_send = true;
+            status.phases.code_review!.status = 'done';
+            status.phases.code_review!.verdict = outcome === 'amended' ? 'approved' : outcome;
+            writeStatusToFile(statusPath, status);
+            if (outcome === 'amended') addAffectedFile(tasksRoot, 'router-scope', 'src/a.ts');
+            if (outcome !== 'spec_gap') writeFilledReview(tasksRoot, 'router-scope',
+                outcome === 'changes_requested' ? 'Changes requested' : 'Approved');
+
+            const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, 'router-scope');
+            if (outcome === 'spec_gap') {
+                assert.equal(result.status, 2, result.output);
+                assert.match(result.output, /src\/a\.ts/);
+                assert.match(result.output, /BLESS does not amend/);
+            } else {
+                assert.equal(result.status, 0, result.output);
+                assert.notEqual(readStatus('router-scope').phases.code_review?.status, 'blocked');
+                if (outcome === 'changes_requested') {
+                    assert.equal(readStatus('router-scope').phases.implement?.status, 'pending');
+                }
+            }
+            return Promise.resolve();
+        });
+    });
+}
+
+void test('partial full-send review without a verdict remains recoverable', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        writeTask(tasksRoot, 'partial-scope');
+        const statusPath = path.join(tasksRoot, 'partial-scope', 'status.json');
+        const status = readStatus('partial-scope');
+        status.full_send = true;
+        writeStatusToFile(statusPath, status);
+        const deps = makeDeps({ activeCwd, events: [], onClaude: () => {
+            fs.writeFileSync(path.join(tasksRoot, 'partial-scope', 'review.md'),
+                '# Code Review\n\n## Stage 1\n\nPartial findings, no verdict yet.\n');
+        } });
+        deps.getAffectedFiles = () => ['src/extra-helper.ts'];
+        const originalExit: typeof process.exit = process.exit.bind(process);
+        process.exit = (code?: string | number | null): never => {
+            throw Object.assign(new Error('process.exit'), { code });
+        };
+        try {
+            await runCodeReviewPhase(makeState(['partial-scope']), false, null, deps);
+        } finally {
+            process.exit = originalExit;
+        }
+        assert.notEqual(readStatus('partial-scope').phases.code_review?.status, 'blocked');
     });
 });
 
@@ -510,10 +573,8 @@ for (const outcome of ['amended', 'directory_amended', 'changes_requested', 'unj
             } });
             deps.getAffectedFiles = () => [file];
             if (outcome === 'unjudged') {
-                await expectExitTwo(() => runCodeReviewPhase(makeState(['scope']), false, null, deps));
-                const blocked = readStatus('scope');
-                assert.equal(blocked.phases.code_review?.status, 'blocked');
-                assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /src\/extra-helper\.ts/);
+                await runCodeReviewPhase(makeState(['scope']), false, null, deps);
+                assert.notEqual(readStatus('scope').phases.code_review?.status, 'blocked');
             } else {
                 const originalExit: typeof process.exit = process.exit.bind(process);
                 process.exit = (code?: string | number | null): never => {
