@@ -315,8 +315,9 @@ function initReviewRepo(cwd: string): string {
     return gitAt(cwd, 'rev-parse', 'HEAD');
 }
 
-function runCheckAndRouteInFixture(tasksRoot: string, activeCwd: string, taskId: string): { status: number | null; output: string } {
-    const script = `import { checkAndRoute } from ${JSON.stringify(path.join(process.cwd(), 'src/orchestrator/main.ts'))}; await checkAndRoute('code_review', [${JSON.stringify(taskId)}]);`;
+function runCheckAndRouteInFixture(tasksRoot: string, activeCwd: string, taskIds: string | readonly string[]): { status: number | null; output: string } {
+    const ids = typeof taskIds === 'string' ? [taskIds] : [...taskIds];
+    const script = `import { checkAndRoute } from ${JSON.stringify(path.join(process.cwd(), 'src/orchestrator/main.ts'))}; await checkAndRoute('code_review', ${JSON.stringify(ids)});`;
     const result = spawnSync(process.execPath, [
         '--import', path.join(process.cwd(), 'tests/md-loader-register.mjs'),
         '--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script,
@@ -427,7 +428,7 @@ void test('scope halt after a prior review resumes at Round 2 without resetting 
     });
 });
 
-void test('full-send scope is enforced after an unfilled review retries to approved', { concurrency: false }, async () => {
+void test('full-send router blocks an approved review that left an out-of-scope file unjudged', { concurrency: false }, async () => {
     await withTempTasksAsync(async (tasksRoot, activeCwd) => {
         initReviewRepo(activeCwd);
         writeTask(tasksRoot, 'retry-scope');
@@ -454,7 +455,7 @@ void test('full-send scope is enforced after an unfilled review retries to appro
     });
 });
 
-for (const outcome of ['amended', 'changes_requested', 'spec_gap'] as const) {
+for (const outcome of ['amended', 'directory_amended', 'changes_requested', 'spec_gap'] as const) {
     void test(`full-send router accepts ${outcome} after the foreman`, { concurrency: false }, async () => {
         await withTempTasksAsync((tasksRoot, activeCwd) => {
             initReviewRepo(activeCwd);
@@ -463,9 +464,10 @@ for (const outcome of ['amended', 'changes_requested', 'spec_gap'] as const) {
             const status = readStatus('router-scope');
             status.full_send = true;
             status.phases.code_review!.status = 'done';
-            status.phases.code_review!.verdict = outcome === 'amended' ? 'approved' : outcome;
+            status.phases.code_review!.verdict = outcome === 'amended' || outcome === 'directory_amended' ? 'approved' : outcome;
             writeStatusToFile(statusPath, status);
             if (outcome === 'amended') addAffectedFile(tasksRoot, 'router-scope', 'src/a.ts');
+            if (outcome === 'directory_amended') addAffectedFile(tasksRoot, 'router-scope', 'src/');
             if (outcome !== 'spec_gap') writeFilledReview(tasksRoot, 'router-scope',
                 outcome === 'changes_requested' ? 'Changes requested' : 'Approved');
 
@@ -480,6 +482,34 @@ for (const outcome of ['amended', 'changes_requested', 'spec_gap'] as const) {
                 if (outcome === 'changes_requested') {
                     assert.equal(readStatus('router-scope').phases.implement?.status, 'pending');
                 }
+            }
+            return Promise.resolve();
+        });
+    });
+}
+
+for (const amended of [true, false]) {
+    void test(`full-send bundle router ${amended ? 'accepts an amendment in the sibling spec' : 'blocks a file no member amended'}`, { concurrency: false }, async () => {
+        await withTempTasksAsync((tasksRoot, activeCwd) => {
+            initReviewRepo(activeCwd);
+            for (const id of ['router-a', 'router-b']) {
+                writeTask(tasksRoot, id);
+                const status = readStatus(id);
+                status.full_send = true;
+                status.phases.code_review!.status = 'done';
+                status.phases.code_review!.verdict = 'approved';
+                writeStatusToFile(path.join(tasksRoot, id, 'status.json'), status);
+                writeFilledReview(tasksRoot, id, 'Approved');
+            }
+            if (amended) addAffectedFile(tasksRoot, 'router-b', 'src/a.ts');
+
+            const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, ['router-a', 'router-b']);
+            if (amended) {
+                assert.equal(result.status, 0, result.output);
+                assert.notEqual(readStatus('router-a').phases.code_review?.status, 'blocked');
+            } else {
+                assert.equal(result.status, 2, result.output);
+                assert.match(result.output, /src\/a\.ts/);
             }
             return Promise.resolve();
         });
@@ -518,9 +548,12 @@ void test('full-send scope exemptions match routing verdicts across a bundle', (
     assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, allowlist, ['task-a', 'task-b'], ['approved', 'needs_re_review']), []);
     assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, allowlist, ['task-a', 'task-b'], ['spec_gap', 'approved']), []);
     assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, allowlist, ['task-a', 'task-b'], ['approved', 'approved']), paths);
+    const prefixed = { paths: new Set<string>(), prefixes: ['src/'] };
+    assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, prefixed, ['task-a'], ['approved']), []);
+    assert.deepEqual(findUnjudgedFullSendFilesFromData(['lib/unlisted.ts'], prefixed, ['task-a'], ['approved']), ['lib/unlisted.ts']);
 });
 
-void test('mixed full-send bundle halts; an amendment in a sibling spec covers the shared diff', { concurrency: false }, async () => {
+void test('mixed full-send bundle halts; once all members opt in the runner hands off to the foreman', { concurrency: false }, async () => {
     await withTempTasksAsync(async (tasksRoot, activeCwd) => {
         for (const id of ['member-a', 'member-b']) writeTask(tasksRoot, id);
         const events: string[] = [];
@@ -535,7 +568,8 @@ void test('mixed full-send bundle halts; an amendment in a sibling spec covers t
         await expectExitTwo(() => runCodeReviewPhase(makeState(['member-a', 'member-b']), false, null, deps));
         assert.deepEqual(events, ['verifyBranch']);
 
-        // The normal member opts in; the union allowlist accepts member-b's amendment.
+        // Once every member is full-send, the runner defers judgment to the foreman
+        // (post-foreman enforcement lives in checkAndRoute; see the bundle router tests).
         const memberB = readStatus('member-b');
         memberB.full_send = true;
         writeStatusToFile(path.join(tasksRoot, 'member-b', 'status.json'), memberB);
@@ -546,7 +580,9 @@ void test('mixed full-send bundle halts; an amendment in a sibling spec covers t
 });
 
 for (const outcome of ['amended', 'directory_amended', 'changes_requested', 'unjudged', 'in_scope'] as const) {
-    void test(`scope pre-flight full-send outcome: ${outcome}`, { concurrency: false }, async () => {
+    // The runner only hands off: it never blocks after the foreman, names the files in the
+    // prompt, and leaves spec.md untouched. Outcome enforcement is covered by the router tests.
+    void test(`full-send runner hands off to the foreman without enforcing (${outcome})`, { concurrency: false }, async () => {
         await withTempTasksAsync(async (tasksRoot, activeCwd) => {
             writeTask(tasksRoot, 'scope');
             const specPath = path.join(tasksRoot, 'scope', 'spec.md');
