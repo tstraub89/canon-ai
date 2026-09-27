@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+## [3.4.0] — 2026-09-27
+
+### Added
+
+- **`code_review` catches files outside the spec's Affected Files at pre-flight instead of at `--pr`.** Previously, a helper, fixture, or rebuilt file the spec didn't list could pass `code_review`, only for `--pr`'s base-drift check to reject it. That forced a spec edit and a second `--pr`. The same scope check now runs just before `code_review`. A normal run halts before any reviewer starts, names the file, and offers two fixes: add it to Affected Files and re-run, or reroute to remove it. In a full-send run, the code-review foreman judges each out-of-scope file instead. It classes each one as an appropriate scope expansion, a spec miss, or something that shouldn't have changed, and records the outcome in `review.md`. For the first two, it also adds a `## Amendment (full-send scope)` section to the spec. That heading does not satisfy the human amendment gate on `--reroute`. `--pr`'s base-drift message now says whether the base branch advanced or the file is out of scope. It no longer labels both cases as scope violations.
+- **The anchored code-review lens checks changed code against `docs/patterns.md`.** When the project keeps that file, the lens reads it first, using its Trigger Table if it has one. It reports each violation of a written project rule as a finding that names the rule, not as a nit. The check runs every round and covers only code the diff changes.
+
+### Changed
+
+- **`code_review` re-rounds review only the fix, not the whole diff, when that's safe.** A full review still runs in these cases:
+  - Round 1.
+  - Every round of an XL or delicate task.
+  - Any round where the previous round's record is missing or unusable.
+  - The fix touches files outside the previous round's change set.
+  - The fix exceeds a size threshold.
+
+  Otherwise, cold-Codex and the cold-Claude lens review only the changes since the commit the previous round reviewed. The anchored lens keeps the full diff, spec, and handoff. No lens is skipped. `review.md` states each round's scope, base, and reason. Each cold-Codex round now writes its own `tasks/<id>/review-cold-codex-run-N.md` instead of overwriting the previous one. The cold-Claude lens also gains a standing sibling-site sweep: when a diff adds or changes a guard or invariant, it looks for other sites that need the same treatment.
+- **The handoff template's guidance on directory paths matches `docs-refs-check`.** Backticking an existing directory is fine. A directory the task deleted should be described in prose or written as a markdown link.
+
+### Fixed
+
+- **The post-implement auto-commit no longer fails when the spec's Affected Files lists a deleted or renamed file.** A path that git had already staged as deleted or renamed away made `git add` fail with "pathspec did not match". All three commit sites now drop paths that are neither tracked nor on disk before staging.
+- **`docs-refs-check` accepts backticked paths to existing directories.** It had reported them as missing files.
+
 ## [3.3.1] — 2026-09-24
 
 ### Fixed
