@@ -25,9 +25,9 @@ Apply canon's existing code-review charter to the diff, spec, handoff, and prior
 
 Run Stage 2 only if Stage 1 passed.
 
-Find correctness bugs, risk/guardrail issues, optional cleanup/nits, and spec gaps. A changed test that passes against broken behavior is a correctness bug. Reference findings by file:line and AC number where applicable.
+**Project conventions — do this first.** Check whether `docs/patterns.md` exists. If it does, read it before reviewing: use its Trigger Table (or skim the file if it has none) to find the sections relevant to the files the diff changes, skipping unfilled placeholder content marked `TODO[canon]` and `_example_` rows. Check the changed code against those rules. Report each violation as a `risk/guardrail` finding that names the rule it breaks (or as a `correctness bug` when it causes incorrect behavior). A violation of a written project rule is not a nit. Apply this check in every round, limited to code changed by the diff.
 
-If the project keeps `docs/patterns.md`, use its Trigger Table (or skim the file if it has none) to find sections relevant to files changed by the diff. Check the changed code against those rules, skipping unfilled placeholder content marked `TODO[canon]` and `_example_` rows. Report each violation as a `risk/guardrail` finding that quotes or names the rule it breaks, or as a `correctness bug` when it causes incorrect behavior. Apply this check in every round, limited to code changed by the diff.
+Find correctness bugs, risk/guardrail issues, optional cleanup/nits, and spec gaps. A changed test that passes against broken behavior is a correctness bug. Reference findings by file:line and AC number where applicable.
 
 Report every issue you find, including ones you are uncertain about or consider low-severity. Do not filter for importance or confidence here — the foreman does that downstream. Tag each Stage 2 finding with both a severity and a confidence so the foreman can rank and filter. Coverage is your job; filtering is not.
 
