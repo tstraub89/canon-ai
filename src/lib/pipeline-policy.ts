@@ -42,7 +42,7 @@ function isReviewOwnedPath(filePath: string, facts: CodeReviewScopeFacts): boole
 export function resolveCodeReviewScope(facts: CodeReviewScopeFacts): CodeReviewScope {
     const full = (reason: string): CodeReviewScope => ({ scope: 'full', base: facts.baseBranch, reason });
     if (facts.isRound1) return full('Round 1 (initial review)');
-    if (facts.effectiveSize === 'XL') return full(facts.delicate ? 'delicate' : 'XL task size');
+    if (facts.effectiveSize === 'XL' || facts.delicate) return full(facts.delicate ? 'delicate' : 'XL task size');
     const prev = facts.prevRecord;
     if (prev === null) return full(facts.previousRecordsDisagree
         ? 'bundle members disagree on the previous reviewed commit'

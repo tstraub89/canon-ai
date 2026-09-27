@@ -546,9 +546,10 @@ export function promptCodeReview(
         isDeltaScope,
         scopeWord: isDeltaScope ? 'Delta' : 'Full',
         scopeBase: scopeInfo?.base ?? resolvedBaseBranch,
-        scopeReason: scopeInfo?.reason ?? (isRound1 ? 'Round 1 (initial review)' : 'full review'),
+        scopeReason: scopeInfo?.reason === 'delta'
+            ? 'small fix within the files already under review'
+            : scopeInfo?.reason ?? (isRound1 ? 'Round 1 (initial review)' : 'full review'),
         deltaBase: scopeInfo?.base ?? '',
-        deltaReason: scopeInfo?.reason ?? '',
         deltaDiffContent: scopeInfo?.deltaDiff?.diff ?? '',
         hasDeltaDiff: scopeInfo?.deltaDiff !== null && scopeInfo?.deltaDiff !== undefined,
         deltaDiffTruncated: scopeInfo?.deltaDiff?.truncated ?? false,

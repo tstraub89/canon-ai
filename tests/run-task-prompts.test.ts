@@ -556,7 +556,7 @@ void test('promptCodeReview_deltaRound', () => {
     assert.match(actual, /delta diff/);
     assert.doesNotMatch(actual, /```diff\nfull diff\n```/);
     assert.match(actual, /git diff main\.\.\.HEAD/);
-    assert.match(actual, /Retrieve the full task diff with `git diff main\.\.\.HEAD` and give it that full diff, not the delta above/);
+    assert.match(actual, /Retrieve the full task diff with `git diff main\.\.\.HEAD` and give it that full diff, not the delta,/);
     assert.match(actual, /sibling-site sweep may search other code files/);
 });
 
