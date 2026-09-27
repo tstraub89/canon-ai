@@ -1,7 +1,7 @@
 {
   "id": "affected-files-preflight-at-code-review",
   "title": "Catch files outside Affected Files at the code_review pre-flight instead of --pr",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-27",
   "updated": "2026-09-27",
   "branch": "task/affected-files-preflight-at-code-review",
@@ -63,7 +63,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
