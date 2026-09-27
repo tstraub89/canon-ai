@@ -113,6 +113,27 @@ void test('filterStageablePaths omits only paths absent from both worktree and i
     });
 });
 
+void test('filterStageablePaths still drops a staged deletion when a prefix lists more files than the output buffer', () => {
+    withTempDir('stageable-large-prefix-', dir => {
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+        git('init');
+        git('config', 'user.email', 'test@example.com');
+        git('config', 'user.name', 'Test User');
+        // ~6,000 tracked paths of ~200 bytes each: a full `git ls-files big`
+        // listing exceeds spawnSync's default 1 MiB stdout buffer.
+        const bigDir = path.join(dir, 'big');
+        fs.mkdirSync(bigDir);
+        const stem = 'x'.repeat(190);
+        for (let i = 0; i < 6000; i += 1) fs.writeFileSync(path.join(bigDir, `${stem}-${i}.ts`), '');
+        fs.writeFileSync(path.join(dir, 'staged-dead.ts'), 'before\n');
+        git('add', '-A');
+        git('commit', '-m', 'fixture baseline');
+        git('rm', 'staged-dead.ts');
+
+        assert.deepEqual(filterStageablePaths(['big', 'staged-dead.ts'], dir), ['big']);
+    });
+});
+
 void test('filterStageablePaths retains candidates when the index probe fails', () => {
     withTempDir('stageable-nonrepo-', dir => {
         assert.deepEqual(filterStageablePaths(['missing.ts', 'removed-dir/'], dir), ['missing.ts', 'removed-dir/']);

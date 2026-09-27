@@ -85,20 +85,18 @@ export function filterGitIgnoredPaths(paths: readonly string[], cwd: string): Se
 /** Keep paths that still have a working-tree entry or an index entry to stage. */
 export function filterStageablePaths(paths: readonly string[], cwd: string): string[] {
     if (paths.length === 0) return [];
-    const result = spawnSync('git', ['ls-files', '-z', '--', ...paths], {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    // An uncertain index must not cause us to silently omit a handoff path.
-    if (result.error || result.status !== 0) return [...paths];
-    const indexedPaths = (result.stdout ?? '').split('\0').filter(Boolean);
 
     return paths.filter(candidate => {
-        const normalized = candidate.replace(/\/+$/, '');
-        if (indexedPaths.some(indexed => indexed === normalized || indexed.startsWith(`${normalized}/`))) {
-            return true;
-        }
+        // Probe one path at a time and discard stdout: a large directory prefix
+        // can list more tracked files than spawnSync's output buffer holds.
+        // Exit 0 = indexed (a directory prefix matches its entries), 1 = no
+        // index entry; anything else leaves the index uncertain, and an
+        // uncertain index must not cause us to silently omit a handoff path.
+        const probe = spawnSync('git', ['ls-files', '--error-unmatch', '--', candidate], {
+            cwd,
+            stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        if (probe.error || probe.status !== 1) return true;
         try {
             fs.lstatSync(path.join(cwd, candidate));
             return true;

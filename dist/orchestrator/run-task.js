@@ -1332,18 +1332,12 @@ function filterGitIgnoredPaths(paths, cwd) {
 }
 function filterStageablePaths(paths, cwd) {
   if (paths.length === 0) return [];
-  const result = spawnSync3("git", ["ls-files", "-z", "--", ...paths], {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (result.error || result.status !== 0) return [...paths];
-  const indexedPaths = (result.stdout ?? "").split("\0").filter(Boolean);
   return paths.filter((candidate) => {
-    const normalized = candidate.replace(/\/+$/, "");
-    if (indexedPaths.some((indexed) => indexed === normalized || indexed.startsWith(`${normalized}/`))) {
-      return true;
-    }
+    const probe = spawnSync3("git", ["ls-files", "--error-unmatch", "--", candidate], {
+      cwd,
+      stdio: ["ignore", "ignore", "ignore"]
+    });
+    if (probe.error || probe.status !== 1) return true;
     try {
       fs6.lstatSync(path5.join(cwd, candidate));
       return true;
