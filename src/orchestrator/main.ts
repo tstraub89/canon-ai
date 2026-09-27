@@ -2965,8 +2965,9 @@ function checkImplementEvidence(taskId: string): EvidenceResult {
         // handles deletions; this pre-check must not be stricter).
         const evidenceCwd = checkRoots[checkRoots.length - 1];
         // A diff from HEAD includes removals staged by `git rm` as well as
-        // working-tree-only deletions. `ls-files --deleted` misses the former.
-        const deletedDiff = splitGit.gitSafeAt(evidenceCwd, 'diff', 'HEAD', '--name-only', '--diff-filter=D');
+        // working-tree-only deletions. `ls-files --deleted` misses the former;
+        // --no-renames keeps a deleted path visible beside a similar added path.
+        const deletedDiff = splitGit.gitSafeAt(evidenceCwd, 'diff', 'HEAD', '--name-only', '--no-renames', '--diff-filter=D');
         const deletedAgainstHead = new Set(
             (deletedDiff.ok ? deletedDiff.stdout : '')
                 .split('\n').map(l => l.trim()).filter(Boolean),

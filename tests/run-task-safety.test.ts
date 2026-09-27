@@ -118,7 +118,7 @@ function setupFakeGit(scriptDir: string): void {
         '  if [ -n "${FAKE_GIT_DELETED_FILES:-}" ]; then printf "%s\\n" "$FAKE_GIT_DELETED_FILES"; fi',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "diff" ] && [ "${2:-}" = "HEAD" ] && [ "${3:-}" = "--name-only" ] && [ "${4:-}" = "--diff-filter=D" ]; then',
+        'if [ "${1:-}" = "diff" ] && [ "${2:-}" = "HEAD" ] && [ "${3:-}" = "--name-only" ] && [ "${4:-}" = "--no-renames" ] && [ "${5:-}" = "--diff-filter=D" ]; then',
         '  if [ -n "${FAKE_GIT_DELETED_FILES:-}" ]; then printf "%s\\n" "$FAKE_GIT_DELETED_FILES"; fi',
         '  exit 0',
         'fi',
@@ -1409,6 +1409,33 @@ void test('checkAndRoute commits a staged deletion for a non-worktree implement 
         assert.equal(execFileSync('git', ['rev-list', '--count', `${before}..HEAD`], { cwd: localDir, encoding: 'utf8' }).trim(), '1');
         assert.deepEqual(latestNameStatuses(localDir), new Set(['D\tdead.ts']));
         assert.equal(execFileSync('git', ['status', '--porcelain=v1', '-uall'], { cwd: localDir, encoding: 'utf8' }), '');
+    });
+});
+
+void test('implement evidence recognizes a removed path paired with an intent-to-add rename', () => {
+    withTempDir('run-task-evidence-intent-rename-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'old.ts': 'export const value = 1;\n' }, ['`old.ts`']);
+        fs.renameSync(path.join(localDir, 'old.ts'), path.join(localDir, 'new.ts'));
+        gitIn(localDir, 'add', '-N', 'new.ts');
+
+        const detected = execFileSync('git', ['diff', 'HEAD', '--name-only', '--diff-filter=D'], {
+            cwd: localDir, encoding: 'utf8',
+        });
+        assert.equal(detected, '');
+        const withoutRenames = execFileSync('git', ['diff', 'HEAD', '--name-only', '--no-renames', '--diff-filter=D'], {
+            cwd: localDir, encoding: 'utf8',
+        }).trim();
+        assert.equal(withoutRenames, 'old.ts');
+
+        const moduleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href;
+        const result = runNodeInline([
+            `import(${JSON.stringify(moduleUrl)})`,
+            ".then(m => { const evidence = m.tryEvidenceAdvance('task-a', 'implement');",
+            '  if (!evidence.advanced) { console.error(evidence.note); process.exit(2); } })',
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), childEnvWithoutTasksOverride(), localDir);
+
+        assert.equal(result.status, 0, result.stderr);
     });
 });
 

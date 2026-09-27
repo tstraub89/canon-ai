@@ -8419,7 +8419,7 @@ function checkImplementEvidence(taskId) {
   );
   if (existingFiles.length === 0) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
-    const deletedDiff = gitSafeAt(evidenceCwd, "diff", "HEAD", "--name-only", "--diff-filter=D");
+    const deletedDiff = gitSafeAt(evidenceCwd, "diff", "HEAD", "--name-only", "--no-renames", "--diff-filter=D");
     const deletedAgainstHead = new Set(
       (deletedDiff.ok ? deletedDiff.stdout : "").split("\n").map((l) => l.trim()).filter(Boolean)
     );
