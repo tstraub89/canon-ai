@@ -64,6 +64,37 @@ void test('backtick file-path refs: existing path passes', () => {
     );
 });
 
+void test('backtick file-path refs: existing directory without trailing slash passes', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/backtick-dir.md', 'See `scripts/fixture-dir`.\n');
+            writeFile(root, 'scripts/fixture-dir/placeholder.ts', 'export const x = 1;\n');
+        },
+        root => assert.deepEqual(runChecks(root), []),
+    );
+});
+
+void test('backtick file-path refs: missing directory still fails', () => {
+    makeTempRepo(
+        root => writeFile(root, 'docs/backtick-missing-dir.md', 'See `scripts/no-such-dir`.\n'),
+        root => assert.deepEqual(runChecks(root), [
+            { file: 'docs/backtick-missing-dir.md', line: 1, ref: '`scripts/no-such-dir`', reason: 'missing file' },
+        ]),
+    );
+});
+
+void test('symbol-in-file refs: existing directory as carrier still fails', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'docs/symbol-dir.md', 'See `fixtureSymbol` in `scripts/fixture-dir`.\n');
+            writeFile(root, 'scripts/fixture-dir/placeholder.ts', 'export const fixtureSymbol = 1;\n');
+        },
+        root => assert.deepEqual(runChecks(root), [
+            { file: 'docs/symbol-dir.md', line: 1, ref: '`fixtureSymbol` in `scripts/fixture-dir`', reason: 'missing file' },
+        ]),
+    );
+});
+
 void test('backtick file-path refs: missing path fails', () => {
     makeTempRepo(
         root => {

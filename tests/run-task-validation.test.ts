@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+    filterStageablePaths,
     parseNameStatusOutput,
 } from '../src/orchestrator/git.js';
 import {
@@ -75,6 +76,69 @@ function withTempDir(prefix: string, fn: (dir: string) => void): void {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 }
+
+void test('filterStageablePaths omits only paths absent from both worktree and index', () => {
+    withTempDir('stageable-paths-', dir => {
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+        git('init');
+        git('config', 'user.email', 'test@example.com');
+        git('config', 'user.name', 'Test User');
+        for (const file of [
+            'staged-dead.ts', 'rename-old.ts', 'removed-dir/file.ts', 'kept-dir/file.ts', 'unstaged-dir/file.ts',
+            'unstaged-dead.ts', 'cached.ts', 'modified.ts',
+        ]) {
+            fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+            fs.writeFileSync(path.join(dir, file), 'before\n');
+        }
+        git('add', '-A');
+        git('commit', '-m', 'fixture baseline');
+
+        git('rm', 'staged-dead.ts');
+        git('mv', 'rename-old.ts', 'rename-new.ts');
+        git('rm', '-r', 'removed-dir');
+        fs.rmSync(path.join(dir, 'unstaged-dir'), { recursive: true });
+        fs.rmSync(path.join(dir, 'unstaged-dead.ts'));
+        git('rm', '--cached', 'cached.ts');
+        fs.writeFileSync(path.join(dir, 'modified.ts'), 'after\n');
+        fs.writeFileSync(path.join(dir, 'new.ts'), 'new\n');
+
+        const candidates = [
+            'staged-dead.ts', 'rename-old.ts', 'rename-new.ts', 'removed-dir',
+            'kept-dir', 'unstaged-dir', 'unstaged-dir/', 'unstaged-dead.ts', 'cached.ts', 'modified.ts', 'new.ts',
+        ];
+        assert.deepEqual(filterStageablePaths(candidates, dir), [
+            'rename-new.ts', 'kept-dir', 'unstaged-dir', 'unstaged-dir/', 'unstaged-dead.ts',
+            'cached.ts', 'modified.ts', 'new.ts',
+        ]);
+    });
+});
+
+void test('filterStageablePaths still drops a staged deletion when a prefix lists more files than the output buffer', () => {
+    withTempDir('stageable-large-prefix-', dir => {
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+        git('init');
+        git('config', 'user.email', 'test@example.com');
+        git('config', 'user.name', 'Test User');
+        // ~6,000 tracked paths of ~200 bytes each: a full `git ls-files big`
+        // listing exceeds spawnSync's default 1 MiB stdout buffer.
+        const bigDir = path.join(dir, 'big');
+        fs.mkdirSync(bigDir);
+        const stem = 'x'.repeat(190);
+        for (let i = 0; i < 6000; i += 1) fs.writeFileSync(path.join(bigDir, `${stem}-${i}.ts`), '');
+        fs.writeFileSync(path.join(dir, 'staged-dead.ts'), 'before\n');
+        git('add', '-A');
+        git('commit', '-m', 'fixture baseline');
+        git('rm', 'staged-dead.ts');
+
+        assert.deepEqual(filterStageablePaths(['big', 'staged-dead.ts'], dir), ['big']);
+    });
+});
+
+void test('filterStageablePaths retains candidates when the index probe fails', () => {
+    withTempDir('stageable-nonrepo-', dir => {
+        assert.deepEqual(filterStageablePaths(['missing.ts', 'removed-dir/'], dir), ['missing.ts', 'removed-dir/']);
+    });
+});
 
 function withTempTasks<T>(fn: (tasksRoot: string) => T): T {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-validation-tasks-'));

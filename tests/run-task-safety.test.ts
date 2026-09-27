@@ -118,6 +118,10 @@ function setupFakeGit(scriptDir: string): void {
         '  if [ -n "${FAKE_GIT_DELETED_FILES:-}" ]; then printf "%s\\n" "$FAKE_GIT_DELETED_FILES"; fi',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "diff" ] && [ "${2:-}" = "HEAD" ] && [ "${3:-}" = "--name-only" ] && [ "${4:-}" = "--no-renames" ] && [ "${5:-}" = "--diff-filter=D" ]; then',
+        '  if [ -n "${FAKE_GIT_DELETED_FILES:-}" ]; then printf "%s\\n" "$FAKE_GIT_DELETED_FILES"; fi',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "ls-files" ] && [ "${2:-}" = "--error-unmatch" ]; then',
         '  if [ "${FAKE_GIT_LS_FILES_FAIL:-}" = "1" ]; then exit 1; fi',
         '  exit 0',
@@ -1258,6 +1262,14 @@ function runCommitQaArtifactsInline(taskId: string, cwd: string): { status: numb
     ].join('\n'), childEnvWithoutTasksOverride(), cwd);
 }
 
+function runAutoCommitCodeInline(taskId: string, cwd: string): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+        `.then(m => { m.autoCommitCode([${JSON.stringify(taskId)}], ${JSON.stringify(cwd)}); })`,
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), childEnvWithoutTasksOverride(), cwd);
+}
+
 function runEnsureWorktreeInline(
     taskId: string,
     branch: string,
@@ -1335,6 +1347,160 @@ function writeImplementEvidenceFixture(tasksRoot: string, taskId: string, handof
         '',
     ].join('\n'), 'utf8');
 }
+
+function makeAutoCommitFixture(dir: string, files: Record<string, string>, handoffChanges: readonly string[]): string {
+    const { localDir } = makeGitFixture(dir);
+    for (const [file, content] of Object.entries(files)) {
+        fs.writeFileSync(path.join(localDir, file), content, 'utf8');
+    }
+    const taskId = 'task-a';
+    const tasksRoot = path.join(localDir, 'tasks');
+    writeImplementEvidenceFixture(tasksRoot, taskId, handoffChanges);
+    writeTaskStatus(tasksRoot, taskId, makeCompleteStatus(taskId, `task/${taskId}`));
+    gitIn(localDir, 'add', '--', ...Object.keys(files), `tasks/${taskId}`);
+    gitIn(localDir, 'commit', '-m', 'fixture baseline');
+    gitIn(localDir, 'checkout', '-b', `task/${taskId}`);
+    return localDir;
+}
+
+function latestNameStatuses(cwd: string): Set<string> {
+    return new Set(execFileSync('git', ['show', '--name-status', '--pretty=format:', 'HEAD'], {
+        cwd, encoding: 'utf8',
+    }).trim().split('\n'));
+}
+
+void test('autoCommitCode commits an already-staged deletion instead of failing the bulk add', () => {
+    withTempDir('run-task-autocommit-staged-deletion-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'dead.ts': 'export const dead = true;\n' }, ['`dead.ts`']);
+        const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        gitIn(localDir, 'rm', 'dead.ts');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.notEqual(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim(), before);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['D\tdead.ts']));
+        assert.equal(execFileSync('git', ['status', '--porcelain=v1', '-uall'], { cwd: localDir, encoding: 'utf8' }), '');
+    });
+});
+
+void test('checkAndRoute commits a staged deletion for a non-worktree implement task', () => {
+    withTempDir('run-task-routed-staged-deletion-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'dead.ts': 'export const dead = true;\n' }, ['`dead.ts`']);
+        const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        gitIn(localDir, 'rm', 'dead.ts');
+
+        const moduleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href;
+        const result = runNodeInline([
+            `import(${JSON.stringify(moduleUrl)})`,
+            ".then(m => m.checkAndRoute('implement', ['task-a']))",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), childEnvWithoutTasksOverride({
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), localDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const status = JSON.parse(fs.readFileSync(path.join(localDir, 'tasks/task-a/status.json'), 'utf8')) as {
+            phases: { implement: { status: string } };
+        };
+        assert.equal(status.phases.implement.status, 'done');
+        assert.equal(execFileSync('git', ['rev-list', '--count', `${before}..HEAD`], { cwd: localDir, encoding: 'utf8' }).trim(), '1');
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['D\tdead.ts']));
+        assert.equal(execFileSync('git', ['status', '--porcelain=v1', '-uall'], { cwd: localDir, encoding: 'utf8' }), '');
+    });
+});
+
+void test('implement evidence recognizes a removed path paired with an intent-to-add rename', () => {
+    withTempDir('run-task-evidence-intent-rename-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'old.ts': 'export const value = 1;\n' }, ['`old.ts`']);
+        fs.renameSync(path.join(localDir, 'old.ts'), path.join(localDir, 'new.ts'));
+        gitIn(localDir, 'add', '-N', 'new.ts');
+
+        const detected = execFileSync('git', ['diff', 'HEAD', '--name-only', '--diff-filter=D'], {
+            cwd: localDir, encoding: 'utf8',
+        });
+        assert.equal(detected, '');
+        const withoutRenames = execFileSync('git', ['diff', 'HEAD', '--name-only', '--no-renames', '--diff-filter=D'], {
+            cwd: localDir, encoding: 'utf8',
+        }).trim();
+        assert.equal(withoutRenames, 'old.ts');
+
+        const moduleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href;
+        const result = runNodeInline([
+            `import(${JSON.stringify(moduleUrl)})`,
+            ".then(m => { const evidence = m.tryEvidenceAdvance('task-a', 'implement');",
+            '  if (!evidence.advanced) { console.error(evidence.note); process.exit(2); } })',
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), childEnvWithoutTasksOverride(), localDir);
+
+        assert.equal(result.status, 0, result.stderr);
+    });
+});
+
+void test('autoCommitCode commits staged deletion and edit together', () => {
+    withTempDir('run-task-autocommit-staged-mixed-', dir => {
+        const localDir = makeAutoCommitFixture(dir, {
+            'dead.ts': 'export const dead = true;\n',
+            'keep.ts': 'export const keep = 1;\n',
+        }, ['`dead.ts`', '`keep.ts`']);
+        const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        gitIn(localDir, 'rm', 'dead.ts');
+        fs.writeFileSync(path.join(localDir, 'keep.ts'), 'export const keep = 2;\n');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(execFileSync('git', ['rev-list', '--count', `${before}..HEAD`], { cwd: localDir, encoding: 'utf8' }).trim(), '1');
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['D\tdead.ts', 'M\tkeep.ts']));
+    });
+});
+
+void test('autoCommitCode commits both sides of a staged rename', () => {
+    withTempDir('run-task-autocommit-staged-rename-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'old.ts': 'export const value = 1;\n' }, [
+            '`old.ts`', '`new.ts`',
+        ]);
+        gitIn(localDir, 'mv', 'old.ts', 'new.ts');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        const tree = execFileSync('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).split('\n');
+        assert.ok(!tree.includes('old.ts'));
+        assert.ok(tree.includes('new.ts'));
+    });
+});
+
+void test('autoCommitCode still stages an unstaged deletion', () => {
+    withTempDir('run-task-autocommit-unstaged-deletion-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'dead.ts': 'export const dead = true;\n' }, ['`dead.ts`']);
+        fs.rmSync(path.join(localDir, 'dead.ts'));
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['D\tdead.ts']));
+    });
+});
+
+void test('commitQaArtifacts commits a staged deletion of a telemetry file', () => {
+    withTempDir('run-task-qa-end-staged-deletion-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        fs.mkdirSync(path.join(localDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'telemetry\n');
+        gitIn(localDir, 'add', 'docs/pipeline-invocations.md');
+        gitIn(localDir, 'commit', '-m', 'add telemetry file');
+        const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        gitIn(localDir, 'rm', 'docs/pipeline-invocations.md');
+        writeQaArtifacts(localDir, 'task-a');
+
+        const result = runCommitQaArtifactsInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(execFileSync('git', ['rev-list', '--count', `${before}..HEAD`], { cwd: localDir, encoding: 'utf8' }).trim(), '1');
+        assert.ok(latestNameStatuses(localDir).has('D\tdocs/pipeline-invocations.md'));
+        assert.ok([...latestNameStatuses(localDir)].some(entry => entry.startsWith('A\ttasks/task-a/')));
+        assert.equal(execFileSync('git', ['status', '--porcelain=v1', '-uall'], { cwd: localDir, encoding: 'utf8' }), '');
+    });
+});
 
 function writeApprovedSpecReview(tasksRoot: string, taskId: string): void {
     fs.mkdirSync(path.join(tasksRoot, taskId), { recursive: true });

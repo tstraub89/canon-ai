@@ -770,7 +770,9 @@ function findBrokenRefs(repoRoot, options = {}) {
                 if (gitIgnoredTargets.has(target)) continue;
 
                 const targetPath = resolveRepoRelative(repoRoot, target);
-                if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isFile()) {
+                const targetExists = fs.existsSync(targetPath)
+                    && (fs.statSync(targetPath).isFile() || fs.statSync(targetPath).isDirectory());
+                if (!targetExists) {
                     addFinding(sourceFile, lineNumber, refText, 'missing file');
                 }
             }

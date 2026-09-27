@@ -12,7 +12,7 @@
 >
 > **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
 
-> **Never backtick a bare directory path** anywhere in this file (e.g. write "the app source tree (apps/app/src)", not `` `apps/app/src` ``). `docs-refs-check` treats a backticked path as a file reference and aborts the pipeline's auto-commit with "missing file" when it is a directory. Backtick only real files.
+> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
 
 | File | What Changed |
 |---|---|

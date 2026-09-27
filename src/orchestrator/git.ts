@@ -1,4 +1,5 @@
 import { spawnSync, type SpawnSyncOptions } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { REPO_ROOT } from './env.js';
@@ -79,6 +80,32 @@ export function filterGitIgnoredPaths(paths: readonly string[], cwd: string): Se
     }
     const stdout = result.stdout ?? '';
     return new Set(stdout.split('\0').filter(p => p.length > 0));
+}
+
+/** Keep paths that still have a working-tree entry or an index entry to stage. */
+export function filterStageablePaths(paths: readonly string[], cwd: string): string[] {
+    if (paths.length === 0) return [];
+
+    return paths.filter(candidate => {
+        // Probe one path at a time and discard stdout: a large directory prefix
+        // can list more tracked files than spawnSync's output buffer holds.
+        // Exit 0 = indexed (a directory prefix matches its entries), 1 = no
+        // index entry; anything else leaves the index uncertain, and an
+        // uncertain index must not cause us to silently omit a handoff path.
+        const probe = spawnSync('git', ['ls-files', '--error-unmatch', '--', candidate], {
+            cwd,
+            stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        if (probe.error || probe.status !== 1) return true;
+        try {
+            fs.lstatSync(path.join(cwd, candidate));
+            return true;
+        } catch (error) {
+            // Only known absence means the staged removal needs no new `git add`.
+            const code = (error as NodeJS.ErrnoException).code;
+            return code !== 'ENOENT' && code !== 'ENOTDIR';
+        }
+    });
 }
 
 export function commitTaskArtifactsToBase(taskIds: string[], _artifactFiles: ReadonlySet<string>): void {

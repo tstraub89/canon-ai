@@ -1,15 +1,15 @@
 {
   "id": "fix-staged-deletion-autocommit-and-dir-refs",
   "title": "Auto-commit handles already-staged deletions and renames; docs-refs-check accepts directory refs",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-09-27",
   "updated": "2026-09-27",
-  "branch": "",
+  "branch": "task/fix-staged-deletion-autocommit-and-dir-refs",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "6600e947b914047ab363bd3d19e9f18415137b2e",
-    "orchestrator_commit": "6600e947b914047ab363bd3d19e9f18415137b2e",
+    "upstream_commit": "630537c84095c512122b64be73396b768bd5f6fc",
+    "orchestrator_commit": "630537c84095c512122b64be73396b768bd5f6fc",
     "canon_version": "3.3.1",
     "codex_cli": "codex-cli 0.157.1",
     "claude_code": "2.1.283 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "01a0e08f-d5bd-7190-9acc-68f5a7718b6c",
-    "claude_spec": "1c26ca86-d7d6-4208-9b2c-2ac7beb5756b"
+    "claude_spec": "1c26ca86-d7d6-4208-9b2c-2ac7beb5756b",
+    "codex": "01a0e262-783e-7503-a80f-3446a2151fb4",
+    "claude_review": "bc1e8686-50f7-4b41-9861-46efc74975a7"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

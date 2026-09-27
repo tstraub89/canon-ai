@@ -74,6 +74,22 @@ When an orchestrator step needs to record "what the process reviewed/acted on" (
 
 ---
 
+### A deletion-evidence probe needs a full history-to-worktree diff, and `--no-renames`
+
+*(2026-09-27, source: fix-staged-deletion-autocommit-and-dir-refs)*
+
+A gate that decides "does this handoff's removed path still count as evidence" by running `git ls-files --deleted` sees only *unstaged* removals — a path already removed from the index with `git rm` is invisible to it, so the gate rejects a perfectly valid staged deletion before auto-commit ever runs. The fix is `git diff HEAD --name-only --diff-filter=D`, which reports both staged and unstaged removals against the last commit. But that alone isn't enough: Git's rename detection can pair the removed path with a similarly-named added or intent-to-add path elsewhere in the diff and report neither as a `D`, hiding the deletion again. Add `--no-renames` so the probe sees the plain add/delete pair instead of a rename. Both gaps were caught only by a real-git regression test that drove the actual routing path (`checkAndRoute`), not by calling the underlying function directly — a fixture that calls the function in isolation can pass while the gate in front of it still wedges. Rule of thumb: any deletion-evidence probe built on `git diff`/`git status` output needs both a staged+unstaged union and an explicit rename-detection stance, and needs a red-first test that goes through the real caller, not just the leaf function.
+
+---
+
+### A fake-git test fixture must be updated in lockstep with the production git command it mocks
+
+*(2026-09-27, source: fix-staged-deletion-autocommit-and-dir-refs)*
+
+When a gate's underlying git probe changes (e.g. from `git ls-files --deleted` to `git diff HEAD --name-only --diff-filter=D`), any test fixture that fakes the git binary by matching on argv and returning a canned response silently goes stale: the fixture keeps answering the *old* command's argv pattern, misses the new one, and returns its default/fallback response instead of the intended one — sometimes still passing, for the wrong reason. This task's real-git regression caught the gate change correctly, but the pre-existing fake-git fixture for the same code path only surfaced its staleness on the next full-suite run. Rule of thumb: whenever a production git command's exact invocation changes, grep the fake-git fixtures for argv patterns matching the *old* invocation and update them to the new one in the same change — a fake-git fixture drifting from its production probe is invisible until something else (a full suite run, a different targeted test) happens to exercise it.
+
+---
+
 <!-- Buffer swept 2026-08-22 (3 entries reviewed: 1 promoted, 1 kept in buffer, 1 pruned).
      Promotion → docs/patterns.md: "Operator-facing text is often rendered by independently-authored duplicates — grep the surface class" as a new pitfall + Trigger Table row (from the duplicate-presentation-surfaces entry; strengthened by a second same-week instance in archive-review-on-reroute's dual review.md prompt pointers).
      Kept in buffer: the grep-AC-exception-list-growth entry — adjacent to two existing canon-spec SKILL rules (≥3-iterations read-content, permitted-to-remain buckets); re-evaluate for a one-sentence SKILL graft if it recurs.
