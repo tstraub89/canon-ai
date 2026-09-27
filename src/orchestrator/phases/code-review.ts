@@ -2,17 +2,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { info, setExitReason, warn } from '../cli.js';
-import { getAffectedFiles, getBaseBranch, getScopedDiff, verifyBranch } from '../git.js';
-import { getClaudeConfig, getCodexConfig, getMaxReviewLoops } from '../policy.js';
+import { getAffectedFiles, getBaseBranch, getScopedDiff, getScopedDiffInRange, getPathsInRange, getDeltaLineStats, resolveCommit, isAncestorCommit, verifyBranch } from '../git.js';
+import { getClaudeConfig, getCodexConfig, getEffectiveSize, getMaxReviewLoops } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
 import { runColdCodexReview } from '../agents/codex.js';
-import { getActiveCwd } from '../worktree.js';
+import { getActiveCwd, PIPELINE_TELEMETRY_FILES } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
 import { classifyPreflightBlockers, isTemplateUnfilled, verifyHandoffAgainstDiff } from '../validation.js';
 import type { ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
-import { promptCodeReview } from '../prompts/index.js';
+import { promptCodeReview, resolveCodeReviewRound } from '../prompts/index.js';
+import { findColdCodexArchiveForRound, hasMalformedColdCodexArchive, writeColdCodexArchive } from '../review-archive.js';
+import { resolveCodeReviewScope } from '../../lib/pipeline-policy.js';
 import { taskPhase, taskPhasePreflightRejected } from '../../task/index.js';
 
 export type PreflightRoute = 'implement' | 'auto_block';
@@ -29,6 +31,15 @@ export type CodeReviewPhaseDeps = {
     getAffectedFiles: typeof getAffectedFiles;
     verifyHandoffAgainstDiff: typeof verifyHandoffAgainstDiff;
     getScopedDiff: typeof getScopedDiff;
+    getScopedDiffInRange: typeof getScopedDiffInRange;
+    getPathsInRange: typeof getPathsInRange;
+    getDeltaLineStats: typeof getDeltaLineStats;
+    resolveCommit: typeof resolveCommit;
+    isAncestorCommit: typeof isAncestorCommit;
+    getEffectiveSize: typeof getEffectiveSize;
+    findColdCodexArchiveForRound: typeof findColdCodexArchiveForRound;
+    hasMalformedColdCodexArchive: typeof hasMalformedColdCodexArchive;
+    writeColdCodexArchive: typeof writeColdCodexArchive;
     getClaudeConfig: typeof getClaudeConfig;
     getMaxReviewLoops: typeof getMaxReviewLoops;
     getCodexConfig: typeof getCodexConfig;
@@ -43,6 +54,15 @@ const defaultDeps: CodeReviewPhaseDeps = {
     getAffectedFiles,
     verifyHandoffAgainstDiff,
     getScopedDiff,
+    getScopedDiffInRange,
+    getPathsInRange,
+    getDeltaLineStats,
+    resolveCommit,
+    isAncestorCommit,
+    getEffectiveSize,
+    findColdCodexArchiveForRound,
+    hasMalformedColdCodexArchive,
+    writeColdCodexArchive,
     getClaudeConfig,
     getMaxReviewLoops,
     getCodexConfig,
@@ -297,9 +317,39 @@ export async function runCodeReviewPhase(
     info(`Phase: code_review (Claude${state.isBundle ? ' bundle' : ''}, iteration ${maxIter + 1})`);
     for (const t of tasks) taskPhase(t.taskId, 'code_review', 'in_progress');
 
+    const { isRound1, roundN } = resolveCodeReviewRound(tasks);
+    const effectiveSize = deps.getEffectiveSize(tasks);
+    const delicate = tasks.some(t => t.status.delicate === true);
+    const records = !isRound1 && effectiveSize !== 'XL'
+        ? tasks.map(t => deps.findColdCodexArchiveForRound(taskDirFor(t.taskId), roundN - 1))
+        : [];
+    const agreed = records.length === tasks.length && records.every(record =>
+        record !== null && record.reviewedSha === records[0]?.reviewedSha);
+    const previousArchiveMalformed = records.some((record, index) =>
+        record === null && deps.hasMalformedColdCodexArchive(taskDirFor(tasks[index].taskId)));
+    const reviewedSha = agreed ? records[0]?.reviewedSha : undefined;
+    const resolved = reviewedSha ? deps.resolveCommit(reviewedSha, activeCwd) : null;
+    const head = resolved ? deps.resolveCommit('HEAD', activeCwd) : null;
+    const prevRecord = reviewedSha ? {
+        reviewedSha,
+        exists: resolved !== null,
+        isAncestor: resolved !== null && deps.isAncestorCommit(reviewedSha, 'HEAD', activeCwd),
+        equalsHead: resolved !== null && head !== null && resolved === head,
+    } : null;
+    const scope = resolveCodeReviewScope({
+        isRound1, effectiveSize, delicate, baseBranch, prevRecord, previousArchiveMalformed,
+        deltaPaths: resolved ? deps.getPathsInRange(`${reviewedSha}..HEAD`, activeCwd) : [],
+        priorChangeSetPaths: resolved ? deps.getPathsInRange(`${baseBranch}...${reviewedSha}`, activeCwd) : [],
+        deltaFileStats: resolved && reviewedSha ? deps.getDeltaLineStats(reviewedSha, activeCwd) : [],
+        taskIds, telemetryFiles: PIPELINE_TELEMETRY_FILES,
+    });
+    const deltaDiff = scope.scope === 'delta'
+        ? deps.getScopedDiffInRange(`${scope.base}..HEAD`, activeCwd)
+        : null;
+
     const coldCfg = deps.getCodexConfig('code_review', tasks);
     const coldReviewStartMs = Date.now();
-    const coldReview = await deps.runColdCodexReview(baseBranch, coldCfg.model, coldCfg.effort, activeCwd, {
+    const coldReview = await deps.runColdCodexReview(scope.base, coldCfg.model, coldCfg.effort, activeCwd, {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,
@@ -323,12 +373,19 @@ export async function runCodeReviewPhase(
             'utf8',
         );
     }
+    const headSha = deps.resolveCommit('HEAD', activeCwd);
+    if (!headSha) throw new Error('Cannot archive cold-Codex findings: HEAD does not resolve to a commit');
+    for (const t of tasks) {
+        deps.writeColdCodexArchive(taskDirFor(t.taskId), {
+            round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
+        }, coldReview.findings);
+    }
     info(`→ cold-codex review (${taskIds.join(', ')}): ${Math.round(coldReviewDurationMs / 1000)}s`);
 
     const cfg = deps.getClaudeConfig('code_review', tasks);
     const reviewResumeId = maxIter > 0 ? resumeId : null;
     const scopedDiff = deps.getScopedDiff(baseBranch, activeCwd);
-    const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
+    const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,

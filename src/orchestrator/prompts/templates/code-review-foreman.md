@@ -24,6 +24,8 @@ This is Round {{roundN}}: re-review after iteration {{priorIteration}}. The lens
 {{/tightenLine}}
 {{/isRound1}}
 
+**Scope:** {{{scopeWord}}} — base `{{{scopeBase}}}` — reason: {{{scopeReason}}}
+
 {{#hasDiff}}
 Task diff against {{{baseBranch}}}:
 
@@ -37,11 +39,24 @@ Task diff against {{{baseBranch}}}:
 {{^hasDiff}}
 Retrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.
 {{/hasDiff}}
+{{#isDeltaScope}}
+Delta diff (`{{{deltaBase}}}..HEAD`) — give this delta to the cold-Claude lens:
+
+```diff
+{{{deltaDiffContent}}}
+```
+{{#deltaDiffTruncated}}
+> Delta diff truncated at 50 000 bytes. Give the cold-Claude lens the visible delta first; for the remainder, direct it to `git diff {{{deltaBase}}}..HEAD`.
+{{/deltaDiffTruncated}}
+{{/isDeltaScope}}
 
 ## Injected Cold-Codex Findings
 
 {{#hasColdCodexFindings}}
 The orchestrator ran `codex review` over the task's branch diff before spawning you. Its findings are reproduced below. These are unanchored: Codex reviewed adversarially without the spec as a checklist. Treat them as the third lens input. Do not re-run Codex; synthesize these findings alongside the Claude lens outputs.
+{{#isDeltaScope}}
+For this round, cold-Codex reviewed `{{{deltaBase}}}..HEAD`.
+{{/isDeltaScope}}
 
 {{{coldCodexFindings}}}
 {{/hasColdCodexFindings}}
@@ -61,7 +76,12 @@ Spawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in olde
 - It returns structured findings to you. It must not write `review.md` or run `canon task phase`.
 
 **Cold-Claude lens** (`subagent_type: code-review-cold`)
+{{#isDeltaScope}}
+- This round is delta-scoped ({{{deltaReason}}}). Give it the delta diff above (`{{{deltaBase}}}..HEAD`) and delta base ref only.
+{{/isDeltaScope}}
+{{^isDeltaScope}}
 - Give it the full diff and base ref only.
+{{/isDeltaScope}}
 - Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.
 - If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.
 - It returns structured findings to you. It must not write `review.md` or run `canon task phase`.
@@ -97,6 +117,8 @@ Test-integrity findings are always code-bugs.
 For each task, write `tasks/<id>/review.md`.
 
 Round 1 fills the existing template structure directly — do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.
+
+Every round — the Round 1 body and each `## Round N` section — includes one scope line near the top: **Scope:** {{{scopeWord}}} — base `{{{scopeBase}}}` — reason: {{{scopeReason}}}. The numbered cold-Codex archive header is the machine-readable record.
 
 Include:
 - Stage 1: anchored lens validation gate result and AC table.

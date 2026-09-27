@@ -517,7 +517,8 @@ function isNoisySourceFile(relPath, skipPaths = []) {
     return (
         relPath === 'docs/BACKLOG.md' ||
         /(?:^|\/)templates\/(?:.*\/)?(spec|plan|notes|spec-review)\.md$/.test(relPath) ||
-        /^tasks\/[^/]+\/(spec|plan|notes|spec-review)\.md$/.test(relPath)
+        /^tasks\/[^/]+\/(spec|plan|notes|spec-review)\.md$/.test(relPath) ||
+        /^tasks\/[^/]+\/review-cold-codex-run-\d+\.md$/.test(relPath)
     );
 }
 

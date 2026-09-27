@@ -15,9 +15,11 @@ Review adversarially for bugs the diff introduces: race conditions, lifecycle is
 
 **Diff-local pattern**: when you see the same safety check, guard, or invariant applied at multiple call sites but a new call site introduced by this diff is missing it, flag it — an inconsistently applied guard is a correctness gap regardless of intent.
 
+**Sibling-site sweep**: when the diff adds or changes a guard, check, or invariant, search the repository for other sites that need the same treatment and report any missing site. Keep that search spec-blind; do not read task artifacts or canon docs.
+
 Report every issue you find, including ones you are uncertain about or consider low-severity. Do not filter for importance or confidence here — the foreman does that downstream. Tag each finding with both a confidence and a severity so the foreman can rank and filter. Coverage is your job; filtering is not.
 
-If the visible diff is truncated and you need more context, inspect only changed files or run a diff against the provided base ref. Do not read `spec.md`, `handoff.md`, `review.md`, canon docs, task notes, or acceptance criteria.
+If the visible diff is truncated and you need more context, inspect changed files or run a diff against the provided base ref. The sibling-site sweep may search other code files. Do not read `spec.md`, `handoff.md`, `review.md`, canon docs, task notes, or acceptance criteria.
 
 ## Return Format
 

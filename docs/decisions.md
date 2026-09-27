@@ -355,6 +355,18 @@ Bundle contract: a bundle shares one branch and one combined diff, so the orches
 
 ---
 
+## Per-round code-review scope: full vs. delta, with a numbered cold-Codex archive (2026-09)
+
+**Decision**: Each `code_review` round resolves a `full` or `delta` scope. Round 1, effective XL size (including delicate tasks), a missing or unusable previous-round archive, paths outside the previous change set, or more than 400 changed lines force `full`. Otherwise cold-Codex reviews from the previous round's reviewed SHA, cold-Claude receives that delta, and anchored Claude retains the full diff and task artifacts. All three lenses run every round.
+
+Each successful cold-Codex invocation writes a numbered `tasks/<id>/review-cold-codex-run-N.md` archive with the round, reviewed SHA, scope, base, and reason. The existing `review-cold-codex.md` still holds the latest verbatim findings. Numbering is numeric max+1, independent of round number.
+
+**Supersedes**: The fixed `--base <baseBranch>` clause of the cold-Codex decision above. The sequential and hard-fail rules remain in force.
+
+**Why**: Later-round archive analysis found useful cold-lens catches in the fix diff, while full re-review also generated repeat and out-of-scope findings. Delta scope keeps the fix under three lenses while preserving full review at the higher-risk boundaries.
+
+---
+
 ## JIT rule delivery: canon rules injected per phase, not ambient auto-loaded
 
 **Decision**: Canon's operating rules are delivered just-in-time per consuming phase via injected prompt templates (`implement.md`, `qa.md`, `spec-review.md`, etc.), agent charters (`.claude/agents/`), and skills (`.claude/skills/`) — not via ambient auto-load of `AGENTS.md` / `CLAUDE.md` in every pipeline session.

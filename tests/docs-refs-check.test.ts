@@ -82,6 +82,19 @@ void test('backtick file-path refs: missing path fails', () => {
     );
 });
 
+void test('numbered cold-Codex archives are noisy, but review.md still checks refs', () => {
+    makeTempRepo(
+        root => {
+            writeFile(root, 'tasks/foo/review-cold-codex-run-11.md', 'See `scripts/nonexistent-target.ts`.\n');
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+            writeFile(root, 'tasks/foo/review.md', 'See `scripts/nonexistent-target.ts`.\n');
+            assert.ok(runChecks(root).some(issue => issue.file === 'tasks/foo/review.md' && issue.reason === 'missing file'));
+        },
+    );
+});
+
 void test('line-citation refs: ascii hyphen, en-dash, and em-dash all pass', () => {
     makeTempRepo(
         root => {

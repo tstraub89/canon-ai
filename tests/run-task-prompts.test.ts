@@ -544,6 +544,20 @@ void test('promptCodeReview_roundN', () => {
     recordOrAssert('promptCodeReview_roundN', actual);
 });
 
+void test('promptCodeReview_deltaRound', () => {
+    const actual = normalize(promptCodeReview(codeReviewRoundNState, 'main',
+        { diff: 'full diff', truncated: false }, 'cold findings', {
+            scope: 'delta', base: 'a'.repeat(40), reason: 'delta',
+            deltaDiff: { diff: 'delta diff', truncated: false },
+        }));
+    recordOrAssert('promptCodeReview_deltaRound', actual);
+    assert.match(actual, /subagent_type: code-review-anchored/);
+    assert.match(actual, /subagent_type: code-review-cold/);
+    assert.match(actual, /delta diff/);
+    assert.doesNotMatch(actual, /```diff\nfull diff\n```/);
+    assert.match(actual, /git diff main\.\.\.HEAD/);
+});
+
 // Defense in depth against the historical pre-flight-rejection-counts-as-round
 // bug. Even with iteration counters > 0, if review.md lacks a `## Stage 1`
 // heading (because the prior "round" was a pre-flight rejection, not a real
@@ -759,6 +773,7 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     assert.doesNotMatch(anchored, /Prefer positive or structural assertions/);
 
     const cold = readRepoFile('.claude/agents/code-review-cold.md');
+    assert.match(cold, /Sibling-site sweep/);
     assert.doesNotMatch(cold, /Name effects to DELETE/);
     assert.doesNotMatch(cold, /Prefer positive or structural assertions/);
 

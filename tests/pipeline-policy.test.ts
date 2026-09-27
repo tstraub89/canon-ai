@@ -15,7 +15,57 @@ import {
     type PolicyConfig,
     type PolicyInput,
     type TaskSize,
+    CODE_REVIEW_DELTA_LINE_THRESHOLD,
+    resolveCodeReviewScope,
+    type CodeReviewScopeFacts,
 } from '../src/lib/pipeline-policy.ts';
+
+const reviewFacts: CodeReviewScopeFacts = {
+    isRound1: false, effectiveSize: 'M', delicate: false, baseBranch: 'main',
+    prevRecord: { reviewedSha: 'a'.repeat(40), exists: true, isAncestor: true, equalsHead: false },
+    deltaPaths: ['src/a.ts'], priorChangeSetPaths: ['src/a.ts'],
+    deltaFileStats: [{ path: 'src/a.ts', added: 2, deleted: 1 }],
+    taskIds: ['work'], telemetryFiles: ['docs/lessons-learned.md'],
+};
+
+for (const [name, override, reason] of [
+    ['round 1', { isRound1: true }, /Round 1/],
+    ['XL', { effectiveSize: 'XL' }, /XL task size/],
+    ['delicate', { effectiveSize: 'XL', delicate: true }, /delicate/],
+    ['missing archive', { prevRecord: null }, /no cold-Codex archive record/],
+    ['unparseable archive', { prevRecord: null, previousArchiveMalformed: true }, /unparseable cold-Codex archive record/],
+    ['bad SHA', { prevRecord: { reviewedSha: 'bad', exists: false, isAncestor: false, equalsHead: false } }, /does not resolve/],
+    ['non-ancestor', { prevRecord: { reviewedSha: 'a', exists: true, isAncestor: false, equalsHead: false } }, /not an ancestor/],
+    ['same HEAD', { prevRecord: { reviewedSha: 'a', exists: true, isAncestor: true, equalsHead: true } }, /equals HEAD/],
+    ['outside path', { deltaPaths: ['src/b.ts'] }, /outside the previous round's change set/],
+    ['over threshold', { deltaFileStats: [{ path: 'src/a.ts', added: CODE_REVIEW_DELTA_LINE_THRESHOLD + 1, deleted: 0 }] }, /exceeds 400/],
+] as const) {
+    void test(`code-review scope: ${name} forces full`, () => {
+        const result = resolveCodeReviewScope({ ...reviewFacts, ...override });
+        assert.equal(result.scope, 'full');
+        assert.equal(result.base, 'main');
+        assert.match(result.reason, reason);
+    });
+}
+
+void test('code-review scope: normal delta and exact line boundary', () => {
+    assert.deepEqual(resolveCodeReviewScope(reviewFacts), { scope: 'delta', base: 'a'.repeat(40), reason: 'delta' });
+    assert.equal(resolveCodeReviewScope({ ...reviewFacts,
+        deltaFileStats: [{ path: 'src/a.ts', added: CODE_REVIEW_DELTA_LINE_THRESHOLD, deleted: 0 }],
+    }).scope, 'delta');
+});
+
+void test('code-review scope excludes task artifacts and telemetry from paths and line count', () => {
+    const result = resolveCodeReviewScope({ ...reviewFacts,
+        deltaPaths: ['tasks/work/handoff.md', 'docs/lessons-learned.md', 'src/a.ts'],
+        deltaFileStats: [
+            { path: 'tasks/work/handoff.md', added: 800, deleted: 0 },
+            { path: 'docs/lessons-learned.md', added: 800, deleted: 0 },
+            { path: 'src/a.ts', added: 1, deleted: 0 },
+        ],
+    });
+    assert.equal(result.scope, 'delta');
+});
 
 const TEST_CONFIG: PolicyConfig = {
     claudeModelSpec: 'opus',
