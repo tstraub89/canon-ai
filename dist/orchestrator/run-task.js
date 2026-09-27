@@ -8419,8 +8419,9 @@ function checkImplementEvidence(taskId) {
   );
   if (existingFiles.length === 0) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
-    const deletedInWorkingTree = new Set(
-      gitSafeAt(evidenceCwd, "ls-files", "--deleted").stdout.split("\n").map((l) => l.trim()).filter(Boolean)
+    const deletedDiff = gitSafeAt(evidenceCwd, "diff", "HEAD", "--name-only", "--diff-filter=D");
+    const deletedAgainstHead = new Set(
+      (deletedDiff.ok ? deletedDiff.stdout : "").split("\n").map((l) => l.trim()).filter(Boolean)
     );
     const baseBranch = sForEvidence.base_branch || getDefaultBaseBranch();
     const committedDiff = gitSafeAt(
@@ -8433,7 +8434,7 @@ function checkImplementEvidence(taskId) {
       committedDiff.stdout.split("\n").filter((l) => l.startsWith("D")).map((l) => l.split("	")[1]?.trim()).filter((p) => Boolean(p))
     );
     const deletedFiles = verifiableFiles.filter(
-      (f) => deletedInWorkingTree.has(f) || deletedInCommits.has(f)
+      (f) => deletedAgainstHead.has(f) || deletedInCommits.has(f)
     );
     if (deletedFiles.length === 0) {
       return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk or are git-tracked deletions` };

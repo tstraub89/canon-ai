@@ -84,7 +84,7 @@ void test('filterStageablePaths omits only paths absent from both worktree and i
         git('config', 'user.email', 'test@example.com');
         git('config', 'user.name', 'Test User');
         for (const file of [
-            'staged-dead.ts', 'rename-old.ts', 'removed-dir/file.ts', 'kept-dir/file.ts',
+            'staged-dead.ts', 'rename-old.ts', 'removed-dir/file.ts', 'kept-dir/file.ts', 'unstaged-dir/file.ts',
             'unstaged-dead.ts', 'cached.ts', 'modified.ts',
         ]) {
             fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
@@ -96,6 +96,7 @@ void test('filterStageablePaths omits only paths absent from both worktree and i
         git('rm', 'staged-dead.ts');
         git('mv', 'rename-old.ts', 'rename-new.ts');
         git('rm', '-r', 'removed-dir');
+        fs.rmSync(path.join(dir, 'unstaged-dir'), { recursive: true });
         fs.rmSync(path.join(dir, 'unstaged-dead.ts'));
         git('rm', '--cached', 'cached.ts');
         fs.writeFileSync(path.join(dir, 'modified.ts'), 'after\n');
@@ -103,11 +104,18 @@ void test('filterStageablePaths omits only paths absent from both worktree and i
 
         const candidates = [
             'staged-dead.ts', 'rename-old.ts', 'rename-new.ts', 'removed-dir',
-            'kept-dir', 'unstaged-dead.ts', 'cached.ts', 'modified.ts', 'new.ts',
+            'kept-dir', 'unstaged-dir', 'unstaged-dir/', 'unstaged-dead.ts', 'cached.ts', 'modified.ts', 'new.ts',
         ];
         assert.deepEqual(filterStageablePaths(candidates, dir), [
-            'rename-new.ts', 'kept-dir', 'unstaged-dead.ts', 'cached.ts', 'modified.ts', 'new.ts',
+            'rename-new.ts', 'kept-dir', 'unstaged-dir', 'unstaged-dir/', 'unstaged-dead.ts',
+            'cached.ts', 'modified.ts', 'new.ts',
         ]);
+    });
+});
+
+void test('filterStageablePaths retains candidates when the index probe fails', () => {
+    withTempDir('stageable-nonrepo-', dir => {
+        assert.deepEqual(filterStageablePaths(['missing.ts', 'removed-dir/'], dir), ['missing.ts', 'removed-dir/']);
     });
 });
 

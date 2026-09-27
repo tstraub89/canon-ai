@@ -118,6 +118,10 @@ function setupFakeGit(scriptDir: string): void {
         '  if [ -n "${FAKE_GIT_DELETED_FILES:-}" ]; then printf "%s\\n" "$FAKE_GIT_DELETED_FILES"; fi',
         '  exit 0',
         'fi',
+        'if [ "${1:-}" = "diff" ] && [ "${2:-}" = "HEAD" ] && [ "${3:-}" = "--name-only" ] && [ "${4:-}" = "--diff-filter=D" ]; then',
+        '  if [ -n "${FAKE_GIT_DELETED_FILES:-}" ]; then printf "%s\\n" "$FAKE_GIT_DELETED_FILES"; fi',
+        '  exit 0',
+        'fi',
         'if [ "${1:-}" = "ls-files" ] && [ "${2:-}" = "--error-unmatch" ]; then',
         '  if [ "${FAKE_GIT_LS_FILES_FAIL:-}" = "1" ]; then exit 1; fi',
         '  exit 0',
@@ -1374,6 +1378,35 @@ void test('autoCommitCode commits an already-staged deletion instead of failing 
         const result = runAutoCommitCodeInline('task-a', localDir);
         assert.equal(result.status, 0, result.stderr);
         assert.notEqual(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim(), before);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['D\tdead.ts']));
+        assert.equal(execFileSync('git', ['status', '--porcelain=v1', '-uall'], { cwd: localDir, encoding: 'utf8' }), '');
+    });
+});
+
+void test('checkAndRoute commits a staged deletion for a non-worktree implement task', () => {
+    withTempDir('run-task-routed-staged-deletion-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'dead.ts': 'export const dead = true;\n' }, ['`dead.ts`']);
+        const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        gitIn(localDir, 'rm', 'dead.ts');
+
+        const moduleUrl = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href;
+        const result = runNodeInline([
+            `import(${JSON.stringify(moduleUrl)})`,
+            ".then(m => m.checkAndRoute('implement', ['task-a']))",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), childEnvWithoutTasksOverride({
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }), localDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const status = JSON.parse(fs.readFileSync(path.join(localDir, 'tasks/task-a/status.json'), 'utf8')) as {
+            phases: { implement: { status: string } };
+        };
+        assert.equal(status.phases.implement.status, 'done');
+        assert.equal(execFileSync('git', ['rev-list', '--count', `${before}..HEAD`], { cwd: localDir, encoding: 'utf8' }).trim(), '1');
         assert.deepEqual(latestNameStatuses(localDir), new Set(['D\tdead.ts']));
         assert.equal(execFileSync('git', ['status', '--porcelain=v1', '-uall'], { cwd: localDir, encoding: 'utf8' }), '');
     });

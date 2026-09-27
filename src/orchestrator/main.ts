@@ -2957,15 +2957,18 @@ function checkImplementEvidence(taskId: string): EvidenceResult {
     );
     if (existingFiles.length === 0) {
         // Deletion-only implements are legitimate: a listed file that is
-        // absent from disk but known to git as a deletion (uncommitted
-        // working-tree delete, or already deleted by a commit on the task
+        // absent from disk but known to git as a deletion (staged or unstaged
+        // removal, or already deleted by a commit on the task
         // branch) is real evidence, same as an existing file. Without this,
         // a deletion-only handoff can never pass the gate — the retry
         // re-deletes nothing and the phase wedges (autoCommitCode already
         // handles deletions; this pre-check must not be stricter).
         const evidenceCwd = checkRoots[checkRoots.length - 1];
-        const deletedInWorkingTree = new Set(
-            splitGit.gitSafeAt(evidenceCwd, 'ls-files', '--deleted').stdout
+        // A diff from HEAD includes removals staged by `git rm` as well as
+        // working-tree-only deletions. `ls-files --deleted` misses the former.
+        const deletedDiff = splitGit.gitSafeAt(evidenceCwd, 'diff', 'HEAD', '--name-only', '--diff-filter=D');
+        const deletedAgainstHead = new Set(
+            (deletedDiff.ok ? deletedDiff.stdout : '')
                 .split('\n').map(l => l.trim()).filter(Boolean),
         );
         const baseBranch = sForEvidence.base_branch || splitGit.getDefaultBaseBranch();
@@ -2979,7 +2982,7 @@ function checkImplementEvidence(taskId: string): EvidenceResult {
                 .filter((p): p is string => Boolean(p)),
         );
         const deletedFiles = verifiableFiles.filter(f =>
-            deletedInWorkingTree.has(f) || deletedInCommits.has(f),
+            deletedAgainstHead.has(f) || deletedInCommits.has(f),
         );
         if (deletedFiles.length === 0) {
             return { advanced: false, note: `handoff.md lists ${files.length} file(s) but none exist on disk or are git-tracked deletions` };
