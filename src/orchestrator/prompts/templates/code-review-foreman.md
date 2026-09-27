@@ -87,6 +87,7 @@ Judge each file against the owning task's ACs and record its outcome and reason 
 3. **Should not have been changed:** Do not amend the spec. Write a finding requiring the file to be reverted or removed, and set the verdict to `changes_requested`.
 
 For a bundle, amend the member spec whose ACs the file serves. The orchestrator checks after this session: every listed file must be in a member's Affected Files or covered by `changes_requested`; otherwise it auto-blocks.
+
 {{/hasOutOfScopeFiles}}
 ## Foreman Protocol
 

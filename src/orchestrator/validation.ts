@@ -1574,6 +1574,33 @@ export function classifyBaseDriftFilesFromData(
     return { baseAdvanced, taskChangedOutOfScope };
 }
 
+export function buildBaseDriftAbortMessage(
+    baseBranch: string,
+    classification: { baseAdvanced: readonly string[]; taskChangedOutOfScope: readonly string[] },
+): string {
+    const sections = ['--pr aborted: base-drift detected.'];
+    if (classification.baseAdvanced.length > 0) sections.push(
+        `The base branch advanced. These files changed only on origin/${baseBranch}:\n` +
+        classification.baseAdvanced.map(file => `  ${file}`).join('\n') + '\n' +
+        `Merge or rebase the base branch into the task branch, then rerun:\n` +
+        `  git fetch origin ${baseBranch} && git rebase origin/${baseBranch}\n` +
+        `  (or: git merge origin/${baseBranch})`
+    );
+    if (classification.taskChangedOutOfScope.length > 0) sections.push(
+        `These task-changed files are not in the spec's Affected Files:\n` +
+        classification.taskChangedOutOfScope.map(file => `  ${file}`).join('\n') + '\n' +
+        `The allowlist covers task artifacts, pipeline telemetry (PIPELINE_TELEMETRY_FILES), ` +
+        `and spec Affected Files entries, including directory entries.\n` +
+        `Add legitimate paths to the spec's '### Affected Files' table ` +
+        `(both sides of a rename), then rerun. If a sibling pipeline or stray task-branch ` +
+        `commit introduced a file, remove it with:\n` +
+        `  git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'\n` +
+        `  or: git revert <sha>`
+    );
+    sections.push(`Bypass with --force if you've verified the drift is intentional.`);
+    return sections.join('\n\n');
+}
+
 export function parseDiffNameStatus(stdout: string): { diffFiles: string[]; renamePairs: Array<[string, string]> } {
     const diffFiles: string[] = [];
     const renamePairs: Array<[string, string]> = [];

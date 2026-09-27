@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runCodeReviewPhase } from './phases/code-review.js';
+import { findUnjudgedFullSendFilesFromData, fullSendScopeBlockReason, runCodeReviewPhase } from './phases/code-review.js';
 import { runImplementPhase } from './phases/implement.js';
 import { runPlanPhase } from './phases/plan.js';
 import { runQaPhase } from './phases/qa.js';
@@ -1222,29 +1222,12 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
             `This failure cannot be bypassed with --force.`
         );
     } else if (baseDriftResult.drift.length > 0) {
-        const taskChangedFiles = new Set(splitGit.getAffectedFiles(baseBranch, cwd));
-        const { baseAdvanced, taskChangedOutOfScope } = splitValidation.classifyBaseDriftFilesFromData(
-            baseDriftResult.drift, taskChangedFiles,
-        );
         if (!cliArgs.force) {
-            const sections = ['--pr aborted: base-drift detected.'];
-            if (baseAdvanced.length > 0) sections.push(
-                `The base branch advanced. These files changed only on origin/${baseBranch}:\n` +
-                baseAdvanced.map(file => `  ${file}`).join('\n') + '\n' +
-                `Merge or rebase origin/${baseBranch} into the task branch, then rerun --pr.`
+            const taskChangedFiles = new Set(splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd));
+            const classification = splitValidation.classifyBaseDriftFilesFromData(
+                baseDriftResult.drift, taskChangedFiles,
             );
-            if (taskChangedOutOfScope.length > 0) sections.push(
-                `These task-changed files are not in the spec's Affected Files:\n` +
-                taskChangedOutOfScope.map(file => `  ${file}`).join('\n') + '\n' +
-                `The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, files listed in\n` +
-                `the spec's '### Affected Files' table (directory entries include subpaths), and\n` +
-                `PIPELINE_MANAGED_DOCS once qa.status = done. Add legitimate paths to the spec\n` +
-                `(both sides of a rename), then rerun. To remove an unintended change:\n` +
-                `  git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'\n` +
-                `  git revert <sha>`
-            );
-            sections.push(`Bypass with --force if you've verified the drift is intentional.`);
-            die(sections.join('\n\n'));
+            die(splitValidation.buildBaseDriftAbortMessage(baseBranch, classification));
         }
         warn(
             `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +
@@ -3231,6 +3214,25 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
     // Re-read after any auto-advances so downstream verdict/iteration checks
     // see the fresh state.
     statuses = taskIds.map(splitState.readStatus);
+
+    // A Claude session can finish code_review during one-shot recovery after an
+    // unfilled review. Enforce the same full-send scope rule here before QA.
+    if (phase === 'code_review' && statuses.every(status => status.full_send === true)) {
+        const cwd = splitWorktree.getActiveCwd(taskIds);
+        const baseBranch = splitGit.getBaseBranch(taskIds);
+        const changedFiles = splitGit.getAffectedFiles(baseBranch, cwd);
+        const allowlist = splitValidation.buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+        const unjudged = findUnjudgedFullSendFilesFromData(
+            changedFiles, allowlist, taskIds, statuses.map(status => getVerdict(status, 'code_review')),
+        );
+        if (unjudged.length > 0) {
+            const reason = fullSendScopeBlockReason(taskIds, unjudged);
+            warn(reason);
+            const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
+            splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
+            process.exit(2);
+        }
+    }
 
     if (lastCodexExitStatus !== 0) {
         warn(`Phase '${phase}' completed despite Codex exit status ${lastCodexExitStatus} (likely MCP warnings). Continuing.`);

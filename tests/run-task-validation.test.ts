@@ -26,6 +26,7 @@ import {
     classifyPreflightBlockersFromData,
     classifyBaseDriftFilesFromData,
     buildAffectedFilesAllowlist,
+    buildBaseDriftAbortMessage,
     collectUnscannedTableHits,
     computeLatestValidationResults,
     extractCheckedVerdict,
@@ -1968,6 +1969,27 @@ void test('classifyBaseDriftFilesFromData partitions task and base changes', () 
     assert.deepEqual(classifyBaseDriftFilesFromData(['a', 'b'], new Set(['b'])), {
         baseAdvanced: ['a'], taskChangedOutOfScope: ['b'],
     });
+});
+
+void test('base-drift abort message varies with drift cause', () => {
+    const baseOnly = buildBaseDriftAbortMessage('main', {
+        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: [],
+    });
+    assert.match(baseOnly, /base branch advanced/);
+    assert.match(baseOnly, /git fetch origin main && git rebase origin\/main/);
+    assert.doesNotMatch(baseOnly, /not in the spec's Affected Files/);
+
+    const taskOnly = buildBaseDriftAbortMessage('main', {
+        baseAdvanced: [], taskChangedOutOfScope: ['src/task-only.ts'],
+    });
+    assert.match(taskOnly, /not in the spec's Affected Files/);
+    assert.doesNotMatch(taskOnly, /base branch advanced/);
+
+    const mixed = buildBaseDriftAbortMessage('main', {
+        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: ['src/task-only.ts'],
+    });
+    assert.match(mixed, /docs\/base-only\.md/);
+    assert.match(mixed, /src\/task-only\.ts/);
 });
 
 void test('buildAffectedFilesAllowlist unions Design and Amendment paths with managed-doc option', () => {

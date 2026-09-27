@@ -9,8 +9,8 @@ import { runColdCodexReview } from '../agents/codex.js';
 import { getActiveCwd, PIPELINE_TELEMETRY_FILES } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
-import { buildAffectedFilesAllowlist, classifyPreflightBlockers, extractCheckedVerdict, isTemplateUnfilled, parseAffectedFilesFromSpec, verifyBaseDriftFromData, verifyHandoffAgainstDiff } from '../validation.js';
-import type { ClassifiedBlocker } from '../validation.js';
+import { buildAffectedFilesAllowlist, classifyPreflightBlockers, extractCheckedVerdict, isTemplateUnfilled, verifyBaseDriftFromData, verifyHandoffAgainstDiff } from '../validation.js';
+import type { AffectedFilesAllowlist, ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { promptCodeReview, resolveCodeReviewRound } from '../prompts/index.js';
 import { findColdCodexArchiveForRound, hasMalformedColdCodexArchive, writeColdCodexArchive } from '../review-archive.js';
@@ -23,6 +23,27 @@ export type PreflightFailure = {
     taskId: string;
     classified: ClassifiedBlocker[];
 };
+
+/** The same scope matcher is used before and after the foreman, including directory entries. */
+export function findUnjudgedFullSendFilesFromData(
+    changedFiles: readonly string[],
+    allowlist: AffectedFilesAllowlist,
+    taskIds: readonly string[],
+    verdicts: readonly (string | null)[],
+): string[] {
+    // A bundle reroutes together. One changes_requested (or its legacy alias)
+    // prevents an unamended file from advancing to QA; the next review checks
+    // every still-out-of-scope file again. A spec_gap blocks at its own gate.
+    if (verdicts.some(verdict =>
+        verdict === 'changes_requested' || verdict === 'needs_re_review' || verdict === 'spec_gap')) return [];
+    return verifyBaseDriftFromData(changedFiles, allowlist.paths, taskIds, allowlist.prefixes);
+}
+
+export function fullSendScopeBlockReason(taskIds: readonly string[], files: readonly string[]): string {
+    return `Full-send code review left out-of-scope files unjudged: ${files.join(', ')}. ` +
+        `Add them to a task spec's ### Affected Files table, then re-run \`canon run ${taskIds.join(' ')}\`; ` +
+        `or request changes to remove them.`;
+}
 
 export type CodeReviewPhaseDeps = {
     verifyBranch: typeof verifyBranch;
@@ -323,8 +344,8 @@ export async function runCodeReviewPhase(
         const reason =
             `Code review pre-flight found files outside the spec's Affected Files for ${taskIds.join(', ')}:\n` +
             outOfScopeFiles.map(file => `  ${file}`).join('\n') + '\n' +
-            `Add them to the spec's ### Affected Files table in the task worktree, run ` +
-            `\`canon task reset-code-review <id>\` for each bundle member, then re-run \`canon run\`; ` +
+            `Add them to the affected task spec's ### Affected Files table in the active checkout, ` +
+            `then re-run \`canon run ${taskIds.join(' ')}\`; ` +
             `or reroute with a note telling the implementer to remove them.`;
         warn(reason);
         autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, reason);
@@ -430,17 +451,15 @@ export async function runCodeReviewPhase(
         }
     }
 
-    if (scopeFullSend && outOfScopeFiles.length > 0 && !anyUnfilled) {
-        const amended = new Set<string>();
-        for (const t of tasks) {
-            for (const file of parseAffectedFilesFromSpec(t.taskId).files) amended.add(file);
-        }
-        const changesRequested = [...reviewContents.values()].some(content =>
-            content !== null && extractCheckedVerdict(content) === 'changes_requested');
-        const unjudged = outOfScopeFiles.filter(file => !amended.has(file));
-        if (unjudged.length > 0 && !changesRequested) {
-            const reason = `Full-send code review left out-of-scope files unjudged: ${unjudged.join(', ')}. ` +
-                `Amend a task spec's ### Affected Files table or request changes to remove them.`;
+    if (scopeFullSend && !anyUnfilled) {
+        const afterAllowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+        const verdicts = [...reviewContents.values()].map(content =>
+            content === null ? null : extractCheckedVerdict(content));
+        const unjudged = findUnjudgedFullSendFilesFromData(
+            [...changedFiles], afterAllowlist, taskIds, verdicts,
+        );
+        if (unjudged.length > 0) {
+            const reason = fullSendScopeBlockReason(taskIds, unjudged);
             warn(reason);
             autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, reason);
             process.exit(2);

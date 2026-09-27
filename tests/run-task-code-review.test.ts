@@ -3,18 +3,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 import { CODEX_HEADLESS } from '../src/orchestrator/prompts/helpers.js';
 import { runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
 import { recordMetric } from '../src/orchestrator/metrics.js';
-import { runCodeReviewPhase, type CodeReviewPhaseDeps } from '../src/orchestrator/phases/code-review.js';
+import { findUnjudgedFullSendFilesFromData, runCodeReviewPhase, type CodeReviewPhaseDeps } from '../src/orchestrator/phases/code-review.js';
 import { writeColdCodexArchive, findColdCodexArchiveForRound, hasMalformedColdCodexArchive } from '../src/orchestrator/review-archive.js';
 import { getPathsInRange, getDeltaLineStats, resolveCommit, isAncestorCommit, getScopedDiffInRange } from '../src/orchestrator/git.js';
 import { evaluateCodeReviewLoop, evaluateSpecReviewLoop } from '../src/orchestrator/review-loop.js';
 import { readStatus, writeStatusToFile } from '../src/orchestrator/state.js';
 import type { PipelineState, StatusJson, TaskContext } from '../src/orchestrator/types.js';
-import { taskResetCodeReview } from '../src/task/index.js';
 
 async function withTempTasksAsync<T>(fn: (tasksRoot: string, activeCwd: string) => Promise<T>): Promise<T> {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-code-review-'));
@@ -384,12 +383,11 @@ void test('scope pre-flight blocks normal runs without consuming review counters
         const blocked = readStatus('scope');
         assert.equal(blocked.phases.code_review?.status, 'blocked');
         assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /src\/extra-helper\.ts/);
-        assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /reset-code-review/);
+        assert.doesNotMatch((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /reset-code-review/);
         assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /reroute/);
         for (const key of ['iterations_current_loop', 'iterations_total', 'preflight_rejections_current_loop', 'preflight_rejections_total'] as const) {
             assert.equal(blocked.phases.code_review?.[key], 0);
         }
-        taskResetCodeReview('scope');
         addAffectedFile(tasksRoot, 'scope', 'src/extra-helper.ts');
         await runCodeReviewPhase(makeState(['scope']), false, null, deps);
         assert.ok(events.some(event => event.startsWith('cold:')));
@@ -397,7 +395,94 @@ void test('scope pre-flight blocks normal runs without consuming review counters
     });
 });
 
-for (const outcome of ['amended', 'changes_requested', 'unjudged', 'in_scope'] as const) {
+void test('scope halt after a prior review resumes at Round 2 without resetting counters', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        writeRoundTwoTask(tasksRoot, 'scope-round-two');
+        const events: string[] = [];
+        const deps = makeDeps({ activeCwd, events, onClaude: prompt => {
+            assert.match(prompt, /This is Round 2/);
+            writeFilledReview(tasksRoot, 'scope-round-two', 'Approved');
+        } });
+        deps.getAffectedFiles = () => ['src/new-helper.ts'];
+        await expectExitTwo(() => runCodeReviewPhase(makeState(['scope-round-two']), false, null, deps));
+        const blocked = readStatus('scope-round-two');
+        assert.equal(blocked.phases.code_review?.iterations_current_loop, 1);
+        assert.doesNotMatch((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /reset-code-review/);
+        addAffectedFile(tasksRoot, 'scope-round-two', 'src/new-helper.ts');
+        await runCodeReviewPhase(makeState(['scope-round-two']), false, null, deps);
+        assert.equal(readStatus('scope-round-two').phases.code_review?.iterations_current_loop, 1);
+    });
+});
+
+void test('full-send scope is enforced after an unfilled review retries to approved', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        initReviewRepo(activeCwd);
+        writeTask(tasksRoot, 'retry-scope');
+        const statusPath = path.join(tasksRoot, 'retry-scope', 'status.json');
+        const status = readStatus('retry-scope');
+        status.full_send = true;
+        writeStatusToFile(statusPath, status);
+        const deps = makeDeps({ activeCwd, events: [] });
+        deps.getAffectedFiles = () => ['src/a.ts'];
+        await runCodeReviewPhase(makeState(['retry-scope']), false, null, deps);
+        assert.equal(readStatus('retry-scope').phases.code_review?.status, 'pending');
+
+        // Simulate the resumed Claude session writing a review and finishing the
+        // phase. checkAndRoute must enforce the scope rule before routing to QA.
+        writeFilledReview(tasksRoot, 'retry-scope', 'Approved');
+        const retried = readStatus('retry-scope');
+        retried.phases.code_review!.status = 'done';
+        retried.phases.code_review!.verdict = 'approved';
+        writeStatusToFile(statusPath, retried);
+        const script = `import { checkAndRoute } from ${JSON.stringify(path.join(process.cwd(), 'src/orchestrator/main.ts'))}; await checkAndRoute('code_review', ['retry-scope']);`;
+        const result = spawnSync(process.execPath, [
+            '--import', path.join(process.cwd(), 'tests/md-loader-register.mjs'),
+            '--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script,
+        ], {
+            cwd: activeCwd,
+            env: { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot },
+            encoding: 'utf8',
+        });
+        assert.equal(result.status, 2, result.stdout + result.stderr);
+        assert.equal(readStatus('retry-scope').phases.code_review?.status, 'blocked');
+    });
+});
+
+void test('full-send scope exemptions match routing verdicts across a bundle', () => {
+    const allowlist = { paths: new Set<string>(), prefixes: [] as string[] };
+    const paths = ['src/unlisted.ts'];
+    assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, allowlist, ['task-a', 'task-b'], ['approved', 'changes_requested']), []);
+    assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, allowlist, ['task-a', 'task-b'], ['approved', 'needs_re_review']), []);
+    assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, allowlist, ['task-a', 'task-b'], ['spec_gap', 'approved']), []);
+    assert.deepEqual(findUnjudgedFullSendFilesFromData(paths, allowlist, ['task-a', 'task-b'], ['approved', 'approved']), paths);
+});
+
+void test('mixed full-send bundle halts; an amendment in a sibling spec covers the shared diff', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        for (const id of ['member-a', 'member-b']) writeTask(tasksRoot, id);
+        const events: string[] = [];
+        const deps = makeDeps({ activeCwd, events, onClaude: () => {
+            addAffectedFile(tasksRoot, 'member-b', 'src/extra-helper.ts');
+            for (const id of ['member-a', 'member-b']) writeFilledReview(tasksRoot, id, 'Approved');
+        } });
+        deps.getAffectedFiles = () => ['src/extra-helper.ts'];
+        const memberA = readStatus('member-a');
+        memberA.full_send = true;
+        writeStatusToFile(path.join(tasksRoot, 'member-a', 'status.json'), memberA);
+        await expectExitTwo(() => runCodeReviewPhase(makeState(['member-a', 'member-b']), false, null, deps));
+        assert.deepEqual(events, ['verifyBranch']);
+
+        // The normal member opts in; the union allowlist accepts member-b's amendment.
+        const memberB = readStatus('member-b');
+        memberB.full_send = true;
+        writeStatusToFile(path.join(tasksRoot, 'member-b', 'status.json'), memberB);
+        await runCodeReviewPhase(makeState(['member-a', 'member-b']), false, null, deps);
+        assert.ok(events.includes('foreman'));
+        assert.notEqual(readStatus('member-a').phases.code_review?.status, 'blocked');
+    });
+});
+
+for (const outcome of ['amended', 'directory_amended', 'changes_requested', 'unjudged', 'in_scope'] as const) {
     void test(`scope pre-flight full-send outcome: ${outcome}`, { concurrency: false }, async () => {
         await withTempTasksAsync(async (tasksRoot, activeCwd) => {
             writeTask(tasksRoot, 'scope');
@@ -420,6 +505,7 @@ for (const outcome of ['amended', 'changes_requested', 'unjudged', 'in_scope'] a
                     assert.match(prompt, /Should not have been changed/);
                 }
                 if (outcome === 'amended') addAffectedFile(tasksRoot, 'scope', file);
+                if (outcome === 'directory_amended') addAffectedFile(tasksRoot, 'scope', 'src/');
                 writeFilledReview(tasksRoot, 'scope', outcome === 'changes_requested' ? 'Changes requested' : 'Approved');
             } });
             deps.getAffectedFiles = () => [file];
@@ -429,7 +515,15 @@ for (const outcome of ['amended', 'changes_requested', 'unjudged', 'in_scope'] a
                 assert.equal(blocked.phases.code_review?.status, 'blocked');
                 assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /src\/extra-helper\.ts/);
             } else {
-                await runCodeReviewPhase(makeState(['scope']), false, null, deps);
+                const originalExit: typeof process.exit = process.exit.bind(process);
+                process.exit = (code?: string | number | null): never => {
+                    throw Object.assign(new Error('process.exit'), { code });
+                };
+                try {
+                    await runCodeReviewPhase(makeState(['scope']), false, null, deps);
+                } finally {
+                    process.exit = originalExit;
+                }
                 assert.notEqual(readStatus('scope').phases.code_review?.status, 'blocked');
             }
             assert.ok(events.some(event => event.startsWith('cold:')));
