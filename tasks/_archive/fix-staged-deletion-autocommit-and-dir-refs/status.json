@@ -1,7 +1,7 @@
 {
   "id": "fix-staged-deletion-autocommit-and-dir-refs",
   "title": "Auto-commit handles already-staged deletions and renames; docs-refs-check accepts directory refs",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-27",
   "updated": "2026-09-27",
   "branch": "task/fix-staged-deletion-autocommit-and-dir-refs",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
