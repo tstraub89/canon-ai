@@ -1025,3 +1025,7 @@
 | 2026-09-27T09:32:07.950Z | anchored-lens-patterns-check | code_review | codex | gpt-6-luna | 0 | 33.4s | - | ok |
 | 2026-09-27T09:35:18.152Z | anchored-lens-patterns-check | code_review | claude | sonnet | 0 | 190.2s | 614976 | ok |
 | 2026-09-27T09:36:16.667Z | anchored-lens-patterns-check | qa | claude | sonnet | 0 | 58.5s | 661084 | ok |
+| 2026-09-27T09:29:55.566Z | affected-files-preflight-at-code-review | spec_review | codex | gpt-6-sol | 0 | 140.7s | 979697 | ok |
+| 2026-09-27T09:30:45.675Z | affected-files-preflight-at-code-review | spec | claude | opus | 0 | 49.9s | 579321 | ok |
+| 2026-09-27T09:31:47.923Z | affected-files-preflight-at-code-review | spec_review | codex | gpt-6-sol | 1 | 62.0s | 1467687 | ok |
+| 2026-09-27T10:21:37.764Z | fix-staged-deletion-autocommit-and-dir-refs | plan | claude | sonnet | 0 | 623.1s | 8044244 | ok |
