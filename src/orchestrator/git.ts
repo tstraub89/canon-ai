@@ -1,4 +1,5 @@
 import { spawnSync, type SpawnSyncOptions } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { REPO_ROOT } from './env.js';
@@ -79,6 +80,34 @@ export function filterGitIgnoredPaths(paths: readonly string[], cwd: string): Se
     }
     const stdout = result.stdout ?? '';
     return new Set(stdout.split('\0').filter(p => p.length > 0));
+}
+
+/** Keep paths that still have a working-tree entry or an index entry to stage. */
+export function filterStageablePaths(paths: readonly string[], cwd: string): string[] {
+    if (paths.length === 0) return [];
+    const result = spawnSync('git', ['ls-files', '-z', '--', ...paths], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // An uncertain index must not cause us to silently omit a handoff path.
+    if (result.error || result.status !== 0) return [...paths];
+    const indexedPaths = (result.stdout ?? '').split('\0').filter(Boolean);
+
+    return paths.filter(candidate => {
+        const normalized = candidate.replace(/\/+$/, '');
+        if (indexedPaths.some(indexed => indexed === normalized || indexed.startsWith(`${normalized}/`))) {
+            return true;
+        }
+        try {
+            fs.lstatSync(path.join(cwd, candidate));
+            return true;
+        } catch (error) {
+            // Only known absence means the staged removal needs no new `git add`.
+            const code = (error as NodeJS.ErrnoException).code;
+            return code !== 'ENOENT' && code !== 'ENOTDIR';
+        }
+    });
 }
 
 export function commitTaskArtifactsToBase(taskIds: string[], _artifactFiles: ReadonlySet<string>): void {

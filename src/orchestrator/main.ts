@@ -375,7 +375,7 @@ function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boo
     return sourceDirty.length === 0;
 }
 
-function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
+export function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     const primaryStatus = splitState.readStatus(taskIds[0]);
     const title = getTitle(primaryStatus);
 
@@ -474,16 +474,9 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // (refactor pattern: round 1 deletes ProjectContext.tsx, round 2 review
     // fixes don't re-touch it, but handoff still lists it as a Change).
     //
-    // `settledDeletions` collects case (b)-deletion subsets — paths that
-    // don't exist on disk but whose deletion is already committed in
-    // baseRef..HEAD. They have no working-tree presence to stage, and
-    // passing them to `git add -A` would fail with `pathspec did not match`
-    // (the bulk-stage step below would die on the whole operation). Filtered
-    // out before staging. Surfaced by the GP starter-preview-renderer task
-    // hitting this on every iteration after a prototype-file deletion was
-    // committed early. See BACKLOG: GP failure mode #6.
+    // Case (b) accepts an already-committed deletion in the pre-stage check.
+    // Stage-path filtering below also handles index-staged removals.
     const missing: string[] = [];
-    const settledDeletions = new Set<string>();
     const baseRefForLog = splitGit.getBaseBranch(taskIds);
     for (const f of allHandoffFiles) {
         if (dirtyFiles.has(f)) continue;
@@ -495,7 +488,6 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
             // delete-in-later-commit all show up here).
             const committed = splitGit.gitSafeAt(cwd, 'log', '--format=%H', '--max-count=1', `${baseRefForLog}..HEAD`, '--', f);
             if (committed.ok && committed.stdout.trim()) {
-                settledDeletions.add(f);
                 continue;
             }
             missing.push(`${f} — listed in handoff but missing from working tree (and no commit in ${baseRefForLog}..HEAD touches this path)`);
@@ -539,19 +531,13 @@ function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // idempotent for clean files and avoids porcelain-output or racy-status
     // omissions dropping a valid handoff file from the commit.
     //
-    // Exclude `settledDeletions` — paths whose deletion is already committed
-    // in baseRef..HEAD. They have no working-tree presence, and `git add -A`
-    // would reject them with `pathspec did not match`, failing the whole
-    // bulk operation. The deletion is already in the commit history, so
-    // there's nothing to stage for them anyway.
-    const stageable = handoffFiles.filter(f => !settledDeletions.has(f));
-    if (stageable.length === 0) {
-        verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles);
-        splitCli.info('All handoff files are already settled in history — skipping auto-commit.');
-        return;
+    // A staged removal has nothing left in the index or working tree for
+    // `git add` to match. It still needs the commit below.
+    const stageable = splitGit.filterStageablePaths(handoffFiles, cwd);
+    if (stageable.length > 0) {
+        const addResult = splitGit.gitSafeAt(cwd, 'add', '-A', '--', ...stageable);
+        if (!addResult.ok) die(`Failed to stage files: ${addResult.stderr || 'unknown error'}`);
     }
-    const addResult = splitGit.gitSafeAt(cwd, 'add', '-A', '--', ...stageable);
-    if (!addResult.ok) die(`Failed to stage files: ${addResult.stderr || 'unknown error'}`);
 
     const preCheck = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
     const remaining = preCheck.ok ? splitValidation.findUncoveredTrackedChanges(preCheck.stdout, allHandoffFiles) : [];
@@ -947,7 +933,7 @@ export function commitQaArtifacts(taskIds: string[], cwd: string): void {
         );
     }
 
-    for (const relPath of stagePaths) {
+    for (const relPath of splitGit.filterStageablePaths([...stagePaths], cwd)) {
         const exclusions = nodeModulesExclusionArgs(relPath, exemptNodeModulesPaths);
         const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath, ...exclusions);
         if (!addResult.ok) {
@@ -1410,7 +1396,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         );
     }
 
-    for (const relPath of stagePaths) {
+    for (const relPath of splitGit.filterStageablePaths([...stagePaths], cwd)) {
         const exclusions = nodeModulesExclusionArgs(relPath, exemptNodeModulesPaths);
         const addResult = gitSafeAt(cwd, 'add', '-A', '--', relPath, ...exclusions);
         if (!addResult.ok) {

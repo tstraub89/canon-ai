@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+    filterStageablePaths,
     parseNameStatusOutput,
 } from '../src/orchestrator/git.js';
 import {
@@ -75,6 +76,40 @@ function withTempDir(prefix: string, fn: (dir: string) => void): void {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 }
+
+void test('filterStageablePaths omits only paths absent from both worktree and index', () => {
+    withTempDir('stageable-paths-', dir => {
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+        git('init');
+        git('config', 'user.email', 'test@example.com');
+        git('config', 'user.name', 'Test User');
+        for (const file of [
+            'staged-dead.ts', 'rename-old.ts', 'removed-dir/file.ts', 'kept-dir/file.ts',
+            'unstaged-dead.ts', 'cached.ts', 'modified.ts',
+        ]) {
+            fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+            fs.writeFileSync(path.join(dir, file), 'before\n');
+        }
+        git('add', '-A');
+        git('commit', '-m', 'fixture baseline');
+
+        git('rm', 'staged-dead.ts');
+        git('mv', 'rename-old.ts', 'rename-new.ts');
+        git('rm', '-r', 'removed-dir');
+        fs.rmSync(path.join(dir, 'unstaged-dead.ts'));
+        git('rm', '--cached', 'cached.ts');
+        fs.writeFileSync(path.join(dir, 'modified.ts'), 'after\n');
+        fs.writeFileSync(path.join(dir, 'new.ts'), 'new\n');
+
+        const candidates = [
+            'staged-dead.ts', 'rename-old.ts', 'rename-new.ts', 'removed-dir',
+            'kept-dir', 'unstaged-dead.ts', 'cached.ts', 'modified.ts', 'new.ts',
+        ];
+        assert.deepEqual(filterStageablePaths(candidates, dir), [
+            'rename-new.ts', 'kept-dir', 'unstaged-dead.ts', 'cached.ts', 'modified.ts', 'new.ts',
+        ]);
+    });
+});
 
 function withTempTasks<T>(fn: (tasksRoot: string) => T): T {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-validation-tasks-'));
