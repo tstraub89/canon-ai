@@ -372,7 +372,7 @@ async function expectExitTwo(fn: () => Promise<unknown>): Promise<void> {
 
 function addAffectedFile(tasksRoot: string, taskId: string, file: string): void {
     fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), [
-        '', '## Amendment', '', '### Affected Files', '', '| File | Change |',
+        '', '## Amendment (full-send scope)', '', '### Affected Files', '', '| File | Change |',
         '|---|---|', `| \`${file}\` | fixture reason |`, '',
     ].join('\n'));
 }

@@ -82,8 +82,8 @@ The task changed these files outside the spec's `### Affected Files` table:
 
 Judge each file against the owning task's ACs and record its outcome and reason in `review.md`:
 
-1. **Appropriate scope expansion:** If needed to meet the ACs and consistent with the spec's intent, append an `## Amendment` section to the owning task's `spec.md`. Include an exact `### Affected Files` heading and table row naming the file, plus a one-line reason that calls it a full-send scope expansion.
-2. **Spec miss:** If the spec should have listed the file, append the same `## Amendment` and exact `### Affected Files` table row, with a one-line reason that calls it a spec miss.
+1. **Appropriate scope expansion:** If needed to meet the ACs and consistent with the spec's intent, append an `## Amendment (full-send scope)` section to the owning task's `spec.md` (use exactly that heading; a bare `## Amendment` is reserved for human reroute amendments). Include an exact `### Affected Files` heading and table row naming the file, plus a one-line reason that calls it a full-send scope expansion.
+2. **Spec miss:** If the spec should have listed the file, append the same `## Amendment (full-send scope)` section and exact `### Affected Files` table row, with a one-line reason that calls it a spec miss.
 3. **Should not have been changed:** Do not amend the spec. Write a finding requiring the file to be reverted or removed, and set the verdict to `changes_requested`.
 
 For a bundle, amend the member spec whose ACs the file serves. The orchestrator checks after code review completes: every listed file must be in a member's Affected Files or a `changes_requested` verdict must route it back to implement. The legacy `needs_re_review` verdict routes the same way. A `spec_gap` verdict blocks for human triage and names any files still outside Affected Files; blessing that verdict does not amend the spec. An approved review with unjudged files auto-blocks.

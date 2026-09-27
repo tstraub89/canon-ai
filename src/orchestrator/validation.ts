@@ -286,6 +286,10 @@ export function checkRerouteEvidence(phase: Phase, artifactContent: string, stat
     return { reroute: true, ok: true };
 }
 
+/** Heading the code-review foreman uses for full-send scope additions. */
+export const FULL_SEND_SCOPE_AMENDMENT_HEADING = '## Amendment (full-send scope)';
+const HUMAN_AMENDMENT_HEADING_RE = /^#{2,6}[ \t]+Amendment\b(?![ \t]*\(full-send scope\))/im;
+
 export function verifyRerouteAmendment(
     taskId: string,
     requiredRound: number,
@@ -307,8 +311,11 @@ export function verifyRerouteAmendment(
     // satisfy `Amendment\s+Round\s+\d+` by spanning the blank line — making the
     // helper report `found ## Amendment Round 1` for a spec that only has bare
     // `## Amendment`.
+    // Foreman-written `## Amendment (full-send scope)` sections declare scope
+    // additions for the Affected Files parser; they are not human reroute
+    // amendments and must not satisfy this gate.
     if (requiredRound === 1) {
-        if (/^#{2,6}[ \t]+Amendment\b/im.test(content)) {
+        if (HUMAN_AMENDMENT_HEADING_RE.test(content)) {
             return { amended: true, reason: '' };
         }
         return {
@@ -334,7 +341,7 @@ export function verifyRerouteAmendment(
             reason: `found \`## Amendment Round ${seenRound}\` in ${specPath}, expected \`## Amendment Round ${requiredRound}\``,
         };
     }
-    if (/^#{2,6}[ \t]+Amendment\b/im.test(content)) {
+    if (HUMAN_AMENDMENT_HEADING_RE.test(content)) {
         return {
             amended: false,
             reason: `found \`## Amendment\` in ${specPath}, expected \`## Amendment Round ${requiredRound}\``,

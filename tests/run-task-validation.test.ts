@@ -2386,6 +2386,20 @@ void test('verifyRerouteAmendment: round 1 accepts `## Amendment`', () => {
     });
 });
 
+void test('verifyRerouteAmendment: a foreman full-send scope amendment is not a human amendment', () => {
+    const scopeOnly = [
+        '# Spec', '', '## Amendment (full-send scope)', '', '### Affected Files', '',
+        '| File | Change |', '|---|---|', '| `src/helper.ts` | full-send scope expansion |', '',
+    ].join('\n');
+    withTempTaskSpec('reroute-scope-only', scopeOnly, () => {
+        assert.equal(verifyRerouteAmendment('reroute-scope-only', 1).amended, false);
+        assert.deepEqual(parseAffectedFilesFromSpec('reroute-scope-only').files, ['src/helper.ts']);
+    });
+    withTempTaskSpec('reroute-scope-and-human', `${scopeOnly}\n## Amendment\n\nHuman fix for the spec gap.\n`, () => {
+        assert.equal(verifyRerouteAmendment('reroute-scope-and-human', 1).amended, true);
+    });
+});
+
 void test('verifyRerouteAmendment: round 1 accepts lowercase h3 amendment headings', () => {
     withTempTaskSpec('reroute-round-1-lowercase', [
         '# Spec',
