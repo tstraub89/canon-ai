@@ -1,10 +1,10 @@
 {
   "id": "anchored-lens-patterns-check",
   "title": "Anchored code-review lens checks changed code against docs/patterns.md",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-09-27",
   "updated": "2026-09-27",
-  "branch": "",
+  "branch": "task/anchored-lens-patterns-check",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -64,7 +65,10 @@
     }
   },
   "escalations": [],
-  "sessions": {},
+  "sessions": {
+    "codex": "01a0e22f-1ec5-75d0-b93b-efa038359e14",
+    "claude_review": "0a6b460c-3c8e-49fd-9747-a9491472d0ef"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
