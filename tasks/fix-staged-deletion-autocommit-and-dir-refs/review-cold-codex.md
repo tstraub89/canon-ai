@@ -1,0 +1,1 @@
+The changes handle staged deletions without breaking staging of remaining handoff paths, and the added directory-reference validation is covered by focused tests. Type-checking and the relevant test suites passed.

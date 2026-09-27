@@ -1,121 +1,155 @@
 # Implementation Handoff: fix-staged-deletion-autocommit-and-dir-refs
 
 > Author: Codex | Spec: `tasks/fix-staged-deletion-autocommit-and-dir-refs/spec.md` | Plan: `tasks/fix-staged-deletion-autocommit-and-dir-refs/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Never backtick a bare directory path** anywhere in this file (e.g. write "the app source tree (apps/app/src)", not `` `apps/app/src` ``). `docs-refs-check` treats a backticked path as a file reference and aborts the pipeline's auto-commit with "missing file" when it is a directory. Backtick only real files.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/git.ts` | Added the shared index and working-tree stage-path filter. |
+| `src/orchestrator/main.ts` | Applied the filter at all three commit sites, kept the deletion-only commit path, and exported the auto-commit test seam. |
+| `scripts/docs-refs-check.mjs`, `templates/scripts/docs-refs-check.mjs` | Accepted existing directories in plain backtick refs and synced the adopter mirror. |
+| `tests/run-task-safety.test.ts` | Added real-git implement and QA commit regressions. |
+| `tests/run-task-validation.test.ts` | Covered every required filter boundary in a temporary real-git repository. |
+| `tests/docs-refs-check.test.ts` | Covered existing and missing directories and the file-only symbol-ref boundary. |
+| `dist/orchestrator/run-task.js`, `dist/cli/index.js` | Rebuilt and normalized published bundles. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+Provenance remains in `status.json.canon`.
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+A path absent from both the working tree and Git index has nothing for `git add` to match. The shared filter omits only that path from staging; the already-staged deletion still flows through the existing coverage checks and commit. Plain backtick references now accept existing directories. Symbol, section, and anchor references retain their file-only behavior.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Removed the now-unused `settledDeletions` set while retaining the committed-deletion acceptance branch. | The shared filter replaces its only staging use; keeping an unread set would fail lint. | No behavioral change to the pre-stage check. |
+| Left the proposed `docs/patterns.md` sentence for QA. | The plan resolves the spec-review scope nit this way; that file is outside the spec's Affected Files cap. | None of the ACs requires that edit. |
+| Filter keeps paths when `lstat` fails for a reason other than absence. | An uncertain filesystem probe must not silently omit content. | Strengthens AC-6's keep boundary. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Real-git staged-deletion-only test creates a new deletion commit and a clean tree. |
+| AC-2 | Met | One new commit contains the staged deletion and unstaged edit. |
+| AC-3 | Met | Old rename path is absent and destination present at HEAD. |
+| AC-4 | Met | Plain unstaged removal passes before and after the fix. |
+| AC-5 | Met | QA-end creates one commit containing dirty task artifacts and the staged telemetry deletion. |
+| AC-6 | Met | One exported helper covers all eight specified real-git cases; all three staging call sites use it. |
+| AC-7 | Met | Literal-string grep count is 0, and AC-1 exercises the empty add list. |
+| AC-8 | Met | Existing directory passes; missing directory and symbol-in-directory fail. |
+| AC-9 | Met | Mirror is byte-identical; sync check passes. |
+| AC-10 | Met | All five red-first failures were observed below; all new tests pass unskipped in the full suite. |
+| AC-11 | Met | Build and required suite pass. Both generated bundles are in the Changes table for the orchestrator-owned commit, and a second build produced identical SHA-256 hashes. |
 
 ## Edge Cases Considered
 
-- ...
+- An unstaged deletion still has an index entry and remains stageable.
+- A cached removal with its file still on disk remains stageable.
+- Directory paths stay stageable if an index entry remains beneath them.
+- A failed index probe keeps every candidate, preserving the existing stage error instead of silently dropping content.
+- The QA and human-review loops can receive an empty filtered list and continue to their staged-content checks.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| AC-1 red-first | Pass | Pre-fix: `Failed to stage files: fatal: pathspec 'dead.ts' did not match any files`; post-fix targeted and full-suite pass. |
+| AC-2 red-first | Pass | Pre-fix: `Failed to stage files: fatal: pathspec 'dead.ts' did not match any files`; post-fix one-commit test passes. |
+| AC-3 red-first | Pass | Pre-fix: `Failed to stage files: fatal: pathspec 'old.ts' did not match any files`; post-fix tree assertion passes. |
+| AC-5 red-first | Pass | Pre-fix: `QA-end commit aborted: failed to stage docs/pipeline-invocations.md: fatal: pathspec 'docs/pipeline-invocations.md' did not match any files`; post-fix one-commit test passes. |
+| AC-8 red-first | Pass | Pre-fix: existing directory produced `missing file`; post-fix it passes, and negative cases still fail. |
+| `npm run lint` | Pass | No findings. |
+| `npm run type-check` | Pass | No findings. |
+| `npm test` | Pass | 1265 tests, 1264 pass, 0 fail, 1 pre-existing environment-gated skip; no new test skipped. |
+| `npm run build` | Pass | Two runs yielded the same bundle hashes. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `git diff --check` | Pass | No whitespace errors. |
+| E2E | not_configured | Spec explicitly marks E2E N/A; real-git integration fixtures cover the CLI internals. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met
+- [x] All required checks pass
+- [x] Deviations documented
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
+## Iteration 2 — addressing review round 1
 
 ### Changes
 
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+| `src/orchestrator/main.ts` | Counted staged and unstaged deletions as implement evidence using the diff from HEAD. |
+| `tests/run-task-safety.test.ts` | Added a red-first real-git test through `checkAndRoute('implement')` and updated the existing fake-Git deletion fixture for the new probe. |
+| `tests/run-task-validation.test.ts` | Pinned absent-on-disk directory index-prefix matching, trailing-slash matching, and failed-index-probe fallback. |
+| `dist/orchestrator/run-task.js` | Rebuilt the orchestrator bundle from the evidence-gate change. |
 
 ### Findings addressed
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+- **Correctness bug 1 — staged deletion blocked before auto-commit:** A real-git, non-worktree `checkAndRoute('implement')` test failed red with `handoff.md lists 1 file(s) but none exist on disk or are git-tracked deletions` and exit 2. The gate now uses `git diff HEAD --name-only --diff-filter=D`, which sees staged and unstaged deletions. The same test passes green, with implement still done, exactly one deletion commit, and a clean tree. The existing unstaged-deletion evidence fixture also passes after its fake-Git response was updated.
+- **Correctness bug 2 — weak helper boundary test:** The real-git fixture now removes a tracked directory with plain filesystem removal and checks both the directory and trailing-slash path remain stageable while absent on disk. A separate non-repository cwd confirms a failed index probe returns every candidate unchanged. Both pass; these assertions exercise the index-prefix, slash normalization, and fail-closed branches.
+- The first full-suite run exposed the old fake-Git fixture's missing response for the new diff probe. That in-scope fixture was corrected; the final full suite passes. Optional nits N1–N4 and follow-ups F1–F5 were left for their stated owners.
 
-### AC deltas (if any)
+### AC deltas
 
-- AC-N: was Partial → now Met (file:line)
+- **AC-1:** The direct auto-commit regression remains green, and a new red-first real-git test now proves the full implement routing reaches and commits the staged deletion.
+- **AC-6:** The keep boundary is pinned for an absent-on-disk tracked directory, a trailing-slash path, and an errored index probe.
+- **AC-10:** The new routed test's pre-fix evidence-gate failure and post-fix pass are recorded above. All task tests ran unskipped.
+- **AC-11:** Rebuilt output is stable across two fresh builds. The cumulative Changes tables cover every file in the branch diff against main.
 
-### Re-run validation (only checks that re-ran)
+### Re-run validation
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| Routed staged-deletion red-first test | Pass | Pre-fix exited 2 with the missing-evidence message above; post-fix targeted and full-suite pass. |
+| Focused routed and helper tests | Pass | Four targeted cases pass, including the pre-existing deletion-evidence fixture. |
+| `npm run lint` | Pass | No findings. |
+| `npm run type-check` | Pass | No findings. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm test` | Pass | 1267 tests, 1266 pass, 0 fail, 1 existing environment-gated skip; no task test skipped. |
+| `npm run build` | Pass | Repeated builds produced identical bundle SHA-256 hashes. |
+| `git diff --check` | Pass | No whitespace errors. |
+
+## Iteration 3 — addressing review round 2
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/orchestrator/main.ts` | Disabled rename detection in the uncommitted-deletion evidence probe so a removed path remains visible beside a similar added path. |
+| `tests/run-task-safety.test.ts` | Added a red-first real-git intent-to-add rename case and aligned the fake-Git argv response with the probe. |
+| `dist/orchestrator/run-task.js` | Rebuilt the orchestrator bundle. |
+
+### Findings addressed
+
+- **N-1 correctness bug:** The new real-git test moves a tracked file, marks the destination intent-to-add, and verifies that `git diff HEAD --name-only --diff-filter=D` reports no deletion while the same command with `--no-renames` reports the old path. Before the fix, `tryEvidenceAdvance('implement')` exited 2 with `handoff.md lists 1 file(s) but none exist on disk or are git-tracked deletions`. The probe now uses `--no-renames`; the test and the existing staged-deletion and deletion-evidence tests pass. The fake-Git fixture matches the revised command exactly.
+- Round 2's sibling committed-diff suggestion and optional nits remain deferred, as requested for this tightening round. No files outside the spec's Affected Files table were edited for the fix.
+
+### AC deltas
+
+- **AC-1 / AC-10:** A deletion-only handoff remains valid when Git would pair its removed path with an intent-to-add destination. The red-first gate failure and green pass are recorded above.
+- **AC-11:** The full suite and required checks pass; the rebuilt bundle is byte-stable across fresh builds. The cumulative Changes tables cover every path in the branch diff against main.
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| Intent-to-add rename red-first test | Pass | Pre-fix gate returned the missing-evidence message and exit 2; post-fix targeted and full-suite pass. |
+| Focused evidence tests | Pass | Three targeted cases pass unskipped. |
+| `npm run lint` | Pass | No findings. |
+| `npm run type-check` | Pass | No findings. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm test` | Pass | 1268 tests, 1267 pass, 0 fail, 1 existing environment-gated skip; no task test skipped. |
+| `npm run build` | Pass | Two fresh builds produced identical bundle SHA-256 hashes. |
+| `git diff --check` | Pass | No whitespace errors. |
