@@ -1018,3 +1018,6 @@
 | 2026-09-27T02:23:16.398Z | code-review-delta-rerounds | code_review | codex | gpt-6-luna | 1 | 84.6s | - | ok |
 | 2026-09-27T02:36:30.376Z | code-review-delta-rerounds | code_review | claude | opus | 1 | 793.9s | 1573921 | ok |
 | 2026-09-27T02:39:08.371Z | code-review-delta-rerounds | qa | claude | sonnet | 0 | 158.0s | 1570880 | ok |
+| 2026-09-27T01:54:40.194Z | fix-staged-deletion-autocommit-and-dir-refs | spec_review | codex | gpt-6-sol | 0 | 163.2s | 925290 | ok |
+| 2026-09-27T01:58:58.238Z | fix-staged-deletion-autocommit-and-dir-refs | spec | claude | opus | 0 | 257.8s | 2558127 | ok |
+| 2026-09-27T02:01:03.422Z | fix-staged-deletion-autocommit-and-dir-refs | spec_review | codex | gpt-6-sol | 1 | 125.0s | 1803357 | ok |
