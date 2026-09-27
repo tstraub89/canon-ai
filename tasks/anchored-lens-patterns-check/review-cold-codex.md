@@ -1,0 +1,1 @@
+The change adds conditional, adopter-aware guidance for checking relevant project patterns and keeps the anchored charter mirror synchronized. The regression test covers the new guidance, existing finding categories, and the cold charter’s exclusion.

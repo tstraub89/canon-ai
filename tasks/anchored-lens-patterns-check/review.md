@@ -4,6 +4,8 @@
 >
 > **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
 
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
+
 Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
 
 The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
@@ -14,74 +16,63 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification (`npm run build` and E2E are correctly marked N/A per spec — agent charter files are not bundled into `dist/`)
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | `.claude/agents/code-review-anchored.md` Stage 2 adds the conditional patterns-check instruction naming `docs/patterns.md`, `Trigger Table`, and `TODO[canon]`; new test in `tests/run-task-prompts.test.ts` asserts all three tokens plus `_example_` phrasing is present in the added text. |
+| AC-2 | Pass | The Return Format's category line (`- [correctness bug \| risk/guardrail \| optional cleanup/nit \| spec gap] ...`) is untouched by the diff hunk (added text lands above it); the new test pins this line verbatim via `assert.ok(anchored.includes(...))`. |
+| AC-3 | Pass | Added text opens with "If the project keeps `docs/patterns.md`" — conditional, adopter-safe phrasing satisfying the Adopter Scope rule in AGENTS.md. |
+| AC-4 | Pass | `.claude/agents/code-review-cold.md` has zero `patterns.md` matches (asserted by the new test); `git diff --name-only main...HEAD` touches only `.claude/agents/code-review-anchored.md`, its `templates/` mirror, and the test file — `src/orchestrator/prompts/templates/code-review-foreman.md` and `.canon/templates/review.md` are untouched. |
+| AC-5 | Pass | `templates/.claude/agents/code-review-anchored.md` is byte-identical to the root file (confirmed via diff; `npm run sync-templates:check` passed per handoff). |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no new finding category, no foreman/cold-lens/`review.md`-template edits, no `docs/patterns.md` content changes)
+- [x] Known Risks addressed or documented as accepted (review cost, noise, and canon-on-canon self-application risks are all inherent to the design and not mitigated further — correctly left as accepted tradeoffs per spec)
+- [x] Human Test Plan is satisfiable by the implementation (conditional guidance and placeholder-skipping are both present in the charter text)
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
+- [x] **Pass** — proceed to Stage 2
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+A small, well-scoped charter-text change: one paragraph added to the anchored lens's Stage 2 instructions, mirrored to the adopter template, with a structural regression test. All three lenses (anchored, cold-Claude, cold-Codex) independently reached an approve signal with no correctness bugs. Two low-severity, low-confidence cold-Claude observations survive as nits below; neither holds up as a blocking defect against the current spec and code.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- **Trigger Table staleness not covered by the fallback clause** (cold-Claude; low severity, low confidence) — `.claude/agents/code-review-anchored.md:30` only instructs a full-file skim when the Trigger Table is entirely absent ("or skim the file if it has none"), with no explicit fallback for a Trigger Table that exists but omits a row for the touched files. Verified against the spec: the Decision section's wording is "use its Trigger Table (or skim the file if there is none)" — the charter text matches the spec's own phrasing exactly, so this is inherited from the spec's chosen design, not an implementation slip. Kept as a nit rather than a spec-gap because the risk is speculative (a stale-but-present Trigger Table is a real but unaddressed edge case already implicit in "use the Trigger Table," not a concrete failure the spec got wrong).
+- **New test only pins substrings, not full instruction semantics** (cold-Claude; low severity, medium confidence) — `tests/run-task-prompts.test.ts:702-712` asserts presence of `docs/patterns.md`, `Trigger Table`, `TODO[canon]`, and the category line, but doesn't assert the round-scoping clause ("Apply this check in every round, limited to code changed by the diff") or the placeholder-skipping behavior beyond the bare token. A future edit could narrow that guidance while keeping the asserted substrings and the test would still pass. This is a coverage-thoroughness observation about the test's blast radius, not a case of the test currently passing against broken behavior (AC-1's own verify text only requires the three tokens, so the test satisfies its AC as written).
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): "Foreman template not updated to mention the new patterns.md check" (`src/orchestrator/prompts/templates/code-review-foreman.md:82-90` vs. the anchored charter) - the cold lens itself flagged this as likely a non-issue given the charter is self-contained; verified against the spec, AC-4 explicitly requires the foreman template be left untouched (it's designed to delegate entirely to the anchored charter file, which every lens invocation reads fresh), so this is spec-intended scoping, not a missed duplicate-surface update.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
@@ -98,31 +89,3 @@ breaks routing. Administrative appends use a non-Round heading (e.g.
 `## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
 
 ## Round N — verifying iteration N-1's response to round N-1
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->

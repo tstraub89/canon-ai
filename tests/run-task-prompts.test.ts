@@ -699,6 +699,18 @@ void test('promptQa bundle ignores prTemplate — bundles skip pr-body.md', () =
     assert.ok(!withTemplate.includes('Fill this section'), 'PR template content must not appear in bundle QA prompt');
 });
 
+void test('anchored review charter checks project patterns without changing categories or the cold lens', () => {
+    const worktreeRoot = process.cwd();
+    const anchored = fs.readFileSync(path.join(worktreeRoot, '.claude/agents/code-review-anchored.md'), 'utf8');
+    const cold = fs.readFileSync(path.join(worktreeRoot, '.claude/agents/code-review-cold.md'), 'utf8');
+
+    assert.match(anchored, /docs\/patterns\.md/);
+    assert.match(anchored, /Trigger Table/);
+    assert.match(anchored, /TODO\[canon\]/);
+    assert.ok(anchored.includes('- [correctness bug | risk/guardrail | optional cleanup/nit | spec gap]'));
+    assert.doesNotMatch(cold, /patterns\.md/);
+});
+
 void test('AC-11 — structural relocation: presence tokens appear in destinations, absence tokens do not bleed', () => {
     const worktreeRoot = process.cwd();
     function readRepoFile(relPath: string): string {
