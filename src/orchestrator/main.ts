@@ -1222,28 +1222,29 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
             `This failure cannot be bypassed with --force.`
         );
     } else if (baseDriftResult.drift.length > 0) {
+        const taskChangedFiles = new Set(splitGit.getAffectedFiles(baseBranch, cwd));
+        const { baseAdvanced, taskChangedOutOfScope } = splitValidation.classifyBaseDriftFilesFromData(
+            baseDriftResult.drift, taskChangedFiles,
+        );
         if (!cliArgs.force) {
-            die(
-                `--pr aborted: base-drift detected. Files in the tree diff between origin/${baseBranch}\n` +
-                `and HEAD that are not in the spec's Affected Files (and not task-dir/telemetry):\n` +
-                `${baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
-                `The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, files listed in\n` +
-                `your spec's '### Affected Files' table (directory-form entries like 'dist/' match\n` +
-                `subpaths), and PIPELINE_MANAGED_DOCS (auto-allowlisted once qa.status = done).\n` +
-                `If this is a legitimate task change, add the path to spec.md '### Affected Files'\n` +
-                `and rerun. For a rename, list BOTH the old and new paths. If the drift is\n` +
-                `unexpected (likely cross-pipeline contamination from a sibling worktree's\n` +
-                `managed-doc sync, OR a third-party commit landed on origin/${baseBranch} while\n` +
-                `this pipeline was running), recover with one of:\n` +
-                `  - rebase onto current origin/${baseBranch} to absorb the base advance:\n` +
-                `      git fetch origin ${baseBranch} && git rebase origin/${baseBranch}\n` +
-                `  - reset a specific file to base's content if a stray task-branch commit\n` +
-                `    introduced it:\n` +
-                `      git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'\n` +
-                `  - revert the offending task-branch commit entirely:\n` +
-                `      git revert <sha>\n` +
-                `Bypass with --force if you've verified the drift is intentional.`
+            const sections = ['--pr aborted: base-drift detected.'];
+            if (baseAdvanced.length > 0) sections.push(
+                `The base branch advanced. These files changed only on origin/${baseBranch}:\n` +
+                baseAdvanced.map(file => `  ${file}`).join('\n') + '\n' +
+                `Merge or rebase origin/${baseBranch} into the task branch, then rerun --pr.`
             );
+            if (taskChangedOutOfScope.length > 0) sections.push(
+                `These task-changed files are not in the spec's Affected Files:\n` +
+                taskChangedOutOfScope.map(file => `  ${file}`).join('\n') + '\n' +
+                `The allowlist is: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, files listed in\n` +
+                `the spec's '### Affected Files' table (directory entries include subpaths), and\n` +
+                `PIPELINE_MANAGED_DOCS once qa.status = done. Add legitimate paths to the spec\n` +
+                `(both sides of a rename), then rerun. To remove an unintended change:\n` +
+                `  git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'\n` +
+                `  git revert <sha>`
+            );
+            sections.push(`Bypass with --force if you've verified the drift is intentional.`);
+            die(sections.join('\n\n'));
         }
         warn(
             `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +

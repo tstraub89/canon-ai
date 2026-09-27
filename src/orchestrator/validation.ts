@@ -1521,6 +1521,30 @@ export function verifyHandoffAgainstDiffFromData(
     return issues;
 }
 
+export type AffectedFilesAllowlist = { paths: ReadonlySet<string>; prefixes: readonly string[] };
+
+export function buildAffectedFilesAllowlist(
+    taskIds: readonly string[],
+    options: { admitManagedDocs: boolean },
+): AffectedFilesAllowlist {
+    const paths = new Set<string>(PIPELINE_TELEMETRY_FILES);
+    const prefixes: string[] = [];
+    for (const taskId of taskIds) {
+        const parsed = parseAffectedFilesFromSpec(taskId);
+        for (const filePath of parsed.files) {
+            if (filePath.endsWith('/')) prefixes.push(filePath);
+            else paths.add(filePath);
+        }
+        for (const malformed of parsed.malformed) {
+            warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
+        }
+    }
+    if (options.admitManagedDocs) {
+        for (const doc of PIPELINE_MANAGED_DOCS) paths.add(doc);
+    }
+    return { paths, prefixes };
+}
+
 export function verifyBaseDriftFromData(
     diffFiles: readonly string[],
     allowedPaths: ReadonlySet<string>,
@@ -1535,6 +1559,19 @@ export function verifyBaseDriftFromData(
         drift.push(filePath);
     }
     return drift;
+}
+
+export function classifyBaseDriftFilesFromData(
+    driftFiles: readonly string[],
+    taskChangedFiles: ReadonlySet<string>,
+): { baseAdvanced: string[]; taskChangedOutOfScope: string[] } {
+    const baseAdvanced: string[] = [];
+    const taskChangedOutOfScope: string[] = [];
+    for (const filePath of driftFiles) {
+        if (taskChangedFiles.has(filePath)) taskChangedOutOfScope.push(filePath);
+        else baseAdvanced.push(filePath);
+    }
+    return { baseAdvanced, taskChangedOutOfScope };
 }
 
 export function parseDiffNameStatus(stdout: string): { diffFiles: string[]; renamePairs: Array<[string, string]> } {
@@ -1609,42 +1646,20 @@ export function verifyBaseDrift(
         return { drift: [], fetchFailed: false, diffFailed: true, diffError: driftResult.stderr };
     }
 
-    const allowedPaths = new Set<string>(PIPELINE_TELEMETRY_FILES);
-    const allowedPrefixes: string[] = [];
+    let admitManagedDocs = false;
     for (const taskId of taskIds) {
-        const parsed = parseAffectedFilesFromSpec(taskId);
-        for (const filePath of parsed.files) {
-            // Trailing-slash entries are directory-form scope (e.g., `dist/` covers
-            // `dist/cli/index.js`). Kept with the slash so prefix matching is
-            // boundary-correct: `dist/` does not accept `dist-other/foo`.
-            if (filePath.endsWith('/')) {
-                allowedPrefixes.push(filePath);
-            } else {
-                allowedPaths.add(filePath);
-            }
-        }
-        for (const malformed of parsed.malformed) {
-            warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
-        }
-
-        // QA's "Docs Freshness" sweep promotes lessons into PIPELINE_MANAGED_DOCS.
-        // The promotion target is downstream of what the spec author could have
-        // predicted, so once qa is done, auto-allowlist managed docs to avoid
-        // forcing a spec backfill before --pr.
         try {
             if (readStatus(taskId).phases.qa?.status === 'done') {
-                for (const doc of PIPELINE_MANAGED_DOCS) {
-                    allowedPaths.add(doc);
-                }
+                admitManagedDocs = true;
             }
         } catch {
-            // readStatus failures (missing/malformed status.json) leave the
-            // pre-QA allowlist in place — strictly safer than auto-widening.
+            // An unreadable status does not widen the allowlist.
         }
     }
+    const allowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs });
 
     return {
-        drift: verifyBaseDriftFromData(driftResult.files, allowedPaths, taskIds, allowedPrefixes),
+        drift: verifyBaseDriftFromData(driftResult.files, allowlist.paths, taskIds, allowlist.prefixes),
         fetchFailed: false,
         diffFailed: false,
     };

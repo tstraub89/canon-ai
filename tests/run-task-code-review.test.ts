@@ -14,6 +14,7 @@ import { getPathsInRange, getDeltaLineStats, resolveCommit, isAncestorCommit, ge
 import { evaluateCodeReviewLoop, evaluateSpecReviewLoop } from '../src/orchestrator/review-loop.js';
 import { readStatus, writeStatusToFile } from '../src/orchestrator/state.js';
 import type { PipelineState, StatusJson, TaskContext } from '../src/orchestrator/types.js';
+import { taskResetCodeReview } from '../src/task/index.js';
 
 async function withTempTasksAsync<T>(fn: (tasksRoot: string, activeCwd: string) => Promise<T>): Promise<T> {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-code-review-'));
@@ -342,6 +343,99 @@ function isProcessExitError(error: unknown, code: number): boolean {
         error.message === 'process.exit' &&
         'code' in error &&
         error.code === code;
+}
+
+async function expectExitTwo(fn: () => Promise<unknown>): Promise<void> {
+    const originalExit: typeof process.exit = process.exit.bind(process);
+    process.exit = (code?: string | number | null): never => {
+        throw Object.assign(new Error('process.exit'), { code });
+    };
+    try {
+        await assert.rejects(fn, (error: unknown) => isProcessExitError(error, 2));
+    } finally {
+        process.exit = originalExit;
+    }
+}
+
+function addAffectedFile(tasksRoot: string, taskId: string, file: string): void {
+    fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), [
+        '', '## Amendment', '', '### Affected Files', '', '| File | Change |',
+        '|---|---|', `| \`${file}\` | fixture reason |`, '',
+    ].join('\n'));
+}
+
+function writeFilledReview(tasksRoot: string, taskId: string, verdict: 'Approved' | 'Changes requested'): void {
+    fs.writeFileSync(path.join(tasksRoot, taskId, 'review.md'),
+        `# Code Review\n\n## Stage 1\n\nReviewed.\n\n## Final Verdict\n\n- [x] ${verdict}\n`);
+}
+
+void test('scope pre-flight blocks normal runs without consuming review counters, then resumes at Round 1', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        writeTask(tasksRoot, 'scope');
+        const events: string[] = [];
+        const deps = makeDeps({ activeCwd, events, onClaude: prompt => {
+            assert.match(prompt, /This is Round 1/);
+            assert.doesNotMatch(prompt, /Full-Send Scope Judgment/);
+            writeFilledReview(tasksRoot, 'scope', 'Approved');
+        } });
+        deps.getAffectedFiles = () => ['src/extra-helper.ts'];
+        await expectExitTwo(() => runCodeReviewPhase(makeState(['scope']), false, null, deps));
+        assert.deepEqual(events, ['verifyBranch']);
+        const blocked = readStatus('scope');
+        assert.equal(blocked.phases.code_review?.status, 'blocked');
+        assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /src\/extra-helper\.ts/);
+        assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /reset-code-review/);
+        assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /reroute/);
+        for (const key of ['iterations_current_loop', 'iterations_total', 'preflight_rejections_current_loop', 'preflight_rejections_total'] as const) {
+            assert.equal(blocked.phases.code_review?.[key], 0);
+        }
+        taskResetCodeReview('scope');
+        addAffectedFile(tasksRoot, 'scope', 'src/extra-helper.ts');
+        await runCodeReviewPhase(makeState(['scope']), false, null, deps);
+        assert.ok(events.some(event => event.startsWith('cold:')));
+        assert.ok(events.includes('foreman'));
+    });
+});
+
+for (const outcome of ['amended', 'changes_requested', 'unjudged', 'in_scope'] as const) {
+    void test(`scope pre-flight full-send outcome: ${outcome}`, { concurrency: false }, async () => {
+        await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+            writeTask(tasksRoot, 'scope');
+            const specPath = path.join(tasksRoot, 'scope', 'spec.md');
+            const file = 'src/extra-helper.ts';
+            if (outcome === 'in_scope') addAffectedFile(tasksRoot, 'scope', file);
+            const originalSpec = fs.readFileSync(specPath);
+            const status = readStatus('scope');
+            status.full_send = true;
+            writeStatusToFile(path.join(tasksRoot, 'scope', 'status.json'), status);
+            const events: string[] = [];
+            const deps = makeDeps({ activeCwd, events, onClaude: prompt => {
+                assert.deepEqual(fs.readFileSync(specPath), originalSpec);
+                if (outcome === 'in_scope') assert.doesNotMatch(prompt, /Full-Send Scope Judgment/);
+                else {
+                    assert.match(prompt, /Full-Send Scope Judgment/);
+                    assert.match(prompt, /src\/extra-helper\.ts/);
+                    assert.match(prompt, /Appropriate scope expansion/);
+                    assert.match(prompt, /Spec miss/);
+                    assert.match(prompt, /Should not have been changed/);
+                }
+                if (outcome === 'amended') addAffectedFile(tasksRoot, 'scope', file);
+                writeFilledReview(tasksRoot, 'scope', outcome === 'changes_requested' ? 'Changes requested' : 'Approved');
+            } });
+            deps.getAffectedFiles = () => [file];
+            if (outcome === 'unjudged') {
+                await expectExitTwo(() => runCodeReviewPhase(makeState(['scope']), false, null, deps));
+                const blocked = readStatus('scope');
+                assert.equal(blocked.phases.code_review?.status, 'blocked');
+                assert.match((blocked.escalations ?? []).map(e => JSON.stringify(e)).join('\n'), /src\/extra-helper\.ts/);
+            } else {
+                await runCodeReviewPhase(makeState(['scope']), false, null, deps);
+                assert.notEqual(readStatus('scope').phases.code_review?.status, 'blocked');
+            }
+            assert.ok(events.some(event => event.startsWith('cold:')));
+            assert.ok(events.includes('foreman'));
+        });
+    });
 }
 
 void test('review-loop evaluators apply cap thresholds and loop-local counters', () => {

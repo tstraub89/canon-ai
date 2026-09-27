@@ -24,6 +24,8 @@ import {
     classifySharedDocDirtFromData,
     classifySharedDocSetFromData,
     classifyPreflightBlockersFromData,
+    classifyBaseDriftFilesFromData,
+    buildAffectedFilesAllowlist,
     collectUnscannedTableHits,
     computeLatestValidationResults,
     extractCheckedVerdict,
@@ -43,6 +45,7 @@ import {
     sliceRerouteRoundSection,
     verifyRerouteAmendment,
 } from '../src/orchestrator/validation.js';
+import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES } from '../src/orchestrator/worktree.js';
 import { checkAndRoute, resolveQaPrBody } from '../src/orchestrator/main.js';
 import {
     buildPreflightReviewBlock,
@@ -1947,6 +1950,50 @@ void test('verifyHandoffAgainstDiffFromData: rename uncovered emits one issue na
 
 void test('verifyBaseDriftFromData: empty diff returns no drift', () => {
     assert.deepEqual(verifyBaseDriftFromData([], new Set(), ['task-a']), []);
+});
+
+void test('base-only drift is classified as base advancement', () => {
+    assert.deepEqual(classifyBaseDriftFilesFromData(['docs/base-only.md'], new Set()), {
+        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: [],
+    });
+});
+
+void test('classifyBaseDriftFilesFromData partitions task and base changes', () => {
+    assert.deepEqual(classifyBaseDriftFilesFromData([], new Set()), {
+        baseAdvanced: [], taskChangedOutOfScope: [],
+    });
+    assert.deepEqual(classifyBaseDriftFilesFromData(['a', 'b'], new Set(['a', 'b'])), {
+        baseAdvanced: [], taskChangedOutOfScope: ['a', 'b'],
+    });
+    assert.deepEqual(classifyBaseDriftFilesFromData(['a', 'b'], new Set(['b'])), {
+        baseAdvanced: ['a'], taskChangedOutOfScope: ['b'],
+    });
+});
+
+void test('buildAffectedFilesAllowlist unions Design and Amendment paths with managed-doc option', () => {
+    withTempTaskSpecs({ 'task-a': ['`src/initial.ts`', '`dist/`'], 'task-b': [] }, tasksRoot => {
+        fs.appendFileSync(path.join(tasksRoot, 'task-b', 'spec.md'), [
+            '## Amendment', '', '### Affected Files', '', '| File | Change |', '|---|---|',
+            '| `src/amended.ts` | reason |', '',
+        ].join('\n'));
+        const normal = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admitManagedDocs: false });
+        assert.equal(normal.paths.has('src/initial.ts'), true);
+        assert.equal(normal.paths.has('src/amended.ts'), true);
+        assert.deepEqual(normal.prefixes, ['dist/']);
+        for (const file of PIPELINE_TELEMETRY_FILES) assert.equal(normal.paths.has(file), true);
+        for (const file of PIPELINE_MANAGED_DOCS) assert.equal(normal.paths.has(file), false);
+        const review = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admitManagedDocs: true });
+        for (const file of PIPELINE_MANAGED_DOCS) assert.equal(review.paths.has(file), true);
+        assert.deepEqual(verifyBaseDriftFromData(
+            ['dist/cli/index.js', 'tasks/task-a/handoff.md', PIPELINE_MANAGED_DOCS[0]],
+            review.paths, ['task-a', 'task-b'], review.prefixes,
+        ), []);
+    });
+});
+
+void test('scope check reports the new side of an unlisted rename', () => {
+    const paths = parseNameStatusOutput('R100\0src/old.ts\0src/new.ts\0');
+    assert.deepEqual(verifyBaseDriftFromData(paths, new Set(['src/old.ts']), ['task-a']), ['src/new.ts']);
 });
 
 void test('verifyBaseDriftFromData: file listed in spec allowlist is accepted', () => {

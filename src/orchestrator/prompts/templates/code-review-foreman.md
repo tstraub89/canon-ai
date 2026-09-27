@@ -73,6 +73,21 @@ For this round, cold-Codex reviewed the full task diff against `{{{baseBranch}}}
 No cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.
 {{/hasColdCodexFindings}}
 
+{{#hasOutOfScopeFiles}}
+## Full-Send Scope Judgment
+
+The task changed these files outside the spec's `### Affected Files` table:
+
+{{{outOfScopeFilesList}}}
+
+Judge each file against the owning task's ACs and record its outcome and reason in `review.md`:
+
+1. **Appropriate scope expansion:** If needed to meet the ACs and consistent with the spec's intent, append an `## Amendment` section to the owning task's `spec.md`. Include an exact `### Affected Files` heading and table row naming the file, plus a one-line reason that calls it a full-send scope expansion.
+2. **Spec miss:** If the spec should have listed the file, append the same `## Amendment` and exact `### Affected Files` table row, with a one-line reason that calls it a spec miss.
+3. **Should not have been changed:** Do not amend the spec. Write a finding requiring the file to be reverted or removed, and set the verdict to `changes_requested`.
+
+For a bundle, amend the member spec whose ACs the file serves. The orchestrator checks after this session: every listed file must be in a member's Affected Files or covered by `changes_requested`; otherwise it auto-blocks.
+{{/hasOutOfScopeFiles}}
 ## Foreman Protocol
 
 ### 1. Spawn Claude Lenses In Parallel
