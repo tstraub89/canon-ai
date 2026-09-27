@@ -8,6 +8,8 @@ Code review is synthesized by a foreman from three lenses: an anchored Claude le
 
 The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
 
+**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
@@ -98,6 +100,8 @@ breaks routing. Administrative appends use a non-Round heading (e.g.
 `## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
 
 ## Round N — verifying iteration N-1's response to round N-1
+
+**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
 
 ### Stage 1 — Acceptance Criteria Re-Check
 

@@ -185,7 +185,11 @@ export function getScopedDiff(
     cwd: string,
     capBytes = 50_000,
 ): ScopedDiff | null {
-    const result = gitSafeAtRaw(cwd, 'diff', `${baseBranch}...HEAD`);
+    return getScopedDiffInRange(`${baseBranch}...HEAD`, cwd, capBytes);
+}
+
+export function getScopedDiffInRange(rangeExpr: string, cwd: string, capBytes = 50_000): ScopedDiff | null {
+    const result = gitSafeAtRaw(cwd, 'diff', rangeExpr);
     if (!result.ok) return null;
 
     const raw = result.stdout;
@@ -416,9 +420,42 @@ export function parseNameStatusOutput(raw: string): string[] {
 }
 
 export function getAffectedFiles(baseRef: string, cwd: string): string[] {
-    const result = gitSafeAtRaw(cwd, 'diff', `${baseRef}...HEAD`, '--name-status', '-M', '-z');
-    if (!result.ok || !result.stdout) return [];
+    return getPathsInRange(`${baseRef}...HEAD`, cwd) ?? [];
+}
+
+export function getPathsInRange(rangeExpr: string, cwd: string): string[] | null {
+    const result = gitSafeAtRaw(cwd, 'diff', rangeExpr, '--name-status', '-M', '-z');
+    if (!result.ok) return null;
+    if (!result.stdout) return [];
     return parseNameStatusOutput(result.stdout);
+}
+
+export function resolveCommit(ref: string, cwd: string): string | null {
+    const result = gitSafeAt(cwd, 'rev-parse', '--verify', `${ref}^{commit}`);
+    return result.ok ? result.stdout.trim() : null;
+}
+
+export function isAncestorCommit(ancestorRef: string, descendantRef: string, cwd: string): boolean {
+    return gitSafeAt(cwd, 'merge-base', '--is-ancestor', ancestorRef, descendantRef).ok;
+}
+
+export type DeltaFileStat = { path: string; added: number; deleted: number };
+
+export function getDeltaLineStats(prevSha: string, cwd: string, headRef = 'HEAD'): DeltaFileStat[] | null {
+    // A rename counted as delete + add may conservatively force a full review.
+    const result = gitSafeAtRaw(cwd, 'diff', `${prevSha}..${headRef}`, '--numstat', '--no-renames');
+    if (!result.ok) return null;
+    const stats = result.stdout.split('\n').filter(Boolean).map(line => {
+        const [addedRaw, deletedRaw, ...pathParts] = line.split('\t');
+        return {
+            path: pathParts.join('\t'),
+            added: addedRaw === '-' ? 0 : Number(addedRaw),
+            deleted: deletedRaw === '-' ? 0 : Number(deletedRaw),
+        };
+    });
+    return stats.every(stat => stat.path.length > 0 && Number.isFinite(stat.added) && Number.isFinite(stat.deleted))
+        ? stats
+        : null;
 }
 
 export function getTreeDriftFiles(baseRef: string, cwd: string): { files: string[]; ok: boolean; stderr: string } {

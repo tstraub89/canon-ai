@@ -1011,3 +1011,10 @@
 | 2026-09-27T01:24:51.922Z | code-review-delta-rerounds | spec | claude | opus | 0 | 153.0s | 1330464 | ok |
 | 2026-09-27T01:25:58.835Z | code-review-delta-rerounds | spec_review | codex | gpt-6-sol | 1 | 66.8s | 1269035 | ok |
 | 2026-09-27T01:39:31.364Z | code-review-delta-rerounds | plan | claude | sonnet | 0 | 576.4s | 4800246 | ok |
+| 2026-09-27T01:59:06.924Z | code-review-delta-rerounds | implement | codex | gpt-6-sol | 0 | 1173.6s | 9110864 | ok |
+| 2026-09-27T02:00:54.110Z | code-review-delta-rerounds | code_review | codex | gpt-6-luna | 0 | 106.6s | - | ok |
+| 2026-09-27T02:13:07.728Z | code-review-delta-rerounds | code_review | claude | opus | 0 | 733.6s | 1164385 | ok |
+| 2026-09-27T02:21:51.292Z | code-review-delta-rerounds | implement | codex | gpt-6-sol | 1 | 523.5s | 16734046 | ok |
+| 2026-09-27T02:23:16.398Z | code-review-delta-rerounds | code_review | codex | gpt-6-luna | 1 | 84.6s | - | ok |
+| 2026-09-27T02:36:30.376Z | code-review-delta-rerounds | code_review | claude | opus | 1 | 793.9s | 1573921 | ok |
+| 2026-09-27T02:39:08.371Z | code-review-delta-rerounds | qa | claude | sonnet | 0 | 158.0s | 1570880 | ok |

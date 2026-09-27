@@ -1,121 +1,154 @@
 # Implementation Handoff: code-review-delta-rerounds
 
 > Author: Codex | Spec: `tasks/code-review-delta-rerounds/spec.md` | Plan: `tasks/code-review-delta-rerounds/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Never backtick a bare directory path** anywhere in this file (e.g. write "the app source tree (apps/app/src)", not `` `apps/app/src` ``). `docs-refs-check` treats a backticked path as a file reference and aborts the pipeline's auto-commit with "missing file" when it is a directory. Backtick only real files.
-
 | File | What Changed |
 |---|---|
+| `src/lib/pipeline-policy.ts` | Pure full/delta scope resolver, ordered triggers, owned-path exclusions, and 400-line threshold. |
+| `src/orchestrator/git.ts` | Range-based rename-aware paths and capped diffs, commit/ancestry probes, and delta line stats. |
+| `src/orchestrator/review-archive.ts` | Numbered cold-Codex archive writer, strict header parser, previous-round lookup, and malformed-record detection. |
+| `src/orchestrator/phases/code-review.ts` | Resolve one round/scope after pre-flight, select the cold-Codex base, archive findings for every bundle member, and pass the scope to the foreman. |
+| `src/orchestrator/prompts/index.ts` | Share the prompt's round definition with the runner and render scope-aware prompt data. |
+| `src/orchestrator/prompts/templates/code-review-foreman.md` | Scope line, delta lens instructions, and the review.md scope-line instruction. |
+| `.claude/agents/code-review-cold.md`, `templates/.claude/agents/code-review-cold.md` | Add the spec-blind sibling-site sweep and synchronized mirror. |
+| `.canon/templates/review.md`, `templates/.canon/templates/review.md` | Show scope lines in the Round 1 and later-round expected shapes. |
+| `scripts/docs-refs-check.mjs`, `templates/scripts/docs-refs-check.mjs` | Exempt only numbered cold-Codex archives under task directories. |
+| `docs/decisions.md` | Record per-round scope and supersede the fixed cold-Codex base clause. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Document the scope triggers, archive, delta lens shape, and current foreman prompt. |
+| `tests/pipeline-policy.test.ts` | Cover each scope trigger, threshold boundary, delta result, and owned-path exclusions. |
+| `tests/run-task-code-review.test.ts` | Cover round fallback, archive numbering, bundle output, pre-flight/failure exclusions, bases, retry lookup, ancestry, malformed records, and real-git rename paths. |
+| `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Add delta-round golden and sibling sweep assertion; regenerate full-round goldens. |
+| `tests/docs-refs-check.test.ts` | Assert archive exemption and review.md negative control. |
+| `dist/orchestrator/run-task.js` | Rebuilt orchestrator bundle. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+The authoritative provenance stamp is in `status.json.canon`; this handoff does not duplicate it.
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The runner now derives the same review round as the foreman prompt, uses a pure policy function to choose the cold-lens base, and records each successful cold-Codex result with the reviewed HEAD SHA. Delta rounds limit cold-Codex and cold-Claude to the fix range; anchored Claude retains the full task diff and task context. Rename-aware path collection and conservative fallbacks keep the scope decision from silently narrowing when review history changes.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Kept diff byte-cap logic inside the new range helper instead of extracting a separate private `capDiff`. | The existing wrapper delegates to one implementation, so no duplicate cap logic remains. | None. |
+| Called the pure resolver on Round 1 and XL rounds instead of constructing those results in the runner. | Keeps trigger ordering and reason text in the pure policy module. | Strengthens AC-1 and AC-2. |
+| Added malformed-archive detection and strict header parsing. | A missing record and an unparseable numbered record need distinct full-scope reasons. | Satisfies AC-5. |
+| Left the optional codebase-map and product-context edits out. | Neither file currently describes the archive family in a place that needed updating; all required documentation is in the specified decision and orchestrator docs. | None. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
-| AC | Status | Notes |
+| AC | Status | Evidence |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Pure resolver test rows cover triggers 1–5, boundary 400/401, delta, and excluded task/telemetry paths. |
+| AC-2 | Met | Runner and prompt call one round resolver; stale counter test records archive round 1. |
+| AC-3 | Met | Two invocations produce numbered archives; max+1 handles 1/2/10; bundle content matches; pre-flight and failed cold-Codex leave no archive. |
+| AC-4 | Met | Runner test records base branch on full and previous SHA on delta. |
+| AC-5 | Met | Real-git tests cover normal delta, retry against round N−1, non-ancestor, equal HEAD, missing/malformed records, and unresolved SHA. |
+| AC-6 | Met | Delta golden retains both Claude lens spawns; runner calls cold-Codex on delta. |
+| AC-7 | Met | Delta golden names scope/base/reason and supplies the delta while anchored Claude retrieves the full diff; existing full goldens gain only scope lines. |
+| AC-8 | Met | Foreman and review scaffold direct one scope line per round. |
+| AC-9 | Met | Cold-Claude charter gains sibling-site sweep and retains spec-blind prohibitions; mirror check passes. |
+| AC-10 | Met | Numbered archive ref is exempt while the same broken ref in review.md fails. |
+| AC-11 | Met | Decision and orchestrator docs updated; managed mirror synced. |
+| AC-12 | Met | Working-tree diff contains none of the four prohibited files. |
+| AC-13 | Met | Fresh build produced the declared dist delta; lint, type-check, full suite, docs refs, and template sync pass. Orchestrator owns the commit. |
+| AC-14 | Met | Real-git rename fixture forces trigger 4 on source X; post-image-only negative-control mutation failed with actual path set Y versus expected X and Y. |
 
 ## Edge Cases Considered
 
-- ...
+- Retried round 2 ignores existing round-2 attempts and reads the newest valid round-1 archive.
+- A previous SHA equal to HEAD or no longer ancestral forces a full review.
+- Bundle members share identical findings and archive headers; a missing or disagreeing previous record prevents a delta scope.
+- A numbered archive with a malformed header cannot become a review base.
+- Rename line counting uses delete-plus-add, which may conservatively force a full review.
+- Negative-control command: `node --test --test-name-pattern 'rename-aware delta path set' --import ./tests/md-loader-register.mjs --import tsx tests/run-task-code-review.test.ts` with the path collector temporarily switched to `--name-only -M -z`. It failed as intended: actual `[Y]`, expected `[X, Y]`. The original collector was restored byte-for-byte, and the same targeted command passed.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- [ambiguity] An archive whose header is entirely unparseable cannot reveal which review round it belongs to. I treat a malformed numbered archive as an unusable previous record only when no valid archive for round N−1 exists, and force full review with an unparseable-record reason. This costs an extra full review in the ambiguous case and preserves coverage.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Final source and tests. |
+| `npm run type-check` | Pass | Final source and tests. |
+| `npm test` | Pass | 1,244 passed, 1 skipped, 0 failed after golden regeneration. |
+| Golden regeneration | Pass | `UPDATE_GOLDENS=1` scoped prompt test passed; full suite then passed against stored goldens. |
+| `npm run build` | Pass | Fresh build emitted the orchestrator bundle listed above; CLI bundle stayed unchanged. |
+| `npm run docs-refs-check` | Pass | All refs OK after the final doc edit and template sync. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| E2E | N/A | Spec Validation Required marks E2E N/A: no UI surface. |
+| `git diff --check` | Pass | No whitespace errors. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs implemented within the Affected Files cap
+- [x] All required validation checks pass
+- [x] Deviations and the malformed-record interpretation documented
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
+## Iteration 2 — addressing review round 1
 
 ### Changes
 
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
+| `src/lib/pipeline-policy.ts` | Distinguish failed delta/prior-path and line-stat probes from empty results; name bundle-record disagreement. |
+| `src/orchestrator/git.ts` | Return `null` on failed range probes, reject malformed numstat data, and support the pinned HEAD endpoint. |
+| `src/orchestrator/phases/code-review.ts` | Pin HEAD before cold-Codex, fail through the phase exit convention if it is unavailable, force full scope on failed probes, and skip unused full-diff injection on delta rounds. |
+| `src/orchestrator/prompts/index.ts` | Pass the presence of an injected delta diff into the foreman template. |
+| `src/orchestrator/prompts/templates/code-review-foreman.md` | Give cold-Claude a retrieval command if delta injection fails, name the anchored lens's full-diff command on delta rounds, and clarify sibling-site search. |
+| `.claude/agents/code-review-cold.md`, `templates/.claude/agents/code-review-cold.md` | Clarify that the spec-blind lens may search code for sibling guards. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Document failed-probe full fallback and delta-diff retrieval. |
+| `tests/pipeline-policy.test.ts` | Pin failure and bundle-disagreement reasons. |
+| `tests/run-task-code-review.test.ts` | Cover failed probes, real-git failure versus empty output, bundle mismatch/missing member, unavailable HEAD, and HEAD movement during cold review. |
+| `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Pin the delta retrieval fallback, explicit anchored full diff, and sibling-site instruction; regenerate the delta golden. |
+| `dist/orchestrator/run-task.js` | Rebuild the reviewed implementation. |
 
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+### Findings Addressed
 
-### Findings addressed
+| Review finding | Resolution |
+|---|---|
+| F1 — git probe errors narrowed the review | Range helpers return `null` on failure while an empty successful diff remains `[]`. The pure resolver forces full scope with the failed probe named. Runner and real-git tests cover all three probes. |
+| F2 — missing injected delta diff looked empty | The delta prompt renders a `git diff <prevSHA>..HEAD` retrieval instruction when injection returns `null`; no empty diff block is shown. |
+| F3 — archive SHA was read after cold-Codex | HEAD is resolved once before cold-Codex or Claude starts. Failure exits through `setExitReason` and exit code 1; the pinned SHA drives ancestry, delta probes, and the archive header. A test moves HEAD during the cold run and checks the archived SHA. |
+| F4 — anchored lens lacked an explicit full diff on delta rounds | The delta-only anchored instruction now names `git diff <baseBranch>...HEAD` and says to give the full task diff, separate from the cold-Claude delta. The delta block is separated from the generic retrieval line. Docs and golden match. |
+| F5 — cold-Claude's sibling sweep conflicted with truncated-diff context | The delta foreman prompt distinguishes inspection for truncated diff context from searching code for sibling guards. The cold agent description also names the sweep. Full-round rendered lens instructions remain unchanged to preserve AC-7; its charter still directs the sweep on every round. |
+| N1 — bundle mismatch had a missing-record reason | Disagreeing SHA records now get their own full-scope reason; tests also cover a missing bundle member. The conservative malformed-header interpretation from Iteration 1 remains documented above. |
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+### AC Deltas
 
-### AC deltas (if any)
+| AC | Result | Evidence |
+|---|---|---|
+| AC-1 | Met | Null probe facts force full with named reasons; pure policy rows added. |
+| AC-3 / AC-5 | Met | Reviewed HEAD is pinned before cold-Codex; archive continues to hold that reviewed SHA, and no archive is written when HEAD cannot resolve. |
+| AC-6 / AC-7 | Met | Delta foreman golden retains both lenses, explicitly separates their ranges, and provides a missing-diff retrieval path. Full-round goldens are unchanged in this iteration. |
+| AC-9 | Met | Delta foreman instruction permits the sibling-site code search while preserving the spec-blind prohibitions. |
+| AC-11 | Met | Orchestrator docs now describe the failed-probe and missing-diff behavior; mirror is synchronized. |
+| AC-13 | Met | Fresh build is stable; the full suite and required checks pass. |
 
-- AC-N: was Partial → now Met (file:line)
+### Deviations
 
-### Re-run validation (only checks that re-ran)
+- The plan predated these review findings. The nullable probe results, pinned HEAD, and prompt fallback are contained within authorized files. No new module or dependency was added.
+
+### Blockers
+
+- None added in this iteration. The Iteration 1 `[ambiguity]` entry remains the chosen conservative interpretation for an archive with an entirely unparseable header.
+
+### Re-run validation
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| `npm run lint` | Pass | Final source and tests. |
+| `npm run type-check` | Pass | Final source and tests. |
+| `npm test` | Pass | 1,254 passed, 1 skipped, 0 failed after delta-golden regeneration. |
+| `npm run build` | Pass | Repeated fresh build produced an identical orchestrator bundle hash. |
+| `npm run docs-refs-check` | Pass | All refs OK before this handoff append; rechecked below after append. |
+| `npm run sync-templates:check` | Pass | All managed mirrors in sync. |
+| E2E | N/A | Spec Validation Required marks E2E N/A: no UI surface. |
+| `git diff --check` | Pass | No whitespace errors. |

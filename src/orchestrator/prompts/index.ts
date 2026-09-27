@@ -477,28 +477,41 @@ function bundleHasRealPriorReview(taskIds: readonly string[]): boolean {
     });
 }
 
+export function resolveCodeReviewRound(tasks: readonly TaskContext[]): { isRound1: boolean; roundN: number; maxIter: number } {
+    const rawMaxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
+    const maxIter = bundleHasRealPriorReview(tasks.map(t => t.taskId)) ? rawMaxIter : 0;
+    return { isRound1: maxIter === 0, roundN: maxIter + 1, maxIter };
+}
+
+export type CodeReviewScopeForPrompt = {
+    scope: 'full' | 'delta';
+    base: string;
+    reason: string;
+    deltaDiff: ScopedDiff | null;
+};
+
 export function promptCodeReview(
     state: PipelineState,
     baseBranch?: string,
     scopedDiff: ScopedDiff | null = null,
     coldCodexFindings: string | null = null,
+    scopeInfo: CodeReviewScopeForPrompt | null = null,
 ): string {
     const { tasks } = state;
-    const rawMaxIter = tasks.reduce((max, t) => Math.max(max, t.iterations), 0);
     // Force Round 1 if any task's review.md lacks a real prior Stage 1 review —
     // see bundleHasRealPriorReview docstring for the bug class this prevents.
-    const maxIter = bundleHasRealPriorReview(tasks.map(t => t.taskId)) ? rawMaxIter : 0;
+    const { maxIter, isRound1, roundN } = resolveCodeReviewRound(tasks);
     const resolvedBaseBranch = baseBranch ?? getBaseBranch(tasks.map(t => t.taskId));
-    const hasDiff = scopedDiff !== null;
-    const isRound1 = maxIter === 0;
-    const roundN = maxIter + 1;
+    const isDeltaScope = scopeInfo?.scope === 'delta';
+    const effectiveScopedDiff = isDeltaScope ? null : scopedDiff;
+    const hasDiff = effectiveScopedDiff !== null;
     const priorIteration = maxIter;
     const diffView = hasDiff
         ? {
             hasDiff,
             baseBranch: resolvedBaseBranch,
-            diffContent: scopedDiff.diff,
-            diffTruncated: scopedDiff.truncated,
+            diffContent: effectiveScopedDiff.diff,
+            diffTruncated: effectiveScopedDiff.truncated,
         }
         : {
             hasDiff,
@@ -530,6 +543,16 @@ export function promptCodeReview(
         maxIter,
         tightenLine,
         ...diffView,
+        isDeltaScope,
+        scopeWord: isDeltaScope ? 'Delta' : 'Full',
+        scopeBase: scopeInfo?.base ?? resolvedBaseBranch,
+        scopeReason: scopeInfo?.reason === 'delta'
+            ? 'small fix within the files already under review'
+            : scopeInfo?.reason ?? (isRound1 ? 'Round 1 (initial review)' : 'full review'),
+        deltaBase: scopeInfo?.base ?? '',
+        deltaDiffContent: scopeInfo?.deltaDiff?.diff ?? '',
+        hasDeltaDiff: scopeInfo?.deltaDiff !== null && scopeInfo?.deltaDiff !== undefined,
+        deltaDiffTruncated: scopeInfo?.deltaDiff?.truncated ?? false,
         coldCodexFindings: coldCodexFindings ?? '',
         hasColdCodexFindings: coldCodexFindings !== null,
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),

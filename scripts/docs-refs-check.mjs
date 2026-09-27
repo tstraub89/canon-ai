@@ -483,7 +483,7 @@ function stripLineCitation(target) {
 
 // `templates/` markdown is intentionally scanned — those files ship to
 // adopters via `canon upgrade`, so broken refs there would propagate
-// silently. Three exempt classes, each by named purpose (not by filename
+// silently. Exempt classes, each by named purpose (not by filename
 // suffix alone):
 //
 // 1. `docs/BACKLOG.md` — deliberate forward-refs to unbuilt work.
@@ -517,7 +517,8 @@ function isNoisySourceFile(relPath, skipPaths = []) {
     return (
         relPath === 'docs/BACKLOG.md' ||
         /(?:^|\/)templates\/(?:.*\/)?(spec|plan|notes|spec-review)\.md$/.test(relPath) ||
-        /^tasks\/[^/]+\/(spec|plan|notes|spec-review)\.md$/.test(relPath)
+        /^tasks\/[^/]+\/(spec|plan|notes|spec-review)\.md$/.test(relPath) ||
+        /^tasks\/[^/]+\/review-cold-codex-run-\d+\.md$/.test(relPath)
     );
 }
 

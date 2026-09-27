@@ -8,6 +8,65 @@
 // resolution + legacy-shim warnings stay in run-task.ts.
 
 export type TaskSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
+export const CODE_REVIEW_DELTA_LINE_THRESHOLD = 400;
+
+export type CodeReviewPrevRecord = {
+    reviewedSha: string;
+    exists: boolean;
+    isAncestor: boolean;
+    equalsHead: boolean;
+} | null;
+
+export type CodeReviewScopeFacts = {
+    isRound1: boolean;
+    effectiveSize: TaskSize;
+    delicate: boolean;
+    baseBranch: string;
+    prevRecord: CodeReviewPrevRecord;
+    previousArchiveMalformed?: boolean;
+    previousRecordsDisagree?: boolean;
+    deltaPaths: readonly string[] | null;
+    priorChangeSetPaths: readonly string[] | null;
+    deltaFileStats: readonly { path: string; added: number; deleted: number }[] | null;
+    taskIds: readonly string[];
+    telemetryFiles: readonly string[];
+};
+
+export type CodeReviewScope = { scope: 'full' | 'delta'; base: string; reason: string };
+
+function isReviewOwnedPath(filePath: string, facts: CodeReviewScopeFacts): boolean {
+    return facts.taskIds.some(id => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`)) ||
+        facts.telemetryFiles.includes(filePath);
+}
+
+export function resolveCodeReviewScope(facts: CodeReviewScopeFacts): CodeReviewScope {
+    const full = (reason: string): CodeReviewScope => ({ scope: 'full', base: facts.baseBranch, reason });
+    if (facts.isRound1) return full('Round 1 (initial review)');
+    if (facts.effectiveSize === 'XL' || facts.delicate) return full(facts.delicate ? 'delicate' : 'XL task size');
+    const prev = facts.prevRecord;
+    if (prev === null) return full(facts.previousRecordsDisagree
+        ? 'bundle members disagree on the previous reviewed commit'
+        : facts.previousArchiveMalformed
+            ? 'unparseable cold-Codex archive record for the previous round'
+            : 'no cold-Codex archive record for the previous round');
+    if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
+    if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
+    if (prev.equalsHead) return full('previous reviewed commit equals HEAD');
+    if (facts.deltaPaths === null) return full('delta path probe failed');
+    if (facts.priorChangeSetPaths === null) return full('previous change-set path probe failed');
+    if (facts.deltaFileStats === null) return full('delta line-stat probe failed');
+
+    const priorPaths = new Set(facts.priorChangeSetPaths.filter(p => !isReviewOwnedPath(p, facts)));
+    const outside = facts.deltaPaths.find(p => !isReviewOwnedPath(p, facts) && !priorPaths.has(p));
+    if (outside) return full(`${outside} is outside the previous round's change set`);
+    const lines = facts.deltaFileStats
+        .filter(stat => !isReviewOwnedPath(stat.path, facts))
+        .reduce((sum, stat) => sum + stat.added + stat.deleted, 0);
+    if (lines > CODE_REVIEW_DELTA_LINE_THRESHOLD) {
+        return full(`delta line count ${lines} exceeds ${CODE_REVIEW_DELTA_LINE_THRESHOLD}`);
+    }
+    return { scope: 'delta', base: prev.reviewedSha, reason: 'delta' };
+}
 export type PipelineTier = 'fast' | 'full';
 export type CodexPhase = 'spec_review' | 'implement' | 'code_review';
 export type ClaudePhase = 'spec' | 'plan' | 'code_review' | 'qa';

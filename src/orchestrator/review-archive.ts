@@ -5,6 +5,69 @@ import { isPristineTaskArtifact, scaffoldTaskArtifact } from '../task/templates.
 import { isTemplateUnfilled } from './validation.js';
 
 export const REVIEW_ARCHIVE_PREFIX = 'review-prior-';
+export const COLD_CODEX_ARCHIVE_PREFIX = 'review-cold-codex-run-';
+const COLD_CODEX_ARCHIVE_RE = /^review-cold-codex-run-(\d+)\.md$/;
+
+export type ColdCodexArchiveHeader = {
+    round: number;
+    reviewedSha: string;
+    scope: 'full' | 'delta';
+    base: string;
+    reason: string;
+};
+
+export function writeColdCodexArchive(taskDir: string, header: ColdCodexArchiveHeader, findings: string): string {
+    let newest = 0;
+    for (const name of fs.readdirSync(taskDir)) {
+        const match = COLD_CODEX_ARCHIVE_RE.exec(name);
+        if (match) newest = Math.max(newest, Number(match[1]));
+    }
+    const name = `${COLD_CODEX_ARCHIVE_PREFIX}${newest + 1}.md`;
+    const reason = header.reason.replaceAll('"', "'");
+    fs.writeFileSync(path.join(taskDir, name),
+        `<!-- round=${header.round} reviewed_sha=${header.reviewedSha} scope=${header.scope} base=${header.base} reason="${reason}" -->\n\n${findings}`,
+        'utf8');
+    return name;
+}
+
+export function parseColdCodexArchiveHeader(content: string): ColdCodexArchiveHeader | null {
+    const match = /^<!-- round=(\d+) reviewed_sha=([a-f\d]{40,64}) scope=(full|delta) base=(\S+) reason="([^"\n]*)" -->\r?\n\r?\n/.exec(content);
+    if (!match) return null;
+    return {
+        round: Number(match[1]),
+        reviewedSha: match[2],
+        scope: match[3] as 'full' | 'delta',
+        base: match[4],
+        reason: match[5],
+    };
+}
+
+export function findColdCodexArchiveForRound(taskDir: string, round: number): ColdCodexArchiveHeader | null {
+    let names: string[];
+    try { names = fs.readdirSync(taskDir); } catch { return null; }
+    const numbered = names.flatMap(name => {
+        const match = COLD_CODEX_ARCHIVE_RE.exec(name);
+        return match ? [{ name, number: Number(match[1]) }] : [];
+    }).sort((a, b) => b.number - a.number);
+    for (const { name } of numbered) {
+        let content: string;
+        try { content = fs.readFileSync(path.join(taskDir, name), 'utf8'); } catch { continue; }
+        const header = parseColdCodexArchiveHeader(content);
+        if (header?.round === round) return header;
+    }
+    return null;
+}
+
+export function hasMalformedColdCodexArchive(taskDir: string): boolean {
+    let names: string[];
+    try { names = fs.readdirSync(taskDir); } catch { return false; }
+    return names.some(name => {
+        if (!COLD_CODEX_ARCHIVE_RE.test(name)) return false;
+        try {
+            return parseColdCodexArchiveHeader(fs.readFileSync(path.join(taskDir, name), 'utf8')) === null;
+        } catch { return true; }
+    });
+}
 
 export type ReviewScaffoldIdentity = { taskId: string; title: string };
 

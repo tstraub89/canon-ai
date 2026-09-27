@@ -412,15 +412,17 @@ PIPELINE_STALL_TIMEOUT_MS=1800000 canon run <id>
 
 ## Code Review Diff Injection
 
-Code review starts with a cold-Codex diff review run by the orchestrator in the active worktree: `codex exec review --json -c model_reasoning_effort=<effort> --base <baseBranch> -m <miniModel>`, where canon resolves `<miniModel>` and `<effort>` through the `code_review` policy row (mini / `high` at every size). The captured findings are written verbatim to `tasks/<id>/review-cold-codex.md` for every task in the invocation. Bundles run this once over the combined branch diff, and the same findings reach every member.
+Code review starts with a cold-Codex diff review run by the orchestrator in the active worktree: `codex exec review --json -c model_reasoning_effort=<effort> --base <reviewBase> -m <miniModel>`, where canon resolves `<miniModel>` and `<effort>` through the `code_review` policy row (mini / `high` at every size). The captured findings are written verbatim to `tasks/<id>/review-cold-codex.md` for every task in the invocation. Bundles run this once over the combined branch diff, and the same findings reach every member.
+
+The review base is the task's base branch for Round 1, effective XL or delicate tasks, an absent or unusable previous-round archive, a delta touching a path outside the previous change set, or a delta over 400 added and deleted lines. Otherwise the base is the reviewed SHA in the newest archive for round N−1. Both path sets include both sides of renames; task artifacts and telemetry do not count toward the path or line triggers. Missing, unresolvable, non-ancestor, or HEAD-equal previous SHAs force a full review, as does a failed delta path or line-stat probe. Every successful cold-Codex invocation adds `tasks/<id>/review-cold-codex-run-N.md` with a header recording round, reviewed SHA, scope, base, and reason; the unnumbered file retains only the latest verbatim findings.
 
 If the cold-Codex review cannot be obtained (no captured findings output, spawn error, stall, or signal), `code_review` stops before any Claude session. Re-run `canon run <id>` when Codex is available; there is no two-Claude-lens fallback. Successful runs emit one duration line in the run log: `→ cold-codex review (<taskIds>): <n>s`.
 
-After that, the code-review foreman prompt includes a scoped diff: `git diff <baseBranch>...HEAD` run in the active worktree (three-dot, so only commits on the task branch are included, not unrelated divergence on `baseBranch`). The diff is capped at 50,000 bytes; if truncated, the prompt notes it. The foreman receives the cold-Codex findings as the pre-obtained third lens input, gives the anchored Claude lens the diff plus spec/handoff context, and gives the cold-Claude lens the diff without spec/AC/canon context. The Codex `--base` review and the Claude scoped diff are both over the task branch versus `<baseBranch>` range.
+After that, the foreman receives the cold-Codex findings as the pre-obtained third lens input. On a full round, the prompt includes `git diff <baseBranch>...HEAD` from the active worktree, capped at 50,000 bytes. On a delta round, it includes `<prevSHA>..HEAD` for cold-Claude and explicitly tells anchored Claude to retrieve the full task diff by command. If the delta diff cannot be injected, the foreman is told to retrieve it by command before spawning cold-Claude. Anchored Claude also receives spec/handoff/prior review context; cold-Claude remains spec-blind. The prompt states the scope, base, and reason and tells the foreman to record them in `review.md`.
 
 ## Per-Iteration Prompt Slimming
 
-Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context; round-1 findings are durable in the artifacts; the round-2+ prompts target only the delta. Code-review re-obtains cold-Codex findings and re-runs the Claude lenses from scratch on every round before the foreman synthesizes the new verdict.
+Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context, and round-1 findings are durable in the artifacts. Code review selects a full or delta scope as described above, then re-obtains cold-Codex findings and re-runs the Claude lenses from scratch before the foreman synthesizes the new verdict.
 
 **Cumulative artifacts.** `handoff.md` and `review.md` grow by section per round:
 - Round 1 fills the existing template structure.
@@ -429,23 +431,7 @@ Round 2+ of code review and implement do not re-inject the full task framing. Re
 
 The append-don't-rewrite convention is enforced both in the prompts and via a comment block at the bottom of each template showing the expected shape.
 
-**Slim resumed-session prompts.** Round 2+ prompts for both code review and implement are tight. Code review's slim shape:
-
-```
-[REVIEW ROUND N — verifying iteration N-1's response to round N-1 findings]
-
-Codex appended `## Iteration N-1` to handoff.md addressing your prior round's findings.
-[Resumed session: framing in context. Cold start: re-read spec.md and earlier review.md sections.]
-
-Tasks to re-review: <one-line per task pointing at the specific section>
-
-For each task:
-1. Read `## Iteration N-1` of handoff.md
-2. Read git diff since prior review
-3. Re-fill the Stage 1 AC table with every AC from spec.md against the latest code
-4. Verify each prior finding addressed, cross-referencing the refreshed AC table; flag NEW issues
-5. APPEND `## Round N` to review.md
-```
+**Resumed-session prompts.** The code-review foreman prompt renders the round number and prior handoff iteration, then asks the foreman to spawn both Claude lenses and synthesize their findings with newly obtained cold-Codex findings. Delta rounds inject only the capped fix diff for cold-Claude and direct anchored Claude to retrieve the full task diff by command. Full rounds inject the capped full task diff as before. The foreman re-fills the AC table and appends `## Round N` to `review.md`; implement revisions point at the prior round's findings.
 
 The Stage 1 AC table is redone on round 2+. Earlier AC tables were snapshots of earlier code states; a revision can fix a cited finding while regressing an unrelated AC. Every AC appears every round. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer rather than re-derived evidence. Implement-revision prompts are composable: code-review reroutes point at the new `## Round N-1` of `review.md`.
 
