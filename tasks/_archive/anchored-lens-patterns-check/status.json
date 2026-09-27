@@ -1,7 +1,7 @@
 {
   "id": "anchored-lens-patterns-check",
   "title": "Anchored code-review lens checks changed code against docs/patterns.md",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-27",
   "updated": "2026-09-27",
   "branch": "task/anchored-lens-patterns-check",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
