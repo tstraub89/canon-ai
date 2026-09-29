@@ -1,10 +1,10 @@
 {
   "id": "claude-55-calibration",
   "title": "Calibrate Claude pipeline prompts for the 5.5 generation",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-09-28",
   "updated": "2026-09-29",
-  "branch": "",
+  "branch": "task/claude-55-calibration",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "01a0eaae-c2c9-7232-bb8e-7786003759d4",
-    "claude_spec": "6bd18649-7c8a-4216-9ea1-b5f1f161a10e"
+    "claude_spec": "6bd18649-7c8a-4216-9ea1-b5f1f161a10e",
+    "codex": "01a0eb4a-4c7d-7692-9e0b-2bb9258f61b2",
+    "claude_review": "b0e23afa-3747-4fa9-afec-34ae72d77288"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
