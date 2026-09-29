@@ -5,6 +5,7 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 ## Contents
 
 - Auto-block on `spec_review` or `code_review` (loop cap hit)
+- Code review stopped without a verdict (reviewer-set `blocked`)
 - Findings keep clustering in the same mechanism (try a size bump before another loop)
 - Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 - `--ship` refuses: wrong phase
@@ -34,6 +35,24 @@ MAX_REVIEW_LOOPS=6 canon run <task-id>
 Stop the reviewer loop once findings turn wording-only. Self-grep for flagged phrases in the current spec/code before running another expensive review pass.
 
 **Never reset the iteration counter** to bypass the cap. Counter is durable signal of how many review rounds the task has burned — losing it hides cost from future operators.
+
+---
+
+## Code review stopped without a verdict (reviewer-set `blocked`)
+
+**Symptom:** the run exits with `✋ CODE REVIEW STOPPED — the reviewer could not reach a verdict`, and `code_review` is `blocked` with an escalation for every task in the bundle. No verdict box is checked in `review.md`.
+
+**Cause:** one of the Claude review lenses returned nothing usable twice (absent, truncated, or not in its return format), so the foreman stopped rather than approve on partial evidence or invent findings. The pipeline deliberately does not retry this stop.
+
+**Fix:**
+1. Read `tasks/<id>/review.md` — it names the missing lens and what came back. Look for the cause: a budget cap hit, a timeout, or a harness error in the run log. Raise `CLAUDE_BUDGET` if the lens ran out of budget.
+2. Reset every task in the bundle, then run again:
+   ```bash
+   canon task reset-code-review <task-id>
+   canon run <task-id>
+   ```
+
+`reset-code-review` archives the stopped `review.md` and starts a fresh review pass. Re-running without the reset also starts a fresh pass, but without archiving the stopped review. Don't hand-check a verdict box or set a verdict with `canon task phase` to get past the stop: the review that would justify it never happened.
 
 ## Findings keep clustering in the same mechanism (try a size bump before another loop)
 
