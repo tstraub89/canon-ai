@@ -123,6 +123,12 @@ Replace the Claude matrix with three tiers, built from two models: *light* (Sonn
 | `README.md` | Correct the `delicate` sentence |
 | `docs/decisions.md` | New dated re-baseline entry |
 | `dist/orchestrator/run-task.js` | Rebuilt bundle |
+| `tests/run-task-harness.test.ts` | Retarget the `MAX_REVIEW_LOOPS` validation test (`:20-46`) from the removed `env.config.maxReviewLoops` to `policyConfig().maxReviewLoops` in `src/orchestrator/policy.ts`, with the same inputs and assertions |
+| `dist/cli/index.js` | Rebuilt bundle (the CLI bundles `src/orchestrator/env.ts`) |
+| `docs/patterns.md` | Correct the stale description of env/policy config resolution (`:37`) to name `src/orchestrator/policy.ts` as the sole resolver |
+| `docs/codebase-map.md` | Same correction (`:65`) |
+
+> **Manifest correction (2026-09-29, operator):** the four rows above were missing from the original manifest. Implement's handoff Blockers identified them correctly. They are consequences of AC-4's removal of the `env.ts` duplicate, not new behavior. No AC changes. The harness test keeps its inputs and assertions and only reads the value from the surviving resolver.
 
 ### Implementation Notes (non-binding; plan and implement own these)
 

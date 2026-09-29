@@ -5,7 +5,7 @@
 // checks has one place to live.
 //
 // This file has no side effects: it reads only what is passed in. Env-var
-// resolution + legacy-shim warnings stay in run-task.ts.
+// resolution lives in orchestrator/policy.ts; legacy warnings live in orchestrator/env.ts.
 
 export type TaskSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
 export const CODE_REVIEW_DELTA_LINE_THRESHOLD = 400;
@@ -80,23 +80,17 @@ export type PolicyInput = {
     delicate?: boolean;
 };
 
-// Config values the policy consumes. Run-task.ts resolves these from env
-// vars (with legacy fallbacks) and passes the resolved struct in.
+// Config values the policy consumes. The orchestrator passes raw env values;
+// this pure policy resolves model precedence per cell.
 export type PolicyConfig = {
-    claudeModelSpec: string;
-    claudeModelPlan: string;
-    claudeModelReview: string;
-    // Code-review model for XL/delicate only (re-baselined 2026-06; was
-    // L/XL/delicate). History: on Sonnet 4.5, Sonnet-at-xhigh missed
-    // lifecycle/state-machine bugs Codex CLI review caught at PR open
-    // (buffer-arming-on-failure class, project-switch flushes, etc.), so L+
-    // ran Opus. Sonnet 4.6 closed that long-horizon gap (matches the prior
-    // Opus flagship on long-horizon coding per vendor + practitioner eval), so
-    // L review returned to Sonnet. Opus is now reserved for XL/delicate, where
-    // the subtlest cross-file bugs and the highest blast radius remain worth
-    // the cost.
-    claudeModelReviewLarge: string;
-    claudeModelQa: string;
+    claudeModelSpec: string | null;
+    claudeModelPlan: string | null;
+    claudeModelReview: string | null;
+    claudeModelReviewLarge: string | null;
+    claudeModelQa: string | null;
+    claudeModelLight: string | null;
+    claudeModelStrong: string | null;
+    claudeModelLegacy: string | null;
     codexModelMini: string;
     codexModelFull: string;
     // null → use size-aware default (3 for XS/S/M, 5 for L/XL). A number here
@@ -113,8 +107,8 @@ export type PipelinePolicy = {
     // scope complexity sets how many review rounds make sense before an
     // auto-block.
     nominalSize: TaskSize;
-    // Nominal size with `delicate` promoting to XL. Drives model/effort —
-    // any auth/Pro/storage-sensitive task gets the full model at xhigh.
+    // Nominal size with `delicate` promoting to XL. Selects the strong Claude
+    // model at high effort for spec, plan, and review; QA remains light/medium.
     effectiveSize: TaskSize;
     // True when the whole bundle runs the fast tier (XS, non-delicate): spec
     // and plan collapse into one Claude session.
@@ -251,60 +245,77 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     };
 }
 
-function claudeModelFor(config: PolicyConfig, phase: ClaudePhase): string {
+type ClaudeTier = 'light' | 'strong';
+type ClaudeCell = { tier: ClaudeTier; effort: 'medium' | 'high' };
+
+// Every phase/size cell is explicit so a retune changes one table entry.
+const CLAUDE_CELLS: Record<ClaudePhase, Record<TaskSize, ClaudeCell>> = {
+    spec: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
+    plan: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
+    code_review: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
+    qa: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'light', effort: 'medium' },
+        L: { tier: 'light', effort: 'medium' },
+        XL: { tier: 'light', effort: 'medium' },
+    },
+};
+
+function claudePinFor(phase: ClaudePhase, size: TaskSize, config: PolicyConfig): string | null {
     switch (phase) {
         case 'spec': return config.claudeModelSpec;
         case 'plan': return config.claudeModelPlan;
         case 'qa': return config.claudeModelQa;
-        // code_review is size-keyed (see codeReviewMatrix in claudeMatrix); not
-        // resolved through this helper. spec_review, implement, human_review
-        // aren't Claude phases; fall back to the spec model so resumed Claude
-        // sessions survive accidental use.
-        default: return config.claudeModelSpec;
+        case 'code_review': return size === 'XL' ? config.claudeModelReviewLarge : config.claudeModelReview;
     }
 }
 
+function resolveClaudeModel(phase: ClaudePhase, size: TaskSize, config: PolicyConfig): string {
+    const pin = claudePinFor(phase, size, config);
+    if (pin !== null) return pin;
+    const tier = CLAUDE_CELLS[phase][size].tier;
+    const tierModel = tier === 'light' ? config.claudeModelLight : config.claudeModelStrong;
+    if (tierModel !== null) return tierModel;
+    if (config.claudeModelLegacy !== null) return config.claudeModelLegacy;
+    return tier === 'light' ? 'sonnet' : 'opus';
+}
+
 function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize, ClaudeMatrixConfig>> {
-    const buildHigh = (phase: ClaudePhase, xlEffort = 'xhigh'): Record<TaskSize, ClaudeMatrixConfig> => {
-        const model = claudeModelFor(config, phase);
-        return {
-            XS: { model, effort: 'medium' },
-            S:  { model, effort: 'medium' },
-            M:  { model, effort: 'high' },
-            L:  { model, effort: 'high' },
-            XL: { model, effort: xlEffort },
-        };
-    };
-    const buildMedium = (phase: ClaudePhase): Record<TaskSize, ClaudeMatrixConfig> => {
-        const model = claudeModelFor(config, phase);
-        return {
-            XS: { model, effort: 'medium' },
-            S:  { model, effort: 'medium' },
-            M:  { model, effort: 'medium' },
-            L:  { model, effort: 'high' },
-            XL: { model, effort: 'high' },
-        };
-    };
-    // code_review splits model by size: Sonnet (claudeModelReview) handles
-    // XS/S/M/L; Opus (claudeModelReviewLarge) is reserved for XL/delicate.
-    // Re-baselined 2026-06 for the Sonnet 4.6 generation — Sonnet 4.6 matches
-    // the prior Opus flagship on long-horizon / lifecycle / state-machine bug
-    // detection (the class that forced the earlier L→Opus bump on Sonnet 4.5),
-    // so L review drops back to Sonnet. XL/delicate stays on Opus, where the
-    // most subtle cross-file bugs and the highest blast radius live. Delicate
-    // promotes to XL effective size, so it picks up Opus automatically.
-    const codeReviewMatrix = (): Record<TaskSize, ClaudeMatrixConfig> => ({
-        XS: { model: config.claudeModelReview,      effort: 'medium' },
-        S:  { model: config.claudeModelReview,      effort: 'medium' },
-        M:  { model: config.claudeModelReview,      effort: 'high' },
-        L:  { model: config.claudeModelReview,      effort: 'high' },
-        XL: { model: config.claudeModelReviewLarge, effort: 'xhigh' },
+    const cell = (phase: ClaudePhase, size: TaskSize): ClaudeMatrixConfig => ({
+        model: resolveClaudeModel(phase, size, config),
+        effort: CLAUDE_CELLS[phase][size].effort,
+    });
+    const row = (phase: ClaudePhase): Record<TaskSize, ClaudeMatrixConfig> => ({
+        XS: cell(phase, 'XS'),
+        S: cell(phase, 'S'),
+        M: cell(phase, 'M'),
+        L: cell(phase, 'L'),
+        XL: cell(phase, 'XL'),
     });
     return {
-        spec:        buildHigh('spec'),
-        plan:        buildHigh('plan', 'high'),  // sonnet doesn't support xhigh
-        code_review: codeReviewMatrix(),
-        qa:          buildMedium('qa'),
+        spec: row('spec'),
+        plan: row('plan'),
+        code_review: row('code_review'),
+        qa: row('qa'),
     };
 }
 

@@ -555,20 +555,6 @@ import path4 from "path";
 import { fileURLToPath } from "url";
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path4.dirname(__filename);
-function parseMaxReviewLoops(raw) {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!/^-?\d+$/.test(trimmed)) {
-    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
-    return null;
-  }
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
-    return null;
-  }
-  return parsed;
-}
 function resolveRepoRoot() {
   try {
     const result = spawnSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
@@ -601,15 +587,6 @@ function resolveProjectName() {
 }
 var config = {
   projectName: resolveProjectName(),
-  claudeBudget: process.env.CLAUDE_BUDGET ?? null,
-  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6-sol",
-  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
 

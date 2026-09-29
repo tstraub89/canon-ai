@@ -71,7 +71,7 @@ export const STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) ||
 export const STALL_KILL_GRACE_MS = 3000;
 
 export const LEGACY_FALLBACK_ENV_VARS: Array<{ old: string; replacement: string }> = [
-    { old: 'CLAUDE_MODEL', replacement: 'CLAUDE_MODEL_SPEC / _PLAN / _REVIEW (still honored as fallback for those three; not applied to qa)' },
+    { old: 'CLAUDE_MODEL', replacement: 'CLAUDE_MODEL_LIGHT / CLAUDE_MODEL_STRONG (still honored as a fallback for every Claude phase, including qa)' },
     { old: 'CODEX_MODEL_DEFAULT', replacement: 'CODEX_MODEL_MINI (still honored as fallback)' },
     { old: 'CODEX_MODEL_DELICATE', replacement: 'CODEX_MODEL_FULL (still honored as fallback)' },
 ];
@@ -142,14 +142,5 @@ export function resolveProjectName(): string {
 
 export const config = {
     projectName: resolveProjectName(),
-    claudeBudget: process.env.CLAUDE_BUDGET ?? null,
-    claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? 'opus',
-    claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? 'sonnet',
-    claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? 'sonnet',
-    claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? 'opus',
-    claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? 'sonnet',
-    codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? 'gpt-6-luna',
-    codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? 'gpt-6-sol',
-    maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
     maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10),
 };

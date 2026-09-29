@@ -62,8 +62,8 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | What | Where | Notes |
 |---|---|---|
 | Type definitions | `src/orchestrator/types.ts` | `Phase`, `PhaseStatus`, `Verdict`, `PHASE_ORDER`, `StatusJson`, `CliArgs` |
-| Environment constants | `src/orchestrator/env.ts` | `REPO_ROOT`, `WORKTREES_ROOT`, all env-var config; synced at module load |
-| Policy config wrappers | `src/orchestrator/policy.ts` | Claude/Codex model and size getters; wraps `src/lib/pipeline-policy.ts` with resolved config |
+| Environment constants | `src/orchestrator/env.ts` | `REPO_ROOT`, `WORKTREES_ROOT`, shared environment helpers, and legacy warnings |
+| Policy config wrappers | `src/orchestrator/policy.ts` | Sole policy env resolver; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
 | Task context extractors | `src/orchestrator/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
 | Signal handlers | `src/orchestrator/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |
 | Detached-mode isolation | `src/orchestrator/detach.ts` | Process group detachment for SIGHUP-safe background runs |

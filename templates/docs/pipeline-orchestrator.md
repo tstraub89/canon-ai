@@ -168,7 +168,7 @@ Claude writes QA summary → Human tests
 
 - Spec and plan are written in separate Claude sessions.
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe.
-- Codex model/effort scales with effective size (matrix below).
+- Effective size selects both the Codex and Claude model/effort cells in the matrices below.
 - **Optional pre-pipeline self-review**: before invoking `canon run`, the operator can run `/canon-spec-review` (task ID optional — it defaults to the task under discussion) to dispatch three parallel sub-agents (structural / factual / spec-quality) at the spec and surface BLOCKING / STRONG / NIT findings inline. Catches the class of issues Codex's spec_review would surface across 2-3 iterations in one ~15-min pass. Opt-in; most valuable when iteration cost is real.
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
@@ -183,8 +183,8 @@ Set in `status.json` at task creation:
 
 | Field | Values | Purpose |
 |---|---|---|
-| `task_size` | `XS \| S \| M \| L \| XL` | Drives Codex model + effort selection and the pipeline tier. XS is fast-tier; S+ runs the full pipeline (including Codex spec review). |
-| `delicate` | `true \| false` | Forces the XL bucket (full Codex model, high implement effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
+| `task_size` | `XS \| S \| M \| L \| XL` | Drives the pipeline tier and effective-size model/effort cells for Codex and Claude. XS is fast-tier; S+ runs the full pipeline (including Codex spec review). |
+| `delicate` | `true \| false` | Forces the XL bucket (full Codex model and high Claude spec/plan/code-review effort) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | **Single-use latch**, not a persistent toggle. `true` arms a one-time halt after `spec_review`, before planning (default: `true`). The orchestrator flips it to `false` *at the moment it halts* — so `false` means "the gate already fired (or was pre-cleared)," not "review was skipped." See [Spec gate is a single-use latch](#spec-gate-is-a-single-use-latch). |
 | `worktree` | `true \| false` | Worktree isolation. `canon task new` scaffolds this to `true`, so worktree mode is the effective default for every scaffolded task — set it to `false` to opt out and run in the main checkout. The orchestrator treats an *absent* field as `false`, but that fallback only applies to hand-rolled `status.json` files. See Worktree Isolation below. |
 | `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `canon task new` from the current git checkout at task creation. |
@@ -223,7 +223,20 @@ Codex is tuned for token efficiency — the mini model handles most phases; the 
 
 The cold-Codex `code_review` lens is the exception to size scaling: as a mandatory hard-fail gate, it runs at flat `high` effort and stays on the mini model at every size, including XL/delicate.
 
-`spec_review` runs at `high` from M upward. Task-history analysis found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts) but a reroute-severity gap, with M's lighter spec_review effort the leading hypothesis. M and L also differ on loop cap, budget, and QA effort, so this isn't a proven sole cause; if you retune the matrix, re-measure your own M vs. L reroute rate.
+`spec_review` runs at `high` from M upward. Task-history analysis found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts) but a reroute-severity gap, with M's lighter spec_review effort the leading hypothesis. M and L also differ on loop cap and budget, so this isn't a proven sole cause; if you retune the matrix, re-measure your own M vs. L reroute rate.
+
+## Claude Model/Effort Matrix
+
+Claude model and effort scale with effective task size. The light tier defaults to `sonnet`, and the strong tier defaults to `opus`:
+
+| Phase | XS | S | M | L | XL / delicate |
+|---|---|---|---|---|---|
+| `spec` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `plan` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `code_review` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `qa` | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium |
+
+`spec`, `plan`, and `code_review` move to the strong tier at M, where sustained judgment matters; only XL/delicate raises effort to `high`. `qa` writes completion artifacts and cannot block or reroute a task, so it stays light/medium at every size. No Claude cell runs above `high`.
 
 ## Claude Budget Matrix
 
@@ -238,15 +251,18 @@ Claude phase budgets scale with task size. `spec`/`plan`/`qa` are single-pass Cl
 
 ## Environment Variables
 
-Claude is tuned for correctness — Opus on phases where false negatives cascade, Sonnet on structured/templated phases.
+Claude uses the light tier for XS/S spec, plan, and code review and for QA at every size. M and above use the strong tier for spec, plan, and code review. A phase pin changes only the model; effort comes from the matrix.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLAUDE_MODEL_SPEC` | `opus` | Spec phase (foundational; cascades into every downstream phase). |
-| `CLAUDE_MODEL_PLAN` | `sonnet` | Plan phase (structured translation of spec → steps). |
-| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for XS/S/M/L (Sonnet 4.6 matches the prior Opus flagship on long-horizon / lifecycle / state-machine bug detection — re-baselined 2026-06; L was Opus on Sonnet 4.5). |
-| `CLAUDE_MODEL_REVIEW_LARGE` | `opus` | Code review for XL/delicate only — the highest-blast-radius tier where the subtlest cross-file bugs warrant Opus. |
-| `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
+| `CLAUDE_MODEL_LIGHT` | `sonnet` | Model for light-tier cells: XS/S `spec`/`plan`/`code_review`, and `qa` at every size, unless a phase pin applies. |
+| `CLAUDE_MODEL_STRONG` | `opus` | Model for strong-tier cells: M and above `spec`/`plan`/`code_review`, unless a phase pin applies. |
+| `CLAUDE_MODEL_SPEC` | _(unset)_ | Pins the `spec` model at every size, replacing the model only; effort still comes from the matrix. |
+| `CLAUDE_MODEL_PLAN` | _(unset)_ | Pins the `plan` model at every size where a separate plan phase runs (XS fast tier combines spec and plan under the `spec` cell), replacing the model only; effort still comes from the matrix. |
+| `CLAUDE_MODEL_REVIEW` | _(unset)_ | Pins the `code_review` model for XS/S/M/L only, replacing the model only; effort still comes from the matrix. Does not reach XL/delicate. |
+| `CLAUDE_MODEL_REVIEW_LARGE` | _(unset)_ | Pins the `code_review` model for XL/delicate only, replacing the model only; effort still comes from the matrix. `_LARGE` means task size, not model tier. Does not reach XS–L. |
+| `CLAUDE_MODEL_QA` | _(unset)_ | Pins the `qa` model at every size, replacing the model only; effort still comes from the matrix. |
+| `CLAUDE_MODEL` | _(unset; deprecated)_ | Legacy catch-all model for every Claude phase, including `qa`, only where no phase pin or light/strong tier variable is set. Phase pin → tier variable → this fallback → tier default. |
 | `CLAUDE_BUDGET` | _(phase- and size-aware)_ | Max spend per Claude phase (USD). Unset → resolved from the Claude Budget Matrix above (phase × size). Set → flat cap applied uniformly across every phase and size (e.g. `CLAUDE_BUDGET=15.00` overrides every phase to $15). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
 | `CANON_WORKTREES_ROOT` | .canon/worktrees | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |

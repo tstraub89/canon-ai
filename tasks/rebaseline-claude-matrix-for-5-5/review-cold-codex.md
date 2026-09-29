@@ -1,0 +1,1 @@
+The Claude model and effort matrix changes are consistently reflected in policy resolution, documentation, and tests. No actionable regressions were identified in the diff.
