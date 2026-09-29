@@ -86,7 +86,7 @@ The pipeline supports two tiers:
 - **Fast tier** (XS tasks): spec + plan in one Claude session, skip Codex spec review, human gate replaces it.
 - **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, Codex reviews specs before they reach the human.
 
-`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the orchestrator's model and effort across every phase. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
+`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus Codex spec review and implementation; QA and the cold-Codex review lens stay on their regular cells. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
 
 A single command runs a task end-to-end:
 

@@ -357,7 +357,7 @@ var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path.resolve(REPO_ROOT, 
 var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
 var STALL_KILL_GRACE_MS = 3e3;
 var LEGACY_FALLBACK_ENV_VARS = [
-  { old: "CLAUDE_MODEL", replacement: "CLAUDE_MODEL_SPEC / _PLAN / _REVIEW (still honored as fallback for those three; not applied to qa)" },
+  { old: "CLAUDE_MODEL", replacement: "CLAUDE_MODEL_LIGHT / CLAUDE_MODEL_STRONG (still honored as a fallback for every Claude phase, including qa)" },
   { old: "CODEX_MODEL_DEFAULT", replacement: "CODEX_MODEL_MINI (still honored as fallback)" },
   { old: "CODEX_MODEL_DELICATE", replacement: "CODEX_MODEL_FULL (still honored as fallback)" }
 ];
@@ -416,15 +416,6 @@ function resolveProjectName() {
 }
 var config = {
   projectName: resolveProjectName(),
-  claudeBudget: process.env.CLAUDE_BUDGET ?? null,
-  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6-sol",
-  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
 
@@ -1733,7 +1724,14 @@ function codexMatrix(config3) {
     }
   };
 }
-function claudeModelFor(config3, phase) {
+function claudeTierFor(phase, size) {
+  if (phase === "qa") return "light";
+  return size === "XS" || size === "S" ? "light" : "strong";
+}
+function claudeEffortFor(phase, size) {
+  return phase !== "qa" && size === "XL" ? "high" : "medium";
+}
+function claudePinFor(phase, size, config3) {
   switch (phase) {
     case "spec":
       return config3.claudeModelSpec;
@@ -1741,49 +1739,30 @@ function claudeModelFor(config3, phase) {
       return config3.claudeModelPlan;
     case "qa":
       return config3.claudeModelQa;
-    // code_review is size-keyed (see codeReviewMatrix in claudeMatrix); not
-    // resolved through this helper. spec_review, implement, human_review
-    // aren't Claude phases; fall back to the spec model so resumed Claude
-    // sessions survive accidental use.
-    default:
-      return config3.claudeModelSpec;
+    case "code_review":
+      return size === "XL" ? config3.claudeModelReviewLarge : config3.claudeModelReview;
   }
 }
+function resolveClaudeModel(phase, size, config3) {
+  const pin = claudePinFor(phase, size, config3);
+  if (pin !== null) return pin;
+  const tier = claudeTierFor(phase, size);
+  const tierModel = tier === "light" ? config3.claudeModelLight : config3.claudeModelStrong;
+  if (tierModel !== null) return tierModel;
+  if (config3.claudeModelLegacy !== null) return config3.claudeModelLegacy;
+  return tier === "light" ? "sonnet" : "opus";
+}
 function claudeMatrix(config3) {
-  const buildHigh = (phase, xlEffort = "xhigh") => {
-    const model = claudeModelFor(config3, phase);
-    return {
-      XS: { model, effort: "medium" },
-      S: { model, effort: "medium" },
-      M: { model, effort: "high" },
-      L: { model, effort: "high" },
-      XL: { model, effort: xlEffort }
-    };
-  };
-  const buildMedium = (phase) => {
-    const model = claudeModelFor(config3, phase);
-    return {
-      XS: { model, effort: "medium" },
-      S: { model, effort: "medium" },
-      M: { model, effort: "medium" },
-      L: { model, effort: "high" },
-      XL: { model, effort: "high" }
-    };
-  };
-  const codeReviewMatrix = () => ({
-    XS: { model: config3.claudeModelReview, effort: "medium" },
-    S: { model: config3.claudeModelReview, effort: "medium" },
-    M: { model: config3.claudeModelReview, effort: "high" },
-    L: { model: config3.claudeModelReview, effort: "high" },
-    XL: { model: config3.claudeModelReviewLarge, effort: "xhigh" }
-  });
-  return {
-    spec: buildHigh("spec"),
-    plan: buildHigh("plan", "high"),
-    // sonnet doesn't support xhigh
-    code_review: codeReviewMatrix(),
-    qa: buildMedium("qa")
-  };
+  const phases = ["spec", "plan", "code_review", "qa"];
+  const result = {};
+  for (const phase of phases) {
+    const row = {};
+    for (const size of SIZE_ORDER) {
+      row[size] = { model: resolveClaudeModel(phase, size, config3), effort: claudeEffortFor(phase, size) };
+    }
+    result[phase] = row;
+  }
+  return result;
 }
 function getPipelinePolicy(tasks, config3) {
   const tier = detectTier(tasks);
@@ -1808,11 +1787,14 @@ function getPipelinePolicy(tasks, config3) {
 
 // src/orchestrator/policy.ts
 var config2 = {
-  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? process.env.CLAUDE_MODEL ?? "sonnet",
-  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? process.env.CLAUDE_MODEL ?? "opus",
-  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? process.env.CLAUDE_MODEL ?? "sonnet",
+  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? null,
+  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? null,
+  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
+  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? null,
+  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? null,
+  claudeModelLight: process.env.CLAUDE_MODEL_LIGHT ?? null,
+  claudeModelStrong: process.env.CLAUDE_MODEL_STRONG ?? null,
+  claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6-sol",
   maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
@@ -1825,6 +1807,9 @@ function policyConfig() {
     claudeModelReview: config2.claudeModelReview,
     claudeModelReviewLarge: config2.claudeModelReviewLarge,
     claudeModelQa: config2.claudeModelQa,
+    claudeModelLight: config2.claudeModelLight,
+    claudeModelStrong: config2.claudeModelStrong,
+    claudeModelLegacy: config2.claudeModelLegacy,
     codexModelMini: config2.codexModelMini,
     codexModelFull: config2.codexModelFull,
     maxReviewLoops: config2.maxReviewLoops,

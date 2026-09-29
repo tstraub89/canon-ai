@@ -223,7 +223,20 @@ Codex is tuned for token efficiency — the mini model handles most phases; the 
 
 The cold-Codex `code_review` lens is the exception to size scaling: as a mandatory hard-fail gate, it runs at flat `high` effort and stays on the mini model at every size, including XL/delicate.
 
-`spec_review` runs at `high` from M upward. Task-history analysis found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts) but a reroute-severity gap, with M's lighter spec_review effort the leading hypothesis. M and L also differ on loop cap, budget, and QA effort, so this isn't a proven sole cause; if you retune the matrix, re-measure your own M vs. L reroute rate.
+`spec_review` runs at `high` from M upward. Task-history analysis found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts) but a reroute-severity gap, with M's lighter spec_review effort the leading hypothesis. M and L also differ on loop cap and budget, so this isn't a proven sole cause; if you retune the matrix, re-measure your own M vs. L reroute rate.
+
+## Claude Model/Effort Matrix
+
+Claude model and effort scale with effective task size. The light tier defaults to `sonnet`, and the strong tier defaults to `opus`:
+
+| Phase | XS | S | M | L | XL / delicate |
+|---|---|---|---|---|---|
+| `spec` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `plan` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `code_review` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `qa` | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium |
+
+`spec`, `plan`, and `code_review` move to the strong tier at M, where sustained judgment matters; only XL/delicate raises effort to `high`. `qa` writes completion artifacts and cannot block or reroute a task, so it stays light/medium at every size. No Claude cell runs above `high`.
 
 ## Claude Budget Matrix
 
@@ -238,15 +251,17 @@ Claude phase budgets scale with task size. `spec`/`plan`/`qa` are single-pass Cl
 
 ## Environment Variables
 
-Claude is tuned for correctness — Opus on phases where false negatives cascade, Sonnet on structured/templated phases.
+Claude uses the light tier for XS/S spec, plan, and code review and for QA at every size. M and above use the strong tier for spec, plan, and code review. A phase pin changes only the model; effort comes from the matrix.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLAUDE_MODEL_SPEC` | `opus` | Spec phase (foundational; cascades into every downstream phase). |
-| `CLAUDE_MODEL_PLAN` | `sonnet` | Plan phase (structured translation of spec → steps). |
-| `CLAUDE_MODEL_REVIEW` | `sonnet` | Code review for XS/S/M/L (Sonnet 4.6 matches the prior Opus flagship on long-horizon / lifecycle / state-machine bug detection — re-baselined 2026-06; L was Opus on Sonnet 4.5). |
-| `CLAUDE_MODEL_REVIEW_LARGE` | `opus` | Code review for XL/delicate only — the highest-blast-radius tier where the subtlest cross-file bugs warrant Opus. |
-| `CLAUDE_MODEL_QA` | `sonnet` | QA phase. |
+| `CLAUDE_MODEL_LIGHT` | `sonnet` | Model for light-tier cells: XS/S `spec`/`plan`/`code_review`, and `qa` at every size, unless a phase pin applies. |
+| `CLAUDE_MODEL_STRONG` | `opus` | Model for strong-tier cells: M and above `spec`/`plan`/`code_review`, unless a phase pin applies. |
+| `CLAUDE_MODEL_SPEC` | _(unset)_ | Pins the `spec` model at every size, replacing the model only; effort still comes from the matrix. |
+| `CLAUDE_MODEL_PLAN` | _(unset)_ | Pins the `plan` model at every size, replacing the model only; effort still comes from the matrix. |
+| `CLAUDE_MODEL_REVIEW` | _(unset)_ | Pins the `code_review` model for XS/S/M/L only, replacing the model only; effort still comes from the matrix. Does not reach XL. |
+| `CLAUDE_MODEL_REVIEW_LARGE` | _(unset)_ | Pins the `code_review` model for XL/delicate only, replacing the model only; effort still comes from the matrix. `_LARGE` means task size, not model tier. Does not reach XS–L. |
+| `CLAUDE_MODEL_QA` | _(unset)_ | Pins the `qa` model at every size, replacing the model only; effort still comes from the matrix. |
 | `CLAUDE_BUDGET` | _(phase- and size-aware)_ | Max spend per Claude phase (USD). Unset → resolved from the Claude Budget Matrix above (phase × size). Set → flat cap applied uniformly across every phase and size (e.g. `CLAUDE_BUDGET=15.00` overrides every phase to $15). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
 | `CANON_WORKTREES_ROOT` | .canon/worktrees | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |
