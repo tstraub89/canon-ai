@@ -84,7 +84,7 @@ The implementation is tight and matches the spec. The routing stop is narrow: on
 
 (none that halt)
 
-The anchored lens noted that two plan-writing surfaces lack the feasibility check: the operator-run XS path in `.claude/skills/canon-spec/SKILL.md` and the fast-tier "Also update plan.md" line in `spec-revision.md`. The spec's Non-Goals exclude `spec-revision.md` deliberately, and the plan phase logged the gap in `notes.md`. So this is a scoped choice, not an ambiguity the implementer had to guess at, and it is recorded here as a candidate follow-up under `docs/patterns.md` §"A rule homed on multiple guidance surfaces must reach every tier".
+The anchored lens noted that two plan-writing surfaces lack the feasibility check: the operator-run XS path in `.claude/skills/canon-spec/SKILL.md` and the fast-tier "Also update plan.md" line in `spec-revision.md`. The spec's Non-Goals exclude `spec-revision.md` deliberately, and the plan phase logged the gap in `notes.md`. So this is a scoped choice, not an ambiguity the implementer had to guess at, and it is recorded here as a candidate follow-up under `docs/patterns.md` §"A rule homed on multiple guidance surfaces must reach every tier — and carry its full predicate at every occurrence".
 
 ### Dismissed Cold Findings
 
