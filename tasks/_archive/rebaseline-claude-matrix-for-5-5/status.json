@@ -1,7 +1,7 @@
 {
   "id": "rebaseline-claude-matrix-for-5-5",
   "title": "Re-baseline Claude model/effort matrix for the 5.5 generation",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-28",
   "updated": "2026-09-29",
   "branch": "task/rebaseline-claude-matrix-for-5-5",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
