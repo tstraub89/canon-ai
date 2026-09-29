@@ -17,7 +17,7 @@ import {
     promptSpecReview,
 } from '../src/orchestrator/prompts/index.js';
 import { runClaude } from '../src/orchestrator/agents/claude.js';
-import { CODEX_STARTUP, toResumePrompt } from '../src/orchestrator/prompts/helpers.js';
+import { CLAUDE_HEADLESS, CLAUDE_STARTUP, CODEX_STARTUP, toResumePrompt } from '../src/orchestrator/prompts/helpers.js';
 import type { PipelineState, StatusJson, TaskContext } from '../src/orchestrator/types.js';
 
 const TASK_ID = 'test-pf-001';
@@ -344,6 +344,10 @@ void test('reroute prompts mark reroute_exempt siblings exempt instead of direct
     assert.match(planOutput, /test-pf-005.*EXEMPT from this reroute's amendment/);
     assert.doesNotMatch(planOutput, /test-pf-005.*append `## Reroute Plan/);
     assert.match(planOutput, /EXCEPT tasks whose line above marks them EXEMPT/);
+    assert.ok(planOutput.indexOf('Feasibility check') > planOutput.indexOf('EXCEPT tasks whose line above marks them EXEMPT'));
+    assert.ok(planOutput.indexOf('Feasibility check') < planOutput.indexOf('Do **not** rewrite'));
+    assert.match(planOutput, /### Delta/);
+    assert.doesNotMatch(outputLineFor(planOutput, exemptId), /Feasibility|Real path/);
 
     const implementOutput = normalize(promptImplementReroute(state, false, [], 'main'));
     assert.match(implementOutput, /test-pf-001.*entering reroute round 1.*`## Amendment`/);
@@ -525,6 +529,82 @@ void test('promptImplementReroute single-task at reroute #2 retains strong-ancho
 void test('promptCodeReview_round1', () => {
     const actual = normalize(promptCodeReview(baseState));
     recordOrAssert('promptCodeReview_round1', actual);
+});
+
+void test('code-review foreman distinguishes valid clean and missing lens returns in every render', () => {
+    for (const output of [
+        promptCodeReview(baseState),
+        promptCodeReview(codeReviewRoundNState),
+        promptCodeReview(codeReviewRoundNState, 'main', null, null, { scope: 'delta', base: 'HEAD~1', reason: 'delta', deltaDiff: { diff: 'delta', truncated: false } }),
+        promptCodeReview(baseState, 'main', null, null, null, ['src/extra-helper.ts']),
+    ]) {
+        assert.doesNotMatch(output, /quiet lens output is a bug/);
+        assert.match(output, /STAGE_2_FINDINGS: \(none\)/);
+        assert.match(output, /COLD_FINDINGS: \(none\)/);
+        assert.match(output, /STAGE_1: fail/);
+        assert.match(output, /re-spawn/);
+        assert.match(output, /approval evidence/);
+        assert.match(output, /no verdict box/);
+        assert.match(output, /code_review blocked/);
+        assert.match(output, /exactly the two Claude lenses/);
+        assert.match(output, /never substitute your own review/);
+    }
+});
+
+void test('missing lens stop renders a blocked command for every bundle member', () => {
+    const peer = makeTask({ taskId: 'test-pf-blocked-peer', title: 'Blocked peer' });
+    const dir = path.join(tmpRoot, peer.taskId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify(peer.status));
+    const output = promptCodeReview({ tasks: [baseState.tasks[0], peer], tier: 'full', isBundle: true });
+    for (const id of [TASK_ID, peer.taskId]) {
+        assert.match(output, new RegExp(`canon task phase ${id} code_review blocked`));
+    }
+});
+
+void test('Claude headless guidance stays out of interactive startup', () => {
+    for (const token of [
+        'nobody reads', 'ambiguous', 'interpretation', 'notes.md', 'phase command',
+        'not completion', 'Do only this phase', 'canon run', 'reviewer sub-agents',
+        'review passes', 'never as passed', 'no one to ask',
+        'Skip that action unless this prompt explicitly authorizes it',
+    ]) {
+        assert.ok(CLAUDE_HEADLESS.includes(token), token);
+        assert.ok(!CLAUDE_STARTUP.includes(token), token);
+    }
+});
+
+void test('lens charters preserve clean forms and high recall while limiting delegation', () => {
+    const anchored = fs.readFileSync(path.resolve('.claude/agents/code-review-anchored.md'), 'utf8');
+    const cold = fs.readFileSync(path.resolve('.claude/agents/code-review-cold.md'), 'utf8');
+    assert.match(anchored, /STAGE_2_FINDINGS: \(none\)/);
+    assert.match(cold, /COLD_FINDINGS: \(none\)/);
+    for (const charter of [anchored, cold]) {
+        assert.match(charter, /Coverage is your job; filtering is not\./);
+        assert.match(charter, /Do this review yourself: spawn no sub-agents/);
+    }
+});
+
+void test('plan feasibility reaches ordinary, bundle, reroute, and fast-tier combined planning', () => {
+    const ordinary = promptPlan(planState);
+    for (const token of [
+        'Feasibility check', 'searching', 'Real path', 'Callers', 'Tests that can fail',
+        'Predicates', 'boundary', 'Affected Files', 're-entry', 'N/A', '[plan]',
+        'notes.md', 'Do not change the spec', 'widen scope', 'Approach section',
+    ]) assert.ok(ordinary.includes(token), token);
+    const peer = makeTask({ taskId: 'test-pf-bundle', title: 'Bundle peer' });
+    const bundle: PipelineState = { tasks: [planState.tasks[0], peer], tier: 'full', isBundle: true };
+    assert.match(promptPlan(bundle), /Feasibility check[\s\S]*Approach section/);
+    assert.match(promptPlan(makeState(makeReroutedTask())), /Feasibility check[\s\S]*### Delta/);
+    for (const state of [
+        { ...baseState, tier: 'fast' as const },
+        { ...bundle, tier: 'fast' as const },
+    ]) {
+        const output = promptSpec(state);
+        assert.match(output, /Feasibility check/);
+        assert.match(output, /records the feasibility check/);
+    }
+    assert.doesNotMatch(promptSpec(baseState), /Feasibility check/);
 });
 
 void test('promptCodeReview_fullSendOutOfScope', () => {
@@ -781,6 +861,7 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     assert.match(helpers, /Branch state: the orchestrator manages it — do not fetch, pull, rebase, or push/);
     assert.doesNotMatch(helpers.match(/export const CODEX_STARTUP =[\s\S]*?;\n/)?.[0] ?? '', /Headless session|wait for approval/);
     assert.match(helpers, /export const CODEX_HEADLESS =/);
+    assert.doesNotMatch(helpers.match(/export const CLAUDE_STARTUP =[\s\S]*?;\n/)?.[0] ?? '', /Unattended session|no one to ask/);
 
     const scaffoldSpec = readRepoFile('.canon/templates/spec.md');
     assert.match(scaffoldSpec, /Migration runner \+ manual review/);

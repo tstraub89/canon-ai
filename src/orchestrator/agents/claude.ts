@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { REPO_ROOT } from '../env.js';
 import { info, setExitReason, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
-import { toResumePrompt } from '../prompts/helpers.js';
+import { CLAUDE_HEADLESS, toResumePrompt } from '../prompts/helpers.js';
 import { formatLiveTick, streamProcess } from './stream.js';
 import type { ClaudeRunResult } from '../types.js';
 
@@ -105,7 +105,8 @@ export async function runClaude(
         }
 
         const attempt = async (useResumeId: string | null): Promise<{ resumeNotFound: boolean; result: ClaudeRunResult | null }> => {
-            const effectivePrompt = useResumeId ? toResumePrompt(prompt) : prompt;
+            const renderedPrompt = useResumeId ? toResumePrompt(prompt) : prompt;
+            const effectivePrompt = `${CLAUDE_HEADLESS}\n\n${renderedPrompt}`;
             const args = [
                 '-p', effectivePrompt,
                 '--model', model,

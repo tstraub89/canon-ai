@@ -1064,3 +1064,7 @@
 | 2026-09-29T03:31:20.145Z | rebaseline-claude-matrix-for-5-5 | code_review | claude | opus | 1 | 642.0s | 1808653 | ok |
 | 2026-09-29T03:33:32.662Z | rebaseline-claude-matrix-for-5-5 | qa | claude | sonnet | 0 | 132.5s | 1072379 | ok |
 | 2026-09-29T03:51:48.693Z | claude-55-calibration | plan | claude | opus | 0 | 421.2s | 6859230 | ok |
+| 2026-09-29T04:04:00.742Z | claude-55-calibration | implement | codex | gpt-6-sol | 0 | 731.1s | 6297607 | ok |
+| 2026-09-29T04:05:25.066Z | claude-55-calibration | code_review | codex | gpt-6-luna | 0 | 83.3s | - | ok |
+| 2026-09-29T04:14:30.024Z | claude-55-calibration | code_review | claude | opus | 0 | 544.9s | 973044 | ok |
+| 2026-09-29T04:17:01.252Z | claude-55-calibration | qa | claude | sonnet | 0 | 151.2s | 1995179 | ok |
