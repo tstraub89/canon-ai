@@ -1055,3 +1055,11 @@
 | 2026-09-29T01:11:47.068Z | claude-55-calibration | spec | claude | opus | 0 | 416.2s | 4975686 | ok |
 | 2026-09-29T01:13:46.384Z | claude-55-calibration | spec_review | codex | gpt-6-sol | 1 | 119.2s | 2012335 | ok |
 | 2026-09-29T02:42:50.258Z | rebaseline-claude-matrix-for-5-5 | plan | claude | sonnet | 0 | 335.9s | 2476319 | ok |
+| 2026-09-29T02:51:29.394Z | rebaseline-claude-matrix-for-5-5 | implement | codex | gpt-6-sol | 0 | 518.2s | 2271867 | ok |
+| 2026-09-29T02:53:27.484Z | rebaseline-claude-matrix-for-5-5 | code_review | codex | gpt-6-luna | 0 | 72.9s | - | ok |
+| 2026-09-29T03:08:26.741Z | rebaseline-claude-matrix-for-5-5 | code_review | claude | opus | 0 | 899.2s | 1857023 | ok |
+| 2026-09-29T03:13:25.418Z | rebaseline-claude-matrix-for-5-5 | implement | codex | gpt-6-sol | 1 | 298.6s | 5480914 | ok |
+| 2026-09-29T03:19:20.495Z | rebaseline-claude-matrix-for-5-5 | implement | codex | gpt-6-sol | 1 | 248.6s | 8639837 | ok |
+| 2026-09-29T03:20:38.154Z | rebaseline-claude-matrix-for-5-5 | code_review | codex | gpt-6-luna | 1 | 77.0s | - | ok |
+| 2026-09-29T03:31:20.145Z | rebaseline-claude-matrix-for-5-5 | code_review | claude | opus | 1 | 642.0s | 1808653 | ok |
+| 2026-09-29T03:33:32.662Z | rebaseline-claude-matrix-for-5-5 | qa | claude | sonnet | 0 | 132.5s | 1072379 | ok |

@@ -1,15 +1,15 @@
 {
   "id": "rebaseline-claude-matrix-for-5-5",
   "title": "Re-baseline Claude model/effort matrix for the 5.5 generation",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-09-28",
   "updated": "2026-09-29",
-  "branch": "",
+  "branch": "task/rebaseline-claude-matrix-for-5-5",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "62c26494c17d0bd171f91c93a9cee554acc343d8",
+    "orchestrator_commit": "d5e6747d0697e725fddf7caaa557c398cb93bd47",
     "canon_version": "3.4.0",
     "codex_cli": "codex-cli 0.157.1",
     "claude_code": "2.1.283 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a0eaae-c397-7881-9ce4-05262099f21d"
+    "codex_spec_review": "01a0eaae-c397-7881-9ce4-05262099f21d",
+    "codex": "01a0eb0b-25b5-7082-a264-eb865877c711",
+    "claude_review": "7f4ea4b6-1d6e-4ed1-9c3c-e0c982a94d53"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

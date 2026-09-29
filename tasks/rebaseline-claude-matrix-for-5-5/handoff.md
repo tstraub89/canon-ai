@@ -1,25 +1,22 @@
 # Implementation Handoff: rebaseline-claude-matrix-for-5-5
 
 > Author: Codex | Spec: `tasks/rebaseline-claude-matrix-for-5-5/spec.md` | Plan: `tasks/rebaseline-claude-matrix-for-5-5/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/lib/pipeline-policy.ts` | Replaced the Claude matrix with light/strong tier resolution, medium/high effort, and pin → tier → legacy → default precedence. |
+| `src/orchestrator/policy.ts` | Passes raw nullable Claude model overrides to the policy. |
+| `src/orchestrator/env.ts` | Removed duplicate policy config fields and corrected the legacy model warning. |
+| `tests/pipeline-policy.test.ts` | Covers all 20 cells, delicate/empty inputs, effort bounds, and subprocess override precedence and warning behavior. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documented the Claude matrix and override scopes; regenerated the managed mirror. |
+| `docs/product-context.md` | Corrected the XL/delicate Claude review claim. |
+| `README.md` | Narrowed the `delicate` upgrade description to the phases it affects. |
+| `docs/decisions.md` | Added the 2026-09 Claude 5.5 re-baseline decision, evidence, precedence, pinned-adopter impact, and rollback. |
+| `dist/orchestrator/run-task.js` | Rebuilt the orchestrator bundle. |
 
 ## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
 
 | Field | Source |
 |---|---|
@@ -31,91 +28,109 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Model precedence now resolves once per Claude cell in the pure policy layer. An unset phase pin remains distinguishable from an explicit model, so tier overrides and the legacy fallback can apply without changing effort. QA stays light/medium at every size.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Corrected the adjacent M/L QA-effort claim in the orchestrator doc. | QA effort is now equal at every size; leaving that sentence would contradict the new matrix. | Supports AC-5. |
+| Initially kept the generated `dist/cli/index.js` at its pre-task content. | The original manifest omitted it; the operator added it in the 2026-09-29 correction and this iteration rebuilt it. | AC-8 is now met. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | The default 4×5 table, delicate M, and empty-list tests pass; budget tests remain unchanged. |
+| AC-2 | Met | Every cell and delicate effort is medium/high; old helpers are absent; Codex tests remain unchanged and pass. |
+| AC-3 | Met | Subprocess cases remove all inherited `CLAUDE_MODEL*` variables and cover each precedence layer and pin scope; all cases assert unchanged effort. |
+| AC-4 | Met | `env.ts` has only the legacy message's Claude model name; `policy.ts` is the only source reading `process.env.CLAUDE_MODEL*`. |
+| AC-5 | Met | Concrete Claude table, variable scopes, pin/effort rule, and tuning text are documented. |
+| AC-6 | Met | Stale Claude claims and comments are corrected; remaining xhigh references on scoped surfaces describe Codex. |
+| AC-7 | Met | New decision record follows the September Codex entry and covers the required table, evidence, precedence, effort change, and rollback. |
+| AC-8 | Met | Mirror and both affected bundles are rebuilt; the prompt golden fixture is unchanged. The manifest correction now covers the CLI bundle. |
 
 ## Edge Cases Considered
 
-- ...
+- A delicate M task selects the XL model/effort cell, while QA remains light/medium.
+- Review pins split at the XL boundary; `_REVIEW_LARGE` also covers delicate promotion.
+- A legacy catch-all model reaches QA and yields to a tier variable or phase pin.
+- Model overrides pass through custom model IDs and never alter effort.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- (none outstanding after the manifest correction; historical scope findings below are retained for context)
+- [resolved] SG-1: the original harness test read the removed `env.config.maxReviewLoops` field and failed at `JSON.parse(undefined)`. The manifest correction authorized its retarget to `policyConfig().maxReviewLoops`; the latest full suite passes.
+- [resolved] SG-2: a fresh build also changes `dist/cli/index.js` because the CLI imports the shared env module. The manifest correction authorized that generated bundle, which is now retained.
+- [resolved] SG-3: `docs/patterns.md` and `docs/codebase-map.md` described the old resolver. The manifest correction authorized both guidance updates, now applied.
+- [resolved] The pipeline evidence guard previously rejected the historical `npm test` failure. The latest re-run validation row is `Pass` after the authorized harness test update.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Final run passed. |
+| `npm run type-check` | Pass | Final run passed. |
+| `npm test` | Fail | `tests/run-task-harness.test.ts:33` reads the removed env config field. This deterministic failure is caused by the required removal; see Blockers. |
+| `node --test --import ./tests/md-loader-register.mjs --import tsx tests/pipeline-policy.test.ts` | Pass | 103 policy tests passed. |
+| `npm run build` | Pass | Build completed; generated an additional unlisted CLI bundle delta that was restored under the scope cap. See Blockers. |
+| `npm run sync-templates` | Pass | Mirror regenerated. |
+| `npm run sync-templates:check` | Pass | All managed files in sync. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `git diff --check` | Pass | No whitespace errors. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (latest re-run results below; one expected skip)
+- [x] All deviations from plan documented with rationale
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
+## Iteration 2 — addressing review round 1
 
 ### Changes
 
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+| `tests/pipeline-policy.test.ts` | Expanded override assertions to all 20 cells, strong XL/delicate boundaries, legacy+tier combinations, and unaffected phases; covered empty tier values. |
+| `src/lib/pipeline-policy.ts` | Made tier/effort a compile-time-complete 4×5 table and corrected the resolver-location header. |
+| `src/orchestrator/policy.ts` | Treats empty new tier variables as unset while preserving existing pin and legacy behavior. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documented legacy `CLAUDE_MODEL`, effective-size scaling for both agents, the fast-tier plan caveat, and the XL/delicate review-pin boundary; synced the mirror. |
+| `docs/product-context.md` | Replaced the stale “lower effort” fast-tier description with its actual cells. |
+| `docs/decisions.md` | Added a supersession note for historical Claude rules and restored the task-analysis reference. |
+| `dist/orchestrator/run-task.js` | Rebuilt after the source revision. |
+| `tests/run-task-harness.test.ts` | Retargeted the loop-cap validation test to `policyConfig()` without changing inputs or assertions. |
+| `dist/cli/index.js` | Rebuilt the newly authorized CLI bundle. |
+| `docs/patterns.md` | Corrected the pure-policy and environment-resolution guidance. |
+| `docs/codebase-map.md` | Corrected the environment and policy module descriptions. |
 
 ### Findings addressed
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+- **CB-1 (correctness):** The precedence tests now check all 20 default cells for the light and strong tier overrides, both legacy+tier combinations, and every unaffected phase under each pin. The strong override is also checked at delicate M. The previously described XL and legacy+LIGHT mutations would now fail these assertions.
+- **R-1 (risk):** The adopter-facing environment table now states the legacy catch-all's scope and the complete precedence order.
+- **N-1–N-6, N-8–N-10 (optional):** Clarified historical supersession, resolver location, task-size and pin wording, fast-tier effort, table exhaustiveness, evidence reference, and truthful full-suite status. The prior `npm test` Validation Outcomes row now reads `Fail`, as the reviewer requested.
+- **N-7 (optional):** Empty values for the two new tier variables now fall through as unset. Existing pins and legacy `CLAUDE_MODEL` retain their pre-task empty-string semantics.
+- **SG-1 / SG-2 / SG-3 (spec gaps):** The 2026-09-29 manifest correction authorized all four missing files. The harness test now uses the surviving resolver, both bundles are rebuilt, and the two guidance docs name the sole policy resolver. No scope blocker remains.
 
-### AC deltas (if any)
+### AC deltas
 
-- AC-N: was Partial → now Met (file:line)
+- **AC-3:** Stronger evidence for every override boundary; policy tests rose from 103 to 105 passing cases.
+- **AC-5:** Legacy layer and size/pin scopes are now explicit in the shipped doc and mirror.
+- **AC-8:** Partial → Met after the manifest correction and rebuilt CLI bundle.
 
-### Re-run validation (only checks that re-ran)
+### Re-run validation
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| `npm run lint` | Pass | Final revision passed. |
+| `npm run type-check` | Pass | Final revision passed. |
+| `node --test --import ./tests/md-loader-register.mjs --import tsx tests/pipeline-policy.test.ts` | Pass | 105/105 passed. |
+| `npm test` | Pass | Latest full run: 1,320 passed, one skipped, zero failed. The prior harness failure is resolved. |
+| `npm run build` | Pass | Both orchestrator and newly authorized CLI bundles rebuilt. |
+| `npm run sync-templates` | Pass | Mirror regenerated. |
+| `npm run sync-templates:check` | Pass | All managed files in sync. |
+| `npm run docs-refs-check` | Pass | All refs OK after the guidance-doc edits. |
+| `git diff --check` | Pass | No whitespace errors after the source and doc edits. |
+
+### Manifest-correction follow-up
+
+The operator amended the spec Affected Files table to include the four files previously identified by SG-1 through SG-3. This follow-up stays in iteration 2 because it completes the same review round. The initial validation failure remains in the baseline table as historical evidence; the latest re-run table above is authoritative for current status. The retargeted harness test passed all 16 focused cases, and the full suite passed. The generated CLI bundle is now retained for the orchestrator’s commit.
