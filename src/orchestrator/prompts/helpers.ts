@@ -34,6 +34,17 @@ export const QA_STARTUP =
     'Read docs/lessons-learned.md for recent insights to distill.\n' +
     'No full codebase context needed for QA — read each task\'s spec.md, handoff.md, and notes.md directly.';
 
+export const CLAUDE_HEADLESS =
+    'Unattended session: this runs non-interactively — nobody reads your messages or answers questions until the phase ends. Don\'t stop to ask for confirmation or clarification. When something is ambiguous, record the question and the interpretation you chose in this phase\'s artifact or in `tasks/<id>/notes.md`, and proceed on it.\n' +
+    '\n' +
+    'The phase is complete only when its artifact is written and its phase command (the `canon task phase` command(s) this prompt lists) has run. A progress summary, a description of next steps, or an offer to continue is not completion — keep working until both are done.\n' +
+    '\n' +
+    'Do only this phase: don\'t run `canon run`, advance any other phase, or start review passes, review skills, or reviewer sub-agents this prompt didn\'t ask for.\n' +
+    '\n' +
+    'Report a check that couldn\'t run, or that failed, as exactly that — never as passed.\n' +
+    '\n' +
+    'If a project instruction file or other repository guidance says to ask or wait for approval before an action, there is no one to ask in this session. Skip that action unless this prompt explicitly authorizes it, record the question in the phase artifact, and continue with the rest of the authorized work.';
+
 export function taskList(tasks: TaskContext[]): string {
     return tasks.map(t => `- \`${t.taskId}\`: "${t.title}" → tasks/${t.taskId}/`).join('\n');
 }

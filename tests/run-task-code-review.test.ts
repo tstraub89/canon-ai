@@ -968,6 +968,106 @@ void test('runCodex adds headless guidance to fresh and resumed non-interactive 
     }
 });
 
+void test('reviewer-set code_review blocked stops before evidence recovery', { concurrency: false }, async () => {
+    await withTempTasksAsync((tasksRoot, activeCwd) => {
+        writeTask(tasksRoot, 'reviewer-stop');
+        const status = readStatus('reviewer-stop');
+        status.phases.code_review!.status = 'blocked';
+        writeStatusToFile(path.join(tasksRoot, 'reviewer-stop', 'status.json'), status);
+        fs.writeFileSync(path.join(tasksRoot, 'reviewer-stop', 'review.md'), '# Code Review\n\n## Stage 1\n\nLens missing twice.\n');
+        const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, 'reviewer-stop');
+        assert.equal(result.status, 2, result.output);
+        assert.equal(readStatus('reviewer-stop').phases.code_review?.status, 'blocked');
+        assert.equal(readStatus('reviewer-stop').escalations?.length, 1);
+        assert.match(result.output, /reviewer-stop\/review\.md/);
+        assert.match(result.output, /reset-code-review/);
+        assert.doesNotMatch(result.output, /Evidence insufficient/);
+        return Promise.resolve();
+    });
+});
+
+void test('reviewer block covers a mixed bundle, and reset restores the review phase', { concurrency: false }, async () => {
+    await withTempTasksAsync((tasksRoot, activeCwd) => {
+        for (const id of ['blocked-peer', 'active-peer']) {
+            writeTask(tasksRoot, id);
+            const status = readStatus(id);
+            status.phases.code_review!.status = id === 'blocked-peer' ? 'blocked' : 'in_progress';
+            writeStatusToFile(path.join(tasksRoot, id, 'status.json'), status);
+            fs.writeFileSync(path.join(tasksRoot, id, 'review.md'), '# Code Review\n\n## Stage 1\n\nLens missing twice.\n');
+        }
+        const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, ['blocked-peer', 'active-peer']);
+        assert.equal(result.status, 2, result.output);
+        assert.doesNotMatch(result.output, /Evidence insufficient/);
+        for (const id of ['blocked-peer', 'active-peer']) {
+            assert.match(result.output, new RegExp(`${id}/review\\.md`));
+            assert.equal(readStatus(id).phases.code_review?.status, 'blocked');
+            assert.equal(readStatus(id).escalations?.length, 1);
+            const script = `import { taskCmd } from ${JSON.stringify(path.join(process.cwd(), 'src/task/index.ts'))}; taskCmd(['reset-code-review', ${JSON.stringify(id)}]);`;
+            const reset = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script], {
+                cwd: process.cwd(), env: { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, encoding: 'utf8',
+            });
+            assert.equal(reset.status, 0, String(reset.stdout) + String(reset.stderr));
+            assert.equal(readStatus(id).phases.implement?.status, 'done');
+            assert.equal(readStatus(id).phases.code_review?.status, 'pending');
+        }
+        return Promise.resolve();
+    });
+});
+
+void test('ordinary incomplete code_review still uses evidence recovery', { concurrency: false }, async () => {
+    await withTempTasksAsync((tasksRoot, activeCwd) => {
+        writeTask(tasksRoot, 'ordinary-incomplete');
+        const status = readStatus('ordinary-incomplete');
+        status.phases.code_review!.status = 'in_progress';
+        writeStatusToFile(path.join(tasksRoot, 'ordinary-incomplete', 'status.json'), status);
+        fs.writeFileSync(path.join(tasksRoot, 'ordinary-incomplete', 'review.md'), '# Code Review\n\n## Stage 1\n\nStill reviewing.\n');
+        const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, 'ordinary-incomplete');
+        assert.equal(result.status, 2, result.output);
+        assert.match(result.output, /Evidence insufficient/);
+        assert.equal(readStatus('ordinary-incomplete').escalations?.length, 0);
+        return Promise.resolve();
+    });
+});
+
+for (const scenario of ['fresh', 'resumed', 'fallback', 'interactive'] as const) {
+    void test(`runClaude headless preamble: ${scenario}`, { concurrency: false }, async () => {
+        const { CLAUDE_HEADLESS } = await import('../src/orchestrator/prompts/helpers.js') as { CLAUDE_HEADLESS?: string };
+        const { runClaude } = await import('../src/orchestrator/agents/claude.js');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-claude-headless-'));
+        const previousPath = process.env.PATH;
+        try {
+            const capture = path.join(dir, 'args.jsonl');
+            fs.writeFileSync(path.join(dir, 'claude'), [
+                '#!/usr/bin/env node',
+                `require('node:fs').appendFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+                scenario === 'fallback' ? "if (process.argv.includes('--resume')) { console.error('No conversation found with session ID'); process.exit(1); }" : '',
+            ].join('\n'), { mode: 0o755 });
+            process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ''}`;
+            await runClaude(`${scenario} prompt`, scenario === 'interactive', scenario === 'resumed' || scenario === 'fallback' ? 'missing-id' : null, 'sonnet', 'medium', '1', undefined, dir);
+            const calls = fs.readFileSync(capture, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]);
+            const args = calls.at(-1) ?? [];
+            const prompt = scenario === 'interactive' ? args.at(-1) ?? '' : args[args.indexOf('-p') + 1] ?? '';
+            if (scenario === 'fallback') {
+                assert.equal(calls.length, 2);
+                assert.ok(!args.includes('--resume'));
+                assert.doesNotMatch(prompt, /\[Resumed session/);
+            }
+            if (scenario === 'interactive') {
+                assert.equal(prompt, 'interactive prompt');
+                assert.ok(!prompt.includes(CLAUDE_HEADLESS ?? 'Unattended session:'));
+            } else {
+                assert.ok(CLAUDE_HEADLESS && prompt.startsWith(CLAUDE_HEADLESS));
+                assert.ok(prompt.endsWith(`${scenario} prompt`));
+                if (scenario === 'resumed') assert.ok(prompt.indexOf('[Resumed session') > CLAUDE_HEADLESS.length - 1);
+            }
+        } finally {
+            if (previousPath === undefined) delete process.env.PATH;
+            else process.env.PATH = previousPath;
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+}
+
 void test('runColdCodexReview records one successful metric row with usage and round attribution', { concurrency: false }, async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-metrics-ok-'));
     try {

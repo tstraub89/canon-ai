@@ -69,6 +69,21 @@ function buildAffectedFilesBlock(affectedFiles: readonly string[] | undefined, b
     ].join('\n');
 }
 
+function planFeasibilityCheck(placement: string, indent = ''): string {
+    const lines = [
+        `**Feasibility check.** Before writing steps, confirm each item below and record the results in a few lines ${placement}. Mark an item that doesn't apply \`N/A\` in a word.`,
+        '- **Exists:** the functions, files, and patterns the plan relies on exist — found by searching the code, not recalled.',
+        '- **Real path:** the actual runtime call path the change sits on, including any existing code on it that already does part of the work.',
+        '- **Callers:** every caller of each function whose behavior or error contract changes, found and accounted for.',
+        '- **Tests that can fail:** for each regression test the plan prescribes, the input or state that sends it through the changed path, so it fails without the change.',
+        '- **Predicates:** for each condition or state check the plan writes out, its boundary values (for example zero, empty, or non-numeric) and every state it must handle.',
+        "- **Scope:** every file the steps change is inside the spec's Affected Files.",
+        '- **Async/stateful:** for async or stateful changes — re-entry, cancellation or unmount, stale state, and ownership.',
+        'A finding that changes a step goes in that step. If the check contradicts the spec, record the contradiction in the plan and in `tasks/<id>/notes.md` with a `[plan]` prefix. Do not change the spec or widen scope to resolve it.',
+    ];
+    return lines.map((line, index) => (index === 0 ? line : indent + line)).join('\n');
+}
+
 export function promptSpec(state: PipelineState): string {
     const { tasks, tier, isBundle } = state;
     const combined = tier === 'fast';
@@ -82,9 +97,9 @@ export function promptSpec(state: PipelineState): string {
             ? tasks.map((t) =>
                 `**Task \`${t.taskId}\`**: Write tasks/${t.taskId}/spec.md using the template.` +
                 (combined ? ` Also write tasks/${t.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns.` : '')
-            ).join('\n\n')
+            ).join('\n\n') + (combined ? `\n\n${planFeasibilityCheck("in each plan.md's Approach section")}` : '')
             : `Write tasks/${task.taskId}/spec.md using the template in .canon/templates/spec.md. Be concrete — Codex implements directly from this.` +
-              (combined ? `\n\nAlso write tasks/${task.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns to use.` : ''),
+              (combined ? `\n\nAlso write tasks/${task.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns to use.\n\n${planFeasibilityCheck("in plan.md's Approach section")}` : ''),
         bundleNote: isBundle ? '\nThese tasks are related — consider cross-task interactions while speccing.' : '',
         doneNote: combined
             ? 'The orchestrator will handle spec_review and plan-phase advancement automatically for fast-tier tasks.'
@@ -94,6 +109,7 @@ export function promptSpec(state: PipelineState): string {
             '- Every AC is verifiable with a specific test (not just "it works" — state exactly how to verify)',
             '- Affected Files lists specific files (not directories) with specific, actionable change descriptions',
             combined ? '- Plan steps reference actual function/file names from the codebase (not just concepts)' : null,
+            combined ? "- plan.md's Approach records the feasibility check (exists, real path, callers, tests that can fail, predicates, Affected Files, async/stateful; N/A where it doesn't apply)" : null,
             '- Known Risks covers failure modes for the trickiest ACs',
             '- Human Test Plan describes product behavior only (no code, no file names, no TypeScript)',
             '- Validation Required has at least one entry checked (or explicitly "None" with a reason)',
@@ -235,6 +251,7 @@ export function promptPlan(state: PipelineState): string {
             taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
             roundBanner,
             verdictLines,
+            feasibilityCheck: planFeasibilityCheck('at the top of the appended `### Delta` section', '   '),
             phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'plan', 'done'),
         });
     }
@@ -248,6 +265,7 @@ export function promptPlan(state: PipelineState): string {
         startup: CLAUDE_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         verdictLines,
+        feasibilityCheck: planFeasibilityCheck("in the plan's Approach section"),
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'plan', 'done'),
     });
 }
@@ -559,6 +577,7 @@ export function promptCodeReview(
         hasOutOfScopeFiles: outOfScopeFiles.length > 0,
         outOfScopeFilesList: outOfScopeFiles.map(file => `- \`${file}\``).join('\n'),
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'done', '<verdict>'),
+        blockedCommands: phaseCommands(tasks.map(t => t.taskId), 'code_review', 'blocked'),
     });
 }
 

@@ -16,6 +16,7 @@ For each task — EXCEPT tasks whose line above marks them EXEMPT (those have no
    - Round 1: `## Reroute Plan`
    - Round N >= 2: `## Reroute Plan Round N`
 6. Plan only the delta from the amendment. Reference specific files, functions, and existing patterns. Acknowledge prior plan steps that still apply without re-planning them.
+7. {{{feasibilityCheck}}}
 
 Do **not** rewrite or remove existing sections from `plan.md`. The appended reroute plan is what implement-reroute reads as its delta guide.
 
@@ -25,5 +26,6 @@ When done, run:
 <!-- per-round append shape:
 ## Reroute Plan [Round N]
 ### Delta
+- Feasibility: ...
 - ...ordered steps for the amendment delta only...
 -->

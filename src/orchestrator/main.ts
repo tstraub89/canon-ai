@@ -3172,8 +3172,36 @@ async function recoverPhaseForTask(taskId: string, phase: Phase, initialStatus: 
 
 // ── checkAndRoute ──────────────────────────────────────────────────────────
 
+function stopForReviewerBlock(taskIds: string[], blockedIds: string[], statuses: StatusJson[]): never {
+    const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
+    const recovery = taskIds.map(id => `canon task reset-code-review ${id}`).join('; ');
+    const reason =
+        `Code review stopped without a verdict for task(s): ${blockedIds.join(', ')}. ` +
+        `The reviewer set code_review blocked; see ${taskIds.map(id => `tasks/${id}/review.md`).join(', ')}. ` +
+        `No evidence recovery or retry was attempted. Recovery for the full blocked bundle [${taskIds.join(' ')}]: ` +
+        `${recovery}; then canon run ${taskIds.join(' ')}.`;
+    console.log('');
+    console.log('════════════════════════════════════════════════════════');
+    console.log('  ✋  CODE REVIEW STOPPED — the reviewer could not reach a verdict.');
+    console.log('  Read the stopped review:');
+    for (const id of taskIds) console.log(`    tasks/${id}/review.md`);
+    console.log('  Reset every task in the bundle, then run again:');
+    for (const id of taskIds) console.log(`    canon task reset-code-review ${id}`);
+    console.log(`    canon run ${taskIds.join(' ')}`);
+    console.log('  Re-running without the reset starts a fresh review pass without archiving the stopped review.md.');
+    console.log('════════════════════════════════════════════════════════');
+    console.log('');
+    splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
+    process.exit(2);
+}
+
 export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<void> {
     let statuses = taskIds.map(splitState.readStatus);
+
+    if (phase === 'code_review') {
+        const blockedIds = taskIds.filter((_, index) => getPhaseStatus(statuses[index], 'code_review') === 'blocked');
+        if (blockedIds.length > 0) stopForReviewerBlock(taskIds, blockedIds, statuses);
+    }
 
     // Verify all tasks completed this phase. If any didn't, attempt
     // evidence-based auto-advance, then a one-shot retry, before bailing.

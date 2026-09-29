@@ -8,6 +8,8 @@ For each task, read tasks/<id>/spec.md and tasks/<id>/spec-review.md. Address an
 
 Write tasks/<id>/plan.md for each task with ordered implementation steps. Reference specific files, existing patterns, and code examples from the codebase. Codex implements directly from this plan.
 
+{{{feasibilityCheck}}}
+
 If you encounter spec gaps, append to tasks/<id>/notes.md (prefix: [plan]).
 
 When done, run:

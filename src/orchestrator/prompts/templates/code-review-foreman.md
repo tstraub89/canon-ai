@@ -119,11 +119,15 @@ Spawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in olde
 
 The injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.
 
+Spawn exactly the two Claude lenses above each round, plus at most one re-spawn of a lens whose return is missing. Spawn no other reviewers or review agents, run no review skills, and never substitute your own review for a lens's return.
+
+A lens return is valid when it follows that lens's charter return format. This includes a clean empty form (`STAGE_2_FINDINGS: (none)` or `COLD_FINDINGS: (none)`) and the anchored Stage 1 fail form (`STAGE_1: fail`, no Stage 2 findings, `OVERALL_SIGNAL: changes_requested`). A return is missing if absent or outside the charter format. Re-spawn a missing lens once with the same inputs. If still missing, do not approve or guess at its findings: it is not approval evidence. Write `review.md` recording which lens was missing and what came back, check no verdict box, then run the `code_review blocked` commands in step 5 for every task. Other lenses' findings may be recorded but not adjudicated into a verdict.
+
 ### 2. Adjudicate
 
 Use the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.
 
-The lenses are instructed to over-report — to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs: a quiet lens output is a bug in the lens, not a clean diff. Rank surviving findings by confidence × severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence — verify it against the spec/diff first, then rank.
+The lenses are instructed to over-report — to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs. A clean return in the charter's empty form is a valid result; only a missing return (step 1) is a lens failure. Rank surviving findings by confidence × severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence — verify it against the spec/diff first, then rank.
 
 1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record "flagged by N lenses." A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement — the same behavior flagged by cold-Claude and cold-Codex — must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.
 2. Keep the two reconciliation checks separate:
@@ -155,9 +159,12 @@ Include:
 - Stage 1: anchored lens validation gate result and AC table.
 - Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.
 - Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.
-- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable.
+- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable (except the missing-lens stop in step 1, which checks none).
 
 ### 5. Set Phase Verdict
 
 Run one command per task with the actual verdict:
 {{{phaseCommands}}}
+
+If a lens was still missing after its re-spawn (step 1), write `review.md` first, then run these instead, with no verdict — this stops the run for the human:
+{{{blockedCommands}}}
