@@ -1,7 +1,7 @@
 {
   "id": "claude-55-calibration",
   "title": "Calibrate Claude pipeline prompts for the 5.5 generation",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-28",
   "updated": "2026-09-29",
   "branch": "task/claude-55-calibration",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
