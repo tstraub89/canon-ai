@@ -1,8 +1,8 @@
 ---
 name: canon-spec-review
 description: Use when a canon task spec is written and the human wants to surface BLOCKING issues before invoking `canon run <id>`. Triggers on "/canon-spec-review", "review the spec", "pre-flight the spec", "what would Codex catch", or before kicking off the pipeline. Useful for any spec with logic — for full-tier (S/M/L/XL/delicate) it pre-empts Codex spec_review iterations, for fast-tier (XS non-delicate) it's the only automated review layer since Codex spec_review auto-approves.
-argument-hint: "<task-id>"
-allowed-tools: Read Glob Grep Bash(canon task list*) Bash(git status*) Agent
+argument-hint: "[task-id]"
+allowed-tools: Read Glob Grep Bash(canon task list*) Bash(git status*) Agent AskUserQuestion
 effort: high
 ---
 
@@ -23,7 +23,11 @@ Don't use for already-committed code review (use `codex review --commit <SHA>` o
 
 ### 1. Verify inputs
 
-The task ID is `$ARGUMENTS`. If empty, stop: usage is `/canon-spec-review <task-id>`.
+Resolve the task ID:
+
+- **`$ARGUMENTS` names a task** → use it. This is how to review a task other than the one under discussion, or to run from a fresh session.
+- **`$ARGUMENTS` is empty** → take the task from the conversation: the one just authored with `/canon-spec`, or the one the human has been discussing. Don't re-confirm an unambiguous pick.
+- **Still unclear** (fresh session, or several tasks in play) → run `canon task list`, narrow to tasks at `spec` or `spec_review`, plus tasks at `plan` whose `status.json` shows `phases.plan.status: "pending"` (full tier waits at the human spec gate in that state). Use `AskUserQuestion` to pick one. If none match, say so rather than offering tasks already past the gate. Don't guess.
 
 Verify `tasks/<id>/spec.md` exists and is filled out (no `<placeholder>` text or "TBD" stubs). If it's still a template, stop and say so.
 

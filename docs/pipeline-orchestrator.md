@@ -169,7 +169,7 @@ Claude writes QA summary → Human tests
 - Spec and plan are written in separate Claude sessions.
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe.
 - Codex model/effort scales with effective size (matrix below).
-- **Optional pre-pipeline self-review**: before invoking `canon run`, the operator can run `/canon-spec-review <task-id>` to dispatch three parallel sub-agents (structural / factual / spec-quality) at the spec and surface BLOCKING / STRONG / NIT findings inline. Catches the class of issues Codex's spec_review would surface across 2-3 iterations in one ~15-min pass. Opt-in; most valuable when iteration cost is real.
+- **Optional pre-pipeline self-review**: before invoking `canon run`, the operator can run `/canon-spec-review` (task ID optional — it defaults to the task under discussion) to dispatch three parallel sub-agents (structural / factual / spec-quality) at the spec and surface BLOCKING / STRONG / NIT findings inline. Catches the class of issues Codex's spec_review would surface across 2-3 iterations in one ~15-min pass. Opt-in; most valuable when iteration cost is real.
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`/canon-spec-review` no longer requires a task ID.** With no argument it reviews the task under discussion; when that is ambiguous it lists tasks still at `spec` or `spec_review`, or waiting at the spec gate, and asks which one. Passing a task ID works as before.
+
 ## [3.4.0] — 2026-09-27
 
 ### Added
