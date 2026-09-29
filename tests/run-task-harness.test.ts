@@ -17,11 +17,11 @@ import type { StatusJson } from '../src/orchestrator/types.js';
 
 const TSX_LOADER = path.join(process.cwd(), 'node_modules', 'tsx', 'dist', 'loader.mjs');
 
-function loadEnvMaxReviewLoops(raw: string): { value: number | null; stderr: string } {
-    const envUrl = pathToFileURL(path.join(process.cwd(), 'src/orchestrator/env.ts')).href;
+function loadPolicyMaxReviewLoops(raw: string): { value: number | null; stderr: string } {
+    const policyUrl = pathToFileURL(path.join(process.cwd(), 'src/orchestrator/policy.ts')).href;
     const result = spawnSync(process.execPath, ['--import', 'tsx', '--eval', [
-        `import(${JSON.stringify(envUrl)})`,
-        '.then(m => console.log(JSON.stringify(m.config.maxReviewLoops)))',
+        `import(${JSON.stringify(policyUrl)})`,
+        '.then(m => console.log(JSON.stringify(m.policyConfig().maxReviewLoops)))',
         '.catch(error => { console.error(error); process.exit(1); });',
     ].join('')], {
         cwd: process.cwd(),
@@ -35,13 +35,13 @@ function loadEnvMaxReviewLoops(raw: string): { value: number | null; stderr: str
     };
 }
 
-void test('env config rejects malformed or negative MAX_REVIEW_LOOPS and preserves zero', () => {
+void test('policy config rejects malformed or negative MAX_REVIEW_LOOPS and preserves zero', () => {
     for (const raw of ['abc', '-1', '1.5', '2junk']) {
-        const loaded = loadEnvMaxReviewLoops(raw);
+        const loaded = loadPolicyMaxReviewLoops(raw);
         assert.equal(loaded.value, null, raw);
         assert.match(loaded.stderr, new RegExp(`Invalid MAX_REVIEW_LOOPS value .*${raw.replace('.', '\\.')}`));
     }
-    const zero = loadEnvMaxReviewLoops('0');
+    const zero = loadPolicyMaxReviewLoops('0');
     assert.equal(zero.value, 0);
     assert.doesNotMatch(zero.stderr, /Invalid MAX_REVIEW_LOOPS/);
 });

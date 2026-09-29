@@ -5,7 +5,7 @@
 // checks has one place to live.
 //
 // This file has no side effects: it reads only what is passed in. Env-var
-// resolution + legacy-shim warnings stay in run-task.ts.
+// resolution lives in orchestrator/policy.ts; legacy warnings live in orchestrator/env.ts.
 
 export type TaskSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
 export const CODE_REVIEW_DELTA_LINE_THRESHOLD = 400;
@@ -246,15 +246,39 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
 }
 
 type ClaudeTier = 'light' | 'strong';
+type ClaudeCell = { tier: ClaudeTier; effort: 'medium' | 'high' };
 
-function claudeTierFor(phase: ClaudePhase, size: TaskSize): ClaudeTier {
-    if (phase === 'qa') return 'light';
-    return size === 'XS' || size === 'S' ? 'light' : 'strong';
-}
-
-function claudeEffortFor(phase: ClaudePhase, size: TaskSize): 'medium' | 'high' {
-    return phase !== 'qa' && size === 'XL' ? 'high' : 'medium';
-}
+// Every phase/size cell is explicit so a retune changes one table entry.
+const CLAUDE_CELLS: Record<ClaudePhase, Record<TaskSize, ClaudeCell>> = {
+    spec: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
+    plan: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
+    code_review: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
+    qa: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'light', effort: 'medium' },
+        L: { tier: 'light', effort: 'medium' },
+        XL: { tier: 'light', effort: 'medium' },
+    },
+};
 
 function claudePinFor(phase: ClaudePhase, size: TaskSize, config: PolicyConfig): string | null {
     switch (phase) {
@@ -268,7 +292,7 @@ function claudePinFor(phase: ClaudePhase, size: TaskSize, config: PolicyConfig):
 function resolveClaudeModel(phase: ClaudePhase, size: TaskSize, config: PolicyConfig): string {
     const pin = claudePinFor(phase, size, config);
     if (pin !== null) return pin;
-    const tier = claudeTierFor(phase, size);
+    const tier = CLAUDE_CELLS[phase][size].tier;
     const tierModel = tier === 'light' ? config.claudeModelLight : config.claudeModelStrong;
     if (tierModel !== null) return tierModel;
     if (config.claudeModelLegacy !== null) return config.claudeModelLegacy;
@@ -276,16 +300,23 @@ function resolveClaudeModel(phase: ClaudePhase, size: TaskSize, config: PolicyCo
 }
 
 function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize, ClaudeMatrixConfig>> {
-    const phases: readonly ClaudePhase[] = ['spec', 'plan', 'code_review', 'qa'];
-    const result = {} as Record<ClaudePhase, Record<TaskSize, ClaudeMatrixConfig>>;
-    for (const phase of phases) {
-        const row = {} as Record<TaskSize, ClaudeMatrixConfig>;
-        for (const size of SIZE_ORDER) {
-            row[size] = { model: resolveClaudeModel(phase, size, config), effort: claudeEffortFor(phase, size) };
-        }
-        result[phase] = row;
-    }
-    return result;
+    const cell = (phase: ClaudePhase, size: TaskSize): ClaudeMatrixConfig => ({
+        model: resolveClaudeModel(phase, size, config),
+        effort: CLAUDE_CELLS[phase][size].effort,
+    });
+    const row = (phase: ClaudePhase): Record<TaskSize, ClaudeMatrixConfig> => ({
+        XS: cell(phase, 'XS'),
+        S: cell(phase, 'S'),
+        M: cell(phase, 'M'),
+        L: cell(phase, 'L'),
+        XL: cell(phase, 'XL'),
+    });
+    return {
+        spec: row('spec'),
+        plan: row('plan'),
+        code_review: row('code_review'),
+        qa: row('qa'),
+    };
 }
 
 export function getPipelinePolicy(

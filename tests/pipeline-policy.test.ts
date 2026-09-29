@@ -340,22 +340,31 @@ void test('override precedence: no Claude model variables uses defaults', () => 
     assert.equal(getPipelinePolicy([s('M')], config).claude('qa').model, 'sonnet');
 });
 
+void test('override precedence: empty tier model values are treated as unset', () => {
+    const config = loadPolicyConfigForEnv({ CLAUDE_MODEL_LIGHT: '', CLAUDE_MODEL_STRONG: '' });
+    for (const row of CLAUDE_MATRIX_TABLE) {
+        assert.equal(getPipelinePolicy([s(row.size)], config).claude(row.phase).model, row.model, `${row.phase}/${row.size}`);
+    }
+});
+
 void test('override precedence: light tier variable only changes light cells', () => {
     const config = loadPolicyConfigForEnv({ CLAUDE_MODEL_LIGHT: 'custom-light' });
-    for (const phase of ['spec', 'plan', 'code_review', 'qa'] as ClaudePhase[]) {
-        assert.equal(getPipelinePolicy([s('XS')], config).claude(phase).model, 'custom-light');
+    for (const row of CLAUDE_MATRIX_TABLE) {
+        const expected = row.model === 'sonnet' ? 'custom-light' : row.model;
+        assert.equal(getPipelinePolicy([s(row.size)], config).claude(row.phase).model, expected, `${row.phase}/${row.size}`);
     }
-    assert.equal(getPipelinePolicy([s('M')], config).claude('qa').model, 'custom-light');
-    assert.equal(getPipelinePolicy([s('M')], config).claude('spec').model, 'opus');
 });
 
 void test('override precedence: strong tier variable only changes strong cells', () => {
     const config = loadPolicyConfigForEnv({ CLAUDE_MODEL_STRONG: 'custom-strong' });
-    for (const phase of ['spec', 'plan', 'code_review'] as ClaudePhase[]) {
-        assert.equal(getPipelinePolicy([s('M')], config).claude(phase).model, 'custom-strong');
+    for (const row of CLAUDE_MATRIX_TABLE) {
+        const expected = row.model === 'opus' ? 'custom-strong' : row.model;
+        assert.equal(getPipelinePolicy([s(row.size)], config).claude(row.phase).model, expected, `${row.phase}/${row.size}`);
     }
-    assert.equal(getPipelinePolicy([s('M')], config).claude('qa').model, 'sonnet');
-    assert.equal(getPipelinePolicy([s('XS')], config).claude('spec').model, 'sonnet');
+    for (const phase of ['spec', 'plan', 'code_review'] as ClaudePhase[]) {
+        assert.equal(getPipelinePolicy([s('M', true)], config).claude(phase).model, 'custom-strong', `delicate/${phase}`);
+    }
+    assert.equal(getPipelinePolicy([s('M', true)], config).claude('qa').model, 'sonnet');
 });
 
 for (const [variable, phase] of [
@@ -363,31 +372,30 @@ for (const [variable, phase] of [
 ] as const) {
     void test(`override precedence: ${variable} pins ${phase} at every size`, () => {
         const config = loadPolicyConfigForEnv({ [variable]: 'pinned' });
-        for (const size of ['XS', 'S', 'M', 'L', 'XL'] as TaskSize[]) {
-            const policy = getPipelinePolicy([s(size)], config);
-            assert.equal(policy.claude(phase).model, 'pinned', size);
-            assert.equal(policy.claude(phase).effort, getPipelinePolicy([s(size)], TEST_CONFIG).claude(phase).effort);
+        for (const row of CLAUDE_MATRIX_TABLE) {
+            const policy = getPipelinePolicy([s(row.size)], config);
+            assert.equal(policy.claude(row.phase).model, row.phase === phase ? 'pinned' : row.model, `${row.phase}/${row.size}`);
+            assert.equal(policy.claude(row.phase).effort, row.effort, `${row.phase}/${row.size}`);
         }
-        const otherPhase = phase === 'spec' ? 'plan' : 'spec';
-        assert.equal(getPipelinePolicy([s('M')], config).claude(otherPhase).model, 'opus');
     });
 }
 
 void test('override precedence: review pin covers XS–L only', () => {
     const config = loadPolicyConfigForEnv({ CLAUDE_MODEL_REVIEW: 'pinned-review' });
-    for (const size of ['XS', 'S', 'M', 'L'] as TaskSize[]) {
-        assert.equal(getPipelinePolicy([s(size)], config).claude('code_review').model, 'pinned-review');
+    for (const row of CLAUDE_MATRIX_TABLE) {
+        const expected = row.phase === 'code_review' && row.size !== 'XL' ? 'pinned-review' : row.model;
+        assert.equal(getPipelinePolicy([s(row.size)], config).claude(row.phase).model, expected, `${row.phase}/${row.size}`);
     }
-    assert.equal(getPipelinePolicy([s('XL')], config).claude('code_review').model, 'opus');
     assert.equal(getPipelinePolicy([s('M', true)], config).claude('code_review').model, 'opus');
 });
 
 void test('override precedence: large review pin covers XL and delicate only', () => {
     const config = loadPolicyConfigForEnv({ CLAUDE_MODEL_REVIEW_LARGE: 'pinned-large' });
-    assert.equal(getPipelinePolicy([s('XL')], config).claude('code_review').model, 'pinned-large');
+    for (const row of CLAUDE_MATRIX_TABLE) {
+        const expected = row.phase === 'code_review' && row.size === 'XL' ? 'pinned-large' : row.model;
+        assert.equal(getPipelinePolicy([s(row.size)], config).claude(row.phase).model, expected, `${row.phase}/${row.size}`);
+    }
     assert.equal(getPipelinePolicy([s('M', true)], config).claude('code_review').model, 'pinned-large');
-    assert.equal(getPipelinePolicy([s('M')], config).claude('code_review').model, 'opus');
-    assert.equal(getPipelinePolicy([s('XS')], config).claude('code_review').model, 'sonnet');
 });
 
 void test('override precedence: legacy model alone covers every cell', () => {
@@ -401,10 +409,21 @@ void test('override precedence: legacy model alone covers every cell', () => {
 
 void test('override precedence: tier variable beats legacy only for its cells', () => {
     const config = loadPolicyConfigForEnv({ CLAUDE_MODEL: 'legacy', CLAUDE_MODEL_LIGHT: 'light' });
-    assert.equal(getPipelinePolicy([s('XS')], config).claude('spec').model, 'light');
-    assert.equal(getPipelinePolicy([s('M')], config).claude('qa').model, 'light');
-    assert.equal(getPipelinePolicy([s('M')], config).claude('spec').model, 'legacy');
-    assert.equal(getPipelinePolicy([s('M')], config).claude('code_review').model, 'legacy');
+    for (const row of CLAUDE_MATRIX_TABLE) {
+        const expected = row.model === 'sonnet' ? 'light' : 'legacy';
+        assert.equal(getPipelinePolicy([s(row.size)], config).claude(row.phase).model, expected, `${row.phase}/${row.size}`);
+    }
+});
+
+void test('override precedence: strong tier variable beats legacy only for its cells', () => {
+    const config = loadPolicyConfigForEnv({ CLAUDE_MODEL: 'legacy', CLAUDE_MODEL_STRONG: 'strong' });
+    for (const row of CLAUDE_MATRIX_TABLE) {
+        const expected = row.model === 'opus' ? 'strong' : 'legacy';
+        assert.equal(getPipelinePolicy([s(row.size)], config).claude(row.phase).model, expected, `${row.phase}/${row.size}`);
+    }
+    for (const phase of ['spec', 'plan', 'code_review'] as ClaudePhase[]) {
+        assert.equal(getPipelinePolicy([s('M', true)], config).claude(phase).model, 'strong', `delicate/${phase}`);
+    }
 });
 
 void test('override precedence: phase pin beats tier variable', () => {

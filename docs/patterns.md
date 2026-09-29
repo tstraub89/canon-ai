@@ -34,7 +34,7 @@ This is the project's hard-won implementation knowledge. It has two main section
 **When to apply**: Any change that touches tier detection, sizing, model/effort matrices, or loop-cap defaults.
 
 **The pattern**:
-- `pipeline-policy.ts` is **side-effect-free**. No I/O, no env reads, no filesystem. Inputs are passed; outputs are returned. Env-var resolution lives in `src/orchestrator/env.ts`; the module receives a fully resolved `PolicyConfig`.
+- `pipeline-policy.ts` is **side-effect-free**. No I/O, no env reads, no filesystem. Inputs are passed; outputs are returned. `src/orchestrator/policy.ts` reads policy env values and passes them as `PolicyConfig`; the pure policy resolves Claude model precedence per cell. `src/orchestrator/env.ts` retains shared environment helpers and legacy warnings.
 - Decisions are **table-driven**. Matrices keyed off `TaskSize` × `Phase`. Adding a new branch means adding a table cell, not chaining `if`s.
 - **Every routing decision has a corresponding test row** in `pipeline-policy.test.ts`. A change to `pipeline-policy.ts` without a corresponding test update is a Stage 1 review failure — the table-driven structure exists *so* tests can cover every cell, and skipping the test means coverage drift.
 

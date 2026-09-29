@@ -1724,13 +1724,36 @@ function codexMatrix(config3) {
     }
   };
 }
-function claudeTierFor(phase, size) {
-  if (phase === "qa") return "light";
-  return size === "XS" || size === "S" ? "light" : "strong";
-}
-function claudeEffortFor(phase, size) {
-  return phase !== "qa" && size === "XL" ? "high" : "medium";
-}
+var CLAUDE_CELLS = {
+  spec: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  plan: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  code_review: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  qa: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "light", effort: "medium" },
+    L: { tier: "light", effort: "medium" },
+    XL: { tier: "light", effort: "medium" }
+  }
+};
 function claudePinFor(phase, size, config3) {
   switch (phase) {
     case "spec":
@@ -1746,23 +1769,30 @@ function claudePinFor(phase, size, config3) {
 function resolveClaudeModel(phase, size, config3) {
   const pin = claudePinFor(phase, size, config3);
   if (pin !== null) return pin;
-  const tier = claudeTierFor(phase, size);
+  const tier = CLAUDE_CELLS[phase][size].tier;
   const tierModel = tier === "light" ? config3.claudeModelLight : config3.claudeModelStrong;
   if (tierModel !== null) return tierModel;
   if (config3.claudeModelLegacy !== null) return config3.claudeModelLegacy;
   return tier === "light" ? "sonnet" : "opus";
 }
 function claudeMatrix(config3) {
-  const phases = ["spec", "plan", "code_review", "qa"];
-  const result = {};
-  for (const phase of phases) {
-    const row = {};
-    for (const size of SIZE_ORDER) {
-      row[size] = { model: resolveClaudeModel(phase, size, config3), effort: claudeEffortFor(phase, size) };
-    }
-    result[phase] = row;
-  }
-  return result;
+  const cell = (phase, size) => ({
+    model: resolveClaudeModel(phase, size, config3),
+    effort: CLAUDE_CELLS[phase][size].effort
+  });
+  const row = (phase) => ({
+    XS: cell(phase, "XS"),
+    S: cell(phase, "S"),
+    M: cell(phase, "M"),
+    L: cell(phase, "L"),
+    XL: cell(phase, "XL")
+  });
+  return {
+    spec: row("spec"),
+    plan: row("plan"),
+    code_review: row("code_review"),
+    qa: row("qa")
+  };
 }
 function getPipelinePolicy(tasks, config3) {
   const tier = detectTier(tasks);
@@ -1792,8 +1822,8 @@ var config2 = {
   claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
   claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? null,
   claudeModelQa: process.env.CLAUDE_MODEL_QA ?? null,
-  claudeModelLight: process.env.CLAUDE_MODEL_LIGHT ?? null,
-  claudeModelStrong: process.env.CLAUDE_MODEL_STRONG ?? null,
+  claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
+  claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
   claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
   codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6-sol",
