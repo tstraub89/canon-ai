@@ -4,9 +4,20 @@
 
 ## [Unreleased]
 
+## [3.5.0] — 2026-09-29
+
+### Added
+
+- **A reviewer that can't reach a verdict now stops the run for a human.** If a code-review lens returns nothing usable twice, the foreman sets `code_review` to `blocked` instead of being pushed to invent a verdict; recover with `canon task reset-code-review` for each bundle member, then `canon run`.
+- **Plans include a short feasibility check.** Pipeline, reroute, and `/canon-spec` XS plans now confirm the code they rely on exists, trace the real call path and callers, and name the input that makes each new test fail without the fix.
+- **`CLAUDE_MODEL_LIGHT` and `CLAUDE_MODEL_STRONG` override each tier's model.** Existing per-phase pins and `CLAUDE_MODEL` still work and take precedence in that order.
+
 ### Changed
 
-- **`/canon-spec-review` no longer requires a task ID.** With no argument it reviews the task under discussion; when that is ambiguous it lists tasks still at `spec` or `spec_review`, or waiting at the spec gate, and asks which one. Passing a task ID works as before.
+- **Claude defaults are re-baselined for the 5.5 generation.** Spec, plan, and code review run Sonnet `medium` for XS/S, Opus `medium` for M/L, and Opus `high` for XL/delicate; QA runs Sonnet `medium` at every size, and nothing runs at `xhigh`. A model pin now replaces only the model, so a Sonnet pin on M/L review or plan drops from `high` to `medium` effort.
+- **Unattended Claude phases get an explicit unattended-session contract.** Like Codex's headless preamble, it says no one will answer questions, finishing means the artifact is written and the phase command has run, and the phase must not start other phases or reviewers.
+- **The code-review foreman accepts clean lens results and bounds delegation.** A lens's empty result is now valid rather than "a bug in the lens," and the foreman spawns only its two lenses plus one re-spawn.
+- **`/canon-spec-review` no longer requires a task ID.** With no argument it reviews the task under discussion, or asks which one when that's ambiguous.
 
 ## [3.4.0] — 2026-09-27
 
