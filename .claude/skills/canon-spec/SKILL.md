@@ -174,7 +174,7 @@ Self-check before presenting:
    - **Scope:** every file the steps change is inside the spec's Affected Files.
    - **Async/stateful:** for async or stateful changes — re-entry, cancellation or unmount, stale state, and ownership.
 
-   A finding that changes a step goes in that step. If the check contradicts the spec, fix the spec with the human before approval rather than working around it in the plan — on the fast tier no Codex `spec_review` will catch the mismatch.
+   A finding that changes a step goes in that step. If the check contradicts the spec, don't work around it in the plan — on the fast tier no Codex `spec_review` will catch the mismatch. Amend the spec, re-present the change to the human, and wait for renewed approval. The earlier Phase 5 approval does not cover a spec changed after it, so don't record approval in step 2 until the human has approved the amended spec.
 2. Record the human's approval in `tasks/TASK-ID/spec-review.md`: check the **Approved** box and add a one-line note ("Fast tier — human conversational spec approval; Codex spec review skipped"). The phase gate reads this artifact before letting `spec_review` advance.
 3. Advance the phases with the helpers (they rederive the top-level `status` pointer):
    ```bash

@@ -46,11 +46,13 @@ Stop the reviewer loop once findings turn wording-only. Self-grep for flagged ph
 
 **Fix:**
 1. Read `tasks/<id>/review.md` — it names the missing lens and what came back. Look for the cause: a budget cap hit, a timeout, or a harness error in the run log. Raise `CLAUDE_BUDGET` if the lens ran out of budget.
-2. Reset every task in the bundle, then run again:
+2. Reset every task in the bundle, then run the whole bundle again. The stop's banner prints these exact commands:
    ```bash
-   canon task reset-code-review <task-id>
-   canon run <task-id>
+   canon task reset-code-review <task-id-1>
+   canon task reset-code-review <task-id-2>
+   canon run <task-id-1> <task-id-2>
    ```
+   Run all bundle members together. A `canon run` with only one ID reviews the shared branch against that one task's spec and Affected Files, so the siblings' changes look out of scope.
 
 `reset-code-review` archives the stopped `review.md` and starts a fresh review pass. Re-running without the reset also starts a fresh pass, but without archiving the stopped review. Don't hand-check a verdict box or set a verdict with `canon task phase` to get past the stop: the review that would justify it never happened.
 
