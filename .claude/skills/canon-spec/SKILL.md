@@ -165,7 +165,16 @@ Self-check before presenting:
 ### Phase 6 — After spec approval
 
 **XS tasks:**
-1. Write `tasks/TASK-ID/plan.md` using `.canon/templates/plan.md` as structure.
+1. Write `tasks/TASK-ID/plan.md` using `.canon/templates/plan.md` as structure. Before writing steps, run the same feasibility check the pipeline's planner runs, and record the results in a few lines in the plan's Approach section. Mark an item that doesn't apply `N/A` in a word:
+   - **Exists:** the functions, files, and patterns the plan relies on exist — found by searching the code, not recalled.
+   - **Real path:** the actual runtime call path the change sits on, including any existing code on it that already does part of the work.
+   - **Callers:** every caller of each function whose behavior or error contract changes, found and accounted for.
+   - **Tests that can fail:** for each regression test the plan prescribes, the input or state that sends it through the changed path, so it fails without the change.
+   - **Predicates:** for each condition or state check the plan writes out, its boundary values (for example zero, empty, or non-numeric) and every state it must handle.
+   - **Scope:** every file the steps change is inside the spec's Affected Files.
+   - **Async/stateful:** for async or stateful changes — re-entry, cancellation or unmount, stale state, and ownership.
+
+   A finding that changes a step goes in that step. If the check contradicts the spec, don't work around it in the plan — on the fast tier no Codex `spec_review` will catch the mismatch. Amend the spec, re-present the change to the human, and wait for renewed approval. The earlier Phase 5 approval does not cover a spec changed after it, so don't record approval in step 2 until the human has approved the amended spec.
 2. Record the human's approval in `tasks/TASK-ID/spec-review.md`: check the **Approved** box and add a one-line note ("Fast tier — human conversational spec approval; Codex spec review skipped"). The phase gate reads this artifact before letting `spec_review` advance.
 3. Advance the phases with the helpers (they rederive the top-level `status` pointer):
    ```bash
