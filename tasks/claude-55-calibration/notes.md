@@ -1,0 +1,15 @@
+# Notes
+
+Raw observations from any phase. Prefix with phase name. Distilled into `docs/lessons-learned.md` during QA.
+
+<!-- Append below this line -->
+
+[spec] Human explicitly authorized Codex authorship with independent Claude review for this task. Draft is not reviewed or approved; do not start canon run before that review. Standard persisted phase agent labels remain unchanged; this exception is documented in spec.md.
+[spec] Assessment reviewed both project quality logs and September archived statuses (105 GalleryPlanner, 7 canon), with representative artifact/run-log spot checks. Model aliases do not establish exact versions; iteration counts include amendments and reroutes. Some downstream fixes appear only in task notes.
+[spec] Pre-existing dirty files at creation: .claude/skills/canon-spec-review/SKILL.md, docs/pipeline-orchestrator.md, and their templates mirrors. Preserve those changes. Only new task artifacts were written during authorship.
+[spec] Proposed rollout narrows the initial conversation: only non-delicate XS/S spec models change; all effort reductions are deferred experiments. Prompt-only and model-routing effects must be evaluated separately. No paid evaluations or implementation were run.
+[spec_review] An agent-set `code_review blocked` status is accepted by `taskPhase`, but `checkAndRoute` treats it as incomplete, attempts verdict-based evidence recovery, then prompts a Claude retry to mark the review done. A no-verdict human stop therefore needs explicit routing/recovery support.
+[spec] Revision 1: accepted Codex's blocking finding (trace confirmed: checkAndRoute recovers any non-done code_review, and the retry prompt demands done <verdict>). Added a checkAndRoute stop branch for agent-set code_review blocked (whole bundle, escalation, exit 2, reset-code-review recovery) plus AC-1b/AC-10 and main.ts + pipeline-orchestrator.md to Affected Files, rather than dropping the stop. No existing verdict means 'review incomplete', and spec_gap would misdirect the human.
+[plan] Spec gap (not resolved here — scope unchanged): two plan-writing surfaces don't get the feasibility check. (1) `.claude/skills/canon-spec/SKILL.md` Phase 6 "XS tasks" step 1 has the operator session write plan.md directly from `.canon/templates/plan.md`. It is not in Affected Files or Non-Goals, so interactive XS plans skip the check. (2) `spec-revision.md`'s combined "Also update plan.md" line is excluded by Non-Goals. Candidate follow-up: add the check to the canon-spec skill's XS step, or leave it to #68.
+[plan] Exit code alone is not red for AC-1b: pre-change checkAndRoute also exits 2 (no claude_review session → no_session → "did not reach 'done'"). The red signal is "Evidence insufficient" in the output plus no escalation.
+[plan] Snag: quoting the literal bracketed TASK-ID sentinel anywhere in plan.md makes check-phase-gate treat it as the unfilled template (isTemplateUnfilled only checks for that substring). Reworded; worth a lessons-learned entry if it recurs.
