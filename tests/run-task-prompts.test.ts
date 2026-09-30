@@ -585,6 +585,63 @@ void test('lens charters preserve clean forms and high recall while limiting del
     }
 });
 
+void test('spec-review-lens charter and canon-spec-review skill carry the calibrated contract', () => {
+    const charter = fs.readFileSync(path.resolve('.claude/agents/spec-review-lens.md'), 'utf8');
+    const skill = fs.readFileSync(path.resolve('.claude/skills/canon-spec-review/SKILL.md'), 'utf8');
+    const frontmatter = charter.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+    const skillFrontmatter = skill.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
+    assert.match(frontmatter, /name: spec-review-lens/);
+    const toolsLine = frontmatter.match(/^tools:\s*(.*)$/m)?.[1];
+    assert.ok(toolsLine, 'tools allowlist must be explicit');
+    const toolList = toolsLine.split(',').map(tool => tool.trim());
+    assert.deepEqual([...new Set(toolList)].sort(), ['Bash', 'Glob', 'Grep', 'Read']);
+    assert.equal(new Set(toolList).size, toolList.length, 'tools allowlist must not contain duplicates');
+    assert.doesNotMatch(toolsLine, /Agent|Skill|Edit|Write/);
+
+    for (const token of [
+        /Bash is read-only/, /spawn no sub-agents/, /Invoke no skills/, /Write no files/,
+        /file:line/, /Coverage first/, /Filtering is the synthesizer's job/, /\[NO FINDINGS\]/,
+    ]) assert.match(charter, token);
+
+    // These structural assertions prove the text is present, not that a model will behave accordingly.
+    for (const file of [charter, skill]) {
+        assert.match(file, /BLOCKING/);
+        assert.match(file, /STRONG/);
+        assert.match(file, /NIT/);
+        assert.match(file, /explicitly exclude|Non-Goals/);
+        assert.match(file, /verif\w* (as )?unaffected/);
+        assert.match(file, /omitted required change/);
+        assert.match(file, /transitive effect/);
+        assert.match(file, /internal contradiction/);
+        for (const line of file.split('\n')) {
+            if (/explicitly exclude|Non-Goals/.test(line)) assert.match(line, /verif\w* (as )?unaffected/);
+        }
+    }
+
+    assert.match(skill, /subagent_type: spec-review-lens/);
+    assert.match(skill, /canon upgrade/);
+    assert.doesNotMatch(skill, /general-purpose/);
+    assert.doesNotMatch(skill, /\bExplore\b/);
+    assert.doesNotMatch(skill, /Shape Check rubric/);
+    assert.match(skill, /Name effects to DELETE/);
+    assert.match(skill, /Prefer positive or structural assertions/);
+    assert.doesNotMatch(skill, /Calibration applied to every angle/);
+    const synthesis = skill.split('### 3. Synthesize and report')[1] ?? '';
+    for (const token of [/uncited/, /scope boundary/, /de-dupe/]) assert.match(synthesis, token);
+    const c3 = skill.split('(3) **Affected Files**')[1]?.split('\n(4)')[0] ?? '';
+    assert.ok(c3, 'C3 text must exist');
+    assert.match(c3, /### Affected Files/);
+    assert.match(c3, /## Design/);
+    assert.match(c3, /generated|rebuilt/i);
+    assert.match(skillFrontmatter, /effort: high/);
+    assert.match(skill, /canon-inline-review/);
+    assert.doesNotMatch(skill, /codex review --/);
+    assert.doesNotMatch(skill, /worktree-canonical-task-state/);
+    assert.doesNotMatch(skill, /~15-min/);
+    const trivialRow = skill.split('\n').find(line => /trivial|XS/.test(line) && line.startsWith('|')) ?? '';
+    assert.match(trivialRow, /XS/);
+});
+
 void test('plan feasibility reaches ordinary, bundle, reroute, and fast-tier combined planning', () => {
     const ordinary = promptPlan(planState);
     for (const token of [

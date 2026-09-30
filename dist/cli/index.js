@@ -5073,6 +5073,7 @@ var CANON_OWNED = [
   ".claude/skills/canon-sweep/SKILL.md",
   ".claude/agents/code-review-anchored.md",
   ".claude/agents/code-review-cold.md",
+  ".claude/agents/spec-review-lens.md",
   ".canon/templates/status.json",
   ".canon/templates/spec.md",
   ".canon/templates/plan.md",
