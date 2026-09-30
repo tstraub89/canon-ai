@@ -60,7 +60,7 @@ This angle catches the highest-value class: a spec that assumes something exists
 Scope: audit against canon's spec-writing rules of thumb. Check these nine items:
 (1) **Name effects to DELETE** — when a change supersedes prior code, is it framed as a single replacement, not separate add/remove bullets?
 (2) **Prefer positive or structural assertions** — are load-bearing "must not" constraints backed by a grep AC or positive reframe, not just prose negation?
-(3) **Affected Files** — the table sits under a heading that is exactly `### Affected Files`, inside `## Design` (or an `## Amendment`). It lists every file the change writes, including generated mirrors and rebuilt outputs. Files only read for context stay out. A mismatched heading or a missing generated output is BLOCKING, because a pipeline gate rejects it later.
+(3) **Affected Files** — the table sits under a heading that is exactly `### Affected Files`, inside `## Design` or an amendment section (`## Amendment` on the first reroute, `## Amendment Round N` on later ones). It lists every file the change writes, including generated mirrors and rebuilt outputs. Files only read for context stay out. A mismatched heading or a missing generated output is BLOCKING, because a pipeline gate rejects it later.
 (4) **Validation Required** — section present AND has at least one `- [x]` checked entry (or an explicit checked "None — <reason>"). A section with zero `[x]` entries is a failing check.
 (5) **Non-goals** — rule out the most tempting scope expansions.
 (6) **Human Test Plan** — product language only; no code, no file paths.
