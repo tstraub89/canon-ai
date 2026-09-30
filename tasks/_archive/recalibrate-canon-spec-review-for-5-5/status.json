@@ -1,7 +1,7 @@
 {
   "id": "recalibrate-canon-spec-review-for-5-5",
   "title": "Recalibrate canon-spec-review for the Claude 5.5 generation",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-09-30",
   "updated": "2026-09-30",
   "branch": "task/recalibrate-canon-spec-review-for-5-5",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
