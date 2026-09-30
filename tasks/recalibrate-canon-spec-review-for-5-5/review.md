@@ -1,132 +1,83 @@
 # Code Review: recalibrate-canon-spec-review-for-5-5
 
 > Reviewer: Claude | Spec: `tasks/recalibrate-canon-spec-review-for-5-5/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
 
-Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
+Code review synthesized by a foreman from three lenses: anchored Claude, cold-Claude, and pre-obtained cold-Codex (reported no actionable defects).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did Codex's `handoff.md` pass all applicable checks?
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+The one skipped test (`tests/run-task-safety.test.ts:2522`) is unrelated to the diff and recorded in the handoff as unverified, not passing.
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: Charter tools bound delegation and writes | Pass | `name: spec-review-lens`; `tools: Read, Grep, Glob, Bash`; test parses the list and rejects Agent/Skill/Edit/Write. |
+| AC-2: Charter body carries the lens contract | Pass | Read-only Bash, no sub-agents/skills/writes, `file:line` citation, coverage-first, `[NO FINDINGS]` all present and tested. |
+| AC-3: Severity and scope boundary in both files | Pass | Both files define BLOCKING/STRONG/NIT and state the scope boundary with both conjuncts and all three exclusions; test checks both files. |
+| AC-4: Skill dispatches only to the charter | Pass | `subagent_type: spec-review-lens`; `canon upgrade` stop; no general-purpose/Explore/Shape Check; Agent C tokens preserved. |
+| AC-5: Silence default moved to synthesis | Pass | Calibration line removed; step 3 names uncited-drop, scope-boundary downgrade, de-dupe. |
+| AC-6: C3 matches the parser | Pass | Names `### Affected Files`, `## Design`, generated/rebuilt outputs. |
+| AC-7: Smaller drift | Pass | `effort: high` kept; `/canon-inline-review`; XS row; war story and `~15-min` removed. |
+| AC-8: Registration and mirrors | Pass | `CANON_OWNED` entry present; both mirrors identical to root; `dist/cli/index.js` contains the path. |
+| AC-9: Decision record | Pass | Paragraph at `docs/decisions.md:469-471`, inside the calibration-audit section. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The change is small and coherent: a tool-bounded charter, a skill that dispatches to it and carries matching severity/scope text, registration, mirrors, and a structural test. All three lenses found no correctness bugs or spec gaps; only low-severity nits survive.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `tests/run-task-prompts.test.ts` (new test, `trivialRow`): takes the first table line matching `/trivial|XS/` and asserts `/XS/`, so it could pick the wrong row if an earlier row mentions "trivial". Works today. (flagged by anchored + cold-Claude)
+- `tests/run-task-prompts.test.ts` (scope-boundary loop): the per-line one-conjunct check fires only on lines matching `Non-Goals`/`explicitly exclude`; the file-wide verification regex could be satisfied elsewhere. Weak but meets AC-3 as written. (cold-Claude)
+- `.claude/skills/canon-spec-review/SKILL.md:23`: the "When to use" trivial-patch sentence does not mention XS; AC-7 requires only the anti-pattern row. (anchored)
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): Bash is unrestricted, so read-only is prose-only — this is the spec's explicitly accepted Known Risk (Bash stays for surfaces lacking Grep/Glob; structural bound covers delegation and Edit/Write).
+- Dismissed (cold-Claude): skill no longer carries the finding output schema, so a stale or missing charter breaks synthesis — the spec assigns the format to the charter (Decision §1) and the missing-charter stop is the designed loud failure.
+- Dismissed (cold-Claude): no `canon doctor` check for the charter — the spec's Non-Goals exclude it.
+- Dismissed (anchored): the `tools:` syntax and Agent-rejects-unknown-type behavior are unverified by the structural test — covered by the spec's Human Test Plan and Known Risks, not a code defect.
+- Dismissed (cold-Codex): no findings returned.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->

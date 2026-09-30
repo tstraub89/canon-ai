@@ -1,25 +1,19 @@
 # Implementation Handoff: recalibrate-canon-spec-review-for-5-5
 
 > Author: Codex | Spec: `tasks/recalibrate-canon-spec-review-for-5-5/spec.md` | Plan: `tasks/recalibrate-canon-spec-review-for-5-5/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `.claude/agents/spec-review-lens.md`, `templates/.claude/agents/spec-review-lens.md` | Added and mirrored the shared read-only reviewer charter. |
+| `.claude/skills/canon-spec-review/SKILL.md`, `templates/.claude/skills/canon-spec-review/SKILL.md` | Repointed the three angles to the charter, moved filtering to synthesis, clarified scope and C3, and corrected the identified drift. |
+| `src/lib/canon-owned.ts` | Registered the charter for init and upgrade. |
+| `dist/cli/index.js` | Rebuilt bundle includes the charter path. |
+| `tests/run-task-prompts.test.ts` | Added structural assertions for AC-1 through AC-7. |
+| `docs/decisions.md` | Recorded the skill calibration under the Claude prompt calibration audit. |
 
 ## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
 
 | Field | Source |
 |---|---|
@@ -31,91 +25,53 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+A shared charter limits what each spec-review lens can do, while the skill keeps each angle's rubric and the synthesis rules. The charter registration and generated mirrors deliver the change through the existing canon-managed file flow.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | Implemented the plan approach. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Charter frontmatter declares exactly Read, Grep, Glob, and Bash; the test checks the parsed allowlist. |
+| AC-2 | Met | Charter includes the lane, read-only Bash, grounding, coverage-first, and clean-return contract; structural test checks tokens. |
+| AC-3 | Met | Both shipped files state matching severity definitions and the full scope-boundary predicate with all three exclusions; test rejects one-conjunct lines. |
+| AC-4 | Met | Skill dispatches only to `spec-review-lens`, has a missing-charter stop, and preserves the two required Agent C phrases. |
+| AC-5 | Met | Per-angle silence calibration is removed; synthesis now drops uncited findings, downgrades scope-boundary findings, de-dupes, and re-classifies. |
+| AC-6 | Met | Check C3 names the exact heading and parent section and includes generated/rebuilt outputs. |
+| AC-7 | Met | Updated frontmatter, inline-review pointer, XS anti-pattern, and removed stale strings are pinned in the structural test. |
+| AC-8 | Met | Charter is registered; sync generated both mirrors. `grep -c 'spec-review-lens.md' dist/cli/index.js` returned `1`. |
+| AC-9 | Met | Calibration-audit section contains the `spec-review-lens` decision paragraph (grep hit at line 471); docs reference check passed. |
 
 ## Edge Cases Considered
 
-- ...
+- A mixed-version adopter whose updated skill lacks the new charter is told to upgrade and start a fresh Claude Code session; the skill does not fall back to a broader agent type.
+- The scope-boundary test checks each `Non-Goals`/`explicitly exclude` line for the required verification conjunct.
+- The existing task-state status file was already dirty at session start and was not included as a source change.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- [validation] One unrelated test is unverified: `tests/run-task-safety.test.ts:2522`, “REPO_ROOT stays anchored to the supervising checkout when imported from a linked worktree,” is skipped because this sandbox restricts `.git/` writes. The full suite exits successfully, but this case is not counted as passing.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 1,333 passed; one unrelated linked-worktree test at `tests/run-task-safety.test.ts:2522` was skipped and is recorded above as unverified. |
+| `npm run build` | Pass | Bundle grep found `spec-review-lens.md` once in `dist/cli/index.js`. |
+| `npm run sync-templates` | Pass | Generated both declared template mirrors. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `node --test --import ./tests/md-loader-register.mjs --import tsx tests/run-task-prompts.test.ts` | Pass | 46 tests passed, including the new structural test. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
