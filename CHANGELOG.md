@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`/canon-spec-review` reviewers report every finding they can cite, and the final report does the filtering.** They now use Codex spec review's blocking and nit definitions, so behavior a spec explicitly excludes and verifies as unaffected is a nit at most. The Affected Files check now names the exact heading the pipeline reads, accepts any amendment section, and expects generated or rebuilt outputs to be listed. The reviewers now run as a read-only `spec-review-lens` agent that has no edit tools, can't launch other agents or skills, and is told to use the shell only for reading. Run `canon upgrade`, then start a new Claude Code session to pick it up.
+
 ## [3.5.0] — 2026-09-29
 
 ### Added
