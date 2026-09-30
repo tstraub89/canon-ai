@@ -1068,3 +1068,5 @@
 | 2026-09-29T04:05:25.066Z | claude-55-calibration | code_review | codex | gpt-6-luna | 0 | 83.3s | - | ok |
 | 2026-09-29T04:14:30.024Z | claude-55-calibration | code_review | claude | opus | 0 | 544.9s | 973044 | ok |
 | 2026-09-29T04:17:01.252Z | claude-55-calibration | qa | claude | sonnet | 0 | 151.2s | 1995179 | ok |
+| 2026-09-30T04:41:18.002Z | recalibrate-canon-spec-review-for-5-5 | spec_review | codex | gpt-6-luna | 0 | 54.7s | 226428 | ok |
+| 2026-09-30T04:52:33.327Z | recalibrate-canon-spec-review-for-5-5 | plan | claude | sonnet | 0 | 71.9s | 882404 | ok |
