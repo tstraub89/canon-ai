@@ -17,7 +17,7 @@ Previews what Codex's `spec_review` phase would surface — BEFORE `canon run <i
 - Task is **fast-tier (XS non-delicate)** — this is the *only* automated review layer (fast-tier auto-approves `spec_review`, so without this skill the human's read is the only gate before Codex hits the spec at implement-time)
 - After a reroute amendment, before re-invoking the pipeline
 
-Don't use for already-committed code review; use `/canon-inline-review` for that, or for genuinely trivial inline patches (typo fixes, version bumps) where there's no logic to vet.
+Don't use for code-diff review (use `/canon-inline-review`), or for XS changes with no logic to vet (typo fixes, version bumps).
 
 ## Workflow
 
@@ -126,7 +126,7 @@ If a lens returned `[NO FINDINGS]`, say so under its section. Don't pad. If all 
 
 | Anti-pattern | Why it's wrong | Do instead |
 |---|---|---|
-| Run on XS typo fixes or version bumps | Overhead exceeds value when there is no logic to vet | Skip when there's no logic to vet; use freely on any S spec that has decisions in it |
+| Run on XS typo fixes or version bumps | Overhead exceeds value when there is no logic to vet | Skip when there's no logic to vet; use freely on any spec that has decisions in it, XS included |
 | Use to revise the spec | The skill doesn't edit files | Read the report, edit the spec manually |
 | Manufacture findings to look thorough | Dilutes signal | `[NO FINDINGS]` is a real verdict; report only cited findings |
 | Use for code-diff review | Spec mode only | Use `/canon-inline-review` for diff review |

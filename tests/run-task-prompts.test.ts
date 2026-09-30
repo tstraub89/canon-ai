@@ -626,6 +626,12 @@ void test('spec-review-lens charter and canon-spec-review skill carry the calibr
     assert.match(skill, /Name effects to DELETE/);
     assert.match(skill, /Prefer positive or structural assertions/);
     assert.doesNotMatch(skill, /Calibration applied to every angle/);
+    const angleA = skill.split('#### Agent A')[1]?.split('#### Agent B')[0] ?? '';
+    for (const token of [/problem real/, /framing right/, /simpler solution/, /AC decomposition/]) assert.match(angleA, token);
+    const angleB = skill.split('#### Agent B')[1]?.split('#### Agent C')[0] ?? '';
+    for (const token of [/Read whole functions/, /call sites/, /return shapes/]) assert.match(angleB, token);
+    const angleC = skill.split('#### Agent C')[1]?.split('### 3.')[0] ?? '';
+    for (let n = 1; n <= 9; n++) assert.ok(angleC.includes(`(${n}) **`), `Agent C check (${n}) must exist`);
     const synthesis = skill.split('### 3. Synthesize and report')[1] ?? '';
     for (const token of [/uncited/, /scope boundary/, /de-dupe/]) assert.match(synthesis, token);
     const c3 = skill.split('(3) **Affected Files**')[1]?.split('\n(4)')[0] ?? '';
@@ -638,7 +644,7 @@ void test('spec-review-lens charter and canon-spec-review skill carry the calibr
     assert.doesNotMatch(skill, /codex review --/);
     assert.doesNotMatch(skill, /worktree-canonical-task-state/);
     assert.doesNotMatch(skill, /~15-min/);
-    const trivialRow = skill.split('\n').find(line => /trivial|XS/.test(line) && line.startsWith('|')) ?? '';
+    const trivialRow = skill.split('\n').find(line => line.startsWith('| Run on ')) ?? '';
     assert.match(trivialRow, /XS/);
 });
 
