@@ -1,0 +1,1 @@
+The changes consistently add and register the shared reviewer charter, update the skill and its generated mirror, and add structural tests for the stated contract. I found no actionable defects in the diff.
