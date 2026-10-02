@@ -1,7 +1,7 @@
 {
   "id": "refactor-spec-correctness-audit-ac",
   "title": "Refactor specs require a correctness audit before preserve-behavior",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-02",
   "updated": "2026-10-02",
   "branch": "task/refactor-spec-correctness-audit-ac",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
