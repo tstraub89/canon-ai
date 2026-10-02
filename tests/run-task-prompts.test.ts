@@ -1012,6 +1012,12 @@ void test('refactor correctness-audit guidance stays aligned across spec surface
     const reviewLine = readRepoFile('src/orchestrator/prompts/templates/spec-review.md')
         .split('\n').find(line => line.includes('correctness audit'));
     assert.ok(reviewLine);
+    assert.ok(reviewLine.startsWith('- For a refactor:'));
+    assert.match(reviewLine, /Blocking/);
+    assert.doesNotMatch(reviewLine, /STRONG/);
+    assert.doesNotMatch(reviewLine, /never BLOCKING/i);
+    assert.match(reviewLine, /fixed deliberately, split out, or kept as a named quirk/);
+    assert.match(reviewLine, /audited, correct/);
     for (const line of [specBullet, revisionBullet, selfCheckLine, reviewLine]) {
         assert.doesNotMatch(line, /`/);
     }
