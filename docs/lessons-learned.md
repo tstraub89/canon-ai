@@ -145,3 +145,9 @@ An AC's red-first test asserted the process would exit non-zero against the pre-
 *(2026-10-01, source: refactor-spec-correctness-audit-ac)*
 
 A spec-authoring rule edit to `spec.md` and `spec-revision.md` prompt templates also moved the spec-review golden, because the reviewer prompt gained the matching question — three goldens, each changing for a different reason. The spec named all three up front (AC-10) and required reviewing each diff, which kept regeneration from being a blind `--update`. For prompt-carrier changes, enumerate which rendered goldens each edited template feeds before implementing, and gate self-check lines separately from shared rule bullets so a template used by two phases doesn't leak a phase-specific line.
+
+### Reviewer severity words mean different things in the pipeline prompt and the advisory skill
+
+*(2026-10-02, source: refactor-spec-correctness-audit-ac)*
+
+The first pass put "STRONG, never BLOCKING" on the new audit check in both the pipeline spec_review prompt and the `/canon-spec-review` skill. That was right for the skill, which only advises, but wrong for the pipeline prompt, where Blocking is the severity that yields `changes_requested` and a spec revision; a STRONG finding would never have forced the audit. It took an amendment round to fix. When adding a reviewer check that must be enforced, decide per carrier whether it gates (pipeline prompt, Blocking) or advises (skill, STRONG), and say so in the AC for each carrier rather than copying one severity across them.

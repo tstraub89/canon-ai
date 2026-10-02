@@ -133,3 +133,24 @@ None of the five protected docs should go stale: the spec-authoring rule lives i
 - [x] Human Test Plan uses product language only (no code, no file names)
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes; N/A for features/refactors) — N/A, guidance feature
+
+## Amendment Round 1
+
+**Trigger:** PR review (Codex bot, P1) on the spec_review phase prompt. The pipeline reviewer has only two severities, Blocking and non-blocking (nit). "STRONG" exists only in the canon-spec-review skill. In the pipeline, a missing audit therefore lands as a nit, `approved_with_nits` exits the review loop, the orchestrator revises the spec only on `changes_requested`, and the plan prompt says nits need no spec change. The missing-audit case this task targets would reach implement with no audit recorded in *Problem*.
+
+**Decision change (supersedes the severity clause of the Decision and of AC-5):** In the pipeline's spec_review phase prompt, a refactor spec that declares behavior preserved with no correctness audit evidence is a **Blocking** finding (requires `changes_requested`), matching how the adjacent bug-fix evidence bullet treats missing evidence. The one-line "audited, correct" record still satisfies a trivially correct refactor, so the cost is one revision round only when the audit is absent. The canon-spec-review skill's check (10) keeps STRONG, never BLOCKING (AC-6 unchanged): that skill is an advisory preview where STRONG is a real tier.
+
+### Acceptance Criteria (amendment)
+
+- [ ] AC-12: The spec_review phase prompt's refactor bullet states that a missing correctness audit is a Blocking finding, and the bullet no longer contains the word "STRONG" or the phrase "never BLOCKING". The rest of the bullet (the question, the three outcomes, the one-line "audited, correct" escape) is unchanged, and the "silence is the default" text is unchanged. Verify: read the bullet; a test asserts the refactor bullet in the spec_review prompt matches Blocking and does not match STRONG.
+- [ ] AC-13: The canon-spec-review skill's check (10) still states STRONG, never BLOCKING. Verify: the skill and its mirror are unchanged by this amendment.
+- [ ] AC-14: The affected golden (spec-review) and the orchestrator bundle are regenerated; `npm test`, `npm run lint`, `npm run type-check` and `npm run sync-templates:check` pass. Verify: only the files in the table below change in this round.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/orchestrator/prompts/templates/spec-review.md` | Refactor bullet: missing audit is Blocking; drop STRONG/never-BLOCKING wording |
+| `tests/run-task-prompts.test.ts` | Assert the refactor bullet says Blocking and not STRONG |
+| `tests/run-task-prompts.golden.json` | Regenerate the spec-review golden |
+| `dist/orchestrator/run-task.js` | Rebuild bundle |

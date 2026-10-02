@@ -78,3 +78,28 @@ Run, in order:
 5. `git diff --name-only main...HEAD` (and working tree) is a subset of Affected Files + Generated Artifacts + task artifacts/telemetry.
 
 Handoff Changes table must list every file above, including the three `templates/` mirrors and `dist/orchestrator/run-task.js` as generated artifacts.
+
+## Reroute Plan
+
+### Delta
+
+Amendment Round 1 (review: approved_with_nits): in the pipeline spec_review prompt only, a missing correctness audit becomes **Blocking**; the canon-spec-review skill's check (10) stays STRONG (AC-13). Steps 1-5 and the Step 6 carrier/equality/self-check/golden assertions of the prior plan still apply untouched.
+
+Feasibility check:
+- **Exists:** the bullet to change is `src/orchestrator/prompts/templates/spec-review.md:18` (ends "A missing audit is a STRONG finding, never BLOCKING."); `STRONG` appears nowhere else in that file (grep). The Blocking tier is defined at `:33` ("Requires `changes_requested`"); the adjacent bug-fix bullet (`:17`) uses the phrase "Blocking Shape Check concerns: ...". The existing test is at `tests/run-task-prompts.test.ts:~974-1025` (`reviewLine` found by `includes('correctness audit')`, backtick check at `:1015`). Skill check (10) and mirror are not touched.
+- **Real path:** `promptSpecReview` renders `templates/spec-review.md`; text reaches adopters via `dist/orchestrator/run-task.js` and the `promptSpecReview` golden in `tests/run-task-prompts.golden.json`. Other tests render spec-review output (`:310-380`) and match only on reroute/EXEMPT lines, unaffected by this bullet.
+- **Callers:** no function contract changes; prose only.
+- **Tests that can fail:** the new assertions run on `reviewLine`; pre-change it contains "STRONG" and lacks "Blocking", so both the `match(/Blocking/)` and `doesNotMatch(/STRONG/)` assertions fail until the bullet is edited. The golden assertion fails until regenerated.
+- **Predicates:** `reviewLine` is the first line containing "correctness audit" and must be exactly the bullet (assert it starts with `- For a refactor:` so a later line, e.g. a second mention, can't silently satisfy the test). Also assert `doesNotMatch(/never BLOCKING/i)`. The no-backtick assertion on this line must keep holding: write "a changes_requested verdict" with no backticks.
+- **Scope:** `spec-review.md`, `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json`, `dist/orchestrator/run-task.js` — all in the amendment's Affected Files. Do not touch the skill, its mirror, or any other prompt.
+- **Async/stateful:** N/A.
+
+Nit incorporated (spec-review): keep the audit question and outcome language intact; the edit replaces only the final sentence.
+
+### Steps
+
+1. **Edit the bullet** (`src/orchestrator/prompts/templates/spec-review.md:18`): replace only the last sentence "A missing audit is a STRONG finding, never BLOCKING." with: "A missing audit is a Blocking Shape Check concern (requires a changes_requested verdict), matching the bug-fix evidence bullet above." Leave the question, the three outcomes, the "audited, correct" escape, and the silence-default line untouched. No backticks; no "STRONG"/"never BLOCKING" left.
+2. **Test** (`tests/run-task-prompts.test.ts`, extend the existing correctness-audit test near `reviewLine`): after `assert.ok(reviewLine)`, add `assert.ok(reviewLine.startsWith('- For a refactor:'))`, `assert.match(reviewLine, /Blocking/)`, `assert.doesNotMatch(reviewLine, /STRONG/)`, `assert.doesNotMatch(reviewLine, /never BLOCKING/i)`. Also assert the audit-question and escape wording survive: `assert.match(reviewLine, /fixed deliberately, split out, or kept as a named quirk/)` and `/audited, correct/`. Do not weaken other assertions.
+3. **Regenerate:** `UPDATE_GOLDENS=1 npm test -- tests/run-task-prompts.test.ts`; review `git diff tests/run-task-prompts.golden.json` — only the spec-review golden's changed sentence should differ from the prior round. Then `npm run build`; `git diff --stat -- dist/` must show only `dist/orchestrator/run-task.js`.
+4. **Verify:** `npm run lint`, `npm run type-check`, `npm test`, `npm run sync-templates:check`, `npm run docs-refs-check`. Confirm `git diff --stat` for this round touches only the four files above (AC-13: the skill and its mirror unchanged — `grep -n "never BLOCKING" .claude/skills/canon-spec-review/SKILL.md` still matches).
+5. **Handoff:** add a reroute section to the handoff listing the four files, and state AC-12/13/14 results; report any test skipped as unverified.

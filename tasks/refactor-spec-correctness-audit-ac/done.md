@@ -4,7 +4,7 @@
 
 ## What Changed
 
-A refactor spec that says "preserve behavior" used to protect whatever bugs the current code had. Canon's spec-writing guidance now tells authors of refactor specs to check, for each behavior being kept, whether today's behavior is actually correct, and to say what happens to anything found wrong: fixed on purpose, split into its own task, or kept as a named intentional quirk. The same guidance reaches every place specs are authored (the `/canon-spec` skill, the spec template, and the pipeline's spec and spec-revision prompts, plus the builder self-check). Spec review gets a matching question: it asks for evidence of the audit on refactor specs, as a STRONG finding at most (never BLOCKING), and stays silent when the evidence is there or the refactor is trivially correct. `/canon-spec-review` gains a tenth check for the same thing. Features and bug fixes are explicitly N/A. Prompt-structure tests and the three affected prompt goldens were updated, and `dist/` was rebuilt.
+A refactor spec that says "preserve behavior" used to protect whatever bugs the current code had. Canon's spec-writing guidance now tells authors of refactor specs to check, for each behavior being kept, whether today's behavior is actually correct, and to say what happens to anything found wrong: fixed on purpose, split into its own task, or kept as a named intentional quirk. The same guidance reaches every place specs are authored (the `/canon-spec` skill, the spec template, and the pipeline's spec and spec-revision prompts, plus the builder self-check). Spec review gets a matching question: the pipeline's spec_review prompt asks for evidence of the audit on refactor specs and treats a missing audit as Blocking (so the spec is revised), staying silent when the evidence is there or the refactor is trivially correct. The advisory `/canon-spec-review` skill gains a tenth check for the same thing, kept at STRONG and never BLOCKING. A one-line "audited, correct" record satisfies it. Features and bug fixes are explicitly N/A. Prompt-structure tests and the three affected prompt goldens were updated, and `dist/` was rebuilt. Amendment Round 1 only raised the pipeline spec_review severity wording (spec-review template, its golden, the test, and the bundle).
 
 ## Files Changed
 
@@ -12,7 +12,7 @@ A refactor spec that says "preserve behavior" used to protect whatever bugs the 
 - `.canon/templates/spec.md` (+ mirror) — refactor note and gated checklist line
 - `.claude/skills/canon-spec-review/SKILL.md` (+ mirror) — new check (10); scope count now ten
 - `src/orchestrator/prompts/templates/spec.md`, `spec-revision.md` — identical audit rule after structural caps
-- `src/orchestrator/prompts/templates/spec-review.md` — audit-evidence question beside the bug-fix evidence question
+- `src/orchestrator/prompts/templates/spec-review.md` — audit-evidence question beside the bug-fix evidence question; missing audit is Blocking (Amendment Round 1)
 - `src/orchestrator/prompts/index.ts` — refactor-gated builder self-check line
 - `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` — structural assertions; regenerated goldens
 - `dist/orchestrator/run-task.js` — rebuilt bundle
@@ -22,7 +22,7 @@ A refactor spec that says "preserve behavior" used to protect whatever bugs the 
 
 1. Ask Claude to draft a spec for a small behavior-preserving refactor. Expected: before any "keep behavior the same" criterion, the spec states whether each kept behavior was checked for correctness and what happens to anything wrong.
 2. Ask Claude to draft a spec for an ordinary new feature. Expected: no audit requirement appears.
-3. Run the spec review on a refactor spec that says "preserve behavior" with no mention of correctness. Expected: the review raises the missing check. On a refactor spec that shows the check, it stays silent about this.
+3. Run the spec review on a refactor spec that says "preserve behavior" with no mention of correctness. Expected: the pipeline review blocks on the missing check (the advisory skill flags it as STRONG). On a refactor spec that shows the check, it stays silent about this.
 
 ## Test Results
 
@@ -53,7 +53,7 @@ Pre-merge checklist (not confirmable in QA; confirm at human_review):
 ## Decisions Made
 
 - Author guidance placed right after the existing refactor structural-caps bullet; reviewer guidance beside the bug-fix evidence question.
-- Missing audit evidence is STRONG, never BLOCKING; the review's silence default is unchanged.
+- Pipeline spec_review treats missing audit evidence as Blocking (Amendment Round 1) because Blocking is what triggers `changes_requested`; the advisory `/canon-spec-review` skill stays STRONG, never BLOCKING (AC-13). Silence default unchanged.
 - Refactor identification stays author judgment (no task-type field), same as the bug-fix gate.
 - Deviation: build verified by two consecutive bundle hash matches rather than a clean `git diff -- dist/` (the bundle is an intended change).
 
@@ -64,11 +64,11 @@ Pre-merge checklist (not confirmable in QA; confirm at human_review):
 
 ## Proposed Changelog
 
-- **Refactor specs now get a correctness audit before "preserve behavior."** `/canon-spec`, the spec template, and the pipeline's spec prompts tell authors of refactor specs to check whether the behavior being kept is actually correct, and to say whether anything wrong was fixed, split out, or kept as a named quirk. Spec review and `/canon-spec-review` ask for that evidence on refactor specs. Features and bug fixes are unaffected.
+- **Refactor specs now get a correctness audit before "preserve behavior."** `/canon-spec`, the spec template, and the pipeline's spec prompts tell authors of refactor specs to check whether the behavior being kept is actually correct, and to say whether anything wrong was fixed, split out, or kept as a named quirk. The pipeline's spec review requires that evidence on refactor specs, and `/canon-spec-review` checks for it as advice. Features and bug fixes are unaffected.
 
 ## Quality Log
 - Spec verdict: approved
 - Human reroute?: No
 - Dropped ACs: 0
 - Validation gaps: 0
-- Notes: Prose-only guidance across skills, templates, and prompts; goldens and dist regenerated; code review approved with low-severity nits only.
+- Notes: Prose-only guidance across skills, templates, and prompts; one amendment round raised pipeline spec_review severity to Blocking; code review approved with low-severity nits only.
