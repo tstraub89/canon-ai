@@ -1,10 +1,10 @@
 {
   "id": "refactor-spec-correctness-audit-ac",
   "title": "Refactor specs require a correctness audit before preserve-behavior",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-02",
   "updated": "2026-10-02",
-  "branch": "",
+  "branch": "task/refactor-spec-correctness-audit-ac",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a0faa9-4280-7ef1-94be-6123c7933482"
+    "codex_spec_review": "01a0faa9-4280-7ef1-94be-6123c7933482",
+    "codex": "01a0faad-4508-7923-b1df-d98afc2092e8",
+    "claude_review": "be244b67-e96c-4464-aa3f-3e9cb4212a11"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

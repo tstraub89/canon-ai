@@ -1,0 +1,1 @@
+The refactor correctness-audit guidance is added consistently across the author, review, and template surfaces, with tests covering its placement and rendered prompts. No actionable regressions were found in the diff.

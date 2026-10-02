@@ -1076,3 +1076,7 @@
 | 2026-09-30T05:04:32.019Z | recalibrate-canon-spec-review-for-5-5 | qa | claude | sonnet | 0 | 36.8s | 369971 | ok |
 | 2026-10-02T03:30:30.274Z | refactor-spec-correctness-audit-ac | spec_review | codex | gpt-6-luna | 0 | 38.6s | 241295 | ok |
 | 2026-10-02T03:34:13.145Z | refactor-spec-correctness-audit-ac | plan | claude | sonnet | 0 | 56.7s | 856550 | ok |
+| 2026-10-02T03:42:58.948Z | refactor-spec-correctness-audit-ac | implement | codex | gpt-6-luna | 0 | 524.7s | 2115727 | ok |
+| 2026-10-02T03:43:24.483Z | refactor-spec-correctness-audit-ac | code_review | codex | gpt-6-luna | 0 | 24.7s | - | ok |
+| 2026-10-02T03:44:33.804Z | refactor-spec-correctness-audit-ac | code_review | claude | sonnet | 0 | 69.3s | 698879 | ok |
+| 2026-10-02T03:45:18.566Z | refactor-spec-correctness-audit-ac | qa | claude | sonnet | 0 | 44.8s | 433704 | ok |
