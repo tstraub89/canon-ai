@@ -114,7 +114,7 @@ export function promptSpec(state: PipelineState): string {
             '- Human Test Plan describes product behavior only (no code, no file names, no TypeScript)',
             '- Validation Required has at least one entry checked (or explicitly "None" with a reason)',
             '- (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class (runtime-dependent mechanisms need executed confirmation), not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative',
-            '- (Refactors; N/A for features/bug fixes) the spec records a correctness audit of each behavior declared preserved, and states the outcome of each audited behavior (fixed deliberately, split out, or kept as a named quirk)',
+            '- (Refactors; N/A for features/bug fixes) the spec records a correctness audit of each behavior declared preserved, and states the outcome of each audited behavior (correct as-is, fixed deliberately, split out, or kept as a named quirk)',
         ].filter(Boolean).join('\n'),
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'spec', 'done'),
     });

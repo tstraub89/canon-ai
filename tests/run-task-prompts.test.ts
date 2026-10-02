@@ -1016,7 +1016,7 @@ void test('refactor correctness-audit guidance stays aligned across spec surface
     assert.match(reviewLine, /Blocking/);
     assert.doesNotMatch(reviewLine, /STRONG/);
     assert.doesNotMatch(reviewLine, /never BLOCKING/i);
-    assert.match(reviewLine, /fixed deliberately, split out, or kept as a named quirk/);
+    assert.match(reviewLine, /correct as-is, fixed deliberately, split out, or kept as a named quirk/);
     assert.match(reviewLine, /audited, correct/);
     for (const line of [specBullet, revisionBullet, selfCheckLine, reviewLine]) {
         assert.doesNotMatch(line, /`/);
