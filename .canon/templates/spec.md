@@ -22,6 +22,7 @@ What are we explicitly NOT doing in this task? This prevents scope creep.
 Checklist of verifiable outcomes. Each item must be testable.
 
 > **For a bug or flake fix:** Include a regression-test AC that fails on the pre-fix code for the stated reason and passes after the fix (red-first). If the mechanism is environment-bound and a faithful repro is impractical, the AC must say so and name the deterministic alternative rather than omitting verification.
+> **For a refactor:** Before any "preserve behavior" AC, require a correctness audit of each behavior declared preserved and record in *Problem* whether it is correct today. State one outcome for each: fixed deliberately (with its own AC), split into a separate task, or kept as a named intentional quirk. A one-line "audited, correct" satisfies a trivially correct refactor. N/A for features and bug fixes.
 
 - [ ] AC-1: ...
 - [ ] AC-2: ...
@@ -98,3 +99,4 @@ Steps the human should perform to verify the feature works as intended. Written 
 - [ ] Human Test Plan uses product language only (no code, no file names)
 - [ ] Validation Required has at least one entry marked `- [x]` (not `- [ ]`). `- [ ]` is a placeholder; the spec author flips required checks to `- [x]` before marking spec done. The orchestrator's code_review pre-flight blocks if no `[x]` items are present.
 - [ ] (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class (runtime-dependent mechanisms need executed confirmation), not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative
+- [ ] (Refactors; N/A for features/bug fixes) *Problem* records the correctness audit of each behavior declared preserved, with each outcome (fixed deliberately with its own AC, split into a separate task, or kept as a named intentional quirk) stated before any "preserve" AC

@@ -970,6 +970,61 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     }
 });
 
+void test('refactor correctness-audit guidance stays aligned across spec surfaces', () => {
+    const worktreeRoot = process.cwd();
+    const readRepoFile = (relPath: string): string => fs.readFileSync(path.join(worktreeRoot, relPath), 'utf8');
+    const carriers = [
+        '.claude/skills/canon-spec/SKILL.md',
+        '.canon/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec-revision.md',
+        'src/orchestrator/prompts/templates/spec-review.md',
+        '.claude/skills/canon-spec-review/SKILL.md',
+    ];
+    for (const file of carriers) {
+        assert.ok(readRepoFile(file).includes('correctness audit'), `${file} is missing correctness audit guidance`);
+    }
+
+    const specPrompt = readRepoFile('src/orchestrator/prompts/templates/spec.md');
+    const revisionPrompt = readRepoFile('src/orchestrator/prompts/templates/spec-revision.md');
+    const bulletLead = '- **Refactor specs need a correctness audit** —';
+    const extractBullet = (content: string): string => {
+        const matches = content.split('\n').filter(line => line.startsWith(bulletLead));
+        assert.equal(matches.length, 1);
+        const [match] = matches;
+        assert.ok(match);
+        return match;
+    };
+    const specBullet = extractBullet(specPrompt);
+    const revisionBullet = extractBullet(revisionPrompt);
+    assert.equal(specBullet, revisionBullet);
+    for (const content of [specPrompt, revisionPrompt]) {
+        const lines = content.split('\n');
+        const index = lines.findIndex(line => line.startsWith(bulletLead));
+        assert.ok(lines[index - 1]?.startsWith('- **Refactor specs need structural caps**'));
+    }
+
+    const builder = readRepoFile('src/orchestrator/prompts/index.ts');
+    const selfCheckLine = builder.split('\n').find(line => line.includes('correctness audit'));
+    assert.ok(selfCheckLine);
+    assert.ok(selfCheckLine.includes('(Refactors; N/A for features/bug fixes)'));
+    assert.ok(selfCheckLine.includes('outcome'));
+    const reviewLine = readRepoFile('src/orchestrator/prompts/templates/spec-review.md')
+        .split('\n').find(line => line.includes('correctness audit'));
+    assert.ok(reviewLine);
+    for (const line of [specBullet, revisionBullet, selfCheckLine, reviewLine]) {
+        assert.doesNotMatch(line, /`/);
+    }
+
+    const specOutput = promptSpec(baseState);
+    const revisionOutput = promptSpecRevision(specRevisionState);
+    const distinctive = 'correctness audit of each behavior declared preserved';
+    assert.ok(specOutput.includes(distinctive));
+    assert.ok(goldens.promptSpec?.includes(distinctive));
+    assert.ok(!revisionOutput.includes(distinctive));
+    assert.ok(!goldens.promptSpecRevision?.includes(distinctive));
+});
+
 void test('interactive runClaude omits --max-budget-usd', { concurrency: false }, async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-claude-args-'));
     const binDir = path.join(tempDir, 'bin');
