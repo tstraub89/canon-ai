@@ -785,6 +785,10 @@ const PR_BODY_TEMPLATE_SENTINELS = [
 // previously in main.ts, code-review.ts, spec-review.ts, plan.ts) so that
 // 1a-2's `checkPhaseGate` and existing post-Codex template guards share
 // one definition.
+//
+// Matches the sentinel anywhere in the file, quoted examples included: prompt
+// text or artifacts that describe the sentinel must paraphrase it, never
+// reproduce it literally, or the gate reads the whole file as unfilled.
 export function isTemplateUnfilled(content: string | null): boolean {
     if (content === null) return true;
     return content.includes('[TASK-ID]');

@@ -284,6 +284,12 @@
 
 ## 🛠️ Tooling & Dev Experience
 
+- [ ] **Ship `canon-pane` — a live canon task pane as a Claude Code mod** *(framed 2026-10-02 from an experiment during `refactor-spec-correctness-audit-ac`. **Priority: low.**)*
+  - **What exists**: a working local mod, kept outside the repo at `~/.claude/mods/canon-pane` (v0.2.0). It lists every non-complete task with ● running, ○ idle, or ✕ crashed or blocked (labelled), and its phase. It refreshes every 5s from `canon task list` (which resolves worktrees) and `canon watch <id> --timeout 1`. A ✕ needs two consecutive death readings and shows the last error-looking line of `.canon-run.log`. It ran in the desktop app through spec_review, plan, implement and the worktree handoff, and correctly showed ✕ on a real OAuth-expiry crash.
+  - **Why ship it**: canon already ships Claude skills and assumes Claude as the operator, so a Claude Code mod fits. It saves the operator from running `canon watch` by hand.
+  - **Open questions**: (1) Trust: mods run unsandboxed with full `$.process` access, so adopters should be told plainly what it runs. (2) Reach: it serves Claude Code only, so a Codex-operated adopter gets nothing. (3) Data source: it scrapes `canon task list` columns and `canon watch` summary lines. A structured `canon status --json` (or similar) would be a sturdier contract than text parsing. (4) Install path: `canon init`/`upgrade` scaffolding vs. a documented `--plugin-dir` / `CLAUDE_CODE_PLUGIN_DIRS` opt-in.
+  - **Effort**: `S` as an opt-in documented mod; `M` with a structured status command.
+
 - [ ] **`/canon-claude-review` skill — adversarial Claude self-review before Codex spec_review / code_review** *(framed 2026-05-23; superseded 2026-09-04 — kept only as a pointer. **Priority: none.**)*
   - **Use case 1 (spec self-review) shipped** as `/canon-spec-review` (`.claude/skills/canon-spec-review/SKILL.md`): three parallel sub-agents at the spec, findings classified BLOCKING / STRONG / NIT, one synthesized inline report before `canon run <id>`.
   - **Use case 2 (code self-review) is covered** by `/canon-inline-review` (a `codex review` wrapper for below-pipeline work) plus the pipeline's own three-lens `code_review` — anchored Claude, cold spec-blind Claude, and cold Codex, synthesized by the foreman.
