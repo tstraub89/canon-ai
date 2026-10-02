@@ -139,3 +139,21 @@ Writing `plan.md`'s feasibility-check instruction needed to describe the unfille
 *(2026-09-29, source: claude-55-calibration)*
 
 An AC's red-first test asserted the process would exit non-zero against the pre-change code, but the pre-change code *already* exited 2 for an unrelated reason (no stored review session → "did not reach done"), so a naive "exit code changed" check would have passed even with no real fix in place. The actual red signal had to be a specific string in the output ("Evidence insufficient") plus an escalation count of zero — evidence that the *old* recovery path ran, not just that the process failed for any reason. Rule of thumb: when writing a red-first AC test, don't rely on a coarse outcome (exit code, pass/fail) that the pre-change code could already produce for a different reason — assert the specific evidence (an error string, a counter, an absent branch) that only the *old* behavior would produce, so the red run actually demonstrates the bug the fix addresses.
+
+### Adding a phrase to a prompt carrier fans out to goldens beyond the obvious ones
+
+*(2026-10-01, source: refactor-spec-correctness-audit-ac)*
+
+A spec-authoring rule edit to `spec.md` and `spec-revision.md` prompt templates also moved the spec-review golden, because the reviewer prompt gained the matching question — three goldens, each changing for a different reason. The spec named all three up front (AC-10) and required reviewing each diff, which kept regeneration from being a blind `--update`. For prompt-carrier changes, enumerate which rendered goldens each edited template feeds before implementing, and gate self-check lines separately from shared rule bullets so a template used by two phases doesn't leak a phase-specific line.
+
+### Reviewer severity words mean different things in the pipeline prompt and the advisory skill
+
+*(2026-10-02, source: refactor-spec-correctness-audit-ac)*
+
+The first pass put "STRONG, never BLOCKING" on the new audit check in both the pipeline spec_review prompt and the `/canon-spec-review` skill. That was right for the skill, which only advises, but wrong for the pipeline prompt, where Blocking is the severity that yields `changes_requested` and a spec revision; a STRONG finding would never have forced the audit. It took an amendment round to fix. When adding a reviewer check that must be enforced, decide per carrier whether it gates (pipeline prompt, Blocking) or advises (skill, STRONG), and say so in the AC for each carrier rather than copying one severity across them.
+
+### A rule restated across many carriers needs one canonical string pinned by a test, not a shared keyword
+
+*(2026-10-02, source: refactor-spec-correctness-audit-ac)*
+
+The correctness-audit rule was hand-paraphrased in about eight places and guarded only by a test that a shared phrase was present. Two PR bot findings showed the paraphrases had drifted: some outcome lists omitted "correct as-is", and the reviewer question asked whether behavior "is actually correct", which a compliant spec that fixes or splits a behavior could not satisfy. Amendment Round 2 replaced the paraphrases with verbatim canonical strings (author rule, reviewer question, outcome list) defined once in the test and asserted in every carrier and mirror. When one rule must read identically on many surfaces, spec the exact text and a single-definition test up front; a phrase-presence check proves a carrier exists, not that it says the right thing.

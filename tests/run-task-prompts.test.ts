@@ -970,6 +970,105 @@ void test('AC-11 — structural relocation: presence tokens appear in destinatio
     }
 });
 
+void test('refactor correctness-audit guidance stays aligned across spec surfaces', () => {
+    const worktreeRoot = process.cwd();
+    const readRepoFile = (relPath: string): string => fs.readFileSync(path.join(worktreeRoot, relPath), 'utf8');
+    const O = 'correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk';
+    const A = `For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: ${O}. A behavior confirmed correct needs only a one-line record.`;
+    const R = `does the spec record, for each behavior it declares preserved, whether it is correct today and one outcome: ${O}? A behavior confirmed correct needs only a one-line record.`;
+    assert.ok(A.includes(O));
+    assert.ok(R.includes(O));
+    const carriersWithA = [
+        '.claude/skills/canon-spec/SKILL.md',
+        '.canon/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec-revision.md',
+        'templates/.claude/skills/canon-spec/SKILL.md',
+        'templates/.canon/templates/spec.md',
+    ];
+    const carriersWithR = [
+        'src/orchestrator/prompts/templates/spec-review.md',
+        '.claude/skills/canon-spec-review/SKILL.md',
+        'templates/.claude/skills/canon-spec-review/SKILL.md',
+    ];
+    const carriersWithO = [
+        '.claude/skills/canon-spec/SKILL.md',
+        '.canon/templates/spec.md',
+        'src/orchestrator/prompts/index.ts',
+        'templates/.claude/skills/canon-spec/SKILL.md',
+        'templates/.canon/templates/spec.md',
+    ];
+    for (const file of carriersWithA) {
+        assert.ok(readRepoFile(file).includes(A), `${file} is missing canonical author rule A`);
+    }
+    for (const file of carriersWithR) {
+        assert.ok(readRepoFile(file).includes(R), `${file} is missing canonical review question R`);
+    }
+    for (const file of carriersWithO) {
+        assert.ok(readRepoFile(file).includes(O), `${file} is missing canonical outcome list O`);
+    }
+    for (const file of [...carriersWithA, ...carriersWithR, ...carriersWithO]) {
+        assert.doesNotMatch(readRepoFile(file), /is actually correct/);
+    }
+    const carriers = [
+        '.claude/skills/canon-spec/SKILL.md',
+        '.canon/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec-revision.md',
+        'src/orchestrator/prompts/templates/spec-review.md',
+        '.claude/skills/canon-spec-review/SKILL.md',
+    ];
+    for (const file of carriers) {
+        assert.ok(readRepoFile(file).includes('correctness audit'), `${file} is missing correctness audit guidance`);
+    }
+
+    const specPrompt = readRepoFile('src/orchestrator/prompts/templates/spec.md');
+    const revisionPrompt = readRepoFile('src/orchestrator/prompts/templates/spec-revision.md');
+    const bulletLead = '- **Refactor specs need a correctness audit** —';
+    const extractBullet = (content: string): string => {
+        const matches = content.split('\n').filter(line => line.startsWith(bulletLead));
+        assert.equal(matches.length, 1);
+        const [match] = matches;
+        assert.ok(match);
+        return match;
+    };
+    const specBullet = extractBullet(specPrompt);
+    const revisionBullet = extractBullet(revisionPrompt);
+    assert.equal(specBullet, revisionBullet);
+    for (const content of [specPrompt, revisionPrompt]) {
+        const lines = content.split('\n');
+        const index = lines.findIndex(line => line.startsWith(bulletLead));
+        assert.ok(lines[index - 1]?.startsWith('- **Refactor specs need structural caps**'));
+    }
+
+    const builder = readRepoFile('src/orchestrator/prompts/index.ts');
+    const selfCheckLine = builder.split('\n').find(line => line.includes('correctness audit'));
+    assert.ok(selfCheckLine);
+    assert.ok(selfCheckLine.includes('(Refactors; N/A for features/bug fixes)'));
+    assert.ok(selfCheckLine.includes('outcome'));
+    const reviewLine = readRepoFile('src/orchestrator/prompts/templates/spec-review.md')
+        .split('\n').find(line => line.includes('correctness audit'));
+    assert.ok(reviewLine);
+    assert.ok(reviewLine.startsWith('- For a refactor:'));
+    assert.match(reviewLine, /Blocking/);
+    assert.doesNotMatch(reviewLine, /STRONG/);
+    assert.doesNotMatch(reviewLine, /never BLOCKING/i);
+    assert.ok(reviewLine.includes(R));
+    assert.ok(readRepoFile('.claude/skills/canon-spec-review/SKILL.md').includes('Missing audit evidence is STRONG, never BLOCKING.'));
+    assert.ok(selfCheckLine.includes(O));
+    for (const line of [specBullet, revisionBullet, selfCheckLine, reviewLine]) {
+        assert.doesNotMatch(line, /`/);
+    }
+
+    const specOutput = promptSpec(baseState);
+    const revisionOutput = promptSpecRevision(specRevisionState);
+    const distinctive = 'correctness audit of each behavior declared preserved';
+    assert.ok(specOutput.includes(distinctive));
+    assert.ok(goldens.promptSpec?.includes(distinctive));
+    assert.ok(!revisionOutput.includes(distinctive));
+    assert.ok(!goldens.promptSpecRevision?.includes(distinctive));
+});
+
 void test('interactive runClaude omits --max-budget-usd', { concurrency: false }, async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-claude-args-'));
     const binDir = path.join(tempDir, 'bin');

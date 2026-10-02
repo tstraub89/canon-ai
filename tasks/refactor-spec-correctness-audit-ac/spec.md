@@ -133,3 +133,64 @@ None of the five protected docs should go stale: the spec-authoring rule lives i
 - [x] Human Test Plan uses product language only (no code, no file names)
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes; N/A for features/refactors) — N/A, guidance feature
+
+## Amendment Round 1
+
+**Trigger:** PR review (Codex bot, P1) on the spec_review phase prompt. The pipeline reviewer has only two severities, Blocking and non-blocking (nit). "STRONG" exists only in the canon-spec-review skill. In the pipeline, a missing audit therefore lands as a nit, `approved_with_nits` exits the review loop, the orchestrator revises the spec only on `changes_requested`, and the plan prompt says nits need no spec change. The missing-audit case this task targets would reach implement with no audit recorded in *Problem*.
+
+**Decision change (supersedes the severity clause of the Decision and of AC-5):** In the pipeline's spec_review phase prompt, a refactor spec that declares behavior preserved with no correctness audit evidence is a **Blocking** finding (requires `changes_requested`), matching how the adjacent bug-fix evidence bullet treats missing evidence. The one-line "audited, correct" record still satisfies a trivially correct refactor, so the cost is one revision round only when the audit is absent. The canon-spec-review skill's check (10) keeps STRONG, never BLOCKING (AC-6 unchanged): that skill is an advisory preview where STRONG is a real tier.
+
+### Acceptance Criteria (amendment)
+
+- [ ] AC-12: The spec_review phase prompt's refactor bullet states that a missing correctness audit is a Blocking finding, and the bullet no longer contains the word "STRONG" or the phrase "never BLOCKING". The rest of the bullet (the question, the three outcomes, the one-line "audited, correct" escape) is unchanged, and the "silence is the default" text is unchanged. Verify: read the bullet; a test asserts the refactor bullet in the spec_review prompt matches Blocking and does not match STRONG.
+- [ ] AC-13: The canon-spec-review skill's check (10) still states STRONG, never BLOCKING. Verify: the skill and its mirror are unchanged by this amendment.
+- [ ] AC-14: The affected golden (spec-review) and the orchestrator bundle are regenerated; `npm test`, `npm run lint`, `npm run type-check` and `npm run sync-templates:check` pass. Verify: only the files in the table below change in this round.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/orchestrator/prompts/templates/spec-review.md` | Refactor bullet: missing audit is Blocking; drop STRONG/never-BLOCKING wording |
+| `tests/run-task-prompts.test.ts` | Assert the refactor bullet says Blocking and not STRONG |
+| `tests/run-task-prompts.golden.json` | Regenerate the spec-review golden |
+| `dist/orchestrator/run-task.js` | Rebuild bundle |
+
+## Amendment Round 2
+
+**Trigger:** two further PR review findings (Codex bot, P2 ×2) on top of Amendment Round 1. (1) The outcome lists named only fixed, split and quirk, so a behavior confirmed correct had no valid outcome; patched inline in commit f3ee6bb by adding "correct as-is". (2) The spec_review prompt asks for evidence that preserved behavior "is actually correct", which a spec that fixes, splits or names a quirk cannot give; since Round 1 made the finding Blocking, a compliant spec could be bounced.
+
+**Root cause:** the rule is restated as hand-written paraphrases in about eight places, and AC-7 only requires a shared phrase to be present. Paraphrases drift, and nothing pins their meaning. This amendment replaces paraphrase with canonical text copied verbatim, enforced by a test.
+
+**Canonical text** (the implementer uses these strings exactly; punctuation included):
+
+- **Outcome list (O):** `correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk`
+- **Author rule (A):** `For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record.` (A contains O.)
+- **Review question (R):** `does the spec record, for each behavior it declares preserved, whether it is correct today and one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk? A behavior confirmed correct needs only a one-line record.` (R contains O.)
+
+Surrounding words (bullet lead-ins, applicability gates such as "N/A for features and bug fixes", and severity) stay per-carrier. Severity is the one intended difference: Blocking in the pipeline spec_review prompt, STRONG, never BLOCKING in the canon-spec-review skill.
+
+### Acceptance Criteria (amendment round 2)
+
+- [ ] AC-15: A appears verbatim in the canon-spec skill's refactor rule-of-thumb, the spec template's refactor note, and the refactor bullets of the spec and spec-revision phase prompts. Each carrier's previous paraphrase of the rule is replaced, not kept alongside. Verify: test.
+- [ ] AC-16: R appears verbatim in the spec_review phase prompt's refactor bullet (with Blocking severity, Round 1's AC-12) and in the canon-spec-review skill's check (10) (with STRONG severity, AC-13). No carrier asks whether the preserved behavior "is actually correct". Verify: test; a repo-wide search for the phrase "is actually correct" finds no hit in any carrier or mirror.
+- [ ] AC-17: O appears verbatim in the canon-spec skill's checklist line, the spec template's checklist line, and the builder self-check line. Verify: test.
+- [ ] AC-18: One test asserts A, R and O verbatim in each carrier listed in AC-15 to AC-17, reading A, R and O from a single definition in the test so a drifted copy fails. This supersedes the presence-only check from AC-7 for these carriers. Verify: changing one word in any one carrier makes the test fail (the implementer confirms this once by hand and reports it in the handoff).
+- [ ] AC-19: Mirrors, goldens and the orchestrator bundle are regenerated; `npm test`, `npm run lint`, `npm run type-check` and `npm run sync-templates:check` pass.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `.claude/skills/canon-spec/SKILL.md` | Rule-of-thumb uses A; checklist line uses O |
+| `.canon/templates/spec.md` | Refactor note uses A; checklist line uses O |
+| `.claude/skills/canon-spec-review/SKILL.md` | Check (10) uses R, keeps STRONG |
+| `src/orchestrator/prompts/templates/spec.md` | Refactor bullet uses A |
+| `src/orchestrator/prompts/templates/spec-revision.md` | Refactor bullet uses A |
+| `src/orchestrator/prompts/templates/spec-review.md` | Refactor bullet uses R, keeps Blocking |
+| `src/orchestrator/prompts/index.ts` | Self-check line uses O |
+| `tests/run-task-prompts.test.ts` | Verbatim A/R/O assertions from one definition |
+| `tests/run-task-prompts.golden.json` | Regenerate |
+| `dist/orchestrator/run-task.js` | Rebuild |
+| `templates/.claude/skills/canon-spec/SKILL.md` | Mirror |
+| `templates/.canon/templates/spec.md` | Mirror |
+| `templates/.claude/skills/canon-spec-review/SKILL.md` | Mirror |

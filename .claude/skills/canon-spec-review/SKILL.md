@@ -57,7 +57,7 @@ This angle catches the highest-value class: a spec that assumes something exists
 
 #### Agent C — Spec-quality completeness
 
-Scope: audit against canon's spec-writing rules of thumb. Check these nine items:
+Scope: audit against canon's spec-writing rules of thumb. Check these ten items:
 (1) **Name effects to DELETE** — when a change supersedes prior code, is it framed as a single replacement, not separate add/remove bullets?
 (2) **Prefer positive or structural assertions** — are load-bearing "must not" constraints backed by a grep AC or positive reframe, not just prose negation?
 (3) **Affected Files** — the table sits under a heading that is exactly `### Affected Files`, inside `## Design` or any amendment section (an H2 whose first word is `Amendment`, such as `## Amendment`, `## Amendment Round N` or `## Amendment (full-send scope)`). It lists every file the change writes, including generated mirrors and rebuilt outputs. Files only read for context stay out. A mismatched heading or a missing generated output is BLOCKING, because a pipeline gate rejects it later.
@@ -67,6 +67,7 @@ Scope: audit against canon's spec-writing rules of thumb. Check these nine items
 (7) **Known Risks** — names actual failure modes for the trickiest ACs.
 (8) **Symbols in ACs exist** — for any named function or symbol, has the author verified the return shape matches the spec's assumed data contract?
 (9) **Bug/flake-fix evidence** (N/A for features/refactors) — *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class: a deterministic mechanism may cite a trace with verified trigger values; a runtime-dependent mechanism needs executed confirmation (a throwaway prototype-fix spike or a deterministic forced repro). *Acceptance Criteria* includes a red-first regression-test AC or the explicit environment-bound-and-impractical escape with a named deterministic alternative. Missing or under-rung evidence, or a missing red-first AC without the escape, is BLOCKING.
+(10) **Refactor correctness audit evidence** (N/A for features/bug fixes) — does the spec record, for each behavior it declares preserved, whether it is correct today and one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk? A behavior confirmed correct needs only a one-line record. Missing audit evidence is STRONG, never BLOCKING.
 
 Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or independently re-verify symbols against the codebase (Agent B's job). Check (8) audits whether the author verified before writing the AC.
 

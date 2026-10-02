@@ -1,0 +1,1 @@
+The guidance is aligned across the authoring, review, template, and generated prompt surfaces. The different severity levels are intentional: the pipeline prompt makes a missing audit Blocking, while the advisory skill retains STRONG. The test suite passed.
