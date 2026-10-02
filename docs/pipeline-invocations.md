@@ -1086,3 +1086,9 @@
 | 2026-10-02T04:05:48.722Z | refactor-spec-correctness-audit-ac | code_review | codex | gpt-6-luna | 0 | 82.9s | - | ok |
 | 2026-10-02T04:06:43.226Z | refactor-spec-correctness-audit-ac | code_review | claude | sonnet | 0 | 54.5s | 585198 | ok |
 | 2026-10-02T04:07:14.061Z | refactor-spec-correctness-audit-ac | qa | claude | sonnet | 0 | 30.8s | 374295 | ok |
+| 2026-10-02T04:25:48.239Z | refactor-spec-correctness-audit-ac | spec_review | codex | gpt-6-luna | 0 | 22.0s | 77126 | ok |
+| 2026-10-02T04:26:47.542Z | refactor-spec-correctness-audit-ac | plan | claude | sonnet | 0 | 59.3s | 490809 | ok |
+| 2026-10-02T04:32:30.235Z | refactor-spec-correctness-audit-ac | implement | codex | gpt-6-luna | 0 | 342.6s | 5133360 | ok |
+| 2026-10-02T04:33:46.842Z | refactor-spec-correctness-audit-ac | code_review | codex | gpt-6-luna | 0 | 75.8s | - | ok |
+| 2026-10-02T04:34:51.153Z | refactor-spec-correctness-audit-ac | code_review | claude | sonnet | 0 | 64.3s | 597770 | ok |
+| 2026-10-02T04:35:35.171Z | refactor-spec-correctness-audit-ac | qa | claude | sonnet | 0 | 44.0s | 464621 | ok |

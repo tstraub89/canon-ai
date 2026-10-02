@@ -1,10 +1,8 @@
 # Code Review: refactor-spec-correctness-audit-ac
 
-> Reviewer: Claude (foreman) | Spec: `tasks/refactor-spec-correctness-audit-ac/spec.md`
-
-Synthesized from three lenses: anchored Claude, cold-Claude, and pre-obtained cold-Codex (no actionable defects; its test run was interrupted before completion).
-
 **Scope:** Full — base `main` — reason: Round 1 (initial review)
+
+Lenses: anchored-Claude, cold-Claude, cold-Codex (injected). All three returned valid forms.
 
 ## Stage 1 — Spec Compliance (gate)
 
@@ -14,26 +12,15 @@ Synthesized from three lenses: anchored Claude, cold-Claude, and pre-obtained co
 - [x] All checks required by the spec's "Validation Required" section were run
 - [x] No required checks were skipped without justification
 
-Note: the lenses did not re-run the build or tests; this relies on the handoff's reported Pass results (E2E is `deferred_by_spec`).
-
 ### Acceptance Criteria Check
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1 | Pass | Skill bullet follows the caps bullet, names all three outcomes; gated self-check added. |
-| AC-2 | Pass | Refactor note under Acceptance Criteria and gated checklist line; no new section. |
-| AC-3 | Pass | Identical bullet after the caps bullet in both prompts; test asserts equality and adjacency. |
-| AC-4 | Pass | Refactor-gated builder line; spec golden has it, spec-revision golden does not. |
-| AC-5 | Pass (as amended) | Bullet sits beside the bug-fix evidence bullet; silence-default text unchanged. |
-| AC-6 | Pass | Check (10) after (9), STRONG never BLOCKING; scope line says ten; no stray "nine". |
-| AC-7 | Pass | Structural test covers the six carriers, the builder line, and the golden. |
-| AC-8 | Pass | Source diff is limited to Affected Files and Generated Artifacts. |
-| AC-9 | Pass | No backticks or canon-internal paths in added shipped lines. |
-| AC-10 | Pass | Mirrors byte-identical; goldens and bundle regenerated. |
-| AC-11 | Pass | Single BACKLOG line removed. |
-| AC-12 | Pass | spec_review bullet says Blocking, no STRONG wording; test pins it. |
-| AC-13 | Pass | Advisory skill check (10) and mirror unchanged by the amendment. |
-| AC-14 | Pass | Spec-review golden and bundle regenerated; checks reported passing. |
+| AC-1 – AC-4 | Met | Author-side carriers (skill, template, spec/spec-revision prompts, builder self-check) carry A/O verbatim; goldens split correctly. |
+| AC-5, AC-12 | Met | spec_review bullet beside bug-fix bullet, Blocking severity, silence-default unchanged. |
+| AC-6, AC-13 | Met | Check (10) after (9), STRONG/never BLOCKING, scope line says ten. |
+| AC-7, AC-15 – AC-18 | Met | One test defines O/A/R once and asserts every carrier and mirror verbatim; mutation check reported. |
+| AC-8 – AC-11, AC-14, AC-19 | Met | Scope bound held, no backticks/internal paths, mirrors/goldens/dist regenerated (anchored lens rebuilt: no dist drift), BACKLOG single-line removal. |
 
 ### Dropped Sections Check
 
@@ -50,33 +37,33 @@ Note: the lenses did not re-run the build or tests; this relies on the handoff's
 
 ### Summary
 
-Guidance-only change, consistently carried across every surface the spec names, with structural tests and regenerated fixtures. No code bugs or spec gaps survived adjudication; only low-severity test-hardening nits remain.
+Guidance-only change, aligned across all carriers. No correctness bugs or adopter-scope violations. Cold-Codex independently confirmed alignment and a passing suite. Only low-severity nits survive.
 
 ### Findings
 
 #### Correctness Bugs
 
-(none)
+None.
 
 #### Risk / Guardrails
 
-(none)
+None.
 
 #### Optional Cleanup / Nit
 
-- `tests/run-task-prompts.test.ts` — the new test locates the self-check and review lines with `find(line => line.includes('correctness audit'))`, so a later line containing the phrase could become the target silently. Also the spec_review severity check matches a bare `/Blocking/`, a weak pin. Low severity (anchored lens, cold-Claude; flagged by 2 lenses). Optional hardening: match on a more distinctive anchor.
-- `docs/lessons-learned.md` and other docs outside Affected Files changed. These are QA/telemetry bookkeeping artifacts, not scope creep (anchored lens).
+- `tests/run-task-prompts.test.ts` (~973-1070) — flagged by anchored + cold-Claude (2 lenses): the self-check line and review bullet are located with `find(... includes('correctness audit'))`, which silently retargets if an earlier line gains the phrase. Also, canon-spec skill bullet placement and check (10) ordering are not asserted (only the two prompt templates get adjacency checks). Cold-Claude adds: reads via `process.cwd()` rather than an `import.meta`-resolved path. Low severity; matches sibling test style.
+- Severity split (Blocking in pipeline prompt vs STRONG in advisory skill) — cold-Claude, low. Intentional per Amendment Round 1/AC-13, pinned by test, and explained in lessons-learned; not a defect.
+- `spec-revision` has no self-check counterpart — cold-Claude, low. Intentional per AC-4 (self-check is spec-prompt only; revision gets rule A); spec_review catches omissions.
 
 #### Spec Gaps
 
-(none)
+None.
 
 ### Dismissed Cold Findings
 
-- Dismissed (cold-Claude): pipeline spec_review calls a missing audit Blocking while the canon-spec-review skill check (10) says STRONG, never BLOCKING — the split is deliberate. Amendment Round 1 (spec.md) explicitly sets Blocking for the pipeline prompt, because the pipeline has only Blocking/nit tiers and a nit would never trigger spec revision, and AC-13 requires the advisory skill to stay STRONG, where STRONG is a real tier. Not a defect.
-- Dismissed (cold-Claude): test reads files relative to `process.cwd()` — low confidence; sibling tests in this suite follow the same style and the suite passes from the repo root.
-- Dismissed (cold-Claude): self-check line exists only in the spec prompt, not spec-revision — intended per AC-4, which requires the spec-revision golden not to contain it; the revision prompt does carry the rule bullet.
-- Dismissed (cold-Codex): no findings returned; nothing to dismiss.
+- Dismissed (cold-Claude): BACKLOG line deleted rather than marked shipped — AC-11 explicitly requires deletion per file convention.
+- Dismissed (cold-Claude): lead-in tone inconsistency of the spec-review bullet (anchored nit) — cosmetic, pinned by canonical text R.
+- Cold-Codex: no findings (alignment confirmed, suite passed); nothing to dismiss.
 
 ## Final Verdict
 

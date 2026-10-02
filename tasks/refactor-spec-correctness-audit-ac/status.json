@@ -28,10 +28,10 @@
     "spec_review": {
       "status": "done",
       "agent": "codex",
-      "verdict": "approved_with_nits",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 2,
+      "iterations_total": 3,
       "changes_requested_total": 0,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
@@ -44,7 +44,7 @@
       "status": "done",
       "agent": "codex",
       "rerouted": true,
-      "reroute_count": 1
+      "reroute_count": 2
     },
     "code_review": {
       "status": "done",
@@ -52,7 +52,7 @@
       "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 2,
+      "iterations_total": 3,
       "changes_requested_total": 0,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
@@ -69,8 +69,8 @@
   "escalations": [],
   "sessions": {
     "codex": "01a0faad-4508-7923-b1df-d98afc2092e8",
-    "codex_spec_review": "01a0fac4-e65c-7a72-8c1d-fb3862166bdc",
-    "claude_review": "54190393-1df4-4410-a780-8b5fcb1d6561"
+    "codex_spec_review": "01a0fadc-23f8-7220-afc9-e0658c3135f8",
+    "claude_review": "78397482-4b26-43d7-975d-14d90d2d6932"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

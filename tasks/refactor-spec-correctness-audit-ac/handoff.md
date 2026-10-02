@@ -2,22 +2,22 @@
 
 > Author: Codex | Spec: `tasks/refactor-spec-correctness-audit-ac/spec.md` | Plan: `tasks/refactor-spec-correctness-audit-ac/plan.md`
 >
-> This handoff records the complete implementation, including the initial pass and Amendment Round 1.
+> Complete implementation record through Amendment Round 2.
 
 ## Changes
 
 | File | What Changed |
 |---|---|
-| `.claude/skills/canon-spec/SKILL.md`, `templates/.claude/skills/canon-spec/SKILL.md` | Added the refactor correctness-audit rule and gated pre-presentation self-check. |
-| `.canon/templates/spec.md`, `templates/.canon/templates/spec.md` | Added the refactor note and gated checklist line; mirror regenerated. |
-| `.claude/skills/canon-spec-review/SKILL.md`, `templates/.claude/skills/canon-spec-review/SKILL.md` | Added review check (10), updated scope count to ten; mirror regenerated. |
-| `src/orchestrator/prompts/templates/spec.md` | Added the refactor correctness-audit rule after structural caps. |
-| `src/orchestrator/prompts/templates/spec-revision.md` | Added the identical refactor correctness-audit rule after structural caps. |
-| `src/orchestrator/prompts/templates/spec-review.md` | Added refactor audit evidence question; amended missing-audit severity to Blocking in Amendment Round 1. |
-| `src/orchestrator/prompts/index.ts` | Added the refactor-gated correctness-audit self-check line. |
-| `tests/run-task-prompts.test.ts` | Added structural assertions for carrier coverage, placement, equal bullet text, no backticks, golden rendering, and amended severity wording. |
-| `tests/run-task-prompts.golden.json` | Regenerated spec, spec-revision, and spec-review prompt fixtures; Amendment Round 1 changes the spec-review golden only. |
-| `dist/orchestrator/run-task.js` | Rebuilt bundled prompts; Amendment Round 1 rebuild includes the updated severity wording. |
+| `.claude/skills/canon-spec/SKILL.md`, `templates/.claude/skills/canon-spec/SKILL.md` | Added canonical author rule A and canonical outcomes O in the gated self-check; mirror regenerated. |
+| `.canon/templates/spec.md`, `templates/.canon/templates/spec.md` | Added canonical author rule A and outcomes O in the checklist; mirror regenerated. |
+| `.claude/skills/canon-spec-review/SKILL.md`, `templates/.claude/skills/canon-spec-review/SKILL.md` | Added canonical reviewer question R to check (10), retaining STRONG/never BLOCKING; mirror regenerated. |
+| `src/orchestrator/prompts/templates/spec.md` | Added canonical author rule A after structural caps. |
+| `src/orchestrator/prompts/templates/spec-revision.md` | Added the identical canonical author rule A after structural caps. |
+| `src/orchestrator/prompts/templates/spec-review.md` | Added canonical reviewer question R, with Blocking severity for missing audit evidence. |
+| `src/orchestrator/prompts/index.ts` | Added canonical outcomes O to the refactor-gated self-check. |
+| `tests/run-task-prompts.test.ts` | Added structural and verbatim assertions for A/R/O, mirrors, placement, severity, and golden rendering. |
+| `tests/run-task-prompts.golden.json` | Regenerated spec, spec-revision, and spec-review prompt fixtures. |
+| `dist/orchestrator/run-task.js` | Rebuilt bundled prompt text. |
 | `docs/BACKLOG.md` | Removed the shipped candidate line only. |
 
 ## Canon Governance
@@ -26,58 +26,64 @@ See authoritative provenance fields in `status.json.canon`.
 
 ## Intent & Rationale
 
-Author guidance requires a correctness audit before preserving refactor behavior and records one of three outcomes. Reviewer guidance keeps the advisory skill at STRONG/never BLOCKING, while the pipeline spec_review prompt now treats missing audit evidence as Blocking so the orchestrator requests a spec revision. A one-line audited-correct record remains sufficient for trivially correct refactors.
+Refactor authors must record whether each preserved behavior is correct today and select an explicit outcome. Canonical wording is now pinned by one structural test to prevent guidance drift. The pipeline review prompt treats missing audit evidence as Blocking; the advisory review skill retains STRONG, never BLOCKING.
 
 ## Deviations from Plan
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| Initial build verification used consecutive bundle hash comparison rather than expecting `git diff --exit-code -- dist/` against the task baseline to pass. | The bundle is an intended generated change, so baseline diff must be non-empty. Consecutive builds produced identical output; only the expected orchestrator bundle changed. | AC-10 met: generated bundle is reproducible. |
-| Amendment Round 1 changed only the final severity sentence of the spec_review bullet, as directed by the amendment. | The pipeline prompt uses Blocking to trigger `changes_requested`; the advisory skill retains STRONG/never BLOCKING per AC-13. | AC-12 through AC-14 met. |
+| Initial build verification compared consecutive bundle hashes rather than expecting the intended dist change to produce an empty baseline diff. | The generated bundle is part of the task. Consecutive builds produced identical bundle output. | AC-10 met. |
+| Amendment Round 2 followed the later canonical reviewer wording R, which replaces Amendment Round 1's “audited, correct” sentence. | Round 2 explicitly replaces the prior paraphrase and defines a one-line record for behavior confirmed correct; its approved decision supersedes that prior wording. | AC-15 through AC-19 met. |
 
 ## AC Coverage
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1 | Met | Skill rule follows structural-caps bullet and names fixed deliberately, split into a separate task, or kept as a named intentional quirk; gated self-check added. |
-| AC-2 | Met | Added refactor note and checklist line; no headings changed. |
-| AC-3 | Met | Identical bullet follows the structural-caps bullet in both prompt templates; test asserts equality and adjacency. |
-| AC-4 | Met | Builder self-check is refactor-gated; test verifies spec rendering and absence from spec-revision rendering/golden. |
-| AC-5 | Met as amended | Strategic-read question sits beside bug-fix evidence; silence-default text is unchanged. Amendment Round 1 makes missing audit evidence Blocking. |
-| AC-6 | Met | Check (10) follows (9), states N/A scope and STRONG/never BLOCKING; scope says ten and no “nine” remains in skill or mirror. |
-| AC-7 | Met | Structural test checks “correctness audit” in each carrier and the builder, plus distinctive golden text. |
-| AC-8 | Met | Implementation diff is limited to Affected Files and Generated Artifacts; excluded prompts, agents, and foreman are untouched. |
-| AC-9 | Met | Added shipped lines contain no canon-internal path references, BACKLOG/CHANGELOG citations, or backticks; docs reference check passes. |
-| AC-10 | Met | Mirrors synchronized; prompt goldens regenerated and reviewed; bundle reproducible. |
-| AC-11 | Met | Removed only the candidate inventory line. |
-| AC-12 | Met | Pipeline prompt says missing audit is a Blocking Shape Check concern requiring a changes_requested verdict; it has no STRONG or never-BLOCKING wording. Test pins severity, question, outcomes, and audited-correct escape. |
-| AC-13 | Met | Advisory skill check (10) and its mirror were not changed in this amendment and still state STRONG, never BLOCKING. |
-| AC-14 | Met | Spec-review golden and orchestrator bundle regenerated; full required checks pass. The round's implementation diff contains only the four amended files. |
+| AC-1 | Met | Canon-spec rule follows structural caps and names all four canonical outcomes; gated checklist line added. |
+| AC-2 | Met | Refactor note and gated checklist line added without changing headings. |
+| AC-3 | Met | Identical rule A follows structural caps in both author prompts; test checks equality and adjacency. |
+| AC-4 | Met | Builder self-check contains O and is rendered only by the spec prompt; test checks both goldens. |
+| AC-5 | Met as amended | Review question is beside bug-fix evidence and silence-default text is unchanged; Round 1 makes missing evidence Blocking. |
+| AC-6 | Met | Check (10) follows (9), uses R and keeps STRONG/never BLOCKING; scope says ten. |
+| AC-7 | Met | Shared phrase remains present; canonical string assertions now supersede presence-only coverage. |
+| AC-8 | Met | Source and generated edits stay within the spec’s Affected Files across rounds; no excluded prompt or agent changed. |
+| AC-9 | Met | Added shipped text has no canon-internal path, BACKLOG/CHANGELOG citation, or backtick; docs-reference check passes. |
+| AC-10 | Met | Mirrors, prompt goldens, and bundle regenerated; bundle output is reproducible. |
+| AC-11 | Met | Removed only the shipped candidate line. |
+| AC-12 | Met | Pipeline reviewer bullet’s missing-audit severity is Blocking; its wording is further canonicalized by R in Round 2. |
+| AC-13 | Met | Advisory skill and mirror retain STRONG, never BLOCKING. |
+| AC-14 | Met | Round 1 regenerated the spec-review golden and bundle; its diff was limited to its four files. |
+| AC-15 | Met | A appears verbatim in the skill, spec template, spec prompt, and spec-revision prompt; previous paraphrases were replaced. |
+| AC-16 | Met | R appears verbatim in both review surfaces; search of carriers and mirrors has no “is actually correct” hit. Severity remains split by surface. |
+| AC-17 | Met | O appears verbatim in both checklist lines and the builder self-check. |
+| AC-18 | Met | One test defines O/A/R once and asserts the appropriate canonical string in every listed carrier and mirror. Mutation check changed one word in the skill’s A; the test failed on the missing canonical author rule, then the original file was restored. |
+| AC-19 | Met | Mirrors, goldens, and bundle regenerated; required tests, lint, type-check, and template check pass. |
 
 ## Edge Cases Considered
 
-- The review prompt asks a question and preserves the existing silence default, avoiding manufactured findings for trivially correct refactors.
-- The refactor gate uses the existing author-judgment convention and marks features and bug fixes N/A.
-- The spec-revision prompt receives the shared rule bullet but not the author self-check line.
-- The advisory skill remains unchanged by Amendment Round 1; only pipeline spec_review severity changed.
+- “Correct as-is” now covers behavior confirmed correct; no behavior must be incorrectly assigned to one of the other outcomes.
+- The pipeline reviewer and advisory skill intentionally retain different severity labels.
+- The self-check remains rendered by the spec prompt only; the spec-revision prompt receives only A.
 
 ## Blockers
 
 - None.
+- [ambiguity] Amendment Round 1 said the “audited, correct” escape remains, while Round 2 replaces that paraphrase with R and defines “A behavior confirmed correct needs only a one-line record.” Applied the later canonical R wording as the superseding requirement.
 
 ## Validation Outcomes
 
 | Check | Result | Notes |
 |---|---|---|
-| `npm run lint` | Pass | Amendment Round 1 run passed. |
-| `npm run type-check` | Pass | Amendment Round 1 run passed. |
+| `npm run lint` | Pass | Amendment Round 2 run passed. |
+| `npm run type-check` | Pass | Amendment Round 2 run passed. |
 | `npm test` | Pass | 1,334 passed, 1 skipped, 0 failed. |
-| `npm run build` | Pass | Amendment Round 1 bundle built successfully; only `dist/orchestrator/run-task.js` changed in the round. |
+| `npm run build` | Pass | Rebuilt the orchestrator bundle successfully. |
 | E2E | deferred_by_spec | Spec: no UI surface. |
-| `npm run sync-templates:check` | Pass | All canon-managed files in sync; amendment did not change managed files. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
 | `npm run docs-refs-check` | Pass | All refs OK. |
-| Prompt test targeted run | Pass | 47 passed; regenerated the prompt goldens. |
-| Amendment scope and skill-preservation check | Pass | Round diff limited to the four amendment files; advisory skill and mirror have no worktree diff. |
+| Prompt test targeted run | Pass | 47 passed; regenerated goldens. |
+| Canonical wording mutation check | Pass | One-word mutation caused the expected assertion failure; file restored. |
+| Advisory skill preservation / round scope | Pass | Skill and mirror still state STRONG/never BLOCKING; round source diff is limited to the 13 amended files. |
 
 ## Ready for Review
 

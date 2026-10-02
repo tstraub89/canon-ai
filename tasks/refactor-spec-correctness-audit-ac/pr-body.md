@@ -1,8 +1,8 @@
 ## Summary
 
-- Add a correctness-audit rule for refactor specs: before a spec says "preserve behavior," the author checks whether the behavior being kept is actually correct and records the outcome (fixed on purpose, split into a separate task, or kept as a named quirk). Added to the `/canon-spec` skill, the spec template, and the pipeline's spec and spec-revision prompts, with a refactor-gated builder self-check.
-- Add the matching reviewer side: the pipeline spec-review prompt asks for audit evidence on refactor specs and treats a missing audit as Blocking (silent when evidence exists, and a one-line audited-correct record is enough), while `/canon-spec-review` gets a tenth check that stays advisory (STRONG, never BLOCKING).
-- Features and bug fixes are N/A, using the same author-judgment gate as the bug-fix evidence rule.
+- Add a correctness-audit rule for refactor specs: before a spec says "preserve behavior," the author checks whether the behavior being kept is actually correct and records one outcome (correct as-is, fixed on purpose, split into a separate task, or kept as a named quirk). Added to the `/canon-spec` skill, the spec template, and the pipeline's spec and spec-revision prompts, with a refactor-gated builder self-check.
+- Add the matching reviewer side: the pipeline spec-review prompt asks for audit evidence on refactor specs and treats a missing audit as Blocking (silent when evidence exists, and a one-line record for behavior confirmed correct is enough), while `/canon-spec-review` gets a tenth check that stays advisory (STRONG, never BLOCKING).
+- The author rule, review question, and outcome list are single canonical strings asserted verbatim in every carrier and mirror by one test, so paraphrases can't drift. Features and bug fixes are N/A, using the same author-judgment gate as the bug-fix evidence rule.
 - Add structural prompt tests, regenerate the three affected prompt goldens, rebuild `dist/`, and drop the shipped candidate line from the backlog.
 
 ## Validation

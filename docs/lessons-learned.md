@@ -151,3 +151,9 @@ A spec-authoring rule edit to `spec.md` and `spec-revision.md` prompt templates 
 *(2026-10-02, source: refactor-spec-correctness-audit-ac)*
 
 The first pass put "STRONG, never BLOCKING" on the new audit check in both the pipeline spec_review prompt and the `/canon-spec-review` skill. That was right for the skill, which only advises, but wrong for the pipeline prompt, where Blocking is the severity that yields `changes_requested` and a spec revision; a STRONG finding would never have forced the audit. It took an amendment round to fix. When adding a reviewer check that must be enforced, decide per carrier whether it gates (pipeline prompt, Blocking) or advises (skill, STRONG), and say so in the AC for each carrier rather than copying one severity across them.
+
+### A rule restated across many carriers needs one canonical string pinned by a test, not a shared keyword
+
+*(2026-10-02, source: refactor-spec-correctness-audit-ac)*
+
+The correctness-audit rule was hand-paraphrased in about eight places and guarded only by a test that a shared phrase was present. Two PR bot findings showed the paraphrases had drifted: some outcome lists omitted "correct as-is", and the reviewer question asked whether behavior "is actually correct", which a compliant spec that fixes or splits a behavior could not satisfy. Amendment Round 2 replaced the paraphrases with verbatim canonical strings (author rule, reviewer question, outcome list) defined once in the test and asserted in every carrier and mirror. When one rule must read identically on many surfaces, spec the exact text and a single-definition test up front; a phrase-presence check proves a carrier exists, not that it says the right thing.
