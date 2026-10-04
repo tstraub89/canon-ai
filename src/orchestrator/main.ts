@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { findUnjudgedFullSendFilesFromData, fullSendScopeBlockReason, runCodeReviewPhase } from './phases/code-review.js';
+import { findUnjudgedFullSendFilesFromData, fullSendScopeBlockReason, isFullSendScopeCheckExempt, scopeUnverifiedReason, runCodeReviewPhase } from './phases/code-review.js';
 import { runImplementPhase } from './phases/implement.js';
 import { runPlanPhase } from './phases/plan.js';
 import { runQaPhase } from './phases/qa.js';
@@ -1222,10 +1222,19 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
             `This failure cannot be bypassed with --force.`
         );
     } else if (baseDriftResult.drift.length > 0) {
+        // A probe failure cannot be bypassed, including under --force.
+        const taskChanged = splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd);
+        if (!taskChanged.ok) {
+            splitCli.die(
+                `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.\n` +
+                `Drifted files:\n${baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
+                `Git error: ${taskChanged.stderr || 'unknown error'}\n` +
+                `This failure cannot be bypassed with --force.`
+            );
+        }
         if (!cliArgs.force) {
-            const taskChangedFiles = new Set(splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd));
             const classification = splitValidation.classifyBaseDriftFilesFromData(
-                baseDriftResult.drift, taskChangedFiles,
+                baseDriftResult.drift, new Set(taskChanged.files),
             );
             die(splitValidation.buildBaseDriftAbortMessage(baseBranch, classification));
         }
@@ -3246,26 +3255,43 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
     // A Claude session can finish code_review during one-shot recovery after an
     // unfilled review. Enforce the same full-send scope rule here before QA.
     let specGapScopeFiles: string[] = [];
+    let specGapScopeError: string | null = null;
     if (phase === 'code_review' && statuses.every(status => status.full_send === true)) {
         const cwd = splitWorktree.getActiveCwd(taskIds);
         const baseBranch = splitGit.getBaseBranch(taskIds);
-        const changedFiles = splitGit.getAffectedFiles(baseBranch, cwd);
-        const allowlist = splitValidation.buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+        const affected = splitGit.getAffectedFiles(baseBranch, cwd);
         const verdicts = statuses.map(status => getVerdict(status, 'code_review'));
-        if (verdicts.includes('spec_gap')) {
-            specGapScopeFiles = splitValidation.verifyBaseDriftFromData(
-                changedFiles, allowlist.paths, taskIds, allowlist.prefixes,
+        const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
+        if (!affected.ok) {
+            // Preserve bundle precedence: spec_gap halts below, requested changes
+            // reroute below, and only a bundle that would advance to QA blocks here.
+            if (verdicts.includes('spec_gap')) {
+                specGapScopeError = affected.stderr || 'unknown error';
+            } else if (!isFullSendScopeCheckExempt(verdicts)) {
+                const recorded = verdicts.filter(Boolean);
+                const verdictNote = ` Recorded code-review verdict(s): ${recorded.length > 0 ? recorded.join(', ') : 'none'}; inspect the review before resuming.`;
+                const reason = scopeUnverifiedReason('Full-send code review', taskIds, baseBranch, affected.stderr, verdictNote);
+                warn(reason);
+                splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
+                process.exit(2);
+            }
+        } else {
+            const changedFiles = affected.files;
+            const allowlist = splitValidation.buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+            if (verdicts.includes('spec_gap')) {
+                specGapScopeFiles = splitValidation.verifyBaseDriftFromData(
+                    changedFiles, allowlist.paths, taskIds, allowlist.prefixes,
+                );
+            }
+            const unjudged = findUnjudgedFullSendFilesFromData(
+                changedFiles, allowlist, taskIds, verdicts,
             );
-        }
-        const unjudged = findUnjudgedFullSendFilesFromData(
-            changedFiles, allowlist, taskIds, verdicts,
-        );
-        if (unjudged.length > 0) {
-            const reason = fullSendScopeBlockReason(taskIds, unjudged, verdicts.filter(Boolean));
-            warn(reason);
-            const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
-            splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
-            process.exit(2);
+            if (unjudged.length > 0) {
+                const reason = fullSendScopeBlockReason(taskIds, unjudged, verdicts.filter(Boolean));
+                warn(reason);
+                splitState.autoBlockPhase(taskIds, 'code_review', maxIter, reason);
+                process.exit(2);
+            }
         }
     }
 
@@ -3357,7 +3383,10 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 const scopeNote = specGapScopeFiles.length > 0
                     ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
                         `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch.`
-                    : '';
+                    : specGapScopeError !== null
+                        ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read (git error: ${specGapScopeError}). ` +
+                            `Scope was not checked; --pr will still reject any task-changed file outside Affected Files. `
+                        : '';
                 const reason =
                     `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(', ')}. ` +
                     `The implementation cannot resolve this — the root cause is in the spec. ` +
@@ -3377,6 +3406,9 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                     for (const file of specGapScopeFiles) console.log(`    ${file}`);
                     console.log('  BLESS does not amend the spec, so --pr will still reject these files.');
                     console.log('  Before blessing, add them to Affected Files (## Amendment) or remove them.');
+                } else if (specGapScopeError !== null) {
+                    console.log(`  Full-send scope could not be verified (git error: ${specGapScopeError}).`);
+                    console.log('  BLESS does not check scope; --pr will still reject task-changed files outside Affected Files.');
                 }
                 console.log('');
                 console.log('  Two recovery options:');

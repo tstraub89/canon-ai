@@ -1586,7 +1586,9 @@ function parseNameStatusOutput(raw) {
   return [...paths].sort();
 }
 function getAffectedFiles(baseRef, cwd) {
-  return getPathsInRange(`${baseRef}...HEAD`, cwd) ?? [];
+  const result = gitSafeAtRaw(cwd, "diff", `${baseRef}...HEAD`, "--name-status", "-M", "-z");
+  if (!result.ok) return { ok: false, stderr: result.stderr };
+  return { ok: true, files: parseNameStatusOutput(result.stdout) };
 }
 function getPathsInRange(rangeExpr, cwd) {
   const result = gitSafeAtRaw(cwd, "diff", rangeExpr, "--name-status", "-M", "-z");
@@ -4790,7 +4792,15 @@ function render3(name, view) {
   return renderTemplate(loadTemplate(name), view);
 }
 function buildAffectedFilesBlock(affectedFiles, baseBranch) {
-  if (!affectedFiles) return "";
+  if (affectedFiles === void 0) return "";
+  if (affectedFiles === null) {
+    return [
+      "## Committed diff vs base branch",
+      "",
+      "The committed diff vs the base branch could not be determined (the git diff failed). Apply the full default check matrix from the spec's *Validation Required* section \u2014 run every check unconditionally; do not evaluate predicate gates against an assumed file set.",
+      ""
+    ].join("\n");
+  }
   if (affectedFiles.length === 0) {
     return [
       "## Committed diff vs base branch",
@@ -5780,8 +5790,17 @@ function taskPhasePreflightRejected(id, phaseArg) {
 
 // src/orchestrator/phases/code-review.ts
 function findUnjudgedFullSendFilesFromData(changedFiles, allowlist, taskIds, verdicts) {
-  if (verdicts.some((verdict) => verdict === "changes_requested" || verdict === "needs_re_review" || verdict === "spec_gap")) return [];
+  if (isFullSendScopeCheckExempt(verdicts)) return [];
   return verifyBaseDriftFromData(changedFiles, allowlist.paths, taskIds, allowlist.prefixes);
+}
+function isFullSendScopeCheckExempt(verdicts) {
+  return verdicts.some((verdict) => verdict === "changes_requested" || verdict === "needs_re_review" || verdict === "spec_gap");
+}
+function scopeUnverifiedReason(context, taskIds, baseBranch, stderr, verdictNote = "") {
+  return `${context} could not verify scope for ${taskIds.join(", ")}: the committed diff against base branch '${baseBranch}' could not be read.
+Git error: ${stderr || "unknown error"}
+Check that the base_branch recorded in each task's status.json exists in the active checkout.${verdictNote}
+Then re-run \`canon run ${taskIds.join(" ")}\`.`;
 }
 function fullSendScopeBlockReason(taskIds, files, recordedVerdicts) {
   const verdictNote = recordedVerdicts.length > 0 ? ` Recorded code-review verdict(s): ${recordedVerdicts.join(", ")}; inspect the review before resuming.` : "";
@@ -5975,7 +5994,14 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
     autoBlockPhase(taskIds, "code_review", codeReviewCheck.count, codeReviewCheck.reason);
     process.exit(2);
   }
-  const changedFiles = new Set(deps.getAffectedFiles(baseBranch, activeCwd));
+  const affected = deps.getAffectedFiles(baseBranch, activeCwd);
+  if (!affected.ok) {
+    const reason = scopeUnverifiedReason("Code review pre-flight", taskIds, baseBranch, affected.stderr);
+    warn(reason);
+    autoBlockPhase(taskIds, "code_review", codeReviewCheck.count, reason);
+    process.exit(2);
+  }
+  const changedFiles = new Set(affected.files);
   const bundleIssues = deps.verifyHandoffAgainstDiff(taskIds, baseBranch);
   const preflightFailed = [];
   for (const t of tasks) {
@@ -6141,7 +6167,11 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
   ensureBranch(taskIds, { force });
   const activeCwd = getActiveCwd(taskIds);
   const baseBranch = getBaseBranch(taskIds);
-  const affectedFiles = getAffectedFiles(baseBranch, activeCwd);
+  const affected = getAffectedFiles(baseBranch, activeCwd);
+  if (!affected.ok) {
+    warn(`Could not compute the committed diff vs ${baseBranch} (${affected.stderr || "unknown error"}); the implement prompt will apply the full check matrix.`);
+  }
+  const affectedFiles = affected.ok ? affected.files : null;
   const isRevision = shouldUseImplementRevision(tasks);
   const isRerouted = tasks.some((t) => t.status.phases.implement?.rerouted === true);
   const wasImplementInProgress = tasks.some((t) => t.status.phases.implement?.status === "in_progress");
@@ -7369,11 +7399,20 @@ Git error: ${baseDriftResult.diffError ?? "unknown error"}
 This failure cannot be bypassed with --force.`
     );
   } else if (baseDriftResult.drift.length > 0) {
+    const taskChanged = getAffectedFiles(`origin/${baseBranch}`, cwd);
+    if (!taskChanged.ok) {
+      die(
+        `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.
+Drifted files:
+${baseDriftResult.drift.map((filePath) => `  ${filePath}`).join("\n")}
+Git error: ${taskChanged.stderr || "unknown error"}
+This failure cannot be bypassed with --force.`
+      );
+    }
     if (!cliArgs.force) {
-      const taskChangedFiles = new Set(getAffectedFiles(`origin/${baseBranch}`, cwd));
       const classification = classifyBaseDriftFilesFromData(
         baseDriftResult.drift,
-        taskChangedFiles
+        new Set(taskChanged.files)
       );
       die2(buildBaseDriftAbortMessage(baseBranch, classification));
     }
@@ -8742,32 +8781,47 @@ async function checkAndRoute(phase, taskIds) {
   }
   statuses = taskIds.map(readStatus);
   let specGapScopeFiles = [];
+  let specGapScopeError = null;
   if (phase === "code_review" && statuses.every((status) => status.full_send === true)) {
     const cwd = getActiveCwd(taskIds);
     const baseBranch = getBaseBranch(taskIds);
-    const changedFiles = getAffectedFiles(baseBranch, cwd);
-    const allowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+    const affected = getAffectedFiles(baseBranch, cwd);
     const verdicts = statuses.map((status) => getVerdict(status, "code_review"));
-    if (verdicts.includes("spec_gap")) {
-      specGapScopeFiles = verifyBaseDriftFromData(
+    const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
+    if (!affected.ok) {
+      if (verdicts.includes("spec_gap")) {
+        specGapScopeError = affected.stderr || "unknown error";
+      } else if (!isFullSendScopeCheckExempt(verdicts)) {
+        const recorded = verdicts.filter(Boolean);
+        const verdictNote = ` Recorded code-review verdict(s): ${recorded.length > 0 ? recorded.join(", ") : "none"}; inspect the review before resuming.`;
+        const reason = scopeUnverifiedReason("Full-send code review", taskIds, baseBranch, affected.stderr, verdictNote);
+        warn2(reason);
+        autoBlockPhase(taskIds, "code_review", maxIter, reason);
+        process.exit(2);
+      }
+    } else {
+      const changedFiles = affected.files;
+      const allowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+      if (verdicts.includes("spec_gap")) {
+        specGapScopeFiles = verifyBaseDriftFromData(
+          changedFiles,
+          allowlist.paths,
+          taskIds,
+          allowlist.prefixes
+        );
+      }
+      const unjudged = findUnjudgedFullSendFilesFromData(
         changedFiles,
-        allowlist.paths,
+        allowlist,
         taskIds,
-        allowlist.prefixes
+        verdicts
       );
-    }
-    const unjudged = findUnjudgedFullSendFilesFromData(
-      changedFiles,
-      allowlist,
-      taskIds,
-      verdicts
-    );
-    if (unjudged.length > 0) {
-      const reason = fullSendScopeBlockReason(taskIds, unjudged, verdicts.filter(Boolean));
-      warn2(reason);
-      const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
-      autoBlockPhase(taskIds, "code_review", maxIter, reason);
-      process.exit(2);
+      if (unjudged.length > 0) {
+        const reason = fullSendScopeBlockReason(taskIds, unjudged, verdicts.filter(Boolean));
+        warn2(reason);
+        autoBlockPhase(taskIds, "code_review", maxIter, reason);
+        process.exit(2);
+      }
     }
   }
   if (lastCodexExitStatus !== 0) {
@@ -8845,7 +8899,7 @@ async function checkAndRoute(phase, taskIds) {
       const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], "code_review") === "spec_gap");
       if (specGapIds.length > 0) {
         const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
-        const scopeNote = specGapScopeFiles.length > 0 ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch.` : "";
+        const scopeNote = specGapScopeFiles.length > 0 ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch.` : specGapScopeError !== null ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read (git error: ${specGapScopeError}). Scope was not checked; --pr will still reject any task-changed file outside Affected Files. ` : "";
         const reason = `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(", ")}. The implementation cannot resolve this \u2014 the root cause is in the spec. ` + scopeNote + `Recovery options (both operate on the full blocked bundle [${taskIds.join(" ")}]):
   FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(" ")} --reroute
   BLESS: canon task accept ${taskIds.join(" ")} code_review --reason "<why>"`;
@@ -8861,6 +8915,9 @@ async function checkAndRoute(phase, taskIds) {
           for (const file of specGapScopeFiles) console.log(`    ${file}`);
           console.log("  BLESS does not amend the spec, so --pr will still reject these files.");
           console.log("  Before blessing, add them to Affected Files (## Amendment) or remove them.");
+        } else if (specGapScopeError !== null) {
+          console.log(`  Full-send scope could not be verified (git error: ${specGapScopeError}).`);
+          console.log("  BLESS does not check scope; --pr will still reject task-changed files outside Affected Files.");
         }
         console.log("");
         console.log("  Two recovery options:");

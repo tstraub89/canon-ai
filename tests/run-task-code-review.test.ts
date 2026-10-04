@@ -13,7 +13,7 @@ import { writeColdCodexArchive, findColdCodexArchiveForRound, hasMalformedColdCo
 import { getPathsInRange, getDeltaLineStats, resolveCommit, isAncestorCommit, getScopedDiffInRange } from '../src/orchestrator/git.js';
 import { evaluateCodeReviewLoop, evaluateSpecReviewLoop } from '../src/orchestrator/review-loop.js';
 import { readStatus, writeStatusToFile } from '../src/orchestrator/state.js';
-import type { PipelineState, StatusJson, TaskContext } from '../src/orchestrator/types.js';
+import type { PipelineState, StatusJson, TaskContext, Verdict } from '../src/orchestrator/types.js';
 
 async function withTempTasksAsync<T>(fn: (tasksRoot: string, activeCwd: string) => Promise<T>): Promise<T> {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-task-code-review-'));
@@ -254,7 +254,7 @@ function makeDeps(options: {
         verifyBranch: () => { options.events.push('verifyBranch'); },
         getBaseBranch: () => 'main',
         getActiveCwd: () => options.activeCwd,
-        getAffectedFiles: () => [],
+        getAffectedFiles: () => ({ ok: true, files: [] }),
         verifyHandoffAgainstDiff: () => [],
         getScopedDiff: () => ({ diff: 'diff --git a/src/foo.ts b/src/foo.ts\n', truncated: false }),
         getScopedDiffInRange: () => ({ diff: 'delta diff\n', truncated: false }),
@@ -382,6 +382,90 @@ function writeFilledReview(tasksRoot: string, taskId: string, verdict: 'Approved
         `# Code Review\n\n## Stage 1\n\nReviewed.\n\n## Final Verdict\n\n- [x] ${verdict}\n`);
 }
 
+for (const fullSend of [false, true]) {
+    void test(`unreadable scope blocks before handoff routing (full_send=${fullSend})`, { concurrency: false }, async () => {
+        await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+            const id = 'unreadable';
+            writeTask(tasksRoot, id);
+            const status = readStatus(id);
+            status.full_send = fullSend;
+            writeStatusToFile(path.join(tasksRoot, id, 'status.json'), status);
+            const events: string[] = [];
+            const deps = makeDeps({ activeCwd, events });
+            deps.getAffectedFiles = () => ({ ok: false, stderr: "fatal: ambiguous argument 'no-such-base...HEAD': unknown revision" });
+            deps.verifyHandoffAgainstDiff = () => ["git diff failed: fatal: ambiguous argument 'no-such-base...HEAD': unknown revision"];
+            await expectExitTwo(() => runCodeReviewPhase(makeState([id]), false, null, deps));
+            assert.deepEqual(events, ['verifyBranch']);
+            const blocked = readStatus(id);
+            assert.equal(blocked.phases.code_review?.status, 'blocked');
+            assert.notEqual(blocked.phases.code_review?.verdict, 'changes_requested');
+            assert.equal(blocked.phases.code_review?.preflight_rejections_current_loop, 0);
+            const reason = JSON.stringify(blocked.escalations);
+            assert.match(reason, /could not verify scope/);
+            assert.match(reason, /unknown revision/);
+            assert.doesNotMatch(reason, /src\//);
+            const reviewPath = path.join(tasksRoot, id, 'review.md');
+            if (fs.existsSync(reviewPath)) assert.doesNotMatch(fs.readFileSync(reviewPath, 'utf8'), /## Pre-Flight Rejection/);
+        });
+    });
+}
+
+const failingScopeVerdicts: readonly (readonly Verdict[])[] = [
+    ['approved'], ['approved', 'approved_with_nits'],
+    ['spec_gap'], ['approved', 'spec_gap'],
+    ['changes_requested'], ['approved', 'changes_requested'], ['approved', 'needs_re_review'],
+];
+for (const verdicts of failingScopeVerdicts) {
+    void test(`unreadable full-send scope preserves bundle precedence: ${verdicts.join(', ')}`, { concurrency: false }, async () => {
+        await withTempTasksAsync((tasksRoot, activeCwd) => {
+            initReviewRepo(activeCwd);
+            const ids = verdicts.map((verdict, index) => {
+                const id = `fail-${index}`;
+                writeTask(tasksRoot, id);
+                const status = readStatus(id);
+                status.full_send = true;
+                status.base_branch = 'no-such-base';
+                status.phases.code_review!.status = 'done';
+                status.phases.code_review!.verdict = verdict;
+                writeStatusToFile(path.join(tasksRoot, id, 'status.json'), status);
+                if (verdict !== 'spec_gap') writeFilledReview(tasksRoot, id,
+                    verdict === 'changes_requested' || verdict === 'needs_re_review' ? 'Changes requested' : 'Approved');
+                return id;
+            });
+            const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, ids);
+            const specGap = verdicts.includes('spec_gap');
+            const reroutes = !specGap && verdicts.some(v => v === 'changes_requested' || v === 'needs_re_review');
+            assert.equal(result.status, reroutes ? 0 : 2, result.output);
+            if (specGap) {
+                for (const text of [/SPEC GAP/, /FIX/, /BLESS/]) assert.match(result.output, text);
+            }
+            for (const id of ids) {
+                const status = readStatus(id);
+                if (reroutes) {
+                    assert.equal(status.phases.implement?.status, 'pending');
+                    assert.equal(status.phases.code_review?.status, 'pending');
+                } else {
+                    assert.equal(status.phases.code_review?.status, 'blocked');
+                    const reason = JSON.stringify(status.escalations);
+                    assert.match(reason, /no-such-base/);
+                    assert.match(reason, /unknown revision/);
+                    assert.doesNotMatch(reason, /src\//);
+                    if (specGap) {
+                        assert.match(reason, /spec_gap verdict/);
+                        assert.match(reason, /scope could not be verified/i);
+                        assert.doesNotMatch(reason, /Full-send code review could not verify scope/);
+                    } else {
+                        assert.match(reason, /could not verify scope/);
+                        for (const verdict of verdicts) assert.ok(reason.includes(verdict));
+                        assert.match(reason, new RegExp(`canon run ${ids.join(' ')}`));
+                    }
+                }
+            }
+            return Promise.resolve();
+        });
+    });
+}
+
 void test('scope pre-flight blocks normal runs without consuming review counters, then resumes at Round 1', { concurrency: false }, async () => {
     await withTempTasksAsync(async (tasksRoot, activeCwd) => {
         writeTask(tasksRoot, 'scope');
@@ -391,7 +475,7 @@ void test('scope pre-flight blocks normal runs without consuming review counters
             assert.doesNotMatch(prompt, /Full-Send Scope Judgment/);
             writeFilledReview(tasksRoot, 'scope', 'Approved');
         } });
-        deps.getAffectedFiles = () => ['src/extra-helper.ts'];
+        deps.getAffectedFiles = () => ({ ok: true, files: ['src/extra-helper.ts'] });
         await expectExitTwo(() => runCodeReviewPhase(makeState(['scope']), false, null, deps));
         assert.deepEqual(events, ['verifyBranch']);
         const blocked = readStatus('scope');
@@ -417,7 +501,7 @@ void test('scope halt after a prior review resumes at Round 2 without resetting 
             assert.match(prompt, /This is Round 2/);
             writeFilledReview(tasksRoot, 'scope-round-two', 'Approved');
         } });
-        deps.getAffectedFiles = () => ['src/new-helper.ts'];
+        deps.getAffectedFiles = () => ({ ok: true, files: ['src/new-helper.ts'] });
         await expectExitTwo(() => runCodeReviewPhase(makeState(['scope-round-two']), false, null, deps));
         const blocked = readStatus('scope-round-two');
         assert.equal(blocked.phases.code_review?.iterations_current_loop, 1);
@@ -437,7 +521,7 @@ void test('full-send router blocks an approved review that left an out-of-scope 
         status.full_send = true;
         writeStatusToFile(statusPath, status);
         const deps = makeDeps({ activeCwd, events: [] });
-        deps.getAffectedFiles = () => ['src/a.ts'];
+        deps.getAffectedFiles = () => ({ ok: true, files: ['src/a.ts'] });
         await runCodeReviewPhase(makeState(['retry-scope']), false, null, deps);
         assert.equal(readStatus('retry-scope').phases.code_review?.status, 'pending');
 
@@ -529,7 +613,7 @@ void test('partial full-send review without a verdict remains recoverable', { co
             fs.writeFileSync(path.join(tasksRoot, 'partial-scope', 'review.md'),
                 '# Code Review\n\n## Stage 1\n\nPartial findings, no verdict yet.\n');
         } });
-        deps.getAffectedFiles = () => ['src/extra-helper.ts'];
+        deps.getAffectedFiles = () => ({ ok: true, files: ['src/extra-helper.ts'] });
         const originalExit: typeof process.exit = process.exit.bind(process);
         process.exit = (code?: string | number | null): never => {
             throw Object.assign(new Error('process.exit'), { code });
@@ -563,7 +647,7 @@ void test('mixed full-send bundle halts; once all members opt in the runner hand
             addAffectedFile(tasksRoot, 'member-b', 'src/extra-helper.ts');
             for (const id of ['member-a', 'member-b']) writeFilledReview(tasksRoot, id, 'Approved');
         } });
-        deps.getAffectedFiles = () => ['src/extra-helper.ts'];
+        deps.getAffectedFiles = () => ({ ok: true, files: ['src/extra-helper.ts'] });
         const memberA = readStatus('member-a');
         memberA.full_send = true;
         writeStatusToFile(path.join(tasksRoot, 'member-a', 'status.json'), memberA);
@@ -609,7 +693,7 @@ for (const outcome of ['amended', 'directory_amended', 'changes_requested', 'unj
                 if (outcome === 'directory_amended') addAffectedFile(tasksRoot, 'scope', 'src/');
                 writeFilledReview(tasksRoot, 'scope', outcome === 'changes_requested' ? 'Changes requested' : 'Approved');
             } });
-            deps.getAffectedFiles = () => [file];
+            deps.getAffectedFiles = () => ({ ok: true, files: [file] });
             if (outcome === 'unjudged') {
                 await runCodeReviewPhase(makeState(['scope']), false, null, deps);
                 assert.notEqual(readStatus('scope').phases.code_review?.status, 'blocked');

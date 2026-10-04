@@ -71,7 +71,11 @@ export async function runImplementPhase(
 
     const activeCwd = getActiveCwd(taskIds);
     const baseBranch = getBaseBranch(taskIds);
-    const affectedFiles = getAffectedFiles(baseBranch, activeCwd);
+    const affected = getAffectedFiles(baseBranch, activeCwd);
+    if (!affected.ok) {
+        warn(`Could not compute the committed diff vs ${baseBranch} (${affected.stderr || 'unknown error'}); the implement prompt will apply the full check matrix.`);
+    }
+    const affectedFiles = affected.ok ? affected.files : null;
     const isRevision = shouldUseImplementRevision(tasks);
     const isRerouted = tasks.some(t => t.status.phases.implement?.rerouted === true);
     const wasImplementInProgress = tasks.some(t => t.status.phases.implement?.status === 'in_progress');
