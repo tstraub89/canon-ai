@@ -442,6 +442,8 @@ for (const verdicts of failingScopeVerdicts) {
             if (specGap) {
                 for (const text of [/SPEC GAP/, /FIX/, /BLESS/]) assert.match(result.output, text);
                 assert.doesNotMatch(result.output, /--pr will still reject/);
+                assert.doesNotMatch(result.output, /re-run `canon run|and re-run, or/);
+                assert.match(result.output, new RegExp(`canon run ${ids.join(' ')} --reroute`));
                 assert.match(result.output, /verify scope manually.*before blessing/);
                 assert.match(result.output, /\n  Git error: .*no-such-base/);
             }
@@ -460,6 +462,8 @@ for (const verdicts of failingScopeVerdicts) {
                         assert.match(reason, /spec_gap verdict/);
                         assert.match(reason, /scope could not be verified/i);
                         assert.doesNotMatch(reason, /--pr will still reject/);
+                        assert.doesNotMatch(reason, /re-run `canon run|and re-run, or/);
+                        assert.match(reason, new RegExp(`FIX: .*canon run ${ids.join(' ')} --reroute`));
                         assert.match(reason, /verify scope manually before blessing/);
                         assert.match(reason, /Git error:/);
                         assert.doesNotMatch(reason, /Full-send code review could not verify scope/);

@@ -3381,12 +3381,12 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             if (specGapIds.length > 0) {
                 const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
                 const scopeNote = specGapScopeFiles.length > 0
-                    ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
+                    ? `Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
                         `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch. `
                     : specGapScopeError !== null
-                        ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read.\n` +
+                        ? `Full-send scope could not be verified: the committed diff against the base branch could not be read.\n` +
                             `Git error: ${specGapScopeError}\n` +
-                            `Scope was not checked. Fix the base branch or repository history and re-run \`canon run ${taskIds.join(' ')}\`, or verify scope manually before blessing.\n`
+                            `Scope was not checked. Fix the base branch or repository history before choosing a recovery option below, and verify scope manually before blessing.\n`
                         : '';
                 const reason =
                     `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(', ')}. ` +
@@ -3410,7 +3410,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 } else if (specGapScopeError !== null) {
                     console.log('  Full-send scope could not be verified.');
                     console.log(`  Git error: ${specGapScopeError}`);
-                    console.log('  Fix the base branch or repository history and re-run, or verify scope manually before blessing.');
+                    console.log('  Fix the base branch or repository history before choosing FIX or BLESS; verify scope manually before blessing.');
                 }
                 console.log('');
                 console.log('  Two recovery options:');

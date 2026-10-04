@@ -8899,9 +8899,9 @@ async function checkAndRoute(phase, taskIds) {
       const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], "code_review") === "spec_gap");
       if (specGapIds.length > 0) {
         const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
-        const scopeNote = specGapScopeFiles.length > 0 ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch. ` : specGapScopeError !== null ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read.
+        const scopeNote = specGapScopeFiles.length > 0 ? `Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch. ` : specGapScopeError !== null ? `Full-send scope could not be verified: the committed diff against the base branch could not be read.
 Git error: ${specGapScopeError}
-Scope was not checked. Fix the base branch or repository history and re-run \`canon run ${taskIds.join(" ")}\`, or verify scope manually before blessing.
+Scope was not checked. Fix the base branch or repository history before choosing a recovery option below, and verify scope manually before blessing.
 ` : "";
         const reason = `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(", ")}. The implementation cannot resolve this \u2014 the root cause is in the spec. ` + scopeNote + `Recovery options (both operate on the full blocked bundle [${taskIds.join(" ")}]):
   FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(" ")} --reroute
@@ -8921,7 +8921,7 @@ Scope was not checked. Fix the base branch or repository history and re-run \`ca
         } else if (specGapScopeError !== null) {
           console.log("  Full-send scope could not be verified.");
           console.log(`  Git error: ${specGapScopeError}`);
-          console.log("  Fix the base branch or repository history and re-run, or verify scope manually before blessing.");
+          console.log("  Fix the base branch or repository history before choosing FIX or BLESS; verify scope manually before blessing.");
         }
         console.log("");
         console.log("  Two recovery options:");
