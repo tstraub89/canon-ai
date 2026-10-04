@@ -1092,3 +1092,7 @@
 | 2026-10-02T04:33:46.842Z | refactor-spec-correctness-audit-ac | code_review | codex | gpt-6-luna | 0 | 75.8s | - | ok |
 | 2026-10-02T04:34:51.153Z | refactor-spec-correctness-audit-ac | code_review | claude | sonnet | 0 | 64.3s | 597770 | ok |
 | 2026-10-02T04:35:35.171Z | refactor-spec-correctness-audit-ac | qa | claude | sonnet | 0 | 44.0s | 464621 | ok |
+| 2026-10-04T01:33:33.431Z | affected-files-fail-closed | spec_review | codex | gpt-6.1-sol | 0 | 194.8s | 1039076 | ok |
+| 2026-10-04T01:35:01.628Z | affected-files-fail-closed | spec | claude | opus | 0 | 88.0s | 1062222 | ok |
+| 2026-10-04T01:36:37.641Z | affected-files-fail-closed | spec_review | codex | gpt-6.1-sol | 1 | 95.9s | 1698004 | ok |
+| 2026-10-04T01:42:48.460Z | affected-files-fail-closed | plan | claude | opus | 0 | 246.0s | 2377966 | ok |
