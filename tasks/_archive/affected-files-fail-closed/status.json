@@ -1,7 +1,7 @@
 {
   "id": "affected-files-fail-closed",
   "title": "getAffectedFiles fails closed on git diff failure",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-03",
   "updated": "2026-10-04",
   "branch": "task/affected-files-fail-closed",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
