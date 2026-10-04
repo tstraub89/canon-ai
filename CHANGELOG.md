@@ -9,6 +9,10 @@
 - **`/canon-spec-review` reviewers report every finding they can cite, and the final report does the filtering.** They now use Codex spec review's blocking and nit definitions, so behavior a spec explicitly excludes and verifies as unaffected is a nit at most. The Affected Files check now names the exact heading the pipeline reads, accepts any amendment section, and expects generated or rebuilt outputs to be listed. The reviewers now run as a read-only `spec-review-lens` agent that has no edit tools, can't launch other agents or skills, and is told to use the shell only for reading. Run `canon upgrade`, then start a new Claude Code session to pick it up.
 - **Refactor specs must check that the behavior they preserve is actually correct.** Before a "preserve behavior" criterion, a refactor spec now records in *Problem* whether each preserved behavior is correct today, and gives one outcome for each: correct as-is, fixed deliberately with its own criterion, split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. `/canon-spec`, the spec template, and the pipeline's spec phases all ask for it. Pipeline spec review treats a missing audit as blocking, while `/canon-spec-review` reports it as STRONG. Feature and bug-fix specs are unaffected.
 
+### Fixed
+
+- **A task whose base branch can't be diffed now blocks instead of passing scope checks.** If git can't read a task's changes against its base (a stale or mistyped `base_branch`, a deleted base), the unreadable diff used to look like "nothing changed," so scope checks let the work through. Full-send review and the `code_review` pre-flight now block with git's error instead of advancing to QA or looping back to implement. `--pr` and `--push` report that the task's changed files couldn't be computed instead of advising a rebase, and `--force` does not bypass it. Implementation continues, with the full check matrix required.
+
 ## [3.5.0] — 2026-09-29
 
 ### Added
