@@ -31,12 +31,27 @@ export function findUnjudgedFullSendFilesFromData(
     taskIds: readonly string[],
     verdicts: readonly (string | null)[],
 ): string[] {
+    if (isFullSendScopeCheckExempt(verdicts)) return [];
+    return verifyBaseDriftFromData(changedFiles, allowlist.paths, taskIds, allowlist.prefixes);
+}
+
+export function isFullSendScopeCheckExempt(verdicts: readonly (string | null)[]): boolean {
     // A bundle reroutes together. One changes_requested (or its legacy alias)
     // prevents an unamended file from advancing to QA; the next review checks
     // every still-out-of-scope file again. A spec_gap blocks at its own gate.
-    if (verdicts.some(verdict =>
-        verdict === 'changes_requested' || verdict === 'needs_re_review' || verdict === 'spec_gap')) return [];
-    return verifyBaseDriftFromData(changedFiles, allowlist.paths, taskIds, allowlist.prefixes);
+    return verdicts.some(verdict =>
+        verdict === 'changes_requested' || verdict === 'needs_re_review' || verdict === 'spec_gap');
+}
+
+export function scopeUnverifiedReason(
+    context: string, taskIds: readonly string[], baseBranch: string, stderr: string, verdictNote = '',
+): string {
+    return `${context} could not verify scope for ${taskIds.join(', ')}: ` +
+        `the committed diff against base branch '${baseBranch}' could not be read.\n` +
+        `Git error: ${stderr || 'unknown error'}\n` +
+        `Check that the task's base branch exists and shares history with HEAD; resolve the git error above.` +
+        `${verdictNote}\n` +
+        `Then re-run \`canon run ${taskIds.join(' ')}\`.`;
 }
 
 export function fullSendScopeBlockReason(
@@ -292,7 +307,16 @@ export async function runCodeReviewPhase(
     // Pre-flight: reject obviously invalid handoffs without spending a Claude session.
     // Classify blockers by who can fix them so a real regression is not framed
     // as a handoff-format problem.
-    const changedFiles = new Set(deps.getAffectedFiles(baseBranch, activeCwd));
+    // Keep this ahead of handoff classification: its "git diff failed:" issue
+    // is classified as a format problem and would otherwise reroute to implement.
+    const affected = deps.getAffectedFiles(baseBranch, activeCwd);
+    if (!affected.ok) {
+        const reason = scopeUnverifiedReason('Code review pre-flight', taskIds, baseBranch, affected.stderr);
+        warn(reason);
+        autoBlockPhase(taskIds, 'code_review', codeReviewCheck.count, reason);
+        process.exit(2);
+    }
+    const changedFiles = new Set(affected.files);
     const bundleIssues = deps.verifyHandoffAgainstDiff(taskIds, baseBranch);
     const preflightFailed: PreflightFailure[] = [];
     for (const t of tasks) {

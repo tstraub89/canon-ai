@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
     filterStageablePaths,
+    getAffectedFiles,
     parseNameStatusOutput,
 } from '../src/orchestrator/git.js';
 import {
@@ -261,6 +262,33 @@ function taskContext(tasksRoot: string, taskId: string): TaskContext {
 function makeHandoffMap(entries: Record<string, readonly string[]>): Map<string, readonly string[]> {
     return new Map(Object.entries(entries));
 }
+
+void test('getAffectedFiles distinguishes a real diff, an empty diff, and an unreadable base', () => {
+    withTempDir('affected-files-result-', dir => {
+        const git = (...args: string[]): string => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        git('init', '-b', 'main');
+        git('config', 'user.name', 'Fixture');
+        git('config', 'user.email', 'fixture@example.com');
+        fs.writeFileSync(path.join(dir, 'old.txt'), 'rename contents\n');
+        fs.writeFileSync(path.join(dir, 'modified.txt'), 'base\n');
+        git('add', '.');
+        git('commit', '-m', 'base');
+        assert.deepEqual(getAffectedFiles('main', dir), { ok: true, files: [] });
+        git('switch', '-c', 'feature');
+        git('mv', 'old.txt', 'new.txt');
+        fs.appendFileSync(path.join(dir, 'modified.txt'), 'task\n');
+        git('add', '.');
+        git('commit', '-m', 'task');
+        assert.deepEqual(getAffectedFiles('main', dir), { ok: true, files: ['modified.txt', 'new.txt', 'old.txt'] });
+        const failed = getAffectedFiles('no-such-base', dir);
+        assert.equal(failed.ok, false);
+        if (!failed.ok) {
+            assert.match(failed.stderr, /no-such-base/);
+            assert.match(failed.stderr, /unknown revision/);
+        }
+        assert.ok(!('files' in failed));
+    });
+});
 
 void test('parseNameStatusOutput: empty diff returns no affected files', () => {
     assert.deepEqual(parseNameStatusOutput(''), []);

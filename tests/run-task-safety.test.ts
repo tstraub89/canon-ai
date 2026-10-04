@@ -131,6 +131,10 @@ function setupFakeGit(scriptDir: string): void {
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "diff" ] && [ "${2:-}" != "--cached" ]; then',
+        '  if [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}...HEAD" ] && [ "${FAKE_GIT_AFFECTED_DIFF_FAIL:-}" = "1" ]; then',
+        '    printf "%s\\n" "${FAKE_GIT_AFFECTED_DIFF_ERROR:-affected diff failed}" >&2',
+        '    exit 128',
+        '  fi',
         '  if [ "${FAKE_GIT_DRIFT_DIFF_FAIL:-}" = "1" ]; then',
         '    printf "%s\\n" "${FAKE_GIT_DRIFT_DIFF_ERROR:-tree diff failed}" >&2',
         '    exit 1',
@@ -6205,6 +6209,48 @@ void test('commitHumanReviewFiles base-drift gate warns and proceeds with --forc
         assert.match(gitLog, /^push -u origin task\/task-a$/m);
     });
 });
+
+for (const force of [false, true]) {
+    void test(`commitHumanReviewFiles fails closed when only the task-changed diff fails (force=${force})`, () => {
+        withTempDir('run-task-affected-diff-fail-', dir => {
+            const harness = setupHumanReviewHarness(dir, ['task-a']);
+            const env = {
+                FAKE_GIT_DRIFT_FILES: 'docs/BACKLOG.md',
+                FAKE_GIT_AFFECTED_DIFF_FAIL: '1',
+                FAKE_GIT_AFFECTED_DIFF_ERROR: 'fatal: simulated three-dot diff failure',
+                FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+                FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+            };
+            const result = force ? runNodeInline([
+                "import { main } from './src/orchestrator/main.ts';",
+                "process.argv = ['node', 'canon', 'task-a', '--push', '--force'];",
+                "main().catch(err => { console.error(err); process.exit(1); });",
+            ].join('\n'), {
+                ...process.env,
+                PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+                CANON_TASKS_DIR_OVERRIDE: harness.tasksRoot,
+                FAKE_GIT_LOG: harness.gitLogPath,
+                FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
+                FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+                FAKE_GIT_REMOTE_EXISTS: '1',
+                FAKE_GIT_BASE_BRANCH: 'main',
+                FAKE_GIT_TASK_BRANCH: 'task/task-a',
+                ...env,
+            }) : runHumanReviewCommit(harness, ['task-a'], env);
+            assert.notEqual(result.status, 0);
+            const output = combinedOutput(result);
+            assert.match(output, /task-changed files could not be computed against origin\/main/);
+            assert.match(output, /fatal: simulated three-dot diff failure/);
+            assert.match(output, /cannot be bypassed with --force/);
+            assert.match(output, /Drifted files:[\s\S]*docs\/BACKLOG\.md/);
+            assert.doesNotMatch(output, /could not compute base-drift diff|git rebase|base advanced|src\//);
+            const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
+            assert.match(gitLog, /^diff origin\/main HEAD --name-status -M -z$/m);
+            assert.match(gitLog, /^diff origin\/main\.\.\.HEAD --name-status -M -z$/m);
+            assert.doesNotMatch(gitLog, /^commit /m);
+        });
+    });
+}
 
 void test('commitHumanReviewFiles base-drift gate fails closed when tree diff fails', () => {
     withTempDir('run-task-base-drift-diff-fail-', dir => {

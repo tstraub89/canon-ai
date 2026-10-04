@@ -402,6 +402,19 @@ void test('promptImplement renders empty affected-files branch', () => {
     assert.match(actual, /every check runs unconditionally on this first implement pass/);
 });
 
+void test('implement prompt builders render an unreadable committed diff conservatively', () => {
+    for (const actual of [
+        promptImplement(baseState, 'fresh', null, 'main'),
+        promptImplementRevisions(iterState, null, 'main'),
+        promptImplementReroute(baseState, false, null, 'main'),
+    ]) {
+        assert.match(actual, /committed diff vs the base branch could not be determined/);
+        assert.match(actual, /Apply the full default check matrix/);
+        assert.match(actual, /run every check unconditionally/);
+        assert.doesNotMatch(actual, /No prior commits/);
+    }
+});
+
 void test('promptImplement renders affected files when provided', () => {
     const actual = normalize(promptImplement(baseState, 'fresh', ['src/a.ts', 'src/b.ts'], 'main'));
     assert.match(actual, /## Committed diff vs base branch/);

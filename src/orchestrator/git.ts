@@ -446,8 +446,12 @@ export function parseNameStatusOutput(raw: string): string[] {
     return [...paths].sort();
 }
 
-export function getAffectedFiles(baseRef: string, cwd: string): string[] {
-    return getPathsInRange(`${baseRef}...HEAD`, cwd) ?? [];
+export type AffectedFilesResult = { ok: true; files: string[] } | { ok: false; stderr: string };
+
+export function getAffectedFiles(baseRef: string, cwd: string): AffectedFilesResult {
+    const result = gitSafeAtRaw(cwd, 'diff', `${baseRef}...HEAD`, '--name-status', '-M', '-z');
+    if (!result.ok) return { ok: false, stderr: result.stderr };
+    return { ok: true, files: parseNameStatusOutput(result.stdout) };
 }
 
 export function getPathsInRange(rangeExpr: string, cwd: string): string[] | null {

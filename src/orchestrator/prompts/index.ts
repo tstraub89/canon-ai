@@ -45,8 +45,17 @@ function render(name: string, view: object): string {
     return renderTemplate(loadTemplate(name), view);
 }
 
-function buildAffectedFilesBlock(affectedFiles: readonly string[] | undefined, baseBranch: string | undefined): string {
-    if (!affectedFiles) return '';
+function buildAffectedFilesBlock(affectedFiles: readonly string[] | null | undefined, baseBranch: string | undefined): string {
+    // null means the committed diff probe failed; undefined omits the block.
+    if (affectedFiles === undefined) return '';
+    if (affectedFiles === null) {
+        return [
+            '## Committed diff vs base branch',
+            '',
+            'The committed diff vs the base branch could not be determined (the git diff failed). Apply the full default check matrix from the spec\'s *Validation Required* section — run every check unconditionally; do not evaluate predicate gates against an assumed file set.',
+            '',
+        ].join('\n');
+    }
     if (affectedFiles.length === 0) {
         return [
             '## Committed diff vs base branch',
@@ -274,7 +283,7 @@ export function promptPlan(state: PipelineState): string {
 export function promptImplement(
     state: PipelineState,
     mode: 'fresh' | 'resume' = 'fresh',
-    affectedFiles?: readonly string[],
+    affectedFiles?: readonly string[] | null,
     baseBranch?: string,
 ): string {
     const { tasks } = state;
@@ -314,7 +323,7 @@ export function promptImplementResume(state: PipelineState): string {
 
 export function promptImplementRevisions(
     state: PipelineState,
-    affectedFiles: readonly string[],
+    affectedFiles: readonly string[] | null,
     baseBranch: string,
 ): string {
     const { tasks } = state;
@@ -381,7 +390,7 @@ export function promptImplementRevisions(
 export function promptImplementReroute(
     state: PipelineState,
     isResumedSession = false,
-    affectedFiles?: readonly string[],
+    affectedFiles?: readonly string[] | null,
     baseBranch?: string,
 ): string {
     const { tasks } = state;
