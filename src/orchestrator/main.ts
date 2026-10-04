@@ -3382,10 +3382,11 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
                 const scopeNote = specGapScopeFiles.length > 0
                     ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
-                        `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch.`
+                        `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch. `
                     : specGapScopeError !== null
-                        ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read (git error: ${specGapScopeError}). ` +
-                            `Scope was not checked; --pr will still reject any task-changed file outside Affected Files. `
+                        ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read.\n` +
+                            `Git error: ${specGapScopeError}\n` +
+                            `Scope was not checked. Fix the base branch or repository history and re-run \`canon run ${taskIds.join(' ')}\`, or verify scope manually before blessing.\n`
                         : '';
                 const reason =
                     `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(', ')}. ` +
@@ -3407,8 +3408,9 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                     console.log('  BLESS does not amend the spec, so --pr will still reject these files.');
                     console.log('  Before blessing, add them to Affected Files (## Amendment) or remove them.');
                 } else if (specGapScopeError !== null) {
-                    console.log(`  Full-send scope could not be verified (git error: ${specGapScopeError}).`);
-                    console.log('  BLESS does not check scope; --pr will still reject task-changed files outside Affected Files.');
+                    console.log('  Full-send scope could not be verified.');
+                    console.log(`  Git error: ${specGapScopeError}`);
+                    console.log('  Fix the base branch or repository history and re-run, or verify scope manually before blessing.');
                 }
                 console.log('');
                 console.log('  Two recovery options:');

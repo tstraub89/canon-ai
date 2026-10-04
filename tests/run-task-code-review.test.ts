@@ -393,7 +393,10 @@ for (const fullSend of [false, true]) {
             const events: string[] = [];
             const deps = makeDeps({ activeCwd, events });
             deps.getAffectedFiles = () => ({ ok: false, stderr: "fatal: ambiguous argument 'no-such-base...HEAD': unknown revision" });
-            deps.verifyHandoffAgainstDiff = () => ["git diff failed: fatal: ambiguous argument 'no-such-base...HEAD': unknown revision"];
+            deps.verifyHandoffAgainstDiff = () => {
+                events.push('handoffDiff');
+                return ["git diff failed: fatal: ambiguous argument 'no-such-base...HEAD': unknown revision"];
+            };
             await expectExitTwo(() => runCodeReviewPhase(makeState([id]), false, null, deps));
             assert.deepEqual(events, ['verifyBranch']);
             const blocked = readStatus(id);
@@ -438,6 +441,9 @@ for (const verdicts of failingScopeVerdicts) {
             assert.equal(result.status, reroutes ? 0 : 2, result.output);
             if (specGap) {
                 for (const text of [/SPEC GAP/, /FIX/, /BLESS/]) assert.match(result.output, text);
+                assert.doesNotMatch(result.output, /--pr will still reject/);
+                assert.match(result.output, /verify scope manually.*before blessing/);
+                assert.match(result.output, /\n  Git error: .*no-such-base/);
             }
             for (const id of ids) {
                 const status = readStatus(id);
@@ -453,6 +459,9 @@ for (const verdicts of failingScopeVerdicts) {
                     if (specGap) {
                         assert.match(reason, /spec_gap verdict/);
                         assert.match(reason, /scope could not be verified/i);
+                        assert.doesNotMatch(reason, /--pr will still reject/);
+                        assert.match(reason, /verify scope manually before blessing/);
+                        assert.match(reason, /Git error:/);
                         assert.doesNotMatch(reason, /Full-send code review could not verify scope/);
                     } else {
                         assert.match(reason, /could not verify scope/);

@@ -73,7 +73,7 @@ export async function runImplementPhase(
     const baseBranch = getBaseBranch(taskIds);
     const affected = getAffectedFiles(baseBranch, activeCwd);
     if (!affected.ok) {
-        warn(`Could not compute the committed diff vs ${baseBranch} (${affected.stderr || 'unknown error'}); the implement prompt will apply the full check matrix.`);
+        warn(`Could not compute the committed diff vs ${baseBranch} (${affected.stderr || 'unknown error'}); the full check matrix applies.`);
     }
     const affectedFiles = affected.ok ? affected.files : null;
     const isRevision = shouldUseImplementRevision(tasks);

@@ -49,7 +49,7 @@ export function scopeUnverifiedReason(
     return `${context} could not verify scope for ${taskIds.join(', ')}: ` +
         `the committed diff against base branch '${baseBranch}' could not be read.\n` +
         `Git error: ${stderr || 'unknown error'}\n` +
-        `Check that the base_branch recorded in each task's status.json exists in the active checkout.` +
+        `Check that the task's base branch exists and shares history with HEAD; resolve the git error above.` +
         `${verdictNote}\n` +
         `Then re-run \`canon run ${taskIds.join(' ')}\`.`;
 }

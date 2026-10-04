@@ -5799,7 +5799,7 @@ function isFullSendScopeCheckExempt(verdicts) {
 function scopeUnverifiedReason(context, taskIds, baseBranch, stderr, verdictNote = "") {
   return `${context} could not verify scope for ${taskIds.join(", ")}: the committed diff against base branch '${baseBranch}' could not be read.
 Git error: ${stderr || "unknown error"}
-Check that the base_branch recorded in each task's status.json exists in the active checkout.${verdictNote}
+Check that the task's base branch exists and shares history with HEAD; resolve the git error above.${verdictNote}
 Then re-run \`canon run ${taskIds.join(" ")}\`.`;
 }
 function fullSendScopeBlockReason(taskIds, files, recordedVerdicts) {
@@ -6169,7 +6169,7 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
   const baseBranch = getBaseBranch(taskIds);
   const affected = getAffectedFiles(baseBranch, activeCwd);
   if (!affected.ok) {
-    warn(`Could not compute the committed diff vs ${baseBranch} (${affected.stderr || "unknown error"}); the implement prompt will apply the full check matrix.`);
+    warn(`Could not compute the committed diff vs ${baseBranch} (${affected.stderr || "unknown error"}); the full check matrix applies.`);
   }
   const affectedFiles = affected.ok ? affected.files : null;
   const isRevision = shouldUseImplementRevision(tasks);
@@ -8899,7 +8899,10 @@ async function checkAndRoute(phase, taskIds) {
       const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], "code_review") === "spec_gap");
       if (specGapIds.length > 0) {
         const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
-        const scopeNote = specGapScopeFiles.length > 0 ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch.` : specGapScopeError !== null ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read (git error: ${specGapScopeError}). Scope was not checked; --pr will still reject any task-changed file outside Affected Files. ` : "";
+        const scopeNote = specGapScopeFiles.length > 0 ? ` Full-send files remain outside Affected Files: ${specGapScopeFiles.join(", ")}. A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch. ` : specGapScopeError !== null ? ` Full-send scope could not be verified: the committed diff against the base branch could not be read.
+Git error: ${specGapScopeError}
+Scope was not checked. Fix the base branch or repository history and re-run \`canon run ${taskIds.join(" ")}\`, or verify scope manually before blessing.
+` : "";
         const reason = `Code review surfaced a spec_gap verdict for task(s): ${specGapIds.join(", ")}. The implementation cannot resolve this \u2014 the root cause is in the spec. ` + scopeNote + `Recovery options (both operate on the full blocked bundle [${taskIds.join(" ")}]):
   FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(" ")} --reroute
   BLESS: canon task accept ${taskIds.join(" ")} code_review --reason "<why>"`;
@@ -8916,8 +8919,9 @@ async function checkAndRoute(phase, taskIds) {
           console.log("  BLESS does not amend the spec, so --pr will still reject these files.");
           console.log("  Before blessing, add them to Affected Files (## Amendment) or remove them.");
         } else if (specGapScopeError !== null) {
-          console.log(`  Full-send scope could not be verified (git error: ${specGapScopeError}).`);
-          console.log("  BLESS does not check scope; --pr will still reject task-changed files outside Affected Files.");
+          console.log("  Full-send scope could not be verified.");
+          console.log(`  Git error: ${specGapScopeError}`);
+          console.log("  Fix the base branch or repository history and re-run, or verify scope manually before blessing.");
         }
         console.log("");
         console.log("  Two recovery options:");
