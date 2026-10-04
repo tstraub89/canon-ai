@@ -86,3 +86,9 @@ Running the full test suite in parallel with a rebuild lets `tsup`'s clean step 
      Pruned: grep-AC-exception-growth (kept two sweeps; covered by canon-spec "≥3 spec_review iterations" rule); file-existence-test (self-evident; code-review test-integrity checks); deletion-evidence-probe (site comment in main.ts + real-git regression test); not-read-elsewhere-claim (canon-spec enumerate-every-caller rule); red-first-exit-code (canon-spec bug-fix rule "fails for the stated reason"); golden-fan-out (patterns.md Test-writing golden bullet).
      Unresolved follow-ups: the canon-spec "Codebase-wide term renames" rule is skill-only, not in the spec/spec-revision phase prompts (2026-08-11 carrier note) — a separate decision.
      Prior entries are in git history. -->
+
+### A fail-closed fix must keep each caller's existing verdict precedence and `--force` semantics
+
+*(2026-10-03, source: affected-files-fail-closed)*
+
+Turning a silent-empty probe result into an explicit failure is not just "block on failure" at each caller: each guard already sits inside a precedence order (SPEC GAP halt, requested-changes reroute, then advance) and some behind a `--force` branch that skips the computation entirely. Spec review caught that a naive "block if any member is approved" conflicts with bundle precedence, and planning caught that the spec's "cannot be bypassed with --force" message was false because the probe ran only inside `if (!force)`. Rule of thumb: when making a probe fail closed, trace each caller through every verdict and flag path before choosing where the block goes, and share the exemption predicate rather than restating it. Recovery wording under a verdict gate must also respect that gate (a plain re-run from a SPEC GAP block starts another review, so it can't be offered as the fix).

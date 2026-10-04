@@ -1,10 +1,10 @@
 {
   "id": "affected-files-fail-closed",
   "title": "getAffectedFiles fails closed on git diff failure",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-03",
   "updated": "2026-10-04",
-  "branch": "",
+  "branch": "task/affected-files-fail-closed",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "01a10488-86f9-72d0-a7db-8b6b1696b03b",
-    "claude_spec": "4a9f4671-b5da-49d2-b537-29846d93efe8"
+    "claude_spec": "4a9f4671-b5da-49d2-b537-29846d93efe8",
+    "codex": "01a10493-fbe4-7c61-a9f7-25fe7892abed",
+    "claude_review": "1f2a078a-a8fe-472c-9f70-f8d7563c1338"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

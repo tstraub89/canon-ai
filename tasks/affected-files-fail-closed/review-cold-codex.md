@@ -1,0 +1,1 @@
+The affected-file probe now distinguishes an empty diff from a failed diff, and the callers handle failures conservatively or preserve existing routing precedence. Type-check and lint pass; no actionable regressions were found.
