@@ -1,10 +1,10 @@
 {
   "id": "rearm-spec-gate",
   "title": "Make the spec gate settable via canon task set",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-05",
   "updated": "2026-10-06",
-  "branch": "",
+  "branch": "task/rearm-spec-gate",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a10e9c-1f50-72f1-9e75-4ab27eeac2d8"
+    "codex_spec_review": "01a10e9c-1f50-72f1-9e75-4ab27eeac2d8",
+    "codex": "01a10ea2-221a-7372-b705-701d3707b180",
+    "claude_review": "13b3a3bf-6516-47e9-9b79-ef74e5015b4c"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

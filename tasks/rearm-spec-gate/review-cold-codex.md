@@ -1,0 +1,1 @@
+The changes add matching documentation in the root and template, strengthen the refusal-message test, and update task artifacts. I found no actionable defect introduced by this diff.
