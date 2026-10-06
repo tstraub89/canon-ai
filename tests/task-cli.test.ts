@@ -683,7 +683,7 @@ void test('task set manages human_spec_gate values, full-send side effects, deli
             phases: { ...makeStatus(fastDoneId).phases, spec_review: donePhase },
         }));
         const fastNote = captureStdout(() => taskSet([fastDoneId, 'human_spec_gate', 'true']));
-        assert.match(fastNote, /fast-tier reroutes skip it, so the armed gate will not fire again/);
+        assert.match(fastNote, /fast-tier reroute skips spec_review, so the armed gate fires again only if this task is rerouted in a bundle with a full-tier task/);
         assert.doesNotMatch(fastNote, /canon run --reroute|reset-spec-review|takes effect on the next canon run/);
         const doneDisarm = captureStdout(() => taskSet([doneId, 'human_spec_gate', 'false']));
         assert.equal(doneDisarm.trim(), '');

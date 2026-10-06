@@ -4528,7 +4528,7 @@ function taskSetRedirectMessage(field) {
 var REROUTE_ADMITTED_PHASES = /* @__PURE__ */ new Set(["code_review", "qa", "human_review"]);
 function specGateDoneNote(id, status) {
   if (isPlanCombined(status)) {
-    return `Note: spec_review is already done on task ${id}, and fast-tier reroutes skip it, so the armed gate will not fire again on this task.`;
+    return `Note: spec_review is already done on task ${id}. A fast-tier reroute skips spec_review, so the armed gate fires again only if this task is rerouted in a bundle with a full-tier task.`;
   }
   if (REROUTE_ADMITTED_PHASES.has(deriveTopLevelStatus(status))) {
     return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
