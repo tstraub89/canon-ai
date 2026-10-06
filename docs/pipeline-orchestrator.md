@@ -364,7 +364,7 @@ Where the gate fires by tier:
 - **Full tier (S/M/L/XL/delicate)**: after Codex `spec_review` completes, before planning.
 - **`--full-send`**: pre-clears the latch to `false` at launch, so the gate never fires.
 
-On a full-tier reroute, an armed latch halts after the amendment's `spec_review`. A fast-tier reroute re-enters at `implement`, so it never reaches the gate. A reroute does not re-arm a consumed latch by itself; to halt after the amendment's review, run `canon task set <id> human_spec_gate true` before rerouting.
+On a full-tier reroute, an armed latch halts after the amendment's `spec_review`, unless that `spec_review` is closed with `canon task accept`, which is itself the human sign-off and skips the gate. A fast-tier reroute re-enters at `implement`, so it never reaches the gate. A reroute does not re-arm a consumed latch by itself; to halt after the amendment's review, run `canon task set <id> human_spec_gate true` before rerouting.
 
 So when you inspect `status.json` mid-pipeline and see `human_spec_gate: false`, read it as **"fired, pre-cleared, or disarmed"**; the value alone does not prove the gate fired or that review was not skipped. Re-running `canon run <id>` after the banner proceeds past the consumed latch.
 
