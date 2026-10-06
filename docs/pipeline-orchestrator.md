@@ -364,6 +364,8 @@ Where the gate fires by tier:
 - **Full tier (S/M/L/XL/delicate)**: after Codex `spec_review` completes, before planning.
 - **`--full-send`**: pre-clears the latch to `false` at launch, so the gate never fires.
 
+On a full-tier reroute, an armed latch halts after the amendment's `spec_review`. A fast-tier reroute re-enters at `implement`, so it never reaches the gate.
+
 So when you inspect `status.json` mid-pipeline and see `human_spec_gate: false`, read it as **"fired, pre-cleared, or disarmed"**; the value alone does not prove the gate fired or that review was not skipped. Re-running `canon run <id>` after the banner proceeds past the consumed latch.
 
 **Bundle rule**: the gate skip is all-or-nothing. One task in the bundle with the latch still armed re-engages the halt for the whole invocation; `--full-send` must apply to every task in the bundle to skip it.

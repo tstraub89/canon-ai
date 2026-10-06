@@ -604,7 +604,12 @@ void test('task set rejects guarded, redirected, immutable, and unknown fields w
         const taskDir = writeTask(tasksRoot, taskId);
         const original = fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8');
 
-        assert.throws(() => taskSet([taskId, 'full_send', 'true']), /canon run --full-send/);
+        let fullSendMessage = '';
+        assert.throws(() => taskSet([taskId, 'full_send', 'true']), error => {
+            fullSendMessage = String(error);
+            return /canon run --full-send/.test(fullSendMessage) && /--reroute/.test(fullSendMessage);
+        });
+        assert.doesNotMatch(fullSendMessage, /not durable metadata/);
         assert.throws(() => taskSet([taskId, 'status', 'done']), /canon task phase/);
         assert.throws(() => taskSet([taskId, 'branch', 'main']), /git identity/);
         assert.throws(() => taskSet([taskId, 'phases', '{}']), /canon task phase/);
