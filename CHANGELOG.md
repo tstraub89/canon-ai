@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [3.7.0] — 2026-10-06
+
+### Added
+
+- **`canon task set <id> human_spec_gate true|false` arms or disarms the human spec gate.** You no longer need to hand-edit `status.json`. Arming the gate on a full-send task also clears `full_send`, because the gate never fires on a full-send task, and prints how to turn full-send back on (`canon run --full-send <id>`). If the task's `spec_review` is already done, it prints a note that the gate fires again only after a full-tier `canon run --reroute <id>`. Disarming is refused on delicate tasks; `canon run --full-send --force <id>` is still the only way to skip the gate there. `canon task new` now points at `canon task set` instead of telling you to edit `status.json`.
+
+### Changed
+
+- **The `full_send` refusal message now says how the flag clears.** It stays in `status.json` until `--reroute` or arming the spec gate clears it.
+- **The npm package's homepage now links to <https://timothystraub.com/canon>.**
+
 ## [3.6.0] — 2026-10-04
 
 ### Changed
