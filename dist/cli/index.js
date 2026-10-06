@@ -3447,17 +3447,21 @@ function rescaffoldReview(taskDir, identity) {
   }
 }
 
+// src/lib/pipeline-policy.ts
+function isPlanCombined(task) {
+  return task.task_size === "XS" && !(task.delicate ?? false);
+}
+
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
 var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
-var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch"];
+var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch", "human_spec_gate"];
 var SETTABLE_FIELD_SET = new Set(SETTABLE_FIELDS);
 var IMMUTABLE_FIELDS = /* @__PURE__ */ new Set(["id", "created", "updated"]);
 var REDIRECT_MESSAGES = {
-  full_send: "a per-run stance, not durable metadata. Use `canon run --full-send <id>`, which also clears the spec gate and enforces the delicate\u2192`--force` guard.",
-  human_spec_gate: "the spec gate is self-clearing. Re-run `canon run <id>` to proceed past it, or use `canon run --full-send <id>` to skip it entirely.",
+  full_send: "persisted in status.json until `canon run --reroute` clears it or arming the gate with `canon task set <id> human_spec_gate true` does. Use `canon run --full-send <id>` to enable it; the delicate-task guard requires `--force`.",
   status: "derived from phase states. Use `canon task phase <id> <phase> <status>`.",
   branch: "load-bearing git identity; retargeting it desyncs the worktree. Not settable via `canon task set`.",
   phases: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.",
@@ -3568,7 +3572,7 @@ function listTemplateFiles() {
   }
   return fs14.readdirSync(root).filter((name) => name.endsWith(".md") || name.endsWith(".json")).sort();
 }
-function printCreatedTask(taskDir, baseBranch) {
+function printCreatedTask(taskId, taskDir, baseBranch) {
   console.log(`Created task: ${taskDir}`);
   console.log("Files:");
   for (const file of fs14.readdirSync(taskDir).sort()) {
@@ -3578,7 +3582,7 @@ function printCreatedTask(taskDir, baseBranch) {
   console.log(`Next: Write the spec in ${taskDir}/spec.md`);
   console.log("");
   console.log(`  Defaults: task_size=M, delicate=false, human_spec_gate=true, base_branch=${baseBranch}`);
-  console.log(`  Edit ${taskDir}/status.json to adjust before running the pipeline.`);
+  console.log(`  Adjust with: canon task set ${taskId} <field> <value>`);
 }
 function taskNew(args2) {
   let id = "";
@@ -3634,7 +3638,7 @@ function taskNew(args2) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Warning: created task without canon snapshot refresh: ${message}`);
   }
-  printCreatedTask(taskDir, baseBranch);
+  printCreatedTask(id, taskDir, baseBranch);
 }
 function derivePhase(status) {
   return deriveTopLevelStatus(status);
@@ -4470,13 +4474,13 @@ function taskSetValue(taskId, field, value, status) {
         throw new Error("Error: title must be single-line (no embedded newlines).");
       }
       status.title = value;
-      return;
+      return [];
     case "task_size":
       if (!TASK_SIZE_VALUES.has(value)) {
         throw new Error(`Error: invalid task_size '${value}'. Must be one of: XS, S, M, L, XL.`);
       }
       status.task_size = value;
-      return;
+      return [];
     case "delicate":
     case "worktree": {
       const normalized = value.toLowerCase();
@@ -4484,7 +4488,26 @@ function taskSetValue(taskId, field, value, status) {
         throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
       }
       status[field] = normalized === "true";
-      return;
+      return [];
+    }
+    case "human_spec_gate": {
+      const normalized = value.toLowerCase();
+      if (normalized !== "true" && normalized !== "false") {
+        throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
+      }
+      if (normalized === "false") {
+        if (status.delicate === true) {
+          throw new Error(`Error: human_spec_gate cannot be disarmed on delicate task ${taskId}. Use \`canon run --full-send --force ${taskId}\` to skip the spec gate on a delicate task, or re-run \`canon run ${taskId}\` to proceed past a gate that already halted.`);
+        }
+        status.human_spec_gate = false;
+        return [];
+      }
+      status.human_spec_gate = true;
+      if (status.full_send === true) {
+        status.full_send = false;
+        return [`Note: full-send was cleared on task ${taskId} because arming the spec gate re-introduces a human checkpoint. Run \`canon run --full-send ${taskId}\` to re-enable it.`];
+      }
+      return [];
     }
     case "base_branch": {
       const trimmed = value.trim();
@@ -4493,7 +4516,7 @@ function taskSetValue(taskId, field, value, status) {
       }
       validateBranchField(trimmed, taskId, "base_branch");
       status.base_branch = trimmed;
-      return;
+      return [];
     }
     default:
       throw new Error(`Error: internal error \u2014 unsupported settable field '${field}'.`);
@@ -4501,6 +4524,16 @@ function taskSetValue(taskId, field, value, status) {
 }
 function taskSetRedirectMessage(field) {
   return REDIRECT_MESSAGES[field] ?? "nested orchestrator-owned state. Use the owning canon task command instead.";
+}
+var REROUTE_ADMITTED_PHASES = /* @__PURE__ */ new Set(["code_review", "qa", "human_review"]);
+function specGateDoneNote(id, status) {
+  if (isPlanCombined(status)) {
+    return `Note: spec_review is already done on task ${id}. A fast-tier reroute skips spec_review, so the armed gate fires again only if this task is rerouted in a bundle with a full-tier task.`;
+  }
+  if (REROUTE_ADMITTED_PHASES.has(deriveTopLevelStatus(status))) {
+    return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
+  }
+  return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once the task reaches code_review, qa, or human_review.`;
 }
 function taskHasStarted(status) {
   return Object.values(status.phases).some((entry) => (entry?.status ?? "pending") !== "pending");
@@ -4527,19 +4560,22 @@ function taskSet(args2) {
     );
   }
   if (SETTABLE_FIELD_SET.has(field)) {
-    taskSetValue(id, field, value, status);
+    const notes = taskSetValue(id, field, value, status);
     status.updated = today();
     writeStatusAtomic(statusPath, status);
-    if (taskHasStarted(status)) {
+    for (const note of notes) console.log(note);
+    const specReviewDone = status.phases.spec_review?.status === "done";
+    if (field === "human_spec_gate" && specReviewDone) {
+      if (status.human_spec_gate === true) {
+        console.log(specGateDoneNote(id, status));
+      }
+    } else if (taskHasStarted(status)) {
       console.log(`Warning: ${field} on task ${id} takes effect on the next canon run.`);
     }
     return;
   }
   if (field === "full_send") {
     throw new Error(`Error: full_send is ${taskSetRedirectMessage(field)}`);
-  }
-  if (field === "human_spec_gate") {
-    throw new Error(`Error: human_spec_gate is ${taskSetRedirectMessage(field)}`);
   }
   if (field === "status") {
     throw new Error(`Error: status is ${taskSetRedirectMessage(field)}`);

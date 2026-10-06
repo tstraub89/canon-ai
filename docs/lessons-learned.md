@@ -92,3 +92,9 @@ Running the full test suite in parallel with a rebuild lets `tsup`'s clean step 
 *(2026-10-03, source: affected-files-fail-closed)*
 
 Turning a silent-empty probe result into an explicit failure is not just "block on failure" at each caller: each guard already sits inside a precedence order (SPEC GAP halt, requested-changes reroute, then advance) and some behind a `--force` branch that skips the computation entirely. Spec review caught that a naive "block if any member is approved" conflicts with bundle precedence, and planning caught that the spec's "cannot be bypassed with --force" message was false because the probe ran only inside `if (!force)`. Rule of thumb: when making a probe fail closed, trace each caller through every verdict and flag path before choosing where the block goes, and share the exemption predicate rather than restating it. Recovery wording under a verdict gate must also respect that gate (a plain re-run from a SPEC GAP block starts another review, so it can't be offered as the fix).
+
+### A guard on one field is only as strong as the fields it reads
+
+*(2026-10-05, source: rearm-spec-gate)*
+
+Refusing `human_spec_gate false` on delicate tasks can be sidestepped by toggling `delicate` off, disarming, and toggling it back on — the guard checks state only at the call. Code review flagged it, but the spec scoped the guard to the gate setter, so it shipped as an accepted spec-gap. Rule of thumb: when a spec adds a guard that depends on another settable field, list the settable-field graph in the spec and either guard the dependency's mutation too or record the bypass as an accepted non-goal. A second instance: a spec-mandated recovery note ("full-tier `--reroute`") can be unreachable right after the state it describes, so trace when the advertised command is actually admitted before mandating its wording.

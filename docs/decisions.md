@@ -102,7 +102,7 @@ Installed-package mode identifies canon by `canon_version` rather than a borrowe
 
 ## Full-send mode collapses the spec gate and human_review stop behind one explicit flag
 
-**Decision**: Canon's "spec to draft PR with no human interrupts" flow is an explicit `status.json.full_send` mode, enabled by `canon run --full-send` and cleared by `--reroute`.
+**Decision**: Canon's "spec to draft PR with no human interrupts" flow is an explicit `status.json.full_send` mode, enabled by `canon run --full-send` and cleared by `--reroute` or by arming the gate via `canon task set`.
 
 **Why**: The alternative was to rely on manual `status.json` edits or to add a separate `canon task new --full-send` creation path. That would have split the mechanism across multiple surfaces and made the opt-in easy to miss. A single file-backed flag keeps the state observable, lets the dispatcher honor it consistently at both human interrupt points, and preserves the existing review chains and PR creation path instead of creating a special pipeline.
 

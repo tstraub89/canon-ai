@@ -1108,3 +1108,10 @@
 | 2026-10-04T02:25:42.429Z | affected-files-fail-closed | qa | claude | sonnet | 0 | 45.9s | 408087 | ok |
 | 2026-10-06T00:28:42.631Z | rearm-spec-gate | spec_review | codex | gpt-6-luna | 0 | 47.8s | 401813 | ok |
 | 2026-10-06T00:34:27.609Z | rearm-spec-gate | plan | claude | sonnet | 0 | 70.2s | 620221 | ok |
+| 2026-10-06T00:45:22.184Z | rearm-spec-gate | implement | codex | gpt-6-luna | 0 | 653.5s | 5320194 | ok |
+| 2026-10-06T00:47:51.132Z | rearm-spec-gate | code_review | codex | gpt-6-luna | 0 | 147.8s | - | ok |
+| 2026-10-06T00:49:26.133Z | rearm-spec-gate | code_review | claude | sonnet | 0 | 95.0s | 439926 | ok |
+| 2026-10-06T00:51:22.948Z | rearm-spec-gate | implement | codex | gpt-6-luna | 1 | 116.8s | 6898940 | ok |
+| 2026-10-06T00:53:42.165Z | rearm-spec-gate | code_review | codex | gpt-6-luna | 1 | 19.6s | - | ok |
+| 2026-10-06T00:54:47.085Z | rearm-spec-gate | code_review | claude | sonnet | 1 | 64.9s | 745529 | ok |
+| 2026-10-06T00:55:36.718Z | rearm-spec-gate | qa | claude | sonnet | 0 | 49.6s | 407000 | ok |

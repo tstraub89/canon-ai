@@ -2,120 +2,110 @@
 
 > Author: Codex | Spec: `tasks/rearm-spec-gate/spec.md` | Plan: `tasks/rearm-spec-gate/plan.md`
 >
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
+> Iteration 1 — initial implementation.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
-
-## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+| `src/task/index.ts` | Made `human_spec_gate` settable with validated booleans, delicate-task disarm refusal, atomic full-send clearing note, reroute guidance for completed spec review, corrected full-send refusal, and task-new command hint. |
+| `tests/task-cli.test.ts` | Covered gate set/disarm, invalid values and byte preservation, full-send interaction, delicate behavior, warning matrix, worktree routing, task-new guidance, and refusal/list wording. |
+| `tests/run-task-reroute-preflight.test.ts` | Added coverage that a re-armed gate halts after approved full-tier reroute review and consumes its latch. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt bundled CLI outputs. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documented the settable contract, false latch semantics, reroute behavior, and full-send interaction; synced mirror. |
+| `docs/decisions.md` | Updated full-send clearing paths. This root-only document has no managed mirror. |
+| `.claude/skills/canon-spec/SKILL.md`, `templates/.claude/skills/canon-spec/SKILL.md` | Replaced manual status edits with canon task commands; synced mirror. |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The task setter now owns gate changes and preserves existing worktree routing. It validates and refuses before writing when appropriate, then performs one atomic status write. Arming clears `full_send` in that write when needed, and prints state-specific operator guidance after the write.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None. | Implemented the planned source, tests, docs, skill updates, and generated outputs. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Tests cover case-insensitive booleans, timestamp/status derivation, invalid input, and byte-identical refusal. |
+| AC-2 | Met | Tests verify `full_send` clears with the gate in one update and note names the real task id; no note when already false. |
+| AC-3 | Met | Test verifies disarming leaves `full_send` true. |
+| AC-4 | Met | Tests verify delicate disarm refusal is byte-identical and names the forced full-send command; arming succeeds. |
+| AC-5 | Met | Updated refusal assertion; `full_send` remains redirected with `--reroute` and no stale “not durable metadata” wording. |
+| AC-6 | Met | Tests cover completed review, started review pending, and unstarted warning cases for both values. |
+| AC-7 | Met | Removed gate redirect/refusal path; unknown-field settable list includes the gate; structural greps are clean. |
+| AC-8 | Met | Reroute preflight test observes the gate banner, exit 0, and consumed latch without orchestrator source changes. |
+| AC-9 | Met | Task creation points to `canon task set <id> <field> <value>` rather than editing status. |
+| AC-10 | Met | Pipeline docs, decision, skill, and managed mirrors describe the revised contract without stale latch semantics. |
+| AC-11 | Met | `git diff --name-only main` has no `src/orchestrator/` or `src/lib/pipeline-policy.ts` paths. |
 
 ## Edge Cases Considered
 
-- ...
+- Invalid booleans and delicate disarm refusal throw before the atomic write.
+- Arming on a task already in full-send clears both flags together; disarming does not change full-send.
+- Existing worktree routing was exercised with distinct repository and worktree status copies.
+- A completed `spec_review` uses full-tier reroute guidance; a fast-tier reroute is not advertised as a gate recovery.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- [ambiguity] AC-6 explicitly requires `human_spec_gate false` on a `spec_review`-done task to print neither the reroute note nor the generic started-task warning, although that task has started. Followed the specific AC case: suppress the generic warning for either gate value once `spec_review` is done; arming prints the reroute note, disarming prints neither. This interpretation is also recorded in `tasks/rearm-spec-gate/notes.md`.
+- No unresolved implementation blockers.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 1,349 passed, 0 failed, 1 skipped. The skipped `REPO_ROOT stays anchored to the supervising checkout when imported from a linked worktree` test reports `.git/ writes are restricted in this environment`; that case remains unverified here. |
+| `npm run build` | Pass | Generated both declared `dist/` bundles. |
+| `npm run docs-refs-check` | Pass | |
+| `npm run sync-templates:check` | Pass | |
+| E2E | N/A | Spec marks this N/A: no UI surface. |
+| Structural greps and scope check | Pass | No `not durable metadata` or `self-clearing` in `src/`; skill has no manual status-edit instruction; no prohibited orchestrator paths in branch diff. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
+## Iteration 2 — addressing review round 1
 
 ### Changes
 
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+| `tests/task-cli.test.ts` | Strengthened the `full_send` refusal assertion to require `--reroute` and reject `not durable metadata`. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Added full-tier reroute halt and fast-tier reroute behavior to the single-use latch section; synced mirror. |
 
 ### Findings addressed
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+- _correctness bug / AC-10:_ Added the full-tier and fast-tier reroute behavior to §"Spec gate is a single-use latch" in the root doc and managed mirror.
+- _correctness bug / test integrity / AC-5:_ The refusal test now checks for both `canon run --full-send` and `--reroute`, and asserts the obsolete phrase is absent.
+- _optional cleanup/nit:_ Left the compound gate test intact; splitting it is not needed to address this round's findings.
 
-### AC deltas (if any)
+### AC deltas
 
-- AC-N: was Partial → now Met (file:line)
+- AC-5: Partial → Met; test pins the complete corrected refusal wording.
+- AC-10: Partial → Met; latch section now states full-tier reroute re-engagement and fast-tier reroute non-engagement.
 
-### Re-run validation (only checks that re-ran)
+### Spec-level findings noted
+
+- [ambiguity] The review notes the AC-mandated completed-review message can be unhelpful immediately after a gate halt because reroute admission begins later. Kept the AC-required `full-tier canon run --reroute <id>` guidance; changing or appending an alternate recovery command would contradict the current AC/known-risk wording and requires a spec decision.
+- [ambiguity] The review notes that changing `delicate` to false, disarming the gate, then restoring `delicate` can bypass the delicate disarm friction. Interpreted AC-4 literally as guarding `human_spec_gate false` when the task is delicate at that call; adding a guard to `delicate` mutations is outside the listed contract and needs a spec decision.
+
+### Re-run validation
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `node --test --import ./tests/md-loader-register.mjs --import tsx tests/task-cli.test.ts` | Pass | 74 passed, 0 failed, 0 skipped. |
+| `npm run docs-refs-check` | Pass | |
+| `npm run sync-templates:check` | Pass | |
+| `npm run build` | Pass | Rebuilt both declared `dist/` bundles. |
+| `npm test` | Pass | 1,349 passed, 0 failed, 1 skipped. The same environment-restricted linked-worktree test noted in Iteration 1 remains unverified. |

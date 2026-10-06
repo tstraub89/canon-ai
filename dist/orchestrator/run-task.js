@@ -5592,7 +5592,7 @@ var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
 var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
-var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch"];
+var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch", "human_spec_gate"];
 var SETTABLE_FIELD_SET = new Set(SETTABLE_FIELDS);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);

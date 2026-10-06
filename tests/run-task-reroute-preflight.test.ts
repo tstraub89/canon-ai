@@ -1593,6 +1593,26 @@ void test('checkAndRoute lets approved reroute spec_review flow through to plan 
     });
 });
 
+void test('checkAndRoute halts after approved full-tier reroute when the spec gate is re-armed', () => {
+    withTempDir('reroute-preflight-approved-armed-gate-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-a';
+        const status = makeRerouteStatus(taskId, 'task/task-a', 1, {
+            worktree: false,
+            humanSpecGate: true,
+            specReview: { status: 'done', verdict: 'approved' },
+            plan: { status: 'pending' },
+            implement: { status: 'pending', rerouted: true },
+        });
+        writeTaskStatus(tasksRoot, taskId, status);
+        const result = runCheckAndRoute(dir, 'spec_review', [taskId]);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /SPEC GATE — Human review required before planning\./);
+        assert.equal((readStatus(tasksRoot, taskId) as { human_spec_gate?: boolean }).human_spec_gate, false);
+    });
+});
+
 void test('checkAndRoute spec_gap block prints and stores audited full-bundle recovery commands', () => {
     withTempDir('reroute-preflight-spec-gap-message-', dir => {
         initGitRepo(dir);

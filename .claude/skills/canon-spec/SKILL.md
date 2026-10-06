@@ -128,13 +128,13 @@ After scope is approved:
    canon task new TASK-ID "Title"
    ```
 
-2. Edit `tasks/TASK-ID/status.json`: set `task_size`, `delicate`, and `human_spec_gate: true`.
+2. Set metadata with `canon task set TASK-ID task_size <XS|S|M|L|XL>` and `canon task set TASK-ID delicate <true|false>`. The spec gate defaults to armed for new tasks.
 
 3. Write `tasks/TASK-ID/spec.md` using `.canon/templates/spec.md` as structure. Fill every section — no placeholders, no "TBD".
    - If full-send mode is active, prepend this line immediately after the title block and before `## Problem`:
      `> **Full-send mode**: This spec was produced in full-send mode.`
 
-4. Set `spec.status` to `"done"` in `status.json`.
+4. Run `canon task phase TASK-ID spec done`.
 
 Self-check before presenting:
 - [ ] Every AC states exactly how to verify it (not just "it works")
@@ -184,7 +184,7 @@ Self-check before presenting:
    canon task phase TASK-ID spec_review done approved
    canon task phase TASK-ID plan done
    ```
-   Then set `human_spec_gate: false` in `status.json` (already cleared by the human's conversational approval).
+   Then run `canon task set TASK-ID human_spec_gate false` (already cleared by the human's conversational approval).
 4. Invoke the pipeline:
    ```bash
    canon run TASK-ID
