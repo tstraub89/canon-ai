@@ -1106,3 +1106,5 @@
 | 2026-10-04T02:19:39.876Z | affected-files-fail-closed | code_review | codex | gpt-6-luna | 2 | 96.6s | - | ok |
 | 2026-10-04T02:24:56.522Z | affected-files-fail-closed | code_review | claude | opus | 2 | 316.6s | 964187 | ok |
 | 2026-10-04T02:25:42.429Z | affected-files-fail-closed | qa | claude | sonnet | 0 | 45.9s | 408087 | ok |
+| 2026-10-06T00:28:42.631Z | rearm-spec-gate | spec_review | codex | gpt-6-luna | 0 | 47.8s | 401813 | ok |
+| 2026-10-06T00:34:27.609Z | rearm-spec-gate | plan | claude | sonnet | 0 | 70.2s | 620221 | ok |
