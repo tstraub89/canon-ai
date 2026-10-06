@@ -1,7 +1,7 @@
 {
   "id": "rearm-spec-gate",
   "title": "Make the spec gate settable via canon task set",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-05",
   "updated": "2026-10-06",
   "branch": "task/rearm-spec-gate",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
