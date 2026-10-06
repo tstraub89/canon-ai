@@ -4552,7 +4552,7 @@ function taskSet(args2) {
     const specReviewDone = status.phases.spec_review?.status === "done";
     if (field === "human_spec_gate" && specReviewDone) {
       if (status.human_spec_gate === true) {
-        console.log(`Note: spec_review is already done on task ${id}, so the spec gate fires only if spec_review runs again \u2014 via a full-tier \`canon run --reroute ${id}\`.`);
+        console.log(`Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. It fires only if spec_review runs again, which only a full-tier \`canon run --reroute ${id}\` does (fast-tier reroutes skip spec_review).`);
       }
     } else if (taskHasStarted(status)) {
       console.log(`Warning: ${field} on task ${id} takes effect on the next canon run.`);
