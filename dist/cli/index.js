@@ -3447,6 +3447,11 @@ function rescaffoldReview(taskDir, identity) {
   }
 }
 
+// src/lib/pipeline-policy.ts
+function isPlanCombined(task) {
+  return task.task_size === "XS" && !(task.delicate ?? false);
+}
+
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
@@ -4520,6 +4525,16 @@ function taskSetValue(taskId, field, value, status) {
 function taskSetRedirectMessage(field) {
   return REDIRECT_MESSAGES[field] ?? "nested orchestrator-owned state. Use the owning canon task command instead.";
 }
+var REROUTE_ADMITTED_PHASES = /* @__PURE__ */ new Set(["code_review", "qa", "human_review"]);
+function specGateDoneNote(id, status) {
+  if (isPlanCombined(status)) {
+    return `Note: spec_review is already done on task ${id}, and fast-tier reroutes skip it, so the armed gate will not fire again on this task.`;
+  }
+  if (REROUTE_ADMITTED_PHASES.has(deriveTopLevelStatus(status))) {
+    return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
+  }
+  return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once the task reaches code_review, qa, or human_review.`;
+}
 function taskHasStarted(status) {
   return Object.values(status.phases).some((entry) => (entry?.status ?? "pending") !== "pending");
 }
@@ -4552,7 +4567,7 @@ function taskSet(args2) {
     const specReviewDone = status.phases.spec_review?.status === "done";
     if (field === "human_spec_gate" && specReviewDone) {
       if (status.human_spec_gate === true) {
-        console.log(`Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. It fires only if spec_review runs again, which only a full-tier \`canon run --reroute ${id}\` does (fast-tier reroutes skip spec_review).`);
+        console.log(specGateDoneNote(id, status));
       }
     } else if (taskHasStarted(status)) {
       console.log(`Warning: ${field} on task ${id} takes effect on the next canon run.`);

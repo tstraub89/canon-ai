@@ -15,7 +15,7 @@ import { filterGitIgnoredPaths } from '../orchestrator/git.js';
 import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
-import { type TaskSize } from '../lib/pipeline-policy.js';
+import { isPlanCombined, type TaskSize } from '../lib/pipeline-policy.js';
 import { renderTaskTemplate, resolveTaskTemplateSource, tasksRoot, templatesRoot } from './templates.js';
 
 export { taskTemplateOverrideRoot } from './templates.js';
@@ -1502,6 +1502,20 @@ function taskSetRedirectMessage(field: string): string {
     return REDIRECT_MESSAGES[field] ?? 'nested orchestrator-owned state. Use the owning canon task command instead.';
 }
 
+// Mirrors REROUTE_ADMITTED_PHASES in the orchestrator: the phases from which
+// `canon run --reroute` is accepted.
+const REROUTE_ADMITTED_PHASES = new Set<string>(['code_review', 'qa', 'human_review']);
+
+function specGateDoneNote(id: string, status: StatusJson): string {
+    if (isPlanCombined(status)) {
+        return `Note: spec_review is already done on task ${id}, and fast-tier reroutes skip it, so the armed gate will not fire again on this task.`;
+    }
+    if (REROUTE_ADMITTED_PHASES.has(deriveTopLevelStatus(status))) {
+        return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
+    }
+    return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once the task reaches code_review, qa, or human_review.`;
+}
+
 function taskHasStarted(status: StatusJson): boolean {
     return Object.values(status.phases).some(entry => (entry?.status ?? 'pending') !== 'pending');
 }
@@ -1540,7 +1554,7 @@ export function taskSet(args: string[]): void {
         const specReviewDone = status.phases.spec_review?.status === 'done';
         if (field === 'human_spec_gate' && specReviewDone) {
             if (status.human_spec_gate === true) {
-                console.log(`Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. It fires only if spec_review runs again, which only a full-tier \`canon run --reroute ${id}\` does (fast-tier reroutes skip spec_review).`);
+                console.log(specGateDoneNote(id, status));
             }
         } else if (taskHasStarted(status)) {
             console.log(`Warning: ${field} on task ${id} takes effect on the next canon run.`);

@@ -665,8 +665,26 @@ void test('task set manages human_spec_gate values, full-send side effects, deli
         const doneId = 'gate-done';
         writeTask(tasksRoot, doneId, makeStatus(doneId, { phases: { ...makeStatus(doneId).phases, spec_review: { status: 'done', agent: 'codex' } } }));
         const doneNote = captureStdout(() => taskSet([doneId, 'human_spec_gate', 'true']));
-        assert.match(doneNote, /full-tier.*canon run --reroute gate-done/);
-        assert.doesNotMatch(doneNote, /reset-spec-review|takes effect on the next canon run/);
+        assert.match(doneNote, /will not fire on this pass.*full-tier.*code_review, qa, or human_review/);
+        assert.doesNotMatch(doneNote, /canon run --reroute|reset-spec-review|takes effect on the next canon run/);
+
+        const rerouteableId = 'gate-done-rerouteable';
+        const donePhase = { status: 'done', agent: 'claude' } as const;
+        writeTask(tasksRoot, rerouteableId, makeStatus(rerouteableId, {
+            phases: { ...makeStatus(rerouteableId).phases, spec: donePhase, spec_review: donePhase, plan: donePhase, implement: donePhase },
+        }));
+        const rerouteNote = captureStdout(() => taskSet([rerouteableId, 'human_spec_gate', 'true']));
+        assert.match(rerouteNote, /full-tier reroute.*canon run --reroute gate-done-rerouteable/);
+        assert.doesNotMatch(rerouteNote, /reset-spec-review|takes effect on the next canon run/);
+
+        const fastDoneId = 'gate-done-fast';
+        writeTask(tasksRoot, fastDoneId, makeStatus(fastDoneId, {
+            task_size: 'XS',
+            phases: { ...makeStatus(fastDoneId).phases, spec_review: donePhase },
+        }));
+        const fastNote = captureStdout(() => taskSet([fastDoneId, 'human_spec_gate', 'true']));
+        assert.match(fastNote, /fast-tier reroutes skip it, so the armed gate will not fire again/);
+        assert.doesNotMatch(fastNote, /canon run --reroute|reset-spec-review|takes effect on the next canon run/);
         const doneDisarm = captureStdout(() => taskSet([doneId, 'human_spec_gate', 'false']));
         assert.equal(doneDisarm.trim(), '');
 
