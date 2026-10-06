@@ -322,7 +322,9 @@ void test('task new creates a task from templates and rejects existing tasks', (
         fs.cpSync(path.join(WORKSPACE_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
 
         withCwd(root, () => {
-            captureStdout(() => taskNew(['new-task', 'New Task', '--base', 'dev']));
+            const output = captureStdout(() => taskNew(['new-task', 'New Task', '--base', 'dev']));
+            assert.match(output, /canon task set new-task <field> <value>/);
+            assert.doesNotMatch(output, /Edit .*status\.json|status\.json to adjust/);
             const taskDir = path.join(root, 'tasks', 'new-task');
             const status = readStatusFile(taskDir);
             assert.equal(status.id, 'new-task');
@@ -498,6 +500,7 @@ void test('task set routes writes to the task worktree status.json', () => {
         withEnv({ CANON_WORKTREES_ROOT: worktreesRoot }, () => {
             withCwd(worktree, () => {
                 captureStdout(() => taskSet(['worktree-set', 'task_size', 'XL']));
+                captureStdout(() => taskSet(['worktree-set', 'human_spec_gate', 'true']));
             });
         });
 
@@ -506,6 +509,8 @@ void test('task set routes writes to the task worktree status.json', () => {
         assert.equal(mainStatus.task_size, 'S');
         assert.equal(worktreeStatus.task_size, 'XL');
         assert.equal(worktreeStatus.status, 'spec');
+        assert.equal(mainStatus.human_spec_gate, false);
+        assert.equal(worktreeStatus.human_spec_gate, true);
     });
 });
 
@@ -600,7 +605,6 @@ void test('task set rejects guarded, redirected, immutable, and unknown fields w
         const original = fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8');
 
         assert.throws(() => taskSet([taskId, 'full_send', 'true']), /canon run --full-send/);
-        assert.throws(() => taskSet([taskId, 'human_spec_gate', 'false']), /Re-run `canon run <id>`/);
         assert.throws(() => taskSet([taskId, 'status', 'done']), /canon task phase/);
         assert.throws(() => taskSet([taskId, 'branch', 'main']), /git identity/);
         assert.throws(() => taskSet([taskId, 'phases', '{}']), /canon task phase/);
@@ -611,9 +615,64 @@ void test('task set rejects guarded, redirected, immutable, and unknown fields w
         assert.throws(() => taskSet([taskId, 'created', '2026-01-01']), /immutable \/ not editable/);
         assert.throws(() => taskSet([taskId, 'updated', '2026-01-01']), /immutable \/ not editable/);
         assert.throws(() => taskSet([taskId, '_inline_doc', 'x']), /immutable \/ not editable/);
-        assert.throws(() => taskSet([taskId, 'nope', '1']), /Settable fields: title, task_size, delicate, worktree, base_branch/);
+        assert.throws(() => taskSet([taskId, 'nope', '1']), /Settable fields: title, task_size, delicate, worktree, base_branch, human_spec_gate/);
 
         assert.equal(fs.readFileSync(path.join(taskDir, 'status.json'), 'utf8'), original);
+    });
+});
+
+void test('task set manages human_spec_gate values, full-send side effects, delicate guard, and warning states', () => {
+    withTasksRoot(tasksRoot => {
+        const id = 'gate-task';
+        const dir = writeTask(tasksRoot, id, makeStatus(id));
+        captureStdout(() => taskSet([id, 'human_spec_gate', 'TRUE']));
+        assert.equal(readStatusFile(dir).human_spec_gate, true);
+        assert.equal(readStatusFile(dir).status, 'spec');
+        assert.equal(readStatusFile(dir).updated, new Date().toISOString().slice(0, 10));
+        const original = fs.readFileSync(path.join(dir, 'status.json'), 'utf8');
+        assert.throws(() => taskSet([id, 'human_spec_gate', 'yes']), /Must be true or false/);
+        assert.equal(fs.readFileSync(path.join(dir, 'status.json'), 'utf8'), original);
+        captureStdout(() => taskSet([id, 'human_spec_gate', 'FALSE']));
+        assert.equal(readStatusFile(dir).human_spec_gate, false);
+
+        const fullId = 'gate-full-send';
+        const fullDir = writeTask(tasksRoot, fullId, makeStatus(fullId, { full_send: true }));
+        const note = captureStdout(() => taskSet([fullId, 'human_spec_gate', 'true']));
+        assert.equal(readStatusFile(fullDir).human_spec_gate, true);
+        assert.equal(readStatusFile(fullDir).full_send, false);
+        assert.match(note, new RegExp(`full-send was cleared.*canon run --full-send ${fullId}`));
+        const noNote = captureStdout(() => taskSet([id, 'human_spec_gate', 'true']));
+        assert.doesNotMatch(noNote, /full-send/);
+
+        const disarmId = 'gate-disarm-full-send';
+        const disarmDir = writeTask(tasksRoot, disarmId, makeStatus(disarmId, { full_send: true }));
+        captureStdout(() => taskSet([disarmId, 'human_spec_gate', 'false']));
+        assert.equal(readStatusFile(disarmDir).full_send, true);
+
+        const delicateId = 'gate-delicate';
+        const delicateDir = writeTask(tasksRoot, delicateId, makeStatus(delicateId, { delicate: true }));
+        const delicateOriginal = fs.readFileSync(path.join(delicateDir, 'status.json'), 'utf8');
+        assert.throws(() => taskSet([delicateId, 'human_spec_gate', 'false']), new RegExp(`canon run --full-send --force ${delicateId}`));
+        assert.equal(fs.readFileSync(path.join(delicateDir, 'status.json'), 'utf8'), delicateOriginal);
+        captureStdout(() => taskSet([delicateId, 'human_spec_gate', 'true']));
+        assert.equal(readStatusFile(delicateDir).human_spec_gate, true);
+
+        const doneId = 'gate-done';
+        writeTask(tasksRoot, doneId, makeStatus(doneId, { phases: { ...makeStatus(doneId).phases, spec_review: { status: 'done', agent: 'codex' } } }));
+        const doneNote = captureStdout(() => taskSet([doneId, 'human_spec_gate', 'true']));
+        assert.match(doneNote, /full-tier.*canon run --reroute gate-done/);
+        assert.doesNotMatch(doneNote, /reset-spec-review|takes effect on the next canon run/);
+        const doneDisarm = captureStdout(() => taskSet([doneId, 'human_spec_gate', 'false']));
+        assert.equal(doneDisarm.trim(), '');
+
+        const startedId = 'gate-started';
+        writeTask(tasksRoot, startedId, makeStatus(startedId, { phases: { ...makeStatus(startedId).phases, implement: { status: 'in_progress', agent: 'codex' } } }));
+        assert.match(captureStdout(() => taskSet([startedId, 'human_spec_gate', 'true'])), /takes effect on the next canon run/);
+        assert.match(captureStdout(() => taskSet([startedId, 'human_spec_gate', 'false'])), /takes effect on the next canon run/);
+        const pendingId = 'gate-pending';
+        writeTask(tasksRoot, pendingId);
+        assert.equal(captureStdout(() => taskSet([pendingId, 'human_spec_gate', 'true'])).trim(), '');
+        assert.equal(captureStdout(() => taskSet([pendingId, 'human_spec_gate', 'false'])).trim(), '');
     });
 });
 

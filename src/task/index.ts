@@ -24,12 +24,11 @@ const VALID_PHASES = new Set<string>(PHASE_ORDER);
 const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
 export const VALID_VERDICTS = new Set<string>(['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap', 'sanctioned']);
 const REVIEW_PHASES = new Set<string>(['spec_review', 'code_review']);
-const SETTABLE_FIELDS = ['title', 'task_size', 'delicate', 'worktree', 'base_branch'] as const;
+const SETTABLE_FIELDS = ['title', 'task_size', 'delicate', 'worktree', 'base_branch', 'human_spec_gate'] as const;
 const SETTABLE_FIELD_SET = new Set<string>(SETTABLE_FIELDS);
 const IMMUTABLE_FIELDS = new Set<string>(['id', 'created', 'updated']);
 const REDIRECT_MESSAGES: Record<string, string> = {
-    full_send: 'a per-run stance, not durable metadata. Use `canon run --full-send <id>`, which also clears the spec gate and enforces the delicate→`--force` guard.',
-    human_spec_gate: 'the spec gate is self-clearing. Re-run `canon run <id>` to proceed past it, or use `canon run --full-send <id>` to skip it entirely.',
+    full_send: 'persisted in status.json until `canon run --reroute` clears it or arming the gate with `canon task set <id> human_spec_gate true` does. Use `canon run --full-send <id>` to enable it; the delicate-task guard requires `--force`.',
     status: 'derived from phase states. Use `canon task phase <id> <phase> <status>`.',
     branch: 'load-bearing git identity; retargeting it desyncs the worktree. Not settable via `canon task set`.',
     phases: 'nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.',
@@ -159,7 +158,7 @@ function listTemplateFiles(): string[] {
         .sort();
 }
 
-function printCreatedTask(taskDir: string, baseBranch: string): void {
+function printCreatedTask(taskId: string, taskDir: string, baseBranch: string): void {
     console.log(`Created task: ${taskDir}`);
     console.log('Files:');
     for (const file of fs.readdirSync(taskDir).sort()) {
@@ -169,7 +168,7 @@ function printCreatedTask(taskDir: string, baseBranch: string): void {
     console.log(`Next: Write the spec in ${taskDir}/spec.md`);
     console.log('');
     console.log(`  Defaults: task_size=M, delicate=false, human_spec_gate=true, base_branch=${baseBranch}`);
-    console.log(`  Edit ${taskDir}/status.json to adjust before running the pipeline.`);
+    console.log(`  Adjust with: canon task set ${taskId} <field> <value>`);
 }
 
 export function taskNew(args: string[]): void {
@@ -236,7 +235,7 @@ export function taskNew(args: string[]): void {
         console.error(`Warning: created task without canon snapshot refresh: ${message}`);
     }
 
-    printCreatedTask(taskDir, baseBranch);
+    printCreatedTask(id, taskDir, baseBranch);
 }
 
 function derivePhase(status: StatusJson): string {
@@ -1443,20 +1442,20 @@ function nudgeShippableTasks(): void {
     console.log('  Run `canon run <id> --ship` on each to archive + clean up.');
 }
 
-function taskSetValue(taskId: string, field: string, value: string, status: StatusJson): void {
+function taskSetValue(taskId: string, field: string, value: string, status: StatusJson): string[] {
     switch (field) {
         case 'title':
             if (value.includes('\n') || value.includes('\r')) {
                 throw new Error('Error: title must be single-line (no embedded newlines).');
             }
             status.title = value;
-            return;
+            return [];
         case 'task_size':
             if (!TASK_SIZE_VALUES.has(value as TaskSize)) {
                 throw new Error(`Error: invalid task_size '${value}'. Must be one of: XS, S, M, L, XL.`);
             }
             status.task_size = value as TaskSize;
-            return;
+            return [];
         case 'delicate':
         case 'worktree': {
             const normalized = value.toLowerCase();
@@ -1464,7 +1463,26 @@ function taskSetValue(taskId: string, field: string, value: string, status: Stat
                 throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
             }
             status[field] = normalized === 'true';
-            return;
+            return [];
+        }
+        case 'human_spec_gate': {
+            const normalized = value.toLowerCase();
+            if (normalized !== 'true' && normalized !== 'false') {
+                throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
+            }
+            if (normalized === 'false') {
+                if (status.delicate === true) {
+                    throw new Error(`Error: human_spec_gate cannot be disarmed on delicate task ${taskId}. Use \`canon run --full-send --force ${taskId}\` to skip the spec gate on a delicate task, or re-run \`canon run ${taskId}\` to proceed past a gate that already halted.`);
+                }
+                status.human_spec_gate = false;
+                return [];
+            }
+            status.human_spec_gate = true;
+            if (status.full_send === true) {
+                status.full_send = false;
+                return [`Note: full-send was cleared on task ${taskId} because arming the spec gate re-introduces a human checkpoint. Run \`canon run --full-send ${taskId}\` to re-enable it.`];
+            }
+            return [];
         }
         case 'base_branch': {
             const trimmed = value.trim();
@@ -1473,7 +1491,7 @@ function taskSetValue(taskId: string, field: string, value: string, status: Stat
             }
             validateBranchField(trimmed, taskId, 'base_branch');
             status.base_branch = trimmed;
-            return;
+            return [];
         }
         default:
             throw new Error(`Error: internal error — unsupported settable field '${field}'.`);
@@ -1515,10 +1533,16 @@ export function taskSet(args: string[]): void {
     }
 
     if (SETTABLE_FIELD_SET.has(field)) {
-        taskSetValue(id, field, value, status);
+        const notes = taskSetValue(id, field, value, status);
         status.updated = today();
         writeStatusAtomic(statusPath, status);
-        if (taskHasStarted(status)) {
+        for (const note of notes) console.log(note);
+        const specReviewDone = status.phases.spec_review?.status === 'done';
+        if (field === 'human_spec_gate' && specReviewDone) {
+            if (status.human_spec_gate === true) {
+                console.log(`Note: spec_review is already done on task ${id}, so the spec gate fires only if spec_review runs again — via a full-tier \`canon run --reroute ${id}\`.`);
+            }
+        } else if (taskHasStarted(status)) {
             console.log(`Warning: ${field} on task ${id} takes effect on the next canon run.`);
         }
         return;
@@ -1526,9 +1550,6 @@ export function taskSet(args: string[]): void {
 
     if (field === 'full_send') {
         throw new Error(`Error: full_send is ${taskSetRedirectMessage(field)}`);
-    }
-    if (field === 'human_spec_gate') {
-        throw new Error(`Error: human_spec_gate is ${taskSetRedirectMessage(field)}`);
     }
     if (field === 'status') {
         throw new Error(`Error: status is ${taskSetRedirectMessage(field)}`);
