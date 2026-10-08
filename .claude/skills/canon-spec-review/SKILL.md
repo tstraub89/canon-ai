@@ -39,7 +39,7 @@ State briefly: task ID, size, delicate flag, "dispatching 3 parallel sub-agents.
 
 ### 2. Dispatch 3 sub-agents in one message
 
-Send a SINGLE message with three Agent tool calls so they run concurrently. Every call uses `subagent_type: spec-review-lens` and carries the full spec text inline, its angle, scope and rubric. Each lens returns cited findings in its own format. If the Agent tool rejects `spec-review-lens`, stop and tell the human to run `canon upgrade`, then start a new Claude Code session; do not fall back to another agent type.
+Send a SINGLE message with three Agent tool calls so they run concurrently. Every call uses `subagent_type: spec-review-lens` and carries the full spec text inline, its angle, scope and rubric. Agent B's call also passes `model: haiku`; its lookups are mechanical, while A and C need judgment and inherit the session model. Each lens returns cited findings in its own format. If the Agent tool rejects `spec-review-lens`, stop and tell the human to run `canon upgrade`, then start a new Claude Code session; do not fall back to another agent type.
 
 #### Agent A — Structural / shape
 
