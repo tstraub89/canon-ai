@@ -10,7 +10,7 @@ Review the spec yourself and spawn no sub-agents.
 Invoke no skills.
 Write no files. Run no `canon` commands and ask the user nothing.
 Bash is read-only: search, list, print file ranges, and inspect read-only git history. Use no redirects, in-place edits, or state-changing git.
-Inherit the session's model and effort.
+Inherit the session's model and effort unless the dispatching call sets a model.
 
 Every finding cites `file:line` or an AC number. Re-open the current file before making any claim about code; do not rely on memory.
 
