@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.8.0] — 2026-10-07
+
+### Changed
+
+- **`/canon-spec-review`'s factual reviewer now runs on Haiku.** The reviewer that checks a spec's paths, symbols, and signatures against the code now runs on `haiku`. Its work is lookups, so the smaller model is enough and costs less. The shape and spec-quality reviewers still use your session's model. Run `canon upgrade`, then start a new Claude Code session to pick it up.
+
 ## [3.7.0] — 2026-10-06
 
 ### Added
