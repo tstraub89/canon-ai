@@ -1,8 +1,20 @@
-# Agent Quality Rules
+# canon-ai
 
 canon-ai is a TypeScript/Node CLI published as an npm package. It scaffolds a Claude + Codex spec-driven pipeline into other repositories, and canon-ai dogfoods that same pipeline on itself. That's why `tasks/`, worktree isolation, and `templates/` mirrors exist.
 
 This is canon-ai's shared project overview. It gives both agents the same starting picture; detailed operating rules arrive just in time through skills, prompt templates, and the docs below.
+
+## Commands
+
+Node 24 (`engines`), TypeScript, ESM, built with `tsup`; unit tests use the Node native test runner with `tsx`.
+
+```bash
+npm run build && npm run type-check && npm run lint && npm test
+npm run sync-templates:check   # root canon-managed files vs their templates/ mirrors
+npm run docs-refs-check
+```
+
+`docs/architecture.md` holds the canonical validation and CI commands; run that section before checks. `canon run <id> --pr` opens a draft PR at `human_review`; `canon run <id> --ship` runs the post-merge cleanup path after approval. Other CLI subcommands: `canon --help`.
 
 ## Adopter Scope
 
@@ -35,26 +47,19 @@ canon-ai runs a phase pipeline: `spec -> spec_review -> plan -> implement -> cod
 - `canon task phase` and `canon task accept` manage task state; prefer them over hand-editing `status.json`.
 - `canon run` drives the pipeline, `canon watch` observes detached runs, and `canon stop` terminates them when needed.
 
-## Stack
-
-TypeScript/Node CLI, built and tested with `npm run build`, `npm test`, `npm run lint`, and `npm run type-check`.
-
-## Commands
-
-- `canon init` scaffolds canon into a repo.
-- `canon doctor` checks environment and setup.
-- `canon task new`, `list`, `status`, `phase`, `accept`, `set`, `reset-spec-review`, and `reset-code-review` manage task state.
-- `canon run`, `watch`, `stop`, `update`, and `upgrade` operate the pipeline and package lifecycle.
-- `canon run --pr` opens a draft PR at `human_review`; `canon run --ship` runs the post-merge cleanup path after approval.
-
 ## Conventions
 
 - Task artifacts live under `tasks/<id>/`; `tasks/<id>/notes.md` is the raw scratchpad and `docs/lessons-learned.md` is the promotion buffer.
-- `docs/architecture.md` holds validation and CI commands; run that section before checks.
 - Root canon-managed files are authoritative; `templates/` is a derived mirror. Edit the root copy, then run `npm run sync-templates` and verify with `npm run sync-templates:check`. `AGENTS.md` and `CLAUDE.md` are not part of the managed set; they have no `templates/` mirror and need no sync.
 - Prefer `canon task` helpers over direct `status.json` edits so phase state stays consistent.
 - Use worktrees for task isolation when canon creates them.
 - The managed set lives in `src/lib/canon-owned.ts` as `CANON_OWNED` and `DELIMITED`; add managed files there, not here.
+
+## Boundaries
+
+- **This repo is public.** Code, tests, fixtures, docs, commit messages, issues, and PR text must not name any private adopter project: no product names, task ids, file paths, or PR numbers from other repositories. Use neutral placeholders (`example-app`, `tasks/example-task/`).
+- Never edit `templates/` mirrors directly; edit the root copy and sync.
+- Never force-push `main`; the pipeline and release flow manage branch state.
 
 ## Code Review Rules
 
@@ -76,4 +81,3 @@ TypeScript/Node CLI, built and tested with `npm run build`, `npm test`, `npm run
 
 - Append short raw observations to `tasks/<id>/notes.md` with a phase prefix.
 - Re-run `canon doctor` after install or when environment assumptions change.
-- Do not force-push `main`; the pipeline and release flow manage branch state.
