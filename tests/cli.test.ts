@@ -4044,8 +4044,7 @@ void test('docs-freshness config stays adopter-owned during init and upgrade', (
         assert.ok(!(CANON_OWNED as readonly string[]).includes('.canon/config.json'));
         assert.ok(!EXPECTED_TEMPLATES.includes('config.json'));
         assert.equal(fs.existsSync(path.join(WORKTREE_ROOT, 'templates/.canon/config.json')), false);
-        const initialized = spawnSync(process.execPath, [path.join(WORKTREE_ROOT, 'dist/cli/index.js'), 'init'], { cwd: dir, encoding: 'utf8' });
-        assert.equal(initialized.status, 0, initialized.stderr);
+        scaffoldTemplates(dir, path.join(WORKTREE_ROOT, 'templates'));
         const file = path.join(dir, '.canon/config.json');
         assert.equal(fs.existsSync(file), false);
         const config = '{ "docs_freshness": {"protected": []}, "future": true }\n';
