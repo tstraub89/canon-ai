@@ -1416,3 +1416,34 @@ for (const worktreeInvalid of [true, false]) {
         });
     });
 }
+
+for (const [name, doc] of [
+    ['non-ASCII', 'docs/café.md'],
+    ['quote', 'docs/a"quote.md'],
+    ['tab', 'docs/control\tname.md'],
+    ['newline', 'docs/control\nname.md'],
+] as const) {
+    for (const kind of ['protected', 'mapped', 'flag-only'] as const) {
+        void test(`ship rejects git-quoted ${name} configured doc (${kind})`, () => {
+            withTempDir('ship-quoted-configured-doc-', dir => {
+                const { localDir } = makeGitFixture(dir, { [doc]: 'original\n' });
+                gitIn(localDir, 'config', 'core.quotePath', 'true');
+                const docsConfig = kind === 'protected' ? { protected: [doc] }
+                    : kind === 'mapped' ? { paths: { 'api/**': [doc] } }
+                    : { flag_only: [doc] };
+                writeRel(localDir, '.canon/config.json', JSON.stringify({ docs_freshness: docsConfig }));
+                fs.appendFileSync(path.join(localDir, doc), 'dirty correction\n');
+                const before = gitRawIn(localDir, 'status', '--porcelain=v1', '-uall', '--', doc);
+                assert.match(before, /^ M "docs\//);
+                const result = spawnSync(process.execPath, ['--import', MD_LOADER, '--import', TSX_LOADER, '-e',
+                    `import(${JSON.stringify(MAIN_HREF)}).then(m => m.classifyAndPreserveSharedDocDirt());`,
+                ], { cwd: localDir, encoding: 'utf8' });
+                assert.notEqual(result.status, 0, `ship must abort on ${kind} doc dirt: ${JSON.stringify(doc)}`);
+                assert.match(result.stderr, /--ship aborted: uncommitted shared-doc edits/);
+                assert.ok(result.stderr.includes(doc), result.stderr);
+                assert.equal(fs.readFileSync(path.join(localDir, doc), 'utf8'), 'original\ndirty correction\n');
+                assert.equal(gitRawIn(localDir, 'status', '--porcelain=v1', '-uall', '--', doc), before);
+            });
+        });
+    }
+}

@@ -185,8 +185,9 @@ function printUsage() {
   console.log("  --expect <phase>    Assert current phase before running");
   console.log("  --pr                At human_review: push branch and open a draft PR (requires gh).");
   console.log("                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and");
-  console.log(`                      protected/configured docs listed in spec.md's "### Affected Files" table (all admitted docs after QA). Dirty`);
-  console.log("                      files outside that set die with a remediation message.");
+  console.log(`                      protected/configured docs listed in spec.md's "### Affected Files"`);
+  console.log("                      table (all admitted docs once QA is done). Dirty files outside");
+  console.log("                      that set die with a remediation message.");
   console.log("                      Aborts if HEAD's tree differs from origin/<base> on files not in");
   console.log("                      spec's Affected Files (bypass with --force).");
   console.log("  --push              At human_review: push branch only, no PR (requires gh). Same");
@@ -1715,7 +1716,7 @@ function segmentRegex(segment) {
   return result;
 }
 function matchesDocsGlob(pattern, filePath) {
-  const segments = pattern.split("/");
+  const segments = pattern.split("/").filter((segment, i, parts) => segment !== "**" || parts[i - 1] !== "**");
   const expression = segments.map((segment, i) => segment === "**" ? i === segments.length - 1 ? ".*" : "(?:[^/]+/)*" : segmentRegex(segment) + (i < segments.length - 1 ? "/" : "")).join("");
   return new RegExp(`^${expression}$`).test(filePath);
 }
@@ -8087,15 +8088,15 @@ function classifyAndPreserveSharedDocDirt() {
   for (const entry of parsePorcelainEntries(statusResult.stdout)) {
     const code = entry.indexStatus + entry.worktreeStatus;
     for (const entryPath of entry.paths) {
-      porcelainByPath.set(entryPath, code);
+      porcelainByPath.set(normalizeGitPath(entryPath), code);
     }
   }
-  const dirty = sharedDocs.filter((relPath) => porcelainByPath.has(relPath));
+  const dirty = sharedDocs.filter((relPath) => porcelainByPath.has(relPath.normalize("NFC")));
   if (dirty.length === 0) return [];
   const managedDocs = configured;
   const entries = dirty.map((relPath) => {
     const docClass = managedDocs.includes(relPath) ? "managed" : "telemetry";
-    const porcelainCode = porcelainByPath.get(relPath) ?? null;
+    const porcelainCode = porcelainByPath.get(relPath.normalize("NFC")) ?? null;
     if (porcelainCode !== " M") {
       return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
     }

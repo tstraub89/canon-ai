@@ -325,7 +325,10 @@ Create an adopter-owned `.canon/config.json` to tell QA which docs to keep curre
 product-context, and decisions. Omit it to keep those defaults; use `[]` to clear
 them. Add docs through `paths`, using `"**"` to check one on every task.
 Globs support `**`, `*`, `?`, and `{a,b}`; wildcards match dotfiles and hidden
-directories too. QA scans mapped docs when the task's committed diff matches,
+directories too. Brace alternatives must be one level and stay within a single
+path segment; nested braces and alternatives containing slashes are unsupported.
+Keys match file paths: use a glob such as `api/**` rather than a directory-only
+key ending in a slash. QA scans mapped docs when the task's committed diff matches,
 while every mapped doc stays eligible for QA commits across later review rounds.
 
 `flag_only` removes docs from QA's edit permission. When selected by the protected
@@ -334,6 +337,8 @@ of the QA summary instead. An implementer may still edit a flag-only doc explici
 listed in the spec's Affected Files.
 
 `canon init` does not create this file and `canon upgrade` leaves it alone.
+Commit the config before starting worktree-isolated tasks: each worktree reads its
+branch's copy, so uncommitted main-checkout changes are not available there.
 Malformed config stops runs, including reroute and ship, and fails the docs-freshness
 check in `canon doctor`; unknown keys warn. Telemetry files and task-artifact paths
 cannot be configured. Without a config, the default protected set applies.

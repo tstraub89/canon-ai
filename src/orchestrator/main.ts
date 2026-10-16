@@ -2057,17 +2057,17 @@ export function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
     for (const entry of splitGit.parsePorcelainEntries(statusResult.stdout)) {
         const code = entry.indexStatus + entry.worktreeStatus;
         for (const entryPath of entry.paths) {
-            porcelainByPath.set(entryPath, code);
+            porcelainByPath.set(normalizeGitPath(entryPath), code);
         }
     }
 
-    const dirty = sharedDocs.filter(relPath => porcelainByPath.has(relPath));
+    const dirty = sharedDocs.filter(relPath => porcelainByPath.has(relPath.normalize('NFC')));
     if (dirty.length === 0) return [];
 
     const managedDocs: readonly string[] = configured;
     const entries = dirty.map(relPath => {
         const docClass: splitValidation.SharedDocClass = managedDocs.includes(relPath) ? 'managed' : 'telemetry';
-        const porcelainCode = porcelainByPath.get(relPath) ?? null;
+        const porcelainCode = porcelainByPath.get(relPath.normalize('NFC')) ?? null;
         if (porcelainCode !== ' M') {
             return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
         }

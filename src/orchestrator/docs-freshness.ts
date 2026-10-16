@@ -113,7 +113,9 @@ function segmentRegex(segment: string): string {
     return result;
 }
 export function matchesDocsGlob(pattern: string, filePath: string): boolean {
-    const segments = pattern.split('/');
+    // Adjacent globstars describe the same paths; keeping each one multiplies
+    // the ways the regex can partition a deep path when its suffix fails.
+    const segments = pattern.split('/').filter((segment, i, parts) => segment !== '**' || parts[i - 1] !== '**');
     const expression = segments.map((segment, i) => segment === '**'
         ? (i === segments.length - 1 ? '.*' : '(?:[^/]+/)*')
         : segmentRegex(segment) + (i < segments.length - 1 ? '/' : '')).join('');

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -112,4 +113,22 @@ void test('equivalent doc path spellings are normalized before set subtraction',
     assert.deepEqual(sets.configured, ['docs/reference.md']);
     assert.deepEqual(sets.admitted, []);
     assert.deepEqual(sets.promptFlagged, ['docs/reference.md']);
+});
+
+void test('consecutive globstars stay bounded on a deep nonmatching path', () => {
+    const moduleUrl = new URL('../src/orchestrator/docs-freshness.ts', import.meta.url).href;
+    const result = spawnSync(process.execPath, [
+        '--import', path.join(process.cwd(), 'node_modules/tsx/dist/loader.mjs'),
+        '--input-type=module', '-e',
+        `import { matchesDocsGlob } from ${JSON.stringify(moduleUrl)};
+        const glob = '**/'.repeat(30) + 'target.md';
+        const prefix = 'deep/'.repeat(30);
+        console.log(JSON.stringify([
+            matchesDocsGlob(glob, prefix + 'other.md'),
+            matchesDocsGlob(glob, prefix + 'target.md'),
+        ]));`,
+    ], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '[false,true]');
 });
