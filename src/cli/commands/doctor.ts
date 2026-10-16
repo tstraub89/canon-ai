@@ -1,6 +1,6 @@
 import { loadDocsFreshnessConfig, resolveDocsFreshness, matchesDocsGlob, formatUnknownKeysWarning } from '../../orchestrator/docs-freshness.js';
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join, relative, sep as pathSep } from 'path';
 import { HEARTBEAT_STALE_AFTER_MS, isHeartbeatStale } from '../../orchestrator/heartbeat.js';
@@ -698,6 +698,7 @@ export function checkDocsFreshness(cwd: string): Check {
     if (loaded.unknownKeys.length) warnings.push(formatUnknownKeysWarning(loaded.unknownKeys));
     for (const doc of sets.configured) {
         if (!existsSync(join(cwd, doc))) warnings.push(`configured doc missing: ${doc}`);
+        else if (statSync(join(cwd, doc)).isDirectory()) warnings.push(`configured doc is a directory, not a file: ${doc}`);
     }
     const globs = Object.keys(loaded.config?.paths ?? {});
     if (globs.length) {

@@ -437,6 +437,9 @@ function docProblem(doc, key) {
     return `doc path "${doc}" in ${key} must be repo-relative with no ".." segment.`;
   }
   if (/[*?[\]{}]/.test(doc)) return `doc path "${doc}" in ${key} must not contain glob characters.`;
+  if (/[\\/]$/.test(doc) || path6.posix.normalize(doc.replaceAll("\\", "/")) === ".") {
+    return `doc path "${doc}" in ${key} must name a file, not a directory.`;
+  }
   if (isPipelinePath(path6.posix.normalize(doc.replaceAll("\\", "/")))) {
     return `doc path "${doc}" in ${key} is a pipeline telemetry file or task artifact; telemetry files and tasks/ paths can't be configured.`;
   }
@@ -499,8 +502,10 @@ function segmentRegex(segment) {
   let result = "";
   for (let i = 0; i < segment.length; i++) {
     const char = segment[i];
-    if (char === "*") result += "[^/]*";
-    else if (char === "?") result += "[^/]";
+    if (char === "*") {
+      while (segment[i + 1] === "*") i++;
+      result += "[^/]*";
+    } else if (char === "?") result += "[^/]";
     else if (char === "{" && segment.indexOf("}", i) > i) {
       const end = segment.indexOf("}", i);
       result += `(?:${segment.slice(i + 1, end).split(",").map(segmentRegex).join("|")})`;
@@ -537,7 +542,7 @@ function resolveDocsFreshness(config2, diff) {
 
 // src/cli/commands/doctor.ts
 import { execSync, spawnSync as spawnSync5 } from "child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, relative, sep as pathSep } from "path";
 
@@ -1726,6 +1731,7 @@ function checkDocsFreshness(cwd) {
   if (loaded.unknownKeys.length) warnings.push(formatUnknownKeysWarning(loaded.unknownKeys));
   for (const doc of sets.configured) {
     if (!existsSync(join(cwd, doc))) warnings.push(`configured doc missing: ${doc}`);
+    else if (statSync(join(cwd, doc)).isDirectory()) warnings.push(`configured doc is a directory, not a file: ${doc}`);
   }
   const globs = Object.keys(loaded.config?.paths ?? {});
   if (globs.length) {
@@ -1805,7 +1811,7 @@ import {
   readFileSync as readFileSync2,
   mkdirSync,
   readdirSync as readdirSync2,
-  statSync,
+  statSync as statSync2,
   writeFileSync
 } from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
@@ -1851,7 +1857,7 @@ function walkDir(dir, base = dir) {
   const results = [];
   for (const entry of readdirSync2(dir)) {
     const full = join2(dir, entry);
-    if (statSync(full).isDirectory()) {
+    if (statSync2(full).isDirectory()) {
       results.push(...walkDir(full, base));
     } else {
       results.push(relative2(base, full));

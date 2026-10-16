@@ -71,6 +71,7 @@ for (const [value, problem] of [
     ...['protected', 'flag_only', 'paths'].map(key => [JSON.stringify({ docs_freshness: { [key]: key === 'paths' ? { '**': ['docs/lessons-learned.md'] } : ['docs/lessons-learned.md'] } }), /docs\/lessons-learned.md.*telemetry/] as const),
     [JSON.stringify({ docs_freshness: { protected: ['tasks/x/spec.md'] } }), /tasks\/x\/spec.md.*task artifact/],
     [JSON.stringify({ docs_freshness: { flag_only: ['./docs/lessons-learned.md'] } }), /telemetry/],
+    ...['docs/', '.', './', 'docs\\'].map(doc => [JSON.stringify({ docs_freshness: { paths: { '**': [doc] } } }), /not a directory/] as const),
 ] as const) {
     void test(`invalid config ${value}`, () => {
         const loaded = parseDocsFreshnessConfig(value);
@@ -113,6 +114,15 @@ void test('equivalent doc path spellings are normalized before set subtraction',
     assert.deepEqual(sets.configured, ['docs/reference.md']);
     assert.deepEqual(sets.admitted, []);
     assert.deepEqual(sets.promptFlagged, ['docs/reference.md']);
+});
+
+void test('repeated stars in one segment stay bounded on a nonmatching name', () => {
+    const glob = 'docs/' + '*'.repeat(10) + 'x.md';
+    const started = Date.now();
+    assert.equal(matchesDocsGlob(glob, 'docs/' + 'a'.repeat(26) + '.md'), false);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(matchesDocsGlob(glob, 'docs/abcx.md'), true);
+    assert.equal(matchesDocsGlob('a**b', 'axyzb'), true);
 });
 
 void test('consecutive globstars stay bounded on a deep nonmatching path', () => {

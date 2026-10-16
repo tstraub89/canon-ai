@@ -4023,6 +4023,7 @@ void test('doctor docs freshness: source, validation, unknown keys, missing docs
             [JSON.stringify({ docs_freshness: { protected: [] } }), 'pass', /config.json: 0 protected, 0 mappings, 0 flag-only/],
             [JSON.stringify({ typo: true, docs_freshness: { protected: [] } }), 'warn', /unknown key.*typo/],
             [JSON.stringify({ docs_freshness: { protected: ['missing.md'] } }), 'warn', /configured doc missing: missing.md/],
+            [JSON.stringify({ docs_freshness: { protected: ['.canon'] } }), 'warn', /configured doc is a directory, not a file: .canon/],
             [JSON.stringify({ docs_freshness: { protected: [], paths: { 'api/**': [] } } }), 'warn', /glob matches no tracked file: api/],
         ] as const;
         execFileSync('git', ['init', dir], { stdio: 'ignore' });

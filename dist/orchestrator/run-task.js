@@ -1639,6 +1639,9 @@ function docProblem(doc, key) {
     return `doc path "${doc}" in ${key} must be repo-relative with no ".." segment.`;
   }
   if (/[*?[\]{}]/.test(doc)) return `doc path "${doc}" in ${key} must not contain glob characters.`;
+  if (/[\\/]$/.test(doc) || path6.posix.normalize(doc.replaceAll("\\", "/")) === ".") {
+    return `doc path "${doc}" in ${key} must name a file, not a directory.`;
+  }
   if (isPipelinePath(path6.posix.normalize(doc.replaceAll("\\", "/")))) {
     return `doc path "${doc}" in ${key} is a pipeline telemetry file or task artifact; telemetry files and tasks/ paths can't be configured.`;
   }
@@ -1706,8 +1709,10 @@ function segmentRegex(segment) {
   let result = "";
   for (let i = 0; i < segment.length; i++) {
     const char = segment[i];
-    if (char === "*") result += "[^/]*";
-    else if (char === "?") result += "[^/]";
+    if (char === "*") {
+      while (segment[i + 1] === "*") i++;
+      result += "[^/]*";
+    } else if (char === "?") result += "[^/]";
     else if (char === "{" && segment.indexOf("}", i) > i) {
       const end = segment.indexOf("}", i);
       result += `(?:${segment.slice(i + 1, end).split(",").map(segmentRegex).join("|")})`;

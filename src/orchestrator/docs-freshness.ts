@@ -35,6 +35,10 @@ function docProblem(doc: string, key: string): string | null {
         return `doc path "${doc}" in ${key} must be repo-relative with no ".." segment.`;
     }
     if (/[*?[\]{}]/.test(doc)) return `doc path "${doc}" in ${key} must not contain glob characters.`;
+    // Allowlists compare exact file paths, so a directory entry would admit nothing.
+    if (/[\\/]$/.test(doc) || path.posix.normalize(doc.replaceAll('\\', '/')) === '.') {
+        return `doc path "${doc}" in ${key} must name a file, not a directory.`;
+    }
     // Normalize equivalent spellings before applying the disjoint-class rule.
     if (isPipelinePath(path.posix.normalize(doc.replaceAll('\\', '/')))) {
         return `doc path "${doc}" in ${key} is a pipeline telemetry file or task artifact; telemetry files and tasks/ paths can't be configured.`;
@@ -102,7 +106,12 @@ function segmentRegex(segment: string): string {
     let result = '';
     for (let i = 0; i < segment.length; i++) {
         const char = segment[i];
-        if (char === '*') result += '[^/]*';
+        if (char === '*') {
+            // Adjacent stars in a segment mean one star; separate `[^/]*` runs
+            // backtrack exponentially on a nonmatching name.
+            while (segment[i + 1] === '*') i++;
+            result += '[^/]*';
+        }
         else if (char === '?') result += '[^/]';
         else if (char === '{' && segment.indexOf('}', i) > i) {
             const end = segment.indexOf('}', i);
