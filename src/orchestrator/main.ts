@@ -1,3 +1,4 @@
+import { loadDocsFreshnessConfig, requireDocsFreshnessConfig, resolveDocsFreshness, formatUnknownKeysWarning } from './docs-freshness.js';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -882,7 +883,7 @@ export function resolveQaPrBody(taskIds: readonly string[], activeCwd: string): 
 }
 
 export function commitQaArtifacts(taskIds: string[], cwd: string): void {
-    const affectedManagedDocs = new Set<string>(splitWorktree.PIPELINE_MANAGED_DOCS);
+    const affectedManagedDocs = new Set<string>(resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null).admitted);
 
     const dirtyResult = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
     if (!dirtyResult.ok) {
@@ -909,7 +910,7 @@ export function commitQaArtifacts(taskIds: string[], cwd: string): void {
         die(
             `QA-end commit aborted: working tree has dirty files outside the QA-end allowlist.\n` +
             unexpected.map(entry => `  ${entry.raw}`).join('\n') + '\n' +
-            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and all PIPELINE_MANAGED_DOCS.\n` +
+            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, and all admitted docs (protected plus mapped in .canon/config.json, minus flag-only).\n` +
             `Source or test edits must be committed during the implement phase, not left dirty at QA-end.`
         );
     }
@@ -1170,6 +1171,7 @@ function shouldRunFullSendTail(taskIds: string[]): boolean {
 }
 
 export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR: boolean): void {
+    const docSets = resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null);
     if (createPR) {
         ghAvailable = splitGit.isCommandAvailable('gh');
     }
@@ -1254,7 +1256,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 // Kept with the trailing slash so prefix matching is
                 // boundary-correct (does not accept `dist-other/foo`).
                 affectedPrefixes.add(filePath);
-            } else if ((splitWorktree.PIPELINE_MANAGED_DOCS as readonly string[]).includes(filePath)) {
+            } else if (docSets.admitted.includes(filePath) || docSets.flagOnly.includes(filePath)) {
                 affectedManagedDocs.add(filePath);
             }
         }
@@ -1262,14 +1264,14 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
             warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
         }
 
-        // QA's "Docs Freshness" sweep can edit any PIPELINE_MANAGED_DOCS entry,
+        // QA's "Docs Freshness" sweep can edit any admitted doc,
         // not just ones the spec author predicted. Once qa is done for a task,
-        // union the full managed-docs set so the human-review gate accepts the
+        // union the full admitted set so the human-review gate accepts the
         // promotion without forcing a manual spec backfill before --pr.
         // Mirrors the same union in verifyBaseDrift (validation.ts).
         try {
             if (splitState.readStatus(taskId).phases.qa?.status === 'done') {
-                for (const doc of splitWorktree.PIPELINE_MANAGED_DOCS) {
+                for (const doc of docSets.admitted) {
                     affectedManagedDocs.add(doc);
                 }
             }
@@ -1332,7 +1334,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     }
 
     if (dirtyEntries.length === 0) {
-        die('Human review commit aborted: no dirty task artifacts, telemetry, or managed docs to commit.');
+        die('Human review commit aborted: no dirty task artifacts, telemetry, or configured docs to commit.');
     }
 
     const unexpected = dirtyEntries.filter(entry => !porcelainEntryPaths(entry).every(pathName =>
@@ -1342,10 +1344,10 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(
             `Human review commit aborted: working tree has dirty files outside the human_review allowlist.\n` +
             unexpected.map(entry => `  ${entry.raw}`).join('\n') + `\n` +
-            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, PIPELINE_MANAGED_DOCS entries listed\n` +
+            `The allowlist is: tasks/<id>/, PIPELINE_TELEMETRY_FILES, protected, mapped, or flag-only docs listed\n` +
             `in your spec's '### Affected Files' table (directory-form entries like 'dist/' match subpaths),\n` +
-            `and all PIPELINE_MANAGED_DOCS once qa.status = done (QA's Docs Freshness auto-allowlist).\n` +
-            `If this is a managed doc this task legitimately edits before QA, add it to spec.md '### Affected Files' and rerun.\n` +
+            `and all admitted docs once qa.status = done (QA's Docs Freshness auto-allowlist).\n` +
+            `If this is a configured doc this task legitimately edits before QA, add it to spec.md '### Affected Files' and rerun.\n` +
             `If this is a source or test file, it should have been committed during the implement phase — ` +
             `investigate why it is dirty now (unexpected late edits or base-drift/branch contamination are possible causes) ` +
             `and revert with: git checkout HEAD -- <path>`
@@ -1357,7 +1359,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     for (const relPath of stagePaths) {
         if (affectedManagedDocs.has(relPath)) {
             warn(
-                `WARNING: ${relPath} has uncommitted edits and is in PIPELINE_MANAGED_DOCS — ` +
+                `WARNING: ${relPath} has uncommitted edits and is a configured doc — ` +
                 `run \`git diff HEAD -- ${relPath}\` to verify these are this task's work before --ship.`
             );
         }
@@ -2035,14 +2037,16 @@ function rewriteArchivedTaskRefs(taskIds: string[]): void {
 
 type PreservedTelemetryEntry = { relPath: string; suffix: string; backupPath: string };
 
-function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
+export function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
+    const configured = resolveDocsFreshness(requireDocsFreshnessConfig(REPO_ROOT), null).configured;
+    const sharedDocs = [...splitWorktree.PIPELINE_TELEMETRY_FILES, ...configured];
     const statusResult = splitGit.gitSafeAtRaw(
         REPO_ROOT,
         'status',
         '--porcelain=v1',
         '-uall',
         '--',
-        ...splitWorktree.PIPELINE_SHARED_DOCS,
+        ...sharedDocs,
     );
     if (!statusResult.ok) {
         die(`--ship aborted: failed to inspect shared-doc dirt before merging: ${statusResult.stderr}`);
@@ -2053,17 +2057,17 @@ function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
     for (const entry of splitGit.parsePorcelainEntries(statusResult.stdout)) {
         const code = entry.indexStatus + entry.worktreeStatus;
         for (const entryPath of entry.paths) {
-            porcelainByPath.set(entryPath, code);
+            porcelainByPath.set(normalizeGitPath(entryPath), code);
         }
     }
 
-    const dirty = splitWorktree.PIPELINE_SHARED_DOCS.filter(relPath => porcelainByPath.has(relPath));
+    const dirty = sharedDocs.filter(relPath => porcelainByPath.has(relPath.normalize('NFC')));
     if (dirty.length === 0) return [];
 
-    const managedDocs: readonly string[] = splitWorktree.PIPELINE_MANAGED_DOCS;
+    const managedDocs: readonly string[] = configured;
     const entries = dirty.map(relPath => {
         const docClass: splitValidation.SharedDocClass = managedDocs.includes(relPath) ? 'managed' : 'telemetry';
-        const porcelainCode = porcelainByPath.get(relPath) ?? null;
+        const porcelainCode = porcelainByPath.get(relPath.normalize('NFC')) ?? null;
         if (porcelainCode !== ' M') {
             return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
         }
@@ -3277,7 +3281,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             }
         } else {
             const changedFiles = affected.files;
-            const allowlist = splitValidation.buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+            const allowlist = splitValidation.buildAdmittedAllowlist(taskIds, cwd);
             if (verdicts.includes('spec_gap')) {
                 specGapScopeFiles = splitValidation.verifyBaseDriftFromData(
                     changedFiles, allowlist.paths, taskIds, allowlist.prefixes,
@@ -3555,6 +3559,11 @@ export async function main(): Promise<void> {
     }
     const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
     checkDeps(cliArgs.taskIds, skipAgentDeps);
+    const configRoot = cliArgs.ship || cliArgs.taskIds.length === 0 || splitState.isOrphanedWorktreeState(cliArgs.taskIds[0])
+        ? REPO_ROOT : splitWorktree.getActiveCwd(cliArgs.taskIds, { tolerateMissingWorktree: true });
+    const docsConfig = loadDocsFreshnessConfig(configRoot);
+    if (!docsConfig.ok) die(docsConfig.message);
+    if (docsConfig.ok && docsConfig.unknownKeys.length > 0) warn(formatUnknownKeysWarning(docsConfig.unknownKeys));
 
     // Early-start the heartbeat for detached children. By the time we reach
     // this point:

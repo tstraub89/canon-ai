@@ -86,8 +86,9 @@ canon run options:
   --interactive, -I       Open interactive agent sessions (default: non-interactive)
   --pr                    At human_review: push branch and open a draft PR (requires gh).
                           Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and
-                          managed docs listed in spec.md's "### Affected Files" table. Dirty
-                          files outside that set die with a remediation message.
+                          protected/configured docs listed in spec.md's "### Affected Files"
+                          table (all admitted docs once QA is done). Dirty files outside
+                          that set die with a remediation message.
                           Aborts if HEAD's tree differs from origin/<base> on files not in
                           spec's Affected Files (bypass with --force).
   --push                  At human_review: push branch only, no PR (requires gh). Same allow-list

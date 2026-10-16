@@ -125,8 +125,9 @@ export function printUsage(): void {
     console.log('  --expect <phase>    Assert current phase before running');
     console.log('  --pr                At human_review: push branch and open a draft PR (requires gh).');
     console.log('                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and');
-    console.log('                      managed docs listed in spec.md\'s "### Affected Files" table. Dirty');
-    console.log('                      files outside that set die with a remediation message.');
+    console.log('                      protected/configured docs listed in spec.md\'s "### Affected Files"');
+    console.log('                      table (all admitted docs once QA is done). Dirty files outside');
+    console.log('                      that set die with a remediation message.');
     console.log('                      Aborts if HEAD\'s tree differs from origin/<base> on files not in');
     console.log('                      spec\'s Affected Files (bypass with --force).');
     console.log('  --push              At human_review: push branch only, no PR (requires gh). Same');

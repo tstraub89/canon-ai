@@ -9,7 +9,7 @@ import { runColdCodexReview } from '../agents/codex.js';
 import { getActiveCwd, PIPELINE_TELEMETRY_FILES } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
-import { buildAffectedFilesAllowlist, classifyPreflightBlockers, isTemplateUnfilled, verifyBaseDriftFromData, verifyHandoffAgainstDiff } from '../validation.js';
+import { buildAdmittedAllowlist, classifyPreflightBlockers, isTemplateUnfilled, verifyBaseDriftFromData, verifyHandoffAgainstDiff } from '../validation.js';
 import type { AffectedFilesAllowlist, ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { promptCodeReview, resolveCodeReviewRound } from '../prompts/index.js';
@@ -364,7 +364,7 @@ export async function runCodeReviewPhase(
         return { agent: 'claude', sessionId: null, exitCode: 0 };
     }
 
-    const allowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs: true });
+    const allowlist = buildAdmittedAllowlist(taskIds, activeCwd);
     const outOfScopeFiles = verifyBaseDriftFromData(
         [...changedFiles], allowlist.paths, taskIds, allowlist.prefixes,
     );

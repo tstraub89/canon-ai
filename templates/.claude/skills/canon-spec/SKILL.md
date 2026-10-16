@@ -36,6 +36,7 @@ Read before doing anything else:
 - `docs/decisions.md` — settled decisions (check for conflicts)
 - `docs/patterns.md` — implementation patterns and known pitfalls
 - `docs/lessons-learned.md` — insights from past tasks
+- If the project has a docs-freshness config (config.json in the .canon directory), read its docs_freshness.paths map. For any path you put in Affected Files that matches a glob, name the mapped docs in Docs Impact. List a mapped doc in Affected Files only if the implementer should edit it.
 
 > The Validation Matrix is inline in `.canon/templates/spec.md` (the sizing table lives in `docs/pipeline-orchestrator.md`).
 

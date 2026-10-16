@@ -1,0 +1,12 @@
+{
+  "docs_freshness": {
+    "protected": [
+      "docs/architecture.md",
+      "docs/codebase-map.md",
+      "docs/patterns.md",
+      "docs/product-context.md",
+      "docs/decisions.md",
+      "docs/pipeline-orchestrator.md"
+    ]
+  }
+}

@@ -56,6 +56,13 @@ void test('parsePorcelain handles renames by emitting both old and new paths', (
     assert.ok(dirty.has('src/new/Name.tsx'));
 });
 
+void test('parsePorcelain keeps a literal arrow in a non-rename path intact', () => {
+    const dirty = parsePorcelain(' M docs/a -> b.md\n');
+
+    assert.ok(dirty.has('docs/a -> b.md'));
+    assert.equal(dirty.size, 1);
+});
+
 void test('parsePorcelain strips surrounding quotes on paths with spaces', () => {
     const output = '?? "src/components/With Space/File.tsx"\n';
 

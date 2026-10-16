@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`.canon/config.json` sets which docs QA keeps fresh.** Under `docs_freshness`, map source-path globs to the docs QA must check when a task touches matching files (`paths`), list docs QA should report under "Docs drift" in `done.md` instead of editing (`flag_only`), or replace the default protected set (`protected`). The file is yours: `canon init` doesn't create it and `canon upgrade` never changes it. A malformed file stops every `canon run` form before it changes any state, and `canon doctor` reports the file's status. See "Configuring docs freshness" in the canon-ai README.
+
+### Changed
+
+- **QA's doc list and the QA commit allowlist now come from the same set.** QA's prompt names the protected docs plus any mapped docs whose globs match the task's changes. Previously the prompt named five docs while the allowlist admitted six.
+- **`docs/pipeline-orchestrator.md` is no longer a default protected doc.** It is a canon-managed file in your repo, and `canon upgrade` overwrites it, so QA edits there didn't last.
+
+### Fixed
+
+- **`--ship` and the QA and human-review commits no longer split file names that contain ` -> `.** Only renamed or copied entries in git status are read as an `old -> new` pair.
+
 ## [3.8.0] — 2026-10-07
 
 ### Changed

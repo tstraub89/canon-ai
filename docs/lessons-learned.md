@@ -98,3 +98,19 @@ Turning a silent-empty probe result into an explicit failure is not just "block 
 *(2026-10-05, source: rearm-spec-gate)*
 
 Refusing `human_spec_gate false` on delicate tasks can be sidestepped by toggling `delicate` off, disarming, and toggling it back on — the guard checks state only at the call. Code review flagged it, but the spec scoped the guard to the gate setter, so it shipped as an accepted spec-gap. Rule of thumb: when a spec adds a guard that depends on another settable field, list the settable-field graph in the spec and either guard the dependency's mutation too or record the bypass as an accepted non-goal. A second instance: a spec-mandated recovery note ("full-tier `--reroute`") can be unreachable right after the state it describes, so trace when the advertised command is actually admitted before mandating its wording.
+
+---
+
+### Name the overlap winner before finalizing a user-configured file list
+
+*(2026-10-15, source: configurable-docs-freshness)*
+
+When a new config lets adopters name files that an existing writer already owns (here, a telemetry log with its own unconditional append rule), the spec must state the overlap policy explicitly. Without one, admission order silently decides: a read-only call with an empty doc set still selected the telemetry file, and a configured flag-only telemetry doc would have conflicted with QA's unconditional append. Spec review caught it as F1; the fix was to reject telemetry and task-artifact paths anywhere in the config, so the sets stay disjoint. Rule of thumb: for every new user-supplied file list, enumerate the existing writers of those files and record which one wins before the config schema is final.
+
+---
+
+### Test a hand-rolled glob matcher for backtracking and dot-file behavior
+
+*(2026-10-15, source: configurable-docs-freshness)*
+
+A regex-built `**` matcher with adjacent globstar segments backtracks badly: 30 consecutive globstars against a 30-level non-matching path ran past two seconds, and the regression only failed by hitting a subprocess deadline. Collapsing adjacent `**` segments before building the regex fixed it. The matcher was written in-repo rather than using `path.matchesGlob`, because the config needed dot paths matched and Node's matcher skips them. Rule of thumb: when writing a glob matcher for user config, decide the dot-file rule up front and test a dotted path, and add a deep non-matching case run under a subprocess timeout, since an unbounded test hangs rather than failing.

@@ -32,7 +32,7 @@ Checklist of verifiable outcomes. Each item must be testable.
 
 ### Affected Files
 
-> Any protected doc Claude expects QA to touch (codebase-map, decisions, patterns, architecture, product-context, pipeline-orchestrator) must be listed here. Telemetry files (lessons-learned, task-quality-log, pipeline-invocations) are auto-committed and do not need a row.
+> List protected or mapped docs here only if the implementer should edit them. The project's docs-freshness config can replace the default protected set (architecture, codebase-map, decisions, patterns, product-context) and map code paths to more docs. QA's docs-freshness corrections and telemetry files (lessons-learned, task-quality-log, pipeline-invocations) are admitted separately and do not need a row.
 
 List files that will need changes, with a brief note on what changes.
 
@@ -72,7 +72,7 @@ Mark applicable checks with `- [x]` (replace `<...>` with the project's actual c
 
 ## Docs Impact
 
-Five protected docs (`docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, `docs/product-context.md`). Name any that might go stale if this task ships — this is a heads-up, not a change; the actual update happens at QA. "None" if this is a bug fix or internal-only change.
+Name any protected doc (by default architecture, codebase-map, decisions, patterns, product-context), plus docs mapped from paths this task touches in the project's docs-freshness config, that might go stale if this task ships. This is a heads-up, not a change; QA checks them. List a mapped doc in Affected Files only if the implementer should edit it. Use "None" when no docs might go stale.
 
 ## Known Risks
 

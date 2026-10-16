@@ -1,3 +1,4 @@
+import { requireDocsFreshnessConfig } from '../docs-freshness.js';
 import { info, warn } from '../cli.js';
 import { getClaudeConfig, getMaxReviewLoops } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
@@ -37,7 +38,7 @@ export async function runSpecPhase(
         for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
         const cfg = getClaudeConfig('spec', tasks);
         const activeCwd = getActiveCwd(taskIds);
-        const result = await runClaude(promptSpecRevision(state), interactive, resumeId, cfg.model, cfg.effort, cfg.budget, {
+        const result = await runClaude(promptSpecRevision(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive, resumeId, cfg.model, cfg.effort, cfg.budget, {
             taskId: taskIds.join('+'),
             phase: 'spec',
             iteration: tasks[0].status.phases.spec?.iterations_current_loop
@@ -53,7 +54,7 @@ export async function runSpecPhase(
     for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
     const cfg = getClaudeConfig('spec', tasks);
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptSpec(state), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+    const result = await runClaude(promptSpec(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive, null, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'spec',
         iteration: tasks[0].status.phases.spec?.iterations_current_loop

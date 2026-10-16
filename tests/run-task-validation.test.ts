@@ -1,3 +1,4 @@
+import { DEFAULT_PROTECTED_DOCS } from '../src/orchestrator/docs-freshness.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -27,6 +28,7 @@ import {
     classifyPreflightBlockersFromData,
     classifyBaseDriftFilesFromData,
     buildAffectedFilesAllowlist,
+    buildAdmittedAllowlist,
     buildBaseDriftAbortMessage,
     collectUnscannedTableHits,
     computeLatestValidationResults,
@@ -47,7 +49,7 @@ import {
     sliceRerouteRoundSection,
     verifyRerouteAmendment,
 } from '../src/orchestrator/validation.js';
-import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES } from '../src/orchestrator/worktree.js';
+import { PIPELINE_TELEMETRY_FILES } from '../src/orchestrator/worktree.js';
 import { checkAndRoute, resolveQaPrBody } from '../src/orchestrator/main.js';
 import {
     buildPreflightReviewBlock,
@@ -2026,16 +2028,16 @@ void test('buildAffectedFilesAllowlist unions Design and Amendment paths with ma
             '## Amendment', '', '### Affected Files', '', '| File | Change |', '|---|---|',
             '| `src/amended.ts` | reason |', '',
         ].join('\n'));
-        const normal = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admitManagedDocs: false });
+        const normal = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admittedDocs: [] });
         assert.equal(normal.paths.has('src/initial.ts'), true);
         assert.equal(normal.paths.has('src/amended.ts'), true);
         assert.deepEqual(normal.prefixes, ['dist/']);
         for (const file of PIPELINE_TELEMETRY_FILES) assert.equal(normal.paths.has(file), true);
-        for (const file of PIPELINE_MANAGED_DOCS) assert.equal(normal.paths.has(file), false);
-        const review = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admitManagedDocs: true });
-        for (const file of PIPELINE_MANAGED_DOCS) assert.equal(review.paths.has(file), true);
+        for (const file of DEFAULT_PROTECTED_DOCS) assert.equal(normal.paths.has(file), false);
+        const review = buildAffectedFilesAllowlist(['task-a', 'task-b'], { admittedDocs: DEFAULT_PROTECTED_DOCS });
+        for (const file of DEFAULT_PROTECTED_DOCS) assert.equal(review.paths.has(file), true);
         assert.deepEqual(verifyBaseDriftFromData(
-            ['dist/cli/index.js', 'tasks/task-a/handoff.md', PIPELINE_MANAGED_DOCS[0]],
+            ['dist/cli/index.js', 'tasks/task-a/handoff.md', DEFAULT_PROTECTED_DOCS[0]],
             review.paths, ['task-a', 'task-b'], review.prefixes,
         ), []);
     });
@@ -2225,7 +2227,7 @@ void test('verifyBaseDrift: directory-form prefix does not bleed across siblings
     }
 });
 
-void test('verifyBaseDrift: QA-done task auto-allowlists PIPELINE_MANAGED_DOCS', () => {
+void test('verifyBaseDrift: QA-done task auto-allowlists DEFAULT_PROTECTED_DOCS', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-qa-done-'));
     try {
         const { localDir } = makeGitFixture(dir);
@@ -4151,3 +4153,47 @@ void test('regression: validateHandoffAgainstSpec rejects a row with the 1b temp
         },
     );
 });
+
+void test('pre-flight and full-send shared allowlist admits mapped docs through reroute without a matching code diff', () => {
+    withTempTaskSpecs({ 'task-a': ['`src/other.ts`'] }, tasksRoot => {
+        const root = path.dirname(tasksRoot);
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        const file = path.join(root, '.canon/config.json');
+        fs.writeFileSync(file, JSON.stringify({ docs_freshness: { paths: { 'api/**': ['docs/api.md', 'AGENTS.md'] }, flag_only: ['AGENTS.md'] } }));
+        const allowed = buildAdmittedAllowlist(['task-a'], root);
+        assert.deepEqual(verifyBaseDriftFromData(['docs/api.md', 'src/other.ts'], allowed.paths, ['task-a']), []);
+        assert.deepEqual(verifyBaseDriftFromData(['AGENTS.md', 'docs/pipeline-orchestrator.md'], allowed.paths, ['task-a']), ['AGENTS.md', 'docs/pipeline-orchestrator.md']);
+        fs.writeFileSync(file, JSON.stringify({ docs_freshness: { protected: ['docs/pipeline-orchestrator.md'] } }));
+        assert.ok(buildAdmittedAllowlist(['task-a'], root).paths.has('docs/pipeline-orchestrator.md'));
+    });
+});
+
+for (const [name, doc, config, qaDone, declared, admitted] of [
+    ['mapped done', 'docs/api.md', { paths: { 'api/**': ['docs/api.md'] } }, true, false, true],
+    ['mapped pending', 'docs/api.md', { paths: { 'api/**': ['docs/api.md'] } }, false, false, false],
+    ['flag undeclared', 'AGENTS.md', { flag_only: ['AGENTS.md'] }, true, false, false],
+    ['flag declared', 'AGENTS.md', { flag_only: ['AGENTS.md'] }, true, true, true],
+    ['default pipeline reference', 'docs/pipeline-orchestrator.md', {}, true, false, false],
+    ['explicit pipeline reference', 'docs/pipeline-orchestrator.md', { protected: ['docs/pipeline-orchestrator.md'] }, true, false, true],
+] as const) {
+    void test(`base-drift docs admission: ${name}`, () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'base-drift-config-'));
+        try {
+            const { localDir } = makeGitFixture(dir);
+            gitIn(localDir, 'checkout', '-b', 'task/demo');
+            fs.mkdirSync(path.dirname(path.join(localDir, doc)), { recursive: true });
+            fs.writeFileSync(path.join(localDir, doc), 'QA correction\n');
+            gitIn(localDir, 'add', doc);
+            gitIn(localDir, 'commit', '-m', 'fixture doc');
+            fs.mkdirSync(path.join(localDir, '.canon'), { recursive: true });
+            fs.writeFileSync(path.join(localDir, '.canon/config.json'), JSON.stringify({ docs_freshness: config }));
+            withTempTaskSpecs({ 'task-a': declared ? [`\`${doc}\``] : [] }, tasksRoot => {
+                writeMinimalStatus(tasksRoot, 'task-a', { qaStatus: qaDone ? 'done' : 'pending' });
+                const result = verifyBaseDrift(['task-a'], 'main', localDir);
+                assert.equal(result.fetchFailed, false);
+                assert.equal(result.diffFailed, false);
+                assert.deepEqual(result.drift, admitted ? [] : [doc]);
+            });
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+}
