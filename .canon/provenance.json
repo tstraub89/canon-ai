@@ -1,7 +1,7 @@
 {
-  "source": "canon-ai@3.1.0",
+  "source": "canon-ai@3.9.0",
   "channel": "stable",
-  "resolved_sha": "8b15af1ea443a140813fe6400b9aecb246134a5b",
-  "updated_at": "2026-09-05T02:52:01.836Z",
-  "version": "3.1.0"
+  "resolved_sha": "563bd1563d5ad7ed45ae298ab322733c9ac4109e",
+  "updated_at": "2026-10-16T13:18:40.954Z",
+  "version": "3.9.0"
 }
