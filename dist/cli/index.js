@@ -437,6 +437,7 @@ function docProblem(doc, key) {
     return `doc path "${doc}" in ${key} must be repo-relative with no ".." segment.`;
   }
   if (/[*?[\]{}]/.test(doc)) return `doc path "${doc}" in ${key} must not contain glob characters.`;
+  if (doc.startsWith(":")) return `doc path "${doc}" in ${key} must not start with ":".`;
   if (["", "."].includes(doc.split(/[\\/]/).at(-1) ?? "")) {
     return `doc path "${doc}" in ${key} must name a file, not a directory.`;
   }
@@ -498,26 +499,53 @@ function loadDocsFreshnessConfig(root) {
 function formatUnknownKeysWarning(keys) {
   return `${DOCS_FRESHNESS_CONFIG_PATH}: unknown key(s) ignored: ${keys.join(", ")}. Check for a misspelled field (for example docs_freshness).`;
 }
-function segmentRegex(segment) {
-  let result = "";
-  for (let i = 0; i < segment.length; i++) {
-    const char = segment[i];
-    if (char === "*") {
-      while (segment[i + 1] === "*") i++;
-      result += "[^/]*";
-    } else if (char === "?") result += "[^/]";
-    else if (char === "{" && segment.indexOf("}", i) > i) {
-      const end = segment.indexOf("}", i);
-      result += `(?:${segment.slice(i + 1, end).split(",").map(segmentRegex).join("|")})`;
-      i = end;
-    } else result += char.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+function expandBraces(segment) {
+  const open = segment.indexOf("{");
+  const close = open < 0 ? -1 : segment.indexOf("}", open);
+  if (close < 0) return [segment];
+  const head = segment.slice(0, open);
+  const tails = expandBraces(segment.slice(close + 1));
+  return segment.slice(open + 1, close).split(",").flatMap((alt) => tails.map((tail) => head + alt + tail));
+}
+function matchesWildcards(pattern, name) {
+  let p = 0, n = 0, star = -1, resume = 0;
+  while (n < name.length) {
+    if (p < pattern.length && (pattern[p] === "?" || pattern[p] !== "*" && pattern[p] === name[n])) {
+      p++;
+      n++;
+    } else if (p < pattern.length && pattern[p] === "*") {
+      star = p++;
+      resume = n;
+    } else if (star >= 0) {
+      p = star + 1;
+      n = ++resume;
+    } else return false;
   }
-  return result;
+  while (pattern[p] === "*") p++;
+  return p === pattern.length;
 }
 function matchesDocsGlob(pattern, filePath) {
-  const segments = pattern.split("/").filter((segment, i, parts) => segment !== "**" || parts[i - 1] !== "**");
-  const expression = segments.map((segment, i) => segment === "**" ? i === segments.length - 1 ? ".*" : "(?:[^/]+/)*" : segmentRegex(segment) + (i < segments.length - 1 ? "/" : "")).join("");
-  return new RegExp(`^${expression}$`).test(filePath);
+  const globs = pattern.split("/").filter((segment, i, parts) => segment !== "**" || parts[i - 1] !== "**").map((segment) => segment === "**" ? null : expandBraces(segment));
+  const names = filePath.split("/");
+  const memo = /* @__PURE__ */ new Map();
+  const match = (g, n) => {
+    const key = g * (names.length + 1) + n;
+    const cached = memo.get(key);
+    if (cached !== void 0) return cached;
+    let result;
+    if (g === globs.length) result = n === names.length;
+    else {
+      const alternatives = globs[g];
+      if (alternatives === null) {
+        result = g === globs.length - 1 ? n < names.length : match(g + 1, n) || n < names.length && names[n] !== "" && match(g, n + 1);
+      } else {
+        result = n < names.length && alternatives.some((alt) => matchesWildcards(alt, names[n])) && match(g + 1, n + 1);
+      }
+    }
+    memo.set(key, result);
+    return result;
+  };
+  return match(0, 0);
 }
 function resolveDocsFreshness(config2, diff) {
   const protectedDocs = [...new Set(config2?.protected ?? DEFAULT_PROTECTED_DOCS)];
