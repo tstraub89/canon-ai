@@ -7766,6 +7766,68 @@ void test('checkAndRoute honors deletion-only implement evidence (listed file ab
     });
 });
 
+void test('checkAndRoute decodes a C-quoted non-ASCII deletion as implement evidence', () => {
+    withTempDir('implement-evidence-quoted-deletion-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const fakeBins = path.join(dir, 'fake-bins');
+        const fakeGitDir = path.join(fakeBins, 'git-bin');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        fs.mkdirSync(fakeGitDir, { recursive: true });
+        setupFakeGit(fakeGitDir);
+        setupFakeCliTools(fakeBins);
+
+        const taskId = 'task-a';
+        // The handoff's only Changes entry is a file that does NOT exist on
+        // disk — it was deleted by the implement. The gate must accept the
+        // git-tracked deletion as evidence instead of wedging the phase.
+        writeImplementEvidenceFixture(tasksRoot, taskId, ['`src/café.ts`']);
+        writeTaskStatus(tasksRoot, taskId, {
+            id: taskId,
+            title: taskId,
+            base_branch: 'main',
+            branch: 'task/task-a',
+            worktree: false,
+            sessions: { codex: 'resume-1234567890' },
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const currentBranchPath = path.join(dir, 'current-branch.txt');
+        fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+
+        const result = runNodeInline([
+            "import { checkAndRoute } from './src/orchestrator/main.ts';",
+            '(async () => {',
+            `  await checkAndRoute('implement', [${JSON.stringify(taskId)}]);`,
+            '})().catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), {
+            ...process.env,
+            PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_GIT_LOG: path.join(dir, 'git.log'),
+            FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+            FAKE_GIT_BASE_BRANCH: 'main',
+            FAKE_GIT_TASK_BRANCH: 'task/task-a',
+            FAKE_GIT_LOG_OUTPUT: 'abc123',
+            FAKE_GIT_DELETED_FILES: '"src/caf\\303\\251.ts"',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { implement?: { status?: string } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'done');
+        assert.doesNotMatch(result.stderr, /Retry/);
+    });
+});
+
 void test('checkAndRoute logs Retry succeeded when implement retry produces valid evidence', () => {
     withTempDir('implement-evidence-retry-success-', dir => {
         const tasksRoot = path.join(dir, 'tasks');

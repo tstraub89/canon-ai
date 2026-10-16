@@ -5,7 +5,7 @@ import path from 'node:path';
 import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies, scanAllTables } from './markdown-table.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
-import { filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
+import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { readStatus, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
@@ -761,6 +761,7 @@ export function findStagedFilesOutsideHandoff(
         .split('\n')
         .map(line => line.trim())
         .filter(Boolean)
+        .map(decodePorcelainPath)
         .filter(filePath => !allowed.has(filePath));
 }
 

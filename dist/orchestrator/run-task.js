@@ -1171,8 +1171,56 @@ function verifyBranch(taskIds) {
     warn(`Expected branch '${status.branch}' but on '${current}'. Continuing anyway.`);
   }
 }
-function stripPorcelainQuotes(filePath) {
-  return filePath.replace(/^"|"$/g, "");
+var C_QUOTE_ESCAPES = {
+  a: 7,
+  b: 8,
+  t: 9,
+  n: 10,
+  v: 11,
+  f: 12,
+  r: 13,
+  '"': 34,
+  "\\": 92
+};
+function readQuotedPorcelainPath(text, start) {
+  if (text[start] !== '"') return null;
+  const bytes = [];
+  for (let i = start + 1; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"') return { path: Buffer.from(bytes).toString("utf8"), end: i + 1 };
+    if (ch === "\\" && i + 1 < text.length) {
+      const octal = /^[0-7]{1,3}/.exec(text.slice(i + 1))?.[0];
+      if (octal !== void 0) {
+        bytes.push(Number.parseInt(octal, 8));
+        i += octal.length;
+        continue;
+      }
+      const escaped = C_QUOTE_ESCAPES[text[i + 1]];
+      if (escaped !== void 0) {
+        bytes.push(escaped);
+        i += 1;
+        continue;
+      }
+    }
+    const codePoint = text.codePointAt(i) ?? 0;
+    bytes.push(...Buffer.from(String.fromCodePoint(codePoint), "utf8"));
+    if (codePoint > 65535) i += 1;
+  }
+  return null;
+}
+function decodePorcelainPath(text) {
+  const quoted = readQuotedPorcelainPath(text, 0);
+  return quoted !== null && quoted.end === text.length ? quoted.path : text;
+}
+function splitRenamePaths(raw) {
+  const quotedOld = readQuotedPorcelainPath(raw, 0);
+  if (quotedOld !== null && raw.startsWith(" -> ", quotedOld.end)) {
+    return [quotedOld.path, decodePorcelainPath(raw.slice(quotedOld.end + 4))];
+  }
+  const quotedNewArrow = raw.endsWith('"') ? raw.lastIndexOf(' -> "') : -1;
+  const arrow = quotedNewArrow >= 0 ? quotedNewArrow : raw.indexOf(" -> ");
+  if (arrow < 0) return [decodePorcelainPath(raw)];
+  return [decodePorcelainPath(raw.slice(0, arrow)), decodePorcelainPath(raw.slice(arrow + 4))];
 }
 function parsePorcelainEntries(output) {
   return output.split("\n").filter((line) => line.length >= 3).flatMap((line) => {
@@ -1183,7 +1231,7 @@ function parsePorcelainEntries(output) {
     const raw = line.slice(3).trim();
     if (!raw) return [];
     const isRenameOrCopy = /[RC]/.test(line[0] + line[1]);
-    const paths = isRenameOrCopy && raw.includes(" -> ") ? raw.split(" -> ").map(stripPorcelainQuotes) : [stripPorcelainQuotes(raw)];
+    const paths = isRenameOrCopy ? splitRenamePaths(raw) : [decodePorcelainPath(raw)];
     return [{
       raw: line,
       indexStatus: line[0],
@@ -3354,7 +3402,7 @@ function findUncoveredTrackedChanges(statusOutput, handoffFiles) {
 }
 function findStagedFilesOutsideHandoff(stagedNameOnlyOutput, handoffFiles) {
   const allowed = toFileSet(handoffFiles);
-  return stagedNameOnlyOutput.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !allowed.has(filePath));
+  return stagedNameOnlyOutput.split("\n").map((line) => line.trim()).filter(Boolean).map(decodePorcelainPath).filter((filePath) => !allowed.has(filePath));
 }
 var DONE_MD_TEMPLATE_SENTINELS = [
   "[TASK-ID]",
@@ -6936,7 +6984,7 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles) {
     die2(`Auto-commit coverage check failed: \`git diff HEAD\` failed: ${wtDiff.stderr || "unknown error"}`);
   }
   if (wtDiff.stdout.trim()) {
-    const stillDifferent = wtDiff.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+    const stillDifferent = wtDiff.stdout.split("\n").map((s) => s.trim()).filter(Boolean).map(decodePorcelainPath);
     for (const f of stillDifferent) {
       if (missing.some((m) => m.startsWith(`${f} \u2014`))) continue;
       missing.push(`${f} \u2014 working tree differs from HEAD (status reported clean \u2014 silent-omission failure mode)`);
@@ -7135,50 +7183,13 @@ function humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath, affected
   return classifyHumanReviewPath(taskIds, affectedManagedDocs, affectedPrefixes, filePath).allowed;
 }
 function normalizeGitPath(filePath) {
-  const body = filePath.startsWith('"') && filePath.endsWith('"') ? filePath.slice(1, -1) : filePath;
-  const bytes = [];
-  const namedEscapes = {
-    a: 7,
-    b: 8,
-    t: 9,
-    n: 10,
-    v: 11,
-    f: 12,
-    r: 13,
-    '"': 34,
-    "\\": 92
-  };
-  for (let i = 0; i < body.length; i += 1) {
-    if (body[i] === "\\" && i + 1 < body.length) {
-      const octal = body.slice(i + 1).match(/^[0-7]{1,3}/)?.[0];
-      if (octal !== void 0) {
-        bytes.push(Number.parseInt(octal, 8));
-        i += octal.length;
-        continue;
-      }
-      const escaped = namedEscapes[body[i + 1]];
-      if (escaped !== void 0) {
-        bytes.push(escaped);
-        i += 1;
-        continue;
-      }
-    }
-    const codePoint = body.codePointAt(i);
-    if (codePoint === void 0) continue;
-    bytes.push(...Buffer.from(String.fromCodePoint(codePoint), "utf8"));
-    if (codePoint > 65535) i += 1;
-  }
-  return Buffer.from(bytes).toString("utf8").normalize("NFC");
+  return filePath.normalize("NFC");
 }
 function matchesPorcelainPath(actual, expected) {
   return normalizeGitPath(actual) === expected.normalize("NFC");
 }
 function untrackedPorcelainPath(entry) {
   if (entry.indexStatus !== "?" || entry.worktreeStatus !== "?") return null;
-  if (entry.raw.startsWith("?? ")) {
-    const rawPath = entry.raw.slice(3).trim();
-    return rawPath.startsWith('"') && rawPath.endsWith('"') ? rawPath.slice(1, -1) : rawPath;
-  }
   return entry.paths.length === 1 ? entry.paths[0] : null;
 }
 function porcelainEntryPaths(entry) {
@@ -7358,7 +7369,7 @@ Source or test edits must be committed during the implement phase, not left dirt
   if (!stagedBefore.ok) {
     die2(`QA-end commit aborted: could not inspect staged files: ${stagedBefore.stderr || "unknown error"}`);
   }
-  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
+  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map(decodePorcelainPath).filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
   if (stagedBeforeUnexpected.length > 0) {
     die2(
       `QA-end commit aborted: staged files outside the QA-end allowlist:
@@ -7376,7 +7387,7 @@ Source or test edits must be committed during the implement phase, not left dirt
   if (!stagedResult.ok) {
     die2(`QA-end commit aborted: could not inspect staged files after add: ${stagedResult.stderr || "unknown error"}`);
   }
-  const stagedNames = stagedResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  const stagedNames = stagedResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map(decodePorcelainPath);
   if (stagedNames.length === 0) return;
   const stagedUnexpected = stagedNames.filter((filePath) => !humanReviewAllowedPath(taskIds, affectedManagedDocs, filePath));
   if (stagedUnexpected.length > 0) {
@@ -7706,7 +7717,7 @@ If this is a source or test file, it should have been committed during the imple
   if (!stagedBefore.ok) {
     die2(`Human review commit aborted: could not inspect staged files: ${stagedBefore.stderr || "unknown error"}`);
   }
-  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !humanReviewAllowedPath(
+  const stagedBeforeUnexpected = stagedBefore.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map(decodePorcelainPath).filter((filePath) => !humanReviewAllowedPath(
     taskIds,
     affectedManagedDocs,
     filePath,
@@ -7730,7 +7741,7 @@ If this is a source or test file, it should have been committed during the imple
   if (!stagedResult.ok) {
     die2(`Human review commit aborted: could not inspect staged files after add: ${stagedResult.stderr || "unknown error"}`);
   }
-  const stagedNames = stagedResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  const stagedNames = stagedResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map(decodePorcelainPath);
   if (stagedNames.length === 0) {
     die2("Human review commit aborted: staging produced no commit-ready files.");
   }
@@ -8745,7 +8756,7 @@ function checkImplementEvidence(taskId) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
     const deletedDiff = gitSafeAt(evidenceCwd, "diff", "HEAD", "--name-only", "--no-renames", "--diff-filter=D");
     const deletedAgainstHead = new Set(
-      (deletedDiff.ok ? deletedDiff.stdout : "").split("\n").map((l) => l.trim()).filter(Boolean)
+      (deletedDiff.ok ? deletedDiff.stdout : "").split("\n").map((l) => l.trim()).filter(Boolean).map(decodePorcelainPath)
     );
     const baseBranch = sForEvidence.base_branch || getDefaultBaseBranch();
     const committedDiff = gitSafeAt(
@@ -8755,7 +8766,7 @@ function checkImplementEvidence(taskId) {
       `${baseBranch}...HEAD`
     );
     const deletedInCommits = new Set(
-      committedDiff.stdout.split("\n").filter((l) => l.startsWith("D")).map((l) => l.split("	")[1]?.trim()).filter((p) => Boolean(p))
+      committedDiff.stdout.split("\n").filter((l) => l.startsWith("D")).map((l) => l.split("	")[1]?.trim()).filter((p) => Boolean(p)).map(decodePorcelainPath)
     );
     const deletedFiles = verifiableFiles.filter(
       (f) => deletedAgainstHead.has(f) || deletedInCommits.has(f)
