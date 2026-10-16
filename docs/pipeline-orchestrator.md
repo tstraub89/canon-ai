@@ -305,7 +305,7 @@ With `"worktree": true` in `status.json` — the scaffolded default from `canon 
 
 **Shared dependency links**: Worktree creation links the root `node_modules` and each eligible npm workspace's installed `node_modules` from `REPO_ROOT` into the task worktree. Eligible workspaces come from non-negated `workspaces` patterns in `REPO_ROOT/package.json` and must resolve inside both checkouts. A missing or hoisted workspace install is skipped silently; an absent worktree workspace is skipped with an info message; and an unsafe destination is skipped with a warning. A real file or directory at the workspace `node_modules` path is left untouched, while a wrong-target symlink or an uninspectable entry aborts initial setup. On later implement entries, canon repairs only missing workspace links in its registered task worktree; it leaves existing root, workspace, and `.env*` entries untouched.
 
-**Project-level resources**: REPO_ROOT remains canonical for managed docs, `scripts/`, `src/`, root agent files, and other project-level files. Their cross-worktree coordination is separate from task-state resolution.
+**Project-level resources**: REPO_ROOT remains canonical for `scripts/`, `src/`, root agent files, and other project-level files. Their cross-worktree coordination is separate from task-state resolution. Managed docs and the docs-freshness config are the exception: task phases and the QA-end and human-review commits read them from the active worktree, and only `--ship` reads them from the main checkout. Make config or managed-doc edits for an in-flight task in its worktree.
 
 **Teardown**: `--ship` calls `git worktree remove --force` *before* archiving the task directory — teardown comes first so the archive write targets the main checkout.
 

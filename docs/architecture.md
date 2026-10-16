@@ -125,7 +125,7 @@ The orchestrator drives agent CLIs as subprocesses (`claude` and `codex`). It do
 
 When `worktree: true`, the orchestrator creates a git worktree for the task. The supervising `run-task.ts` process runs from the main checkout; agent CLIs (especially `codex` during implement) run with CWD set to the worktree. Edits land in the worktree until merge. The supervisor's view of `scripts/`, `AGENTS.md`, etc. is shielded — this is what makes canon-on-canon work safely.
 
-Task-scoped state is worktree-canonical once a task reaches implement: `tasks/<id>/` artifacts and per-task telemetry rows are read from and written to the worktree while the pipeline is active. REPO_ROOT remains canonical for project-level resources such as managed docs, `scripts/`, `src/`, root agent files, and for pre-implement task state before the worktree exists.
+Task-scoped state is worktree-canonical once a task reaches implement: `tasks/<id>/` artifacts and per-task telemetry rows are read from and written to the worktree while the pipeline is active. REPO_ROOT remains canonical for project-level resources such as `scripts/`, `src/`, root agent files, and for pre-implement task state before the worktree exists. Managed docs and the docs-freshness config are read from the active checkout: the worktree for task phases, QA-end and human-review commits, and the main checkout only for `--ship`. Make config or managed-doc edits for an in-flight task in its worktree.
 
 ## Validation
 

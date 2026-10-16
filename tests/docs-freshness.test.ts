@@ -124,6 +124,9 @@ void test('repeated stars in one segment stay bounded on a nonmatching name', ()
     assert.ok(Date.now() - started < 1000);
     assert.equal(matchesDocsGlob(glob, 'docs/abcx.md'), true);
     assert.equal(matchesDocsGlob('a**b', 'axyzb'), true);
+    assert.equal(matchesDocsGlob('assets/{😀,x}.png', 'assets/😀.png'), true);
+    assert.equal(matchesDocsGlob('assets/?.png', 'assets/😀.png'), true);
+    assert.equal(matchesDocsGlob('assets/😀*.png', 'assets/😀-1.png'), true);
     const runs = '*a'.repeat(30) + 'b';
     const runsStarted = Date.now();
     assert.equal(matchesDocsGlob(runs, 'a'.repeat(200)), false);

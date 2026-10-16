@@ -108,11 +108,14 @@ type GlobToken = string | readonly (readonly string[])[];
 // One brace level: `{a,b}` becomes a group of alternatives; a `{` with no
 // closing `}` is literal, and so is a `{` inside an alternative.
 function tokenizeSegment(segment: string): GlobToken[] {
+    // Code points throughout, so an astral character is one token and one
+    // name position.
+    const chars = [...segment];
     const tokens: GlobToken[] = [];
-    for (let i = 0; i < segment.length; i++) {
-        const close = segment[i] === '{' ? segment.indexOf('}', i) : -1;
-        if (close < 0) { tokens.push(segment[i]); continue; }
-        tokens.push(segment.slice(i + 1, close).split(',').map(alt => [...alt]));
+    for (let i = 0; i < chars.length; i++) {
+        const close = chars[i] === '{' ? chars.indexOf('}', i) : -1;
+        if (close < 0) { tokens.push(chars[i]); continue; }
+        tokens.push(chars.slice(i + 1, close).join('').split(',').map(alt => [...alt]));
         i = close;
     }
     return tokens;
@@ -120,7 +123,7 @@ function tokenizeSegment(segment: string): GlobToken[] {
 // Tracks every name offset the pattern prefix can end at, so `*`, `?` and
 // brace groups cost at most tokens x name length, with no expansion or
 // backtracking.
-function advance(token: string, from: ReadonlySet<number>, name: string): Set<number> {
+function advance(token: string, from: ReadonlySet<number>, name: readonly string[]): Set<number> {
     const next = new Set<number>();
     if (token === '*') {
         if (from.size) for (let n = Math.min(...from); n <= name.length; n++) next.add(n);
@@ -129,7 +132,8 @@ function advance(token: string, from: ReadonlySet<number>, name: string): Set<nu
     }
     return next;
 }
-function matchesSegment(tokens: readonly GlobToken[], name: string): boolean {
+function matchesSegment(tokens: readonly GlobToken[], segmentName: string): boolean {
+    const name = [...segmentName];
     let offsets = new Set([0]);
     for (const token of tokens) {
         if (typeof token === 'string') offsets = advance(token, offsets, name);

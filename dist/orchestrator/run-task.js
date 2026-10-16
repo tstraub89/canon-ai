@@ -1707,14 +1707,15 @@ function formatUnknownKeysWarning(keys) {
   return `${DOCS_FRESHNESS_CONFIG_PATH}: unknown key(s) ignored: ${keys.join(", ")}. Check for a misspelled field (for example docs_freshness).`;
 }
 function tokenizeSegment(segment) {
+  const chars = [...segment];
   const tokens = [];
-  for (let i = 0; i < segment.length; i++) {
-    const close = segment[i] === "{" ? segment.indexOf("}", i) : -1;
+  for (let i = 0; i < chars.length; i++) {
+    const close = chars[i] === "{" ? chars.indexOf("}", i) : -1;
     if (close < 0) {
-      tokens.push(segment[i]);
+      tokens.push(chars[i]);
       continue;
     }
-    tokens.push(segment.slice(i + 1, close).split(",").map((alt) => [...alt]));
+    tokens.push(chars.slice(i + 1, close).join("").split(",").map((alt) => [...alt]));
     i = close;
   }
   return tokens;
@@ -1728,7 +1729,8 @@ function advance(token, from, name) {
   }
   return next;
 }
-function matchesSegment(tokens, name) {
+function matchesSegment(tokens, segmentName) {
+  const name = [...segmentName];
   let offsets = /* @__PURE__ */ new Set([0]);
   for (const token of tokens) {
     if (typeof token === "string") offsets = advance(token, offsets, name);
