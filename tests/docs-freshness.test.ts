@@ -71,7 +71,7 @@ for (const [value, problem] of [
     ...['protected', 'flag_only', 'paths'].map(key => [JSON.stringify({ docs_freshness: { [key]: key === 'paths' ? { '**': ['docs/lessons-learned.md'] } : ['docs/lessons-learned.md'] } }), /docs\/lessons-learned.md.*telemetry/] as const),
     [JSON.stringify({ docs_freshness: { protected: ['tasks/x/spec.md'] } }), /tasks\/x\/spec.md.*task artifact/],
     [JSON.stringify({ docs_freshness: { flag_only: ['./docs/lessons-learned.md'] } }), /telemetry/],
-    ...['docs/', '.', './', 'docs\\'].map(doc => [JSON.stringify({ docs_freshness: { paths: { '**': [doc] } } }), /not a directory/] as const),
+    ...['docs/', '.', './', 'docs\\', 'docs/.', 'docs\\.'].map(doc => [JSON.stringify({ docs_freshness: { paths: { '**': [doc] } } }), /not a directory/] as const),
 ] as const) {
     void test(`invalid config ${value}`, () => {
         const loaded = parseDocsFreshnessConfig(value);

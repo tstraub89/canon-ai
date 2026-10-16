@@ -437,7 +437,7 @@ function docProblem(doc, key) {
     return `doc path "${doc}" in ${key} must be repo-relative with no ".." segment.`;
   }
   if (/[*?[\]{}]/.test(doc)) return `doc path "${doc}" in ${key} must not contain glob characters.`;
-  if (/[\\/]$/.test(doc) || path6.posix.normalize(doc.replaceAll("\\", "/")) === ".") {
+  if (["", "."].includes(doc.split(/[\\/]/).at(-1) ?? "")) {
     return `doc path "${doc}" in ${key} must name a file, not a directory.`;
   }
   if (isPipelinePath(path6.posix.normalize(doc.replaceAll("\\", "/")))) {

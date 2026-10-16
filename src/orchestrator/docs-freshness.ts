@@ -36,7 +36,7 @@ function docProblem(doc: string, key: string): string | null {
     }
     if (/[*?[\]{}]/.test(doc)) return `doc path "${doc}" in ${key} must not contain glob characters.`;
     // Allowlists compare exact file paths, so a directory entry would admit nothing.
-    if (/[\\/]$/.test(doc) || path.posix.normalize(doc.replaceAll('\\', '/')) === '.') {
+    if (['', '.'].includes(doc.split(/[\\/]/).at(-1) ?? '')) {
         return `doc path "${doc}" in ${key} must name a file, not a directory.`;
     }
     // Normalize equivalent spellings before applying the disjoint-class rule.
