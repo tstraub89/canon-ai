@@ -36,6 +36,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, derived status, task/worktree path helpers; exports `validateStatus` and `readStatusFromPath` |
 | Shared run-context resolver | `src/orchestrator/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
 | Git plumbing and porcelain parsing | `src/orchestrator/git.ts` | Branch helpers, commits, porcelain parsers |
+| Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator, pure set resolver, dot-aware glob matcher |
 | Worktree management | `src/orchestrator/worktree.ts` | Worktree lifecycle, cleanup/detect helpers, `findExistingWorktreeForBranch`, and pipeline file registries |
 | Validation gates and diff checks | `src/orchestrator/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
@@ -52,7 +53,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `src/orchestrator/main.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `src/orchestrator/validation.ts` | |
 | Handoff Changes-table parser | `src/orchestrator/validation.ts` | Extracts comma-separated backtick-path / markdown-link tokens per cell |
-| Spec Affected Files parser | `src/orchestrator/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; feeds `buildAffectedFilesAllowlist()`, the shared allow-list builder used by both `verifyBaseDrift` (`--push`/`--pr`) and the `code_review` pre-flight scope check (`src/orchestrator/phases/code-review.ts`) |
+| Spec Affected Files parser | `src/orchestrator/validation.ts` | `parseAffectedFilesFromSpec(taskId)` — reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; feeds `buildAffectedFilesAllowlist()` for `verifyBaseDrift` (`--push`/`--pr`) and `buildAdmittedAllowlist()` for the `code_review` pre-flight (`src/orchestrator/phases/code-review.ts`) and full-send scope check |
 | Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts` | `verifyBaseDivergence` / `verifyBaseDivergenceFromData` in `validation.ts` checks commit divergence first and blocks at `--push`, `--pr`, and `--ship`; `verifyBaseDrift` / `verifyBaseDriftFromData` remains the file-allow-list gate for `--push`/`--pr`; `getUnpushedBaseCommits` / `getTreeDriftFiles` in `git.ts` are the low-level helpers |
 
 ## Internal Orchestrator Modules
@@ -78,7 +79,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Canon-managed files whitelist | `src/lib/canon-owned.ts` | `CANON_OWNED` and `DELIMITED` lists — authoritative source for which files `canon upgrade` controls |
 
 Prompt-template content notes:
-- `src/orchestrator/prompts/templates/qa.md` carries Docs Freshness two-checkpoint guidance, Handoff Validation, Release Rules, Code-is-Canonical, and Commit Ownership inline.
+- `src/orchestrator/prompts/templates/qa.md` renders the resolved config’s Docs Freshness list and carries two-checkpoint guidance, Handoff Validation, Release Rules, Code-is-Canonical, and Commit Ownership inline.
 
 ## Task Lifecycle Artifacts
 
@@ -97,6 +98,8 @@ Every task lives in `tasks/<TASK-ID>/`. Templates live in `.canon/templates/`.
 | Per-task scratchpad | `.canon/templates/notes.md` | Any agent, any phase |
 
 ## Protected Docs (Institutional Memory)
+
+QA’s protected set is configurable via .canon/config.json; canon-ai’s own config keeps `docs/pipeline-orchestrator.md` in it.
 
 These must stay current — the pipeline reads the protected `docs/*` corpus at session start, and phase-specific rules arrive just in time via prompt templates and skills.
 

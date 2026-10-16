@@ -1,5 +1,6 @@
-import { execSync } from 'child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { loadDocsFreshnessConfig, resolveDocsFreshness, matchesDocsGlob, formatUnknownKeysWarning } from '../../orchestrator/docs-freshness.js';
+import { execSync, spawnSync } from 'child_process';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join, relative, sep as pathSep } from 'path';
 import { HEARTBEAT_STALE_AFTER_MS, isHeartbeatStale } from '../../orchestrator/heartbeat.js';
@@ -687,6 +688,34 @@ function printCheck(c: Check): void {
     console.log(c.detail ? `${line} — ${c.detail}` : line);
 }
 
+export function checkDocsFreshness(cwd: string): Check {
+    const label = 'Docs freshness';
+    const loaded = loadDocsFreshnessConfig(cwd);
+    if (!loaded.ok) return { label, status: 'fail', detail: loaded.message };
+    if (loaded.source === 'defaults') return { label, status: 'pass', detail: 'canon defaults (no config file)' };
+    const sets = resolveDocsFreshness(loaded.config, null);
+    const warnings: string[] = [];
+    if (loaded.unknownKeys.length) warnings.push(formatUnknownKeysWarning(loaded.unknownKeys));
+    for (const doc of sets.configured) {
+        if (!existsSync(join(cwd, doc))) warnings.push(`configured doc missing: ${doc}`);
+        else if (statSync(join(cwd, doc)).isDirectory()) warnings.push(`configured doc is a directory, not a file: ${doc}`);
+    }
+    const globs = Object.keys(loaded.config?.paths ?? {});
+    if (globs.length) {
+        const tracked = spawnSync('git', ['ls-files', '-z'], { cwd, encoding: 'utf8' });
+        if (tracked.status !== 0 || tracked.error) warnings.push('could not list tracked files to check globs');
+        else {
+            const files = tracked.stdout.split('\0').filter(Boolean);
+            for (const glob of globs) {
+                if (!files.some(file => matchesDocsGlob(glob, file))) warnings.push(`glob matches no tracked file: ${glob}`);
+            }
+        }
+    }
+    const source = loaded.config === null ? '.canon/config.json (no docs_freshness; canon defaults)' : '.canon/config.json';
+    const detail = `${source}: ${sets.protected.length} protected, ${globs.length} mappings, ${sets.flagOnly.length} flag-only`;
+    return { label, status: warnings.length ? 'warn' : 'pass', detail: [detail, ...warnings].join('; ') };
+}
+
 export function doctorCmd(_args: string[]): void {
     const cwd = process.cwd();
 
@@ -715,6 +744,7 @@ export function doctorCmd(_args: string[]): void {
         checkRecommendedPermissions(cwd),
         checkLocalSettingsGitignored(cwd),
         checkRuntimeFilesGitignored(cwd),
+        checkDocsFreshness(cwd),
     ];
 
     // Active-orchestrator section is conditional — only shows when at least

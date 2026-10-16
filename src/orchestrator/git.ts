@@ -409,7 +409,10 @@ export function parsePorcelainEntries(output: string): PorcelainEntry[] {
         }
         const raw = line.slice(3).trim();
         if (!raw) return [];
-        const paths = raw.includes(' -> ')
+        // Only rename/copy entries carry an `old -> new` pair; any other
+        // status keeps ` -> ` as part of the path.
+        const isRenameOrCopy = /[RC]/.test(line[0] + line[1]);
+        const paths = isRenameOrCopy && raw.includes(' -> ')
             ? raw.split(' -> ').map(stripPorcelainQuotes)
             : [stripPorcelainQuotes(raw)];
         return [{

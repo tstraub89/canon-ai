@@ -26,6 +26,7 @@ import {
 } from '../src/lib/canon-block.js';
 import {
     checkActiveOrchestrators,
+    checkDocsFreshness,
     checkNodeVersion,
     checkCodexMdDeprecated,
     EXPECTED_TEMPLATES,
@@ -4009,5 +4010,48 @@ void test('runUpgrade --check tolerates a regular file at an expected parent dir
         assert.ok(result.wouldUpgrade.includes('scripts/docs-refs-check.mjs'));
         assert.equal(fs.readFileSync(path.join(repo, 'scripts'), 'utf8'), 'existing file');
         assert.equal(fs.existsSync(path.join(repo, '.canon')), false);
+    });
+});
+
+void test('doctor docs freshness: source, validation, unknown keys, missing docs, and unmatched globs', () => {
+    withTempDir(dir => {
+        assert.deepEqual(checkDocsFreshness(dir), { label: 'Docs freshness', status: 'pass', detail: 'canon defaults (no config file)' });
+        const file = path.join(dir, '.canon/config.json');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const cases = [
+            ['{', 'fail', /config.json.*not valid JSON/],
+            [JSON.stringify({ docs_freshness: { protected: [] } }), 'pass', /config.json: 0 protected, 0 mappings, 0 flag-only/],
+            [JSON.stringify({ typo: true, docs_freshness: { protected: [] } }), 'warn', /unknown key.*typo/],
+            [JSON.stringify({ docs_freshness: { protected: ['missing.md'] } }), 'warn', /configured doc missing: missing.md/],
+            [JSON.stringify({ docs_freshness: { protected: ['.canon'] } }), 'warn', /configured doc is a directory, not a file: .canon/],
+            [JSON.stringify({ docs_freshness: { protected: [], paths: { 'api/**': [] } } }), 'warn', /glob matches no tracked file: api/],
+        ] as const;
+        execFileSync('git', ['init', dir], { stdio: 'ignore' });
+        for (const [raw, status, detail] of cases) {
+            fs.writeFileSync(file, raw);
+            const result = checkDocsFreshness(dir);
+            assert.equal(result.status, status);
+            assert.match(result.detail ?? '', detail);
+        }
+        const config = fs.readFileSync(path.join(WORKTREE_ROOT, '.canon/config.json'), 'utf8');
+        assert.match(config, /docs\/pipeline-orchestrator.md/);
+        assert.match(checkDocsFreshness(WORKTREE_ROOT).detail ?? '', /6 protected/);
+        assert.equal(checkDocsFreshness(WORKTREE_ROOT).status, 'pass');
+    });
+});
+
+void test('docs-freshness config stays adopter-owned during init and upgrade', () => {
+    withTempDir(dir => {
+        assert.ok(!(CANON_OWNED as readonly string[]).includes('.canon/config.json'));
+        assert.ok(!EXPECTED_TEMPLATES.includes('config.json'));
+        assert.equal(fs.existsSync(path.join(WORKTREE_ROOT, 'templates/.canon/config.json')), false);
+        scaffoldTemplates(dir, path.join(WORKTREE_ROOT, 'templates'));
+        const file = path.join(dir, '.canon/config.json');
+        assert.equal(fs.existsSync(file), false);
+        const config = '{ "docs_freshness": {"protected": []}, "future": true }\n';
+        fs.writeFileSync(file, config);
+        const result = runUpgrade(dir, WORKTREE_ROOT, { noStage: true });
+        assert.equal(fs.readFileSync(file, 'utf8'), config);
+        assert.ok(!result.dirtyRefused.includes('.canon/config.json'));
     });
 });

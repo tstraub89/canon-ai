@@ -8,6 +8,10 @@ Tasks with review feedback:
 Address every `changes_requested` finding in each spec.md.{{#combined}}
 Also update plan.md if spec changes affect the implementation approach.{{/combined}}
 
+{{#docsMapBlock}}
+{{{docsMapBlock}}}
+
+{{/docsMapBlock}}
 **Spec-writing rules of thumb** — apply when revising each spec:
 
 - **Name effects to DELETE** — frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" — not separate "Add" and "Remove" bullets.

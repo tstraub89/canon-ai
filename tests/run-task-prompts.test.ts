@@ -1,3 +1,5 @@
+import { resolveQaDocsFreshness } from '../src/orchestrator/phases/qa.js';
+import { DEFAULT_PROTECTED_DOCS } from '../src/orchestrator/docs-freshness.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1109,4 +1111,53 @@ void test('interactive runClaude omits --max-budget-usd', { concurrency: false }
     }
     assert.doesNotMatch(args, /--max-budget-usd/);
     assert.match(args, /--model\nopus\n--effort\nhigh/);
+});
+
+void test('QA docs prompt renders configured matches, flag-only drift, empty sets, and diff failure', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-docs-'));
+    try {
+        const configFile = path.join(root, '.canon/config.json');
+        fs.mkdirSync(path.dirname(configFile), { recursive: true });
+        const defaults = promptQa(baseState).split('- **Docs freshness')[1]?.split('\n')[0] ?? '';
+        for (const doc of DEFAULT_PROTECTED_DOCS) assert.ok(defaults.includes(doc));
+        assert.equal((defaults.match(/`docs\//g) ?? []).length, 5);
+        assert.doesNotMatch(promptQa(baseState), /## Docs drift/);
+        fs.writeFileSync(configFile, JSON.stringify({ docs_freshness: {
+            protected: [], paths: { 'api/**': ['docs/api.md', 'AGENTS.md'], 'web/**': ['docs/web.md'] }, flag_only: ['AGENTS.md'],
+        } }));
+        const docs = resolveQaDocsFreshness(['task-a'], root, {
+            getBaseBranch: () => 'main', getAffectedFiles: () => ({ ok: true, files: ['api/.internal/x.ts'] }),
+        });
+        const rendered = promptQa(baseState, null, docs);
+        const bullet = rendered.split('- **Docs freshness')[1]?.split('\n')[0] ?? '';
+        assert.match(bullet, /docs\/api.md/);
+        assert.doesNotMatch(bullet, /AGENTS.md|docs\/web.md/);
+        assert.match(rendered, /Docs drift.*AGENTS.md.*## Docs drift/);
+        assert.match(promptQa(baseState, null, { editable: [], flagged: [] }), /no docs are configured for correction/);
+        const warnings: string[] = [];
+        const previous = console.error;
+        console.error = (...args: unknown[]) => { warnings.push(args.join(' ')); };
+        try {
+            fs.writeFileSync(configFile, JSON.stringify({ docs_freshness: { protected: ['docs/protected.md'], paths: { '**': ['docs/mapped.md'] } } }));
+            const fallback = resolveQaDocsFreshness(['task-a'], root, {
+                getBaseBranch: () => 'main', getAffectedFiles: () => ({ ok: false, stderr: 'fixture diff failure' }),
+            });
+            assert.deepEqual(fallback, { editable: ['docs/protected.md'], flagged: [] });
+            assert.match(warnings.join('\n'), /fixture diff failure.*docs\/mapped.md/);
+        } finally { console.error = previous; }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+void test('spec prompts inject maps only when configured', () => {
+    const map = { 'api/**': ['docs/api-contract.md', 'docs/environment.md'] };
+    for (const [builder, state, key] of [
+        [promptSpec, baseState, 'promptSpec_withDocsMap'],
+        [promptSpecRevision, specRevisionState, 'promptSpecRevision_withDocsMap'],
+    ] as const) {
+        assert.equal(builder(state, {}), builder(state));
+        const rendered = builder(state, map);
+        assert.match(rendered, /`api\/\*\*` → `docs\/api-contract.md`, `docs\/environment.md`/);
+        assert.match(rendered, /List a mapped doc in Affected Files only if the implementer should edit it/);
+        recordOrAssert(key, normalize(rendered));
+    }
 });

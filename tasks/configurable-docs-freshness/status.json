@@ -1,15 +1,15 @@
 {
   "id": "configurable-docs-freshness",
   "title": "Configurable QA docs freshness via .canon/config.json",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-16",
   "updated": "2026-10-16",
-  "branch": "",
+  "branch": "task/configurable-docs-freshness",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "e8584a644d18b9d43716cb6f89628b04cbe6a116",
+    "orchestrator_commit": "a6c160294e8323c5a7e3d45272ede1a1106efc68",
     "canon_version": "3.8.0",
     "codex_cli": "codex-cli 0.162.1",
     "claude_code": "2.1.300 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "01a1425d-6954-7592-9b5b-89ded5bac2d0",
-    "claude_spec": "096a1e8c-e778-41e4-b71f-01e940104e07"
+    "claude_spec": "096a1e8c-e778-41e4-b71f-01e940104e07",
+    "codex": "01a14287-3892-7e03-9dc0-7717e9d763f8",
+    "claude_review": "394e59a8-bbdb-4896-b2bd-cbe4416ee61d"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

@@ -1,3 +1,4 @@
+import { requireDocsFreshnessConfig, resolveDocsFreshness } from '../docs-freshness.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -6,11 +7,21 @@ import { getClaudeConfig } from '../policy.js';
 import { runClaude } from '../agents/claude.js';
 import { extractDoneMdFromStdout, isDoneMdTemplate } from '../validation.js';
 import { getActiveCwd } from '../worktree.js';
-import { verifyBranch } from '../git.js';
+import { getBaseBranch, getAffectedFiles, verifyBranch } from '../git.js';
 import { readStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
-import { promptQa } from '../prompts/index.js';
+import { promptQa, type QaDocsFreshnessPrompt } from '../prompts/index.js';
 import { taskPhase } from '../../task/index.js';
+
+export function resolveQaDocsFreshness(taskIds: string[], activeCwd: string,
+    deps = { getBaseBranch, getAffectedFiles }): QaDocsFreshnessPrompt {
+    const config = requireDocsFreshnessConfig(activeCwd);
+    const base = deps.getBaseBranch(taskIds);
+    const affected = deps.getAffectedFiles(base, activeCwd);
+    const sets = resolveDocsFreshness(config, affected.ok ? affected.files : null);
+    if (!affected.ok) warn(`Docs freshness: could not compute the task diff vs ${base} (${affected.stderr || 'unknown error'}); the QA prompt lists protected docs only. Mapped docs not evaluated: ${sets.unevaluatedMappedDocs.join(', ') || 'none'}.`);
+    return { editable: sets.promptEditable, flagged: sets.promptFlagged };
+}
 
 export async function runQaPhase(
     state: PipelineState,
@@ -25,7 +36,7 @@ export async function runQaPhase(
     for (const t of tasks) taskPhase(t.taskId, 'qa', 'in_progress');
     const cfg = getClaudeConfig('qa', tasks);
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptQa(state, resolvedPrTemplate), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+    const result = await runClaude(promptQa(state, resolvedPrTemplate, resolveQaDocsFreshness(taskIds, activeCwd)), interactive, null, cfg.model, cfg.effort, cfg.budget, {
         taskId: taskIds.join('+'),
         phase: 'qa',
         iteration: tasks[0].status.phases.qa?.iterations_current_loop

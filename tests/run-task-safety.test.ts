@@ -1,3 +1,4 @@
+import { DEFAULT_PROTECTED_DOCS } from '../src/orchestrator/docs-freshness.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,7 +27,6 @@ import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '
 import {
     classifyNodeModulesLinkFromData,
     isContainedIn,
-    PIPELINE_MANAGED_DOCS,
     resolveWorkspaceDirs,
     worktreePath,
 } from '../src/orchestrator/worktree.js';
@@ -2754,7 +2754,7 @@ void test('buildHumanReviewStagePaths includes only task artifacts, telemetry, a
 });
 
 void test('buildHumanReviewStagePaths with full managed-doc set includes only dirty QA-end paths', () => {
-    const paths = buildHumanReviewStagePaths(['task-a'], new Set(PIPELINE_MANAGED_DOCS), [
+    const paths = buildHumanReviewStagePaths(['task-a'], new Set(DEFAULT_PROTECTED_DOCS), [
         {
             raw: ' M tasks/task-a/done.md',
             indexStatus: ' ',
@@ -2788,7 +2788,7 @@ void test('buildHumanReviewStagePaths with full managed-doc set includes only di
 });
 
 void test('buildHumanReviewStagePaths stages a QA-touched managed doc absent from Affected Files', () => {
-    const paths = buildHumanReviewStagePaths(['task-b'], new Set(PIPELINE_MANAGED_DOCS), [
+    const paths = buildHumanReviewStagePaths(['task-b'], new Set(DEFAULT_PROTECTED_DOCS), [
         {
             raw: ' M docs/decisions.md',
             indexStatus: ' ',
@@ -5958,7 +5958,7 @@ void test('commitHumanReviewFiles dies on out-of-scope managed docs with actiona
     withTempDir('run-task-human-review-managed-out-', dir => {
         const harness = setupHumanReviewHarness(dir, ['task-a']);
         // Override the harness's qa.status = 'done' (which would auto-allowlist
-        // PIPELINE_MANAGED_DOCS per the QA Docs Freshness sweep): the rejection
+        // DEFAULT_PROTECTED_DOCS per the QA Docs Freshness sweep): the rejection
         // path under test is for managed-doc edits that landed BEFORE qa ran.
         const taskStatus = makeCompleteStatus('task-a', 'task/task-a');
         const phases = taskStatus.phases as Record<string, { status: string }>;
@@ -5973,7 +5973,7 @@ void test('commitHumanReviewFiles dies on out-of-scope managed docs with actiona
 
         assert.notEqual(result.status, 0);
         assert.match(result.stderr, /allowlist/);
-        assert.match(result.stderr, /PIPELINE_MANAGED_DOCS/);
+        assert.match(result.stderr, /admitted docs/);
         assert.match(result.stderr, /Affected Files/);
         assert.match(result.stderr, /implement phase/);
         assert.match(result.stderr, /git checkout HEAD --/);
@@ -5999,7 +5999,7 @@ void test('commitHumanReviewFiles commits in-scope managed docs and emits one ad
     });
 });
 
-void test('commitHumanReviewFiles auto-allowlists PIPELINE_MANAGED_DOCS once qa.status is done', () => {
+void test('commitHumanReviewFiles auto-allowlists DEFAULT_PROTECTED_DOCS once qa.status is done', () => {
     withTempDir('run-task-human-review-qa-done-allowlist-', dir => {
         const harness = setupHumanReviewHarness(dir, ['task-a']);
         // Spec lists no managed docs; harness's makeCompleteStatus already has
@@ -6153,7 +6153,7 @@ void test('commitHumanReviewFiles base-drift gate dies on drift outside the allo
         const harness = setupHumanReviewHarness(dir, ['task-a']);
         writeAffectedFilesSpec(harness.tasksRoot, 'task-a', ['`src/orchestrator/main.ts`']);
 
-        // Use a non-managed-doc drift file: PIPELINE_MANAGED_DOCS like
+        // Use a non-managed-doc drift file: DEFAULT_PROTECTED_DOCS like
         // docs/decisions.md are auto-allowlisted once qa.status === 'done'
         // (BACKLOG #994), which the harness's makeCompleteStatus already sets.
         const result = runHumanReviewCommit(harness, ['task-a'], {
@@ -6291,7 +6291,7 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
         gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
         gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
-        // Use docs/BACKLOG.md (not in PIPELINE_MANAGED_DOCS) so the gate fires —
+        // Use docs/BACKLOG.md (not in DEFAULT_PROTECTED_DOCS) so the gate fires —
         // managed-doc paths are auto-allowlisted at qa.status === 'done'.
         const baseAdvanceFile = path.join(thirdPartyDir, 'docs', 'BACKLOG.md');
         fs.mkdirSync(path.dirname(baseAdvanceFile), { recursive: true });
@@ -8619,4 +8619,81 @@ void test('worktree roots default to the in-repo .canon/worktrees directory', ()
         if (previous === undefined) delete process.env.CANON_WORKTREES_ROOT;
         else process.env.CANON_WORKTREES_ROOT = previous;
     }
+});
+
+function writeFreshnessConfig(root: string, value: unknown): void {
+    fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.canon/config.json'), typeof value === 'string' ? value : JSON.stringify(value));
+}
+
+for (const [name, doc, config, admitted] of [
+    ['mapped', 'docs/api.md', { paths: { 'api/**': ['docs/api.md'] } }, true],
+    ['flag-only', 'AGENTS.md', { protected: ['AGENTS.md'], flag_only: ['AGENTS.md'] }, false],
+    ['default pipeline reference', 'docs/pipeline-orchestrator.md', {}, false],
+    ['explicit pipeline reference', 'docs/pipeline-orchestrator.md', { protected: ['docs/pipeline-orchestrator.md'] }, true],
+] as const) {
+    void test(`QA-end docs admission: ${name}`, () => {
+        withTempDir('qa-config-admission-', dir => {
+            const { localDir } = makeGitFixture(dir);
+            writeFreshnessConfig(localDir, { docs_freshness: config });
+            gitIn(localDir, 'add', '.canon/config.json');
+            gitIn(localDir, 'commit', '-m', 'fixture config');
+            fs.mkdirSync(path.dirname(path.join(localDir, doc)), { recursive: true });
+            fs.writeFileSync(path.join(localDir, doc), 'QA correction\n');
+            const result = runCommitQaArtifactsInline('task-a', localDir);
+            assert.equal(result.status === 0, admitted, result.stderr);
+            if (admitted) assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: localDir, encoding: 'utf8' }), '');
+            else assert.match(result.stderr, /outside the QA-end allowlist/);
+        });
+    });
+}
+
+for (const [name, doc, config, qaDone, declared, admitted] of [
+    ['mapped after QA', 'docs/api.md', { paths: { 'api/**': ['docs/api.md'] } }, true, false, true],
+    ['mapped before QA', 'docs/api.md', { paths: { 'api/**': ['docs/api.md'] } }, false, false, false],
+    ['mapped explicitly before QA', 'docs/api.md', { paths: { 'api/**': ['docs/api.md'] } }, false, true, true],
+    ['flag-only undeclared', 'AGENTS.md', { flag_only: ['AGENTS.md'] }, true, false, false],
+    ['flag-only declared', 'AGENTS.md', { flag_only: ['AGENTS.md'] }, true, true, true],
+    ['default pipeline reference', 'docs/pipeline-orchestrator.md', {}, true, false, false],
+    ['explicit pipeline reference', 'docs/pipeline-orchestrator.md', { protected: ['docs/pipeline-orchestrator.md'] }, true, false, true],
+] as const) {
+    void test(`human-review docs admission: ${name}`, () => {
+        withTempDir('human-config-admission-', dir => {
+            const harness = setupHumanReviewHarness(dir, ['task-a']);
+            writeFreshnessConfig(dir, { docs_freshness: config });
+            if (!qaDone) {
+                const status = makeCompleteStatus('task-a', 'task/task-a');
+                (status.phases as Record<string, { status: string }>).qa.status = 'in_progress';
+                writeTaskStatus(harness.tasksRoot, 'task-a', status);
+            }
+            if (declared) writeAffectedFilesSpec(harness.tasksRoot, 'task-a', [`\`${doc}\``]);
+            const result = runHumanReviewCommit(harness, ['task-a'], {
+                FAKE_GIT_STATUS_OUTPUT: ` M ${doc}`, FAKE_GIT_DIFF_OUTPUT: doc,
+            });
+            assert.equal(result.status === 0, admitted, result.stderr);
+            if (admitted) assert.match(fs.readFileSync(harness.gitLogPath, 'utf8'), /^commit /m);
+            else assert.match(result.stderr, /outside the human_review allowlist/);
+        });
+    });
+}
+
+void test('QA-end, human-review, and QA prompt consumers fail closed on a config edited after import', () => {
+    withTempDir('config-mid-run-', dir => {
+        for (const kind of ['qa-commit', 'human-commit', 'qa-prompt']) {
+            writeFreshnessConfig(dir, '{}');
+            const modulePath = kind === 'qa-prompt' ? 'src/orchestrator/phases/qa.ts' : 'src/orchestrator/main.ts';
+            const action = kind === 'qa-commit' ? 'm.commitQaArtifacts(["task-a"], root);'
+                : kind === 'human-commit' ? 'm.commitHumanReviewFiles(["task-a"], root, false);'
+                : 'm.resolveQaDocsFreshness(["task-a"], root, { getBaseBranch: () => "main", getAffectedFiles: () => ({ ok: true, files: [] }) });';
+            const result = runNodeInline(`import fs from 'node:fs';
+                const root = ${JSON.stringify(dir)};
+                import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, modulePath)).href)}).then(m => {
+                    fs.writeFileSync(root + '/.canon/config.json', '{');
+                    ${action}
+                });`, process.env);
+            assert.notEqual(result.status, 0, kind);
+            assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/, kind);
+            assert.doesNotMatch(result.stdout, /Committed|Pushing/);
+        }
+    });
 });
