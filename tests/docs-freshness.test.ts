@@ -129,6 +129,11 @@ void test('repeated stars in one segment stay bounded on a nonmatching name', ()
     assert.equal(matchesDocsGlob(runs, 'a'.repeat(200)), false);
     assert.ok(Date.now() - runsStarted < 1000);
     assert.equal(matchesDocsGlob(runs, 'a'.repeat(40) + 'b'), true);
+    const braces = '{a,b}'.repeat(40);
+    const bracesStarted = Date.now();
+    assert.equal(matchesDocsGlob(braces, 'ab'.repeat(19) + 'c'), false);
+    assert.equal(matchesDocsGlob(braces, 'ab'.repeat(20)), true);
+    assert.ok(Date.now() - bracesStarted < 1000);
 });
 
 void test('consecutive globstars stay bounded on a deep nonmatching path', () => {

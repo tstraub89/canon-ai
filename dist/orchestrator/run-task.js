@@ -1706,33 +1706,47 @@ function requireDocsFreshnessConfig(root) {
 function formatUnknownKeysWarning(keys) {
   return `${DOCS_FRESHNESS_CONFIG_PATH}: unknown key(s) ignored: ${keys.join(", ")}. Check for a misspelled field (for example docs_freshness).`;
 }
-function expandBraces(segment) {
-  const open = segment.indexOf("{");
-  const close = open < 0 ? -1 : segment.indexOf("}", open);
-  if (close < 0) return [segment];
-  const head = segment.slice(0, open);
-  const tails = expandBraces(segment.slice(close + 1));
-  return segment.slice(open + 1, close).split(",").flatMap((alt) => tails.map((tail) => head + alt + tail));
-}
-function matchesWildcards(pattern, name) {
-  let p = 0, n = 0, star = -1, resume = 0;
-  while (n < name.length) {
-    if (p < pattern.length && (pattern[p] === "?" || pattern[p] !== "*" && pattern[p] === name[n])) {
-      p++;
-      n++;
-    } else if (p < pattern.length && pattern[p] === "*") {
-      star = p++;
-      resume = n;
-    } else if (star >= 0) {
-      p = star + 1;
-      n = ++resume;
-    } else return false;
+function tokenizeSegment(segment) {
+  const tokens = [];
+  for (let i = 0; i < segment.length; i++) {
+    const close = segment[i] === "{" ? segment.indexOf("}", i) : -1;
+    if (close < 0) {
+      tokens.push(segment[i]);
+      continue;
+    }
+    tokens.push(segment.slice(i + 1, close).split(",").map((alt) => [...alt]));
+    i = close;
   }
-  while (pattern[p] === "*") p++;
-  return p === pattern.length;
+  return tokens;
+}
+function advance(token, from, name) {
+  const next = /* @__PURE__ */ new Set();
+  if (token === "*") {
+    if (from.size) for (let n = Math.min(...from); n <= name.length; n++) next.add(n);
+  } else {
+    for (const n of from) if (n < name.length && (token === "?" || name[n] === token)) next.add(n + 1);
+  }
+  return next;
+}
+function matchesSegment(tokens, name) {
+  let offsets = /* @__PURE__ */ new Set([0]);
+  for (const token of tokens) {
+    if (typeof token === "string") offsets = advance(token, offsets, name);
+    else {
+      const merged = /* @__PURE__ */ new Set();
+      for (const alt of token) {
+        let altOffsets = offsets;
+        for (const char of alt) altOffsets = advance(char, altOffsets, name);
+        for (const n of altOffsets) merged.add(n);
+      }
+      offsets = merged;
+    }
+    if (!offsets.size) return false;
+  }
+  return offsets.has(name.length);
 }
 function matchesDocsGlob(pattern, filePath) {
-  const globs = pattern.split("/").filter((segment, i, parts) => segment !== "**" || parts[i - 1] !== "**").map((segment) => segment === "**" ? null : expandBraces(segment));
+  const globs = pattern.split("/").filter((segment, i, parts) => segment !== "**" || parts[i - 1] !== "**").map((segment) => segment === "**" ? null : tokenizeSegment(segment));
   const names = filePath.split("/");
   const memo = /* @__PURE__ */ new Map();
   const match = (g, n) => {
@@ -1742,11 +1756,11 @@ function matchesDocsGlob(pattern, filePath) {
     let result;
     if (g === globs.length) result = n === names.length;
     else {
-      const alternatives = globs[g];
-      if (alternatives === null) {
+      const tokens = globs[g];
+      if (tokens === null) {
         result = g === globs.length - 1 ? n < names.length : match(g + 1, n) || n < names.length && names[n] !== "" && match(g, n + 1);
       } else {
-        result = n < names.length && alternatives.some((alt) => matchesWildcards(alt, names[n])) && match(g + 1, n + 1);
+        result = n < names.length && matchesSegment(tokens, names[n]) && match(g + 1, n + 1);
       }
     }
     memo.set(key, result);
