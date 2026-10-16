@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.9.0] — 2026-10-16
+
 ### Added
 
 - **`.canon/config.json` sets which docs QA keeps fresh.** Under `docs_freshness`, map source-path globs to the docs QA must check when a task touches matching files (`paths`), list docs QA should report under "Docs drift" in `done.md` instead of editing (`flag_only`), or replace the default protected set (`protected`). The file is yours: `canon init` doesn't create it and `canon upgrade` never changes it. A malformed file stops every `canon run` form before it changes any state, and `canon doctor` reports the file's status. See "Configuring docs freshness" in the canon-ai README.
