@@ -1182,7 +1182,8 @@ function parsePorcelainEntries(output) {
     }
     const raw = line.slice(3).trim();
     if (!raw) return [];
-    const paths = raw.includes(" -> ") ? raw.split(" -> ").map(stripPorcelainQuotes) : [stripPorcelainQuotes(raw)];
+    const isRenameOrCopy = /[RC]/.test(line[0] + line[1]);
+    const paths = isRenameOrCopy && raw.includes(" -> ") ? raw.split(" -> ").map(stripPorcelainQuotes) : [stripPorcelainQuotes(raw)];
     return [{
       raw: line,
       indexStatus: line[0],

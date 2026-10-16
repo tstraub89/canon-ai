@@ -314,7 +314,7 @@ Create an adopter-owned `.canon/config.json` to tell QA which docs to keep curre
     "protected": ["docs/architecture.md", "docs/codebase-map.md"],
     "paths": {
       "api/**": ["docs/api-contract.md", "docs/environment-variables.md"],
-      "**": ["docs/ROADMAP.md"]
+      "**": ["docs/ROADMAP.md", "AGENTS.md"]
     },
     "flag_only": ["AGENTS.md"]
   }
