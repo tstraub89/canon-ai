@@ -1115,3 +1115,7 @@
 | 2026-10-06T00:53:42.165Z | rearm-spec-gate | code_review | codex | gpt-6-luna | 1 | 19.6s | - | ok |
 | 2026-10-06T00:54:47.085Z | rearm-spec-gate | code_review | claude | sonnet | 1 | 64.9s | 745529 | ok |
 | 2026-10-06T00:55:36.718Z | rearm-spec-gate | qa | claude | sonnet | 0 | 49.6s | 407000 | ok |
+| 2026-10-16T01:43:47.695Z | configurable-docs-freshness | spec_review | codex | gpt-6.1-sol | 0 | 247.7s | 1514573 | ok |
+| 2026-10-16T01:45:00.159Z | configurable-docs-freshness | spec | claude | opus | 0 | 72.0s | 953016 | ok |
+| 2026-10-16T01:46:13.873Z | configurable-docs-freshness | spec_review | codex | gpt-6.1-sol | 1 | 73.6s | 2386435 | ok |
+| 2026-10-16T02:25:19.186Z | configurable-docs-freshness | plan | claude | opus | 0 | 506.5s | 10708696 | ok |
