@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
     findStagedFilesOutsideHandoff,
     findUncoveredTrackedChanges,
@@ -69,6 +70,58 @@ void test('parsePorcelain strips surrounding quotes on paths with spaces', () =>
     const dirty = parsePorcelain(output);
 
     assert.ok(dirty.has('src/components/With Space/File.tsx'));
+});
+
+void test('parsePorcelain decodes octal-escaped non-ASCII paths as UTF-8', () => {
+    // Default core.quotePath=true C-quotes every byte >= 0x80.
+    const dirty = parsePorcelain('?? "docs/\\360\\237\\230\\200.md"\n M "docs/caf\\303\\251.md"\n');
+
+    assert.deepEqual([...dirty], ['docs/😀.md', 'docs/café.md']);
+});
+
+void test('parsePorcelain decodes embedded quote, backslash, and control escapes', () => {
+    const dirty = parsePorcelain(' M "docs/a\\"b\\\\c.md"\n?? "docs/tab\\there.md"\n');
+
+    assert.deepEqual([...dirty], ['docs/a"b\\c.md', 'docs/tab\there.md']);
+});
+
+void test('parsePorcelain decodes both sides of a quoted rename', () => {
+    const dirty = parsePorcelain('R  "docs/old \\360\\237\\230\\200.md" -> "docs/new\\\\name.md"\n');
+
+    assert.deepEqual([...dirty], ['docs/old 😀.md', 'docs/new\\name.md']);
+});
+
+void test('parsePorcelain splits a rename on the arrow outside the quotes', () => {
+    const dirty = parsePorcelain('R  "docs/a -> \\"b.md" -> docs/c.md\nC  docs/d.md -> "docs/e -> \\"f.md"\n');
+
+    assert.deepEqual([...dirty], ['docs/a -> "b.md', 'docs/c.md', 'docs/d.md', 'docs/e -> "f.md']);
+});
+
+void test('parsePorcelain matches real git status output for non-ASCII and quoted names', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-porcelain-'));
+    try {
+        const git = (...args: string[]) => {
+            const result = spawnSync('git', ['-c', 'core.quotePath=true', ...args], { cwd: repo, encoding: 'utf8' });
+            assert.equal(result.status, 0, result.stderr);
+            return result.stdout;
+        };
+        git('init', '-q');
+        fs.mkdirSync(path.join(repo, 'docs'));
+        const names = ['docs/😀.md', 'docs/a"b\\c.md'];
+        for (const name of names) fs.writeFileSync(path.join(repo, name), 'x\n');
+
+        const dirty = parsePorcelain(git('status', '--porcelain=v1', '-uall'));
+
+        assert.deepEqual([...dirty].sort(), [...names].sort());
+    } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+    }
+});
+
+void test('findUncoveredTrackedChanges matches a quoted non-ASCII path against handoff', () => {
+    const status = ' M "src/\\360\\237\\230\\200.ts"\n';
+
+    assert.deepEqual(findUncoveredTrackedChanges(status, new Set(['src/😀.ts'])), []);
 });
 
 void test('parsePorcelain returns empty set for empty input', () => {

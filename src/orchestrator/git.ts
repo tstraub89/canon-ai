@@ -397,8 +397,57 @@ export type PorcelainEntry = {
     paths: string[];
 };
 
-function stripPorcelainQuotes(filePath: string): string {
-    return filePath.replace(/^"|"$/g, '');
+const C_QUOTE_ESCAPES: Readonly<Record<string, number>> = {
+    a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92,
+};
+
+// Reads one porcelain path starting at `start`. Git C-quotes a path (octal
+// escapes for bytes >= 0x80 under the default core.quotePath, plus named
+// escapes) only when it wraps it in double quotes, so unquoted text is literal.
+// Returns the decoded path and the index just past it, or null when the text
+// at `start` is not a complete quoted path.
+function readQuotedPorcelainPath(text: string, start: number): { path: string; end: number } | null {
+    if (text[start] !== '"') return null;
+    const bytes: number[] = [];
+    for (let i = start + 1; i < text.length; i += 1) {
+        const ch = text[i];
+        if (ch === '"') return { path: Buffer.from(bytes).toString('utf8'), end: i + 1 };
+        if (ch === '\\' && i + 1 < text.length) {
+            const octal = /^[0-7]{1,3}/.exec(text.slice(i + 1))?.[0];
+            if (octal !== undefined) {
+                bytes.push(Number.parseInt(octal, 8));
+                i += octal.length;
+                continue;
+            }
+            const escaped = C_QUOTE_ESCAPES[text[i + 1]];
+            if (escaped !== undefined) {
+                bytes.push(escaped);
+                i += 1;
+                continue;
+            }
+        }
+        const codePoint = text.codePointAt(i) ?? 0;
+        bytes.push(...Buffer.from(String.fromCodePoint(codePoint), 'utf8'));
+        if (codePoint > 0xFFFF) i += 1;
+    }
+    return null;
+}
+
+export function decodePorcelainPath(text: string): string {
+    const quoted = readQuotedPorcelainPath(text, 0);
+    return quoted !== null && quoted.end === text.length ? quoted.path : text;
+}
+
+function splitRenamePaths(raw: string): string[] {
+    const quotedOld = readQuotedPorcelainPath(raw, 0);
+    if (quotedOld !== null && raw.startsWith(' -> ', quotedOld.end)) {
+        return [quotedOld.path, decodePorcelainPath(raw.slice(quotedOld.end + 4))];
+    }
+    // Unquoted old path: a quoted new path starts at the last ` -> "`.
+    const quotedNewArrow = raw.endsWith('"') ? raw.lastIndexOf(' -> "') : -1;
+    const arrow = quotedNewArrow >= 0 ? quotedNewArrow : raw.indexOf(' -> ');
+    if (arrow < 0) return [decodePorcelainPath(raw)];
+    return [decodePorcelainPath(raw.slice(0, arrow)), decodePorcelainPath(raw.slice(arrow + 4))];
 }
 
 export function parsePorcelainEntries(output: string): PorcelainEntry[] {
@@ -412,9 +461,7 @@ export function parsePorcelainEntries(output: string): PorcelainEntry[] {
         // Only rename/copy entries carry an `old -> new` pair; any other
         // status keeps ` -> ` as part of the path.
         const isRenameOrCopy = /[RC]/.test(line[0] + line[1]);
-        const paths = isRenameOrCopy && raw.includes(' -> ')
-            ? raw.split(' -> ').map(stripPorcelainQuotes)
-            : [stripPorcelainQuotes(raw)];
+        const paths = isRenameOrCopy ? splitRenamePaths(raw) : [decodePorcelainPath(raw)];
         return [{
             raw: line,
             indexStatus: line[0],
