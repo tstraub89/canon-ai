@@ -16,6 +16,7 @@
 ### Fixed
 
 - **`--ship` and the QA and human-review commits no longer split file names that contain ` -> `.** Only renamed or copied entries in git status are read as an `old -> new` pair.
+- **File names with non-ASCII or special characters now match their real paths.** Git quotes such names in its status and diff output (for example `docs/😀.md`), and canon compared the quoted form. The QA-end and human-review commits could reject the file, implement's auto-commit checks could miss it, and `--ship` could overlook it as dirty. Canon now decodes the quoting first.
 
 ## [3.8.0] — 2026-10-07
 
