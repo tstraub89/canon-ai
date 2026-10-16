@@ -1318,3 +1318,101 @@ void test('--ship tolerates remote branch already gone during stale-remote clean
         expectArchivedAndDeleted(localDir, taskId, branch);
     });
 });
+
+for (const flag of ['', '--ship', '--reroute', '--dry-run', '--pr', '--push', '--full-send']) {
+    void test(`malformed docs config refuses ${flag || 'plain run'} before state or heartbeat writes`, () => {
+        withTempDir('run-config-invalid-', dir => {
+            const { localDir } = makeGitFixture(dir);
+            const fakeTools = path.join(dir, 'fake-tools');
+            setupFakeTools(fakeTools);
+            writeTaskFiles(localDir, 'config-test', makeHumanReviewStatus('config-test', 'main'));
+            writeRel(localDir, '.canon/config.json', '{');
+            const statusPath = path.join(localDir, 'tasks/config-test/status.json');
+            const before = fs.readFileSync(statusPath, 'utf8');
+            const result = runCanon(localDir, ['config-test', ...(flag ? [flag] : [])], fakeTools);
+            assert.notEqual(result.status, 0);
+            assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/);
+            assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
+            for (const file of ['.heartbeat.json', '.canon-pid']) assert.equal(fs.existsSync(path.join(localDir, 'tasks/config-test', file)), false);
+        });
+    });
+}
+
+void test('unknown docs config key warns once and dry-run proceeds', () => {
+    withTempDir('run-config-unknown-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const fakeTools = path.join(dir, 'fake-tools');
+        setupFakeTools(fakeTools);
+        writeTaskFiles(localDir, 'config-test', makeHumanReviewStatus('config-test', 'main'));
+        writeRel(localDir, '.canon/config.json', '{"docsFreshness":{},"docs_freshness":{"protected_docs":[]}}');
+        const result = runCanon(localDir, ['config-test', '--dry-run'], fakeTools);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /unknown key.*docsFreshness.*docs_freshness.protected_docs/);
+        assert.equal((result.stderr.match(/unknown key/g) ?? []).length, 1);
+    });
+});
+
+for (const mainInvalid of [true, false]) {
+    void test(`ship config source: main ${mainInvalid ? 'invalid' : 'valid'}, worktree opposite`, () => {
+        withTempDir('ship-config-source-', dir => {
+            const { localDir, fakeTools } = prepareSharedWorktreeShipFixture(dir, ['config-a', 'config-b'], { prNumber: 601 });
+            const worktreeDir = path.join(dir, 'worktrees/config-a');
+            writeRel(localDir, '.canon/config.json', mainInvalid ? '{' : '{}');
+            writeRel(worktreeDir, '.canon/config.json', mainInvalid ? '{}' : '{');
+            const statusPath = path.join(localDir, 'tasks/config-a/status.json');
+            const before = fs.readFileSync(statusPath, 'utf8');
+            // No PR evidence is supplied: a valid config can reach later ship checks safely.
+            const result = runCanon(localDir, ['config-a', 'config-b', '--ship'], fakeTools, { CANON_WORKTREES_ROOT: path.join(dir, 'worktrees') });
+            if (mainInvalid) {
+                assert.notEqual(result.status, 0);
+                assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/);
+                assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
+            } else assert.doesNotMatch(result.stderr, /\.canon\/config.json is invalid/);
+        });
+    });
+}
+
+for (const kind of ['mapped', 'flag-only', 'malformed'] as const) {
+    void test(`ship consumer reloads config: ${kind}`, () => {
+        withTempDir('ship-config-consumer-', dir => {
+            const { localDir } = makeGitFixture(dir, { 'docs/custom.md': 'original\n' });
+            // Import first, then mutate the file: this exercises the consumer independently of startup.
+            const raw = kind === 'malformed' ? '{' : JSON.stringify({ docs_freshness: kind === 'mapped'
+                ? { paths: { 'api/**': ['docs/custom.md'] } }
+                : { flag_only: ['docs/custom.md'] } });
+            const result = spawnSync(process.execPath, ['--import', MD_LOADER, '--import', TSX_LOADER, '-e',
+                `import fs from 'node:fs'; import(${JSON.stringify(MAIN_HREF)}).then(m => {
+                    fs.mkdirSync('.canon', { recursive: true });
+                    fs.writeFileSync('.canon/config.json', ${JSON.stringify(raw)});
+                    fs.appendFileSync('docs/custom.md', 'stale edit\\n');
+                    m.classifyAndPreserveSharedDocDirt();
+                });`,
+            ], { cwd: localDir, encoding: 'utf8' });
+            assert.notEqual(result.status, 0);
+            if (kind === 'malformed') assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/);
+            else {
+                assert.match(result.stderr, /--ship aborted: uncommitted shared-doc edits/);
+                assert.match(result.stderr, /docs\/custom.md/);
+            }
+            assert.equal(readRel(localDir, 'docs/custom.md'), 'original\nstale edit\n');
+        });
+    });
+}
+
+for (const worktreeInvalid of [true, false]) {
+    void test(`dry-run config source: worktree ${worktreeInvalid ? 'invalid' : 'valid'}, main opposite`, () => {
+        withTempDir('run-config-worktree-source-', dir => {
+            const { localDir, fakeTools } = prepareSharedWorktreeShipFixture(dir, ['config-a', 'config-b'], { prNumber: 602 });
+            const worktreeDir = path.join(dir, 'worktrees/config-a');
+            writeRel(localDir, '.canon/config.json', worktreeInvalid ? '{}' : '{');
+            writeRel(worktreeDir, '.canon/config.json', worktreeInvalid ? '{' : '{}');
+            const statusPath = path.join(worktreeDir, 'tasks/config-a/status.json');
+            const before = fs.readFileSync(statusPath, 'utf8');
+            const result = runCanon(localDir, ['config-a', '--dry-run'], fakeTools, { CANON_WORKTREES_ROOT: path.join(dir, 'worktrees') });
+            assert.equal(result.status === 0, !worktreeInvalid, result.stderr);
+            if (worktreeInvalid) assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/);
+            else assert.doesNotMatch(result.stderr, /\.canon\/config.json is invalid/);
+            assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
+        });
+    });
+}

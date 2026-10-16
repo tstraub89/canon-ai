@@ -1,3 +1,4 @@
+import { DEFAULT_PROTECTED_DOCS } from '../docs-freshness.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -93,11 +94,21 @@ function planFeasibilityCheck(placement: string, indent = ''): string {
     return lines.map((line, index) => (index === 0 ? line : indent + line)).join('\n');
 }
 
-export function promptSpec(state: PipelineState): string {
+function buildDocsMapBlock(paths?: Readonly<Record<string, readonly string[]>>): string {
+    if (!paths || Object.keys(paths).length === 0) return '';
+    return [
+        '**Docs-freshness map** — this project maps code paths to docs QA keeps current:',
+        ...Object.entries(paths).map(([glob, docs]) => `- \`${glob}\` → ${docs.map(doc => `\`${doc}\``).join(', ')}`),
+        'For every path you put in Affected Files that matches one of these globs, name the mapped docs in Docs Impact. List a mapped doc in Affected Files only if the implementer should edit it.',
+    ].join('\n');
+}
+
+export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<string, readonly string[]>>): string {
     const { tasks, tier, isBundle } = state;
     const combined = tier === 'fast';
     const task = tasks[0];
     return render('spec.md', {
+        docsMapBlock: buildDocsMapBlock(docsPaths),
         header: isBundle
             ? `You are writing specs for a bundle of ${tasks.length} related tasks for ${config.projectName}.\n\nBundle tasks:\n${taskList(tasks)}`
             : `You are working on task "${task.taskId}" for ${config.projectName}.\n\nTask: ${task.title}\nDirectory: tasks/${task.taskId}/`,
@@ -129,7 +140,7 @@ export function promptSpec(state: PipelineState): string {
     });
 }
 
-export function promptSpecRevision(state: PipelineState): string {
+export function promptSpecRevision(state: PipelineState, docsPaths?: Readonly<Record<string, readonly string[]>>): string {
     const { tasks, tier } = state;
     const combined = tier === 'fast';
     const reviewLines = tasks
@@ -138,6 +149,7 @@ export function promptSpecRevision(state: PipelineState): string {
         .join('\n');
 
     return render('spec-revision.md', {
+        docsMapBlock: buildDocsMapBlock(docsPaths),
         projectName: config.projectName,
         startup: CLAUDE_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
@@ -591,13 +603,18 @@ export function promptCodeReview(
     });
 }
 
-export function promptQa(state: PipelineState, prTemplate?: string | null): string {
+export type QaDocsFreshnessPrompt = { editable: readonly string[]; flagged: readonly string[] };
+
+export function promptQa(state: PipelineState, prTemplate?: string | null,
+    docs: QaDocsFreshnessPrompt = { editable: DEFAULT_PROTECTED_DOCS, flagged: [] }): string {
     const { tasks } = state;
     const taskLines = tasks.map(t =>
         `- \`${t.taskId}\`: "${t.title}" → tasks/${t.taskId}/`
     ).join('\n');
 
     return render('qa.md', {
+        docsEditable: docs.editable.map(doc => `\`${doc}\``).join(', '),
+        docsFlagged: docs.flagged.map(doc => `\`${doc}\``).join(', '),
         projectName: config.projectName,
         docsScope: tasks.length > 1 ? 'these tasks' : 'this task',
         startup: QA_STARTUP,

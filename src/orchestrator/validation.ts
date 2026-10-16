@@ -1,8 +1,9 @@
+import { requireDocsFreshnessConfig, resolveDocsFreshness } from './docs-freshness.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies, scanAllTables } from './markdown-table.js';
-import { PIPELINE_MANAGED_DOCS, PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
+import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
 import { filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { readStatus, taskDirFor } from './state.js';
@@ -1536,7 +1537,7 @@ export type AffectedFilesAllowlist = { paths: ReadonlySet<string>; prefixes: rea
 
 export function buildAffectedFilesAllowlist(
     taskIds: readonly string[],
-    options: { admitManagedDocs: boolean },
+    options: { admittedDocs: readonly string[] },
 ): AffectedFilesAllowlist {
     const paths = new Set<string>(PIPELINE_TELEMETRY_FILES);
     const prefixes: string[] = [];
@@ -1550,10 +1551,13 @@ export function buildAffectedFilesAllowlist(
             warn(`${taskId} spec.md Affected Files row malformed: ${malformed.reason}`);
         }
     }
-    if (options.admitManagedDocs) {
-        for (const doc of PIPELINE_MANAGED_DOCS) paths.add(doc);
-    }
+    for (const doc of options.admittedDocs) paths.add(doc);
     return { paths, prefixes };
+}
+
+export function buildAdmittedAllowlist(taskIds: readonly string[], configRoot: string): AffectedFilesAllowlist {
+    const sets = resolveDocsFreshness(requireDocsFreshnessConfig(configRoot), null);
+    return buildAffectedFilesAllowlist(taskIds, { admittedDocs: sets.admitted });
 }
 
 export function verifyBaseDriftFromData(
@@ -1670,6 +1674,7 @@ export function verifyBaseDrift(
     baseBranch: string,
     cwd: string,
 ): { drift: string[]; fetchFailed: boolean; diffFailed: boolean; diffError?: string } {
+    const docSets = resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null);
     const fetchResult = gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
     if (!fetchResult.ok) {
         warn(
@@ -1694,7 +1699,7 @@ export function verifyBaseDrift(
             // An unreadable status does not widen the allowlist.
         }
     }
-    const allowlist = buildAffectedFilesAllowlist(taskIds, { admitManagedDocs });
+    const allowlist = buildAffectedFilesAllowlist(taskIds, { admittedDocs: admitManagedDocs ? docSets.admitted : [] });
 
     return {
         drift: verifyBaseDriftFromData(driftResult.files, allowlist.paths, taskIds, allowlist.prefixes),

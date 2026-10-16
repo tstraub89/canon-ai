@@ -1786,3 +1786,17 @@ void test('line-citation refs: spaced ranges work in symbol, section and link ca
         ].join('\n'));
     }, root => assert.deepEqual(runChecks(root), []));
 });
+
+void test('shipped markdown works in an adopter with no docs-freshness config or example docs', () => {
+    makeTempRepo(root => {
+        fs.cpSync(path.join(process.cwd(), 'templates'), root, { recursive: true });
+        writeFile(root, 'src/lib/canon-owned.ts', fs.readFileSync(path.join(process.cwd(), 'src/lib/canon-owned.ts'), 'utf8'));
+        writeFile(root, '.claude/settings.json', '{}');
+    }, root => {
+        assert.equal(fs.existsSync(path.join(root, '.canon/config.json')), false);
+        for (const doc of ['docs/api-contract.md', 'docs/environment-variables.md', 'docs/ROADMAP.md']) assert.equal(fs.existsSync(path.join(root, doc)), false);
+        assert.deepEqual(runChecks(root), []);
+        fs.appendFileSync(path.join(root, '.canon/README.md'), '\nExample `docs/not-created.md`.\n');
+        assert.ok(runChecks(root).some(finding => finding.ref.includes('docs/not-created.md')));
+    });
+});

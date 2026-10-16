@@ -12,16 +12,6 @@ export const PIPELINE_TELEMETRY_FILES = [
     'docs/lessons-learned.md',
 ] as const;
 
-export const PIPELINE_MANAGED_DOCS = [
-    'docs/architecture.md',
-    'docs/codebase-map.md',
-    'docs/decisions.md',
-    'docs/patterns.md',
-    'docs/pipeline-orchestrator.md',
-    'docs/product-context.md',
-] as const;
-
-export const PIPELINE_SHARED_DOCS = [...PIPELINE_TELEMETRY_FILES, ...PIPELINE_MANAGED_DOCS] as const;
 
 export const TASK_ARTIFACT_FILES = new Set([
     'spec.md', 'spec-review.md', 'plan.md', 'handoff.md', 'review.md', 'done.md', 'pr-body.md', 'notes.md',

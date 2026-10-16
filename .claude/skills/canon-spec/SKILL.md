@@ -30,6 +30,8 @@ Stop points marked **⛔ STOP** require explicit approval before continuing.
 
 ### Phase 1 — Load context
 
+- If the project has a docs-freshness config (config.json in the .canon directory), read its docs_freshness.paths map. For any path you put in Affected Files that matches a glob, name the mapped docs in Docs Impact. List a mapped doc in Affected Files only if the implementer should edit it.
+
 Read before doing anything else:
 
 - `docs/product-context.md` — project context, user flows, delicate surfaces

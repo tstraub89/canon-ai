@@ -1,8 +1,8 @@
 # .canon/
 
-Files in this directory are managed by canon. **Do not edit them directly.**
+Files in this directory are managed by canon, except config.json (see below). **Do not edit the managed files directly.**
 
-`canon upgrade` overwrites files here to keep them in sync with the installed
+`canon upgrade` overwrites managed files here to keep them in sync with the installed
 version of canon-ai. Any edits will be lost on the next upgrade.
 
 ## Customizing task templates
@@ -33,3 +33,20 @@ the local equivalent), not in canon-side policy modules. Canon's pipeline runs
 Codex with `--sandbox workspace-write` (writes within the worktree, plus
 network access) — appropriate for the checks an `implement` phase typically
 runs (lint, type-check, unit tests, build).
+
+## Project config (config.json)
+
+config.json in this directory is adopter-owned. `canon init` does not create it,
+and `canon upgrade` never creates, changes, or refuses on it. The docs_freshness
+field configures QA's protected docs, path mappings, and flag-only docs; see
+"Configuring docs freshness" in the canon-ai README for the full behavior.
+
+```json
+{
+  "docs_freshness": {
+    "protected": ["docs/architecture.md", "docs/codebase-map.md"],
+    "paths": { "api/**": ["docs/api-contract.md"], "**": ["docs/ROADMAP.md"] },
+    "flag_only": ["AGENTS.md"]
+  }
+}
+```
