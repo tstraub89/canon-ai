@@ -186,6 +186,12 @@ void test('findStagedFilesOutsideHandoff catches files git commit would otherwis
     assert.deepEqual(unexpected, ['src/unrelated.ts', 'tasks/example/status.json']);
 });
 
+void test('findStagedFilesOutsideHandoff decodes C-quoted --name-only paths', () => {
+    const staged = '"src/\\360\\237\\230\\200.ts"\n"src/a\\"b.ts"\n';
+
+    assert.deepEqual(findStagedFilesOutsideHandoff(staged, new Set(['src/😀.ts'])), ['src/a"b.ts']);
+});
+
 // ── PIPELINE_TELEMETRY_FILES ────────────────────────────────────────────────
 
 void test('PIPELINE_TELEMETRY_FILES covers the two files the pipeline itself writes', () => {

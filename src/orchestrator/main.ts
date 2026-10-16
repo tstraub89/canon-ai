@@ -300,7 +300,7 @@ function verifyHandoffFilesCommitted(
         die(`Auto-commit coverage check failed: \`git diff HEAD\` failed: ${wtDiff.stderr || 'unknown error'}`);
     }
     if (wtDiff.stdout.trim()) {
-        const stillDifferent = wtDiff.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+        const stillDifferent = wtDiff.stdout.split('\n').map(s => s.trim()).filter(Boolean).map(splitGit.decodePorcelainPath);
         for (const f of stillDifferent) {
             // Avoid duplicate messages if status already flagged it as still-dirty.
             if (missing.some(m => m.startsWith(`${f} —`))) continue;
@@ -2932,7 +2932,7 @@ function checkImplementEvidence(taskId: string): EvidenceResult {
         const deletedDiff = splitGit.gitSafeAt(evidenceCwd, 'diff', 'HEAD', '--name-only', '--no-renames', '--diff-filter=D');
         const deletedAgainstHead = new Set(
             (deletedDiff.ok ? deletedDiff.stdout : '')
-                .split('\n').map(l => l.trim()).filter(Boolean),
+                .split('\n').map(l => l.trim()).filter(Boolean).map(splitGit.decodePorcelainPath),
         );
         const baseBranch = sForEvidence.base_branch || splitGit.getDefaultBaseBranch();
         const committedDiff = splitGit.gitSafeAt(
@@ -2942,7 +2942,8 @@ function checkImplementEvidence(taskId: string): EvidenceResult {
             committedDiff.stdout.split('\n')
                 .filter(l => l.startsWith('D'))
                 .map(l => l.split('\t')[1]?.trim())
-                .filter((p): p is string => Boolean(p)),
+                .filter((p): p is string => Boolean(p))
+                .map(splitGit.decodePorcelainPath),
         );
         const deletedFiles = verifiableFiles.filter(f =>
             deletedAgainstHead.has(f) || deletedInCommits.has(f),

@@ -3402,7 +3402,7 @@ function findUncoveredTrackedChanges(statusOutput, handoffFiles) {
 }
 function findStagedFilesOutsideHandoff(stagedNameOnlyOutput, handoffFiles) {
   const allowed = toFileSet(handoffFiles);
-  return stagedNameOnlyOutput.split("\n").map((line) => line.trim()).filter(Boolean).filter((filePath) => !allowed.has(filePath));
+  return stagedNameOnlyOutput.split("\n").map((line) => line.trim()).filter(Boolean).map(decodePorcelainPath).filter((filePath) => !allowed.has(filePath));
 }
 var DONE_MD_TEMPLATE_SENTINELS = [
   "[TASK-ID]",
@@ -6984,7 +6984,7 @@ function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles) {
     die2(`Auto-commit coverage check failed: \`git diff HEAD\` failed: ${wtDiff.stderr || "unknown error"}`);
   }
   if (wtDiff.stdout.trim()) {
-    const stillDifferent = wtDiff.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+    const stillDifferent = wtDiff.stdout.split("\n").map((s) => s.trim()).filter(Boolean).map(decodePorcelainPath);
     for (const f of stillDifferent) {
       if (missing.some((m) => m.startsWith(`${f} \u2014`))) continue;
       missing.push(`${f} \u2014 working tree differs from HEAD (status reported clean \u2014 silent-omission failure mode)`);
@@ -8756,7 +8756,7 @@ function checkImplementEvidence(taskId) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
     const deletedDiff = gitSafeAt(evidenceCwd, "diff", "HEAD", "--name-only", "--no-renames", "--diff-filter=D");
     const deletedAgainstHead = new Set(
-      (deletedDiff.ok ? deletedDiff.stdout : "").split("\n").map((l) => l.trim()).filter(Boolean)
+      (deletedDiff.ok ? deletedDiff.stdout : "").split("\n").map((l) => l.trim()).filter(Boolean).map(decodePorcelainPath)
     );
     const baseBranch = sForEvidence.base_branch || getDefaultBaseBranch();
     const committedDiff = gitSafeAt(
@@ -8766,7 +8766,7 @@ function checkImplementEvidence(taskId) {
       `${baseBranch}...HEAD`
     );
     const deletedInCommits = new Set(
-      committedDiff.stdout.split("\n").filter((l) => l.startsWith("D")).map((l) => l.split("	")[1]?.trim()).filter((p) => Boolean(p))
+      committedDiff.stdout.split("\n").filter((l) => l.startsWith("D")).map((l) => l.split("	")[1]?.trim()).filter((p) => Boolean(p)).map(decodePorcelainPath)
     );
     const deletedFiles = verifiableFiles.filter(
       (f) => deletedAgainstHead.has(f) || deletedInCommits.has(f)
