@@ -26,6 +26,7 @@ import { isHeartbeatStale, readHeartbeat, startHeartbeat, stopAllHeartbeats } fr
 import { registerShutdownHook } from './signals.js';
 import { archivePriorReview, rescaffoldReview } from './review-archive.js';
 import { taskPhase } from '../../src/task/index.js';
+import { foldTelemetryFragments, sharedTelemetryDocsTouched } from './telemetry-fold.js';
 
 const REPO_ROOT = splitEnv.REPO_ROOT;
 const TASKS_DIR = splitEnv.TASKS_DIR;
@@ -1019,9 +1020,16 @@ function recordPinnedPRNumber(taskIds: string[], prNum: number): void {
     }
 }
 
-function reportOrCreatePR(taskIds: string[], branchName: string): void {
+function reportOrCreatePR(taskIds: string[], branchName: string, cwd: string): void {
     if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
     const baseBranch = splitGit.getBaseBranch(taskIds);
+    const affected = splitGit.getAffectedFiles(baseBranch, cwd);
+    if (affected.ok) {
+        const touched = sharedTelemetryDocsTouched(affected.files);
+        if (touched.length) warn(`Shared telemetry docs changed: ${touched.join(', ')}. Parallel tasks will conflict there; new runs write task fragments that --ship folds.`);
+    } else {
+        warn(`Could not check shared telemetry doc drift: ${affected.stderr}`);
+    }
     const openPR = findOpenPRNumber(branchName, baseBranch);
     let prNum: number;
     if (openPR !== null) {
@@ -1291,7 +1299,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
 
-            if (createPR) reportOrCreatePR(taskIds, branchName);
+            if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
             return;
         }
     }
@@ -1404,7 +1412,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
 
-    if (createPR) reportOrCreatePR(taskIds, branchName);
+    if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
 }
 
 function printDryRunPlan(state: PipelineState): void {
@@ -2311,6 +2319,16 @@ function shipTasks(taskIds: string[]): void {
         );
     }
 
+    // Fold before teardown, status writes, or archive moves so failures are re-runnable.
+    try {
+        for (const file of foldTelemetryFragments(REPO_ROOT, taskIds, taskDirForRepoRoot)) {
+            info(`Folded task telemetry into ${file}.`);
+        }
+    } catch (error) {
+        die(`--ship aborted: could not fold task telemetry fragments: ${error instanceof Error ? error.message : String(error)}. ` +
+            'Fix the shared docs or fragment write/read error and re-run --ship; no task has been archived.');
+    }
+
     const archiveDir = path.join(TASKS_DIR, '_archive');
     if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
 
@@ -2364,6 +2382,7 @@ function shipTasks(taskIds: string[]): void {
         path.join(TASKS_DIR, '_archive', id),            // new archive destination
         path.join(REPO_ROOT, 'docs', 'lessons-learned.md'),
         path.join(REPO_ROOT, 'docs', 'task-quality-log.md'),
+        path.join(REPO_ROOT, 'docs', 'pipeline-invocations.md'),
     ]);
     stageArchiveChanges(stagedPaths);
 

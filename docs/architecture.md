@@ -84,7 +84,7 @@ The orchestrator is a long-running TypeScript process. It spawns agent CLIs as s
 7. **Implement**: orchestrator spawns Codex with the implement prompt + spec + plan. Codex edits files in the worktree (or main checkout if `worktree: false`), writes `handoff.md`. Orchestrator runs hallucination check.
 8. **Auto-commit**: `autoCommitCode()` parses every handoff Changes table → `allHandoffFiles` set. Verifies dirty tree matches handoff (every dirty file is listed; every listed file exists). Stages and commits with task-titled message.
 9. **Code review**: orchestrator runs `validateHandoff()` pre-flight (no `Fail` rows, AC coverage table populated, all required validations present). If pass, spawns Claude with the review prompt. Claude writes `review.md` (Stage 1 + Stage 2). On `changes_requested`, routes back to implement.
-10. **QA**: Claude writes `done.md` (including judgment cells for the task-quality-log row) and distills `notes.md` into `lessons-learned.md` entries. The qa → done transition upserts the task's `task-quality-log.md` row from `status.json` plus those judgment cells.
+10. **QA**: Claude writes `done.md` (including judgment cells for the task-quality-log row) and distills `notes.md` into the task's `lessons.md` fragment. The qa → done transition upserts the task's `quality-log.md` fragment row from `status.json` plus those judgment cells. Task runs write telemetry fragments; `--ship` folds them into the shared docs.
 11. **Human review**: human tests against `done.md`, marks `phases.human_review.status = "done"`.
 
 ### State persistence
@@ -93,7 +93,7 @@ All state is files. There is no in-memory shared state between phases — every 
 
 ### Telemetry
 
-After every agent invocation, the orchestrator appends a row to `docs/pipeline-invocations.md` (duration + tokens). During QA, Claude records five judgment cells in `done.md`; the qa → done transition derives the remaining cells from `status.json` and upserts one row per task into `docs/task-quality-log.md`. `docs/pipeline-invocations.md` remains append-only.
+Task runs write telemetry fragments under their task directories: `metrics.md` records every agent invocation (duration + tokens), `quality-log.md` holds the qa → done upsert derived from `status.json` and QA's five judgment cells in `done.md`, and `lessons.md` holds QA's distilled notes. Bundle invocation rows live in the first member's metrics fragment and keep the joined task label. `--ship` folds fragments into `docs/pipeline-invocations.md`, `docs/task-quality-log.md`, and `docs/lessons-learned.md` before archiving, then removes them. Metrics remain append-only; quality rows reconcile by task id. Runtime writes warn on failure; a failed fold aborts ship before archive changes. Missing fragments support legacy tasks. `--pr` warns when branches still edit the shared logs, since those edits can conflict across parallel tasks.
 
 ## Boundaries & Contracts
 

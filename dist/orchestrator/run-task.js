@@ -1841,9 +1841,9 @@ function resolveDocsFreshness(config3, diff) {
 
 // src/orchestrator/main.ts
 import { spawnSync as spawnSync6 } from "child_process";
-import fs22 from "fs";
+import fs23 from "fs";
 import os from "os";
-import path21 from "path";
+import path22 from "path";
 
 // src/orchestrator/phases/code-review.ts
 import fs17 from "fs";
@@ -2104,31 +2104,45 @@ import { spawn as spawn2 } from "child_process";
 // src/orchestrator/metrics.ts
 import fs8 from "fs";
 import path7 from "path";
-function getMetricsFile(activeCwd) {
-  return process.env.CANON_METRICS_FILE_OVERRIDE ? path7.resolve(process.env.CANON_METRICS_FILE_OVERRIDE) : path7.join(activeCwd ?? REPO_ROOT, "docs/pipeline-invocations.md");
+var METRICS_SKELETON = [
+  "# Workflow Metrics",
+  "",
+  "> Auto-logged by canon's orchestrator. One row per agent invocation.",
+  "> Tokens: per-invocation total (input + cache + output). Parsed from the agent's structured output \u2014 `claude -p --output-format stream-json` for Claude, `codex exec --json` for Codex. Interactive-mode invocations are not tracked.",
+  "",
+  "| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |",
+  "|---|---|---|---|---|---|---|---|---|",
+  ""
+].join("\n");
+function getMetricsFile(taskLabel, activeCwd) {
+  return process.env.CANON_METRICS_FILE_OVERRIDE ? path7.resolve(process.env.CANON_METRICS_FILE_OVERRIDE) : path7.join(
+    process.env.CANON_TASKS_DIR_OVERRIDE ?? path7.join(activeCwd ?? REPO_ROOT, "tasks"),
+    taskLabel.split("+")[0],
+    "metrics.md"
+  );
+}
+function getSharedMetricsFile(repoRoot) {
+  return path7.join(repoRoot, "docs/pipeline-invocations.md");
 }
 function recordMetric(entry) {
-  const metricsFile = getMetricsFile(entry.activeCwd);
-  if (!fs8.existsSync(metricsFile)) {
-    fs8.writeFileSync(metricsFile, [
-      "# Workflow Metrics",
-      "",
-      "> Auto-logged by canon's orchestrator. One row per agent invocation.",
-      "> Tokens: per-invocation total (input + cache + output). Parsed from the agent's structured output \u2014 `claude -p --output-format stream-json` for Claude, `codex exec --json` for Codex. Interactive-mode invocations are not tracked.",
-      "",
-      "| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |",
-      "|---|---|---|---|---|---|---|---|---|",
-      ""
-    ].join("\n"));
-  }
-  const safeCell = (v) => v.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
-  const dur = (entry.durationMs / 1e3).toFixed(1) + "s";
-  const tok = entry.tokens != null ? String(entry.tokens) : "-";
-  fs8.appendFileSync(
-    metricsFile,
-    `| ${(/* @__PURE__ */ new Date()).toISOString()} | ${entry.taskId} | ${entry.phase} | ${entry.agent} | ${safeCell(entry.model)} | ${entry.iteration ?? "-"} | ${dur} | ${tok} | ${entry.status} |
+  try {
+    if (!process.env.CANON_METRICS_FILE_OVERRIDE && !entry.taskId.split("+")[0]) {
+      throw new Error("empty task label");
+    }
+    const metricsFile = getMetricsFile(entry.taskId, entry.activeCwd);
+    if (!process.env.CANON_METRICS_FILE_OVERRIDE) fs8.mkdirSync(path7.dirname(metricsFile), { recursive: true });
+    if (!fs8.existsSync(metricsFile)) fs8.writeFileSync(metricsFile, METRICS_SKELETON);
+    const safeCell = (v) => v.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    const dur = (entry.durationMs / 1e3).toFixed(1) + "s";
+    const tok = entry.tokens != null ? String(entry.tokens) : "-";
+    fs8.appendFileSync(
+      metricsFile,
+      `| ${(/* @__PURE__ */ new Date()).toISOString()} | ${entry.taskId} | ${entry.phase} | ${entry.agent} | ${safeCell(entry.model)} | ${entry.iteration ?? "-"} | ${dur} | ${tok} | ${entry.status} |
 `
-  );
+    );
+  } catch (error) {
+    warn(`metrics: could not record ${entry.phase} row for '${entry.taskId}': ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 // src/orchestrator/prompts/helpers.ts
@@ -4983,7 +4997,7 @@ var plan_reroute_default = "You are updating the implementation plan for {{taskS
 var plan_default = "You are writing implementation plans for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n{{{verdictLines}}}\n\nFor each task, read tasks/<id>/spec.md and tasks/<id>/spec-review.md. Address any `changes_requested` items before writing the plan. If the verdict is `approved_with_nits`, incorporate the nits into the plan \u2014 they don't require spec changes but should inform implementation decisions.\n\nWrite tasks/<id>/plan.md for each task with ordered implementation steps. Reference specific files, existing patterns, and code examples from the codebase. Codex implements directly from this plan.\n\n{{{feasibilityCheck}}}\n\nIf you encounter spec gaps, append to tasks/<id>/notes.md (prefix: [plan]).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // src/orchestrator/prompts/templates/qa.md
-var qa_default = 'You are writing QA summaries for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks:\n{{{taskLines}}}\n\nFor each task:\n1. **Use the Write tool** to create tasks/<id>/done.md \u2014 plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, decisions made, open questions.\n   \u26A0\uFE0F CRITICAL: Use the `Write` tool \u2014 do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.\n2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check\'s latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.\n   - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.\n   - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.\n3. Include a **Proposed Changelog** section in done.md \u2014 the changelog **entry text only**. Do **NOT** include a version number, a "Proposed version" line, or a bump tier (Patch/Minor/Major): the version is decided at the release step (`/canon-changelog` + human), never by QA.\n   - **Canon release rules (non-negotiable)**: (1) Agents do not bump versions or land changelog edits without explicit scope authorization. (2) The QA step proposes a draft changelog entry text only \u2014 not the version number. (3) Changelog + version bump are committed separately from code changes (when a project versions its releases). (4) No major versioning surprises: if a task introduces a breaking change the spec didn\'t flag, raise it before shipping.\n   - Read `docs/decisions.md` \xA7"Versioning and release policy" for this project\'s changelog **scope** (which changes warrant an entry). The bump tier / SemVer interpretation is the release step\'s call, not QA\'s \u2014 do not propose one.\n   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.\n   - Apply the "would a user notice" test to every candidate bullet (or the project\'s equivalent scope test): if a candidate falls outside the project\'s defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change \u2014 omit from changelog") rather than inventing a bullet.\n   - Implementation mechanics belong in the "What Changed" section above \u2014 not in the proposed changelog.\n   The human finalizes the changelog entry.\n4. **For single tasks only \u2014 use the Write tool** to create `tasks/<id>/pr-body.md` \u2014 the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work.\n   {{#prTemplate}}\n   The repo has this PR template. Fill every section with specifics from what shipped. Keep the headings; replace every placeholder:\n\n   {{{prTemplate}}}\n   {{/prTemplate}}\n   {{^prTemplate}}\n   No PR template found. Use this structure:\n\n   ## Summary\n   1\u20133 bullets: what changed and why.\n\n   ## Changes\n   Key files or areas touched, described for a reviewer.\n\n   ## How to Test\n   Steps a reviewer can follow to verify the change.\n\n   ## Notes for Reviewer\n   Any context, caveats, or follow-up items.\n   {{/prTemplate}}\n   \u26A0\uFE0F Write as the human engineer who did the work \u2014 not as the AI or tool that produced it (Claude, Codex, canon, an LLM). \u2705 e.g. "Fix the pagination off-by-one that dropped the last row." \u274C e.g. "\u{1F916} Generated with Claude Code."\n   Skip this step entirely for bundle tasks \u2014 per-task bodies are not combined for bundle PRs.\n\nAfter writing all done.md files:\n- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries \u2014 not this task\'s earlier entries, and never another task\'s. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action \u2014 never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md \u2192 "How to use this doc".)\n- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly \u2014 the qa \u2192 done transition writes or upserts that row automatically from status.json plus this section.\n\n  ```markdown\n  ## Quality Log\n  - Spec verdict: <the FIRST spec_review verdict this task ever received \u2014 approved / approved_with_nits / changes_requested; leave blank only if truly unknown>\n  - Human reroute?: <Yes/No \u2014 did the human reject at human_review and force a re-implement? Do not infer this from any reroute counter; if this is a fresh QA pass with no human_review rejection yet, answer No>\n  - Dropped ACs: <count of ACs the implementation missed, caught in code review>\n  - Validation gaps: <count of validation checks that should have run but did not>\n  - Notes: <one-line summary of anything notable \u2014 single line, no embedded line breaks>\n  ```\n\n  On a re-upsert after a reroute, only fill in cells that changed or that you are correcting \u2014 an omitted cell keeps its previously recorded value. In particular, do not overwrite an already-recorded `Spec verdict` with the current status.json verdict; that column means the first spec_review verdict, and status.json only retains the latest.\n\n**Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):\n- [ ] Version correct (per project policy; skip if unversioned)\n- [ ] Changelog updated if needed (per project policy; skip if unversioned)\n- [ ] PR body current\n- [ ] Final CI/CD checks green\n- [ ] Final diff matches spec intent\n\n**Output Format for Human** \u2014 `done.md` must contain:\n1. One-paragraph plain-English summary\n2. Files changed\n3. How to test (product-level steps, not code)\n4. Test results table\n5. Decisions made during implementation\n6. Open questions needing human input\n\n**Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently \u2014 reference the symbol or path; do not restate the value.\n\n**Commit Ownership** \u2014 three change categories:\n- Code changes \u2192 task branch, committed by the orchestrator after Codex static validation.\n- Pre-implement scaffold \u2192 base branch, committed by the orchestrator before first implement.\n- Changelog + version bump (if versioned) \u2192 separate commit, human + Claude, after human_review.\n\n- **Docs freshness \u2014 Two-checkpoint**: {{#docsEditable}}scan these docs ({{{docsEditable}}}) for references that {{docsScope}} *contradicts* \u2014 a renamed symbol, a moved file, a behavior this task changed \u2014 and correct those stale references. That is the only edit QA makes to permanent docs.{{/docsEditable}}{{^docsEditable}}no docs are configured for correction in this project, so QA makes no edits to permanent docs under this step.{{/docsEditable}} Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries \u2014 promotion is the human sweep, not Docs freshness.\n{{#docsFlagged}}\n- **Docs drift (flag only)**: also check {{{docsFlagged}}} for statements {{docsScope}} makes stale. Do **not** edit these docs. Report each stale statement in a `## Docs drift` section of done.md (doc, the stale statement, and what is now true). Omit the section if nothing is stale.\n{{/docsFlagged}}\n- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md now holds more than ~15 entries, add one line to this task\'s done.md \u2014 `Maintenance: lessons-learned.md has N entries; a human lessons sweep is due (see docs/lessons-learned.md \u2192 "How to use this doc").` Do not perform the sweep yourself.\n\nWhen done, run (use the Bash tool \u2014 do not just output the command as text):\n{{{phaseCommands}}}\n';
+var qa_default = 'You are writing QA summaries for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks:\n{{{taskLines}}}\n\nFor each task:\n1. **Use the Write tool** to create tasks/<id>/done.md \u2014 plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, decisions made, open questions.\n   \u26A0\uFE0F CRITICAL: Use the `Write` tool \u2014 do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.\n2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check\'s latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.\n   - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.\n   - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.\n3. Include a **Proposed Changelog** section in done.md \u2014 the changelog **entry text only**. Do **NOT** include a version number, a "Proposed version" line, or a bump tier (Patch/Minor/Major): the version is decided at the release step (`/canon-changelog` + human), never by QA.\n   - **Canon release rules (non-negotiable)**: (1) Agents do not bump versions or land changelog edits without explicit scope authorization. (2) The QA step proposes a draft changelog entry text only \u2014 not the version number. (3) Changelog + version bump are committed separately from code changes (when a project versions its releases). (4) No major versioning surprises: if a task introduces a breaking change the spec didn\'t flag, raise it before shipping.\n   - Read `docs/decisions.md` \xA7"Versioning and release policy" for this project\'s changelog **scope** (which changes warrant an entry). The bump tier / SemVer interpretation is the release step\'s call, not QA\'s \u2014 do not propose one.\n   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.\n   - Apply the "would a user notice" test to every candidate bullet (or the project\'s equivalent scope test): if a candidate falls outside the project\'s defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change \u2014 omit from changelog") rather than inventing a bullet.\n   - Implementation mechanics belong in the "What Changed" section above \u2014 not in the proposed changelog.\n   The human finalizes the changelog entry.\n4. **For single tasks only \u2014 use the Write tool** to create `tasks/<id>/pr-body.md` \u2014 the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work.\n   {{#prTemplate}}\n   The repo has this PR template. Fill every section with specifics from what shipped. Keep the headings; replace every placeholder:\n\n   {{{prTemplate}}}\n   {{/prTemplate}}\n   {{^prTemplate}}\n   No PR template found. Use this structure:\n\n   ## Summary\n   1\u20133 bullets: what changed and why.\n\n   ## Changes\n   Key files or areas touched, described for a reviewer.\n\n   ## How to Test\n   Steps a reviewer can follow to verify the change.\n\n   ## Notes for Reviewer\n   Any context, caveats, or follow-up items.\n   {{/prTemplate}}\n   \u26A0\uFE0F Write as the human engineer who did the work \u2014 not as the AI or tool that produced it (Claude, Codex, canon, an LLM). \u2705 e.g. "Fix the pagination off-by-one that dropped the last row." \u274C e.g. "\u{1F916} Generated with Claude Code."\n   Skip this step entirely for bundle tasks \u2014 per-task bodies are not combined for bundle PRs.\n\nAfter writing all done.md files:\n- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to its own lessons fragment, using the entry format in docs/lessons-learned.md. Do not edit docs/lessons-learned.md; `--ship` folds the fragments into it. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries \u2014 not this task\'s earlier entries, and never another task\'s. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action \u2014 never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md \u2192 "How to use this doc".)\n\n  Append each member\u2019s lesson to that member\u2019s fragment:\n{{{lessonsFragments}}}\n\n- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly \u2014 the qa \u2192 done transition writes or upserts that row automatically into each task\'s quality-log.md fragment from status.json plus this section. `--ship` folds it into the shared log.\n\n  ```markdown\n  ## Quality Log\n  - Spec verdict: <the FIRST spec_review verdict this task ever received \u2014 approved / approved_with_nits / changes_requested; leave blank only if truly unknown>\n  - Human reroute?: <Yes/No \u2014 did the human reject at human_review and force a re-implement? Do not infer this from any reroute counter; if this is a fresh QA pass with no human_review rejection yet, answer No>\n  - Dropped ACs: <count of ACs the implementation missed, caught in code review>\n  - Validation gaps: <count of validation checks that should have run but did not>\n  - Notes: <one-line summary of anything notable \u2014 single line, no embedded line breaks>\n  ```\n\n  On a re-upsert after a reroute, only fill in cells that changed or that you are correcting \u2014 an omitted cell keeps its previously recorded value. In particular, do not overwrite an already-recorded `Spec verdict` with the current status.json verdict; that column means the first spec_review verdict, and status.json only retains the latest.\n\n**Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):\n- [ ] Version correct (per project policy; skip if unversioned)\n- [ ] Changelog updated if needed (per project policy; skip if unversioned)\n- [ ] PR body current\n- [ ] Final CI/CD checks green\n- [ ] Final diff matches spec intent\n\n**Output Format for Human** \u2014 `done.md` must contain:\n1. One-paragraph plain-English summary\n2. Files changed\n3. How to test (product-level steps, not code)\n4. Test results table\n5. Decisions made during implementation\n6. Open questions needing human input\n\n**Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently \u2014 reference the symbol or path; do not restate the value.\n\n**Commit Ownership** \u2014 three change categories:\n- Code changes \u2192 task branch, committed by the orchestrator after Codex static validation.\n- Pre-implement scaffold \u2192 base branch, committed by the orchestrator before first implement.\n- Changelog + version bump (if versioned) \u2192 separate commit, human + Claude, after human_review.\n\n- **Docs freshness \u2014 Two-checkpoint**: {{#docsEditable}}scan these docs ({{{docsEditable}}}) for references that {{docsScope}} *contradicts* \u2014 a renamed symbol, a moved file, a behavior this task changed \u2014 and correct those stale references. That is the only edit QA makes to permanent docs.{{/docsEditable}}{{^docsEditable}}no docs are configured for correction in this project, so QA makes no edits to permanent docs under this step.{{/docsEditable}} Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries \u2014 promotion is the human sweep, not Docs freshness.\n{{#docsFlagged}}\n- **Docs drift (flag only)**: also check {{{docsFlagged}}} for statements {{docsScope}} makes stale. Do **not** edit these docs. Report each stale statement in a `## Docs drift` section of done.md (doc, the stale statement, and what is now true). Omit the section if nothing is stale.\n{{/docsFlagged}}\n- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md plus this task\'s lessons fragment now hold more than ~15 entries, add one line to this task\'s done.md \u2014 `Maintenance: lessons-learned.md plus this task\u2019s fragment have N entries; a human lessons sweep is due (see docs/lessons-learned.md \u2192 "How to use this doc").` Do not perform the sweep yourself.\n\nWhen done, run (use the Bash tool \u2014 do not just output the command as text):\n{{{phaseCommands}}}\n';
 
 // src/orchestrator/prompts/templates/spec.md
 var spec_default = '{{{header}}}\n\n{{{startup}}}\n\n{{{instructions}}}\n{{{bundleNote}}}\n{{#doneNote}}\nNote: {{{doneNote}}}{{/doneNote}}\n\n{{#docsMapBlock}}\n{{{docsMapBlock}}}\n\n{{/docsMapBlock}}\n**Spec-writing rules of thumb** \u2014 apply when writing each spec:\n\n- **Name effects to DELETE** \u2014 frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" \u2014 not separate "Add" and "Remove" bullets.\n- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe; bare prose negation is fragile.\n- **Symbols named in ACs must exist** \u2014 grep for every function or symbol an AC names; verify its return shape matches the spec\'s assumed data contract before marking spec done.\n- **Enumerate every caller and classify its execution context before asserting how a mechanism works** \u2014 "counter X only increments on event Y" or "this writer can only be invoked from surface Z" is a control-flow claim, and control-flow claims need every caller traced. A helper named for one trigger routinely serves several, and whether a call site runs inside an agent\'s own session or in the orchestrator\'s process is invisible from the function body. Grep every caller of the function or counter \u2014 including skills and docs, not just source \u2014 and classify each site as in-agent-session or orchestrator-context before the spec asserts anything about it.\n- **Behavioral contracts, not mechanics** \u2014 ACs describe observable behavior; defer implementation mechanics (signatures, constant names, precise algorithms) to plan/implement. If review rounds start re-litigating literal regexes, exact file layouts, or verbatim command strings, the spec has dropped to code altitude and each round\'s "underspecified" finding just adds more reviewable surface: move the mechanics into a clearly-labeled non-binding *Implementation Notes* subsection owned by plan/implement, rather than wording the same mechanism more precisely.\n- **Bug and flake-fix specs need a confirmed mechanism and red-first test** \u2014 For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed \u2014 not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.\n- **At \u22653 spec_review iterations, read the rounds\' content, not the count** \u2014 label each round *edge-fine-tune* (it narrows an already-identified case \u2014 converging, safe to finish once the remaining findings are addressed) or *scope-expansion* (it names a **new** structural case the spec hadn\'t covered \u2014 a real design gap). Round count alone is not the signal; a 6-round run of successive fine-tunes is convergence, not churn. On genuine scope-expansion, don\'t refine again: check whether the last two rejections share one structural root, and whether an existing layer already owns the concern. Dropping the whole mechanism class \u2014 or deleting the mechanism in favor of the layer that already owns it \u2014 is usually cheaper than another round of hardening.\n- **Refactor specs need structural caps** \u2014 provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.\n- **Refactor specs need a correctness audit** \u2014 For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. N/A for features and bug fixes.\n- **UI spatial / gesture tasks** \u2014 flag "visual positioning \u2014 expect human iteration" or "runtime debugging required" in *Known Risks*.\n- **Sensitive-surface escalation** \u2014 flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.\n\n{{{selfCheck}}}\n\nWhen done, run (one per task):\n{{{phaseCommands}}}\n';
@@ -5418,6 +5432,7 @@ function promptQa(state, prTemplate, docs = { editable: DEFAULT_PROTECTED_DOCS, 
     (t) => `- \`${t.taskId}\`: "${t.title}" \u2192 tasks/${t.taskId}/`
   ).join("\n");
   return render3("qa.md", {
+    lessonsFragments: tasks.map((t) => `- Task \`${t.taskId}\`: append its lesson to \`tasks/${t.taskId}/lessons.md\`.`).join("\n"),
     docsEditable: docs.editable.map((doc) => `\`${doc}\``).join(", "),
     docsFlagged: docs.flagged.map((doc) => `\`${doc}\``).join(", "),
     projectName: config.projectName,
@@ -5581,9 +5596,6 @@ var JUDGMENT_LABELS = {
   "validation gaps": "Validation gaps",
   "notes": "Notes"
 };
-function getQualityLogFile(activeCwd) {
-  return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path14.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path14.join(activeCwd, "docs/task-quality-log.md");
-}
 function normalizeCellValue(value) {
   return value.replace(/\r\n|\n/g, " ");
 }
@@ -5744,6 +5756,26 @@ function writeFileAtomic(filePath, content) {
     }
   }
 }
+function replaceTaskRow(lines, located, taskId, buildRow) {
+  const logRows = parseLogRows(
+    lines,
+    located.headerCells,
+    located.dataStart,
+    located.dataEnd
+  );
+  const strayRows = parseStrayRows(lines, located.headerCells);
+  const taskRows = [...logRows, ...strayRows].filter((row) => (row.cells.Task ?? "").trim() === taskId);
+  const finalRow = buildRow(taskRows);
+  const rendered = renderRowLine(located.headerCells, finalRow);
+  const removeIndexes = new Set(taskRows.map((row) => row.lineIndex));
+  const updatedLines = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index === located.dataEnd) updatedLines.push(rendered);
+    if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
+  }
+  if (located.dataEnd >= lines.length) updatedLines.push(rendered);
+  return updatedLines;
+}
 function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
   try {
     let content;
@@ -5766,24 +5798,7 @@ function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
       );
       return;
     }
-    const logRows = parseLogRows(
-      lines,
-      located.headerCells,
-      located.dataStart,
-      located.dataEnd
-    );
-    const strayRows = parseStrayRows(lines, located.headerCells);
-    const taskRows = [...logRows, ...strayRows].filter((row) => (row.cells.Task ?? "").trim() === derived.taskId);
-    const reconciled = reconcileHistory(taskRows, located.headerCells);
-    const finalRow = buildFinalRow(located.headerCells, derived, reconciled, qaSupplied);
-    const rendered = renderRowLine(located.headerCells, finalRow);
-    const removeIndexes = new Set(taskRows.map((row) => row.lineIndex));
-    const updatedLines = [];
-    for (let index = 0; index < lines.length; index += 1) {
-      if (index === located.dataEnd) updatedLines.push(rendered);
-      if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
-    }
-    if (located.dataEnd >= lines.length) updatedLines.push(rendered);
+    const updatedLines = replaceTaskRow(lines, located, derived.taskId, (taskRows) => buildFinalRow(located.headerCells, derived, reconcileHistory(taskRows, located.headerCells), qaSupplied));
     writeFileAtomic(logFilePath, updatedLines.join("\n"));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -5803,15 +5818,17 @@ function parseQualityLogJudgmentBlock(doneMdContent) {
   }
   return result;
 }
-function writeQualityLogForTask(taskId, activeCwd, donePath, status) {
+function writeQualityLogForTask(taskId, _activeCwd, donePath, status) {
   try {
     let doneContent = "";
     try {
       doneContent = fs15.readFileSync(donePath, "utf8");
     } catch {
     }
+    const target = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path14.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path14.join(path14.dirname(donePath), "quality-log.md");
+    if (!process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) fs15.mkdirSync(path14.dirname(target), { recursive: true });
     upsertQualityLogRow(
-      getQualityLogFile(activeCwd),
+      target,
       {
         taskId,
         taskSize: status.task_size,
@@ -5825,6 +5842,25 @@ function writeQualityLogForTask(taskId, activeCwd, donePath, status) {
     const message = error instanceof Error ? error.message : String(error);
     warn(`quality-log: failed to write row for '${taskId}': ${message}`);
   }
+}
+function foldQualityLogFragment(shared, fragment, taskId) {
+  const fragmentLines = fragment.split("\n");
+  const fragmentTable = locateLogTable(fragmentLines);
+  if (!fragmentTable) throw new Error(`quality-log fragment for '${taskId}' has no well-formed '## Log' table`);
+  const fragmentRows = parseLogRows(fragmentLines, fragmentTable.headerCells, fragmentTable.dataStart, fragmentTable.dataEnd).filter((row) => row.cells.Task === taskId);
+  if (!fragmentRows.length) return null;
+  const lines = (shared ?? STANDARD_QUALITY_LOG_SKELETON).split("\n");
+  const located = locateLogTable(lines);
+  if (!located) throw new Error("docs/task-quality-log.md has no well-formed '## Log' table with all required columns");
+  return replaceTaskRow(lines, located, taskId, (taskRows) => {
+    const history = [...taskRows, ...fragmentRows.map((row, index) => ({ ...row, lineIndex: lines.length + index }))];
+    const reconciled = reconcileHistory(history, located.headerCells);
+    const latest = fragmentRows[fragmentRows.length - 1].cells;
+    return Object.fromEntries(located.headerCells.map((header) => [
+      header,
+      header === "Task" ? taskId : DERIVED_HEADERS.has(header) ? latest[header] ?? "" : reconciled[header] ?? ""
+    ]));
+  }).join("\n");
 }
 
 // src/task/index.ts
@@ -6828,6 +6864,127 @@ function removeCanonPid(taskDir) {
   }
 }
 
+// src/orchestrator/telemetry-fold.ts
+import fs22 from "fs";
+import path21 from "path";
+import { randomUUID } from "crypto";
+var LESSONS_SKELETON = "# Lessons Learned\n\n> Distilled cross-task insights. Task lessons fragments are folded here by `canon run --ship`.\n";
+var METRICS_HEADER = /^\|\s*Timestamp\s*\|/;
+function foldMetricsFragment(shared, fragment) {
+  const rows = fragment.split("\n").filter((line) => line.trimStart().startsWith("|") && !METRICS_HEADER.test(line.trimStart()) && !/^\|(\s*:?-+:?\s*\|)+\s*$/.test(line.trim()));
+  if (!rows.length) return null;
+  const lines = (shared ?? METRICS_SKELETON).split("\n");
+  const header = lines.findIndex((line) => METRICS_HEADER.test(line.trimStart()));
+  if (header === -1) throw new Error("docs/pipeline-invocations.md has no '| Timestamp |' table header");
+  let end = header + 1;
+  while (end < lines.length && lines[end].trimStart().startsWith("|")) end += 1;
+  lines.splice(end, 0, ...rows);
+  return lines.join("\n").replace(/\n?$/, "\n");
+}
+function foldLessonsFragment(shared, fragment) {
+  const body = fragment.trim();
+  if (!body) return null;
+  const base = (shared ?? LESSONS_SKELETON).trimEnd();
+  const separator = base.endsWith("---") || body.startsWith("---") ? "\n\n" : "\n\n---\n\n";
+  return `${base}${separator}${body}
+`;
+}
+function sharedTelemetryDocsTouched(paths) {
+  return PIPELINE_TELEMETRY_FILES.filter((file) => paths.includes(file));
+}
+function readOptional(file) {
+  try {
+    return fs22.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function planTelemetryFold(repoRoot, taskIds, taskDirFor3) {
+  const kinds = [
+    { name: "metrics.md", target: getSharedMetricsFile(repoRoot), fold: foldMetricsFragment },
+    { name: "quality-log.md", target: path21.join(repoRoot, "docs/task-quality-log.md"), fold: foldQualityLogFragment },
+    { name: "lessons.md", target: path21.join(repoRoot, "docs/lessons-learned.md"), fold: foldLessonsFragment }
+  ];
+  const before = new Map(kinds.map((kind) => [kind.target, readOptional(kind.target)]));
+  const contents = new Map(before);
+  const fragments = [];
+  for (const taskId of taskIds) {
+    for (const kind of kinds) {
+      const fragmentPath = path21.join(taskDirFor3(taskId), kind.name);
+      const content = readOptional(fragmentPath);
+      if (content === null) continue;
+      fragments.push({ path: fragmentPath, content });
+      try {
+        const folded = kind.fold(contents.get(kind.target) ?? null, content, taskId);
+        if (folded !== null) contents.set(kind.target, folded);
+      } catch (error) {
+        throw new Error(`${fragmentPath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+  return {
+    writes: [...contents].flatMap(([target, after]) => after !== null && after !== before.get(target) ? [{ target, before: before.get(target) ?? null, after }] : []),
+    fragments
+  };
+}
+function applyTelemetryFold(plan) {
+  const temps = [];
+  const written = [];
+  const deleted = [];
+  try {
+    for (const write of plan.writes) {
+      fs22.mkdirSync(path21.dirname(write.target), { recursive: true });
+      const temp = `${write.target}.${randomUUID()}.canon-fold.tmp`;
+      const fd = fs22.openSync(temp, "wx");
+      temps.push(temp);
+      try {
+        fs22.writeFileSync(fd, write.after, "utf8");
+      } finally {
+        fs22.closeSync(fd);
+      }
+    }
+    for (let index = 0; index < plan.writes.length; index += 1) {
+      fs22.renameSync(temps[index], plan.writes[index].target);
+      written.push(plan.writes[index]);
+    }
+    for (const fragment of plan.fragments) {
+      fs22.unlinkSync(fragment.path);
+      deleted.push(fragment);
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    const restore = (action) => {
+      try {
+        action();
+      } catch (rollbackError) {
+        rollbackErrors.push(String(rollbackError));
+      }
+    };
+    for (const write of written.reverse()) {
+      restore(() => {
+        if (write.before === null) fs22.unlinkSync(write.target);
+        else fs22.writeFileSync(write.target, write.before, "utf8");
+      });
+    }
+    for (const fragment of deleted) restore(() => fs22.writeFileSync(fragment.path, fragment.content, "utf8"));
+    if (rollbackErrors.length) throw new Error(`${String(error)}; rollback failed: ${rollbackErrors.join("; ")}`);
+    throw error;
+  } finally {
+    for (const temp of temps) {
+      try {
+        fs22.unlinkSync(temp);
+      } catch {
+      }
+    }
+  }
+}
+function foldTelemetryFragments(repoRoot, taskIds, taskDirFor3) {
+  const plan = planTelemetryFold(repoRoot, taskIds, taskDirFor3);
+  applyTelemetryFold(plan);
+  return plan.writes.map((write) => path21.relative(repoRoot, write.target));
+}
+
 // src/orchestrator/main.ts
 var REPO_ROOT2 = REPO_ROOT;
 var TASKS_DIR2 = TASKS_DIR;
@@ -7089,7 +7246,7 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   for (const f of allHandoffFiles) {
     if (dirtyFiles.has(f)) continue;
     if (gitIgnoredHandoffFiles.has(f)) continue;
-    const exists = fs22.existsSync(path21.join(cwd, f));
+    const exists = fs23.existsSync(path22.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);
       if (committed.ok && committed.stdout.trim()) {
@@ -7238,30 +7395,30 @@ function exemptNodeModulesPath(entry, cwd, resolvedWorkspaceDirs) {
   if (entryPath === null) return null;
   if (matchesPorcelainPath(entryPath, "node_modules")) {
     return probeNodeModulesEntry(
-      path21.join(cwd, entryPath),
-      path21.join(REPO_ROOT2, entryPath)
+      path22.join(cwd, entryPath),
+      path22.join(REPO_ROOT2, entryPath)
     ).verdict === "verified-symlink" ? "node_modules" : null;
   }
   if (!isNodeModulesEntryPath(entryPath)) return null;
   let cwdReal;
   let repoRootReal;
   try {
-    cwdReal = fs22.realpathSync(cwd);
-    repoRootReal = fs22.realpathSync(REPO_ROOT2);
+    cwdReal = fs23.realpathSync(cwd);
+    repoRootReal = fs23.realpathSync(REPO_ROOT2);
   } catch {
     return null;
   }
   if (cwdReal === repoRootReal) return null;
   const workspaceDirs = resolvedWorkspaceDirs ?? resolveWorkspaceDirs(REPO_ROOT2);
   for (const workspace of workspaceDirs) {
-    const resolvedDestination = resolveContainedPath(path21.join(cwd, workspace), cwd);
+    const resolvedDestination = resolveContainedPath(path22.join(cwd, workspace), cwd);
     if (resolvedDestination === null) continue;
-    const relativeDestination = path21.relative(cwdReal, resolvedDestination).split(path21.sep).join("/");
+    const relativeDestination = path22.relative(cwdReal, resolvedDestination).split(path22.sep).join("/");
     const expectedEntryPath = `${relativeDestination}/node_modules`;
     if (!matchesPorcelainPath(entryPath, expectedEntryPath)) continue;
     return probeNodeModulesEntry(
-      path21.join(resolvedDestination, "node_modules"),
-      path21.join(REPO_ROOT2, workspace, "node_modules")
+      path22.join(resolvedDestination, "node_modules"),
+      path22.join(REPO_ROOT2, workspace, "node_modules")
     ).verdict === "verified-symlink" ? expectedEntryPath : null;
   }
   return null;
@@ -7303,15 +7460,15 @@ function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, 
 }
 function findPullRequestTemplate(repoRoot) {
   const candidates = [
-    path21.join(repoRoot, ".github", "pull_request_template.md"),
-    path21.join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
-    path21.join(repoRoot, "docs", "pull_request_template.md"),
-    path21.join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
-    path21.join(repoRoot, "pull_request_template.md"),
-    path21.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
+    path22.join(repoRoot, ".github", "pull_request_template.md"),
+    path22.join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
+    path22.join(repoRoot, "docs", "pull_request_template.md"),
+    path22.join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
+    path22.join(repoRoot, "pull_request_template.md"),
+    path22.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
   ];
   for (const candidate of candidates) {
-    if (fs22.existsSync(candidate)) return candidate;
+    if (fs23.existsSync(candidate)) return candidate;
   }
   return null;
 }
@@ -7325,13 +7482,13 @@ function resolveQaPrBody(taskIds, activeCwd) {
   if (taskIds.length !== 1) {
     return { kind: "fallback", reason: "bundle: per-task pr-body.md files are not combined in this version" };
   }
-  const prBodyPath = path21.join(activeCwd, "tasks", taskIds[0], "pr-body.md");
+  const prBodyPath = path22.join(activeCwd, "tasks", taskIds[0], "pr-body.md");
   if (!isPrBodyTemplate(prBodyPath)) {
     return { kind: "body-file", path: prBodyPath };
   }
   return {
     kind: "fallback",
-    reason: fs22.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
+    reason: fs23.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
   };
 }
 function commitQaArtifacts(taskIds, cwd) {
@@ -7452,20 +7609,27 @@ function formatExistingPRMessage(prNum, prUrl) {
   return `Existing draft PR: #${prNum} (${prUrl})`;
 }
 function sidecarPathFor(taskId, taskDir = taskDirFor2(taskId)) {
-  return path21.join(taskDir, ".pr-number");
+  return path22.join(taskDir, ".pr-number");
 }
 function recordPinnedPRNumber(taskIds, prNum) {
   const alreadyPinned = taskIds.every((taskId) => readSidecarPRNumber(taskId) === prNum);
   if (alreadyPinned) return;
   for (const taskId of taskIds) {
     const sidecarPath = sidecarPathFor(taskId);
-    fs22.mkdirSync(path21.dirname(sidecarPath), { recursive: true });
-    fs22.writeFileSync(sidecarPath, String(prNum), "utf8");
+    fs23.mkdirSync(path22.dirname(sidecarPath), { recursive: true });
+    fs23.writeFileSync(sidecarPath, String(prNum), "utf8");
   }
 }
-function reportOrCreatePR(taskIds, branchName) {
+function reportOrCreatePR(taskIds, branchName, cwd) {
   if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
   const baseBranch = getBaseBranch(taskIds);
+  const affected = getAffectedFiles(baseBranch, cwd);
+  if (affected.ok) {
+    const touched = sharedTelemetryDocsTouched(affected.files);
+    if (touched.length) warn2(`Shared telemetry docs changed: ${touched.join(", ")}. Parallel tasks will conflict there; new runs write task fragments that --ship folds.`);
+  } else {
+    warn2(`Could not check shared telemetry doc drift: ${affected.stderr}`);
+  }
   const openPR = findOpenPRNumber(branchName, baseBranch);
   let prNum;
   if (openPR !== null) {
@@ -7581,8 +7745,8 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
 ` + baseDivergenceResult.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
     );
   }
-  const docsRefsScript = path21.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
-  if (fs22.existsSync(docsRefsScript)) {
+  const docsRefsScript = path22.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
+  if (fs23.existsSync(docsRefsScript)) {
     const docsRefsResult = spawnSync6("node", [docsRefsScript], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -7681,7 +7845,7 @@ This failure cannot be bypassed with --force.`
       if (!pushResult2.ok) {
         die2(`Human review push failed: ${pushResult2.stderr || "unknown error"}`);
       }
-      if (createPR) reportOrCreatePR(taskIds, branchName2);
+      if (createPR) reportOrCreatePR(taskIds, branchName2, cwd);
       return;
     }
   }
@@ -7774,7 +7938,7 @@ If this is a source or test file, it should have been committed during the imple
   if (!pushResult.ok) {
     die2(`Human review push failed: ${pushResult.stderr || "unknown error"}`);
   }
-  if (createPR) reportOrCreatePR(taskIds, branchName);
+  if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
 }
 function printDryRunPlan(state) {
   const { tasks } = state;
@@ -7938,7 +8102,7 @@ function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
   const sidecarPath = sidecarPathFor(taskId, taskDir);
   let raw;
   try {
-    raw = fs22.readFileSync(sidecarPath, "utf8").trim();
+    raw = fs23.readFileSync(sidecarPath, "utf8").trim();
   } catch {
     return null;
   }
@@ -7949,7 +8113,7 @@ function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
 }
 function resolveProofPRNumberForPrefetch(taskId, branchName, baseBranch, taskCwd) {
   if (!ghAvailable) return null;
-  const pinnedPrNum = readSidecarPRNumber(taskId, path21.join(taskCwd, "tasks", taskId));
+  const pinnedPrNum = readSidecarPRNumber(taskId, path22.join(taskCwd, "tasks", taskId));
   if (pinnedPrNum !== null) return pinnedPrNum;
   return findOpenPRNumber(branchName, baseBranch) ?? findMergedPRNumber(branchName, baseBranch);
 }
@@ -7980,7 +8144,7 @@ function establishPRHeadAncestryProof(cwd, prNum, prHead, localTip) {
   return { proven: true };
 }
 function establishMergeProof(taskId, branchName, localTip, baseBranch, cwd, prefetchedHeads) {
-  const pinnedPrNum = readSidecarPRNumber(taskId, path21.join(cwd, "tasks", taskId));
+  const pinnedPrNum = readSidecarPRNumber(taskId, path22.join(cwd, "tasks", taskId));
   if (ghAvailable && pinnedPrNum !== null) {
     if (!isPRMerged(pinnedPrNum)) {
       return { proven: false, reason: `Pinned PR #${pinnedPrNum} is not in MERGED state.` };
@@ -8084,8 +8248,8 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
   return anyMerged;
 }
 function runPostMergeHook() {
-  const hookPath = path21.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
-  if (!fs22.existsSync(hookPath)) return;
+  const hookPath = path22.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
+  if (!fs23.existsSync(hookPath)) return;
   info2("Running .canon/hooks/post-merge.sh...");
   const result = runCommand2("bash", [hookPath]);
   if (!result.ok) {
@@ -8109,12 +8273,12 @@ function commitArchiveChanges(taskIds, baseBranch) {
 }
 function rewriteArchivedTaskRefs(taskIds) {
   const targets = [
-    path21.join(REPO_ROOT2, "docs", "lessons-learned.md"),
-    path21.join(REPO_ROOT2, "docs", "task-quality-log.md")
+    path22.join(REPO_ROOT2, "docs", "lessons-learned.md"),
+    path22.join(REPO_ROOT2, "docs", "task-quality-log.md")
   ];
   for (const filePath of targets) {
-    if (!fs22.existsSync(filePath)) continue;
-    let content = fs22.readFileSync(filePath, "utf8");
+    if (!fs23.existsSync(filePath)) continue;
+    let content = fs23.readFileSync(filePath, "utf8");
     let changed = false;
     for (const taskId of taskIds) {
       const stale = `tasks/${taskId}/`;
@@ -8125,8 +8289,8 @@ function rewriteArchivedTaskRefs(taskIds) {
       }
     }
     if (changed) {
-      fs22.writeFileSync(filePath, content, "utf8");
-      info2(`Updated stale task refs in ${path21.relative(REPO_ROOT2, filePath)}.`);
+      fs23.writeFileSync(filePath, content, "utf8");
+      info2(`Updated stale task refs in ${path22.relative(REPO_ROOT2, filePath)}.`);
     }
   }
 }
@@ -8161,7 +8325,7 @@ function classifyAndPreserveSharedDocDirt() {
     if (porcelainCode !== " M") {
       return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
     }
-    const workingContent = fs22.readFileSync(path21.join(REPO_ROOT2, relPath), "utf8");
+    const workingContent = fs23.readFileSync(path22.join(REPO_ROOT2, relPath), "utf8");
     const headResult = gitSafeAtRaw(REPO_ROOT2, "show", `HEAD:${relPath}`);
     return {
       relPath,
@@ -8178,11 +8342,11 @@ function classifyAndPreserveSharedDocDirt() {
   }
   const preserve = verdict.preserve;
   if (preserve.length === 0) return [];
-  const backupDir = fs22.mkdtempSync(path21.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
+  const backupDir = fs23.mkdtempSync(path22.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
   const preserved = [];
   for (const { relPath, suffix } of preserve) {
-    const backupPath = path21.join(backupDir, relPath.replace(/[\\/]/g, "__"));
-    fs22.writeFileSync(backupPath, suffix, "utf8");
+    const backupPath = path22.join(backupDir, relPath.replace(/[\\/]/g, "__"));
+    fs23.writeFileSync(backupPath, suffix, "utf8");
     info2(`Preserving uncommitted ${relPath} dirt during --ship; backup: ${backupPath}`);
     const checkoutResult = gitSafe("checkout", "HEAD", "--", relPath);
     if (!checkoutResult.ok) {
@@ -8196,21 +8360,21 @@ function shipTasks(taskIds) {
   const resolveShipCwd = (taskId) => {
     const tasksDirOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
     if (tasksDirOverride) {
-      return path21.dirname(tasksDirOverride);
+      return path22.dirname(tasksDirOverride);
     }
     if (isOrphanedWorktreeState(taskId)) return REPO_ROOT2;
-    return path21.dirname(path21.dirname(taskDirFor2(taskId)));
+    return path22.dirname(path22.dirname(taskDirFor2(taskId)));
   };
   const taskStatuses = /* @__PURE__ */ new Map();
   const readShipStatus = (taskId) => {
     const taskCwd = resolveShipCwd(taskId);
     const candidates = [
-      path21.join(taskCwd, "tasks", taskId, "status.json"),
-      path21.join(taskCwd, taskId, "status.json"),
-      path21.join(taskDirForRepoRoot2(taskId), "status.json")
+      path22.join(taskCwd, "tasks", taskId, "status.json"),
+      path22.join(taskCwd, taskId, "status.json"),
+      path22.join(taskDirForRepoRoot2(taskId), "status.json")
     ];
     for (const candidate of candidates) {
-      if (fs22.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
+      if (fs23.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
     }
     const snapshot = taskStatuses.get(taskId);
     if (snapshot) return snapshot;
@@ -8242,7 +8406,7 @@ function shipTasks(taskIds) {
     const currentPhase = getCurrentPhase(readShipStatus(taskId));
     if (currentPhase !== "human_review") continue;
     const taskCwd = resolveShipCwd(taskId);
-    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path21.join(taskCwd, "tasks");
+    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path22.join(taskCwd, "tasks");
     const gateResult = checkPhaseGate(
       taskId,
       "human_review",
@@ -8277,7 +8441,7 @@ function shipTasks(taskIds) {
   if (taskIds.some((id) => taskSnapshot(id).worktree)) {
     preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
   }
-  const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path21.join("tasks", taskId, "status.json"));
+  const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path22.join("tasks", taskId, "status.json"));
   if (orphanedStatusPaths.length > 0) {
     gitSafe("checkout", "HEAD", "--", ...orphanedStatusPaths);
   }
@@ -8350,8 +8514,15 @@ Recovery:
   - --force does not bypass this gate.`
     );
   }
-  const archiveDir = path21.join(TASKS_DIR2, "_archive");
-  if (!fs22.existsSync(archiveDir)) fs22.mkdirSync(archiveDir, { recursive: true });
+  try {
+    for (const file of foldTelemetryFragments(REPO_ROOT2, taskIds, taskDirForRepoRoot2)) {
+      info2(`Folded task telemetry into ${file}.`);
+    }
+  } catch (error) {
+    die2(`--ship aborted: could not fold task telemetry fragments: ${error instanceof Error ? error.message : String(error)}. Fix the shared docs or fragment write/read error and re-run --ship; no task has been archived.`);
+  }
+  const archiveDir = path22.join(TASKS_DIR2, "_archive");
+  if (!fs23.existsSync(archiveDir)) fs23.mkdirSync(archiveDir, { recursive: true });
   const localBranchesToDelete = [];
   for (const taskId of taskIds) {
     const { worktree: hasWorktree } = taskSnapshot(taskId);
@@ -8360,27 +8531,28 @@ Recovery:
     status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const humanReview = status.phases.human_review;
     if (humanReview) humanReview.status = "done";
-    writeStatusToFile(path21.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
+    writeStatusToFile(path22.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
     const src = taskDirForRepoRoot2(taskId);
-    const dest = path21.join(archiveDir, taskId);
-    fs22.renameSync(src, dest);
+    const dest = path22.join(archiveDir, taskId);
+    fs23.renameSync(src, dest);
     info2(`\u{1F4E6} ${taskId} \u2192 tasks/_archive/${taskId}`);
     const branchName = taskSnapshot(taskId).branch;
     if (branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
   }
   rewriteArchivedTaskRefs(taskIds);
   const stagedPaths = taskIds.flatMap((id) => [
-    path21.join(TASKS_DIR2, id),
+    path22.join(TASKS_DIR2, id),
     // deleted source (if not cleaned up)
-    path21.join(TASKS_DIR2, "_archive", id),
+    path22.join(TASKS_DIR2, "_archive", id),
     // new archive destination
-    path21.join(REPO_ROOT2, "docs", "lessons-learned.md"),
-    path21.join(REPO_ROOT2, "docs", "task-quality-log.md")
+    path22.join(REPO_ROOT2, "docs", "lessons-learned.md"),
+    path22.join(REPO_ROOT2, "docs", "task-quality-log.md"),
+    path22.join(REPO_ROOT2, "docs", "pipeline-invocations.md")
   ]);
   stageArchiveChanges(stagedPaths);
   for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-    fs22.appendFileSync(path21.join(REPO_ROOT2, relPath), suffix, "utf8");
-    fs22.rmSync(backupPath, { force: true });
+    fs23.appendFileSync(path22.join(REPO_ROOT2, relPath), suffix, "utf8");
+    fs23.rmSync(backupPath, { force: true });
     info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
   }
   const archiveCommit = commitArchiveChanges(taskIds, baseBranch);
@@ -8441,7 +8613,7 @@ function rerouteFromHumanReview(taskIds) {
     if (!result.amended) {
       amendmentFailures.push({
         taskId,
-        specPath: path21.join(taskDirFor2(taskId), "spec.md"),
+        specPath: path22.join(taskDirFor2(taskId), "spec.md"),
         requiredRound,
         expectedHeading: requiredRound === 1 ? "## Amendment" : `## Amendment Round ${requiredRound}`,
         reason: result.reason
@@ -8497,7 +8669,7 @@ function rerouteFromHumanReview(taskIds) {
     }
     const rescaffold = rescaffoldReview(taskDirFor2(taskId), scaffoldIdentity);
     if (rescaffold.outcome === "written") {
-      info(`Re-scaffolded tasks/${taskId}/review.md from ${path21.relative(process.cwd(), rescaffold.source)}.`);
+      info(`Re-scaffolded tasks/${taskId}/review.md from ${path22.relative(process.cwd(), rescaffold.source)}.`);
     } else if (rescaffold.outcome === "no-template") {
       warn2(
         `tasks/${taskId}/review.md is missing and no template was found to re-scaffold it (looked for a review.md override under tasks/_templates/ and .canon/templates/review.md). The code-review foreman will have to write the file from scratch.`
@@ -8631,7 +8803,7 @@ async function runPhase(phase, state) {
   if (phase === "qa") {
     const activeCwd = getActiveCwd(taskIds);
     const qaTemplatePath = state.isBundle ? null : findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
-    const resolvedPrTemplate = qaTemplatePath ? fs22.readFileSync(qaTemplatePath, "utf8") : null;
+    const resolvedPrTemplate = qaTemplatePath ? fs23.readFileSync(qaTemplatePath, "utf8") : null;
     return runQaPhase(state, cliArgs.interactive, resolvedPrTemplate);
   }
   if (phase === "human_review") {
@@ -8645,7 +8817,7 @@ async function runPhase(phase, state) {
       }
       const branch = [...branches][0];
       const cwd = getActiveCwd(taskIds2);
-      const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path21.join(cwd, "tasks");
+      const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path22.join(cwd, "tasks");
       for (const taskId of taskIds2) {
         const gateResult = checkPhaseGate(taskId, "human_review", void 0, tasksRootForGate);
         if (!gateResult.ok) {
@@ -8712,9 +8884,9 @@ async function runPhase(phase, state) {
 }
 var extractCheckedVerdict2 = extractCheckedVerdict;
 function readArtifact(taskId, name) {
-  const p = path21.join(taskDirFor2(taskId), name);
+  const p = path22.join(taskDirFor2(taskId), name);
   try {
-    return fs22.readFileSync(p, "utf8");
+    return fs23.readFileSync(p, "utf8");
   } catch {
     return null;
   }
@@ -8730,15 +8902,15 @@ function checkImplementEvidence(taskId) {
     return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
   }
   const issues = validateHandoffAgainstSpec(
-    path21.join(taskDirFor2(taskId), "spec.md"),
-    path21.join(taskDirFor2(taskId), "handoff.md")
+    path22.join(taskDirFor2(taskId), "spec.md"),
+    path22.join(taskDirFor2(taskId), "handoff.md")
   );
   if (issues.length > 0) return { advanced: false, note: `handoff.md validation failed: ${issues.join("; ")}` };
   const checkRoots = [REPO_ROOT2];
   const sForEvidence = readStatus(taskId);
   if (sForEvidence.worktree === true) {
     const wt = worktreePath(taskId);
-    if (fs22.existsSync(wt)) checkRoots.push(wt);
+    if (fs23.existsSync(wt)) checkRoots.push(wt);
   }
   const ignoreCwd = checkRoots[checkRoots.length - 1];
   const gitIgnored = filterGitIgnoredPaths(files, ignoreCwd);
@@ -8750,7 +8922,7 @@ function checkImplementEvidence(taskId) {
     };
   }
   const existingFiles = verifiableFiles.filter(
-    (f) => checkRoots.some((root) => fs22.existsSync(path21.join(root, f)))
+    (f) => checkRoots.some((root) => fs23.existsSync(path22.join(root, f)))
   );
   if (existingFiles.length === 0) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
@@ -8835,7 +9007,7 @@ function tryEvidenceAdvance(taskId, phase) {
       return { advanced: true, note: "spec.md is populated" };
     }
     case "qa": {
-      const donePath = path21.join(taskDirFor(taskId), "done.md");
+      const donePath = path22.join(taskDirFor(taskId), "done.md");
       if (isDoneMdTemplate(donePath)) return { advanced: false, note: "done.md is still the template" };
       taskPhase(taskId, "qa", "done");
       return { advanced: true, note: "done.md is populated" };
@@ -9186,9 +9358,9 @@ function checkDeps(taskIds, skipAgentDeps = false) {
   }
   for (const taskId of taskIds) {
     validateTaskId(taskId);
-    const repoRootStatusFile = path21.join(REPO_ROOT2, "tasks", taskId, "status.json");
-    const statusFile = cliArgs.ship && fs22.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
-    if (!fs22.existsSync(statusFile)) {
+    const repoRootStatusFile = path22.join(REPO_ROOT2, "tasks", taskId, "status.json");
+    const statusFile = cliArgs.ship && fs23.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
+    if (!fs23.existsSync(statusFile)) {
       die(`No status.json at tasks/${taskId}/status.json \u2014 run canon task new ${taskId} first`);
     }
   }
@@ -9233,8 +9405,8 @@ async function main() {
   const earlyHeartbeatTaskIds = cliArgs.taskIds;
   let heartbeatStarted = false;
   const earlyHeartbeatResolver = (id) => {
-    const repoRootStatusFile = path21.join(REPO_ROOT2, "tasks", id, "status.json");
-    return path21.dirname(cliArgs.ship && fs22.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
+    const repoRootStatusFile = path22.join(REPO_ROOT2, "tasks", id, "status.json");
+    return path22.dirname(cliArgs.ship && fs23.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
   };
   if (!cliArgs.ship && !cliArgs.dryRun) {
     guardConcurrentRun(cliArgs.taskIds, earlyHeartbeatResolver);
@@ -9270,7 +9442,7 @@ async function main() {
   }
   refreshCanonSnapshotsAtPaths(taskIds.map(statusFileFor));
   const initialState = buildPipelineState(taskIds);
-  const heartbeatDirResolver = (id) => path21.dirname(statusFileFor(id));
+  const heartbeatDirResolver = (id) => path22.dirname(statusFileFor(id));
   if (!isSynchronousMode(cliArgs) && shouldAutoDetach()) {
     detachAndExit({
       taskIds,

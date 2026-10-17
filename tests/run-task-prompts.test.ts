@@ -849,6 +849,16 @@ void test('promptQa', () => {
     recordOrAssert('promptQa', actual);
 });
 
+void test('promptQa renders each task’s own lessons fragment and combined buffer count', () => {
+    for (const ids of [['example-task'], ['bundle-a', 'bundle-b']]) {
+        const state: PipelineState = { tasks: ids.map(taskId => makeTask({ taskId })), tier: 'full', isBundle: ids.length > 1 };
+        const prompt = promptQa(state);
+        for (const id of ids) assert.ok(prompt.includes(`Task \`${id}\`: append its lesson to \`tasks/${id}/lessons.md\``));
+        assert.doesNotMatch(prompt, /tasks\/<id>\/lessons\.md|tasks\/\/lessons\.md/);
+        assert.match(prompt, /docs\/lessons-learned\.md plus this task's lessons fragment/);
+    }
+});
+
 void test('promptQa_withTemplate', () => {
     const actual = normalize(promptQa(baseState, '## Summary\n- Fill this section.\n'));
     recordOrAssert('promptQa_withTemplate', actual);

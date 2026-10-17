@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { parseTable } from '../src/orchestrator/markdown-table.js';
 import {
+    foldQualityLogFragment,
     parseQualityLogJudgmentBlock,
     serializeQualityLogCell,
     upsertQualityLogRow,
@@ -353,4 +354,32 @@ void test('quality-log writer does not infer human reroutes or mutate attempt ar
             assert.equal(fs.readFileSync(artifact, 'utf8'), content);
         }
     });
+});
+
+void test('quality fold maps headers, removes stray rows, and preserves earliest verdict and adopter cells', () => {
+    const taskId = 'fold-quality';
+    const headers = [...HEADERS, 'Adopter'];
+    const shared = tableDocument([
+        `| 2000-01-01 | ${taskId} | S | changes_requested | 1 | 1 | 0 | 0 | No | old | keep me |`,
+        '| 2000-01-01 | other | S | approved | 1 | 1 | 0 | 0 | No | unrelated | untouched |',
+    ], headers) + `\n| 2001-01-01 | ${taskId} | M | approved | 2 | 2 | 0 | 0 | No | stray | latest extra |\n`;
+    const reordered = [...HEADERS].reverse();
+    const values: Record<string, string> = { Date: '2026-10-16', Task: taskId, Size: 'L', 'Spec verdict': 'approved', 'Spec iter': '8', 'Review iter': '9', Notes: 'new | note' };
+    const fragment = tableDocument([`| ${reordered.map(h => serializeQualityLogCell(values[h] ?? '')).join(' | ')} |`], reordered);
+    const result = foldQualityLogFragment(shared, fragment, taskId);
+    assert.ok(result);
+    const rows = parseTable(result, 'Log');
+    const row = rows.find(r => r.Task === taskId);
+    assert.equal(rows.filter(r => r.Task === taskId).length, 1);
+    assert.equal(result.split('## Periodic Reviews')[1].includes(taskId), false);
+    assert.equal(row?.['Spec verdict'], 'changes_requested');
+    assert.equal(row?.Size, 'L');
+    assert.equal(row?.['Review iter'], '9');
+    assert.equal(row?.Notes, 'new | note');
+    assert.equal(row?.Adopter, 'latest extra');
+    assert.equal(rows.find(r => r.Task === 'other')?.Adopter, 'untouched');
+    assert.ok(foldQualityLogFragment(null, fragment, taskId)?.includes('## Log'));
+    assert.equal(foldQualityLogFragment(null, tableDocument(), taskId), null);
+    assert.throws(() => foldQualityLogFragment(null, '# malformed', taskId), /no well-formed/);
+    assert.throws(() => foldQualityLogFragment('# malformed', fragment, taskId), /no well-formed/);
 });

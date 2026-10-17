@@ -1,6 +1,6 @@
 # Task Quality Log
 
-> Upserted by the qa → done phase transition — one row per task, keyed by Task id. QA supplies five judgment cells via done.md; the remaining cells are derived from status.json.
+> Task runs upsert a quality-log.md fragment at the qa → done phase transition; `canon run --ship` folds it here — one row per task, keyed by Task id. QA supplies five judgment cells via done.md; the remaining cells are derived from status.json.
 
 ## How to use this doc
 

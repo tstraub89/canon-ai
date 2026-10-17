@@ -290,6 +290,33 @@ function writeFileAtomic(filePath: string, content: string): void {
     }
 }
 
+function replaceTaskRow(
+    lines: readonly string[], located: LocatedLogTable, taskId: string,
+    buildRow: (taskRows: readonly TableRow[]) => Record<string, string>,
+): string[] {
+    const logRows = parseLogRows(
+        lines,
+        located.headerCells,
+        located.dataStart,
+        located.dataEnd,
+    );
+    const strayRows = parseStrayRows(lines, located.headerCells);
+    const taskRows = [...logRows, ...strayRows]
+        .filter(row => (row.cells.Task ?? '').trim() === taskId);
+    const finalRow = buildRow(taskRows);
+    const rendered = renderRowLine(located.headerCells, finalRow);
+    const removeIndexes = new Set(taskRows.map(row => row.lineIndex));
+
+    const updatedLines: string[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        if (index === located.dataEnd) updatedLines.push(rendered);
+        if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
+    }
+    if (located.dataEnd >= lines.length) updatedLines.push(rendered);
+
+    return updatedLines;
+}
+
 export function upsertQualityLogRow(
     logFilePath: string,
     derived: QualityLogDerived,
@@ -319,26 +346,8 @@ export function upsertQualityLogRow(
             return;
         }
 
-        const logRows = parseLogRows(
-            lines,
-            located.headerCells,
-            located.dataStart,
-            located.dataEnd,
-        );
-        const strayRows = parseStrayRows(lines, located.headerCells);
-        const taskRows = [...logRows, ...strayRows]
-            .filter(row => (row.cells.Task ?? '').trim() === derived.taskId);
-        const reconciled = reconcileHistory(taskRows, located.headerCells);
-        const finalRow = buildFinalRow(located.headerCells, derived, reconciled, qaSupplied);
-        const rendered = renderRowLine(located.headerCells, finalRow);
-        const removeIndexes = new Set(taskRows.map(row => row.lineIndex));
-
-        const updatedLines: string[] = [];
-        for (let index = 0; index < lines.length; index += 1) {
-            if (index === located.dataEnd) updatedLines.push(rendered);
-            if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
-        }
-        if (located.dataEnd >= lines.length) updatedLines.push(rendered);
+        const updatedLines = replaceTaskRow(lines, located, derived.taskId, taskRows =>
+            buildFinalRow(located.headerCells, derived, reconcileHistory(taskRows, located.headerCells), qaSupplied));
 
         writeFileAtomic(logFilePath, updatedLines.join('\n'));
     } catch (error) {
@@ -364,7 +373,7 @@ export function parseQualityLogJudgmentBlock(doneMdContent: string): QualityLogJ
 
 export function writeQualityLogForTask(
     taskId: string,
-    activeCwd: string,
+    _activeCwd: string,
     donePath: string,
     status: StatusJson,
 ): void {
@@ -376,8 +385,13 @@ export function writeQualityLogForTask(
             // A missing/unreadable done.md only means this pass supplies no
             // judgment cells. The transition gate owns done.md validity.
         }
+        // donePath already resolves worktree ownership and the tasks-dir override.
+        const target = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE
+            ? path.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE)
+            : path.join(path.dirname(donePath), 'quality-log.md');
+        if (!process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) fs.mkdirSync(path.dirname(target), { recursive: true });
         upsertQualityLogRow(
-            getQualityLogFile(activeCwd),
+            target,
             {
                 taskId,
                 taskSize: status.task_size,
@@ -391,4 +405,25 @@ export function writeQualityLogForTask(
         const message = error instanceof Error ? error.message : String(error);
         warn(`quality-log: failed to write row for '${taskId}': ${message}`);
     }
+}
+
+/** Reconcile a task fragment into the shared table using the existing row placement rules. */
+export function foldQualityLogFragment(shared: string | null, fragment: string, taskId: string): string | null {
+    const fragmentLines = fragment.split('\n');
+    const fragmentTable = locateLogTable(fragmentLines);
+    if (!fragmentTable) throw new Error(`quality-log fragment for '${taskId}' has no well-formed '## Log' table`);
+    const fragmentRows = parseLogRows(fragmentLines, fragmentTable.headerCells, fragmentTable.dataStart, fragmentTable.dataEnd)
+        .filter(row => row.cells.Task === taskId);
+    if (!fragmentRows.length) return null;
+    const lines = (shared ?? STANDARD_QUALITY_LOG_SKELETON).split('\n');
+    const located = locateLogTable(lines);
+    if (!located) throw new Error("docs/task-quality-log.md has no well-formed '## Log' table with all required columns");
+    return replaceTaskRow(lines, located, taskId, taskRows => {
+        const history = [...taskRows, ...fragmentRows.map((row, index) => ({ ...row, lineIndex: lines.length + index }))];
+        const reconciled = reconcileHistory(history, located.headerCells);
+        const latest = fragmentRows[fragmentRows.length - 1].cells;
+        return Object.fromEntries(located.headerCells.map(header => [header,
+            header === 'Task' ? taskId : DERIVED_HEADERS.has(header) ? (latest[header] ?? '') : (reconciled[header] ?? ''),
+        ]));
+    }).join('\n');
 }
