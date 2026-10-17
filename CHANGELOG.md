@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A task's lessons no longer bring a stray heading into the shared lessons log.** `canon run --ship` drops any `#` or `##` title an agent puts at the top of a task's lessons file before folding it into `docs/lessons-learned.md`, and the QA prompt now says that file holds only `###` entries.
+
 ## [3.10.0] — 2026-10-17
 
 ### Changed
