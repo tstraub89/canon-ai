@@ -8445,6 +8445,14 @@ function shipTasks(taskIds) {
     return snapshot;
   };
   let preservedSharedDocDirt = [];
+  const restorePreservedSharedDocDirt = () => {
+    for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+      fs23.appendFileSync(path22.join(REPO_ROOT2, relPath), suffix, "utf8");
+      fs23.rmSync(backupPath, { force: true });
+      info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+    }
+    preservedSharedDocDirt = [];
+  };
   if (taskIds.some((id) => taskSnapshot(id).worktree)) {
     preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
   }
@@ -8528,6 +8536,7 @@ Recovery:
       info2(`Folded task telemetry into ${file}.`);
     }
   } catch (error) {
+    restorePreservedSharedDocDirt();
     die2(`--ship aborted: could not fold task telemetry fragments: ${error instanceof Error ? error.message : String(error)}. Fix the shared docs or fragment write/read error and re-run --ship; no task has been archived.`);
   }
   const localBranchesToDelete = [];
@@ -8560,12 +8569,9 @@ Recovery:
       path22.join(REPO_ROOT2, "docs", "pipeline-invocations.md")
     ]);
     stageArchiveChanges(stagedPaths);
-    for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-      fs23.appendFileSync(path22.join(REPO_ROOT2, relPath), suffix, "utf8");
-      fs23.rmSync(backupPath, { force: true });
-      info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
-    }
+    restorePreservedSharedDocDirt();
   } catch (error) {
+    restorePreservedSharedDocDirt();
     if (foldedDocs.length === 0) throw error;
     const message = error instanceof Error ? error.message : String(error);
     die2(`--ship aborted: archive step failed after folding task telemetry: ${message}

@@ -2211,6 +2211,16 @@ function shipTasks(taskIds: string[]): void {
     // branch changes so live managed-doc edits fail closed and pure-append
     // telemetry can be restored after archive staging and before commit/push.
     let preservedSharedDocDirt: PreservedTelemetryEntry[] = [];
+    // Re-append preserved sibling telemetry dirt and drop its backups. Safe to call
+    // more than once: the list is emptied after restoring.
+    const restorePreservedSharedDocDirt = (): void => {
+        for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+            fs.appendFileSync(path.join(REPO_ROOT, relPath), suffix, 'utf8');
+            fs.rmSync(backupPath, { force: true });
+            info(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+        }
+        preservedSharedDocDirt = [];
+    };
     if (taskIds.some(id => taskSnapshot(id).worktree)) {
         preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
     }
@@ -2328,6 +2338,7 @@ function shipTasks(taskIds: string[]): void {
             info(`Folded task telemetry into ${file}.`);
         }
     } catch (error) {
+        restorePreservedSharedDocDirt();
         die(`--ship aborted: could not fold task telemetry fragments: ${error instanceof Error ? error.message : String(error)}. ` +
             'Fix the shared docs or fragment write/read error and re-run --ship; no task has been archived.');
     }
@@ -2392,12 +2403,9 @@ function shipTasks(taskIds: string[]): void {
         // Re-apply preserved telemetry dirt after the archive changes are staged
         // but before commit/push. That keeps sibling rows out of this task's
         // archive commit while restoring them before commit/push failure paths.
-        for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-            fs.appendFileSync(path.join(REPO_ROOT, relPath), suffix, 'utf8');
-            fs.rmSync(backupPath, { force: true });
-            info(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
-        }
+        restorePreservedSharedDocDirt();
     } catch (error) {
+        restorePreservedSharedDocDirt();
         if (foldedDocs.length === 0) throw error;
         const message = error instanceof Error ? error.message : String(error);
         die(`--ship aborted: archive step failed after folding task telemetry: ${message}\n\n` +

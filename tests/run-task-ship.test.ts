@@ -1545,6 +1545,34 @@ void test('--ship failed fold preserves docs, fragments and review status; retry
     });
 });
 
+void test('--ship failed fold restores preserved sibling telemetry dirt before aborting', () => {
+    withTempDir('ship-fold-fail-dirt-', dir => {
+        const taskId = 'fold-fail-dirt';
+        const suffix = '| sibling | pre-implement | row |\n';
+        const tmpDir = makeTmpDir(dir);
+        const initialFiles = {
+            'docs/pipeline-invocations.md': METRICS_SKELETON,
+            'docs/task-quality-log.md': '# malformed shared quality table\n',
+            'docs/lessons-learned.md': '# Lessons\n',
+        };
+        const { localDir, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles, taskFiles: telemetryFragments(taskId), syncBase: true,
+        });
+        gitIn(localDir, 'branch', '-D', `task/${taskId}`);
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, { TMPDIR: tmpDir });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /could not fold task telemetry fragments/);
+        const backupPath = result.stdout.match(/backup: (.+)/)?.[1]?.trim();
+        assert.ok(backupPath, result.stdout);
+        assert.equal(fs.existsSync(backupPath), false);
+        assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
+    });
+});
+
 void test('fold rolls back partial replacements and partial fragment deletion on I/O failure', t => {
     withTempDir('fold-rollback-', dir => {
         for (const [file, content] of Object.entries(telemetryFragments('rollback'))) writeRel(dir, file, content);
