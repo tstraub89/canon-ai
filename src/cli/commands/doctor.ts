@@ -301,7 +301,7 @@ export function checkQualityLog(cwd: string): Check {
                 return {
                     label,
                     status: 'warn',
-                    detail: `parent directory of ${logPath} does not exist — \`canon run --ship\` creates the shared log when folding a task's quality-log fragment; create the directory (or run \`canon init\`)`,
+                    detail: `parent directory of ${logPath} does not exist — expected after \`canon init\`; \`canon run --ship\` will create it when folding a task's quality-log fragment, but a missing docs directory usually means the scaffold is incomplete`,
                 };
             }
             return {

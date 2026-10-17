@@ -45,7 +45,6 @@ For each task:
 After writing all done.md files:
 - Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to its own lessons fragment, using the entry format in docs/lessons-learned.md. Do not edit docs/lessons-learned.md; `--ship` folds the fragments into it. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
 
-  Append each member’s lesson to that member’s fragment:
 {{{lessonsFragments}}}
 
 - Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly — the qa → done transition writes or upserts that row automatically into each task's quality-log.md fragment from status.json plus this section. `--ship` folds it into the shared log.

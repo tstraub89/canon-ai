@@ -2319,7 +2319,8 @@ function shipTasks(taskIds: string[]): void {
         );
     }
 
-    // Fold before teardown, status writes, or archive moves so failures are re-runnable.
+    // Fold before teardown, status writes, or archive moves so a fold failure leaves
+    // --ship re-runnable. Failures after the fold need the documented manual recovery.
     let foldedDocs: string[] = [];
     try {
         foldedDocs = foldTelemetryFragments(REPO_ROOT, taskIds, taskDirForRepoRoot);
