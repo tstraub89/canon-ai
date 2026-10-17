@@ -114,6 +114,7 @@ When a new config lets adopters name files that an existing writer already owns 
 *(2026-10-15, source: configurable-docs-freshness)*
 
 A regex-built `**` matcher with adjacent globstar segments backtracks badly: 30 consecutive globstars against a 30-level non-matching path ran past two seconds, and the regression only failed by hitting a subprocess deadline. Collapsing adjacent `**` segments before building the regex fixed it. The matcher was written in-repo rather than using `path.matchesGlob`, because the config needed dot paths matched and Node's matcher skips them. Rule of thumb: when writing a glob matcher for user config, decide the dot-file rule up front and test a dotted path, and add a deep non-matching case run under a subprocess timeout, since an unbounded test hangs rather than failing.
+
 ---
 
 ### Check that a prompt builder passes each per-task value a template renders

@@ -1490,7 +1490,7 @@ function checkQualityLog(cwd) {
         return {
           label,
           status: "warn",
-          detail: `parent directory of ${logPath} does not exist \u2014 expected after \`canon init\`; \`canon run --ship\` will create it when folding a task's quality-log fragment, but a missing docs directory usually means the scaffold is incomplete`
+          detail: `parent directory of ${logPath} does not exist \u2014 a missing docs directory usually means the scaffold is incomplete (re-run \`canon init\`); \`canon run --ship\` will create it when folding a task's quality-log fragment`
         };
       }
       return {
