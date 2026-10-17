@@ -196,3 +196,55 @@ All the docs this change makes stale are edited here (AC-10). `docs/patterns.md`
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes) — N/A, feature
 - [x] (Refactors) — N/A, feature
+
+## Amendment 1 (code_review spec gap, round 2)
+
+Human decisions on review findings S1–S3, 2026-10-17.
+
+### Problem (amendment)
+
+S3(a) fixes a diagnostic defect. The mechanism is deterministic, confirmed by tracing `shipTasks` and `commitArchiveChanges` in the task branch's `src/orchestrator/main.ts`. Once the fold has written the shared docs and deleted the fragments, a later failure exits without a recovery hint:
+
+1. **Archive rename fails** (for example, `fs.renameSync(src, dest)` throws ENOTEMPTY when `tasks/_archive/<id>/` already exists). This is uncaught inside the archive loop, so the process dies with a raw stack. The shared docs are left with uncommitted folded edits.
+2. **Commit fails.** `commitArchiveChanges` returns `stderr`, and `shipTasks` dies with `--ship aborted: failed to commit archive changes: <stderr>`, with no mention of the folded rows. The shared docs are left staged but uncommitted.
+3. **Push fails.** `commitArchiveChanges` has already committed, then `git('push', 'origin', baseBranch)` throws, uncaught. The folded rows are in a local `chore: archive` commit that was never pushed.
+
+In all three cases the output never says the shared logs hold rows whose fragments are gone. So an operator following the generic "reset and re-run" instinct loses them, in cases 1 and 2, or may reset the local base, in case 3. Trigger values are verified against the existing ship harness's fake commit and push failure seams. Those tests currently exercise preserved legacy dirt, not consumed fragments, which is why no test fails today.
+
+- **S1:** `tests/run-task-safety.test.ts` has an assertion that metrics land in `docs/pipeline-invocations.md` for a worktree run. Move it to the task's `tasks/<id>/metrics.md` fragment in the worktree, and keep the check that `docs/pipeline-invocations.md` is unchanged. Do not drop the worktree-routing check.
+- **S2:** `canon doctor`'s quality-log messages say the writer creates the log on the first qa → done transition, and refer to the writer's self-heal write. Reword them: the shared log is now created or updated when `--ship` folds a task's quality-log fragment.
+- **S3, recovery after a post-fold failure: options (a) and (c).**
+  - **(c)** Keep the "Failure after the telemetry fold" recovery paragraph in `docs/pipeline-orchestrator.md` and its mirror, and accept the gap as a Known Risk (below). A self-healing re-run, option (b), is out of scope.
+  - **(a)** Any `--ship` failure that happens after the fold has written the shared docs, and before the archive commit is pushed, exits with a message that:
+    - states where the folded rows are now:
+      - for an archive or commit failure, uncommitted (possibly staged) edits to the three shared logs;
+      - for a push failure, the local `chore: archive` commit that was not pushed;
+    - says the fragments are already deleted;
+    - says not to reset or check out those docs (or, for a push failure, not to reset the local base);
+    - points to the "Failure after the telemetry fold" section of the pipeline reference doc.
+
+    This covers the archive move, the commit and the push. Failures that today escape as uncaught throws, such as the archive `renameSync` and the push, must be caught so the hint is printed.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `tests/run-task-safety.test.ts` | S1: move the worktree metrics-routing assertion to the task fragment; keep the shared-doc-unchanged check. |
+| `src/cli/commands/doctor.ts` | S2: quality-log messages say the shared log is created or updated by the `--ship` fold. |
+| `tests/cli.test.ts` | S2: update any doctor test asserting the old message wording (only if one exists). |
+| `src/orchestrator/main.ts` | S3(a): post-fold archive, commit and push failures exit with the recovery hint. Already listed. |
+| `tests/run-task-ship.test.ts` | AC-11 tests. Already listed. |
+
+### Acceptance Criteria (amendment)
+
+- [ ] **AC-11: Post-fold failures print the recovery hint, red-first.** In `tests/run-task-ship.test.ts`, three new tests ship a task that has fragments. Each uses the existing faked commit-failure and push-failure seams, plus a forced archive-rename failure (a pre-existing `tasks/_archive/<id>/`). In each case `--ship` exits non-zero and its output:
+  - names the folded shared logs and where the rows are (uncommitted edits, or an unpushed local commit for the push case);
+  - warns not to reset them;
+  - references the "Failure after the telemetry fold" doc section.
+
+  The tests must first be run against the pre-amendment implementation and fail because the hint text is absent. The handoff records that red run, with the failing assertion, before the fix makes them pass.
+- [ ] **AC-12: Restatements updated.** `npm test` passes in full, including `tests/run-task-safety.test.ts`, and `canon doctor`'s quality-log messages no longer say the log is created on qa → done.
+
+### Known Risks (amendment)
+
+- **Failure after the fold is recovered by hand.** If the archive move or commit fails after the fold, the folded rows exist only as uncommitted or staged edits to the shared logs. If the push fails, they sit in an unpushed local `chore: archive` commit. In the uncommitted case, a plain re-run will refuse (quality-log dirt) or drop them (metrics and lessons appends). Resetting the docs loses the rows. Recovery is manual: the failure message points to the documented steps (S3, options (a) and (c)). A self-healing re-run was rejected as new logic on a delicate path for a rare failure.

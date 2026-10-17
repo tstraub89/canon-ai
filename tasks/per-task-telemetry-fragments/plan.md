@@ -476,3 +476,83 @@ Run `npm run build` (this rebuilds `dist/cli/index.js` and `dist/orchestrator/ru
 - The lessons skeleton is in code (judgment call 5).
 
 All of these are recorded in `notes.md` with a `[plan]` prefix.
+
+## Reroute Plan
+
+Delta for Amendment 1 (S1, S2, S3 options (a)+(c)) plus the amendment review's nit. Every prior step still applies as shipped; nothing below re-plans Steps 1–8. The C1/C2 fixes and the "Failure after the telemetry fold" paragraph (option (c)) from iteration 2 stay as they are.
+
+### Delta
+
+- **Feasibility:**
+  - **Exists:** `shipTasks`, `commitArchiveChanges` (`src/orchestrator/main.ts:1964`, push at `:1978` via throwing `git()`), the fold call at `:2324`, the archive loop's `fs.renameSync` at `:2368`, the commit `die` at `:2400`; `foldTelemetryFragments` returns `string[]` of repo-relative shared-doc paths it wrote (`src/orchestrator/telemetry-fold.ts:125`); `checkQualityLog` messages at `src/cli/commands/doctor.ts:304,310`; `setupGitArchiveFailure(scriptDir, realGit, 'commit' | 'push')` (`tests/run-task-ship.test.ts:185`), `telemetryFragments`, `prepareShipFixture` (`initialFiles`, `taskFiles`), `readRel`, `METRICS_SKELETON`; the stale assertion at `tests/run-task-safety.test.ts:4606`; the doc paragraph at `docs/pipeline-orchestrator.md:513` (and mirror). All found by grep.
+  - **Real path:** `shipTasks`: fold → archive loop (teardown, `human_review: done` write, rename) → `rewriteArchivedTaskRefs` → `stageArchiveChanges` → re-apply preserved dirt → `commitArchiveChanges` (commit via `gitSafe`, returns `stderr`; push via `git()`, throws `Error("git push origin <base> failed: <stderr>")`). Today: rename throw is uncaught (raw stack), commit failure `die`s without a hint, push throw is uncaught. No existing code prints any post-fold hint.
+  - **Callers:** `commitArchiveChanges` keeps its contract (callers: `shipTasks`, and `tests/run-task-safety.test.ts:1989` which `deepEqual`s the commit-failure return). `checkQualityLog`'s status values are unchanged; `tests/cli.test.ts:1262` matches `/parent directory/` and `/does not exist/`, so the reworded warn detail must keep both substrings. No test matches the `pass` detail text. `tests/cli.test.ts` therefore needs no edit.
+  - **Tests that can fail:** each AC-11 test ships a fragment-bearing task, so `foldedDocs` is non-empty, and then trips one post-fold failure. Today's output lacks the hint, so the hint assertions fail red (rename: raw ENOTEMPTY stack; commit: `failed to commit archive changes: …` only; push: raw `git push … failed` stack). S1's edited assertion fails today only in the sense that the old one already fails; the new fragment assertion passes on the current implementation (it pins existing behavior, which is intended).
+  - **Predicates:** hint fires iff `foldedDocs.length > 0` (empty: no fragments, or only empty/no-op fragments; then today's behavior is kept unchanged). Two states: `uncommitted` (archive-loop through pre-commit failures, and commit failure) vs. `unpushed` (push failure after a successful local commit).
+  - **Scope:** `src/orchestrator/main.ts`, `src/orchestrator/telemetry-fold.ts`, `tests/run-task-ship.test.ts`, `dist/*` (original table); `tests/run-task-safety.test.ts`, `src/cli/commands/doctor.ts` (amendment table). `tests/cli.test.ts` is listed conditionally and is not needed. No doc edit is needed: option (c)'s paragraph already exists.
+  - **Async/stateful:** synchronous. `die` calls `process.exit`, so a `die` inside a `try` never reaches its `catch`. `teardownWorktree` can `die` internally before the hint; accepted (the spec names rename, commit, push). Re-entry is unchanged: fragments are already gone, so a re-run's fold is a no-op, which is exactly why the hint is needed.
+
+#### Step R1 — Hint builder (`src/orchestrator/telemetry-fold.ts`)
+
+Add a pure exported builder, following `docs/patterns.md` "Build a state-dependent operator message from one parameterized clause builder":
+
+```ts
+export type PostFoldFailureState = 'uncommitted' | 'unpushed';
+export function formatPostFoldFailureHint(foldedDocs: readonly string[], state: PostFoldFailureState, baseBranch: string): string
+```
+
+The returned text (appended to the existing `die` message after a blank line) must:
+- name every path in `foldedDocs` (e.g. `docs/pipeline-invocations.md, docs/task-quality-log.md, docs/lessons-learned.md`);
+- say where the rows are: `uncommitted` → "as uncommitted (possibly staged) edits in the working tree"; `unpushed` → "in the local `chore: archive` commit on `<baseBranch>`, which was not pushed";
+- say the task telemetry fragments were already deleted, so those rows cannot be regenerated;
+- say not to reset or check out those docs (`uncommitted`), or not to reset the local `<baseBranch>` (`unpushed`);
+- point to "Failure after the telemetry fold" in `docs/pipeline-orchestrator.md` (adopters have this doc; Adopter Scope OK).
+
+It lives in `telemetry-fold.ts` so it stays importable without `main.ts` (no cycle).
+
+#### Step R2 — Wire the hint into `shipTasks` (`src/orchestrator/main.ts`)
+
+1. Capture the fold result: `let foldedDocs: string[] = [];` before the existing `try`; inside, `foldedDocs = foldTelemetryFragments(...)` and loop `info` over it. The fold-failure `die` is unchanged (AC-5).
+2. Wrap the archive loop, `rewriteArchivedTaskRefs(taskIds)`, `stageArchiveChanges(stagedPaths)` and the preserved-dirt re-apply loop in one `try`. In `catch (error)`: if `foldedDocs.length === 0`, `throw error` (today's behavior, byte-for-byte). Otherwise `die(`--ship aborted: archive step failed after folding task telemetry: ${message}\n\n${formatPostFoldFailureHint(foldedDocs, 'uncommitted', baseBranch)}`)`.
+3. Commit failure: keep the `--ship aborted: failed to commit archive changes: ${stderr}` prefix (the existing test at `tests/run-task-ship.test.ts:938` matches it) and append `\n\n` + the `uncommitted` hint only when `foldedDocs.length > 0`.
+4. Push failure: wrap the `commitArchiveChanges(taskIds, baseBranch)` call in `try`/`catch`. `commitArchiveChanges` only throws from its post-commit `git('push', …)` (`diff --cached` and `commit` use `gitSafe`), so a throw means the local commit exists. In `catch`: if `foldedDocs.length === 0`, rethrow; otherwise `die(`--ship aborted: archive commit was created locally but the push failed: ${message}\n\n${formatPostFoldFailureHint(foldedDocs, 'unpushed', baseBranch)}`)`. The message keeps the git error text, so the existing push test's `/simulated archive push failure/` still matches. Leave `commitArchiveChanges` unchanged, so `tests/run-task-safety.test.ts:1989` stays valid; add a one-line comment at the catch naming the "throw ⇒ push" invariant.
+
+#### Step R3 — AC-11 tests, red first (`tests/run-task-ship.test.ts`)
+
+Add three tests next to the existing archive commit/push failure tests (`:917`, `:946`). Each uses `prepareShipFixture(dir, [taskId], { prNumbers, initialFiles: { 'docs/pipeline-invocations.md': METRICS_SKELETON, 'docs/task-quality-log.md': <well-formed qualityDoc for another task or skeleton>, 'docs/lessons-learned.md': '# Lessons\n' }, taskFiles: telemetryFragments(taskId) })`, runs `--ship` with the merged-PR env, and asserts:
+- `result.status !== 0`;
+- stderr names all three shared docs, contains `/Failure after the telemetry fold/`, `/fragments? (were|are) already deleted/i` (or equivalent fixed wording), and `/do not reset/i`;
+- state: the working-tree shared docs contain the folded rows (e.g. the fragment's `| spec |` metrics row and `### Lesson for <id>`).
+
+Cases:
+- **(a) Archive rename failure:** add `tasks/_archive/<id>/sentinel.md` to `initialFiles` (committed on base). **The destination must be non-empty**: per the amendment review nit, `fs.renameSync` replaces an empty directory and only throws `ENOTEMPTY` when it holds a file. Assert stderr matches `/uncommitted/` and `tasks/<id>/` still exists (rename did not happen). Do not call `markTaskWorktree`; the non-worktree path keeps teardown out of the way.
+- **(b) Commit failure:** `setupGitArchiveFailure(fakeTools, realGit, 'commit')`. Assert `/failed to commit archive changes/` and `/uncommitted/`.
+- **(c) Push failure:** `setupGitArchiveFailure(fakeTools, realGit, 'push')`. Assert `/not pushed/`, `/local/`, `/simulated archive push failure/`, and `git log -1 --format=%s` is `chore: archive <id>`.
+
+**Red-first order (AC-11):** write these three tests before Steps R1/R2, run them against the current implementation (`node --test --test-name-pattern='<shared name prefix>' --import ./tests/md-loader-register.mjs --import tsx tests/run-task-ship.test.ts`), and record in the handoff each test's failing assertion (expected the hint text, got stderr without it). Then implement R1/R2 and re-run green. Give the three tests a shared name prefix (e.g. `--ship post-fold failure hint:`) so one pattern selects them.
+
+#### Step R4 — S1: worktree metrics assertion (`tests/run-task-safety.test.ts:4606`)
+
+Replace `assert.match(<worktreeDir>/docs/pipeline-invocations.md, /implement-ssot/)` with:
+- `assert.match(fs.readFileSync(path.join(worktreeDir, 'tasks', taskId, 'metrics.md'), 'utf8'), /implement-ssot/)`: the row lands in the worktree's task fragment (keeps the worktree-routing check);
+- `assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'pipeline-invocations.md'), 'utf8'), 'baseline telemetry\n')`: the worktree's shared doc is unchanged.
+
+Keep `:4605` (the main checkout's doc unchanged) as is. Add `assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, 'metrics.md')), false)` only if it holds on a run; the root scaffold commit precedes implement, so it should, but don't add it if it doesn't (a scaffold-time row would be legitimate). Rename the test only if its title becomes false; "writes metrics and task artifacts only in the worktree" still holds.
+
+#### Step R5 — S2: doctor wording (`src/cli/commands/doctor.ts:304,310`)
+
+- warn detail: `parent directory of ${logPath} does not exist — \`canon run --ship\` could not create the log when folding a task's quality-log fragment; create the directory (or run \`canon init\`)`. This keeps `parent directory` and `does not exist` for `tests/cli.test.ts:1262`.
+- pass detail: `not present — created when \`canon run --ship\` folds a task's quality-log fragment`.
+
+Grep confirms no other surface restates the old wording (`first qa → done`, `creates it fresh`, `self-heal write`: only these two lines).
+
+#### Step R6 — Build and validate
+
+`npm run build` (both `dist/` bundles carry R1/R2/R5), then lint, type-check, `npm test` (full suite must now be clean, AC-12, including `tests/run-task-safety.test.ts`), `sync-templates:check`, `docs-refs-check` (currently passes: the foreman neutralized the `review.md` refs). Report any failure verbatim with its assertion, never as passing.
+
+### Reroute judgment calls (recorded in `notes.md`)
+
+1. **No-fold failures keep today's behavior** (rethrow / unchanged `die`). The amendment scopes the hint to "after the fold has written the shared docs"; a hint about folded rows would be false when nothing was folded.
+2. **Push detection at the call site, not a `commitArchiveChanges` contract change.** That keeps the exported helper and its safety test untouched; the invariant is commented.
+3. **`try` spans the archive loop through the dirt re-apply**, not just `renameSync`: every throwing step there leaves folded rows uncommitted, and the hint is equally true. A `die` inside `teardownWorktree` still exits without the hint; the spec names rename, commit and push only.
+4. **Hint builder lives in `telemetry-fold.ts`** (original Affected Files) to stay pure and cycle-free.

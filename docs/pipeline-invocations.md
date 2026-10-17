@@ -1130,3 +1130,16 @@
 | 2026-10-17T02:59:26.597Z | per-task-telemetry-fragments | spec | claude | opus | 0 | 40.6s | 638019 | ok |
 | 2026-10-17T02:59:58.230Z | per-task-telemetry-fragments | spec_review | codex | gpt-6.1-sol | 1 | 31.5s | 1601655 | ok |
 | 2026-10-17T03:11:23.875Z | per-task-telemetry-fragments | plan | claude | opus | 0 | 650.2s | 8505068 | ok |
+| 2026-10-17T03:20:23.439Z | per-task-telemetry-fragments | implement | codex | gpt-6.1-sol | 0 | 538.6s | 5841486 | ok |
+| 2026-10-17T03:22:35.654Z | per-task-telemetry-fragments | code_review | codex | gpt-6-luna | 0 | 131.4s | - | ok |
+| 2026-10-17T03:31:55.415Z | per-task-telemetry-fragments | code_review | claude | opus | 0 | 559.7s | 1321146 | ok |
+| 2026-10-17T03:35:33.482Z | per-task-telemetry-fragments | implement | codex | gpt-6.1-sol | 1 | 218.0s | 9385085 | ok |
+| 2026-10-17T03:36:37.608Z | per-task-telemetry-fragments | code_review | codex | gpt-6-luna | 1 | 63.2s | - | ok |
+| 2026-10-17T03:44:42.279Z | per-task-telemetry-fragments | code_review | claude | opus | 1 | 484.6s | 1819984 | ok |
+| 2026-10-17T12:34:01.660Z | per-task-telemetry-fragments | spec_review | codex | gpt-6.1-sol | 0 | 124.5s | 1186719 | ok |
+| 2026-10-17T12:35:41.554Z | per-task-telemetry-fragments | spec_review | codex | gpt-6.1-sol | 1 | 62.9s | 2203147 | ok |
+| 2026-10-17T12:38:21.645Z | per-task-telemetry-fragments | plan | claude | opus | 0 | 160.1s | 1965498 | ok |
+| 2026-10-17T12:43:24.697Z | per-task-telemetry-fragments | implement | codex | gpt-6.1-sol | 0 | 303.0s | 14360995 | ok |
+| 2026-10-17T12:44:35.223Z | per-task-telemetry-fragments | code_review | codex | gpt-6-luna | 0 | 67.7s | - | ok |
+| 2026-10-17T12:53:34.916Z | per-task-telemetry-fragments | code_review | claude | opus | 0 | 539.6s | 1343609 | ok |
+| 2026-10-17T12:54:49.379Z | per-task-telemetry-fragments | qa | claude | claude-haiku-5-5 | 0 | 74.4s | 1050680 | ok |

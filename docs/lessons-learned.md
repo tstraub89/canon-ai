@@ -114,3 +114,26 @@ When a new config lets adopters name files that an existing writer already owns 
 *(2026-10-15, source: configurable-docs-freshness)*
 
 A regex-built `**` matcher with adjacent globstar segments backtracks badly: 30 consecutive globstars against a 30-level non-matching path ran past two seconds, and the regression only failed by hitting a subprocess deadline. Collapsing adjacent `**` segments before building the regex fixed it. The matcher was written in-repo rather than using `path.matchesGlob`, because the config needed dot paths matched and Node's matcher skips them. Rule of thumb: when writing a glob matcher for user config, decide the dot-file rule up front and test a dotted path, and add a deep non-matching case run under a subprocess timeout, since an unbounded test hangs rather than failing.
+---
+
+### Check that a prompt builder passes each per-task value a template renders
+
+*(2026-10-17, source: per-task-telemetry-fragments)*
+
+A spec that names a per-task value inside a prompt template (for example, a fragment path for each bundle member) is unimplementable if the builder only passes formatted strings. `promptQa()` passed `taskLines` and `taskScope` and no per-task field, so the template could not substitute the path, and spec_review rejected the first draft. Before naming a template variable in a spec's Affected Files, grep the builder's call site for the value it would need, and list the builder if it does not pass that value as data.
+
+---
+
+### Force a rename failure with a sentinel file, not an empty directory
+
+*(2026-10-17, source: per-task-telemetry-fragments)*
+
+`fs.renameSync` onto an existing empty directory succeeds on POSIX, because it replaces the directory. A red-first test that expects ENOTEMPTY from an empty `tasks/_archive/<id>/` therefore never fails, and the test looks like it covers the failure path when it does not. Put a sentinel file in the destination so the rename really fails. Probe the failure trigger in isolation before using it as a red-first fixture.
+
+---
+
+### Round-trip tests of a re-rendered row need two or more write-read cycles
+
+*(2026-10-17, source: per-task-telemetry-fragments)*
+
+The quality-log decoder halved backslashes once while the renderer escaped them on every write, so each QA rerun or fold doubled them. A single parse-then-render round trip passed, and only a repeated write, read, write cycle exposed it (code review C1). For any table cell that is parsed and written back out, assert the bytes are stable after at least two cycles, including values with backslashes, pipes and trailing backslashes.
