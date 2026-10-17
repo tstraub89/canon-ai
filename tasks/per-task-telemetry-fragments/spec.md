@@ -234,6 +234,7 @@ In all three cases the output never says the shared logs hold rows whose fragmen
 | `tests/cli.test.ts` | S2: update any doctor test asserting the old message wording (only if one exists). |
 | `src/orchestrator/main.ts` | S3(a): post-fold archive, commit and push failures exit with the recovery hint. Already listed. |
 | `tests/run-task-ship.test.ts` | AC-11 tests. Already listed. |
+| `templates/docs/patterns.md` | Post-review nit N6 (human-approved, fixed inline): the adopter scaffold says QA appends lessons via its task fragment. Init scaffold, not a sync mirror. |
 
 ### Acceptance Criteria (amendment)
 
