@@ -165,6 +165,17 @@
   - **Risk**: Sol at `high` runs every review round, and multi-round L tasks run 3–5. Record per-round cost/duration during the trial.
   - **Effort**: `S`.
 
+- [ ] **Retire the legacy shared-telemetry safety nets** *(filed 2026-10-17 after 3.10.0 shipped per-task telemetry fragments, `per-task-telemetry-fragments`. **Priority: cleanup — pick up once no pre-3.10.0 tasks are in flight.**)*
+  - **Context**: since 3.10.0, runs write `tasks/<id>/metrics.md`, `quality-log.md` and `lessons.md`, and `--ship` folds them into the three shared logs in the archive commit. To stay compatible with tasks started on older engines, that spec's Non-Goals kept every shared-doc dirt handler. They are now mostly dead weight on a delicate path.
+  - **Candidates to remove or harden**:
+    - `classifyAndPreserveSharedDocDirt` and the backup/re-apply flow in `shipTasks`, including the restore helper added for failure exits.
+    - The absorb-pre-implement-telemetry half of `commitTaskArtifactsToBase`.
+    - The `PIPELINE_TELEMETRY_FILES` exemptions: handoff-diff, base-drift, the human_review allow-list, the accept guard and auto-commit. Once runs never write the shared logs, a branch edit to them is drift. The `--pr` warning could become a block.
+  - **Open decision**: the cutoff. Options are a major version, or a `--ship` / `canon doctor` check that refuses legacy shared-doc dirt with an actionable message instead of silently preserving it.
+  - **Likely moots**: the parked "Telemetry discrimination gate at scaffold-commit time" entry above, since early-phase rows no longer dirty the shared docs.
+  - **Restatements**: `docs/pipeline-orchestrator.md` (+ mirror), `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, the `/canon-pipeline` recovery notes.
+  - **Effort**: `M`, delicate (`--ship` and validation gates).
+
 ### Wave 3 cluster — follow-ups from TokenAnxiety dogfood discussion #27
 
 *Originally GH issues #31–34 on the pre-launch tracker, promoted to BACKLOG per the original [BACKLOG-vs-issues decision](decisions.md). The 2026-05-10 five-sub-bundle cluster plan (parser, counters, gates, enum, snapshot stamping) has fully shipped except the QA-telemetry verification half of sub-bundle 1b — the entry below. `verdict_source` is now public issue #21.*
