@@ -73,6 +73,7 @@ const JUDGMENT_LABELS: Record<string, keyof QualityLogJudgment> = {
     'notes': 'Notes',
 };
 
+// Shared-doc reader for doctor; runtime writes target the task fragment below.
 export function getQualityLogFile(activeCwd: string): string {
     return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE
         ? path.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE)
@@ -91,7 +92,8 @@ export function serializeQualityLogCell(value: string): string {
 
 // This is intentionally local to the writer: the existing markdown-table
 // module does not expose its line splitter, and this task's affected-file cap
-// does not authorize widening that API. Keep parity with splitTableLine there.
+// does not authorize widening that API. Decode the pairs emitted by this
+// module’s serializer, preserving unpaired backslashes in legacy cells.
 function splitTableRowCells(line: string): string[] {
     const cells: string[] = [];
     let cell = '';
@@ -114,13 +116,13 @@ function splitTableRowCells(line: string): string[] {
             continue;
         }
         if (backslashes > 0) {
-            cell += '\\'.repeat(backslashes);
+            cell += '\\'.repeat(Math.ceil(backslashes / 2));
             backslashes = 0;
         }
         cell += char;
     }
 
-    if (backslashes > 0) cell += '\\'.repeat(backslashes);
+    if (backslashes > 0) cell += '\\'.repeat(Math.ceil(backslashes / 2));
     cells.push(cell);
 
     const innerCells = cells.slice(
@@ -371,6 +373,7 @@ export function parseQualityLogJudgmentBlock(doneMdContent: string): QualityLogJ
     return result;
 }
 
+// Keep activeCwd in the caller API; the resolved donePath supplies the fragment directory.
 export function writeQualityLogForTask(
     taskId: string,
     _activeCwd: string,

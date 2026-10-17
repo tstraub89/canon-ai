@@ -10,6 +10,7 @@ import {
     parseQualityLogJudgmentBlock,
     serializeQualityLogCell,
     upsertQualityLogRow,
+    writeQualityLogForTask,
 } from '../src/orchestrator/quality-log.js';
 
 const HEADERS = [
@@ -382,4 +383,33 @@ void test('quality fold maps headers, removes stray rows, and preserves earliest
     assert.equal(foldQualityLogFragment(null, tableDocument(), taskId), null);
     assert.throws(() => foldQualityLogFragment(null, '# malformed', taskId), /no well-formed/);
     assert.throws(() => foldQualityLogFragment('# malformed', fragment, taskId), /no well-formed/);
+});
+
+void test('quality judgment backslashes survive QA upserts and repeated ship folds', () => {
+    withTempDir(dir => {
+        const taskId = 'backslash-roundtrip';
+        const notes = 'Path C:\\x; regex \\d; UNC \\\\server\\share; pipe a\\|b; trailing\\';
+        const fragment = path.join(dir, 'quality-log.md');
+        const done = path.join(dir, 'done.md');
+        const previousOverride = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE;
+        process.env.CANON_QUALITY_LOG_FILE_OVERRIDE = fragment;
+        try {
+            fs.writeFileSync(done, `# QA\n\n## Quality Log\n- Notes: ${notes}\n`);
+            writeQualityLogForTask(taskId, dir, done, { id: taskId, phases: {} });
+            const originalRow = fs.readFileSync(fragment, 'utf8').split('\n').find(line => line.includes(`| ${taskId} |`));
+            assert.ok(originalRow);
+            // Omitted judgment cells pass through history reconciliation on a QA rerun.
+            fs.writeFileSync(done, '# QA\n\n## Quality Log\n');
+            writeQualityLogForTask(taskId, dir, done, { id: taskId, phases: {} });
+            const content = fs.readFileSync(fragment, 'utf8');
+            assert.equal(content.split('\n').find(line => line.includes(`| ${taskId} |`)), originalRow);
+            const folded = foldQualityLogFragment(null, content, taskId);
+            assert.ok(folded);
+            assert.equal(folded.split('\n').find(line => line.includes(`| ${taskId} |`)), originalRow);
+            assert.equal(foldQualityLogFragment(folded, content, taskId), folded);
+        } finally {
+            if (previousOverride === undefined) delete process.env.CANON_QUALITY_LOG_FILE_OVERRIDE;
+            else process.env.CANON_QUALITY_LOG_FILE_OVERRIDE = previousOverride;
+        }
+    });
 });

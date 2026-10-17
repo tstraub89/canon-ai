@@ -5623,12 +5623,12 @@ function splitTableRowCells(line) {
       continue;
     }
     if (backslashes > 0) {
-      cell += "\\".repeat(backslashes);
+      cell += "\\".repeat(Math.ceil(backslashes / 2));
       backslashes = 0;
     }
     cell += char;
   }
-  if (backslashes > 0) cell += "\\".repeat(backslashes);
+  if (backslashes > 0) cell += "\\".repeat(Math.ceil(backslashes / 2));
   cells.push(cell);
   const innerCells = cells.slice(
     (cells[0] ?? "").trim() === "" ? 1 : 0,
