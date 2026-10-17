@@ -1,7 +1,7 @@
 {
   "id": "per-task-telemetry-fragments",
   "title": "Per-task telemetry fragments, folded on ship",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-17",
   "updated": "2026-10-17",
   "branch": "task/per-task-telemetry-fragments",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
