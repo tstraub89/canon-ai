@@ -43,8 +43,11 @@ For each task:
    Skip this step entirely for bundle tasks — per-task bodies are not combined for bundle PRs.
 
 After writing all done.md files:
-- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to docs/lessons-learned.md. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
-- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly — the qa → done transition writes or upserts that row automatically from status.json plus this section.
+- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to its own lessons fragment, using the entry format in docs/lessons-learned.md. Do not edit docs/lessons-learned.md; `--ship` folds the fragments into it. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)
+
+{{{lessonsFragments}}}
+
+- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly — the qa → done transition writes or upserts that row automatically into each task's quality-log.md fragment from status.json plus this section. `--ship` folds it into the shared log.
 
   ```markdown
   ## Quality Log
@@ -83,7 +86,7 @@ After writing all done.md files:
 {{#docsFlagged}}
 - **Docs drift (flag only)**: also check {{{docsFlagged}}} for statements {{docsScope}} makes stale. Do **not** edit these docs. Report each stale statement in a `## Docs drift` section of done.md (doc, the stale statement, and what is now true). Omit the section if nothing is stale.
 {{/docsFlagged}}
-- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md now holds more than ~15 entries, add one line to this task's done.md — `Maintenance: lessons-learned.md has N entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").` Do not perform the sweep yourself.
+- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md plus this task's lessons fragment now hold more than ~15 entries, add one line to this task's done.md — `Maintenance: lessons-learned.md plus this task’s fragment have N entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").` Do not perform the sweep yourself.
 
 When done, run (use the Bash tool — do not just output the command as text):
 {{{phaseCommands}}}

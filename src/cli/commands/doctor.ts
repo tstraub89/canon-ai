@@ -301,13 +301,13 @@ export function checkQualityLog(cwd: string): Check {
                 return {
                     label,
                     status: 'warn',
-                    detail: `parent directory of ${logPath} does not exist — the writer's self-heal write would also fail; create the directory (or run \`canon init\`)`,
+                    detail: `parent directory of ${logPath} does not exist — a missing docs directory usually means the scaffold is incomplete (re-run \`canon init\`); \`canon run --ship\` will create it when folding a task's quality-log fragment`,
                 };
             }
             return {
                 label,
                 status: 'pass',
-                detail: 'not present — writer creates it fresh on first qa → done transition',
+                detail: "not present — created when `canon run --ship` folds a task's quality-log fragment",
             };
         }
         const message = error instanceof Error ? error.message : String(error);

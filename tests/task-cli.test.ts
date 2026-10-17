@@ -2807,3 +2807,31 @@ void test('bundled orchestrator help is invocable once from dist', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Usage: canon run/);
 });
+
+void test('qa completion upserts its fragment on rerun and leaves shared quality log untouched', () => {
+    withTempDir('task-quality-fragment-', dir => {
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'quality-fragment';
+        const status = makeStatus(taskId);
+        for (const phase of ['spec', 'spec_review', 'plan', 'implement', 'code_review'] as const) status.phases[phase]!.status = 'done';
+        status.phases.qa = { status: 'in_progress', agent: 'claude' };
+        const taskDir = writeTask(tasksRoot, taskId, status);
+        const shared = path.join(WORKSPACE_ROOT, 'docs/task-quality-log.md');
+        const sharedBefore = fs.readFileSync(shared, 'utf8');
+        const sharedMtime = fs.statSync(shared).mtimeMs;
+        const done = path.join(taskDir, 'done.md');
+        fs.writeFileSync(done, '# QA\n\n## Quality Log\n- Spec verdict: changes_requested\n- Notes: first\n');
+        withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot, CANON_QUALITY_LOG_FILE_OVERRIDE: undefined, CANON_SKIP_PHASE_GATE: '1' }, () => {
+            captureStdout(() => taskPhase(taskId, 'qa', 'done'));
+            fs.writeFileSync(done, '# QA\n\n## Quality Log\n- Notes: rerun\n');
+            captureStdout(() => taskPhase(taskId, 'qa', 'in_progress'));
+            captureStdout(() => taskPhase(taskId, 'qa', 'done'));
+        });
+        const rows = parseTable(fs.readFileSync(path.join(taskDir, 'quality-log.md'), 'utf8'), 'Log');
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0]['Spec verdict'], 'changes_requested');
+        assert.equal(rows[0].Notes, 'rerun');
+        assert.equal(fs.readFileSync(shared, 'utf8'), sharedBefore);
+        assert.equal(fs.statSync(shared).mtimeMs, sharedMtime);
+    });
+});

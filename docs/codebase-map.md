@@ -111,9 +111,9 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Patterns + Known Pitfalls | `docs/patterns.md` | Pitfalls auto-injected into Codex implement prompts |
 | Product / framework context | `docs/product-context.md` | What canon-ai is, who it's for |
 | Pipeline mechanics reference | `docs/pipeline-orchestrator.md` | Flags, env vars, model matrix, reroute, auto-block |
-| Distilled lessons across tasks | `docs/lessons-learned.md` | Promoted from per-task notes during QA |
-| Pipeline health log | `docs/task-quality-log.md` | Spec review outcomes, dropped ACs, failure phases |
-| Per-invocation telemetry | `docs/pipeline-invocations.md` | Auto-appended by `src/orchestrator/metrics.ts` (duration + tokens) |
+| Distilled lessons across tasks | `docs/lessons-learned.md` | QA writes task lessons fragments; `--ship` folds them here |
+| Pipeline health log | `docs/task-quality-log.md` | Task quality fragments folded on `--ship`: spec outcomes, dropped ACs, validation gaps |
+| Per-invocation telemetry | `docs/pipeline-invocations.md` | Task metrics fragments from `src/orchestrator/metrics.ts`, folded on `--ship` (duration + tokens) |
 
 ## Tests
 
@@ -187,7 +187,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `src/orchestrator/types.ts` (the `CliArgs` type) → `src/orchestrator/cli.ts` (parser + usage text) → `tests/run-task-cli.test.ts` (asserts the full parsed-object shape) — all three. Omitting `types.ts` blocks type-check; omitting the test fails the parser-shape snapshot.
 
 **Promote a lesson into canon**:
-> `tasks/<id>/notes.md` (raw) → `docs/lessons-learned.md` (distilled & appended, during QA) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule. The final hop (promotion + pruning the buffer) is a **human-run sweep**, never automated by QA — QA only appends.
+> `tasks/<id>/notes.md` (raw) → task `lessons.md` fragment (distilled during QA) → `docs/lessons-learned.md` (folded by `--ship`) → eventually `docs/patterns.md` Known Pitfalls or `docs/decisions.md` if it becomes a rule. The final hop (promotion + pruning the buffer) is a **human-run sweep**, never automated by QA — QA only appends to its task fragment; task runs never write the shared logs.
 
 ## Agent Config
 

@@ -26,6 +26,7 @@ import { isHeartbeatStale, readHeartbeat, startHeartbeat, stopAllHeartbeats } fr
 import { registerShutdownHook } from './signals.js';
 import { archivePriorReview, rescaffoldReview } from './review-archive.js';
 import { taskPhase } from '../../src/task/index.js';
+import { foldTelemetryFragments, formatPostFoldFailureHint, sharedTelemetryDocsTouched } from './telemetry-fold.js';
 
 const REPO_ROOT = splitEnv.REPO_ROOT;
 const TASKS_DIR = splitEnv.TASKS_DIR;
@@ -1019,9 +1020,16 @@ function recordPinnedPRNumber(taskIds: string[], prNum: number): void {
     }
 }
 
-function reportOrCreatePR(taskIds: string[], branchName: string): void {
+function reportOrCreatePR(taskIds: string[], branchName: string, cwd: string): void {
     if (!ghAvailable) die('--pr requires the gh CLI, but it is not available.');
     const baseBranch = splitGit.getBaseBranch(taskIds);
+    const affected = splitGit.getAffectedFiles(baseBranch, cwd);
+    if (affected.ok) {
+        const touched = sharedTelemetryDocsTouched(affected.files);
+        if (touched.length) warn(`Shared telemetry docs changed: ${touched.join(', ')}. Parallel tasks will conflict there; new runs write task fragments that --ship folds.`);
+    } else {
+        warn(`Could not check shared telemetry doc drift: ${affected.stderr}`);
+    }
     const openPR = findOpenPRNumber(branchName, baseBranch);
     let prNum: number;
     if (openPR !== null) {
@@ -1291,7 +1299,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
             }
 
-            if (createPR) reportOrCreatePR(taskIds, branchName);
+            if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
             return;
         }
     }
@@ -1404,7 +1412,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(`Human review push failed: ${pushResult.stderr || 'unknown error'}`);
     }
 
-    if (createPR) reportOrCreatePR(taskIds, branchName);
+    if (createPR) reportOrCreatePR(taskIds, branchName, cwd);
 }
 
 function printDryRunPlan(state: PipelineState): void {
@@ -2203,6 +2211,16 @@ function shipTasks(taskIds: string[]): void {
     // branch changes so live managed-doc edits fail closed and pure-append
     // telemetry can be restored after archive staging and before commit/push.
     let preservedSharedDocDirt: PreservedTelemetryEntry[] = [];
+    // Re-append preserved sibling telemetry dirt and drop its backups. Safe to call
+    // more than once: the list is emptied after restoring.
+    const restorePreservedSharedDocDirt = (): void => {
+        for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+            fs.appendFileSync(path.join(REPO_ROOT, relPath), suffix, 'utf8');
+            fs.rmSync(backupPath, { force: true });
+            info(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+        }
+        preservedSharedDocDirt = [];
+    };
     if (taskIds.some(id => taskSnapshot(id).worktree)) {
         preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
     }
@@ -2311,74 +2329,103 @@ function shipTasks(taskIds: string[]): void {
         );
     }
 
-    const archiveDir = path.join(TASKS_DIR, '_archive');
-    if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
+    // Fold before teardown, status writes, or archive moves so a fold failure leaves
+    // --ship re-runnable. Failures after the fold need the documented manual recovery.
+    let foldedDocs: string[] = [];
+    try {
+        foldedDocs = foldTelemetryFragments(REPO_ROOT, taskIds, taskDirForRepoRoot);
+        for (const file of foldedDocs) {
+            info(`Folded task telemetry into ${file}.`);
+        }
+    } catch (error) {
+        restorePreservedSharedDocDirt();
+        die(`--ship aborted: could not fold task telemetry fragments: ${error instanceof Error ? error.message : String(error)}. ` +
+            'Fix the shared docs or fragment write/read error and re-run --ship; no task has been archived.');
+    }
 
     const localBranchesToDelete: string[] = [];
+    try {
+        const archiveDir = path.join(TASKS_DIR, '_archive');
+        if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
 
-    for (const taskId of taskIds) {
-        const { worktree: hasWorktree } = taskSnapshot(taskId);
+        for (const taskId of taskIds) {
+            const { worktree: hasWorktree } = taskSnapshot(taskId);
 
-        // Re-read status fresh post-merge instead of using the pre-switch
-        // captured snapshot. The captured snapshot is stable for `branch` and
-        // `worktree` (set at task creation, doesn't change), but the full
-        // `status` can be stale if the local task branch was behind origin
-        // before `--ship` ran. `assertTaskBranchPushed` only blocks
-        // local-AHEAD divergence; a behind-local checkout passes through, and
-        // `mergeOpenPRsAndPull` then brings origin's tip into base. Writing
-        // the pre-switch snapshot back here would overwrite fields that
-        // landed via the merge (Codex P2 on PR #103).
-        //
-        // By this point in `shipTasks`, `mergeOpenPRsAndPull` has succeeded
-        // so the task's `status.json` exists either in the worktree (not yet
-        // torn down) or in REPO_ROOT (squashed-in on base) — both routes that
-        // `resolveTaskCwd` already handles. The original ENOENT this PR
-        // exists to fix is bypassed because the merge has completed.
-        const status = readShipStatus(taskId);
+            // Re-read status fresh post-merge instead of using the pre-switch
+            // captured snapshot. The captured snapshot is stable for `branch` and
+            // `worktree` (set at task creation, doesn't change), but the full
+            // `status` can be stale if the local task branch was behind origin
+            // before `--ship` ran. `assertTaskBranchPushed` only blocks
+            // local-AHEAD divergence; a behind-local checkout passes through, and
+            // `mergeOpenPRsAndPull` then brings origin's tip into base. Writing
+            // the pre-switch snapshot back here would overwrite fields that
+            // landed via the merge (Codex P2 on PR #103).
+            //
+            // By this point in `shipTasks`, `mergeOpenPRsAndPull` has succeeded
+            // so the task's `status.json` exists either in the worktree (not yet
+            // torn down) or in REPO_ROOT (squashed-in on base) — both routes that
+            // `resolveTaskCwd` already handles. The original ENOENT this PR
+            // exists to fix is bypassed because the merge has completed.
+            const status = readShipStatus(taskId);
 
-        // Teardown before the final write so the worktree can disappear cleanly.
-        if (hasWorktree) splitWorktree.teardownWorktree(taskId);
+            // Teardown before the final write so the worktree can disappear cleanly.
+            if (hasWorktree) splitWorktree.teardownWorktree(taskId);
 
-        status.updated = new Date().toISOString().slice(0, 10);
-        const humanReview = status.phases.human_review;
-        if (humanReview) humanReview.status = 'done';
-        // Write directly to the supervising checkout now that the worktree is gone.
-        splitState.writeStatusToFile(path.join(REPO_ROOT, 'tasks', taskId, 'status.json'), status);
+            status.updated = new Date().toISOString().slice(0, 10);
+            const humanReview = status.phases.human_review;
+            if (humanReview) humanReview.status = 'done';
+            // Write directly to the supervising checkout now that the worktree is gone.
+            splitState.writeStatusToFile(path.join(REPO_ROOT, 'tasks', taskId, 'status.json'), status);
 
-        const src = taskDirForRepoRoot(taskId);
-        const dest = path.join(archiveDir, taskId);
-        fs.renameSync(src, dest);
-        info(`📦 ${taskId} → tasks/_archive/${taskId}`);
+            const src = taskDirForRepoRoot(taskId);
+            const dest = path.join(archiveDir, taskId);
+            fs.renameSync(src, dest);
+            info(`📦 ${taskId} → tasks/_archive/${taskId}`);
 
-        // Queue local branch for deletion after worktree is gone.
-        const branchName = taskSnapshot(taskId).branch;
-        if (splitGit.branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
+            // Queue local branch for deletion after worktree is gone.
+            const branchName = taskSnapshot(taskId).branch;
+            if (splitGit.branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
+        }
+
+        // Rewrite stale tasks/<id>/... refs → tasks/_archive/<id>/... in docs.
+        rewriteArchivedTaskRefs(taskIds);
+
+        // Commit the archive move + any status changes and push.
+        const stagedPaths: string[] = taskIds.flatMap(id => [
+            path.join(TASKS_DIR, id),                        // deleted source (if not cleaned up)
+            path.join(TASKS_DIR, '_archive', id),            // new archive destination
+            path.join(REPO_ROOT, 'docs', 'lessons-learned.md'),
+            path.join(REPO_ROOT, 'docs', 'task-quality-log.md'),
+            path.join(REPO_ROOT, 'docs', 'pipeline-invocations.md'),
+        ]);
+        stageArchiveChanges(stagedPaths);
+
+        // Re-apply preserved telemetry dirt after the archive changes are staged
+        // but before commit/push. That keeps sibling rows out of this task's
+        // archive commit while restoring them before commit/push failure paths.
+        restorePreservedSharedDocDirt();
+    } catch (error) {
+        restorePreservedSharedDocDirt();
+        if (foldedDocs.length === 0) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        die(`--ship aborted: archive step failed after folding task telemetry: ${message}\n\n` +
+            formatPostFoldFailureHint(foldedDocs, 'uncommitted', baseBranch));
     }
 
-    // Rewrite stale tasks/<id>/... refs → tasks/_archive/<id>/... in docs.
-    rewriteArchivedTaskRefs(taskIds);
-
-    // Commit the archive move + any status changes and push.
-    const stagedPaths: string[] = taskIds.flatMap(id => [
-        path.join(TASKS_DIR, id),                        // deleted source (if not cleaned up)
-        path.join(TASKS_DIR, '_archive', id),            // new archive destination
-        path.join(REPO_ROOT, 'docs', 'lessons-learned.md'),
-        path.join(REPO_ROOT, 'docs', 'task-quality-log.md'),
-    ]);
-    stageArchiveChanges(stagedPaths);
-
-    // Re-apply preserved telemetry dirt after the archive changes are staged
-    // but before commit/push. That keeps sibling rows out of this task's
-    // archive commit while restoring them before commit/push failure paths.
-    for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-        fs.appendFileSync(path.join(REPO_ROOT, relPath), suffix, 'utf8');
-        fs.rmSync(backupPath, { force: true });
-        info(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+    let archiveCommit: ReturnType<typeof commitArchiveChanges>;
+    try {
+        archiveCommit = commitArchiveChanges(taskIds, baseBranch);
+    } catch (error) {
+        // commitArchiveChanges uses gitSafe until commit succeeds; only its push throws.
+        if (foldedDocs.length === 0) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        return die(`--ship aborted: archive commit was created locally but the push failed: ${message}\n\n` +
+            formatPostFoldFailureHint(foldedDocs, 'unpushed', baseBranch));
     }
-
-    const archiveCommit = commitArchiveChanges(taskIds, baseBranch);
     if (archiveCommit.stderr) {
-        die(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}`);
+        const hint = foldedDocs.length > 0
+            ? `\n\n${formatPostFoldFailureHint(foldedDocs, 'uncommitted', baseBranch)}` : '';
+        die(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}${hint}`);
     }
 
     // Delete local task branches (safe to force — squash-merged).

@@ -849,6 +849,24 @@ void test('promptQa', () => {
     recordOrAssert('promptQa', actual);
 });
 
+void test('promptQa renders each task’s own lessons fragment and combined buffer count', () => {
+    for (const ids of [['example-task'], ['bundle-a', 'bundle-b']]) {
+        const state: PipelineState = { tasks: ids.map(taskId => makeTask({ taskId })), tier: 'full', isBundle: ids.length > 1 };
+        const prompt = promptQa(state);
+        if (ids.length === 1) {
+            assert.ok(prompt.includes(`\n  Append the lesson to \`tasks/${ids[0]}/lessons.md\`.\n`));
+            assert.doesNotMatch(prompt, /each member’s lesson/);
+        } else {
+            assert.ok(prompt.includes('\n  Append each member’s lesson to that member’s fragment:\n'));
+            for (const id of ids) assert.ok(prompt.includes(`\n  - Task \`${id}\`: \`tasks/${id}/lessons.md\`\n`));
+        }
+        // The list stays nested under the notes bullet, not at column 0.
+        assert.doesNotMatch(prompt, /^- Task `/m);
+        assert.doesNotMatch(prompt, /tasks\/<id>\/lessons\.md|tasks\/\/lessons\.md/);
+        assert.match(prompt, /docs\/lessons-learned\.md plus this task's lessons fragment/);
+    }
+});
+
 void test('promptQa_withTemplate', () => {
     const actual = normalize(promptQa(baseState, '## Summary\n- Fill this section.\n'));
     recordOrAssert('promptQa_withTemplate', actual);

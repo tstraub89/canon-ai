@@ -4603,7 +4603,9 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
         });
         assert.equal(rootTaskStatus.stdout.trim(), '');
         assert.equal(fs.readFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'utf8'), 'baseline telemetry\n');
-        assert.match(fs.readFileSync(path.join(worktreeDir, 'docs', 'pipeline-invocations.md'), 'utf8'), /implement-ssot/);
+        assert.match(fs.readFileSync(path.join(worktreeDir, 'tasks', taskId, 'metrics.md'), 'utf8'), /implement-ssot/);
+        assert.equal(fs.readFileSync(path.join(worktreeDir, 'docs', 'pipeline-invocations.md'), 'utf8'), 'baseline telemetry\n');
+        assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, 'metrics.md')), false);
         assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), 'utf8'), 'root scaffold\n');
         assert.equal(fs.readFileSync(path.join(worktreeDir, 'tasks', taskId, 'handoff.md'), 'utf8'), 'worktree handoff\n');
 

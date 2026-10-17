@@ -1,14 +1,14 @@
 # Lessons Learned
 
-> Distilled cross-task insights. The QA phase appends entries here when a task surfaces a reusable insight that would have changed how a *different* task was approached.
+> Distilled cross-task insights. Task runs write lessons fragments; `canon run --ship` folds them here when a task surfaces a reusable insight that would have changed how a *different* task was approached.
 
 ## How to use this doc
 
 This file accumulates over the lifetime of the project. Entries land here from two paths:
 
-1. **QA distillation (automated, append-only)**: At the end of each task, the QA phase reads `tasks/<id>/notes.md` (raw scratchpad observations from any phase) and asks "would this have changed how a *different* task was approached?" If yes, it **appends** one entry for that task. If no, the detail stays in `notes.md` only. QA never edits, prunes, promotes, or reorganizes existing entries — appending its own task's entry is the only write it makes to this file.
+1. **QA distillation (automated, append-only)**: At the end of each task, the QA phase reads `tasks/<id>/notes.md` (raw scratchpad observations from any phase) and asks "would this have changed how a *different* task was approached?" If yes, it **appends** one entry to that task's `lessons.md` fragment; `--ship` folds it into this shared doc. If no, the detail stays in `notes.md` only. QA never edits, prunes, promotes, or reorganizes existing entries — appending its own task's fragment is its only lessons write. Task runs never write this shared doc directly.
 
-2. **Lessons sweep (human-initiated and human-approved only)**: Promoting entries into permanent docs and pruning the buffer is a **human decision**. Agents never perform it autonomously, and no entry count ever auto-triggers it. Two occasions call for a sweep: (a) when this file exceeds ~15 entries — the QA phase notices and *signals* it with a one-line note in the task's `done.md`, but does not act; and (b) at the end of a release milestone — a human-recognized occasion, since the QA phase has no notion of release boundaries and emits no signal for it. Either way, a human runs the sweep when they choose to (the `/canon-sweep` skill walks the triage and proposes a verdict per entry before anything is written):
+2. **Lessons sweep (human-initiated and human-approved only)**: Promoting entries into permanent docs and pruning the buffer is a **human decision**. Agents never perform it autonomously, and no entry count ever auto-triggers it. Two occasions call for a sweep: (a) when this file plus the current task's lessons fragment exceed ~15 entries — the QA phase notices and *signals* it with a one-line note in the task's `done.md`, but does not act; and (b) at the end of a release milestone — a human-recognized occasion, since the QA phase has no notion of release boundaries and emits no signal for it. Either way, a human runs the sweep when they choose to (the `/canon-sweep` skill walks the triage and proposes a verdict per entry before anything is written):
    - **Promote durable truths** to the right permanent doc — `docs/patterns.md` (a pitfall), `docs/decisions.md` (a settled decision), or `AGENTS.md` / `CLAUDE.md` (a workflow / spec / review rule). Then prune the entry here.
    - **Prune task-specific entries** that turned out not to generalize. Just delete them — the detail lives in the task's `notes.md` and the git history of this file.
 
@@ -114,3 +114,27 @@ When a new config lets adopters name files that an existing writer already owns 
 *(2026-10-15, source: configurable-docs-freshness)*
 
 A regex-built `**` matcher with adjacent globstar segments backtracks badly: 30 consecutive globstars against a 30-level non-matching path ran past two seconds, and the regression only failed by hitting a subprocess deadline. Collapsing adjacent `**` segments before building the regex fixed it. The matcher was written in-repo rather than using `path.matchesGlob`, because the config needed dot paths matched and Node's matcher skips them. Rule of thumb: when writing a glob matcher for user config, decide the dot-file rule up front and test a dotted path, and add a deep non-matching case run under a subprocess timeout, since an unbounded test hangs rather than failing.
+
+---
+
+### Check that a prompt builder passes each per-task value a template renders
+
+*(2026-10-17, source: per-task-telemetry-fragments)*
+
+A spec that names a per-task value inside a prompt template (for example, a fragment path for each bundle member) is unimplementable if the builder only passes formatted strings. `promptQa()` passed `taskLines` and `taskScope` and no per-task field, so the template could not substitute the path, and spec_review rejected the first draft. Before naming a template variable in a spec's Affected Files, grep the builder's call site for the value it would need, and list the builder if it does not pass that value as data.
+
+---
+
+### Force a rename failure with a sentinel file, not an empty directory
+
+*(2026-10-17, source: per-task-telemetry-fragments)*
+
+`fs.renameSync` onto an existing empty directory succeeds on POSIX, because it replaces the directory. A red-first test that expects ENOTEMPTY from an empty `tasks/_archive/<id>/` therefore never fails, and the test looks like it covers the failure path when it does not. Put a sentinel file in the destination so the rename really fails. Probe the failure trigger in isolation before using it as a red-first fixture.
+
+---
+
+### Round-trip tests of a re-rendered row need two or more write-read cycles
+
+*(2026-10-17, source: per-task-telemetry-fragments)*
+
+The quality-log decoder halved backslashes once while the renderer escaped them on every write, so each QA rerun or fold doubled them. A single parse-then-render round trip passed, and only a repeated write, read, write cycle exposed it (code review C1). For any table cell that is parsed and written back out, assert the bytes are stable after at least two cycles, including values with backslashes, pipes and trailing backslashes.

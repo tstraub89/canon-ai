@@ -613,6 +613,12 @@ export function promptQa(state: PipelineState, prTemplate?: string | null,
     ).join('\n');
 
     return render('qa.md', {
+        lessonsFragments: tasks.length === 1
+            ? `  Append the lesson to \`tasks/${tasks[0].taskId}/lessons.md\`.`
+            : [
+                '  Append each member’s lesson to that member’s fragment:',
+                ...tasks.map(t => `  - Task \`${t.taskId}\`: \`tasks/${t.taskId}/lessons.md\``),
+            ].join('\n'),
         docsEditable: docs.editable.map(doc => `\`${doc}\``).join(', '),
         docsFlagged: docs.flagged.map(doc => `\`${doc}\``).join(', '),
         projectName: config.projectName,

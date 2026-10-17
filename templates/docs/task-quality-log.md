@@ -1,6 +1,6 @@
 # Task Quality Log
 
-> Upserted by the qa → done phase transition — one row per task, keyed by Task id. QA supplies five judgment cells via done.md; the remaining cells are derived from status.json.
+> Task runs upsert a quality-log.md fragment at the qa → done phase transition; `canon run --ship` folds it here — one row per task, keyed by Task id. QA supplies five judgment cells via done.md; the remaining cells are derived from status.json.
 
 ## How to use this doc
 
@@ -10,7 +10,7 @@ Each row records what *actually happened* in a task — spec verdicts, review it
 - Repeated dropped ACs in code review? → Codex prompts or AC clarity need work.
 - Validation gaps slipping through to human_review? → Validation matrix or handoff template needs work.
 
-The qa → done transition writes or updates this task's row in place. The product owner reviews trends periodically (e.g., end of release milestone) and uses signals to update `AGENTS.md`, prompts, or templates.
+The qa → done transition writes or updates this task's quality-log.md fragment; `--ship` folds that row into this shared log. The product owner reviews trends periodically (e.g., end of release milestone) and uses signals to update `AGENTS.md`, prompts, or templates.
 
 ## Columns
 

@@ -6,6 +6,12 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { METRICS_SKELETON, recordMetric } from '../src/orchestrator/metrics.js';
+import { CANON_LOG_HEADERS, writeQualityLogForTask } from '../src/orchestrator/quality-log.js';
+import { applyTelemetryFold, foldTelemetryFragments, planTelemetryFold, sharedTelemetryDocsTouched } from '../src/orchestrator/telemetry-fold.js';
+import { parseTable } from '../src/orchestrator/markdown-table.js';
+import type { StatusJson } from '../src/orchestrator/types.js';
+
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
 const MD_LOADER = path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs');
@@ -342,7 +348,7 @@ function advanceBranchOnOrigin(dir: string, originDir: string, branch: string): 
     return sha;
 }
 
-function simulateMergeOnOrigin(dir: string, originDir: string, statuses: Record<string, Record<string, unknown>>): void {
+function simulateMergeOnOrigin(dir: string, originDir: string, statuses: Record<string, Record<string, unknown>>, files: Record<string, string> = {}): void {
     const mergeDir = path.join(dir, `merge-${Math.random().toString(16).slice(2)}`);
     execFileSync('git', ['clone', originDir, mergeDir], { stdio: 'ignore' });
     gitIn(mergeDir, 'config', 'user.email', 'test@example.com');
@@ -351,7 +357,8 @@ function simulateMergeOnOrigin(dir: string, originDir: string, statuses: Record<
     for (const [taskId, status] of Object.entries(statuses)) {
         writeTaskFiles(mergeDir, taskId, status);
     }
-    gitIn(mergeDir, 'add', 'tasks');
+    for (const [file, content] of Object.entries(files)) writeRel(mergeDir, file, content);
+    gitIn(mergeDir, 'add', 'tasks', ...Object.keys(files));
     gitIn(mergeDir, 'commit', '-m', 'simulate squash merge');
     gitIn(mergeDir, 'push', 'origin', 'main');
 }
@@ -367,6 +374,7 @@ function prepareShipFixture(
         advanceRemote?: boolean;
         materializeAdvancedHead?: boolean;
         initialFiles?: Record<string, string>;
+        taskFiles?: Record<string, string>;
     } = {},
 ): { localDir: string; originDir: string; branch: string; tip: string; prHead: string; fakeTools: string } {
     const { localDir, originDir } = makeGitFixture(dir, options.initialFiles);
@@ -384,7 +392,8 @@ function prepareShipFixture(
             writePrNumberSidecar(localDir, taskId, options.prNumbers[taskId]);
         }
     }
-    gitIn(localDir, 'add', 'tasks');
+    for (const [file, content] of Object.entries(options.taskFiles ?? {})) writeRel(localDir, file, content);
+    gitIn(localDir, 'add', 'tasks', ...Object.keys(options.taskFiles ?? {}));
     gitIn(localDir, 'commit', '-m', 'add task artifacts');
     const tip = gitIn(localDir, 'rev-parse', branch);
     gitIn(localDir, 'push', '-u', 'origin', branch);
@@ -394,7 +403,7 @@ function prepareShipFixture(
     }
 
     if (options.mergeToOrigin !== false) {
-        simulateMergeOnOrigin(dir, originDir, statuses);
+        simulateMergeOnOrigin(dir, originDir, statuses, options.taskFiles);
     }
     if (options.deleteRemote !== false) {
         gitIn(localDir, 'push', 'origin', '--delete', branch);
@@ -563,6 +572,7 @@ void test('--pr writes the sidecar on create path and leaves status clean', () =
         });
 
         assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stderr, /Shared telemetry docs changed/);
         assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '101');
         const status = readStatusFile(localDir, taskId) as { pr?: { number?: number } };
         assert.equal(status.pr, undefined);
@@ -925,6 +935,7 @@ void test('--ship preserves telemetry in the working tree when the archive commi
         });
 
         assert.notEqual(result.status, 0);
+        assert.doesNotMatch(result.stderr, /Failure after the telemetry fold/);
         assert.match(result.stderr, /failed to commit archive changes/);
         assert.equal(
             readRel(localDir, 'docs/pipeline-invocations.md'),
@@ -954,6 +965,7 @@ void test('--ship preserves telemetry in the working tree when the archive push 
         });
 
         assert.notEqual(result.status, 0);
+        assert.doesNotMatch(result.stderr, /Failure after the telemetry fold/);
         assert.match(result.stderr, /simulated archive push failure/);
         assert.equal(
             readRel(localDir, 'docs/pipeline-invocations.md'),
@@ -1446,4 +1458,317 @@ for (const [name, doc] of [
             });
         });
     }
+}
+
+function qualityDoc(taskId: string, verdict: string, note: string, extra?: string): string {
+    const headers = [...CANON_LOG_HEADERS, ...(extra === undefined ? [] : ['Adopter'])];
+    return '# Task Quality Log\n\n## Log\n\n' +
+        `| ${headers.join(' | ')} |\n|${headers.map(() => '---').join('|')}|\n` +
+        `| 2026-01-01 | ${taskId} | M | ${verdict} | 3 | 4 | 0 | 0 | No | ${note} |${extra === undefined ? '' : ` ${extra} |`}\n\n## Periodic Reviews\n`;
+}
+
+function telemetryFragments(taskId: string): Record<string, string> {
+    return {
+        [`tasks/${taskId}/metrics.md`]: METRICS_SKELETON +
+            `| 2026-01-01 | ${taskId} | spec | claude | test | 1 | 1s | 42 | ok |\n` +
+            `| 2026-01-02 | ${taskId} | plan | claude | test | 1 | 2s | 43 | ok |\n`,
+        [`tasks/${taskId}/quality-log.md`]: qualityDoc(taskId, 'approved', `see tasks/${taskId}/done.md`),
+        [`tasks/${taskId}/lessons.md`]: `### Lesson for ${taskId}\n\nSee tasks/${taskId}/notes.md.\n`,
+    };
+}
+
+void test('--ship folds all fragments, reconciles legacy quality rows, rewrites refs and stages all logs', () => {
+    withTempDir('ship-fold-', dir => {
+        const taskId = 'fold-task';
+        const sharedQuality = qualityDoc(taskId, 'changes_requested', 'legacy', 'preserve') +
+            `\n| 2026-01-02 | ${taskId} | S | approved | 1 | 1 | 0 | 0 | No | stray | extra |\n`;
+        const { localDir, tip, branch, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 101 },
+            initialFiles: {
+                'docs/pipeline-invocations.md': METRICS_SKELETON,
+                'docs/task-quality-log.md': sharedQuality,
+                'docs/lessons-learned.md': '# Lessons Learned\n\nLegacy entry.\n',
+            },
+            taskFiles: telemetryFragments(taskId),
+        });
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED', FAKE_GH_BASE_REF_NAME: 'main', FAKE_GH_HEAD_REF_OID: tip,
+        });
+        assert.equal(result.status, 0, result.stderr);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+        const metrics = readRel(localDir, 'docs/pipeline-invocations.md');
+        assert.equal(metrics.match(/\| Timestamp \|/g)?.length, 1);
+        assert.equal(metrics.match(/^\|---/gm)?.length, 1);
+        assert.match(metrics, /\| spec \|[^\n]*\n\|[^\n]*\| plan \|[^\n]*\n\s*$/);
+        const quality = readRel(localDir, 'docs/task-quality-log.md');
+        const rows = parseTable(quality, 'Log');
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0]['Spec verdict'], 'changes_requested');
+        assert.equal(rows[0].Adopter, 'extra');
+        assert.equal(rows[0].Notes, `see tasks/_archive/${taskId}/done.md`);
+        assert.doesNotMatch(quality.split('## Periodic Reviews')[1], /fold-task/);
+        assert.match(readRel(localDir, 'docs/lessons-learned.md'), /Legacy entry\.[\s\S]*### Lesson for fold-task[\s\S]*tasks\/_archive\/fold-task\/notes\.md\.\n$/);
+        for (const name of ['metrics.md', 'quality-log.md', 'lessons.md']) {
+            assert.equal(fs.existsSync(path.join(localDir, 'tasks/_archive', taskId, name)), false);
+        }
+        const committedDocs = gitIn(localDir, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD', '--', 'docs').split('\n').sort();
+        assert.deepEqual(committedDocs, ['docs/lessons-learned.md', 'docs/pipeline-invocations.md', 'docs/task-quality-log.md']);
+        assert.equal(gitIn(localDir, 'log', '-1', '--format=%s'), `chore: archive ${taskId}`);
+    });
+});
+
+void test('--ship failed fold preserves docs, fragments and review status; retry succeeds', () => {
+    withTempDir('ship-fold-fail-', dir => {
+        const taskId = 'fold-retry';
+        const initialFiles = {
+            'docs/pipeline-invocations.md': METRICS_SKELETON,
+            'docs/task-quality-log.md': '# malformed shared quality table\n',
+            'docs/lessons-learned.md': '# Lessons\n',
+        };
+        const fragments = telemetryFragments(taskId);
+        const { localDir, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles, taskFiles: fragments, syncBase: true,
+        });
+        // No local branch is also a supported merge-proof path.
+        gitIn(localDir, 'branch', '-D', `task/${taskId}`);
+        const before = readRel(localDir, `tasks/${taskId}/status.json`);
+        const first = runCanon(localDir, [taskId, '--ship'], fakeTools);
+        assert.notEqual(first.status, 0);
+        assert.match(first.stderr, /could not fold task telemetry fragments/);
+        for (const [file, content] of Object.entries({ ...initialFiles, ...fragments })) assert.equal(readRel(localDir, file), content);
+        assert.equal(readRel(localDir, `tasks/${taskId}/status.json`), before);
+        assert.equal(fs.existsSync(path.join(localDir, 'tasks/_archive', taskId)), false);
+        writeRel(localDir, 'docs/task-quality-log.md', qualityDoc('legacy', 'approved', 'unchanged'));
+        const retry = runCanon(localDir, [taskId, '--ship'], fakeTools);
+        assert.equal(retry.status, 0, retry.stderr);
+        assert.ok(fs.existsSync(path.join(localDir, 'tasks/_archive', taskId)));
+    });
+});
+
+void test('--ship failed fold restores preserved sibling telemetry dirt before aborting', () => {
+    withTempDir('ship-fold-fail-dirt-', dir => {
+        const taskId = 'fold-fail-dirt';
+        const suffix = '| sibling | pre-implement | row |\n';
+        const tmpDir = makeTmpDir(dir);
+        const initialFiles = {
+            'docs/pipeline-invocations.md': METRICS_SKELETON,
+            'docs/task-quality-log.md': '# malformed shared quality table\n',
+            'docs/lessons-learned.md': '# Lessons\n',
+        };
+        const { localDir, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles, taskFiles: telemetryFragments(taskId), syncBase: true,
+        });
+        gitIn(localDir, 'branch', '-D', `task/${taskId}`);
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, { TMPDIR: tmpDir });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /could not fold task telemetry fragments/);
+        const backupPath = result.stdout.match(/backup: (.+)/)?.[1]?.trim();
+        assert.ok(backupPath, result.stdout);
+        assert.equal(fs.existsSync(backupPath), false);
+        assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
+    });
+});
+
+void test('fold rolls back partial replacements and partial fragment deletion on I/O failure', t => {
+    withTempDir('fold-rollback-', dir => {
+        for (const [file, content] of Object.entries(telemetryFragments('rollback'))) writeRel(dir, file, content);
+        writeRel(dir, 'docs/pipeline-invocations.md', METRICS_SKELETON);
+        const plan = planTelemetryFold(dir, ['rollback'], id => path.join(dir, 'tasks', id));
+        const originalRename = fs.renameSync;
+        let calls = 0;
+        const renameMock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+            calls += 1;
+            if (calls === 2) throw new Error('forced rename failure');
+            originalRename(from, to);
+        });
+        assert.throws(() => applyTelemetryFold(plan), /forced rename failure/);
+        renameMock.mock.restore();
+        const checkRestored = () => {
+            assert.equal(readRel(dir, 'docs/pipeline-invocations.md'), METRICS_SKELETON);
+            assert.equal(fs.existsSync(path.join(dir, 'docs/task-quality-log.md')), false);
+            assert.equal(fs.existsSync(path.join(dir, 'docs/lessons-learned.md')), false);
+            for (const fragment of plan.fragments) assert.equal(fs.readFileSync(fragment.path, 'utf8'), fragment.content);
+            assert.deepEqual(fs.readdirSync(path.join(dir, 'docs')), ['pipeline-invocations.md']);
+        };
+        checkRestored();
+        const originalUnlink = fs.unlinkSync;
+        const unlinkMock = t.mock.method(fs, 'unlinkSync', (file: fs.PathLike) => {
+            if (String(file) === plan.fragments[1].path) throw new Error('forced deletion failure');
+            originalUnlink(file);
+        });
+        assert.throws(() => applyTelemetryFold(plan), /forced deletion failure/);
+        unlinkMock.mock.restore();
+        checkRestored();
+        foldTelemetryFragments(dir, ['rollback'], id => path.join(dir, 'tasks', id));
+        assert.equal(plan.fragments.some(fragment => fs.existsSync(fragment.path)), false);
+    });
+});
+
+void test('--ship creates absent shared docs from fragments, while legacy missing fragments stay compatible', () => {
+    withTempDir('ship-fold-create-', dir => {
+        const taskId = 'create-logs';
+        const { localDir, fakeTools } = prepareShipFixture(dir, [taskId], { syncBase: true, taskFiles: telemetryFragments(taskId) });
+        gitIn(localDir, 'branch', '-D', `task/${taskId}`);
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(readRel(localDir, 'docs/pipeline-invocations.md'), /\| create-logs \|/);
+        assert.equal(parseTable(readRel(localDir, 'docs/task-quality-log.md'), 'Log')[0].Task, taskId);
+        assert.match(readRel(localDir, 'docs/lessons-learned.md'), /^# Lessons Learned/);
+    });
+    withTempDir('ship-fold-legacy-', dir => {
+        const taskId = 'legacy-logs';
+        const docs = {
+            'docs/pipeline-invocations.md': METRICS_SKELETON,
+            'docs/task-quality-log.md': qualityDoc(taskId, 'approved', `tasks/${taskId}/done.md`),
+            'docs/lessons-learned.md': `# Lessons\n\ntasks/${taskId}/notes.md\n`,
+        };
+        const { localDir, fakeTools } = prepareShipFixture(dir, [taskId], { syncBase: true, taskFiles: docs });
+        gitIn(localDir, 'branch', '-D', `task/${taskId}`);
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools);
+        assert.equal(result.status, 0, result.stderr);
+        for (const [file, content] of Object.entries(docs)) assert.equal(readRel(localDir, file), content.replaceAll(`tasks/${taskId}/`, `tasks/_archive/${taskId}/`));
+    });
+});
+
+void test('--pr warns for every shared telemetry doc changed but still opens the PR', () => {
+    withTempDir('pr-telemetry-warning-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const fakeTools = path.join(dir, 'tools');
+        setupFakeTools(fakeTools);
+        const taskId = 'warning-task';
+        const branch = `task/${taskId}`;
+        gitIn(localDir, 'checkout', '-b', branch);
+        writeTaskFiles(localDir, taskId, makeHumanReviewStatus(taskId, branch));
+        for (const file of ['pipeline-invocations.md', 'task-quality-log.md', 'lessons-learned.md']) writeRel(localDir, `docs/${file}`, '# Legacy log\n');
+        gitIn(localDir, 'add', 'docs', 'tasks');
+        gitIn(localDir, 'commit', '-m', 'legacy telemetry');
+        const result = runCanon(localDir, [taskId, '--pr'], fakeTools, {
+            FAKE_GH_STATE_FILE: path.join(dir, 'gh-state'), FAKE_GH_CREATE_NUMBER: '101',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /Parallel tasks will conflict there/);
+        for (const file of ['pipeline-invocations.md', 'task-quality-log.md', 'lessons-learned.md']) assert.ok(result.stderr.includes(`docs/${file}`));
+        assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '101');
+    });
+});
+
+void test('parallel branches write no shared logs and both ship after a real squash merge without conflicts', () => {
+    withTempDir('ship-parallel-fragments-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const fakeTools = path.join(dir, 'tools');
+        setupFakeTools(fakeTools);
+        const base = gitIn(localDir, 'rev-parse', 'HEAD');
+        const envKeys = ['CANON_METRICS_FILE_OVERRIDE', 'CANON_QUALITY_LOG_FILE_OVERRIDE', 'CANON_TASKS_DIR_OVERRIDE'];
+        const previous = envKeys.map(key => process.env[key]);
+        envKeys.forEach(key => { delete process.env[key]; });
+        try {
+            for (const id of ['parallel-a', 'parallel-b']) {
+                const branch = `task/${id}`;
+                gitIn(localDir, 'checkout', '-b', branch, base);
+                const status = makeStatus(id, branch);
+                writeTaskFiles(localDir, id, status);
+                recordMetric({ taskId: id, activeCwd: localDir, phase: 'qa', agent: 'claude', model: 'test', durationMs: 100, status: 'ok' });
+                writeQualityLogForTask(id, localDir, path.join(localDir, 'tasks', id, 'done.md'), status as unknown as StatusJson);
+                writeRel(localDir, `tasks/${id}/lessons.md`, `### Lesson ${id}\n\nReusable insight.\n`);
+                gitIn(localDir, 'add', 'tasks');
+                gitIn(localDir, 'commit', '-m', `finish ${id}`);
+                assert.equal(gitIn(localDir, 'diff', `${base}...HEAD`, '--', 'docs/pipeline-invocations.md', 'docs/task-quality-log.md', 'docs/lessons-learned.md'), '');
+            }
+        } finally {
+            envKeys.forEach((key, index) => {
+                if (previous[index] === undefined) delete process.env[key];
+                else process.env[key] = previous[index];
+            });
+        }
+        gitIn(localDir, 'checkout', 'main');
+        for (const id of ['parallel-a', 'parallel-b']) {
+            // The second squash runs against base after A's fold + archive commit.
+            gitIn(localDir, 'merge', '--squash', `task/${id}`);
+            gitIn(localDir, 'commit', '-m', `merge ${id}`);
+            gitIn(localDir, 'push', 'origin', 'main');
+            gitIn(localDir, 'branch', '-D', `task/${id}`);
+            const result = runCanon(localDir, [id, '--ship'], fakeTools);
+            assert.equal(result.status, 0, result.stderr);
+        }
+        const metrics = readRel(localDir, 'docs/pipeline-invocations.md');
+        const lessons = readRel(localDir, 'docs/lessons-learned.md');
+        const rows = parseTable(readRel(localDir, 'docs/task-quality-log.md'), 'Log');
+        for (const id of ['parallel-a', 'parallel-b']) {
+            assert.ok(metrics.includes(`| ${id} |`));
+            assert.ok(lessons.includes(`### Lesson ${id}`));
+            assert.equal(rows.filter(row => row.Task === id).length, 1);
+        }
+    });
+});
+
+void test('fold skips empty lessons and metrics, consumes no-row quality, and preserves argument order', () => {
+    withTempDir('fold-empty-', dir => {
+        const empty = {
+            'tasks/empty/metrics.md': METRICS_SKELETON,
+            'tasks/empty/lessons.md': ' \n\t',
+            'tasks/empty/quality-log.md': qualityDoc('other', 'approved', 'no matching task'),
+        };
+        for (const [file, content] of Object.entries(empty)) writeRel(dir, file, content);
+        assert.deepEqual(foldTelemetryFragments(dir, ['empty'], id => path.join(dir, 'tasks', id)), []);
+        assert.equal(fs.existsSync(path.join(dir, 'docs')), false);
+        assert.deepEqual(fs.readdirSync(path.join(dir, 'tasks/empty')), []);
+        for (const id of ['second', 'first']) {
+            for (const [file, content] of Object.entries(telemetryFragments(id))) writeRel(dir, file, content);
+        }
+        foldTelemetryFragments(dir, ['first', 'second'], id => path.join(dir, 'tasks', id));
+        const metrics = readRel(dir, 'docs/pipeline-invocations.md');
+        const lessons = readRel(dir, 'docs/lessons-learned.md');
+        assert.ok(metrics.indexOf('| first |') < metrics.indexOf('| second |'));
+        assert.ok(lessons.indexOf('Lesson for first') < lessons.indexOf('Lesson for second'));
+        assert.deepEqual(sharedTelemetryDocsTouched(['src/example.ts', 'docs/lessons-learned.md']), ['docs/lessons-learned.md']);
+        assert.deepEqual(sharedTelemetryDocsTouched([]), []);
+    });
+});
+
+for (const mode of ['rename', 'commit', 'push'] as const) {
+    void test(`--ship post-fold failure hint: ${mode}`, () => {
+        withTempDir(`ship-post-fold-${mode}-`, dir => {
+            const taskId = `post-fold-${mode}`;
+            const initialFiles: Record<string, string> = {
+                'docs/pipeline-invocations.md': METRICS_SKELETON,
+                'docs/task-quality-log.md': qualityDoc('other', 'approved', 'existing'),
+                'docs/lessons-learned.md': '# Lessons\n',
+            };
+            if (mode === 'rename') initialFiles[`tasks/_archive/${taskId}/sentinel.md`] = 'Keep the archive destination non-empty.\n';
+            const { localDir, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+                initialFiles, taskFiles: telemetryFragments(taskId), prNumbers: { [taskId]: 411 },
+            });
+            if (mode !== 'rename') {
+                const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+                setupGitArchiveFailure(fakeTools, realGit, mode);
+            }
+            const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+                FAKE_GH_PR_STATE: 'MERGED', FAKE_GH_BASE_REF_NAME: 'main', FAKE_GH_HEAD_REF_OID: tip,
+            });
+            assert.notEqual(result.status, 0);
+            assert.match(readRel(localDir, 'docs/pipeline-invocations.md'), /\| spec \|/);
+            assert.match(readRel(localDir, 'docs/lessons-learned.md'), new RegExp(`### Lesson for ${taskId}`));
+            assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, 'metrics.md')), false);
+            assert.match(result.stderr, /Failure after the telemetry fold/);
+            for (const file of ['pipeline-invocations.md', 'task-quality-log.md', 'lessons-learned.md']) assert.ok(result.stderr.includes(`docs/${file}`));
+            assert.match(result.stderr, /fragments were already deleted/i);
+            assert.match(result.stderr, /do not reset/i);
+            if (mode === 'push') {
+                assert.match(result.stderr, /local.*chore: archive/);
+                assert.match(result.stderr, /not pushed/);
+                assert.match(result.stderr, /simulated archive push failure/);
+                assert.doesNotMatch(result.stderr, /as uncommitted/);
+                assert.equal(gitIn(localDir, 'log', '-1', '--format=%s'), `chore: archive ${taskId}`);
+            } else {
+                assert.match(result.stderr, /uncommitted \(possibly staged\)/);
+                assert.doesNotMatch(result.stderr, /which was not pushed/);
+                if (mode === 'rename') assert.ok(fs.existsSync(path.join(localDir, 'tasks', taskId)));
+                else assert.match(result.stderr, /failed to commit archive changes/);
+            }
+        });
+    });
 }

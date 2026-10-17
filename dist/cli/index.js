@@ -827,12 +827,12 @@ function splitTableRowCells(line) {
       continue;
     }
     if (backslashes > 0) {
-      cell += "\\".repeat(backslashes);
+      cell += "\\".repeat(Math.ceil(backslashes / 2));
       backslashes = 0;
     }
     cell += char;
   }
-  if (backslashes > 0) cell += "\\".repeat(backslashes);
+  if (backslashes > 0) cell += "\\".repeat(Math.ceil(backslashes / 2));
   cells.push(cell);
   const innerCells = cells.slice(
     (cells[0] ?? "").trim() === "" ? 1 : 0,
@@ -960,6 +960,26 @@ function writeFileAtomic(filePath, content) {
     }
   }
 }
+function replaceTaskRow(lines, located, taskId, buildRow) {
+  const logRows = parseLogRows(
+    lines,
+    located.headerCells,
+    located.dataStart,
+    located.dataEnd
+  );
+  const strayRows = parseStrayRows(lines, located.headerCells);
+  const taskRows = [...logRows, ...strayRows].filter((row) => (row.cells.Task ?? "").trim() === taskId);
+  const finalRow = buildRow(taskRows);
+  const rendered = renderRowLine(located.headerCells, finalRow);
+  const removeIndexes = new Set(taskRows.map((row) => row.lineIndex));
+  const updatedLines = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index === located.dataEnd) updatedLines.push(rendered);
+    if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
+  }
+  if (located.dataEnd >= lines.length) updatedLines.push(rendered);
+  return updatedLines;
+}
 function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
   try {
     let content;
@@ -982,24 +1002,7 @@ function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
       );
       return;
     }
-    const logRows = parseLogRows(
-      lines,
-      located.headerCells,
-      located.dataStart,
-      located.dataEnd
-    );
-    const strayRows = parseStrayRows(lines, located.headerCells);
-    const taskRows = [...logRows, ...strayRows].filter((row) => (row.cells.Task ?? "").trim() === derived.taskId);
-    const reconciled = reconcileHistory(taskRows, located.headerCells);
-    const finalRow = buildFinalRow(located.headerCells, derived, reconciled, qaSupplied);
-    const rendered = renderRowLine(located.headerCells, finalRow);
-    const removeIndexes = new Set(taskRows.map((row) => row.lineIndex));
-    const updatedLines = [];
-    for (let index = 0; index < lines.length; index += 1) {
-      if (index === located.dataEnd) updatedLines.push(rendered);
-      if (!removeIndexes.has(index)) updatedLines.push(lines[index]);
-    }
-    if (located.dataEnd >= lines.length) updatedLines.push(rendered);
+    const updatedLines = replaceTaskRow(lines, located, derived.taskId, (taskRows) => buildFinalRow(located.headerCells, derived, reconcileHistory(taskRows, located.headerCells), qaSupplied));
     writeFileAtomic(logFilePath, updatedLines.join("\n"));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1019,15 +1022,17 @@ function parseQualityLogJudgmentBlock(doneMdContent) {
   }
   return result;
 }
-function writeQualityLogForTask(taskId, activeCwd, donePath, status) {
+function writeQualityLogForTask(taskId, _activeCwd, donePath, status) {
   try {
     let doneContent = "";
     try {
       doneContent = fs8.readFileSync(donePath, "utf8");
     } catch {
     }
+    const target = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path7.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path7.join(path7.dirname(donePath), "quality-log.md");
+    if (!process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) fs8.mkdirSync(path7.dirname(target), { recursive: true });
     upsertQualityLogRow(
-      getQualityLogFile(activeCwd),
+      target,
       {
         taskId,
         taskSize: status.task_size,
@@ -1485,13 +1490,13 @@ function checkQualityLog(cwd) {
         return {
           label,
           status: "warn",
-          detail: `parent directory of ${logPath} does not exist \u2014 the writer's self-heal write would also fail; create the directory (or run \`canon init\`)`
+          detail: `parent directory of ${logPath} does not exist \u2014 a missing docs directory usually means the scaffold is incomplete (re-run \`canon init\`); \`canon run --ship\` will create it when folding a task's quality-log fragment`
         };
       }
       return {
         label,
         status: "pass",
-        detail: "not present \u2014 writer creates it fresh on first qa \u2192 done transition"
+        detail: "not present \u2014 created when `canon run --ship` folds a task's quality-log fragment"
       };
     }
     const message = error instanceof Error ? error.message : String(error);
