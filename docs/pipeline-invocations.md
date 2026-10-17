@@ -1126,3 +1126,7 @@
 | 2026-10-16T03:03:31.314Z | configurable-docs-freshness | code_review | codex | gpt-6-luna | 1 | 74.7s | - | ok |
 | 2026-10-16T03:11:57.031Z | configurable-docs-freshness | code_review | claude | opus | 1 | 505.6s | 1439949 | ok |
 | 2026-10-16T03:15:31.403Z | configurable-docs-freshness | qa | claude | claude-haiku-5-5 | 0 | 214.4s | 1103803 | ok |
+| 2026-10-17T02:58:45.833Z | per-task-telemetry-fragments | spec_review | codex | gpt-6.1-sol | 0 | 84.8s | 1040130 | ok |
+| 2026-10-17T02:59:26.597Z | per-task-telemetry-fragments | spec | claude | opus | 0 | 40.6s | 638019 | ok |
+| 2026-10-17T02:59:58.230Z | per-task-telemetry-fragments | spec_review | codex | gpt-6.1-sol | 1 | 31.5s | 1601655 | ok |
+| 2026-10-17T03:11:23.875Z | per-task-telemetry-fragments | plan | claude | opus | 0 | 650.2s | 8505068 | ok |
