@@ -6984,6 +6984,10 @@ function foldTelemetryFragments(repoRoot, taskIds, taskDirFor3) {
   applyTelemetryFold(plan);
   return plan.writes.map((write) => path21.relative(repoRoot, write.target));
 }
+function formatPostFoldFailureHint(foldedDocs, state, baseBranch) {
+  const location = state === "uncommitted" ? "as uncommitted (possibly staged) edits in the working tree. Do not reset or check out those docs." : `in the local chore: archive commit on ${baseBranch}, which was not pushed. Do not reset the local ${baseBranch} branch.`;
+  return `Folded telemetry rows for ${foldedDocs.join(", ")} remain ${location} Task telemetry fragments were already deleted, so those rows cannot be regenerated from them. Follow "Failure after the telemetry fold" in docs/pipeline-orchestrator.md for manual recovery.`;
+}
 
 // src/orchestrator/main.ts
 var REPO_ROOT2 = REPO_ROOT;
@@ -8514,50 +8518,72 @@ Recovery:
   - --force does not bypass this gate.`
     );
   }
+  let foldedDocs = [];
   try {
-    for (const file of foldTelemetryFragments(REPO_ROOT2, taskIds, taskDirForRepoRoot2)) {
+    foldedDocs = foldTelemetryFragments(REPO_ROOT2, taskIds, taskDirForRepoRoot2);
+    for (const file of foldedDocs) {
       info2(`Folded task telemetry into ${file}.`);
     }
   } catch (error) {
     die2(`--ship aborted: could not fold task telemetry fragments: ${error instanceof Error ? error.message : String(error)}. Fix the shared docs or fragment write/read error and re-run --ship; no task has been archived.`);
   }
-  const archiveDir = path22.join(TASKS_DIR2, "_archive");
-  if (!fs23.existsSync(archiveDir)) fs23.mkdirSync(archiveDir, { recursive: true });
   const localBranchesToDelete = [];
-  for (const taskId of taskIds) {
-    const { worktree: hasWorktree } = taskSnapshot(taskId);
-    const status = readShipStatus(taskId);
-    if (hasWorktree) teardownWorktree(taskId);
-    status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-    const humanReview = status.phases.human_review;
-    if (humanReview) humanReview.status = "done";
-    writeStatusToFile(path22.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
-    const src = taskDirForRepoRoot2(taskId);
-    const dest = path22.join(archiveDir, taskId);
-    fs23.renameSync(src, dest);
-    info2(`\u{1F4E6} ${taskId} \u2192 tasks/_archive/${taskId}`);
-    const branchName = taskSnapshot(taskId).branch;
-    if (branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
+  try {
+    const archiveDir = path22.join(TASKS_DIR2, "_archive");
+    if (!fs23.existsSync(archiveDir)) fs23.mkdirSync(archiveDir, { recursive: true });
+    for (const taskId of taskIds) {
+      const { worktree: hasWorktree } = taskSnapshot(taskId);
+      const status = readShipStatus(taskId);
+      if (hasWorktree) teardownWorktree(taskId);
+      status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const humanReview = status.phases.human_review;
+      if (humanReview) humanReview.status = "done";
+      writeStatusToFile(path22.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
+      const src = taskDirForRepoRoot2(taskId);
+      const dest = path22.join(archiveDir, taskId);
+      fs23.renameSync(src, dest);
+      info2(`\u{1F4E6} ${taskId} \u2192 tasks/_archive/${taskId}`);
+      const branchName = taskSnapshot(taskId).branch;
+      if (branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
+    }
+    rewriteArchivedTaskRefs(taskIds);
+    const stagedPaths = taskIds.flatMap((id) => [
+      path22.join(TASKS_DIR2, id),
+      // deleted source (if not cleaned up)
+      path22.join(TASKS_DIR2, "_archive", id),
+      // new archive destination
+      path22.join(REPO_ROOT2, "docs", "lessons-learned.md"),
+      path22.join(REPO_ROOT2, "docs", "task-quality-log.md"),
+      path22.join(REPO_ROOT2, "docs", "pipeline-invocations.md")
+    ]);
+    stageArchiveChanges(stagedPaths);
+    for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
+      fs23.appendFileSync(path22.join(REPO_ROOT2, relPath), suffix, "utf8");
+      fs23.rmSync(backupPath, { force: true });
+      info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+    }
+  } catch (error) {
+    if (foldedDocs.length === 0) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    die2(`--ship aborted: archive step failed after folding task telemetry: ${message}
+
+` + formatPostFoldFailureHint(foldedDocs, "uncommitted", baseBranch));
   }
-  rewriteArchivedTaskRefs(taskIds);
-  const stagedPaths = taskIds.flatMap((id) => [
-    path22.join(TASKS_DIR2, id),
-    // deleted source (if not cleaned up)
-    path22.join(TASKS_DIR2, "_archive", id),
-    // new archive destination
-    path22.join(REPO_ROOT2, "docs", "lessons-learned.md"),
-    path22.join(REPO_ROOT2, "docs", "task-quality-log.md"),
-    path22.join(REPO_ROOT2, "docs", "pipeline-invocations.md")
-  ]);
-  stageArchiveChanges(stagedPaths);
-  for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-    fs23.appendFileSync(path22.join(REPO_ROOT2, relPath), suffix, "utf8");
-    fs23.rmSync(backupPath, { force: true });
-    info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
+  let archiveCommit;
+  try {
+    archiveCommit = commitArchiveChanges(taskIds, baseBranch);
+  } catch (error) {
+    if (foldedDocs.length === 0) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    return die2(`--ship aborted: archive commit was created locally but the push failed: ${message}
+
+` + formatPostFoldFailureHint(foldedDocs, "unpushed", baseBranch));
   }
-  const archiveCommit = commitArchiveChanges(taskIds, baseBranch);
   if (archiveCommit.stderr) {
-    die2(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}`);
+    const hint = foldedDocs.length > 0 ? `
+
+${formatPostFoldFailureHint(foldedDocs, "uncommitted", baseBranch)}` : "";
+    die2(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}${hint}`);
   }
   for (const branch of localBranchesToDelete) {
     const result = gitSafe("branch", "-D", branch);

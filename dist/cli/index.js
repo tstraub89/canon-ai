@@ -1490,13 +1490,13 @@ function checkQualityLog(cwd) {
         return {
           label,
           status: "warn",
-          detail: `parent directory of ${logPath} does not exist \u2014 the writer's self-heal write would also fail; create the directory (or run \`canon init\`)`
+          detail: `parent directory of ${logPath} does not exist \u2014 \`canon run --ship\` creates the shared log when folding a task's quality-log fragment; create the directory (or run \`canon init\`)`
         };
       }
       return {
         label,
         status: "pass",
-        detail: "not present \u2014 writer creates it fresh on first qa \u2192 done transition"
+        detail: "not present \u2014 created when `canon run --ship` folds a task's quality-log fragment"
       };
     }
     const message = error instanceof Error ? error.message : String(error);

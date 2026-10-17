@@ -129,3 +129,16 @@ export function foldTelemetryFragments(
     applyTelemetryFold(plan);
     return plan.writes.map(write => path.relative(repoRoot, write.target));
 }
+
+export type PostFoldFailureState = 'uncommitted' | 'unpushed';
+
+export function formatPostFoldFailureHint(
+    foldedDocs: readonly string[], state: PostFoldFailureState, baseBranch: string,
+): string {
+    const location = state === 'uncommitted'
+        ? 'as uncommitted (possibly staged) edits in the working tree. Do not reset or check out those docs.'
+        : `in the local chore: archive commit on ${baseBranch}, which was not pushed. Do not reset the local ${baseBranch} branch.`;
+    return `Folded telemetry rows for ${foldedDocs.join(', ')} remain ${location} ` +
+        'Task telemetry fragments were already deleted, so those rows cannot be regenerated from them. ' +
+        'Follow "Failure after the telemetry fold" in docs/pipeline-orchestrator.md for manual recovery.';
+}

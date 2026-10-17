@@ -935,6 +935,7 @@ void test('--ship preserves telemetry in the working tree when the archive commi
         });
 
         assert.notEqual(result.status, 0);
+        assert.doesNotMatch(result.stderr, /Failure after the telemetry fold/);
         assert.match(result.stderr, /failed to commit archive changes/);
         assert.equal(
             readRel(localDir, 'docs/pipeline-invocations.md'),
@@ -964,6 +965,7 @@ void test('--ship preserves telemetry in the working tree when the archive push 
         });
 
         assert.notEqual(result.status, 0);
+        assert.doesNotMatch(result.stderr, /Failure after the telemetry fold/);
         assert.match(result.stderr, /simulated archive push failure/);
         assert.equal(
             readRel(localDir, 'docs/pipeline-invocations.md'),
@@ -1698,3 +1700,47 @@ void test('fold skips empty lessons and metrics, consumes no-row quality, and pr
         assert.deepEqual(sharedTelemetryDocsTouched([]), []);
     });
 });
+
+for (const mode of ['rename', 'commit', 'push'] as const) {
+    void test(`--ship post-fold failure hint: ${mode}`, () => {
+        withTempDir(`ship-post-fold-${mode}-`, dir => {
+            const taskId = `post-fold-${mode}`;
+            const initialFiles: Record<string, string> = {
+                'docs/pipeline-invocations.md': METRICS_SKELETON,
+                'docs/task-quality-log.md': qualityDoc('other', 'approved', 'existing'),
+                'docs/lessons-learned.md': '# Lessons\n',
+            };
+            if (mode === 'rename') initialFiles[`tasks/_archive/${taskId}/sentinel.md`] = 'Keep the archive destination non-empty.\n';
+            const { localDir, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+                initialFiles, taskFiles: telemetryFragments(taskId), prNumbers: { [taskId]: 411 },
+            });
+            if (mode !== 'rename') {
+                const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+                setupGitArchiveFailure(fakeTools, realGit, mode);
+            }
+            const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+                FAKE_GH_PR_STATE: 'MERGED', FAKE_GH_BASE_REF_NAME: 'main', FAKE_GH_HEAD_REF_OID: tip,
+            });
+            assert.notEqual(result.status, 0);
+            assert.match(readRel(localDir, 'docs/pipeline-invocations.md'), /\| spec \|/);
+            assert.match(readRel(localDir, 'docs/lessons-learned.md'), new RegExp(`### Lesson for ${taskId}`));
+            assert.equal(fs.existsSync(path.join(localDir, 'tasks', taskId, 'metrics.md')), false);
+            assert.match(result.stderr, /Failure after the telemetry fold/);
+            for (const file of ['pipeline-invocations.md', 'task-quality-log.md', 'lessons-learned.md']) assert.ok(result.stderr.includes(`docs/${file}`));
+            assert.match(result.stderr, /fragments were already deleted/i);
+            assert.match(result.stderr, /do not reset/i);
+            if (mode === 'push') {
+                assert.match(result.stderr, /local.*chore: archive/);
+                assert.match(result.stderr, /not pushed/);
+                assert.match(result.stderr, /simulated archive push failure/);
+                assert.doesNotMatch(result.stderr, /as uncommitted/);
+                assert.equal(gitIn(localDir, 'log', '-1', '--format=%s'), `chore: archive ${taskId}`);
+            } else {
+                assert.match(result.stderr, /uncommitted \(possibly staged\)/);
+                assert.doesNotMatch(result.stderr, /which was not pushed/);
+                if (mode === 'rename') assert.ok(fs.existsSync(path.join(localDir, 'tasks', taskId)));
+                else assert.match(result.stderr, /failed to commit archive changes/);
+            }
+        });
+    });
+}
