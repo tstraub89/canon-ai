@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [3.10.0] — 2026-10-17
+
+### Changed
+
+- **Parallel tasks no longer conflict on the shared telemetry logs.** While a task runs, its metrics rows, quality-log row and QA lessons go to its own files in its task folder. `canon run --ship` folds them into `docs/pipeline-invocations.md`, `docs/task-quality-log.md` and `docs/lessons-learned.md` in the archive commit it already makes on the base branch. Two task PRs no longer touch those three files, so they no longer conflict there, on GitHub or locally. Tasks started on an older canon still merge their log edits the old way.
+
+### Added
+
+- **`--pr` warns when a task branch still edits a shared telemetry log.** The warning names each file and doesn't block the PR.
+- **A `--ship` failure after the fold says where the folded rows are.** If the archive move, commit or push fails after the logs were folded, the message names the affected logs, says the task's fragments are already gone, says not to reset those docs, and points to the recovery steps in the pipeline reference.
+
 ## [3.9.0] — 2026-10-16
 
 ### Added
