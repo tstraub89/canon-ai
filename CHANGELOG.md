@@ -2,7 +2,7 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
-## [Unreleased]
+## [3.10.1] — 2026-10-17
 
 ### Fixed
 
