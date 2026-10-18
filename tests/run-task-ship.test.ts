@@ -1743,6 +1743,10 @@ void test('lessons fold drops title headings above the first entry and keeps ent
     assert.match(folded, /Legacy entry\.\n\n---\n\n### Lesson one\n/);
     assert.ok(folded.endsWith(`${fragment.slice(fragment.indexOf('### Lesson one')).trim()}\n`), 'entries fold verbatim');
     assert.equal(foldLessonsFragment(shared, '# Lessons\n'), null);
+    const indented = foldLessonsFragment(shared, '  # Lessons\n\n   ## From QA\n\n ### Lesson\n\n    # indented code stays\n');
+    assert.ok(indented);
+    assert.doesNotMatch(indented, /Lessons$|From QA/m);
+    assert.match(indented, /---\n\n### Lesson\n\n    # indented code stays\n$/);
 });
 
 for (const mode of ['rename', 'commit', 'push'] as const) {

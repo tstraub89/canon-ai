@@ -6886,10 +6886,10 @@ function foldMetricsFragment(shared, fragment) {
 }
 function stripFragmentTitles(fragment) {
   const lines = fragment.split("\n");
-  const firstEntry = lines.findIndex((line) => /^###\s/.test(line));
+  const firstEntry = lines.findIndex((line) => /^ {0,3}###\s/.test(line));
   const head = firstEntry === -1 ? lines : lines.slice(0, firstEntry);
   const rest = firstEntry === -1 ? [] : lines.slice(firstEntry);
-  return [...head.filter((line) => !/^#{1,2}\s/.test(line)), ...rest].join("\n");
+  return [...head.filter((line) => !/^ {0,3}#{1,2}\s/.test(line)), ...rest].join("\n");
 }
 function foldLessonsFragment(shared, fragment) {
   const body = stripFragmentTitles(fragment).trim();
