@@ -2,7 +2,11 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
-## [Unreleased]
+## [3.10.1] — 2026-10-17
+
+### Fixed
+
+- **A task's lessons no longer bring a stray heading into the shared lessons log.** `canon run --ship` drops any `#` or `##` title an agent puts at the top of a task's lessons file before folding it into `docs/lessons-learned.md`, and the QA prompt now says that file holds only `###` entries.
 
 ## [3.10.0] — 2026-10-17
 

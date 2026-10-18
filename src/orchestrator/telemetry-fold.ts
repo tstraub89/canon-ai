@@ -22,8 +22,21 @@ export function foldMetricsFragment(shared: string | null, fragment: string): st
     return lines.join('\n').replace(/\n?$/, '\n');
 }
 
+/**
+ * A fragment holds `###` entries only. Drop `#`/`##` title lines an agent may put above the first
+ * entry; never touch anything from the first `###` on, so entry content (code examples included) survives.
+ * Headings may carry up to three spaces of indent, as in Markdown.
+ */
+function stripFragmentTitles(fragment: string): string {
+    const lines = fragment.split('\n');
+    const firstEntry = lines.findIndex(line => /^ {0,3}###\s/.test(line));
+    const head = firstEntry === -1 ? lines : lines.slice(0, firstEntry);
+    const rest = firstEntry === -1 ? [] : lines.slice(firstEntry);
+    return [...head.filter(line => !/^ {0,3}#{1,2}\s/.test(line)), ...rest].join('\n');
+}
+
 export function foldLessonsFragment(shared: string | null, fragment: string): string | null {
-    const body = fragment.trim();
+    const body = stripFragmentTitles(fragment).trim();
     if (!body) return null;
     const base = (shared ?? LESSONS_SKELETON).trimEnd();
     const separator = base.endsWith('---') || body.startsWith('---') ? '\n\n' : '\n\n---\n\n';
