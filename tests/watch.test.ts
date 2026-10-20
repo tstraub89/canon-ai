@@ -1473,6 +1473,85 @@ void test('watch --follow uses byte offsets and preserves UTF-8 across polls and
     });
 });
 
+void test('watch --follow tails the most recently written log when both the main-checkout and worktree logs exist', () => {
+    withTempDir((root) => {
+        const mainDir = path.join(root, 'tasks', 'primary');
+        const worktreeDir = path.join(root, 'worktree', 'tasks', 'primary');
+        fs.mkdirSync(mainDir, { recursive: true });
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        const mainLog = path.join(mainDir, '.canon-run.log');
+        const worktreeLog = path.join(worktreeDir, '.canon-run.log');
+        fs.writeFileSync(mainLog, 'first run\n');
+        const old = new Date(Date.now() - 60_000);
+        fs.utimesSync(mainLog, old, old);
+        fs.writeFileSync(worktreeLog, 'resumed run\n');
+        fs.writeFileSync(path.join(worktreeDir, 'status.json'), '{}');
+        const clock = makeClock();
+        let polls = 0;
+        const ctx = makeContext({
+            taskDir: worktreeDir, statusFile: path.join(worktreeDir, 'status.json'),
+            statusResult: { kind: 'ok', file: path.join(worktreeDir, 'status.json'), status: makeStatus('implement', {
+                plan: { status: 'done', agent: 'claude' }, implement: { status: 'in_progress', agent: 'codex' },
+            }) },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, clock.now(), ['primary']) },
+            canonPid: 7777, resolvedPid: 7777,
+        });
+        const result = runWatchCommand(['primary', '--follow', '--timeout', '1s'], {
+            nowImpl: clock.now, pollIntervalMs: 100,
+            sleepImpl: (ms) => {
+                clock.sleep(ms);
+                polls += 1;
+                if (polls === 1) fs.appendFileSync(worktreeLog, 'streamed from the resumed run\n');
+            },
+            gatherContextImpl: () => ctx,
+            probeAliveImpl: (pid: number): void => { if (pid !== 7777) throw new Error('unexpected pid'); },
+        });
+        assert.equal(result.exitCode, 5);
+        assert.match(result.stderr.join(''), /streamed from the resumed run/);
+    });
+});
+
+void test('watch --follow switches to a resumed run log mid-follow and streams it from the start', () => {
+    withTempDir((root) => {
+        const mainDir = path.join(root, 'tasks', 'primary');
+        const worktreeDir = path.join(root, 'worktree', 'tasks', 'primary');
+        fs.mkdirSync(mainDir, { recursive: true });
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        const mainLog = path.join(mainDir, '.canon-run.log');
+        const worktreeLog = path.join(worktreeDir, '.canon-run.log');
+        fs.writeFileSync(mainLog, 'first run history\n');
+        const old = new Date(Date.now() - 60_000);
+        fs.utimesSync(mainLog, old, old);
+        fs.writeFileSync(path.join(worktreeDir, 'status.json'), '{}');
+        const clock = makeClock();
+        let polls = 0;
+        const ctx = makeContext({
+            taskDir: worktreeDir, statusFile: path.join(worktreeDir, 'status.json'),
+            statusResult: { kind: 'ok', file: path.join(worktreeDir, 'status.json'), status: makeStatus('implement', {
+                plan: { status: 'done', agent: 'claude' }, implement: { status: 'in_progress', agent: 'codex' },
+            }) },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, clock.now(), ['primary']) },
+            canonPid: 7777, resolvedPid: 7777,
+        });
+        const result = runWatchCommand(['primary', '--follow', '--timeout', '1s'], {
+            nowImpl: clock.now, pollIntervalMs: 100,
+            sleepImpl: (ms) => {
+                clock.sleep(ms);
+                polls += 1;
+                if (polls === 2) fs.writeFileSync(worktreeLog, 'resumed run first line\n');
+                if (polls === 4) fs.appendFileSync(worktreeLog, 'resumed run later line\n');
+            },
+            gatherContextImpl: () => ctx,
+            probeAliveImpl: (pid: number): void => { if (pid !== 7777) throw new Error('unexpected pid'); },
+        });
+        const output = result.stderr.join('');
+        assert.equal(result.exitCode, 5);
+        assert.doesNotMatch(output, /first run history/);
+        assert.match(output, /resumed run first line\n/);
+        assert.match(output, /resumed run later line\n/);
+    });
+});
+
 void test('watch --follow streams the main-checkout primary log when context is in a worktree', () => {
     withTempDir((root) => {
         const mainDir = path.join(root, 'tasks', 'primary');

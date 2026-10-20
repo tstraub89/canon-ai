@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 import { runLogPathFor } from '../../orchestrator/detach.js';
@@ -521,9 +522,24 @@ function primaryLogTaskId(ctx: RunContext, fallbackTaskId: string): string {
 type LogTailState = {
     position: number | null;
     path?: string;
+    owner?: string;
     identity?: string;
     decoder: StringDecoder;
 };
+
+function newestRunLogDir(candidateDirs: readonly string[]): string | undefined {
+    let newest: { dir: string; mtimeMs: number } | undefined;
+    for (const dir of candidateDirs) {
+        let mtimeMs: number;
+        try {
+            mtimeMs = fs.statSync(runLogPathFor(dir)).mtimeMs;
+        } catch {
+            continue;
+        }
+        if (!newest || mtimeMs > newest.mtimeMs) newest = { dir, mtimeMs };
+    }
+    return newest?.dir;
+}
 
 function tailRunLog(
     ctx: RunContext,
@@ -532,8 +548,14 @@ function tailRunLog(
     tailState: LogTailState,
     primaryTaskId?: string,
 ): void {
-    const candidateDirs = runLogCandidateDirs(ctx.taskDir, taskId, primaryTaskId ?? primaryLogTaskId(ctx, taskId));
-    const logTaskDir = candidateDirs.find((dir) => fs.existsSync(runLogPathFor(dir))) ?? candidateDirs[0];
+    const logOwnerId = primaryTaskId ?? primaryLogTaskId(ctx, taskId);
+    const candidateDirs = runLogCandidateDirs(ctx.taskDir, taskId, logOwnerId);
+    // Only the run's primary task holds the log. A resumed run opens a new log in
+    // the primary's worktree while the first run's log stays in the main checkout,
+    // so among the primary's locations the active log is the most recently written.
+    const logTaskDir = newestRunLogDir(candidateDirs.filter((dir) => path.basename(dir) === logOwnerId))
+        ?? candidateDirs.find((dir) => fs.existsSync(runLogPathFor(dir)))
+        ?? candidateDirs[0];
     const logPath = runLogPathFor(logTaskDir);
     let fd: number | undefined;
     try {
@@ -541,11 +563,15 @@ function tailRunLog(
         const stat = fs.fstatSync(fd);
         const identity = `${logPath}:${stat.dev}:${stat.ino}`;
         if (tailState.position == null || tailState.path !== logPath) {
-            tailState.position = stat.size;
+            // Same owner, new path: the run resumed into a newer log, so stream it
+            // from the start. A new owner (or the first poll) skips history.
+            const resumedLog = tailState.path != null && tailState.owner === logOwnerId;
+            tailState.position = resumedLog ? 0 : stat.size;
             tailState.path = logPath;
+            tailState.owner = logOwnerId;
             tailState.identity = identity;
             tailState.decoder = new StringDecoder('utf8');
-            return;
+            if (!resumedLog) return;
         }
         if (identity !== tailState.identity || stat.size < tailState.position) {
             tailState.position = 0;

@@ -37,7 +37,7 @@ canon watch <id>
 | `0` | Healthy stop — checkpoint (`human_review`), complete, or `--step` step-done (reported only when no crash evidence exists) |
 | `2` | Bad usage, nothing to watch, unreadable state, ambiguous pid disagreement, or launch-window timeout |
 | `3` | Auto-block |
-| `4` | Crash — orchestrator died, or the run log's last exit marker is non-zero; run `canon run <id>` to resume |
+| `4` | Crash — orchestrator died, or the run log's last exit marker is non-zero and not older than the task's `status.json` (a stale marker from an earlier run is ignored); run `canon run <id>` to resume |
 | `5` | `--timeout` elapsed while still attached |
 
 **Summary line** — always the final stdout line, stable `key=value`:
