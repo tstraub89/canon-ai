@@ -23,3 +23,9 @@
 | 2026-10-20T03:29:24.218Z | watch-crash-not-step-done | code_review | codex | gpt-6-luna | 0 | 64.8s | - | ok |
 | 2026-10-20T03:30:59.595Z | watch-crash-not-step-done | code_review | claude | sonnet | 0 | 95.4s | 863961 | ok |
 | 2026-10-20T03:34:50.339Z | watch-crash-not-step-done | qa | claude | claude-haiku-5-5 | 0 | 204.4s | 749107 | ok |
+| 2026-10-20T03:44:27.396Z | watch-crash-not-step-done | spec_review | codex | gpt-6-luna | 0 | 23.2s | 234558 | ok |
+| 2026-10-20T03:45:31.650Z | watch-crash-not-step-done | plan | claude | sonnet | 0 | 64.2s | 760412 | ok |
+| 2026-10-20T03:49:19.460Z | watch-crash-not-step-done | implement | codex | gpt-6-luna | 0 | 227.8s | 20941167 | ok |
+| 2026-10-20T03:49:51.836Z | watch-crash-not-step-done | code_review | codex | gpt-6-luna | 0 | 31.9s | - | ok |
+| 2026-10-20T03:51:33.040Z | watch-crash-not-step-done | code_review | claude | sonnet | 0 | 101.2s | 433535 | ok |
+| 2026-10-20T03:54:32.349Z | watch-crash-not-step-done | qa | claude | claude-haiku-5-5 | 0 | 179.3s | 1129891 | ok |

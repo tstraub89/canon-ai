@@ -13,5 +13,8 @@ Raw observations from any phase. Prefix with phase name. Distilled into the task
 [plan] reroute round 2: leading-newline risk from round 1 is resolved by the amendment (tail-anchored regex). Existing mid-line test at tests/watch.test.ts:569 asserts null for a marker that now matches; replace it per AC-12'.
 
 - [implement-reroute] The Round 2 amendment resolves the line-start risk by requiring unanchored marker search constrained by the ISO timestamp at end of line/file; the writer remains unchanged.
+- [implement-reroute] Round 3 confirmed that detached logs remain in the launch-time primary task directory after resolution moves to a worktree. Remembering the primary id from a live heartbeat lets both crash classification and `--follow` find that original log.
 
 [2026-10-20] Operator accepted code_review via `canon task accept` — sanctioned (agent verdict overridden). Reason: Only remaining finding (classifyAttach on late attach) is an explicit Non-Goal and yields nothing_to_watch, not a false healthy report; filed as a follow-up issue. Flaky run-task-signals test passes in isolation; QA reruns the full suite..
+
+[plan] reroute round 3: marker lookup widened to all run-log candidate dirs (main-checkout + resolved, primary + watched id) via readNewestExitMarker; primary id remembered in watchCmd from the last live heartbeat. No spec contradiction; AC-16 planned as the main route with the spec fallback if --follow tests break.

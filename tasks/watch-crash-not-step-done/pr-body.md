@@ -19,7 +19,7 @@ Fixes #76.
 
 ## Notes
 
-- `dist/cli/index.js` is rebuilt and must be part of this PR. After it is committed, run `npm run build && git diff --exit-code -- dist/` to confirm the bundle is fresh.
+- `dist/cli/index.js` is rebuilt and must be part of this PR. After it is committed, run `npm run build && git diff --exit-code -- dist/` to confirm the bundle is fresh. That check has not run yet.
 - `npm run sync-templates:check` passes. The `templates/docs/pipeline-orchestrator.md` mirror is regenerated, not hand-edited.
 - Behavior change to review: a run stopped by a signal (`canon stop`, Ctrl-C) during a phase now reports `death` with the termination reason, not `step_done`. This is intended.
 - Known gap, out of scope: a `canon watch` started after a run has already died still reports `nothing_to_watch` (exit 2). The fix applies when watch is attached before the run exits. A follow-up is needed to cover the attach path.

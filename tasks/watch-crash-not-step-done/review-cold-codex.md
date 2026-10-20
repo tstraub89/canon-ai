@@ -1,6 +1,6 @@
-The added exit-marker check detects some crashes after watch has attached, but misses the same persisted crash when watch starts after the orchestrator exits. In that case the initial attach classification bypasses this check and reports nothing to watch.
+A marker-shaped suffix in ordinary run output can be misclassified as an orchestrator crash, causing a false failure report. The added tests do not cover a marker substring embedded in a line that ends with a valid-looking timestamp.
 
 Review comment:
 
-- [P2] Detect persisted crashes when watch starts after the exit — /Users/tstraub/canon-ai/.canon/worktrees/watch-crash-not-step-done/src/cli/commands/watch.ts:445-446
-  When `canon watch` is first invoked after the orchestrator has already exited with the current phase pending or in progress after a completed phase, `classifyAttach` returns `nothing_to_watch` before `classifyIdle` reaches this exit-marker check. The command therefore exits with code 2 instead of reporting the crash with code 4, so the new behavior only works if watch was already attached when the run died.
+- [P2] Anchor exit markers to the start of a log line — /Users/tstraub/canon-ai/.canon/worktrees/watch-crash-not-step-done/src/orchestrator/run-context.ts:29-29
+  If task or agent output contains text ending with a marker-shaped string, this regex matches the marker substring even when it is embedded in ordinary output. `classifyIdle` can then report a crash and exit with code 4 for a run that did not emit an orchestrator exit marker. Require the marker to begin at the start of its line.

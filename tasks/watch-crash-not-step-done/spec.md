@@ -142,3 +142,18 @@ Round 1 (post-reroute) code_review returned `spec_gap`. `writeExitMarker()` writ
   - (ii) a log whose last line is a truncated marker (no `at <ISO>` tail). The helper ignores it and returns the previous well-formed marker, or null.
 - The AC-12 docs-placement half (stderr sentence after the summary-line code block) stands.
 - Optional nit from that review, worth doing: split the combined classifyIdle test so the clean-marker case is its own test, and add a case exactly at the one-second tolerance boundary.
+
+## Amendment Round 3
+
+The PR-level Codex review (P1) found that the marker lookup reads the wrong log in the common detached case. `detachAndExit()` opens `.canon-run.log` once, in the primary task's directory as resolved at launch: the main-checkout `tasks/<primary-id>/` when no worktree exists yet. It never moves it. `classifyIdle()` reads `readLastExitMarker(ctx.taskDir)`, and once a task worktree exists `ctx.taskDir` is the worktree's `tasks/<id>/`. So a non-zero exit during implement, code_review or QA on a first run is missed and reported `step_done` again. A non-primary bundle member has the same gap, because only the primary task's directory holds the log.
+
+- **AC-13:** the crash-marker check reads every candidate run-log location for the run and uses the newest well-formed marker by timestamp. Candidates:
+  - the run-log path in the main-checkout task directory of the **primary** task id (`taskDirForRepoRoot(primaryId)`);
+  - the run-log path in the currently resolved task directory of the primary task id;
+  - if they differ, the same two locations for the watched task id.
+  
+  The primary task id is the first entry of the heartbeat's `task_ids`. Because the heartbeat file is deleted on exit, `watchCmd` must remember the primary id (and so the candidate paths) from the last heartbeat it read while the run was live, and pass it to the idle classifier. When it never saw a heartbeat, fall back to the watched task id.
+- **AC-14 (red-first regression):** a `watchCmd` test whose run log sits only in the main-checkout task dir, while `ctx.taskDir` resolves to a worktree task dir, with spec_review/plan/implement `done` and code_review `pending`, and a fresh `code=1` marker. It exits `4` with `reason=death`. It fails on the round-2 code (which reports `step_done`).
+- **AC-15:** a bundle test: watching the second member of a two-task bundle, where only the primary's directory holds the log with a fresh non-zero marker, reports `death`.
+- **AC-16:** `tailRunLog()` (`--follow`) uses the same remembered primary-id main-checkout candidate, so following a run keeps streaming the real log after the worktree is created. If that is a larger change than one shared helper, fixing the lookup for the crash check is enough; then record the `--follow` gap in the handoff instead.
+- Existing AC-1 to AC-12′ stand.
