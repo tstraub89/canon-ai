@@ -110,8 +110,8 @@ git push --force-with-lease origin task/<task-B-id>
 
 ## Agent auth 401 mid-pipeline
 
-Fix: re-auth (`claude login`), then re-invoke the same `canon run` command. The pipeline resumes from the last completed phase. If the failed phase left `status.json` in `in_progress`, roll it back first:
+Fix: re-auth (`claude login`), then re-invoke the same `canon run` command. A failed non-interactive agent session parks its phase as `blocked` with an escalation; the plain re-run re-enters that phase without a manual reset. For a bundle, re-run all member IDs together — every member was parked, including any that had already finished the phase.
 ```bash
-canon task phase <task-id> <phase> pending
+claude login
 canon run <task-id>
 ```

@@ -1,5 +1,6 @@
+import { AgentSessionError } from './errors.js';
 import { REPO_ROOT } from '../env.js';
-import { die, info, setExitReason, warn } from '../cli.js';
+import { die, info, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
 import { runCommandOrDie } from '../git.js';
 import { CODEX_HEADLESS, toResumePrompt } from '../prompts/helpers.js';
@@ -112,18 +113,15 @@ export async function runCodex(
         if (result.spawnError) {
             console.error(result.spawnError.message);
             status = 'failed';
-            setExitReason(`codex session spawn error: ${result.spawnError.message}`);
-            process.exit(1);
+            throw new AgentSessionError({ agent: 'codex', kind: 'spawn_error', reason: `codex session spawn error: ${result.spawnError.message}` });
         }
         if (result.stalled) {
             status = 'failed';
-            setExitReason('codex session stalled');
-            process.exit(1);
+            throw new AgentSessionError({ agent: 'codex', kind: 'stalled', reason: 'codex session stalled' });
         }
         if (result.signal) {
             status = 'failed';
-            setExitReason(`codex session received signal ${result.signal}`);
-            process.exit(1);
+            throw new AgentSessionError({ agent: 'codex', kind: 'signal', reason: `codex session received signal ${result.signal}`, signal: result.signal });
         }
 
         if (result.exitCode !== 0) {

@@ -77,6 +77,27 @@ process.on("SIGTERM", () => {
 // src/orchestrator/run-task.ts
 import { pathToFileURL } from "url";
 
+// src/orchestrator/agents/errors.ts
+var AgentSessionError = class extends Error {
+  agent;
+  kind;
+  exitCode;
+  signal;
+  reason;
+  constructor(options) {
+    super(options.reason);
+    this.name = "AgentSessionError";
+    this.agent = options.agent;
+    this.kind = options.kind;
+    this.reason = options.reason;
+    this.exitCode = options.exitCode ?? null;
+    this.signal = options.signal ?? null;
+  }
+};
+function isAgentSessionError(error) {
+  return error instanceof AgentSessionError;
+}
+
 // src/orchestrator/docs-freshness.ts
 import fs7 from "fs";
 import path6 from "path";
@@ -2456,24 +2477,20 @@ ${renderedPrompt}`;
       if (result.spawnError) {
         console.error(result.spawnError.message);
         status = "failed";
-        setExitReason(`claude session spawn error: ${result.spawnError.message}`);
-        process.exit(1);
+        throw new AgentSessionError({ agent: "claude", kind: "spawn_error", reason: `claude session spawn error: ${result.spawnError.message}` });
       }
       if (result.stalled) {
         status = "failed";
-        setExitReason("claude session stalled");
-        process.exit(1);
+        throw new AgentSessionError({ agent: "claude", kind: "stalled", reason: "claude session stalled" });
       }
       if (typeof result.exitCode === "number" && result.exitCode !== 0) {
         printClaudeTooOldHint(result.capturedStderr);
         status = "failed";
-        setExitReason(`claude session exited ${result.exitCode} (possible budget exhaustion \u2014 see CLAUDE_BUDGET)`);
-        process.exit(result.exitCode);
+        throw new AgentSessionError({ agent: "claude", kind: "exit_code", reason: `claude session exited ${result.exitCode} (possible budget exhaustion \u2014 see CLAUDE_BUDGET)`, exitCode: result.exitCode });
       }
       if (result.signal) {
         status = "failed";
-        setExitReason(`claude session received signal ${result.signal}`);
-        process.exit(1);
+        throw new AgentSessionError({ agent: "claude", kind: "signal", reason: `claude session received signal ${result.signal}`, signal: result.signal });
       }
       return {
         resumeNotFound: false,
@@ -2583,18 +2600,15 @@ ${renderedPrompt}`;
     if (result.spawnError) {
       console.error(result.spawnError.message);
       status = "failed";
-      setExitReason(`codex session spawn error: ${result.spawnError.message}`);
-      process.exit(1);
+      throw new AgentSessionError({ agent: "codex", kind: "spawn_error", reason: `codex session spawn error: ${result.spawnError.message}` });
     }
     if (result.stalled) {
       status = "failed";
-      setExitReason("codex session stalled");
-      process.exit(1);
+      throw new AgentSessionError({ agent: "codex", kind: "stalled", reason: "codex session stalled" });
     }
     if (result.signal) {
       status = "failed";
-      setExitReason(`codex session received signal ${result.signal}`);
-      process.exit(1);
+      throw new AgentSessionError({ agent: "codex", kind: "signal", reason: `codex session received signal ${result.signal}`, signal: result.signal });
     }
     if (result.exitCode !== 0) {
       status = "failed";
@@ -6376,10 +6390,11 @@ Add them to the affected task spec's ### Affected Files table in the active chec
   });
   const coldReviewDurationMs = Date.now() - coldReviewStartMs;
   if (!coldReview.success) {
-    setExitReason(
-      `cold-Codex review could not be obtained for task(s) ${taskIds.join(", ")} (no findings output / spawn error / stall / signal). Re-run when Codex is available \u2014 the code_review phase has not advanced.`
-    );
-    process.exit(1);
+    throw new AgentSessionError({
+      agent: "codex",
+      kind: "exit_code",
+      reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(", ")} (no findings output / spawn error / stall / signal). Re-run when Codex is available \u2014 the code_review phase has not advanced.`
+    });
   }
   for (const t of tasks) {
     fs17.writeFileSync(
@@ -9154,6 +9169,36 @@ async function recoverPhaseForTask(taskId, phase, initialStatus) {
   warn2(`Retry did not recover '${taskId}' ${phase} (${postEvidence.note}).`);
   return false;
 }
+function phaseIterationCount(taskIds, phase) {
+  return taskIds.reduce((max, id) => {
+    const entry = readStatus(id).phases[phase];
+    return Math.max(max, entry?.iterations_current_loop ?? entry?.iterations ?? 0);
+  }, 0);
+}
+function parkAgentSessionFailure(phase, taskIds, error) {
+  const rerun = `canon run ${taskIds.join(" ")}`;
+  const budget = error.agent === "claude" ? "budget \u2014 raise `CLAUDE_BUDGET`" : "credits/quota";
+  const recovery = `Fix the cause (auth, ${budget}, network), then re-run \`${rerun}\`.`;
+  autoBlockPhase(taskIds, phase, phaseIterationCount(taskIds, phase), `${error.reason}. ${recovery}`);
+  console.log("");
+  console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  console.log(`  \u270B  AGENT SESSION FAILED \u2014 ${phase} parked as blocked.`);
+  console.log(`  Agent:  ${error.agent}`);
+  console.log(`  Reason: ${error.reason}`);
+  console.log(`  ${recovery}`);
+  console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
+  console.log("");
+  setExitReason(error.reason);
+  process.exit(2);
+}
+async function withAgentSessionPark(phase, taskIds, run) {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isAgentSessionError(error) || phase === "complete") throw error;
+    parkAgentSessionFailure(phase, taskIds, error);
+  }
+}
 function stopForReviewerBlock(taskIds, blockedIds, statuses) {
   const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
   const recovery = taskIds.map((id) => `canon task reset-code-review ${id}`).join("; ");
@@ -9201,7 +9246,10 @@ async function checkAndRoute(phase, taskIds) {
       if (shouldParkCrashedReview(phase, lastCodexExitStatus)) {
         warn2(`Codex spec review exited with status ${lastCodexExitStatus} and did not complete \u2014 no verdict was recorded this round for '${taskIds[i]}'.`);
         warn2("This is typically caused by out-of-credits, auth, network, or an MCP crash.");
-        warn2(`Fix the cause, then re-run \`canon run ${taskIds[i]}\`.`);
+        warn2(`Fix the cause, then re-run \`canon run ${taskIds.join(" ")}\`.`);
+        const reason = `Codex spec review exited with status ${lastCodexExitStatus} and did not complete for '${taskIds[i]}' \u2014 no verdict was recorded this round. Fix the cause (out-of-credits, auth, network, or an MCP crash), then re-run \`canon run ${taskIds.join(" ")}\`.`;
+        autoBlockPhase(taskIds, "spec_review", phaseIterationCount(taskIds, "spec_review"), reason);
+        setExitReason(reason);
         process.exit(2);
       }
       const recovered = await recoverPhaseForTask(taskIds[i], phase, phaseStatus);
@@ -9515,25 +9563,27 @@ async function main() {
     info2(`Current phase: ${currentPhase}`);
     console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
     const state = buildPipelineState(taskIds);
-    const phaseResult = await runPhase(currentPhase, state);
-    lastClaudeSessionId = phaseResult?.agent === "claude" ? phaseResult.sessionId : null;
-    lastCodexSessionId = phaseResult?.agent === "codex" ? phaseResult.sessionId : null;
-    lastCodexExitStatus = phaseResult?.agent === "codex" ? phaseResult.exitCode ?? 0 : 0;
-    if (currentPhase !== "complete" && currentPhase !== "human_review") {
-      const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
-      if (agentForPhase === "claude") {
-        const slot = currentPhase === "spec" ? "claude_spec" : currentPhase === "code_review" ? "claude_review" : null;
-        if (slot && lastClaudeSessionId) {
-          storeSessionId(taskIds, slot, lastClaudeSessionId);
-          info(`Claude session stored (${slot}): ${lastClaudeSessionId.slice(0, 8)}...`);
+    await withAgentSessionPark(currentPhase, taskIds, async () => {
+      const phaseResult = await runPhase(currentPhase, state);
+      lastClaudeSessionId = phaseResult?.agent === "claude" ? phaseResult.sessionId : null;
+      lastCodexSessionId = phaseResult?.agent === "codex" ? phaseResult.sessionId : null;
+      lastCodexExitStatus = phaseResult?.agent === "codex" ? phaseResult.exitCode ?? 0 : 0;
+      if (currentPhase !== "complete" && currentPhase !== "human_review") {
+        const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
+        if (agentForPhase === "claude") {
+          const slot = currentPhase === "spec" ? "claude_spec" : currentPhase === "code_review" ? "claude_review" : null;
+          if (slot && lastClaudeSessionId) {
+            storeSessionId(taskIds, slot, lastClaudeSessionId);
+            info(`Claude session stored (${slot}): ${lastClaudeSessionId.slice(0, 8)}...`);
+          }
+        } else if (agentForPhase === "codex" && lastCodexSessionId) {
+          const codexSlot = currentPhase === "spec_review" ? "codex_spec_review" : "codex";
+          storeSessionId(taskIds, codexSlot, lastCodexSessionId);
+          info(`Codex session stored (${codexSlot}): ${lastCodexSessionId.slice(0, 8)}...`);
         }
-      } else if (agentForPhase === "codex" && lastCodexSessionId) {
-        const codexSlot = currentPhase === "spec_review" ? "codex_spec_review" : "codex";
-        storeSessionId(taskIds, codexSlot, lastCodexSessionId);
-        info(`Codex session stored (${codexSlot}): ${lastCodexSessionId.slice(0, 8)}...`);
+        await checkAndRoute(currentPhase, taskIds);
       }
-      await checkAndRoute(currentPhase, taskIds);
-    }
+    });
     if (cliArgs.step) {
       const nextPhase = assertSamePhase(taskIds);
       info("Step mode: stopping after one phase.");

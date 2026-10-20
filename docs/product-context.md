@@ -71,7 +71,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things â
 
 ### Flow 3: Recover from a stuck pipeline
 
-1. Pipeline halts (auto-block, manual Ctrl+C, or unexpected error).
+1. Pipeline halts (auto-block, agent-session failure, manual Ctrl+C, or unexpected error). For an agent-session failure (the phase is parked `blocked` with the failure in `escalations`), fix the cause (auth, budget, network) and skip to step 4; no reset is needed.
 2. Human inspects `tasks/<id>/status.json` and the latest artifact written.
 3. Resolve manually: reset the relevant phase via `canon task phase <id> <phase> pending`; for a `spec_review` auto-block use `canon task reset-spec-review <id>`, or for `code_review` use `canon task reset-code-review <id>` (both mark the predecessor `spec` / `implement` done, accepting it as-is for re-review, archive the prior review, zero loop counters, and preserve lifetime `iterations_total`; raise the cap instead to run the deferred revision); or escalate to a human reroute.
 4. Re-run `canon run <id>`. The orchestrator picks up from the new phase state.
