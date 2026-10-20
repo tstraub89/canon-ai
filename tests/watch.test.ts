@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { classifyAttach, classifyIdle, orchestratorStillProgressing, watchCmd } from '../src/cli/commands/watch.js';
 import type { HeartbeatReadResult, HeartbeatRecord } from '../src/orchestrator/heartbeat.js';
-import { gatherRunContext } from '../src/orchestrator/run-context.js';
+import { gatherRunContext, readLastExitMarker } from '../src/orchestrator/run-context.js';
 import type { RunContext } from '../src/orchestrator/run-context.js';
 import { type StatusJson } from '../src/orchestrator/types.js';
 
@@ -518,6 +518,86 @@ void test('classifyIdle: step_done shows the transition for a done phase', () =>
     if (result.kind === 'step_done') assert.equal(result.phase, 'implement→code_review');
 });
 
+function makeCrashStatus(taskDir: string): RunContext {
+    const statusFile = path.join(taskDir, 'status.json');
+    return makeContext({
+        taskDir,
+        statusFile,
+        statusResult: {
+            kind: 'ok', file: statusFile,
+            status: makeStatus('plan', {
+                spec_review: { status: 'done', agent: 'claude' },
+                plan: { status: 'in_progress', agent: 'claude' },
+            }),
+        },
+    });
+}
+
+function writeExitLog(taskDir: string, markers: string[]): void {
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'status.json'), '{}');
+    fs.writeFileSync(path.join(taskDir, '.canon-run.log'), markers.join('\n') + '\n');
+}
+
+function exitLine(code: string, reason: string, timestamp = new Date().toISOString()): string {
+    return `■ orchestrator exit code=${code} [reason=${reason}] at ${timestamp}`;
+}
+
+void test('readLastExitMarker: last well-formed marker wins; malformed trailing lines are ignored', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        writeExitLog(taskDir, [exitLine('1', 'old'), exitLine('0', 'clean'), '■ orchestrator exit code=1 [reas']);
+        assert.equal(readLastExitMarker(taskDir)?.code, '0');
+    });
+});
+
+void test('readLastExitMarker: malformed and absent logs return null and signal codes/reasons parse', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        writeExitLog(taskDir, ['noise', 'truncated']);
+        assert.equal(readLastExitMarker(taskDir), null);
+        assert.equal(readLastExitMarker(path.join(dir, 'missing')), null);
+        const timestamp = new Date().toISOString();
+        writeExitLog(taskDir, [exitLine('signal:SIGTERM', 'terminated by SIGTERM [operator]', timestamp)]);
+        assert.deepEqual(readLastExitMarker(taskDir), {
+            code: 'signal:SIGTERM', reason: 'terminated by SIGTERM [operator]',
+            timestampMs: Date.parse(timestamp),
+        });
+    });
+});
+
+void test('classifyIdle: fresh non-zero marker is death with reason; clean and stale markers remain step_done', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        const now = Date.now();
+        writeExitLog(taskDir, [exitLine('1', 'claude session exited 1 (possible budget exhaustion — see CLAUDE_BUDGET)', new Date(now).toISOString())]);
+        fs.utimesSync(statusFile, now / 1000 - 10, now / 1000 - 10);
+        const result = classifyIdle(makeCrashStatus(taskDir), 't1');
+        assert.equal(result.kind, 'death');
+        if (result.kind === 'death') assert.match(result.reason ?? '', /CLAUDE_BUDGET/);
+
+        writeExitLog(taskDir, [exitLine('0', 'clean')]);
+        assert.equal(classifyIdle(makeCrashStatus(taskDir), 't1').kind, 'step_done');
+
+        const oldMarker = new Date(Date.now() - 20_000).toISOString();
+        writeExitLog(taskDir, [exitLine('1', 'old crash', oldMarker)]);
+        fs.utimesSync(statusFile, Date.now() / 1000, Date.now() / 1000);
+        assert.equal(classifyIdle(makeCrashStatus(taskDir), 't1').kind, 'step_done');
+    });
+});
+
+void test('classifyIdle: dead pid evidence is death while a live pid does not override step_done', () => {
+    const ctx = makeContext({
+        statusResult: { kind: 'ok', file: '/tmp/t1/status.json', status: makeStatus('plan', {
+            spec_review: { status: 'done', agent: 'claude' }, plan: { status: 'in_progress', agent: 'claude' },
+        }) },
+        canonPid: 4242, resolvedPid: 4242,
+    });
+    assert.equal(classifyIdle(ctx, 't1', () => false).kind, 'death');
+    assert.equal(classifyIdle(ctx, 't1', () => true).kind, 'step_done');
+});
+
 void test('classifyIdle: death when progress remains in the file', () => {
     const ctx = makeContext({
         statusResult: {
@@ -540,6 +620,65 @@ void test('watchCmd: invalid --until phase fails before attach', () => {
     assert.match(result.stderr.join('\n'), /Invalid phase for --until/);
     assert.equal(result.stdout.length, 1);
     assert.match(result.stdout[0], /state=usage reason=usage_error/);
+});
+
+void test('watchCmd: reports a logged crash on stderr with the stable death summary', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        writeExitLog(taskDir, [exitLine('1', 'claude session exited 1 (budget exhausted)')]);
+        const liveCtx = makeContext({
+            statusResult: { kind: 'ok', file: path.join(taskDir, 'status.json'), status: makeStatus('plan', {
+                spec_review: { status: 'done', agent: 'claude' }, plan: { status: 'in_progress', agent: 'claude' },
+            }) },
+            taskDir, statusFile: path.join(taskDir, 'status.json'),
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, NOW) }, canonPid: 7777, resolvedPid: 7777,
+        });
+        const deadCtx = makeCrashStatus(taskDir);
+        const contexts = [liveCtx, deadCtx, deadCtx];
+        let index = 0;
+        const clock = makeClock();
+        const result = runWatchCommand(['t1'], {
+            nowImpl: clock.now, sleepImpl: clock.sleep,
+            gatherContextImpl: () => contexts[index++] ?? deadCtx,
+            probeAliveImpl: (pid: number): void => {
+                if (pid === 7777) return;
+                const err = new Error('ESRCH') as NodeJS.ErrnoException; err.code = 'ESRCH'; throw err;
+            },
+        });
+        assert.equal(result.exitCode, 4);
+        assert.deepEqual(result.stdout, ['state=plan reason=death\n']);
+        assert.equal(result.stderr.filter((line) => line.startsWith('canon watch: orchestrator exited non-zero:')).length, 1);
+        assert.match(result.stderr.join(''), /budget exhausted/);
+        assert.match(result.stderr.join(''), /canon run t1/);
+    });
+});
+
+void test('watchCmd: signal exit marker reports termination reason', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        writeExitLog(taskDir, [exitLine('signal:SIGTERM', 'terminated by SIGTERM')]);
+        const liveCtx = makeContext({
+            statusResult: { kind: 'ok', file: path.join(taskDir, 'status.json'), status: makeStatus('plan', {
+                spec_review: { status: 'done', agent: 'claude' }, plan: { status: 'in_progress', agent: 'claude' },
+            }) },
+            taskDir, statusFile: path.join(taskDir, 'status.json'),
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, NOW) }, canonPid: 7777, resolvedPid: 7777,
+        });
+        const deadCtx = makeCrashStatus(taskDir);
+        const contexts = [liveCtx, deadCtx, deadCtx]; let index = 0;
+        const clock = makeClock();
+        const result = runWatchCommand(['t1'], {
+            nowImpl: clock.now, sleepImpl: clock.sleep,
+            gatherContextImpl: () => contexts[index++] ?? deadCtx,
+            probeAliveImpl: (pid: number): void => {
+                if (pid === 7777) return;
+                const err = new Error('ESRCH') as NodeJS.ErrnoException; err.code = 'ESRCH'; throw err;
+            },
+        });
+        assert.equal(result.exitCode, 4);
+        assert.match(result.stderr.join(''), /terminated by SIGTERM/);
+        assert.deepEqual(result.stdout, ['state=plan reason=death\n']);
+    });
 });
 
 void test('watchCmd: --until returns immediately when the phase has already settled', () => {

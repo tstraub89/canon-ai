@@ -1,6 +1,7 @@
 import path from 'node:path';
+import fs from 'node:fs';
 
-import { readCanonPid } from './detach.js';
+import { readCanonPid, runLogPathFor } from './detach.js';
 import { type HeartbeatReadResult, readHeartbeatStatus } from './heartbeat.js';
 import { isOrphanedWorktreeState, statusFileFor, taskDirForRepoRoot } from './state.js';
 import { readStatusFromPath } from './state.js';
@@ -22,6 +23,39 @@ export interface RunContext {
     resolvedPid: number | null;
     ambiguousPid: { canonPid: number; heartbeatPid: number } | null;
     launchWindow: boolean;
+}
+
+export interface ExitMarker {
+    code: string;
+    reason: string;
+    timestampMs: number;
+}
+
+const EXIT_MARKER_TAIL_BYTES = 64 * 1024;
+const EXIT_MARKER_RE = /■ orchestrator exit code=(\S+) \[reason=(.*)\] at (\S+)\s*$/;
+
+export function readLastExitMarker(taskDir: string): ExitMarker | null {
+    let fd: number | undefined;
+    try {
+        fd = fs.openSync(runLogPathFor(taskDir), 'r');
+        const { size } = fs.fstatSync(fd);
+        const length = Math.min(EXIT_MARKER_TAIL_BYTES, size);
+        const buffer = Buffer.allocUnsafe(length);
+        if (length > 0) fs.readSync(fd, buffer, 0, length, size - length);
+        const lines = buffer.toString('utf8').split(/\r?\n/);
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+            const match = lines[index].match(EXIT_MARKER_RE);
+            if (!match) continue;
+            const timestampMs = Date.parse(match[3]);
+            if (!Number.isFinite(timestampMs)) continue;
+            return { code: match[1], reason: match[2], timestampMs };
+        }
+        return null;
+    } catch {
+        return null;
+    } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+    }
 }
 
 export interface GatherRunContextDeps {

@@ -3,7 +3,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 import { runLogPathFor } from '../../orchestrator/detach.js';
 import { HEARTBEAT_INTERVAL_MS, isHeartbeatStale, type HeartbeatReadResult } from '../../orchestrator/heartbeat.js';
-import { gatherRunContext, isStatusJson, probePidAlive, tolerantTaskDir, type RunContext } from '../../orchestrator/run-context.js';
+import { gatherRunContext, isStatusJson, probePidAlive, readLastExitMarker, tolerantTaskDir, type RunContext } from '../../orchestrator/run-context.js';
 import { deriveTopLevelStatus } from '../../orchestrator/state.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type Verdict, type StatusJson } from '../../orchestrator/types.js';
 import { formatAge } from './doctor.js';
@@ -66,7 +66,7 @@ export type IdleClassification =
     | { kind: 'complete'; state: string; pid?: number }
     | { kind: 'auto_block'; state: string; phase: string; pid?: number }
     | { kind: 'step_done'; state: string; phase: string; verdict?: Verdict; pid?: number }
-    | { kind: 'death'; state: string; pid?: number }
+    | { kind: 'death'; state: string; pid?: number; reason?: string }
     | { kind: 'ambiguous_pid'; state: string; canonPid: number; heartbeatPid: number }
     | { kind: 'read_error'; file: string; reason: string };
 
@@ -439,6 +439,21 @@ export function classifyIdle(
         if (currentPhaseStatus === 'pending' || currentPhaseStatus === 'in_progress') {
             const previousPhase = findPreviousDonePhase(status, currentPhase);
             if (previousPhase) {
+                if (ctx.resolvedPid != null && !orchestratorLive) {
+                    return { kind: 'death', state, pid: ctx.resolvedPid, reason: 'orchestrator died without a clean exit (runtime files left behind)' };
+                }
+                const marker = readLastExitMarker(ctx.taskDir);
+                if (marker && marker.code !== '0') {
+                    let statusMtimeMs: number | null = null;
+                    try {
+                        statusMtimeMs = fs.statSync(ctx.statusFile).mtimeMs;
+                    } catch {
+                        // Missing state cannot establish that the marker is stale.
+                    }
+                    if (statusMtimeMs == null || marker.timestampMs >= statusMtimeMs - 1_000) {
+                        return { kind: 'death', state, pid: ctx.resolvedPid ?? undefined, reason: `orchestrator exited non-zero: ${marker.reason}` };
+                    }
+                }
                 return {
                     kind: 'step_done',
                     state,
@@ -814,6 +829,9 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         }
 
         const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now());
+        if (idleResult.kind === 'death' && idleResult.reason) {
+            stderr(`canon watch: ${idleResult.reason}; run \`canon run ${taskId}\` to resume\n`);
+        }
         emitSummary(stdout, summarizeIdle(idleResult));
         switch (idleResult.kind) {
             case 'checkpoint':
