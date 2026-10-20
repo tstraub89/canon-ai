@@ -1,0 +1,1 @@
+The attach path now reuses the existing crash-evidence checks for pending or in-progress phases, while retaining prior outcomes when there is no fresh crash evidence. No actionable regressions were found in the reviewed diff.

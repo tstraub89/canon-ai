@@ -2572,6 +2572,14 @@ function classifyAttach(ctx, taskId, probeAlive, now) {
     return { kind: "launch_window", state };
   }
   if (status) {
+    const currentPhase = PHASE_ORDER.find((phase) => (status.phases[phase]?.status ?? "pending") !== "done");
+    const currentStatus = currentPhase ? status.phases[currentPhase]?.status ?? "pending" : null;
+    if (currentPhase && currentPhase !== "human_review" && (currentStatus === "pending" || currentStatus === "in_progress")) {
+      const heartbeatPrimary = ctx.heartbeatResult.kind === "found" ? ctx.heartbeatResult.record.task_ids[0] : void 0;
+      const primaryId = typeof heartbeatPrimary === "string" && heartbeatPrimary.length > 0 ? heartbeatPrimary : taskId;
+      const reason = findCrashEvidence(ctx, taskId, probeAlive, primaryId, orchestratorLive);
+      if (reason) return { kind: "death", state, hint: `run \`canon run ${taskId}\` to resume`, reason };
+    }
     const inProgress = PHASE_ORDER.some((phase) => (status.phases[phase]?.status ?? "pending") === "in_progress");
     if (inProgress) {
       return {
@@ -2586,6 +2594,23 @@ function classifyAttach(ctx, taskId, probeAlive, now) {
     state,
     hint: `Use \`canon task status ${taskId}\` for a non-blocking snapshot of the task state.`
   };
+}
+function findCrashEvidence(ctx, taskId, probeAlive, primaryTaskId, resolvedPidAlive) {
+  if (ctx.resolvedPid != null && !(resolvedPidAlive ?? probeAlive(ctx.resolvedPid))) {
+    return "orchestrator died without a clean exit (runtime files left behind)";
+  }
+  const marker = readNewestExitMarker(runLogCandidateDirs(ctx.taskDir, taskId, primaryTaskId ?? taskId));
+  if (marker && marker.code !== "0") {
+    let statusMtimeMs = null;
+    try {
+      statusMtimeMs = fs11.statSync(ctx.statusFile).mtimeMs;
+    } catch {
+    }
+    if (statusMtimeMs == null || marker.timestampMs >= statusMtimeMs - 1e3) {
+      return `orchestrator exited non-zero: ${marker.reason}`;
+    }
+  }
+  return null;
 }
 function classifyIdle(ctx, taskId, probeAlive = () => false, now = Date.now(), primaryTaskId) {
   const readError = classifyStatusErrors(ctx);
@@ -2636,20 +2661,8 @@ function classifyIdle(ctx, taskId, probeAlive = () => false, now = Date.now(), p
     if (currentPhaseStatus === "pending" || currentPhaseStatus === "in_progress") {
       const previousPhase = findPreviousDonePhase(status, currentPhase);
       if (previousPhase) {
-        if (ctx.resolvedPid != null && !orchestratorLive) {
-          return { kind: "death", state, pid: ctx.resolvedPid, reason: "orchestrator died without a clean exit (runtime files left behind)" };
-        }
-        const marker = readNewestExitMarker(runLogCandidateDirs(ctx.taskDir, taskId, primaryTaskId ?? taskId));
-        if (marker && marker.code !== "0") {
-          let statusMtimeMs = null;
-          try {
-            statusMtimeMs = fs11.statSync(ctx.statusFile).mtimeMs;
-          } catch {
-          }
-          if (statusMtimeMs == null || marker.timestampMs >= statusMtimeMs - 1e3) {
-            return { kind: "death", state, pid: ctx.resolvedPid ?? void 0, reason: `orchestrator exited non-zero: ${marker.reason}` };
-          }
-        }
+        const crashReason = findCrashEvidence(ctx, taskId, probeAlive, primaryTaskId, orchestratorLive);
+        if (crashReason) return { kind: "death", state, pid: ctx.resolvedPid ?? void 0, reason: crashReason };
         return {
           kind: "step_done",
           state,
@@ -2814,7 +2827,8 @@ function watchCmd(args2, deps = {}) {
         emitSummary(stdout, { state: "blocked", reason: "auto_block", phase: result.phase });
         return exit(3);
       case "death":
-        stderr(`canon watch: ${result.hint}
+        stderr(result.reason ? `canon watch: ${result.reason}; run \`canon run ${taskId}\` to resume
+` : `canon watch: ${result.hint}
 `);
         emitSummary(stdout, { state: result.state, reason: "death" });
         return exit(4);

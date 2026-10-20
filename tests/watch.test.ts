@@ -220,6 +220,74 @@ void test('classifyAttach: death when status says in_progress and no live proces
     assert.equal(result.kind, 'death');
 });
 
+void test('classifyAttach: reports a fresh crash marker after a completed phase', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        writeExitLog(taskDir, [exitLine('1', 'claude session exited 1 (budget)')]);
+        const statusFile = path.join(taskDir, 'status.json');
+        const ctx = makeContext({
+            taskDir,
+            statusFile,
+            statusResult: { kind: 'ok', file: statusFile, status: makeStatus('plan', {
+                spec_review: { status: 'done', agent: 'claude' },
+                plan: { status: 'pending', agent: 'claude' },
+            }) },
+        });
+        const result = classifyAttach(ctx, 't1', () => false, NOW);
+        assert.equal(result.kind, 'death');
+        if (result.kind === 'death') {
+            assert.match(result.reason ?? '', /orchestrator exited non-zero: .*budget/);
+            assert.equal(result.hint, 'run `canon run t1` to resume');
+        }
+    });
+});
+
+void test('classifyAttach: pending phase without crash evidence remains nothing_to_watch', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        const ctx = makeContext({ taskDir, statusFile, statusResult: { kind: 'ok', file: statusFile, status: makeStatus('plan', {
+            spec_review: { status: 'done', agent: 'claude' }, plan: { status: 'pending', agent: 'claude' },
+        }) } });
+        assert.equal(classifyAttach(ctx, 't1', () => false, NOW).kind, 'nothing_to_watch');
+    });
+});
+
+void test('classifyAttach: clean or stale crash markers remain nothing_to_watch', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        const ctx = makeContext({ taskDir, statusFile, statusResult: { kind: 'ok', file: statusFile, status: makeStatus('plan', {
+            spec_review: { status: 'done', agent: 'claude' }, plan: { status: 'pending', agent: 'claude' },
+        }) } });
+        writeExitLog(taskDir, [exitLine('0', 'clean')]);
+        assert.equal(classifyAttach(ctx, 't1', () => false, NOW).kind, 'nothing_to_watch');
+        writeExitLog(taskDir, [exitLine('1', 'old crash', new Date(Date.now() - 20_000).toISOString())]);
+        fs.utimesSync(statusFile, Date.now() / 1000, Date.now() / 1000);
+        assert.equal(classifyAttach(ctx, 't1', () => false, NOW).kind, 'nothing_to_watch');
+    });
+});
+
+void test('classifyAttach: in_progress crash keeps marker reason and no evidence keeps generic hint', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        const status = makeStatus('plan', { plan: { status: 'in_progress', agent: 'claude' } });
+        const ctx = makeContext({ taskDir, statusFile, statusResult: { kind: 'ok', file: statusFile, status } });
+        writeExitLog(taskDir, [exitLine('1', 'plan agent failed')]);
+        const withEvidence = classifyAttach(ctx, 't1', () => false, NOW);
+        assert.equal(withEvidence.kind, 'death');
+        if (withEvidence.kind === 'death') assert.match(withEvidence.reason ?? '', /plan agent failed/);
+        fs.rmSync(path.join(taskDir, '.canon-run.log'));
+        const withoutEvidence = classifyAttach(ctx, 't1', () => false, NOW);
+        assert.equal(withoutEvidence.kind, 'death');
+        if (withoutEvidence.kind === 'death') {
+            assert.equal(withoutEvidence.reason, undefined);
+            assert.equal(withoutEvidence.hint, 'run `canon run t1` to resume');
+        }
+    });
+});
+
 void test('classifyAttach: read_error when the heartbeat file is corrupt', () => {
     const ctx = makeContext({
         statusResult: {
@@ -708,6 +776,25 @@ void test('watchCmd: reports a logged crash on stderr with the stable death summ
         assert.equal(result.exitCode, 4);
         assert.deepEqual(result.stdout, ['state=plan reason=death\n']);
         assert.equal(result.stderr.filter((line) => line.startsWith('canon watch: orchestrator exited non-zero:')).length, 1);
+        assert.match(result.stderr.join(''), /budget exhausted/);
+        assert.match(result.stderr.join(''), /canon run t1/);
+    });
+});
+
+void test('watchCmd: late attach reports a pending-phase crash and exits 4', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        writeExitLog(taskDir, [exitLine('1', 'claude session exited 1 (budget exhausted)')]);
+        const ctx = makeContext({
+            taskDir, statusFile,
+            statusResult: { kind: 'ok', file: statusFile, status: makeStatus('plan', {
+                spec_review: { status: 'done', agent: 'claude' }, plan: { status: 'pending', agent: 'claude' },
+            }) },
+        });
+        const result = runWatchCommand(['t1'], { gatherContextImpl: () => ctx });
+        assert.equal(result.exitCode, 4);
+        assert.deepEqual(result.stdout, ['state=plan reason=death\n']);
         assert.match(result.stderr.join(''), /budget exhausted/);
         assert.match(result.stderr.join(''), /canon run t1/);
     });

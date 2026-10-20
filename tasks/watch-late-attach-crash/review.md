@@ -1,132 +1,79 @@
 # Code Review: watch-late-attach-crash
 
-> Reviewer: Claude | Spec: `tasks/watch-late-attach-crash/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman) | Spec: `tasks/watch-late-attach-crash/spec.md`
 
-Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
+Synthesized from three lenses: anchored Claude, cold-Claude, and cold-Codex (pre-obtained; reported no actionable regressions).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did Codex's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | `tests/watch.test.ts:223` — fresh `code=1` marker after done phase → `death` with reason. Red-first claim taken from handoff, not re-run. |
+| AC-2 | Pass | No log / no pid → `nothing_to_watch`. |
+| AC-3 | Pass | `code=0` and stale non-zero markers → `nothing_to_watch`. |
+| AC-4 | Pass | `in_progress` with marker carries reason; without evidence keeps generic hint. |
+| AC-5 | Pass | `watchCmd` exits 4, stdout `state=plan reason=death`, stderr has reason and `canon run t1`. |
+| AC-6 | Pass | Both classifiers call `findCrashEvidence`; `timestampMs >= statusMtimeMs - 1_000` appears once (`src/cli/commands/watch.ts:409`). No existing tests modified. |
+| AC-7 | Pass | Exit-code 4 row updated in doc and template mirror. |
+| AC-8 | Pass | Validation matrix all Pass; `dist/cli/index.js` rebuilt. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Clean extraction of the idle-path evidence check into `findCrashEvidence`, reused on attach with the spec'd fall-through behavior. The `death` variant gains an optional reason and the reporter prints it. No correctness bugs survived adjudication; remaining items are test-coverage nits.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
+(none blocking)
 
-(none / list items)
+#### Optional Cleanup / Nits
 
-#### Optional Cleanup / Nit
+- **Untested attach-side dead-pid branch** (`code-bug`-free nit; flagged by 3 lenses: anchored, cold-Claude; cold-Codex silent) — `tests/watch.test.ts`: no attach-level test sets `resolvedPid` to a dead pid and expects `death` with "orchestrator died without a clean exit". The branch is shared with idle (covered), but the new call site's `orchestratorLive` wiring is unverified. Verified against the diff: true.
+- **Untested attach edges** (anchored) — heartbeat-primary candidate selection (`watch.ts:369-370`), `human_review` exclusion with a fresh marker, and a `changes_requested` phase skipping the check have no tests.
+- **Redundant helper parameter** (anchored) — `findCrashEvidence` takes both `probeAlive` and `resolvedPidAlive`; both callers pass the latter, so the fallback probe is dead. Documented deviation in handoff; harmless.
+- **Known Risks gap** (anchored, cold-Claude) — `classifyAttach` checks evidence without requiring a previously-done phase (`watch.ts:363-373`), unlike `classifyIdle`. A leftover non-zero marker on a first-phase `pending` task now reports death. The spec explicitly asks for "current phase is pending or in_progress" with no previous-phase requirement, so this matches spec; the false-positive direction is not named in Known Risks. Spec-intended, not a defect.
 
-> Style, naming, or minor improvements. Not blocking.
+## Dismissed Cold Findings
 
-(none / list items)
-
-#### Spec Gaps
-
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
-
-### Dismissed Cold Findings
-
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): legacy `inProgress` fallback returns death without reason when current phase is `blocked`/`human_review` — spec Decision 2 says no-evidence falls through "unchanged", and Non-Goals exclude `human_review`/blocked handling changes; odd-state only.
+- Dismissed (cold-Claude): attach death carries no `pid` while idle death does — spec Decision 2 specifies reason + hint only; summary line unchanged by spec (Decision 3); Known Risks says keep each function's existing state shape.
+- Dismissed (cold-Claude): race where a just-spawned resume sees the prior run's marker as fresh — low confidence; launch-window and live checks precede the evidence check, and the freshness heuristic is reused unchanged per Non-Goals (same exposure as idle path).
+- Dismissed (cold-Claude, test-integrity): attach "clean/stale" test lacks dead-pid coverage — folded into the dead-pid nit above; the test itself is sound.
+- Dismissed (cold-Claude): consistency gap on missing previous-done-phase guard — merged into the Known Risks nit above (spec-evidenced: Decision 2).
+- Dismissed (anchored): `docs/lessons-learned.md:180` stale wording — historical lesson, not a contract restatement.
+- cold-Codex: no findings to dismiss.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
 - [ ] Approved
-- [ ] Approved with nits
+- [x] Approved with nits
 - [ ] Changes requested
 - [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
