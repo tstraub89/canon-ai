@@ -1,132 +1,95 @@
 # Code Review: watch-crash-not-step-done
 
 > Reviewer: Claude | Spec: `tasks/watch-crash-not-step-done/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
 
-Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
+Code review is synthesized by a foreman from three lenses: an anchored Claude lens, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator. This is the single consolidated artifact and verdict.
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did Codex's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | Fresh non-zero marker returns `death` with the reason carried. |
+| AC-2 | Pass | Dead `resolvedPid` returns `death`. |
+| AC-3 | Pass | No marker and no pid evidence falls through to the unchanged `step_done`. |
+| AC-4 | Pass | `code=0` marker stays `step_done`. |
+| AC-5 | Pass | Marker older than the status mtime by more than 1 s stays `step_done`. |
+| AC-6 | Pass | Parser scans from the last line back, skips malformed lines, and returns null when none is well-formed. |
+| AC-7 | Pass | Stable summary line, exit 4, no extra keys. |
+| AC-8 | Pass | One stderr `canon watch:` diagnostic with the reason and resume hint. The `signal:SIGTERM` case is covered. |
+| AC-9 | Pass | Exit-code rows and the stderr sentence are updated, the sentence sits after the code block, and the mirror is in sync. |
+| AC-10 | Pass | Handoff reports 1499 passed, 1 skipped, 0 failed. Anchored lens re-ran `tests/watch.test.ts` (51 pass). |
+| AC-11 | Partial (expected) | `dist/cli/index.js` is rebuilt and committed. The post-commit `git diff --exit-code -- dist/` check is run by the pipeline. |
+| AC-12′ | Pass | Tail-anchored regex (`\s*$`), mid-line marker accepted, truncated tail rejected. |
+| AC-13 | Pass | Candidate dirs cover the main-checkout and resolved primary, then the watched id. The newest marker by timestamp wins. `watchCmd` remembers the primary id from the last live heartbeat. |
+| AC-14 | Pass | Worktree/main-checkout regression test is present and passes. |
+| AC-15 | Pass | Bundle-secondary test is present and passes. |
+| AC-16 | Pass | `tailRunLog` uses the same candidate resolution. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (writer, `classifyAttach`, `changes_requested` branch, flags and exit codes untouched)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The change is small and well contained. `classifyIdle()` gates `step_done` on dead-pid evidence and a fresh non-zero exit marker. One bounded tail parser lives in `run-context.ts`, and `watchCmd` carries the reason to stderr without touching the stdout summary contract. Tests cover parsing, classification, the tolerance boundary, the worktree/main-checkout split and bundles. No surviving code-bug or spec-gap.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none blocking)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `docs/pipeline-orchestrator.md` (~line 49): "the failure reason is printed on stderr" is true only for the idle-classification death path. The launch-window and attach death paths print no reason. Consider scoping the sentence to a run that dies after watch attached. (cold-Claude, `watch.ts` and docs)
+- `tests/watch.test.ts` tolerance-boundary test (1000 ms vs 1001 ms) depends on `utimesSync` precision. It is stable on APFS and ext4 and could flake on coarse-mtime filesystems. (cold-Claude)
+- `src/cli/commands/watch.ts` `classifyIdle` now takes five positional params. An options object would read better next time it grows. (anchored)
+- `tailRunLog` takes the first candidate whose log exists, while `classifyIdle` takes the newest marker across candidates. They can differ only when logs exist in both the main checkout and a worktree. This is rare, and the tail stays on the primary's main-checkout log. (anchored, low confidence)
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
+(none new)
 
-(none / list items)
+Known and previously accepted, recorded here and not re-raised:
+- A `canon watch` started after the run has already died still reports `nothing_to_watch` (exit 2), and a bundle secondary watched after death cannot learn the primary id. Both are the `classifyAttach` Non-Goal. The operator already accepted this as sanctioned at an earlier code_review round, and `done.md` lists it under Open Questions. (cold-Claude, 2 findings)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Codex): "Anchor exit markers to the start of a log line" - Amendment Round 2 deliberately made the regex tail-anchored, not line-anchored. `writeExitMarker()` emits no leading newline, so a marker follows unterminated agent output mid-line, and line-start anchoring reintroduced the false `step_done` (see spec Amendment Round 2, AC-12′). A false positive needs agent output that ends in a full marker-shaped string with a valid ISO timestamp and `code≠0`, which is contrived. The writer stays a Non-Goal.
+- Dismissed (cold-Claude): "`resolvedPid != null && !orchestratorLive` can misreport a clean `--step` stop as death when a stale heartbeat in another dir survives" - spec Decision 1 makes a surviving dead-pid record crash evidence. The scenario is speculative (low confidence), and no test or trace shows a clean exit leaving a pid behind.
+- Dismissed (cold-Claude): "marker followed by more output, or more than 64 KB of later log, makes the reader return null" - the marker is written once, at process exit, as the last output. The 64 KiB tail bound is spec Known Risks guidance. A later `--step` run does not write to this log.
+- Dismissed (cold-Claude): "status.json mtime guard can be masked by a later status write, and mixes clocks" - this is the spec's chosen design (Decision 2, AC-5, Known Risks "Clock/mtime granularity"). It biases toward reporting a crash, and the logs and status share one host.
+- Dismissed (cold-Claude): "`canon stop` / Ctrl-C reports death (exit 4)" - spec Decision explicitly includes `signal:<NAME>` as non-zero and says this is intended. It is listed in `done.md` Open Questions for the operator to confirm.
+- Dismissed (cold-Claude): "`statSync` failure treats a missing status file as fresh" - effectively dead code, because status was just read successfully. The bias toward death matches the spec's "prefer reporting a crash".
+- Dismissed (cold-Claude): "`runLogCandidateDirs` test is environment-sensitive" - the test uses temp-dir paths and asserts the dedupe and ordering logic. It is not an invariant violation.
+- Dismissed (anchored): `!orchestratorLive` redundancy, the greedy `(.*)` reason with quoted marker text, and the `readSync` short-read note - all low confidence, with no practical impact (a regular-file read of ≤64 KiB is complete, and the pid is already dead when this branch is reached).
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->

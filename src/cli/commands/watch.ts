@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 import { runLogPathFor } from '../../orchestrator/detach.js';
 import { HEARTBEAT_INTERVAL_MS, isHeartbeatStale, type HeartbeatReadResult } from '../../orchestrator/heartbeat.js';
-import { gatherRunContext, isStatusJson, probePidAlive, tolerantTaskDir, type RunContext } from '../../orchestrator/run-context.js';
+import { gatherRunContext, isStatusJson, probePidAlive, readNewestExitMarker, runLogCandidateDirs, type RunContext } from '../../orchestrator/run-context.js';
 import { deriveTopLevelStatus } from '../../orchestrator/state.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type Verdict, type StatusJson } from '../../orchestrator/types.js';
 import { formatAge } from './doctor.js';
@@ -66,7 +67,7 @@ export type IdleClassification =
     | { kind: 'complete'; state: string; pid?: number }
     | { kind: 'auto_block'; state: string; phase: string; pid?: number }
     | { kind: 'step_done'; state: string; phase: string; verdict?: Verdict; pid?: number }
-    | { kind: 'death'; state: string; pid?: number }
+    | { kind: 'death'; state: string; pid?: number; reason?: string }
     | { kind: 'ambiguous_pid'; state: string; canonPid: number; heartbeatPid: number }
     | { kind: 'read_error'; file: string; reason: string };
 
@@ -381,9 +382,10 @@ export function classifyAttach(
 
 export function classifyIdle(
     ctx: RunContext,
-    _taskId: string,
+    taskId: string,
     probeAlive: (pid: number) => boolean = () => false,
     now: number = Date.now(),
+    primaryTaskId?: string,
 ): IdleClassification {
     const readError = classifyStatusErrors(ctx);
     if (readError) return readError;
@@ -439,6 +441,21 @@ export function classifyIdle(
         if (currentPhaseStatus === 'pending' || currentPhaseStatus === 'in_progress') {
             const previousPhase = findPreviousDonePhase(status, currentPhase);
             if (previousPhase) {
+                if (ctx.resolvedPid != null && !orchestratorLive) {
+                    return { kind: 'death', state, pid: ctx.resolvedPid, reason: 'orchestrator died without a clean exit (runtime files left behind)' };
+                }
+                const marker = readNewestExitMarker(runLogCandidateDirs(ctx.taskDir, taskId, primaryTaskId ?? taskId));
+                if (marker && marker.code !== '0') {
+                    let statusMtimeMs: number | null = null;
+                    try {
+                        statusMtimeMs = fs.statSync(ctx.statusFile).mtimeMs;
+                    } catch {
+                        // Missing state cannot establish that the marker is stale.
+                    }
+                    if (statusMtimeMs == null || marker.timestampMs >= statusMtimeMs - 1_000) {
+                        return { kind: 'death', state, pid: ctx.resolvedPid ?? undefined, reason: `orchestrator exited non-zero: ${marker.reason}` };
+                    }
+                }
                 return {
                     kind: 'step_done',
                     state,
@@ -505,17 +522,40 @@ function primaryLogTaskId(ctx: RunContext, fallbackTaskId: string): string {
 type LogTailState = {
     position: number | null;
     path?: string;
+    owner?: string;
     identity?: string;
     decoder: StringDecoder;
 };
+
+function newestRunLogDir(candidateDirs: readonly string[]): string | undefined {
+    let newest: { dir: string; mtimeMs: number } | undefined;
+    for (const dir of candidateDirs) {
+        let mtimeMs: number;
+        try {
+            mtimeMs = fs.statSync(runLogPathFor(dir)).mtimeMs;
+        } catch {
+            continue;
+        }
+        if (!newest || mtimeMs > newest.mtimeMs) newest = { dir, mtimeMs };
+    }
+    return newest?.dir;
+}
 
 function tailRunLog(
     ctx: RunContext,
     taskId: string,
     deps: Pick<WatchCmdDeps, 'stderr'>,
     tailState: LogTailState,
+    primaryTaskId?: string,
 ): void {
-    const logTaskDir = tolerantTaskDir(primaryLogTaskId(ctx, taskId));
+    const logOwnerId = primaryTaskId ?? primaryLogTaskId(ctx, taskId);
+    const candidateDirs = runLogCandidateDirs(ctx.taskDir, taskId, logOwnerId);
+    // Only the run's primary task holds the log. A resumed run opens a new log in
+    // the primary's worktree while the first run's log stays in the main checkout,
+    // so among the primary's locations the active log is the most recently written.
+    const logTaskDir = newestRunLogDir(candidateDirs.filter((dir) => path.basename(dir) === logOwnerId))
+        ?? candidateDirs.find((dir) => fs.existsSync(runLogPathFor(dir)))
+        ?? candidateDirs[0];
     const logPath = runLogPathFor(logTaskDir);
     let fd: number | undefined;
     try {
@@ -523,11 +563,15 @@ function tailRunLog(
         const stat = fs.fstatSync(fd);
         const identity = `${logPath}:${stat.dev}:${stat.ino}`;
         if (tailState.position == null || tailState.path !== logPath) {
-            tailState.position = stat.size;
+            // Same owner, new path: the run resumed into a newer log, so stream it
+            // from the start. A new owner (or the first poll) skips history.
+            const resumedLog = tailState.path != null && tailState.owner === logOwnerId;
+            tailState.position = resumedLog ? 0 : stat.size;
             tailState.path = logPath;
+            tailState.owner = logOwnerId;
             tailState.identity = identity;
             tailState.decoder = new StringDecoder('utf8');
-            return;
+            if (!resumedLog) return;
         }
         if (identity !== tailState.identity || stat.size < tailState.position) {
             tailState.position = 0;
@@ -656,7 +700,15 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         }
     };
 
+    let rememberedPrimaryTaskId: string | null = null;
+    const rememberPrimary = (observedCtx: RunContext): void => {
+        if (observedCtx.heartbeatResult.kind !== 'found') return;
+        const primaryId = observedCtx.heartbeatResult.record.task_ids[0];
+        if (typeof primaryId === 'string' && primaryId.length > 0) rememberedPrimaryTaskId = primaryId;
+    };
+
     let ctx = gatherContext(taskId, deps);
+    rememberPrimary(ctx);
 
     if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
         emitSummary(stdout, {
@@ -708,6 +760,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
 
         if (waitResult.kind === 'found') {
             ctx = gatherContext(taskId, deps);
+            rememberPrimary(ctx);
             const postWaitAttach = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
             if (postWaitAttach.kind !== 'live') {
                 return reportInitialFailure(postWaitAttach);
@@ -730,7 +783,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
     }
 
     stderr(`canon watch: attached to task '${taskId}' (pid=${ctx.resolvedPid ?? 'unknown'})\n`);
-    if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
+    if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? undefined);
 
     for (;;) {
         if (withinTimeout()) return reportTimeout();
@@ -738,6 +791,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         if (withinTimeout()) return reportTimeout();
 
         ctx = gatherContext(taskId, deps);
+        rememberPrimary(ctx);
         if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
             emitSummary(stdout, {
                 state: parsed.untilPhase,
@@ -761,7 +815,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
             } else {
                 tick();
             }
-            if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
+            if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? undefined);
             continue;
         }
 
@@ -794,7 +848,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
             } else {
                 tick();
             }
-            if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
+            if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? undefined);
             continue;
         }
 
@@ -803,6 +857,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         if (withinTimeout()) return reportTimeout();
 
         const freshCtx = gatherContext(taskId, deps);
+        rememberPrimary(freshCtx);
         if (parsed.untilPhase && phaseSettled(freshCtx, parsed.untilPhase, isOrchestratorAlive, now())) {
             emitSummary(stdout, {
                 state: parsed.untilPhase,
@@ -813,7 +868,10 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
             return exit(0);
         }
 
-        const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now());
+        const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now(), rememberedPrimaryTaskId ?? undefined);
+        if (idleResult.kind === 'death' && idleResult.reason) {
+            stderr(`canon watch: ${idleResult.reason}; run \`canon run ${taskId}\` to resume\n`);
+        }
         emitSummary(stdout, summarizeIdle(idleResult));
         switch (idleResult.kind) {
             case 'checkpoint':

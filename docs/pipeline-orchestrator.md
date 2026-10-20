@@ -34,10 +34,10 @@ canon watch <id>
 
 | Code | Meaning |
 |---|---|
-| `0` | Healthy stop — checkpoint (`human_review`), complete, or `--step` step-done |
+| `0` | Healthy stop — checkpoint (`human_review`), complete, or `--step` step-done (reported only when no crash evidence exists) |
 | `2` | Bad usage, nothing to watch, unreadable state, ambiguous pid disagreement, or launch-window timeout |
 | `3` | Auto-block |
-| `4` | Crash — orchestrator died; run `canon run <id>` to resume |
+| `4` | Crash — orchestrator died, or the run log's last exit marker is non-zero and not older than the task's `status.json` (a stale marker from an earlier run is ignored); run `canon run <id>` to resume |
 | `5` | `--timeout` elapsed while still attached |
 
 **Summary line** — always the final stdout line, stable `key=value`:
@@ -45,6 +45,8 @@ canon watch <id>
 ```
 state=human_review reason=checkpoint phase=qa→human_review verdict=approved pid=48213
 ```
+
+For a crash, the failure reason is printed on stderr; the summary line itself is unchanged.
 
 Keys: `state`, `reason` (always); `phase`, `verdict`, `pid` when applicable. All progress (attach line, phase transitions, heartbeat-age ticks, `--follow` log stream) goes to **stderr**; stdout carries only this one line.
 
