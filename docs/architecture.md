@@ -171,7 +171,7 @@ Anthropic's `claude` CLI supports `--resume <session-id>`. The orchestrator stor
 ### Auto-block / reroute
 
 Two mechanisms halt or redirect the pipeline:
-- **`autoBlockPhase()`**: the primary check runs at the next revision phase's entry (`spec` / `implement`), before that revision starts; the review phase keeps the same check as a defense-in-depth backstop. On a block it sets the review phase's status to `blocked`, bumps `auto_block_count`, pushes an escalation, and exits with code 2. Recover by raising `MAX_REVIEW_LOOPS` and resuming, or via `canon task reset-spec-review <id>` / `canon task reset-code-review <id>` for a genuine rescope (see recovery below). Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
+- **`autoBlockPhase()`**: the primary check runs at the next revision phase's entry (`spec` / `implement`), before that revision starts; the review phase keeps the same check as a defense-in-depth backstop. On a block it sets the review phase's status to `blocked`, bumps `auto_block_count`, pushes an escalation; its callers exit with code 2. Recover by raising `MAX_REVIEW_LOOPS` and resuming, or via `canon task reset-spec-review <id>` / `canon task reset-code-review <id>` for a genuine rescope (see recovery below). Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
 - **`routeBackTo()`**: on `changes_requested` verdicts. Flips the target phase and all downstream to `pending`. Loop re-enters the routed phase next iteration.
 
 ### Validation gates

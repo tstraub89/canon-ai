@@ -1,3 +1,4 @@
+import { AgentSessionError } from './errors.js';
 import { spawn } from 'node:child_process';
 import { REPO_ROOT } from '../env.js';
 import { info, setExitReason, warn } from '../cli.js';
@@ -189,24 +190,20 @@ export async function runClaude(
             if (result.spawnError) {
                 console.error(result.spawnError.message);
                 status = 'failed';
-                setExitReason(`claude session spawn error: ${result.spawnError.message}`);
-                process.exit(1);
+                throw new AgentSessionError({ agent: 'claude', kind: 'spawn_error', reason: `claude session spawn error: ${result.spawnError.message}` });
             }
             if (result.stalled) {
                 status = 'failed';
-                setExitReason('claude session stalled');
-                process.exit(1);
+                throw new AgentSessionError({ agent: 'claude', kind: 'stalled', reason: 'claude session stalled' });
             }
             if (typeof result.exitCode === 'number' && result.exitCode !== 0) {
                 printClaudeTooOldHint(result.capturedStderr);
                 status = 'failed';
-                setExitReason(`claude session exited ${result.exitCode} (possible budget exhaustion — see CLAUDE_BUDGET)`);
-                process.exit(result.exitCode);
+                throw new AgentSessionError({ agent: 'claude', kind: 'exit_code', reason: `claude session exited ${result.exitCode} (possible budget exhaustion — see CLAUDE_BUDGET)`, exitCode: result.exitCode });
             }
             if (result.signal) {
                 status = 'failed';
-                setExitReason(`claude session received signal ${result.signal}`);
-                process.exit(1);
+                throw new AgentSessionError({ agent: 'claude', kind: 'signal', reason: `claude session received signal ${result.signal}`, signal: result.signal });
             }
 
             return {

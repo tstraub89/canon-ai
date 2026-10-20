@@ -369,7 +369,7 @@ function setupInvocationLoggingCliTools(scriptDir: string): void {
         "status.phases[phase].status = 'done';",
         "if (phase === 'spec_review' || phase === 'code_review') status.phases[phase].verdict = 'approved';",
         "if (phase === 'spec_review') fs.writeFileSync(path.join(tasksRoot, taskId, 'spec-review.md'), '# Spec Review\\n\\n## Verdict\\n\\n- [x] **Approved**\\n- [ ] **Changes requested**\\n');",
-        "status.status = phase === 'spec' ? 'spec_review' : phase === 'spec_review' ? 'plan' : phase === 'implement' ? 'code_review' : phase === 'code_review' ? 'qa' : status.status;",
+        "status.status = phase === 'spec' ? 'spec_review' : phase === 'spec_review' ? 'plan' : phase === 'plan' ? 'implement' : phase === 'implement' ? 'code_review' : phase === 'code_review' ? 'qa' : status.status;",
         "fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\\n`);",
         '',
     ].join('\n'), 'utf8');
@@ -6740,7 +6740,13 @@ void test('checkAndRoute parks a crashed Codex spec_review before stale-verdict 
                 };
             };
         };
-        assert.equal(updated.phases?.spec_review?.status, 'in_progress');
+        assert.equal(updated.phases?.spec_review?.status, 'blocked');
+        const durable = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        assert.equal(durable.phases.spec_review?.auto_block_count, 1);
+        assert.equal(durable.escalations?.length, 1);
+        assert.equal(durable.escalations?.at(-1)?.phase, 'spec_review');
+        assert.equal(durable.escalations?.at(-1)?.iteration_count, 1);
+        assert.match(durable.escalations.at(-1)!.reason, /canon run task-crash/);
         assert.equal(updated.phases?.spec_review?.verdict, '');
         assert.equal(updated.phases?.spec_review?.iterations_current_loop, 1);
         assert.equal(updated.phases?.spec_review?.iterations_total, 2);
@@ -8075,99 +8081,62 @@ void test('multi-line exit reasons collapse to a single marker line', () => {
     assert.match(markers[0] ?? '', /at \d{4}-\d{2}-\d{2}T/);
 });
 
-void test('Claude failure ladders set exit reasons and Codex non-zero exits do not exit by themselves', () => {
+void test('agent failure ladders throw AgentSessionError and Codex non-zero exits still return', () => {
     withTempDir('orchestrator-exit-agents-', dir => {
         const fakeBins = path.join(dir, 'fake-bins');
-        fs.mkdirSync(fakeBins, { recursive: true });
-
-        writeExecutable(fakeBins, 'claude', ['exit 1']);
-        const claudeResult = runNodeInline([
-            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
-            "import { runClaude } from './src/orchestrator/agents/claude.js';",
-            'registerExitHandlers();',
-            '(async () => {',
-            "  await runClaude('prompt', false, null, 'model', 'effort', '10', undefined, process.cwd());",
-            '})().catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), {
-            ...process.env,
-            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
-        });
-        assert.equal(claudeResult.status, 1, claudeResult.stderr);
-        const claudeMarkers = claudeResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
-        assert.equal(claudeMarkers.length, 1, claudeResult.stderr);
-        assert.match(claudeMarkers[0] ?? '', /code=1/);
-        assert.match(claudeMarkers[0] ?? '', /claude session exited 1/);
-
-        const codexSpawnErrorDir = path.join(dir, 'codex-spawn-error-bin');
-        fs.mkdirSync(codexSpawnErrorDir, { recursive: true });
-        const spawnErrorResult = runNodeInline([
-            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
-            "import { runCodex } from './src/orchestrator/agents/codex.js';",
-            'registerExitHandlers();',
-            '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
-            '})().catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), {
-            ...process.env,
-            PATH: codexSpawnErrorDir,
-        });
-        assert.equal(spawnErrorResult.status, 1, spawnErrorResult.stderr);
-        const spawnMarkers = spawnErrorResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
-        assert.equal(spawnMarkers.length, 1, spawnErrorResult.stderr);
-        assert.match(spawnMarkers[0] ?? '', /codex session spawn error:/);
-
+        const emptyBins = path.join(dir, 'empty-bins');
+        fs.mkdirSync(fakeBins);
+        fs.mkdirSync(emptyBins);
+        const metricsFile = path.join(dir, 'metrics.md');
+        for (const scenario of [
+            { agent: 'claude', body: ['exit 1'], kind: 'exit_code', reason: /claude session exited 1/ },
+            { agent: 'codex', body: null, kind: 'spawn_error', reason: /codex session spawn error:/ },
+            { agent: 'codex', body: ['sleep 2'], kind: 'stalled', reason: /codex session stalled/ },
+            { agent: 'codex', body: ['kill -TERM $$'], kind: 'signal', reason: /codex session received signal SIGTERM/ },
+        ]) {
+            if (scenario.body) writeExecutable(fakeBins, scenario.agent, scenario.body);
+            const result = runNodeInline([
+                "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+                "import { AgentSessionError } from './src/orchestrator/agents/errors.js';",
+                `import { ${scenario.agent === 'claude' ? 'runClaude' : 'runCodex'} as run } from './src/orchestrator/agents/${scenario.agent}.js';`,
+                'registerExitHandlers();',
+                'try {',
+                scenario.agent === 'claude'
+                    ? "await run('prompt', false, null, 'model', 'high', '10', { taskId: 'claude-failed-metric', phase: 'plan', iteration: 0 }, process.cwd());"
+                    : "await run('prompt', false, null, 'model', 'high', undefined, process.cwd());",
+                "console.log('returned');",
+                '} catch (err) {',
+                "console.log('CAUGHT ' + JSON.stringify({ isASE: err instanceof AgentSessionError, agent: err.agent, kind: err.kind, reason: err.reason, exitCode: err.exitCode, signal: err.signal }));",
+                '}',
+                "console.log('after-call');",
+            ].join('\n'), {
+                ...process.env,
+                PATH: scenario.body ? `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}` : emptyBins,
+                PIPELINE_STALL_TIMEOUT_MS: scenario.kind === 'stalled' ? '1' : '600000',
+                CANON_METRICS_FILE_OVERRIDE: metricsFile,
+            });
+            assert.equal(result.status, 0, combinedOutput(result));
+            assert.match(result.stdout, /after-call/);
+            assert.doesNotMatch(result.stdout, /^returned$/m);
+            const caught = JSON.parse(result.stdout.match(/^CAUGHT (.+)$/m)![1]) as Record<string, unknown>;
+            assert.equal(caught.isASE, true);
+            assert.equal(caught.agent, scenario.agent);
+            assert.equal(caught.kind, scenario.kind);
+            assert.match(String(caught.reason), scenario.reason);
+            if (scenario.kind === 'exit_code') assert.equal(caught.exitCode, 1);
+            if (scenario.kind === 'signal') assert.equal(caught.signal, 'SIGTERM');
+            assert.equal((result.stderr.match(/^■ orchestrator exit .*$/gm) ?? []).length, 1);
+            assert.match(result.stderr, /■ orchestrator exit code=0/);
+        }
+        assert.match(fs.readFileSync(metricsFile, 'utf8'), /\| claude-failed-metric \| plan \| claude \|.*\| failed \|/);
         writeExecutable(fakeBins, 'codex', ['exit 1']);
-        const codexNoExitResult = runNodeInline([
-            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+        const returned = runNodeInline([
             "import { runCodex } from './src/orchestrator/agents/codex.js';",
-            'registerExitHandlers();',
-            '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
-            "  console.log('after-runCodex');",
-            '})().catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), {
-            ...process.env,
-            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
-        });
-        assert.equal(codexNoExitResult.status, 0, codexNoExitResult.stderr);
-        assert.match(codexNoExitResult.stdout, /after-runCodex/);
-        assert.doesNotMatch(codexNoExitResult.stderr, /codex session exited 1/);
-        assert.doesNotMatch(codexNoExitResult.stderr, /code=1/);
-
-        writeExecutable(fakeBins, 'codex', ['sleep 2']);
-        const stallResult = runNodeInline([
-            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
-            "import { runCodex } from './src/orchestrator/agents/codex.js';",
-            'registerExitHandlers();',
-            '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
-            '})().catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), {
-            ...process.env,
-            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
-            PIPELINE_STALL_TIMEOUT_MS: '1',
-        });
-        assert.equal(stallResult.status, 1, stallResult.stderr);
-        const stallMarkers = stallResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
-        assert.equal(stallMarkers.length, 1, stallResult.stderr);
-        assert.match(stallMarkers[0] ?? '', /codex session stalled/);
-
-        writeExecutable(fakeBins, 'codex', ['kill -TERM $$']);
-        const signalResult = runNodeInline([
-            "import { registerExitHandlers } from './src/orchestrator/cli.js';",
-            "import { runCodex } from './src/orchestrator/agents/codex.js';",
-            'registerExitHandlers();',
-            '(async () => {',
-            "  await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
-            '})().catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), {
-            ...process.env,
-            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
-        });
-        assert.equal(signalResult.status, 1, signalResult.stderr);
-        const signalMarkers = signalResult.stderr.match(/^■ orchestrator exit .*$/gm) ?? [];
-        assert.equal(signalMarkers.length, 1, signalResult.stderr);
-        assert.match(signalMarkers[0] ?? '', /codex session received signal SIGTERM/);
+            "await runCodex('prompt', false, null, 'model', 'high', undefined, process.cwd());",
+            "console.log('after-runCodex');",
+        ].join('\n'), { ...process.env, PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}` });
+        assert.equal(returned.status, 0, returned.stderr);
+        assert.match(returned.stdout, /after-runCodex/);
     });
 });
 
@@ -8761,5 +8730,197 @@ void test('QA-end, human-review, and QA prompt consumers fail closed on a config
             assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/, kind);
             assert.doesNotMatch(result.stdout, /Committed|Pushing/);
         }
+    });
+});
+
+void test('main parks a failed plan durably and a plain rerun completes it', { concurrency: false }, () => {
+    withTempDir('agent-plan-park-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'plan-failure';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+        const statusPath = path.join(tasksRoot, taskId, 'status.json');
+        const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        status.phases.plan!.status = 'pending';
+        writeTaskStatus(tasksRoot, taskId, status);
+        const fakeBins = path.join(dir, 'bins');
+        fs.mkdirSync(fakeBins);
+        setupInvocationLoggingCliTools(fakeBins);
+        writeExecutable(fakeBins, 'claude', [
+            'if [ "${1:-}" = "--version" ]; then echo "fake-agent 1.0"; exit 0; fi',
+            'exit 1',
+        ]);
+        const failed = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3);
+        assert.equal(failed.status, 2, combinedOutput(failed));
+        const parked = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        assert.equal(parked.phases.plan?.status, 'blocked');
+        assert.equal(parked.phases.plan?.auto_block_count, 1);
+        assert.equal(parked.escalations?.length, 1);
+        assert.equal(parked.escalations?.[0].phase, 'plan');
+        assert.match(parked.escalations[0].reason, /claude session exited 1/);
+        assert.match(parked.escalations[0].reason, /canon run plan-failure/);
+        assert.match(failed.stderr, /■ orchestrator exit code=2 \[reason=claude session exited 1/);
+        assert.match(failed.stdout, /AGENT SESSION FAILED/);
+
+        writeExecutable(fakeBins, 'claude', [
+            'if [ "${1:-}" = "--version" ]; then echo "fake-agent 1.0"; exit 0; fi',
+            'printf "# Plan\\n\\n1. Implement the change.\\n" > "$CANON_TASKS_DIR_OVERRIDE/$FAKE_AGENT_TASK_ID/plan.md"',
+            'node "$FAKE_AGENT_COMPLETER"',
+        ]);
+        const recovered = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], { FAKE_AGENT_COMPLETE_PHASE: 'plan' });
+        assert.equal(recovered.status, 0, combinedOutput(recovered));
+        const done = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        assert.equal(done.phases.plan?.status, 'done');
+        assert.equal(done.status, 'implement');
+    });
+});
+
+void test('main parks a stalled Codex implement session', { concurrency: false }, () => {
+    withTempDir('agent-implement-park-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'implement-stall';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+        const fakeBins = path.join(dir, 'bins');
+        fs.mkdirSync(fakeBins);
+        setupInvocationLoggingCliTools(fakeBins);
+        writeExecutable(fakeBins, 'codex', [
+            'if [ "${1:-}" = "--version" ]; then echo "fake-agent 1.0"; exit 0; fi',
+            'sleep 2',
+        ]);
+        const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], { PIPELINE_STALL_TIMEOUT_MS: '1' });
+        assert.equal(result.status, 2, combinedOutput(result));
+        const parked = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        assert.equal(parked.phases.implement?.status, 'blocked');
+        assert.equal(parked.escalations?.at(-1)?.phase, 'implement');
+        assert.match(parked.escalations.at(-1)!.reason, /codex session stalled/);
+    });
+});
+
+for (const failure of ['signal', 'exit_code'] as const) {
+    void test(`main reopens a partially completed spec_review bundle after ${failure}`, { concurrency: false }, () => {
+        withTempDir(`agent-bundle-${failure}-`, dir => {
+            const { localDir } = makeGitFixture(dir);
+            const ids = ['bundle-a', 'bundle-b'];
+            const tasksRoot = writeReviewLoopFixture(localDir, ids[0], 'spec_review', 0, 0, true);
+            writeReviewLoopFixture(localDir, ids[1], 'spec_review', 0, 0, true);
+            const fakeBins = path.join(dir, 'bins');
+            fs.mkdirSync(fakeBins);
+            setupInvocationLoggingCliTools(fakeBins);
+            writeExecutable(fakeBins, 'codex', [
+                'if [ "${1:-}" = "--version" ]; then echo "fake-agent 1.0"; exit 0; fi',
+                'node "$FAKE_AGENT_COMPLETER"',
+                failure === 'signal' ? 'kill -TERM $$' : 'exit 1',
+            ]);
+            const first = runReviewLoopMain(localDir, tasksRoot, fakeBins, ids[0], 3, [ids[1]], { FAKE_AGENT_COMPLETE_PHASE: 'spec_review' });
+            assert.equal(first.status, 2, combinedOutput(first));
+            for (const id of ids) {
+                const parked = JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
+                assert.equal(parked.phases.spec_review?.status, 'blocked');
+                assert.equal(parked.status, 'spec_review');
+                assert.equal(parked.escalations?.length, 1);
+                assert.equal(parked.escalations?.[0].phase, 'spec_review');
+                assert.match(parked.escalations[0].reason, /canon run bundle-a bundle-b/);
+            }
+            writeExecutable(fakeBins, 'codex', [
+                'if [ "${1:-}" = "--version" ]; then echo "fake-agent 1.0"; exit 0; fi',
+                'FAKE_AGENT_TASK_ID=bundle-a node "$FAKE_AGENT_COMPLETER"',
+                'FAKE_AGENT_TASK_ID=bundle-b node "$FAKE_AGENT_COMPLETER"',
+            ]);
+            const second = runReviewLoopMain(localDir, tasksRoot, fakeBins, ids[0], 3, [ids[1]], { FAKE_AGENT_COMPLETE_PHASE: 'spec_review' });
+            assert.equal(second.status, 0, combinedOutput(second));
+            assert.doesNotMatch(combinedOutput(second), /Bundle tasks are at different phases/);
+            for (const id of ids) {
+                const done = JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
+                assert.equal(done.phases.spec_review?.status, 'done');
+                assert.equal(done.status, 'plan');
+            }
+        });
+    });
+}
+
+void test('QA failure rejects before partial stdout can salvage done.md', { concurrency: false }, () => {
+    withTempDir('agent-qa-salvage-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'qa-failure';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+        const statusPath = path.join(tasksRoot, taskId, 'status.json');
+        const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        status.phases.code_review!.status = 'done';
+        writeTaskStatus(tasksRoot, taskId, status);
+        const fakeBins = path.join(dir, 'bins');
+        fs.mkdirSync(fakeBins);
+        writeExecutable(fakeBins, 'claude', ['printf "# QA Summary\\n\\nAll checks passed.\\n"', 'exit 1']);
+        const result = runNodeInline([
+            `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+            `import { AgentSessionError } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/agents/errors.ts')).href)};`,
+            'try {',
+            `await runQaPhase(buildPipelineState([${JSON.stringify(taskId)}]), false, null);`,
+            "console.log('returned');",
+            '} catch (error) {',
+            "console.log('CAUGHT ' + JSON.stringify({ isASE: error instanceof AgentSessionError, agent: error.agent, kind: error.kind }));",
+            '}',
+        ].join('\n'), { ...process.env, PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.match(result.stdout, /# QA Summary/);
+        assert.match(result.stdout, /CAUGHT {"isASE":true,"agent":"claude","kind":"exit_code"}/);
+        assert.doesNotMatch(result.stdout, /^returned$/m);
+        assert.equal(fs.existsSync(path.join(tasksRoot, taskId, 'done.md')), false);
+        const incomplete = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        assert.equal(incomplete.phases.qa?.status, 'in_progress');
+    });
+});
+
+void test('agent park boundary propagates non-agent errors and parks typed failures only', () => {
+    withTempDir('agent-park-boundary-', dir => {
+        for (const typed of [false, true]) {
+            const taskId = typed ? 'typed-error' : 'plain-error';
+            const tasksRoot = path.join(dir, 'tasks');
+            const status = makeReviewLoopStatus(taskId, 'code_review', 0) as unknown as StatusJson;
+            status.phases.plan!.status = 'in_progress';
+            writeTaskStatus(tasksRoot, taskId, status);
+            const result = runNodeInline([
+                "import { registerExitHandlers } from './src/orchestrator/cli.js';",
+                "import { withAgentSessionPark } from './src/orchestrator/main.ts';",
+                "import { AgentSessionError } from './src/orchestrator/agents/errors.js';",
+                'registerExitHandlers();',
+                `void withAgentSessionPark('plan', [${JSON.stringify(taskId)}], async () => {`,
+                typed
+                    ? "throw new AgentSessionError({ agent: 'claude', kind: 'exit_code', exitCode: 1, reason: 'claude session exited 1' });"
+                    : "throw new Error('plain boom');",
+                '});',
+            ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot });
+            assert.equal(result.status, typed ? 2 : 1, combinedOutput(result));
+            const after = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+            assert.equal(after.phases.plan?.status, typed ? 'blocked' : 'in_progress');
+            assert.equal(after.escalations?.length, typed ? 1 : 0);
+            if (!typed) {
+                assert.match(result.stderr, /reason=unhandled rejection: plain boom/);
+                assert.doesNotMatch(result.stdout, /AGENT SESSION FAILED/);
+            }
+        }
+    });
+});
+
+void test('agent failure park writes task status only in its active worktree', () => {
+    withTempDir('agent-park-worktree-', dir => {
+        const taskId = 'worktree-park';
+        const { localDir, worktreeDir } = makeBootstrappedTaskWorktreeFixture(dir, taskId);
+        const mainPath = path.join(localDir, 'tasks', taskId, 'status.json');
+        const worktreeStatusPath = path.join(worktreeDir, 'tasks', taskId, 'status.json');
+        const before = fs.readFileSync(mainPath, 'utf8');
+        const mainHref = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href;
+        const errorsHref = pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/agents/errors.ts')).href;
+        const result = runNodeInline([
+            `import { withAgentSessionPark } from ${JSON.stringify(mainHref)};`,
+            `import { AgentSessionError } from ${JSON.stringify(errorsHref)};`,
+            `await withAgentSessionPark('implement', [${JSON.stringify(taskId)}], async () => {`,
+            "throw new AgentSessionError({ agent: 'codex', kind: 'stalled', reason: 'codex session stalled' });",
+            '});',
+        ].join('\n'), { ...process.env, CANON_WORKTREES_ROOT: path.join(localDir, '.canon', 'worktrees') }, localDir);
+        assert.equal(result.status, 2, combinedOutput(result));
+        assert.equal(fs.readFileSync(mainPath, 'utf8'), before);
+        const parked = JSON.parse(fs.readFileSync(worktreeStatusPath, 'utf8')) as StatusJson;
+        assert.equal(parked.phases.implement?.status, 'blocked');
+        assert.equal(parked.escalations?.at(-1)?.phase, 'implement');
     });
 });
