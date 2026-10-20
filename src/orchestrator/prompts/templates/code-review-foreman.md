@@ -149,6 +149,8 @@ Test-integrity findings are always code-bugs.
 
 ### 4. Write `review.md`
 
+When you cite a section of a Markdown doc with the quoted form `§"…"`, the quoted text must be an exact heading in that file. To point at a bold-lead paragraph or anything that is not a heading, use `file:line` or the unquoted `§Name` form instead.
+
 For each task, write `tasks/<id>/review.md`.
 
 Round 1 fills the existing template structure directly — do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.

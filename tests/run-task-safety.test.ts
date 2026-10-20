@@ -1274,6 +1274,14 @@ function runAutoCommitCodeInline(taskId: string, cwd: string): { status: number 
     ].join('\n'), childEnvWithoutTasksOverride(), cwd);
 }
 
+function runReviewEntryRetryInline(taskId: string, cwd: string): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+        `.then(m => { m.retryImplementAutoCommitAtReviewEntry([${JSON.stringify(taskId)}], ${JSON.stringify(cwd)}); })`,
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), { ...childEnvWithoutTasksOverride(), CANON_TASKS_DIR_OVERRIDE: path.join(cwd, 'tasks') }, cwd);
+}
+
 function runEnsureWorktreeInline(
     taskId: string,
     branch: string,
@@ -1372,6 +1380,71 @@ function latestNameStatuses(cwd: string): Set<string> {
         cwd, encoding: 'utf8',
     }).trim().split('\n'));
 }
+
+void test('review-entry auto-commit retry is limited to dirty handoff files', () => {
+    withTempDir('run-task-review-entry-retry-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'initial-fixture.txt': 'baseline\n' }, ['`initial-fixture.txt`']);
+        const baseline = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        fs.writeFileSync(path.join(localDir, 'tasks/task-a/review.md'), 'pipeline artifact\n');
+        fs.mkdirSync(path.join(localDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'docs/pipeline-invocations.md'), 'telemetry\n');
+        const cleanHandoff = runReviewEntryRetryInline('task-a', localDir);
+        assert.equal(cleanHandoff.status, 0, cleanHandoff.stderr);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim(), baseline);
+        assert.doesNotMatch(cleanHandoff.stdout, /Retrying the implement auto-commit/);
+
+        fs.writeFileSync(path.join(localDir, 'initial-fixture.txt'), 'handoff source dirty\n');
+        const retried = runReviewEntryRetryInline('task-a', localDir);
+        assert.equal(retried.status, 0, retried.stderr);
+        assert.match(retried.stdout, /Retrying the implement auto-commit/);
+        assert.notEqual(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim(), baseline);
+    });
+});
+
+void test('review-entry retry skips a current operator accept but retries after HEAD advances', () => {
+    withTempDir('run-task-review-entry-accepted-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'initial-fixture.txt': 'baseline\n' }, ['`initial-fixture.txt`']);
+        const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        const statusPath = path.join(localDir, 'tasks/task-a/status.json');
+        const accepted = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Record<string, unknown>;
+        const phases = accepted.phases as Record<string, Record<string, unknown>>;
+        phases.implement.operator_accepted = true;
+        phases.implement.operator_accepted_sha = sha;
+        fs.writeFileSync(statusPath, `${JSON.stringify(accepted, null, 2)}\n`);
+        fs.writeFileSync(path.join(localDir, 'initial-fixture.txt'), 'dirty after accept\n');
+        const skipped = runReviewEntryRetryInline('task-a', localDir);
+        assert.equal(skipped.status, 0, skipped.stderr);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim(), sha);
+        assert.match(execFileSync('git', ['status', '--porcelain'], { cwd: localDir, encoding: 'utf8' }), /initial-fixture\.txt/);
+        assert.doesNotMatch(skipped.stdout, /Retrying the implement auto-commit/);
+
+        fs.writeFileSync(path.join(localDir, 'unrelated.txt'), 'advance HEAD\n');
+        gitIn(localDir, 'add', 'unrelated.txt');
+        gitIn(localDir, 'commit', '-m', 'advance accepted HEAD');
+        const retried = runReviewEntryRetryInline('task-a', localDir);
+        assert.equal(retried.status, 0, retried.stderr);
+        assert.match(retried.stdout, /Retrying the implement auto-commit/);
+        assert.doesNotMatch(execFileSync('git', ['status', '--porcelain'], { cwd: localDir, encoding: 'utf8' }), /initial-fixture\.txt/);
+    });
+});
+
+void test('review-entry retry commit failure exits before any review preflight', () => {
+    withTempDir('run-task-review-entry-failure-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'initial-fixture.txt': 'baseline\n' }, ['`initial-fixture.txt`']);
+        fs.writeFileSync(path.join(localDir, 'initial-fixture.txt'), 'dirty\n');
+        fs.writeFileSync(path.join(localDir, 'tasks/task-a/review.md'), '# Code Review\n');
+        const hook = path.join(localDir, '.git/hooks/pre-commit');
+        fs.mkdirSync(path.dirname(hook), { recursive: true });
+        fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+        const result = runReviewEntryRetryInline('task-a', localDir);
+        assert.equal(result.status, 1);
+        assert.match(`${result.stdout}\n${result.stderr}`, /Auto-commit failed:/);
+        assert.doesNotMatch(fs.readFileSync(path.join(localDir, 'tasks/task-a/review.md'), 'utf8'), /handoff→diff/);
+        const status = JSON.parse(fs.readFileSync(path.join(localDir, 'tasks/task-a/status.json'), 'utf8')) as { phases: { code_review: { preflight_rejections_current_loop?: number; iterations_current_loop?: number } } };
+        assert.equal(status.phases.code_review.preflight_rejections_current_loop ?? 0, 0);
+        assert.equal(status.phases.code_review.iterations_current_loop ?? 0, 0);
+    });
+});
 
 void test('autoCommitCode commits an already-staged deletion instead of failing the bulk add', () => {
     withTempDir('run-task-autocommit-staged-deletion-', dir => {

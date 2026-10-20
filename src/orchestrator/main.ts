@@ -348,7 +348,7 @@ function isPipelineOwnedPath(filePath: string, taskIds: readonly string[]): bool
  * Bundle is all-or-nothing — accepting one task's implement but not the
  * others would leave autocommit half-running on the unaccepted tasks.
  */
-function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boolean {
+function implementAcceptedAtHead(taskIds: readonly string[], cwd: string): boolean {
     const allAccepted = taskIds.every(taskId => {
         const status = splitState.readStatus(taskId);
         return status.phases?.implement?.operator_accepted === true;
@@ -367,6 +367,12 @@ function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boo
     });
     if (!shaMatch) return false;
 
+    return true;
+}
+
+function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boolean {
+    if (!implementAcceptedAtHead(taskIds, cwd)) return false;
+
     // Source-tree must be clean (pipeline-owned paths are fine). Skipping
     // auto-commit when the tree has fresh source edits would let them slip
     // straight into code_review.
@@ -376,6 +382,26 @@ function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boo
     const dirtyPaths = [...splitGit.parsePorcelain(dirty.stdout)];
     const sourceDirty = dirtyPaths.filter(p => !isPipelineOwnedPath(p, taskIds));
     return sourceDirty.length === 0;
+}
+
+/** Retry a failed implement commit before code_review reads committed history. */
+export function retryImplementAutoCommitAtReviewEntry(taskIds: string[], cwd: string): boolean {
+    if (implementAcceptedAtHead(taskIds, cwd)) return false;
+
+    const handoffFiles = new Set<string>();
+    for (const taskId of taskIds) {
+        for (const file of splitValidation.parseHandoffChangesRows(taskId).files) handoffFiles.add(file);
+    }
+    if (handoffFiles.size === 0) return false;
+
+    const status = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+    if (!status.ok) return false;
+    const dirty = splitGit.parsePorcelain(status.stdout);
+    if (![...dirty].some(file => handoffFiles.has(file))) return false;
+
+    splitCli.info('Retrying the implement auto-commit that did not complete…');
+    autoCommitCode(taskIds, cwd);
+    return true;
 }
 
 export function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
@@ -3784,6 +3810,10 @@ export async function main(): Promise<void> {
         console.log('────────────────────────────────────────');
         info(`Current phase: ${currentPhase}`);
         console.log('────────────────────────────────────────');
+
+        if (currentPhase === 'code_review') {
+            retryImplementAutoCommitAtReviewEntry(taskIds, splitWorktree.getActiveCwd(taskIds));
+        }
 
         const state = buildPipelineState(taskIds);
         await withAgentSessionPark(currentPhase, taskIds, async () => {
