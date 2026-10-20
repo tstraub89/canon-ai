@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
+    compareTaskSize,
     defaultMaxReviewLoops,
     detectTier,
     getEffectiveSize,
@@ -500,4 +501,9 @@ void test('policy: empty task list falls back to XS/fast tier', () => {
     assert.equal(p.nominalSize, 'XS');
     assert.equal(p.effectiveSize, 'XS');
     assert.deepEqual(p.claude('spec'), { model: 'sonnet', effort: 'medium', budget: '5.00' });
+});
+
+void test('compareTaskSize orders sizes XS→XL, not lexically', () => {
+    assert.deepEqual((['XL', 'L', 'M', 'S', 'XS'] as const).slice().sort(compareTaskSize), ['XS', 'S', 'M', 'L', 'XL']);
+    assert.deepEqual((['XL', 'S', 'L'] as const).slice().sort(compareTaskSize), ['S', 'L', 'XL']);
 });

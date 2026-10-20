@@ -3567,7 +3567,7 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
     for (const filePath of files) {
       if (gitIgnored.has(filePath)) continue;
       if (!coveredPaths.has(filePath)) {
-        issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff`);
+        issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff \u2014 it has no committed change against the task base. If it was untouched or rewritten with identical content, drop the row`);
       }
     }
   }
@@ -3766,6 +3766,11 @@ function currentBranchOrEmpty() {
   if (result.error || result.status !== 0) return "";
   return (result.stdout ?? "").trim();
 }
+function remoteDefaultBranchOrEmpty() {
+  const result = runGit(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (result.error || result.status !== 0) return "";
+  return (result.stdout ?? "").trim().replace(/^origin\//, "");
+}
 function listTemplateFiles() {
   const root = templatesRoot();
   if (!fs15.existsSync(root)) {
@@ -3817,8 +3822,14 @@ function taskNew(args2) {
   if (fs15.existsSync(taskDir)) {
     throw new Error(`Error: Task directory ${taskDir} already exists.`);
   }
+  let implicitBaseWarning = "";
   if (!baseBranch) {
     baseBranch = currentBranchOrEmpty() || "main";
+    const defaultBranch = remoteDefaultBranchOrEmpty();
+    if (defaultBranch && defaultBranch !== baseBranch) {
+      implicitBaseWarning = `Warning: base_branch=${baseBranch} was taken from the current branch, not the default branch (${defaultBranch}).
+  If that's unintended: canon task set ${id} base_branch ${defaultBranch}  (or pass --base <branch> to canon task new)`;
+    }
   }
   fs15.mkdirSync(taskDir, { recursive: true });
   for (const basename2 of listTemplateFiles()) {
@@ -3840,6 +3851,8 @@ function taskNew(args2) {
     console.error(`Warning: created task without canon snapshot refresh: ${message}`);
   }
   printCreatedTask(id, taskDir, baseBranch);
+  if (implicitBaseWarning) console.error(`
+${implicitBaseWarning}`);
 }
 function derivePhase(status) {
   return deriveTopLevelStatus(status);
@@ -4934,12 +4947,22 @@ function defaultGitRunner(args2) {
 var CANON_AI_DEP_KEYS = ["dependencies", "devDependencies", "optionalDependencies"];
 var STRICT_FINAL_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 var FULL_SHA_RE = /^[0-9a-f]{40}$/i;
+function upstreamSlug() {
+  const upstreamOverride = process.env.CANON_UPSTREAM_REPO?.trim();
+  return upstreamOverride ? upstreamOverride : CANON_UPSTREAM_REPO;
+}
+function pnpmHint() {
+  return `This looks like a pnpm install. Update it with pnpm instead: \`pnpm add -g canon-ai@<version>\` for a global install, or \`pnpm add -D canon-ai@<version>\` in your project. For a development commit (what --channel main / --ref install), use \`pnpm add -g github:${upstreamSlug()}#<sha>\` (or \`pnpm add -D \u2026\` in your project). Then run \`canon upgrade\` to refresh the templates.`;
+}
+function isPnpmStoreShape(installRoot) {
+  const normalized = installRoot.replace(/\\/g, "/");
+  return normalized.includes("/.pnpm/") || normalized.endsWith("/.pnpm") || normalized.includes("/node_modules/");
+}
 function layoutGate(installRoot) {
   if (!existsSync4(join4(installRoot, "package.json"))) {
-    return {
-      ok: false,
-      message: `canon update: no package.json found at ${installRoot} \u2014 this doesn't look like an install root. Refusing to run npm here.`
-    };
+    const base = `canon update: no package.json found at ${installRoot} \u2014 this doesn't look like an install root. Refusing to run npm here.`;
+    return { ok: false, message: isPnpmStoreShape(installRoot) ? `${base}
+${pnpmHint()}` : base };
   }
   return { ok: true };
 }
@@ -5198,7 +5221,7 @@ function updateCmd(args2, deps = {}) {
     dependencyBlock = dependency.dependencyBlock;
   }
   const upstreamOverride = process.env.CANON_UPSTREAM_REPO?.trim();
-  const slug = upstreamOverride ? upstreamOverride : CANON_UPSTREAM_REPO;
+  const slug = upstreamSlug();
   const usesRegistry = options.channel !== "main" && !options.ref && !upstreamOverride;
   const npmView = deps.npmViewRunner ?? defaultNpmViewRunner;
   let channel;

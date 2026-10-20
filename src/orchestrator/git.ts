@@ -241,6 +241,8 @@ export type EnsureBranchOptions = {
 
 function isPipelineOwnedDirtyPath(filePath: string): boolean {
     if (filePath.startsWith('tasks/')) return true;
+    // `canon update` writes the install record; it is canon-owned, not a stray source edit.
+    if (filePath === '.canon/provenance.json') return true;
     return (PIPELINE_TELEMETRY_FILES as readonly string[]).includes(filePath);
 }
 

@@ -119,6 +119,11 @@ export type PipelinePolicy = {
 };
 
 const SIZE_ORDER: readonly TaskSize[] = ['XS', 'S', 'M', 'L', 'XL'];
+
+/** Sort comparator for task sizes in canonical XS→XL order. */
+export function compareTaskSize(a: TaskSize, b: TaskSize): number {
+    return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
+}
 const SINGLE_PASS_BUDGET_BY_SIZE: Record<TaskSize, string> = {
     XS: '5.00',
     S: '5.00',

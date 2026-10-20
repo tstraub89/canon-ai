@@ -339,6 +339,38 @@ void test('task new creates a task from templates and rejects existing tasks', (
     });
 });
 
+void test('task new warns when the implicit base branch is not the remote default branch', () => {
+    withTempDir('task-new-base-', root => {
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
+        git(root, ['init', '-q', '-b', 'main']);
+        git(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init']);
+        git(root, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+        git(root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+
+        const captureStderr = (fn: () => void): string => {
+            const lines: string[] = [];
+            const original = console.error;
+            console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+            try { captureStdout(fn); } finally { console.error = original; }
+            return lines.join('\n');
+        };
+
+        withCwd(root, () => {
+            assert.doesNotMatch(captureStderr(() => taskNew(['on-default', 'On default'])), /base_branch=/);
+            assert.equal(readStatusFile(path.join(root, 'tasks', 'on-default')).base_branch, 'main');
+
+            git(root, ['checkout', '-q', '-b', 'scratch']);
+            const warning = captureStderr(() => taskNew(['on-scratch', 'On scratch']));
+            assert.match(warning, /base_branch=scratch was taken from the current branch, not the default branch \(main\)/);
+            assert.match(warning, /canon task set on-scratch base_branch main/);
+            assert.equal(readStatusFile(path.join(root, 'tasks', 'on-scratch')).base_branch, 'scratch');
+
+            assert.doesNotMatch(captureStderr(() => taskNew(['explicit', 'Explicit', '--base', 'scratch'])), /base_branch=/);
+        });
+    });
+});
+
 void test('task new rejects invalid task IDs', () => {
     withTempDir('task-new-invalid-', root => {
         fs.mkdirSync(path.join(root, '.canon'), { recursive: true });

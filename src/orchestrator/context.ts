@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { REPO_ROOT, config } from './env.js';
+import { compareTaskSize } from '../lib/pipeline-policy.js';
 import { getEffectiveSize, getNominalSize } from './policy.js';
 import { taskDirFor } from './state.js';
 import type { ImplementMode, PipelineState } from './types.js';
@@ -169,7 +170,7 @@ export function buildImplementStateHeader(state: PipelineState, mode: ImplementM
     };
 
     const sizes = new Set(tasks.map(t => t.status.task_size ?? 'M'));
-    const nominalLabel = sizes.size === 1 ? [...sizes][0] : `mixed (${[...sizes].sort().join(',')})`;
+    const nominalLabel = sizes.size === 1 ? [...sizes][0] : `mixed (${[...sizes].sort(compareTaskSize).join(',')})`;
     const effective = getEffectiveSize(tasks);
     const nominal = getNominalSize(tasks);
     const sizeLabel = effective !== nominal

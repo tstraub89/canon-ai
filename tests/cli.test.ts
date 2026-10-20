@@ -527,6 +527,27 @@ void test('layoutGate: missing package.json is a distinct install-root refusal',
     });
 });
 
+void test('layoutGate: a pnpm virtual-store root names pnpm as the updater', () => {
+    withTempDir(dir => {
+        const pnpmRoot = path.join(dir, 'node_modules', '.pnpm', 'canon-ai@3.10.1');
+        fs.mkdirSync(pnpmRoot, { recursive: true });
+        const result = layoutGate(pnpmRoot);
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+            assert.match(result.message, /no package\.json.*install root/);
+            assert.match(result.message, /pnpm add -g canon-ai@<version>/);
+            assert.match(result.message, /pnpm add -g github:[^#\s]+\/canon-ai#<sha>/);
+        }
+        withEnv({ CANON_UPSTREAM_REPO: 'example-fork/canon-ai' }, () => {
+            const forked = layoutGate(pnpmRoot);
+            if (!forked.ok) assert.match(forked.message, /github:example-fork\/canon-ai#<sha>/);
+            else assert.fail('expected refusal');
+        });
+        const plain = layoutGate(dir);
+        if (!plain.ok) assert.doesNotMatch(plain.message, /pnpm/);
+    });
+});
+
 void test('canon update: malformed or unrelated local manifests refuse before npm', () => {
     withTempDir(dir => {
         const malformedRoot = path.join(dir, 'malformed');

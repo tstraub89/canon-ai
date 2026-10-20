@@ -1063,6 +1063,7 @@ function isCommandAvailable(command) {
 }
 function isPipelineOwnedDirtyPath(filePath) {
   if (filePath.startsWith("tasks/")) return true;
+  if (filePath === ".canon/provenance.json") return true;
   return PIPELINE_TELEMETRY_FILES.includes(filePath);
 }
 function findDirtyRepoRootSourcePaths(statusOutput) {
@@ -1876,6 +1877,9 @@ function resolveCodeReviewScope(facts) {
   return { scope: "delta", base: prev.reviewedSha, reason: "delta" };
 }
 var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
+function compareTaskSize(a, b) {
+  return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
+}
 var SINGLE_PASS_BUDGET_BY_SIZE = {
   XS: "5.00",
   S: "5.00",
@@ -3868,7 +3872,7 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
     for (const filePath of files) {
       if (gitIgnored.has(filePath)) continue;
       if (!coveredPaths.has(filePath)) {
-        issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff`);
+        issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff \u2014 it has no committed change against the task base. If it was untouched or rewritten with identical content, drop the row`);
       }
     }
   }
@@ -4298,7 +4302,7 @@ function buildImplementStateHeader(state, mode) {
     resume: "previous implement pass was interrupted after code changes were made \u2014 finish validation + handoff only"
   };
   const sizes = new Set(tasks.map((t) => t.status.task_size ?? "M"));
-  const nominalLabel = sizes.size === 1 ? [...sizes][0] : `mixed (${[...sizes].sort().join(",")})`;
+  const nominalLabel = sizes.size === 1 ? [...sizes][0] : `mixed (${[...sizes].sort(compareTaskSize).join(",")})`;
   const effective = getEffectiveSize2(tasks);
   const nominal = getNominalSize2(tasks);
   const sizeLabel = effective !== nominal ? `${nominalLabel} (effective: ${effective} via delicate)` : nominalLabel;

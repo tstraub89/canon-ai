@@ -107,14 +107,31 @@ const STRICT_FINAL_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const FULL_SHA_RE = /^[0-9a-f]{40}$/i;
 
 type GatePass = { ok: true };
+
+// pnpm's virtual store (`node_modules/.pnpm/...`) nests node_modules, which
+// detectInstallType routes here. npm must not mutate pnpm-managed state, so
+// point at the package manager that owns the install instead.
+function upstreamSlug(): string {
+    const upstreamOverride = process.env.CANON_UPSTREAM_REPO?.trim();
+    return upstreamOverride ? upstreamOverride : CANON_UPSTREAM_REPO;
+}
+
+function pnpmHint(): string {
+    return 'This looks like a pnpm install. Update it with pnpm instead: `pnpm add -g canon-ai@<version>` for a global install, or `pnpm add -D canon-ai@<version>` in your project. '
+        + `For a development commit (what --channel main / --ref install), use \`pnpm add -g github:${upstreamSlug()}#<sha>\` (or \`pnpm add -D …\` in your project). `
+        + 'Then run `canon upgrade` to refresh the templates.';
+}
+
+function isPnpmStoreShape(installRoot: string): boolean {
+    const normalized = installRoot.replace(/\\/g, '/');
+    return normalized.includes('/.pnpm/') || normalized.endsWith('/.pnpm') || normalized.includes('/node_modules/');
+}
 type GateFailure = { ok: false; message: string };
 
 export function layoutGate(installRoot: string): GatePass | GateFailure {
     if (!existsSync(join(installRoot, 'package.json'))) {
-        return {
-            ok: false,
-            message: `canon update: no package.json found at ${installRoot} — this doesn't look like an install root. Refusing to run npm here.`,
-        };
+        const base = `canon update: no package.json found at ${installRoot} — this doesn't look like an install root. Refusing to run npm here.`;
+        return { ok: false, message: isPnpmStoreShape(installRoot) ? `${base}\n${pnpmHint()}` : base };
     }
     return { ok: true };
 }
@@ -462,7 +479,7 @@ export function updateCmd(args: string[], deps: UpdateCmdDeps = {}): void {
     }
 
     const upstreamOverride = process.env.CANON_UPSTREAM_REPO?.trim();
-    const slug = upstreamOverride ? upstreamOverride : CANON_UPSTREAM_REPO;
+    const slug = upstreamSlug();
     const usesRegistry = options.channel !== 'main' && !options.ref && !upstreamOverride;
     const npmView = deps.npmViewRunner ?? defaultNpmViewRunner;
     let channel: 'stable' | 'main' | 'ref';

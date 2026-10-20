@@ -1488,7 +1488,7 @@ export function verifyHandoffAgainstDiffFromData(
         for (const filePath of files) {
             if (gitIgnored.has(filePath)) continue;
             if (!coveredPaths.has(filePath)) {
-                issues.push(`[${taskId}] handoff→diff: ${filePath} listed in handoff but not in diff`);
+                issues.push(`[${taskId}] handoff→diff: ${filePath} listed in handoff but not in diff — it has no committed change against the task base. If it was untouched or rewritten with identical content, drop the row`);
             }
         }
     }
