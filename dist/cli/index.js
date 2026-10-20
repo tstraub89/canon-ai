@@ -4947,7 +4947,13 @@ function defaultGitRunner(args2) {
 var CANON_AI_DEP_KEYS = ["dependencies", "devDependencies", "optionalDependencies"];
 var STRICT_FINAL_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 var FULL_SHA_RE = /^[0-9a-f]{40}$/i;
-var PNPM_HINT = `This looks like a pnpm install. Update it with pnpm instead: \`pnpm add -g canon-ai@<version>\` for a global install, or \`pnpm add -D canon-ai@<version>\` in your project. For a development commit (what --channel main / --ref install), use \`pnpm add -g github:${CANON_UPSTREAM_REPO}#<sha>\` (or \`pnpm add -D \u2026\` in your project). Then run \`canon upgrade\` to refresh the templates.`;
+function upstreamSlug() {
+  const upstreamOverride = process.env.CANON_UPSTREAM_REPO?.trim();
+  return upstreamOverride ? upstreamOverride : CANON_UPSTREAM_REPO;
+}
+function pnpmHint() {
+  return `This looks like a pnpm install. Update it with pnpm instead: \`pnpm add -g canon-ai@<version>\` for a global install, or \`pnpm add -D canon-ai@<version>\` in your project. For a development commit (what --channel main / --ref install), use \`pnpm add -g github:${upstreamSlug()}#<sha>\` (or \`pnpm add -D \u2026\` in your project). Then run \`canon upgrade\` to refresh the templates.`;
+}
 function isPnpmStoreShape(installRoot) {
   const normalized = installRoot.replace(/\\/g, "/");
   return normalized.includes("/.pnpm/") || normalized.endsWith("/.pnpm") || normalized.includes("/node_modules/");
@@ -4956,7 +4962,7 @@ function layoutGate(installRoot) {
   if (!existsSync4(join4(installRoot, "package.json"))) {
     const base = `canon update: no package.json found at ${installRoot} \u2014 this doesn't look like an install root. Refusing to run npm here.`;
     return { ok: false, message: isPnpmStoreShape(installRoot) ? `${base}
-${PNPM_HINT}` : base };
+${pnpmHint()}` : base };
   }
   return { ok: true };
 }
@@ -5215,7 +5221,7 @@ function updateCmd(args2, deps = {}) {
     dependencyBlock = dependency.dependencyBlock;
   }
   const upstreamOverride = process.env.CANON_UPSTREAM_REPO?.trim();
-  const slug = upstreamOverride ? upstreamOverride : CANON_UPSTREAM_REPO;
+  const slug = upstreamSlug();
   const usesRegistry = options.channel !== "main" && !options.ref && !upstreamOverride;
   const npmView = deps.npmViewRunner ?? defaultNpmViewRunner;
   let channel;

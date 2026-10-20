@@ -538,6 +538,11 @@ void test('layoutGate: a pnpm virtual-store root names pnpm as the updater', () 
             assert.match(result.message, /pnpm add -g canon-ai@<version>/);
             assert.match(result.message, /pnpm add -g github:[^#\s]+\/canon-ai#<sha>/);
         }
+        withEnv({ CANON_UPSTREAM_REPO: 'example-fork/canon-ai' }, () => {
+            const forked = layoutGate(pnpmRoot);
+            if (!forked.ok) assert.match(forked.message, /github:example-fork\/canon-ai#<sha>/);
+            else assert.fail('expected refusal');
+        });
         const plain = layoutGate(dir);
         if (!plain.ok) assert.doesNotMatch(plain.message, /pnpm/);
     });
