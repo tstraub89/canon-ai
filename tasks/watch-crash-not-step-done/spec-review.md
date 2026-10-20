@@ -46,3 +46,17 @@ None.
 - [x] **Approved** — spec is implementable as written
 - [ ] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase (list items above)
+
+## Amendment Review
+- [x] **Approved**
+- [ ] **Approved with nits**
+- [ ] **Changes requested**
+
+> Findings: None. The amendment adds the generated bundle files omitted from the prior Affected Files list and makes the build freshness condition verifiable. AC-12's documentation placement and line-start parser test fit the approved stderr-only diagnostic and summary-line contract without changing its behavior.
+
+## Amendment Review Round 2
+- [x] **Approved**
+- [ ] **Approved with nits**
+- [ ] **Changes requested**
+
+> Findings: None. Round 2 replaces the line-start constraint with a marker match that can begin after unterminated agent output while requiring the timestamp to terminate the line or file. The new cases verify both the mid-line marker and truncated-tail fallback. This is consistent with the existing writer's marker suffix and preserves the approved diagnostic and summary-line behavior.

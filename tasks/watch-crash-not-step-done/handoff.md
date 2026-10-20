@@ -1,121 +1,73 @@
 # Implementation Handoff: watch-crash-not-step-done
 
 > Author: Codex | Spec: `tasks/watch-crash-not-step-done/spec.md` | Plan: `tasks/watch-crash-not-step-done/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
-
-## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+| `src/cli/commands/watch.ts` | Classify pending/in-progress-after-done as death when dead PID evidence or a fresh non-zero exit marker exists; print crash reason to stderr. |
+| `src/orchestrator/run-context.ts` | Add bounded last exit-marker parser. Marker text may follow unterminated output, but the ISO timestamp must end the line/file. |
+| `tests/watch.test.ts` | Cover marker parsing, classification, watch command output, truncated tails, mid-line markers, and exact mtime tolerance boundary. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Clarify exit codes and stderr reason behavior; regenerated template mirror, with reason sentence after the summary code block. |
+| `dist/cli/index.js` | Rebuilt tracked CLI bundle. |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Use the detached run log and surviving dead PID evidence to distinguish crashes from clean `--step` completion. Compare marker time to `status.json` mtime using the one-second tolerance. Keep summary stdout stable and send crash details to stderr. The Round 2 amendment permits the marker prefix to follow unterminated agent output while retaining the required end-of-line timestamp shape.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| `classifyIdle` reads existing `RunContext.taskDir` and `statusFile` directly. | These fields already provide the needed paths; no context shape change was needed. | None. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Pre-fix regression returned `step_done` instead of `death`; passes after fix. |
+| AC-2 | Met | Dead resolved PID test returns death. |
+| AC-3 | Met | Existing clean step_done test remains unchanged and passes. |
+| AC-4 | Met | Final code=0 marker remains step_done. |
+| AC-5 | Met | Marker older than status mtime by 20 seconds remains step_done. |
+| AC-6 | Met | Parser tests cover last marker, code=0 winning, truncated final marker, no valid marker, absent log, signal code, and bracket in reason. |
+| AC-7 | Met | watchCmd exits 4 and emits exactly `state=plan reason=death`. |
+| AC-8 | Met | Stderr has one crash diagnostic with reason/resume hint; signal marker also reports reason. |
+| AC-9 | Met | Exit-code prose updated and template sync check passes. |
+| AC-10 | Partial | Required checks were run. Targeted watch suite passes. Full suite has one unrelated failure listed below. |
+| AC-11 | Partial | Both builds succeeded and `git status --porcelain -- dist` was unchanged between builds. The bundle remains a working-tree change until the pipeline-owned commit; the post-commit `git diff --exit-code -- dist/` check must run after that commit. `dist/orchestrator/run-task.js` did not change. |
+| AC-12′ | Met | Red-first command `npx tsx --test --test-name-pattern='accepts unterminated output' tests/watch.test.ts` failed pre-fix with null instead of the code=1 marker; passes after removing the start anchor. Tests also reject a truncated tail and a marker followed by trailing output. |
+| AC-12 docs placement | Met | Stderr reason sentence follows the summary code block. |
 
 ## Edge Cases Considered
 
-- ...
+- Exit markers are read only from the final 64 KiB of the run log.
+- Malformed/truncated marker lines are skipped; absent or unreadable logs produce no marker evidence.
+- Signal markers count as non-zero.
+- A live resolved PID does not count as runtime-file crash evidence.
+- If status mtime cannot be read, a non-zero marker is treated as fresh.
+- Mid-line marker prefixes are accepted only when the ISO timestamp terminates the line/file; marker text followed by more output is rejected.
+- Exact tolerance boundary (1000 ms older) counts as crash; 1001 ms older is stale.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- [pipeline] The amended Affected Files requires committing `dist/cli/index.js`. The pipeline owns staging/commit; after that commit, rerun the CI freshness check (`npm run build && git diff --exit-code -- dist/`). The bundle is currently regenerated and stable across consecutive builds.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Fail – unrelated | `tests/run-task-signals.test.ts:314`, “SIGTERM shutdown writes exactly one exit marker before the re-raise”; outside this task's affected files. Repro hint: `npm test`. |
+| `npm run build` | Pass | Ran twice; `git status --porcelain -- dist` stayed stable. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npx tsx --test tests/watch.test.ts` | Pass | 46 tests passed. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [ ] All spec ACs met (AC-10 has an unrelated full-suite failure; AC-11 awaits pipeline-owned commit and post-commit freshness check)
+- [x] Validation outcomes recorded; unrelated full-suite failure is outside the affected files
+- [x] All deviations from plan documented with rationale
