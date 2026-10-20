@@ -1,6 +1,6 @@
-# Implementation Handoff: agent-failure-parks-phase
+# Implementation Handoff: autocommit-retry-at-review-entry
 
-> Author: Codex | Spec: `tasks/agent-failure-parks-phase/spec.md` | Plan: `tasks/agent-failure-parks-phase/plan.md`
+> Author: Codex | Spec: `tasks/autocommit-retry-at-review-entry/spec.md` | Plan: `tasks/autocommit-retry-at-review-entry/plan.md`
 >
 > **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 

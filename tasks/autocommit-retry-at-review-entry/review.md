@@ -1,6 +1,6 @@
-# Code Review: agent-failure-parks-phase
+# Code Review: autocommit-retry-at-review-entry
 
-> Reviewer: Claude | Spec: `tasks/agent-failure-parks-phase/spec.md`
+> Reviewer: Claude | Spec: `tasks/autocommit-retry-at-review-entry/spec.md`
 >
 > **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
 

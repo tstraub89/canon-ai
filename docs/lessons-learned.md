@@ -138,3 +138,11 @@ A spec that names a per-task value inside a prompt template (for example, a frag
 *(2026-10-17, source: per-task-telemetry-fragments)*
 
 The quality-log decoder halved backslashes once while the renderer escaped them on every write, so each QA rerun or fold doubled them. A single parse-then-render round trip passed, and only a repeated write, read, write cycle exposed it (code review C1). For any table cell that is parsed and written back out, assert the bytes are stable after at least two cycles, including values with backslashes, pipes and trailing backslashes.
+
+---
+
+### Park a typed agent failure at one boundary, and reopen bundle members only where no agent runs after routing
+
+*(2026-10-20, source: agent-failure-parks-phase)*
+
+When a failed agent session must stop a run durably, throw a typed error from the wrapper and catch only that type at one loop boundary; rethrow everything else. Returning a failed result instead lets phase post-processing treat truncated stdout as a finished result: a QA phase would salvage `done.md` from partial output. If the park also reopens completed bundle members, that is safe only while no agent session runs after the routing writes; this task's argument depended on that ordering. Before adding an agent call after a verdict or routing write, check whether a park at that point would reopen members that routing already moved on. Keep the bundle partial-completion integration test as the tripwire.

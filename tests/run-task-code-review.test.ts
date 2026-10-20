@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
 
+import { AgentSessionError } from '../src/orchestrator/agents/errors.js';
 import { CODEX_HEADLESS } from '../src/orchestrator/prompts/helpers.js';
 import { runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
 import { recordMetric } from '../src/orchestrator/metrics.js';
@@ -1379,18 +1380,10 @@ void test('runCodeReviewPhase stops the whole bundle before foreman when cold-Co
                 throw new Error('foreman must not run when cold-Codex review is unavailable');
             },
         });
-        const originalExit: typeof process.exit = process.exit.bind(process);
-        process.exit = (code?: string | number | null): never => {
-            throw Object.assign(new Error('process.exit'), { code });
-        };
-        try {
-            await assert.rejects(
-                () => runCodeReviewPhase(makeState(['task-a', 'task-b']), false, null, deps),
-                (error: unknown) => isProcessExitError(error, 1),
-            );
-        } finally {
-            process.exit = originalExit;
-        }
+        await assert.rejects(
+            () => runCodeReviewPhase(makeState(['task-a', 'task-b']), false, null, deps),
+            (error: unknown) => error instanceof AgentSessionError && error.agent === 'codex' && /cold-Codex review could not be obtained/.test(error.reason),
+        );
 
         assert.deepEqual(events, ['verifyBranch', `cold:mini-from-policy:high:${activeCwd}:task-a+task-b:0`]);
         for (const taskId of ['task-a', 'task-b']) {

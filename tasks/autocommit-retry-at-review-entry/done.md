@@ -1,4 +1,4 @@
-# Completion Summary: agent-failure-parks-phase — Agent session failures park the phase blocked instead of killing the orchestrator
+# Completion Summary: autocommit-retry-at-review-entry — Retry a failed implement auto-commit at code_review entry
 
 > For the human. This is what you need to know.
 

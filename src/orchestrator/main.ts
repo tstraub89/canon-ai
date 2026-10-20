@@ -1,3 +1,4 @@
+import { AgentSessionError, isAgentSessionError } from './agents/errors.js';
 import { loadDocsFreshnessConfig, requireDocsFreshnessConfig, resolveDocsFreshness, formatUnknownKeysWarning } from './docs-freshness.js';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -3198,6 +3199,42 @@ async function recoverPhaseForTask(taskId: string, phase: Phase, initialStatus: 
 
 // ── checkAndRoute ──────────────────────────────────────────────────────────
 
+function phaseIterationCount(taskIds: string[], phase: Phase): number {
+    return taskIds.reduce((max, id) => {
+        const entry = splitState.readStatus(id).phases[phase];
+        return Math.max(max, entry?.iterations_current_loop ?? entry?.iterations ?? 0);
+    }, 0);
+}
+
+function parkAgentSessionFailure(phase: Phase, taskIds: string[], error: AgentSessionError): never {
+    const rerun = `canon run ${taskIds.join(' ')}`;
+    const budget = error.agent === 'claude' ? 'budget — raise `CLAUDE_BUDGET`' : 'credits/quota';
+    const recovery = `Fix the cause (auth, ${budget}, network), then re-run \`${rerun}\`.`;
+    // Reopen even completed members so the whole bundle re-enters this phase.
+    // This is safe only while no agent session runs after routing writes.
+    splitState.autoBlockPhase(taskIds, phase, phaseIterationCount(taskIds, phase), `${error.reason}. ${recovery}`);
+    console.log('');
+    console.log('════════════════════════════════════════════════════════');
+    console.log(`  ✋  AGENT SESSION FAILED — ${phase} parked as blocked.`);
+    console.log(`  Agent:  ${error.agent}`);
+    console.log(`  Reason: ${error.reason}`);
+    console.log(`  ${recovery}`);
+    console.log('════════════════════════════════════════════════════════');
+    console.log('');
+    splitCli.setExitReason(error.reason);
+    process.exit(2);
+}
+
+// Covers phase sessions and checkAndRoute's recovery sessions; other bugs propagate.
+export async function withAgentSessionPark<T>(phase: CurrentPhase, taskIds: string[], run: () => Promise<T>): Promise<T> {
+    try {
+        return await run();
+    } catch (error) {
+        if (!isAgentSessionError(error) || phase === 'complete') throw error;
+        parkAgentSessionFailure(phase, taskIds, error);
+    }
+}
+
 function stopForReviewerBlock(taskIds: string[], blockedIds: string[], statuses: StatusJson[]): never {
     const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
     const recovery = taskIds.map(id => `canon task reset-code-review ${id}`).join('; ');
@@ -3254,7 +3291,13 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             if (shouldParkCrashedReview(phase, lastCodexExitStatus)) {
                 warn(`Codex spec review exited with status ${lastCodexExitStatus} and did not complete — no verdict was recorded this round for '${taskIds[i]}'.`);
                 warn('This is typically caused by out-of-credits, auth, network, or an MCP crash.');
-                warn(`Fix the cause, then re-run \`canon run ${taskIds[i]}\`.`);
+                warn(`Fix the cause, then re-run \`canon run ${taskIds.join(' ')}\`.`);
+                const reason =
+                    `Codex spec review exited with status ${lastCodexExitStatus} and did not complete for '${taskIds[i]}' — ` +
+                    `no verdict was recorded this round. Fix the cause (out-of-credits, auth, network, or an MCP crash), ` +
+                    `then re-run \`canon run ${taskIds.join(' ')}\`.`;
+                splitState.autoBlockPhase(taskIds, 'spec_review', phaseIterationCount(taskIds, 'spec_review'), reason);
+                splitCli.setExitReason(reason);
                 process.exit(2);
             }
             const recovered = await recoverPhaseForTask(taskIds[i], phase, phaseStatus);
@@ -3743,36 +3786,38 @@ export async function main(): Promise<void> {
         console.log('────────────────────────────────────────');
 
         const state = buildPipelineState(taskIds);
-        const phaseResult = await runPhase(currentPhase, state);
-        lastClaudeSessionId = phaseResult?.agent === 'claude' ? phaseResult.sessionId : null;
-        lastCodexSessionId = phaseResult?.agent === 'codex' ? phaseResult.sessionId : null;
-        lastCodexExitStatus = phaseResult?.agent === 'codex' ? (phaseResult.exitCode ?? 0) : 0;
+        await withAgentSessionPark(currentPhase, taskIds, async () => {
+            const phaseResult = await runPhase(currentPhase, state);
+            lastClaudeSessionId = phaseResult?.agent === 'claude' ? phaseResult.sessionId : null;
+            lastCodexSessionId = phaseResult?.agent === 'codex' ? phaseResult.sessionId : null;
+            lastCodexExitStatus = phaseResult?.agent === 'codex' ? (phaseResult.exitCode ?? 0) : 0;
 
-        // Store session IDs after each agent phase for resumption.
-        // Sessions are stored per-cluster, not per-phase:
-        //   spec/spec_revision  → claude_spec        (both run in REPO_ROOT, share continuity)
-        //   code_review         → claude_review       (same worktree cwd across rounds)
-        //   spec_review (Codex) → codex_spec_review   (REPO_ROOT; separate from implement)
-        //   implement (Codex)   → codex               (worktree cwd)
-        //   plan, qa            → not stored          (one-offs, always fresh)
-        if (currentPhase !== 'complete' && currentPhase !== 'human_review') {
-            const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
-            if (agentForPhase === 'claude') {
-                const slot: SessionSlot | null =
-                    currentPhase === 'spec' ? 'claude_spec' :
-                    currentPhase === 'code_review' ? 'claude_review' :
-                    null; // plan, qa: one-offs, don't persist
-                if (slot && lastClaudeSessionId) {
-                    splitState.storeSessionId(taskIds, slot, lastClaudeSessionId);
-                    splitCli.info(`Claude session stored (${slot}): ${lastClaudeSessionId.slice(0, 8)}...`);
+            // Store session IDs after each agent phase for resumption.
+            // Sessions are stored per-cluster, not per-phase:
+            //   spec/spec_revision  → claude_spec        (both run in REPO_ROOT, share continuity)
+            //   code_review         → claude_review       (same worktree cwd across rounds)
+            //   spec_review (Codex) → codex_spec_review   (REPO_ROOT; separate from implement)
+            //   implement (Codex)   → codex               (worktree cwd)
+            //   plan, qa            → not stored          (one-offs, always fresh)
+            if (currentPhase !== 'complete' && currentPhase !== 'human_review') {
+                const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
+                if (agentForPhase === 'claude') {
+                    const slot: SessionSlot | null =
+                        currentPhase === 'spec' ? 'claude_spec' :
+                        currentPhase === 'code_review' ? 'claude_review' :
+                        null; // plan, qa: one-offs, don't persist
+                    if (slot && lastClaudeSessionId) {
+                        splitState.storeSessionId(taskIds, slot, lastClaudeSessionId);
+                        splitCli.info(`Claude session stored (${slot}): ${lastClaudeSessionId.slice(0, 8)}...`);
+                    }
+                } else if (agentForPhase === 'codex' && lastCodexSessionId) {
+                    const codexSlot: SessionSlot = currentPhase === 'spec_review' ? 'codex_spec_review' : 'codex';
+                    splitState.storeSessionId(taskIds, codexSlot, lastCodexSessionId);
+                    splitCli.info(`Codex session stored (${codexSlot}): ${lastCodexSessionId.slice(0, 8)}...`);
                 }
-            } else if (agentForPhase === 'codex' && lastCodexSessionId) {
-                const codexSlot: SessionSlot = currentPhase === 'spec_review' ? 'codex_spec_review' : 'codex';
-                splitState.storeSessionId(taskIds, codexSlot, lastCodexSessionId);
-                splitCli.info(`Codex session stored (${codexSlot}): ${lastCodexSessionId.slice(0, 8)}...`);
+                await checkAndRoute(currentPhase, taskIds);
             }
-            await checkAndRoute(currentPhase, taskIds);
-        }
+        });
 
         if (cliArgs.step) {
             const nextPhase = assertSamePhase(taskIds);

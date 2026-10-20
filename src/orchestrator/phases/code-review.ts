@@ -1,3 +1,4 @@
+import { AgentSessionError } from '../agents/errors.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -433,12 +434,14 @@ export async function runCodeReviewPhase(
     const coldReviewDurationMs = Date.now() - coldReviewStartMs;
 
     if (!coldReview.success) {
-        setExitReason(
-            `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
-            `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
-            `the code_review phase has not advanced.`,
-        );
-        process.exit(1);
+        // The cold review reports success only, without a specific failure kind.
+        throw new AgentSessionError({
+            agent: 'codex',
+            kind: 'exit_code',
+            reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
+                `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
+                `the code_review phase has not advanced.`,
+        });
     }
 
     for (const t of tasks) {
