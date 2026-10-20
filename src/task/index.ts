@@ -148,6 +148,13 @@ function currentBranchOrEmpty(): string {
     return (result.stdout ?? '').trim();
 }
 
+/** The remote default branch (`origin/HEAD` → `main`), or '' when it can't be resolved. */
+function remoteDefaultBranchOrEmpty(): string {
+    const result = runGit(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+    if (result.error || result.status !== 0) return '';
+    return (result.stdout ?? '').trim().replace(/^origin\//, '');
+}
+
 function listTemplateFiles(): string[] {
     const root = templatesRoot();
     if (!fs.existsSync(root)) {
@@ -207,8 +214,14 @@ export function taskNew(args: string[]): void {
         throw new Error(`Error: Task directory ${taskDir} already exists.`);
     }
 
+    let implicitBaseWarning = '';
     if (!baseBranch) {
         baseBranch = currentBranchOrEmpty() || 'main';
+        const defaultBranch = remoteDefaultBranchOrEmpty();
+        if (defaultBranch && defaultBranch !== baseBranch) {
+            implicitBaseWarning = `Warning: base_branch=${baseBranch} was taken from the current branch, not the default branch (${defaultBranch}).\n`
+                + `  If that's unintended: canon task set ${id} base_branch ${defaultBranch}  (or pass --base <branch> to canon task new)`;
+        }
     }
 
     fs.mkdirSync(taskDir, { recursive: true });
@@ -236,6 +249,7 @@ export function taskNew(args: string[]): void {
     }
 
     printCreatedTask(id, taskDir, baseBranch);
+    if (implicitBaseWarning) console.error(`\n${implicitBaseWarning}`);
 }
 
 function derivePhase(status: StatusJson): string {

@@ -1575,12 +1575,14 @@ void test('findDirtyRepoRootSourcePaths allows task artifacts and telemetry only
         ' M docs/pipeline-invocations.md',
         ' M docs/task-quality-log.md',
         ' M docs/lessons-learned.md',
+        '?? .canon/provenance.json',
+        ' M .canon/version',
         ' M src/feature.ts',
         '?? scripts/local-check.ts',
         '',
     ].join('\n'));
 
-    assert.deepEqual(dirty, ['src/feature.ts', 'scripts/local-check.ts']);
+    assert.deepEqual(dirty, ['.canon/version', 'src/feature.ts', 'scripts/local-check.ts']);
 });
 
 void test('ensureBranch rejects first worktree creation when REPO_ROOT has dirty source files', () => {
