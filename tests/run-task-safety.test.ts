@@ -731,12 +731,19 @@ function makeOutOfRootTaskFixture(dir: string, taskId: string, linkedWorktree: s
     return { localDir, branch };
 }
 
-function makeBootstrappedTaskWorktreeFixture(dir: string, taskId: string): {
+function makeBootstrappedTaskWorktreeFixture(dir: string, taskId: string, initialFiles: Record<string, string> = {}): {
     localDir: string;
     worktreeDir: string;
     branch: string;
 } {
     const { localDir } = makeGitFixture(dir);
+    for (const [file, content] of Object.entries(initialFiles)) {
+        fs.writeFileSync(path.join(localDir, file), content, 'utf8');
+    }
+    if (Object.keys(initialFiles).length > 0) {
+        gitIn(localDir, 'add', '--', ...Object.keys(initialFiles));
+        gitIn(localDir, 'commit', '-m', 'add base fixture files');
+    }
     const branch = `task/${taskId}`;
     const status = { ...makeCompleteStatus(taskId, ''), worktree: true };
     writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
@@ -1443,6 +1450,110 @@ void test('review-entry retry commit failure exits before any review preflight',
         const status = JSON.parse(fs.readFileSync(path.join(localDir, 'tasks/task-a/status.json'), 'utf8')) as { phases: { code_review: { preflight_rejections_current_loop?: number; iterations_current_loop?: number } } };
         assert.equal(status.phases.code_review.preflight_rejections_current_loop ?? 0, 0);
         assert.equal(status.phases.code_review.iterations_current_loop ?? 0, 0);
+    });
+});
+
+function prepareReviewEntryMainFixture(dir: string, taskId: string, commitSource: boolean, dirtySource: boolean) {
+    const { localDir, worktreeDir } = makeBootstrappedTaskWorktreeFixture(dir, taskId, {
+            'initial-fixture.txt': 'committed baseline\n',
+        });
+    if (commitSource) {
+        gitIn(localDir, 'config', 'core.hooksPath', '/dev/null');
+        fs.writeFileSync(path.join(worktreeDir, 'initial-fixture.txt'), 'committed task change\n');
+        gitIn(worktreeDir, 'add', 'initial-fixture.txt');
+        gitIn(worktreeDir, 'commit', '-m', 'commit handoff fixture source');
+    }
+
+    const tasksRoot = writeReviewLoopFixture(worktreeDir, taskId, 'code_review', 0, 0, true);
+    fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
+    fs.appendFileSync(path.join(tasksRoot, taskId, 'handoff.md'), [
+            '',
+            '## AC Coverage',
+            '',
+            '| AC | Status | Notes |',
+            '|---|---|---|',
+            '| AC-1 | Met | fixture |',
+            '',
+        ].join('\n'));
+    const statusPath = path.join(tasksRoot, taskId, 'status.json');
+    const taskStatus = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Record<string, unknown>;
+    taskStatus.worktree = true;
+    taskStatus.branch = `task/${taskId}`;
+    fs.writeFileSync(statusPath, `${JSON.stringify(taskStatus, null, 2)}\n`);
+    if (dirtySource) fs.writeFileSync(path.join(worktreeDir, 'initial-fixture.txt'), 'dirty implement result\n');
+
+    const fakeBins = path.join(dir, 'fake-bins');
+    fs.mkdirSync(fakeBins, { recursive: true });
+    setupInvocationLoggingCliTools(fakeBins);
+    writeExecutable(fakeBins, 'codex', [
+            'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+            'node -e \'console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"clean review"}})); console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}}))\'',
+        ]);
+    return { localDir, worktreeDir, tasksRoot, statusPath, fakeBins };
+}
+
+function runReviewEntryMainFixture(fixture: ReturnType<typeof prepareReviewEntryMainFixture>, taskId: string) {
+    return runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], {
+        CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon', 'worktrees'),
+        FAKE_AGENT_COMPLETE_PHASE: 'code_review',
+    });
+}
+
+void test('main retries before code_review preflight in a task worktree', { concurrency: false }, () => {
+    withTempDir('run-task-review-entry-main-', dir => {
+        const taskId = 'review-entry-main';
+        const fixture = prepareReviewEntryMainFixture(dir, taskId, false, true);
+        const { localDir, worktreeDir, tasksRoot, statusPath } = fixture;
+        const result = runReviewEntryMainFixture(fixture, taskId);
+        assert.equal(result.status, 0, combinedOutput(result));
+        const updated = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as {
+            phases: { code_review: { preflight_rejections_current_loop?: number } };
+        };
+        assert.equal(updated.phases.code_review.preflight_rejections_current_loop, 0, combinedOutput(result));
+        assert.doesNotMatch(fs.readFileSync(path.join(tasksRoot, taskId, 'review.md'), 'utf8'), /handoff→diff/);
+        assert.match(result.stdout, /Retrying the implement auto-commit/);
+        assert.ok(execFileSync('git', ['log', '--format=%H', 'main..HEAD', '--', 'initial-fixture.txt'], {
+            cwd: worktreeDir, encoding: 'utf8',
+        }).trim());
+        assert.deepEqual(readAgentInvocations(path.join(localDir, 'agent-invocations.log')), ['claude']);
+    });
+});
+
+void test('main enters code_review without retry when the handoff is clean and pipeline artifacts are dirty', { concurrency: false }, () => {
+    withTempDir('run-task-review-entry-clean-', dir => {
+        const taskId = 'review-entry-clean';
+        const fixture = prepareReviewEntryMainFixture(dir, taskId, true, false);
+        fs.writeFileSync(path.join(fixture.tasksRoot, taskId, 'review.md'), '# Code Review\n');
+        fs.mkdirSync(path.join(fixture.worktreeDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.worktreeDir, 'docs/pipeline-invocations.md'), 'telemetry\n');
+        const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.worktreeDir, encoding: 'utf8' }).trim();
+        const result = runReviewEntryMainFixture(fixture, taskId);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.doesNotMatch(result.stdout, /Retrying the implement auto-commit/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.worktreeDir, encoding: 'utf8' }).trim(), before);
+        assert.deepEqual(readAgentInvocations(path.join(fixture.localDir, 'agent-invocations.log')), ['claude']);
+    });
+});
+
+void test('main stops before code_review preflight when the review-entry retry commit fails', { concurrency: false }, () => {
+    withTempDir('run-task-review-entry-main-failure-', dir => {
+        const taskId = 'review-entry-main-failure';
+        const fixture = prepareReviewEntryMainFixture(dir, taskId, false, true);
+        const hook = path.join(fixture.localDir, '.git/hooks/pre-commit');
+        fs.mkdirSync(path.dirname(hook), { recursive: true });
+        fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+        const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.worktreeDir, encoding: 'utf8' }).trim();
+        const result = runReviewEntryMainFixture(fixture, taskId);
+        assert.equal(result.status, 1);
+        assert.match(combinedOutput(result), /Auto-commit failed:/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.worktreeDir, encoding: 'utf8' }).trim(), before);
+        assert.doesNotMatch(fs.readFileSync(path.join(fixture.tasksRoot, taskId, 'review.md'), 'utf8'), /handoff→diff/);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as {
+            phases: { code_review: { preflight_rejections_current_loop?: number; iterations_current_loop?: number } };
+        };
+        assert.equal(status.phases.code_review.preflight_rejections_current_loop, 0);
+        assert.equal(status.phases.code_review.iterations_current_loop, 0);
+        assert.deepEqual(readAgentInvocations(path.join(fixture.localDir, 'agent-invocations.log')), []);
     });
 });
 
