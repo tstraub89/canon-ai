@@ -1,7 +1,7 @@
 {
   "id": "agent-failure-parks-phase",
   "title": "Agent session failures park the phase blocked instead of killing the orchestrator",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-20",
   "updated": "2026-10-20",
   "branch": "task/agent-failure-parks-phase",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
