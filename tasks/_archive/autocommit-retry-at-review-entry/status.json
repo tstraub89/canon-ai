@@ -1,7 +1,7 @@
 {
   "id": "autocommit-retry-at-review-entry",
   "title": "Retry a failed implement auto-commit at code_review entry",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-20",
   "updated": "2026-10-20",
   "branch": "task/autocommit-retry-at-review-entry",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
