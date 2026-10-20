@@ -1080,7 +1080,7 @@ function runLogPathFor(taskDir) {
 
 // src/orchestrator/run-context.ts
 var EXIT_MARKER_TAIL_BYTES = 64 * 1024;
-var EXIT_MARKER_RE = /^■ orchestrator exit code=(\S+) \[reason=(.*)\] at (\S+)\s*$/;
+var EXIT_MARKER_RE = /■ orchestrator exit code=(\S+) \[reason=(.*)\] at (\S+)\s*$/;
 function readLastExitMarker(taskDir) {
   let fd;
   try {

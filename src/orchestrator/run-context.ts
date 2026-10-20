@@ -32,7 +32,7 @@ export interface ExitMarker {
 }
 
 const EXIT_MARKER_TAIL_BYTES = 64 * 1024;
-const EXIT_MARKER_RE = /^■ orchestrator exit code=(\S+) \[reason=(.*)\] at (\S+)\s*$/;
+const EXIT_MARKER_RE = /■ orchestrator exit code=(\S+) \[reason=(.*)\] at (\S+)\s*$/;
 
 export function readLastExitMarker(taskDir: string): ExitMarker | null {
     let fd: number | undefined;

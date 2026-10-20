@@ -566,20 +566,26 @@ void test('readLastExitMarker: malformed and absent logs return null and signal 
     });
 });
 
-void test('readLastExitMarker: ignores marker text embedded in output and accepts a later line-start marker', () => {
+void test('readLastExitMarker: accepts unterminated output before a marker and rejects truncated tails', () => {
     withTempDir((dir) => {
         const taskDir = path.join(dir, 't1');
-        writeExitLog(taskDir, ['error: saw ' + exitLine('1', 'embedded', '2026-01-01T00:00:00.000Z')]);
-        assert.equal(readLastExitMarker(taskDir), null);
+        writeExitLog(taskDir, ['partial agent output with no newline' + exitLine('1', 'claude session exited 1', '2026-01-01T00:00:00.000Z')]);
+        assert.deepEqual(readLastExitMarker(taskDir), {
+            code: '1', reason: 'claude session exited 1', timestampMs: Date.parse('2026-01-01T00:00:00.000Z'),
+        });
         writeExitLog(taskDir, [
-            'error: saw ' + exitLine('1', 'embedded', '2026-01-01T00:00:00.000Z'),
-            exitLine('0', 'real marker', '2026-01-02T00:00:00.000Z'),
+            exitLine('0', 'prev', '2026-01-01T00:00:00.000Z'),
+            '■ orchestrator exit code=1 [reason=x]',
         ]);
-        assert.equal(readLastExitMarker(taskDir)?.reason, 'real marker');
+        assert.equal(readLastExitMarker(taskDir)?.reason, 'prev');
+        writeExitLog(taskDir, ['■ orchestrator exit code=1 [reason=x]']);
+        assert.equal(readLastExitMarker(taskDir), null);
+        writeExitLog(taskDir, ['error: saw ' + exitLine('1', 'embedded', '2026-01-01T00:00:00.000Z') + ' in output']);
+        assert.equal(readLastExitMarker(taskDir), null);
     });
 });
 
-void test('classifyIdle: fresh non-zero marker is death with reason; clean and stale markers remain step_done', () => {
+void test('classifyIdle: fresh non-zero marker is death with reason', () => {
     withTempDir((dir) => {
         const taskDir = path.join(dir, 't1');
         const statusFile = path.join(taskDir, 'status.json');
@@ -589,13 +595,32 @@ void test('classifyIdle: fresh non-zero marker is death with reason; clean and s
         const result = classifyIdle(makeCrashStatus(taskDir), 't1');
         assert.equal(result.kind, 'death');
         if (result.kind === 'death') assert.match(result.reason ?? '', /CLAUDE_BUDGET/);
+    });
+});
 
+void test('classifyIdle: clean code=0 marker remains step_done', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
         writeExitLog(taskDir, [exitLine('0', 'clean')]);
         assert.equal(classifyIdle(makeCrashStatus(taskDir), 't1').kind, 'step_done');
+    });
+});
 
+void test('classifyIdle: stale crash marker remains step_done and exact tolerance boundary counts as death', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
         const oldMarker = new Date(Date.now() - 20_000).toISOString();
         writeExitLog(taskDir, [exitLine('1', 'old crash', oldMarker)]);
         fs.utimesSync(statusFile, Date.now() / 1000, Date.now() / 1000);
+        assert.equal(classifyIdle(makeCrashStatus(taskDir), 't1').kind, 'step_done');
+
+        const wholeSecond = Math.floor(Date.now() / 1000);
+        writeExitLog(taskDir, [exitLine('1', 'boundary', new Date(wholeSecond * 1000 - 1_000).toISOString())]);
+        fs.utimesSync(statusFile, wholeSecond, wholeSecond);
+        assert.equal(classifyIdle(makeCrashStatus(taskDir), 't1').kind, 'death');
+        writeExitLog(taskDir, [exitLine('1', 'outside boundary', new Date(wholeSecond * 1000 - 1_001).toISOString())]);
+        fs.utimesSync(statusFile, wholeSecond, wholeSecond);
         assert.equal(classifyIdle(makeCrashStatus(taskDir), 't1').kind, 'step_done');
     });
 });
