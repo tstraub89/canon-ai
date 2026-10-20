@@ -1,0 +1,1 @@
+No actionable regressions were identified in the changes. Type-checking passed; remaining risk is in external agent CLI behavior not covered by local fixtures.

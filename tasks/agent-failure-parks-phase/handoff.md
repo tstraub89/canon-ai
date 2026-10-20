@@ -1,25 +1,25 @@
 # Implementation Handoff: agent-failure-parks-phase
 
 > Author: Codex | Spec: `tasks/agent-failure-parks-phase/spec.md` | Plan: `tasks/agent-failure-parks-phase/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/agents/errors.ts` | Added typed session failures and an instanceof guard. |
+| `src/orchestrator/agents/claude.ts` | Non-interactive failure branches throw; metrics finally records failed sessions. |
+| `src/orchestrator/agents/codex.ts` | Spawn, stall, and signal failures throw; non-zero exit-code return remains intact. |
+| `src/orchestrator/phases/code-review.ts` | Unavailable cold-Codex review throws before the foreman. |
+| `src/orchestrator/main.ts` | Added the typed-only park boundary around phase execution and recovery; crashed spec reviews now block the full bundle durably. |
+| `tests/run-task-safety.test.ts` | Added failure, recovery, bundle, QA, metrics, error-discrimination, and worktree-routing coverage; updated crash assertions and fake plan completion. |
+| `tests/run-task-code-review.test.ts` | Cold-Codex failure now expects AgentSessionError. |
+| `docs/patterns.md` | Documented throw-and-park behavior and the constraint on agent calls after routing. |
+| `docs/architecture.md` | Corrected autoBlockPhase ownership: callers exit. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documented durable session parks and whole-bundle recovery; regenerated mirror. |
+| `.claude/skills/canon-pipeline/recovery.md`, `templates/.claude/skills/canon-pipeline/recovery.md` | Auth recovery uses a plain rerun without a manual phase reset; regenerated mirror. |
+| `dist/orchestrator/run-task.js` | Rebuilt runtime bundle. |
 
 ## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
 
 | Field | Source |
 |---|---|
@@ -31,91 +31,73 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Failed non-interactive sessions unwind through AgentSessionError, preserving metrics cleanup and preventing phase post-processing from treating partial output as success. The main-loop boundary catches only that type, blocks every bundle member, records escalations and a recovery command, and exits 2. Ordinary errors propagate unchanged. Returning non-zero Codex spec reviews retain their existing completion check and now write the same durable blocked state when incomplete.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Reused runReviewLoopMain's existing extraArgs for bundle IDs rather than creating another harness. | Existing argv support exercises the real same-phase check without duplicating the subprocess helper. | AC-13 unchanged. |
+| Added plan -> implement to the existing fake-agent completer. | The fake previously marked plan done while leaving its top-level pointer stale; the recovery test exposed this fixture omission. Production derivation needed no change. | Makes AC-5 fixture representative. |
+| Added a worktree-routing park regression. | Repo guidance requires this fixture shape for a new status-writing path. | Additional coverage; no scope expansion. |
+| Rebuilt both entry points; only the orchestrator bundle changed. | The CLI bundle is byte-identical, so it is omitted from Changes. | AC-12 met. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Grep finds only the interactive Claude process.exit; Codex wrapper has none. Cold-review failure throws. |
+| AC-2 | Met | Failure-ladder test catches AgentSessionError for Claude exit 1 and Codex spawn/stall/signal, reaches after-call, and preserves non-zero Codex return. Red-first evidence below. |
+| AC-3 | Met | Full main plan fixture verifies exit 2, blocked, escalation with reason/recovery, auto_block_count, banner, and exit marker. |
+| AC-4 | Met | Full main implement stall fixture verifies exit 2, blocked, and escalation. |
+| AC-5 | Met | Same plan fixture replaces the failing agent, reruns without resetting state, and verifies plan done / implement current. |
+| AC-6 | Met | Real runQaPhase rejects after QA-shaped partial output; done.md remains absent and qa stays in_progress. |
+| AC-7 | Met | Injected unavailable cold review rejects with AgentSessionError for Codex; foreman never runs. Main catches that shared type. |
+| AC-8 | Met | Existing crashed-spec-review test now checks blocked, one escalation, iteration count, recovery reason, and auto_block_count. Self-bookkept and clean-exit tests pass. |
+| AC-9 | Met | Boundary test sends an ordinary Error to existing unhandled-rejection handling: exit 1, original reason, no escalation. Typed positive control parks. |
+| AC-10 | Met | Claude failure test reads a failed plan metric from CANON_METRICS_FILE_OVERRIDE. |
+| AC-11 | Met | All four root doc surfaces updated; both managed mirrors regenerated; sync and references pass. |
+| AC-12 | Met | All six required checks pass; full suite: 1489 pass, zero failures, one skip. |
+| AC-13 | Met | Signal and returning exit-1 fixtures complete A before B fails; both reopen blocked at spec_review with escalations, then both advance to plan on a plain bundle rerun. Both cases were red first. |
 
 ## Edge Cases Considered
 
-- ...
+- Full-bundle parks deliberately include completed members; artifacts, verdicts, and review counters remain intact. The spec's accepted extra review-round counter cost remains.
+- All agent-capable phase runners set in_progress before their session. code_review's reviewer-block check occurs later in checkAndRoute, so crash-parked reviews re-enter the runner. Loop caps still apply. Plan and spec_review re-entry are exercised end to end; code_review follows the same ordering by trace.
+- Recovery sessions execute inside the new boundary through checkAndRoute's per-member completion loop. Verdict routing and routeBackTo happen afterward and invoke no agents.
+- The worktree regression verifies the supervising checkout's status bytes remain unchanged while the task worktree receives the park.
+- Interactive exits, stale Claude resume fallback, shutdown handling, and normal non-zero Codex return behavior remain as specified.
+- A blocked implement starts with the fresh prompt when no revision/reroute applies, as described in the plan's existing scope note; partial files remain on disk. No change to implement session-resumption policy was authorized.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- [ambiguity] Which failure kind represents an unavailable cold-Codex review when its result exposes only success? Following the plan, interpreted it as exit_code with exitCode null; retained the existing reason listing possible causes, without inventing an exit number or widening the result/type contracts. No incomplete ACs remain.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Final run clean after removing five unnecessary test assertions. |
+| `npm run type-check` | Pass | TypeScript completed cleanly. |
+| `npm test` | Pass | 1490 tests: 1489 passed, zero failed, one skipped; about 119 seconds. Build completed before this run. |
+| `npm run build` | Pass | Both entry points rebuilt; only orchestrator output changed. |
+| `npm run sync-templates:check` | Pass | Managed mirrors aligned. |
+| `npm run docs-refs-check` | Pass | All references valid. |
+| Targeted failure/recovery tests | Pass | Ten selected tests passed, including QA and worktree routing. |
+| `git diff --check` | Pass | No whitespace errors. |
+
+### Red-first regression evidence
+
+Before changing failure branches or main routing, added the error type and regression assertions, then ran:
+
+```bash
+node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='agent failure ladders|main parks a failed plan|main parks a stalled|main reopens a partially|stops the whole bundle before foreman' tests/run-task-safety.test.ts tests/run-task-code-review.test.ts
+```
+
+All six selected tests failed for the expected reasons: the Claude wrapper exited 1 instead of allowing a caught error; plan and implement exited 1 instead of 2; the signaled bundle exited 1; the returning exit-1 bundle left A done instead of blocked; and the cold-review assertion received the stubbed process.exit error instead of AgentSessionError. After implementing the fix, these tests passed. The first green run additionally exposed the fake plan completer's stale top-level pointer; correcting that in-scope fixture made recovery pass. QA salvage prevention is a guard against returning partial output as success, rather than a claim that the original exit behavior salvaged it.
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
