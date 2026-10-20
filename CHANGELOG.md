@@ -2,6 +2,23 @@
 
 > Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). canon-ai uses SemVer per [`docs/decisions.md`](docs/decisions.md).
 
+## [3.11.0] — 2026-10-20
+
+### Changed
+
+- **An agent session failure now stops the run at a blocked phase instead of killing the orchestrator.** If Claude or Codex fails mid-phase (it won't start, stalls, is killed, or Claude exits with an error such as an exhausted budget or an expired login), `canon run` marks the phase blocked, records the reason in the task's escalations, prints the command to resume, and exits 2. Fix the cause and run `canon run <id>` again: the phase re-runs with no manual reset. In a bundle, every member is parked. A detached run no longer disappears with its phase stuck in progress.
+
+### Fixed
+
+- **`canon watch` reports a crashed run as a death, not a finished step or nothing to watch.** A run that exited with an error right after a phase finished used to show `reason=step_done` (exit 0), or `reason=nothing_to_watch` (exit 2) when watch started after the crash. It now shows `reason=death` and exits 4 when the run log's newest exit line is non-zero (including a run stopped by a signal) and isn't older than the task state, or when the run's runtime files survive. The reason prints to stderr; the summary line is unchanged. A clean `--step` finish and a clean stop at a gate still report `step_done`. `canon watch --follow` keeps streaming the active run's log after the task moves into a worktree or resumes.
+- **A failed implement auto-commit is retried before code review starts.** If the auto-commit after implement fails (for example, a pre-commit hook rejects it), the next `canon run` commits the pending handoff files first. Previously they went to the code-review pre-flight, which rejected them and used up a review loop. If the retry fails again, the run stops with the same `Auto-commit failed:` message and no review loop is used.
+- **The code-review foreman cites headings exactly.** A quoted `§"Heading"` citation in `review.md` must match a real heading, so the foreman no longer writes citations that fail the docs-refs check at commit time.
+- **A worktree can be created right after `canon update`.** The install record `canon update` writes (`provenance.json` under `.canon`) no longer counts as a stray source edit that blocks the first task worktree.
+- **`canon task new` warns when the base branch came from a non-default current branch.** Without `--base`, if you're on a branch other than the remote default, it says so and prints the `canon task set <id> base_branch <default>` fix. An explicit `--base` is silent.
+- **The handoff pre-flight says how to fix an unchanged file.** A Changes row for a file with no committed change against the task base now says to drop the row if the file was untouched or rewritten with identical content.
+- **`canon update` names pnpm for a pnpm-managed install.** The layout refusal for pnpm's virtual-store shape now says to update with `pnpm add -g canon-ai@<version>` (or the `github:<repo>#<sha>` form for `--channel main` / `--ref`, honoring `CANON_UPSTREAM_REPO`).
+- **Mixed bundle sizes list in size order.** The implement header now shows `XS, S, M, L, XL` order instead of alphabetical.
+
 ## [3.10.1] — 2026-10-17
 
 ### Fixed
