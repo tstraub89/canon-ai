@@ -1,7 +1,7 @@
 {
   "id": "watch-late-attach-crash",
   "title": "Late watch attach reports a crashed run as death",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-20",
   "updated": "2026-10-20",
   "branch": "task/watch-late-attach-crash",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
