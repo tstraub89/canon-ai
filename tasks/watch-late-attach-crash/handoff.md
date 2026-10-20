@@ -16,6 +16,10 @@
 
 | File | What Changed |
 |---|---|
+| `src/cli/commands/watch.ts` | Shared crash evidence helper used by attach and idle classification; attach reports fresh marker reasons. |
+| `tests/watch.test.ts` | Late attach regression, evidence boundaries, in-progress fallback, and watch exit behavior. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Exit code 4 documentation now covers attach before or after process exit; mirror generated. |
+| `dist/cli/index.js` | Rebuilt CLI bundle. |
 
 ## Canon Governance
 
@@ -31,7 +35,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Extracted the existing idle-path evidence check into `findCrashEvidence()` and reused it for late attach. Attach retains its existing generic `in_progress` death and `nothing_to_watch` outcomes when evidence is absent, clean, or stale. The death reporter includes the evidence reason when available.
 
 ## Deviations from Plan
 
@@ -39,7 +43,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Reuse computed pid liveness in the helper | The plan signature would probe the same resolved pid a second time in each classifier. Passing the already computed liveness preserves the existing idle-path probe behavior and avoids duplicate probing. | No AC impact. |
 
 ## AC Coverage
 
@@ -47,17 +51,25 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Red-first test failed before fix with `nothing_to_watch`; passes after fix with marker reason. |
+| AC-2 | Met | Pending after done with no log/runtime pid remains `nothing_to_watch`. |
+| AC-3 | Met | Unit test covers clean and stale non-zero markers. |
+| AC-4 | Met | In-progress with fresh marker carries reason; without evidence retains generic hint. |
+| AC-5 | Met | `watchCmd` late attach exits 4, writes stable summary, and includes reason/resume command on stderr. |
+| AC-6 | Met | `classifyAttach` and `classifyIdle` both call `findCrashEvidence`; `timestampMs >= statusMtimeMs` occurs once at `src/cli/commands/watch.ts:409`. |
+| AC-7 | Met | Exit code 4 row covers attach before/after exit; template generated and sync check passes. |
+| AC-8 | Met | Required validation matrix passed; bundle rebuilt. |
 
 ## Edge Cases Considered
 
-- ...
+- No run log and no runtime pid evidence leaves a pending phase as `nothing_to_watch`.
+- Clean and stale non-zero markers are ignored; the existing one-second tolerance remains in one shared comparison.
+- `human_review` remains outside attach-time crash evidence, preserving the spec non-goal.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
+- [ambiguity] The plan interprets the non-goal on `human_review` as excluding a pending `human_review` phase from attach-time crash evidence; that behavior is preserved.
 
 ## Validation Outcomes
 
@@ -78,13 +90,18 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 1,520 passed, 0 failed, 1 skipped by sandbox restriction (`REPO_ROOT` linked-worktree test requires `.git` writes). |
+| `npm run build` | Pass | Rebuilt `dist/cli/index.js`. |
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | All refs OK. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 
