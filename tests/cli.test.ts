@@ -536,6 +536,7 @@ void test('layoutGate: a pnpm virtual-store root names pnpm as the updater', () 
         if (!result.ok) {
             assert.match(result.message, /no package\.json.*install root/);
             assert.match(result.message, /pnpm add -g canon-ai@<version>/);
+            assert.match(result.message, /pnpm add -g github:[^#\s]+\/canon-ai#<sha>/);
         }
         const plain = layoutGate(dir);
         if (!plain.ok) assert.doesNotMatch(plain.message, /pnpm/);

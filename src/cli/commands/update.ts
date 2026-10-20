@@ -111,7 +111,9 @@ type GatePass = { ok: true };
 // pnpm's virtual store (`node_modules/.pnpm/...`) nests node_modules, which
 // detectInstallType routes here. npm must not mutate pnpm-managed state, so
 // point at the package manager that owns the install instead.
-const PNPM_HINT = 'This looks like a pnpm install. Update it with pnpm instead: `pnpm add -g canon-ai@<version>` for a global install, or `pnpm add -D canon-ai@<version>` in your project. Then run `canon upgrade` to refresh the templates.';
+const PNPM_HINT = 'This looks like a pnpm install. Update it with pnpm instead: `pnpm add -g canon-ai@<version>` for a global install, or `pnpm add -D canon-ai@<version>` in your project. '
+    + `For a development commit (what --channel main / --ref install), use \`pnpm add -g github:${CANON_UPSTREAM_REPO}#<sha>\` (or \`pnpm add -D …\` in your project). `
+    + 'Then run `canon upgrade` to refresh the templates.';
 
 function isPnpmStoreShape(installRoot: string): boolean {
     const normalized = installRoot.replace(/\\/g, '/');

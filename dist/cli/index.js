@@ -4947,7 +4947,7 @@ function defaultGitRunner(args2) {
 var CANON_AI_DEP_KEYS = ["dependencies", "devDependencies", "optionalDependencies"];
 var STRICT_FINAL_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 var FULL_SHA_RE = /^[0-9a-f]{40}$/i;
-var PNPM_HINT = "This looks like a pnpm install. Update it with pnpm instead: `pnpm add -g canon-ai@<version>` for a global install, or `pnpm add -D canon-ai@<version>` in your project. Then run `canon upgrade` to refresh the templates.";
+var PNPM_HINT = `This looks like a pnpm install. Update it with pnpm instead: \`pnpm add -g canon-ai@<version>\` for a global install, or \`pnpm add -D canon-ai@<version>\` in your project. For a development commit (what --channel main / --ref install), use \`pnpm add -g github:${CANON_UPSTREAM_REPO}#<sha>\` (or \`pnpm add -D \u2026\` in your project). Then run \`canon upgrade\` to refresh the templates.`;
 function isPnpmStoreShape(installRoot) {
   const normalized = installRoot.replace(/\\/g, "/");
   return normalized.includes("/.pnpm/") || normalized.endsWith("/.pnpm") || normalized.includes("/node_modules/");
