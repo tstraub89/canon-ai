@@ -1,0 +1,1 @@
+The changes add main-loop worktree tests for retry success, clean handoff behavior, and commit failure. All three targeted tests pass, and no actionable defect was found in the diff.

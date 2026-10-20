@@ -546,6 +546,12 @@ void test('promptCodeReview_round1', () => {
     recordOrAssert('promptCodeReview_round1', actual);
 });
 
+void test('rendered code-review foreman requires quoted citations to match exact headings', () => {
+    const output = promptCodeReview(baseState);
+    assert.match(output, /When you cite a section of a Markdown doc with the quoted form `§"…"`, the quoted text must be an exact heading in that file\./);
+    assert.match(output, /use `file:line` or the unquoted `§Name` form instead\./);
+});
+
 void test('code-review foreman distinguishes valid clean and missing lens returns in every render', () => {
     for (const output of [
         promptCodeReview(baseState),

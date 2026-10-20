@@ -16,6 +16,12 @@
 
 | File | What Changed |
 |---|---|
+| `src/orchestrator/main.ts` | Share accepted-implement-at-HEAD check and retry auto-commit for dirty handoff files before code_review state construction. |
+| `src/orchestrator/prompts/templates/code-review-foreman.md` | Add exact-heading citation rule in foreman step 4. |
+| `tests/run-task-safety.test.ts` | Cover handoff-only retry, pipeline-owned dirt, accepted SHA/stale accept, and retry commit failure. |
+| `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Assert rendered citation rule and regenerate foreman prompt snapshots. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Document review-entry retry and failure behavior; regenerate managed mirror. |
+| `dist/orchestrator/run-task.js` | Rebuild committed CLI bundle. |
 
 ## Canon Governance
 
@@ -31,7 +37,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The main loop retries the existing scoped auto-commit before building code_review state, but only when a handoff-listed file is dirty and operator acceptance does not still match HEAD. The existing commit guards remain authoritative.
 
 ## Deviations from Plan
 
@@ -39,7 +45,8 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| The safety tests call the exported retry helper directly instead of driving the full main-loop code_review pre-flight with a worktree fixture. | This pins commit selection, operator acceptance, and failure behavior in isolated git fixtures, but does not verify the integrated pre-flight counter/review.md outcome in the requested main-loop scenario. | AC-1 partial; AC-3 partial |
+| The AC-1 regression was not run red against pre-fix code before the production change. | The retry implementation was applied before the new test was executed. The direct helper test passes after the fix, but there is no observed pre-fix failure. | AC-1 partial |
 
 ## AC Coverage
 
@@ -47,17 +54,24 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Partial | Dirty handoff file is committed by the retry helper test, but the full code_review main-loop/pre-flight integration and red-first run remain unverified. |
+| AC-2 | Partial | Clean handoff with task artifact and telemetry dirt causes no retry/commit; the fixture calls the helper directly and does not assert code_review progression. |
+| AC-3 | Partial | Failing pre-commit hook exits 1 with `Auto-commit failed:` and counters remain unchanged; helper-level fixture does not invoke a real pre-flight path. |
+| AC-4 | Met | Current accepted SHA preserves HEAD and dirty source; moving HEAD makes the helper retry and commit. |
+| AC-5 | Met | Dirty task review artifact and telemetry with clean handoff paths do not trigger retry. |
+| AC-6 | Met | Prompt render assertion passes; both round 1 and round N goldens regenerated. |
+| AC-7 | Met | Retry behavior documented and managed mirror synced. |
+| AC-8 | Met | Required validations pass. |
 
 ## Edge Cases Considered
 
-- ...
+- Retry pre-check only considers paths parsed from handoff Changes rows; task artifacts and telemetry alone do not trigger it.
+- Operator acceptance is honored only while every task's recorded accepted SHA equals active HEAD.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- AC-1 remains partially verified: add/run a worktree-mode main-loop fixture asserting committed range, zero preflight rejections, and no `handoff→diff` review block. Red-first behavior was not observed before the implementation.
+- AC-2 and AC-3 likewise lack a full main-loop integration assertion; current fixtures invoke the retry helper directly.
 
 ## Validation Outcomes
 
@@ -78,13 +92,18 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 1,489 passed, 1 skipped by sandbox guard. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js`; `dist/cli/index.js` had no generated diff. |
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | |
 
 ## Ready for Review
 
 - [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 
@@ -119,3 +138,33 @@ On revision rounds, append below this line:
 |---|---|---|
 | `<lint>` | Pass | |
 -->
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `tests/run-task-safety.test.ts` | Added worktree-mode main-loop integration coverage for retry success, clean handoff with pipeline-owned dirt, and retry commit failure. |
+
+### Findings addressed
+
+- _test-integrity:_ the prior tests did not exercise main-loop wiring or pre-flight outcomes → added `main()`-driven worktree fixtures covering AC-1, AC-2, and AC-3.
+- _red-first:_ temporarily bypassed the retry call and ran the AC-1 integration test before restoring it. Command: `node --import ./tests/md-loader-register.mjs --import tsx --test --test-name-pattern='main retries before code_review preflight in a task worktree' tests/run-task-safety.test.ts`. Observed `handoff→diff: initial-fixture.txt listed in handoff but not in diff` and `preflight_rejections_current_loop` became `1`; after restoring the call, the test passes with the file committed and the counter at `0`.
+
+### AC deltas
+
+- AC-1: Partial → Met. The worktree main-loop test asserts the path appears in `main..HEAD`, the pre-flight counter stays `0`, and `review.md` has no `handoff→diff` block. The red run reproduced the expected pre-flight rejection without the retry.
+- AC-2: Partial → Met. A clean handoff with dirty task-review and telemetry artifacts enters code_review, emits no retry line, invokes the review agent, and leaves HEAD unchanged.
+- AC-3: Partial → Met. A failing pre-commit hook makes the main loop exit 1 with `Auto-commit failed:`, without invoking review agents or changing review counters/artifact.
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 1,492 passed, 1 skipped by sandbox guard. |
+| `npm run build` | Pass | |
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | |
