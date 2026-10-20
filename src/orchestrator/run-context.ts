@@ -58,6 +58,15 @@ export function readLastExitMarker(taskDir: string): ExitMarker | null {
     }
 }
 
+export function readNewestExitMarker(taskDirs: string[]): ExitMarker | null {
+    let newest: ExitMarker | null = null;
+    for (const taskDir of new Set(taskDirs)) {
+        const marker = readLastExitMarker(taskDir);
+        if (marker && (newest == null || marker.timestampMs > newest.timestampMs)) newest = marker;
+    }
+    return newest;
+}
+
 export interface GatherRunContextDeps {
     readStatusImpl?: (file: string) => StatusJson;
     readHeartbeatImpl?: (dir: string) => HeartbeatReadResult;
@@ -87,6 +96,32 @@ function statusReadResult(taskId: string, statusFile: string, readImpl?: (file: 
 export function tolerantTaskDir(taskId: string): string {
     if (isOrphanedWorktreeState(taskId)) return taskDirForRepoRoot(taskId);
     return path.dirname(statusFileFor(taskId));
+}
+
+export function runLogCandidateDirs(ctxTaskDir: string, taskId: string, primaryTaskId = taskId): string[] {
+    const candidates: string[] = [];
+    const addRepoRoot = (id: string): void => {
+        try {
+            candidates.push(taskDirForRepoRoot(id));
+        } catch {
+            // Keep candidate resolution best-effort; an unavailable path is ignored by the log reader.
+        }
+    };
+    const addResolved = (id: string): void => {
+        try {
+            candidates.push(tolerantTaskDir(id));
+        } catch {
+            // A missing or unavailable worktree should not prevent checking other log locations.
+        }
+    };
+    addRepoRoot(primaryTaskId);
+    addResolved(primaryTaskId);
+    candidates.push(ctxTaskDir);
+    if (taskId !== primaryTaskId) {
+        addRepoRoot(taskId);
+        addResolved(taskId);
+    }
+    return [...new Set(candidates)];
 }
 
 function defaultProbeAlive(pid: number): void {

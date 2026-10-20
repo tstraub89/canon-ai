@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { classifyAttach, classifyIdle, orchestratorStillProgressing, watchCmd } from '../src/cli/commands/watch.js';
 import type { HeartbeatReadResult, HeartbeatRecord } from '../src/orchestrator/heartbeat.js';
-import { gatherRunContext, readLastExitMarker } from '../src/orchestrator/run-context.js';
+import { gatherRunContext, readLastExitMarker, readNewestExitMarker, runLogCandidateDirs } from '../src/orchestrator/run-context.js';
 import type { RunContext } from '../src/orchestrator/run-context.js';
 import { type StatusJson } from '../src/orchestrator/types.js';
 
@@ -585,6 +585,28 @@ void test('readLastExitMarker: accepts unterminated output before a marker and r
     });
 });
 
+void test('readNewestExitMarker: newest timestamp wins across candidate dirs; missing logs are ignored', () => {
+    withTempDir((root) => {
+        const first = path.join(root, 'first');
+        const second = path.join(root, 'second');
+        writeExitLog(first, [exitLine('1', 'older', '2026-01-01T00:00:00.000Z')]);
+        writeExitLog(second, [exitLine('0', 'newer', '2026-01-02T00:00:00.000Z')]);
+        assert.equal(readNewestExitMarker([first, second, first])?.reason, 'newer');
+        assert.equal(readNewestExitMarker([path.join(root, 'missing')]), null);
+    });
+});
+
+void test('runLogCandidateDirs: includes main-checkout dirs for primary and watched ids without duplicates', () => {
+    withTempDir((root) => {
+        const ctxDir = path.join(root, 'worktree', 'tasks', 'secondary');
+        const candidates = runLogCandidateDirs(ctxDir, 'secondary', 'primary');
+        assert.ok(candidates.includes(ctxDir));
+        assert.ok(candidates.includes(path.join(root, 'tasks', 'primary')));
+        assert.ok(candidates.includes(path.join(root, 'tasks', 'secondary')));
+        assert.equal(new Set(candidates).size, candidates.length);
+    });
+});
+
 void test('classifyIdle: fresh non-zero marker is death with reason', () => {
     withTempDir((dir) => {
         const taskDir = path.join(dir, 't1');
@@ -716,6 +738,83 @@ void test('watchCmd: signal exit marker reports termination reason', () => {
         assert.equal(result.exitCode, 4);
         assert.match(result.stderr.join(''), /terminated by SIGTERM/);
         assert.deepEqual(result.stdout, ['state=plan reason=death\n']);
+    });
+});
+
+void test('watchCmd (red-first): finds primary run log in main checkout after task dir moves to worktree', () => {
+    withTempDir((root) => {
+        const primaryDir = path.join(root, 'tasks', 'primary');
+        const worktreeDir = path.join(root, 'worktree', 'tasks', 'primary');
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        fs.writeFileSync(path.join(worktreeDir, 'status.json'), '{}');
+        fs.mkdirSync(primaryDir, { recursive: true });
+        fs.writeFileSync(path.join(primaryDir, '.canon-run.log'), exitLine('1', 'primary main-checkout crash') + '\n');
+        const status = makeStatus('code_review', {
+            spec: { status: 'done', agent: 'codex' },
+            spec_review: { status: 'done', agent: 'claude' },
+            plan: { status: 'done', agent: 'codex' },
+            implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'pending', agent: 'claude' },
+        });
+        const live = makeContext({
+            taskDir: worktreeDir, statusFile: path.join(worktreeDir, 'status.json'),
+            statusResult: { kind: 'ok', file: path.join(worktreeDir, 'status.json'), status },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, NOW, ['primary']) },
+            canonPid: 7777, resolvedPid: 7777,
+        });
+        const dead = { ...live, heartbeatResult: { kind: 'missing' } as const, canonPid: null, resolvedPid: null };
+        const contexts = [live, dead, dead]; let index = 0;
+        const clock = makeClock();
+        const result = runWatchCommand(['primary'], {
+            nowImpl: clock.now, sleepImpl: clock.sleep,
+            gatherContextImpl: () => contexts[index++] ?? dead,
+            probeAliveImpl: (pid: number): void => {
+                if (pid === 7777) return;
+                const err = new Error('ESRCH') as NodeJS.ErrnoException; err.code = 'ESRCH'; throw err;
+            },
+        });
+        assert.equal(result.exitCode, 4);
+        assert.deepEqual(result.stdout, ['state=code_review reason=death\n']);
+        assert.match(result.stderr.join(''), /primary main-checkout crash/);
+    });
+});
+
+void test('watchCmd: secondary bundle member uses remembered primary main-checkout log', () => {
+    withTempDir((root) => {
+        const primaryDir = path.join(root, 'tasks', 'primary');
+        const secondaryWorktreeDir = path.join(root, 'worktree', 'tasks', 'secondary');
+        fs.mkdirSync(primaryDir, { recursive: true });
+        fs.mkdirSync(secondaryWorktreeDir, { recursive: true });
+        fs.writeFileSync(path.join(secondaryWorktreeDir, 'status.json'), '{}');
+        fs.writeFileSync(path.join(primaryDir, '.canon-run.log'), exitLine('1', 'bundle primary crashed') + '\n');
+        const bundleStatus = makeStatus('code_review', {
+            spec: { status: 'done', agent: 'codex' }, spec_review: { status: 'done', agent: 'claude' },
+            plan: { status: 'done', agent: 'codex' }, implement: { status: 'done', agent: 'codex' },
+            code_review: { status: 'pending', agent: 'claude' },
+        });
+        const live = makeContext({
+            taskDir: secondaryWorktreeDir, statusFile: path.join(secondaryWorktreeDir, 'status.json'),
+            statusResult: { kind: 'ok', file: path.join(secondaryWorktreeDir, 'status.json'), status: bundleStatus },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, NOW, ['primary', 'secondary']) },
+            canonPid: 7777, resolvedPid: 7777,
+        });
+        const dead = { ...live, heartbeatResult: { kind: 'missing' } as const, canonPid: null, resolvedPid: null };
+        const contexts = [live, dead, dead]; let index = 0;
+        const clock = makeClock();
+        const result = runWatchCommand(['secondary'], {
+            nowImpl: clock.now, sleepImpl: clock.sleep,
+            gatherContextImpl: () => contexts[index++] ?? dead,
+            probeAliveImpl: (pid: number): void => {
+                if (pid === 7777) return;
+                const err = new Error('ESRCH') as NodeJS.ErrnoException; err.code = 'ESRCH'; throw err;
+            },
+        });
+        assert.equal(result.exitCode, 4);
+        assert.deepEqual(result.stdout, ['state=code_review reason=death\n']);
+        assert.match(result.stderr.join(''), /bundle primary crashed/);
+
+        const noHeartbeat = { ...dead, taskDir: secondaryWorktreeDir };
+        assert.equal(classifyIdle(noHeartbeat, 'secondary').kind, 'step_done');
     });
 });
 
@@ -1371,5 +1470,38 @@ void test('watch --follow uses byte offsets and preserves UTF-8 across polls and
         assert.match(output, /truncated\n/);
         assert.doesNotMatch(output, /historical-other/);
         assert.match(output, /new-other\n/);
+    });
+});
+
+void test('watch --follow streams the main-checkout primary log when context is in a worktree', () => {
+    withTempDir((root) => {
+        const mainDir = path.join(root, 'tasks', 'primary');
+        const worktreeDir = path.join(root, 'worktree', 'tasks', 'primary');
+        fs.mkdirSync(mainDir, { recursive: true });
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        fs.writeFileSync(path.join(mainDir, '.canon-run.log'), 'initial log\n');
+        fs.writeFileSync(path.join(worktreeDir, 'status.json'), '{}');
+        const clock = makeClock();
+        let polls = 0;
+        const ctx = makeContext({
+            taskDir: worktreeDir, statusFile: path.join(worktreeDir, 'status.json'),
+            statusResult: { kind: 'ok', file: path.join(worktreeDir, 'status.json'), status: makeStatus('plan', {
+                spec_review: { status: 'done', agent: 'claude' }, plan: { status: 'in_progress', agent: 'claude' },
+            }) },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(7777, clock.now(), ['primary']) },
+            canonPid: 7777, resolvedPid: 7777,
+        });
+        const result = runWatchCommand(['primary', '--follow', '--timeout', '1s'], {
+            nowImpl: clock.now, pollIntervalMs: 100,
+            sleepImpl: (ms) => {
+                clock.sleep(ms);
+                polls += 1;
+                if (polls === 1) fs.appendFileSync(path.join(mainDir, '.canon-run.log'), 'streamed from primary\n');
+            },
+            gatherContextImpl: () => ctx,
+            probeAliveImpl: (pid: number): void => { if (pid !== 7777) throw new Error('unexpected pid'); },
+        });
+        assert.equal(result.exitCode, 5);
+        assert.match(result.stderr.join(''), /streamed from primary/);
     });
 });

@@ -1104,6 +1104,14 @@ function readLastExitMarker(taskDir) {
     if (fd !== void 0) fs10.closeSync(fd);
   }
 }
+function readNewestExitMarker(taskDirs) {
+  let newest = null;
+  for (const taskDir of new Set(taskDirs)) {
+    const marker = readLastExitMarker(taskDir);
+    if (marker && (newest == null || marker.timestampMs > newest.timestampMs)) newest = marker;
+  }
+  return newest;
+}
 function statusReadResult(taskId, statusFile, readImpl) {
   try {
     if (readImpl) {
@@ -1124,6 +1132,29 @@ function statusReadResult(taskId, statusFile, readImpl) {
 function tolerantTaskDir(taskId) {
   if (isOrphanedWorktreeState(taskId)) return taskDirForRepoRoot(taskId);
   return path9.dirname(statusFileFor(taskId));
+}
+function runLogCandidateDirs(ctxTaskDir, taskId, primaryTaskId = taskId) {
+  const candidates = [];
+  const addRepoRoot = (id) => {
+    try {
+      candidates.push(taskDirForRepoRoot(id));
+    } catch {
+    }
+  };
+  const addResolved = (id) => {
+    try {
+      candidates.push(tolerantTaskDir(id));
+    } catch {
+    }
+  };
+  addRepoRoot(primaryTaskId);
+  addResolved(primaryTaskId);
+  candidates.push(ctxTaskDir);
+  if (taskId !== primaryTaskId) {
+    addRepoRoot(taskId);
+    addResolved(taskId);
+  }
+  return [...new Set(candidates)];
 }
 function defaultProbeAlive(pid) {
   process.kill(pid, 0);
@@ -2555,7 +2586,7 @@ function classifyAttach(ctx, taskId, probeAlive, now) {
     hint: `Use \`canon task status ${taskId}\` for a non-blocking snapshot of the task state.`
   };
 }
-function classifyIdle(ctx, _taskId, probeAlive = () => false, now = Date.now()) {
+function classifyIdle(ctx, taskId, probeAlive = () => false, now = Date.now(), primaryTaskId) {
   const readError = classifyStatusErrors(ctx);
   if (readError) return readError;
   const status = ctx.statusResult.kind === "ok" && isStatusJson(ctx.statusResult.status) ? ctx.statusResult.status : null;
@@ -2607,7 +2638,7 @@ function classifyIdle(ctx, _taskId, probeAlive = () => false, now = Date.now()) 
         if (ctx.resolvedPid != null && !orchestratorLive) {
           return { kind: "death", state, pid: ctx.resolvedPid, reason: "orchestrator died without a clean exit (runtime files left behind)" };
         }
-        const marker = readLastExitMarker(ctx.taskDir);
+        const marker = readNewestExitMarker(runLogCandidateDirs(ctx.taskDir, taskId, primaryTaskId ?? taskId));
         if (marker && marker.code !== "0") {
           let statusMtimeMs = null;
           try {
@@ -2653,8 +2684,9 @@ function primaryLogTaskId(ctx, fallbackTaskId) {
   }
   return fallbackTaskId;
 }
-function tailRunLog(ctx, taskId, deps, tailState) {
-  const logTaskDir = tolerantTaskDir(primaryLogTaskId(ctx, taskId));
+function tailRunLog(ctx, taskId, deps, tailState, primaryTaskId) {
+  const candidateDirs = runLogCandidateDirs(ctx.taskDir, taskId, primaryTaskId ?? primaryLogTaskId(ctx, taskId));
+  const logTaskDir = candidateDirs.find((dir) => fs11.existsSync(runLogPathFor(dir))) ?? candidateDirs[0];
   const logPath = runLogPathFor(logTaskDir);
   let fd;
   try {
@@ -2799,7 +2831,14 @@ function watchCmd(args2, deps = {}) {
         throw new Error("reportInitialFailure called for live result");
     }
   };
+  let rememberedPrimaryTaskId = null;
+  const rememberPrimary = (observedCtx) => {
+    if (observedCtx.heartbeatResult.kind !== "found") return;
+    const primaryId = observedCtx.heartbeatResult.record.task_ids[0];
+    if (typeof primaryId === "string" && primaryId.length > 0) rememberedPrimaryTaskId = primaryId;
+  };
   let ctx = gatherContext(taskId, deps);
+  rememberPrimary(ctx);
   if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
     emitSummary(stdout, {
       state: parsed.untilPhase,
@@ -2844,6 +2883,7 @@ function watchCmd(args2, deps = {}) {
     });
     if (waitResult.kind === "found") {
       ctx = gatherContext(taskId, deps);
+      rememberPrimary(ctx);
       const postWaitAttach = classifyAttach(ctx, taskId, isOrchestratorAlive, now());
       if (postWaitAttach.kind !== "live") {
         return reportInitialFailure(postWaitAttach);
@@ -2867,12 +2907,13 @@ function watchCmd(args2, deps = {}) {
   }
   stderr(`canon watch: attached to task '${taskId}' (pid=${ctx.resolvedPid ?? "unknown"})
 `);
-  if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
+  if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? void 0);
   for (; ; ) {
     if (withinTimeout()) return reportTimeout();
     sleep(pollIntervalMs);
     if (withinTimeout()) return reportTimeout();
     ctx = gatherContext(taskId, deps);
+    rememberPrimary(ctx);
     if (parsed.untilPhase && phaseSettled(ctx, parsed.untilPhase, isOrchestratorAlive, now())) {
       emitSummary(stdout, {
         state: parsed.untilPhase,
@@ -2892,7 +2933,7 @@ function watchCmd(args2, deps = {}) {
       } else {
         tick();
       }
-      if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
+      if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? void 0);
       continue;
     }
     if (liveResult.kind === "read_error") {
@@ -2917,13 +2958,14 @@ function watchCmd(args2, deps = {}) {
       } else {
         tick();
       }
-      if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState);
+      if (parsed.follow) tailRunLog(ctx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? void 0);
       continue;
     }
     stderr("canon watch: orchestrator appears idle; re-reading status.json after a grace interval...\n");
     sleep(pollIntervalMs);
     if (withinTimeout()) return reportTimeout();
     const freshCtx = gatherContext(taskId, deps);
+    rememberPrimary(freshCtx);
     if (parsed.untilPhase && phaseSettled(freshCtx, parsed.untilPhase, isOrchestratorAlive, now())) {
       emitSummary(stdout, {
         state: parsed.untilPhase,
@@ -2933,7 +2975,7 @@ function watchCmd(args2, deps = {}) {
       });
       return exit(0);
     }
-    const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now());
+    const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now(), rememberedPrimaryTaskId ?? void 0);
     if (idleResult.kind === "death" && idleResult.reason) {
       stderr(`canon watch: ${idleResult.reason}; run \`canon run ${taskId}\` to resume
 `);
