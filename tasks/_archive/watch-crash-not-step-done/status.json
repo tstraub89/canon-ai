@@ -1,7 +1,7 @@
 {
   "id": "watch-crash-not-step-done",
   "title": "Watch reports a crashed full-auto run as death, not step_done",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-20",
   "updated": "2026-10-20",
   "branch": "task/watch-crash-not-step-done",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
