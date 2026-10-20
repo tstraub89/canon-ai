@@ -42,11 +42,11 @@ canon watch <id>
 
 **Summary line** — always the final stdout line, stable `key=value`:
 
-For a crash, the failure reason is printed on stderr; the summary line itself is unchanged.
-
 ```
 state=human_review reason=checkpoint phase=qa→human_review verdict=approved pid=48213
 ```
+
+For a crash, the failure reason is printed on stderr; the summary line itself is unchanged.
 
 Keys: `state`, `reason` (always); `phase`, `verdict`, `pid` when applicable. All progress (attach line, phase transitions, heartbeat-age ticks, `--follow` log stream) goes to **stderr**; stdout carries only this one line.
 

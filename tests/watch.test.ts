@@ -566,6 +566,19 @@ void test('readLastExitMarker: malformed and absent logs return null and signal 
     });
 });
 
+void test('readLastExitMarker: ignores marker text embedded in output and accepts a later line-start marker', () => {
+    withTempDir((dir) => {
+        const taskDir = path.join(dir, 't1');
+        writeExitLog(taskDir, ['error: saw ' + exitLine('1', 'embedded', '2026-01-01T00:00:00.000Z')]);
+        assert.equal(readLastExitMarker(taskDir), null);
+        writeExitLog(taskDir, [
+            'error: saw ' + exitLine('1', 'embedded', '2026-01-01T00:00:00.000Z'),
+            exitLine('0', 'real marker', '2026-01-02T00:00:00.000Z'),
+        ]);
+        assert.equal(readLastExitMarker(taskDir)?.reason, 'real marker');
+    });
+});
+
 void test('classifyIdle: fresh non-zero marker is death with reason; clean and stale markers remain step_done', () => {
     withTempDir((dir) => {
         const taskDir = path.join(dir, 't1');
