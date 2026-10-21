@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [3.12.0] — 2026-10-21
+
+### Added
+
+- **Broken references in a task's handoff or QA summary are fixed by the agent that wrote them, before the commit.** After implement, and again after QA, `canon run` checks the task's own artifacts with the docs-refs checker. If it finds a broken reference, it resumes the same agent session to fix it, up to two attempts. A fix session may change only the task's own artifacts; if it touches anything else, the run stops and names the files. If a reference is still broken after two attempts, canon warns and continues as before. The implement and QA prompts also now ask agents to cite repository files by full path and deleted files as markdown links.
+- **`--full-send` pushes its own scaffold commits to the base branch before opening the draft PR.** It pushes only commits that have the exact scaffold subject and change only task artifacts and pipeline telemetry, and it pushes the checked commit rather than the moving branch. If any other commit is unpushed on the base branch, nothing is pushed and the run stops at the divergence check as before. A rejected push (for example, a protected branch) stops with a hint to push or merge manually. The "Scaffold committed" hint now prints only when such commits exist.
+
+### Changed
+
+- **`--pr` and `--push` block only on real merge conflicts with the base.** A base branch that moved on files the task never touched, such as another task's artifacts, no longer stops the run; canon prints one line saying those files merge cleanly. A conflict with `origin/<base>`, including in a file the spec declared, still aborts before the push and names the conflicted files. The task's own out-of-scope changes still abort as before. `--force` bypasses a conflict with a warning. On Git older than 2.38, canon warns that conflicts weren't checked and proceeds.
+
+### Fixed
+
+- **`canon watch` reports a full-send run that died after QA as a death, not a clean stop.** A run that crashed while opening its draft PR now shows `reason=death` and exits 4, with the reason on stderr, whether watch was attached during the run or started after it. A tail that is still running keeps watch blocking.
+- **`canon task reset-spec-review` re-arms the spec gate.** The gate disarms itself when it halts, so a reset after that halt used to let the next run go straight through to human review. The reset now re-arms it and says so, unless the task is full-send.
+- **`--ship` no longer warns that the branch delete failed.** It merges with `gh pr merge --squash`, deletes the remote branch itself, and deletes the local branch after the worktree is removed; the old order made `gh` try to delete a branch the worktree still held.
+
 ## [3.11.0] — 2026-10-20
 
 ### Changed
