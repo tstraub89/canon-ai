@@ -193,6 +193,61 @@ export function getUnpushedBaseCommits(
     return { commits, ok: true, stderr: '' };
 }
 
+const CANON_TASK_ID_PATTERN = '[a-z0-9][a-z0-9._-]*';
+const SCAFFOLD_ARTIFACTS_SUBJECT = new RegExp(`^task\\(${CANON_TASK_ID_PATTERN}\\): commit artifacts pre-pipeline$`);
+const SCAFFOLD_TELEMETRY_SUBJECT = new RegExp(
+    `^chore: absorb pre-implement telemetry into scaffold for ${CANON_TASK_ID_PATTERN}(?:, ${CANON_TASK_ID_PATTERN})*$`,
+);
+
+export function isScaffoldCommitSubject(subject: string): boolean {
+    return SCAFFOLD_ARTIFACTS_SUBJECT.test(subject) || SCAFFOLD_TELEMETRY_SUBJECT.test(subject);
+}
+
+export type SafeToPushVerdict = { safe: true } | { safe: false; reason: string };
+
+export function classifySafeToPushCommitFromData(input: {
+    subject: string;
+    parentCount: number;
+    paths: readonly string[];
+}): SafeToPushVerdict {
+    if (!isScaffoldCommitSubject(input.subject)) return { safe: false, reason: 'subject is not a canon scaffold subject' };
+    if (input.parentCount > 1) return { safe: false, reason: 'merge commit' };
+    const disallowed = input.paths.find(candidate =>
+        !candidate.startsWith('tasks/') && !(PIPELINE_TELEMETRY_FILES as readonly string[]).includes(candidate),
+    );
+    if (disallowed) return { safe: false, reason: `changes ${disallowed} outside tasks/ and pipeline telemetry` };
+    return { safe: true };
+}
+
+export function classifySafeToPushCommit(
+    sha: string,
+    subject: string,
+    cwd: string,
+): { ok: true; verdict: SafeToPushVerdict } | { ok: false; stderr: string } {
+    if (!isScaffoldCommitSubject(subject)) {
+        return { ok: true, verdict: { safe: false, reason: 'subject is not a canon scaffold subject' } };
+    }
+    const parents = gitSafeAtRaw(cwd, 'rev-list', '--parents', '-n', '1', sha);
+    if (!parents.ok || !parents.stdout.trim()) return { ok: false, stderr: parents.stderr || 'could not read commit parents' };
+    const parentCount = Math.max(0, parents.stdout.trim().split(/\s+/).length - 1);
+    const changed = gitSafeAtRaw(cwd, 'diff-tree', '--no-commit-id', '--root', '-r', '--name-only', '--no-renames', '-z', sha);
+    if (!changed.ok) return { ok: false, stderr: changed.stderr };
+    const paths = changed.stdout.split('\0').filter(Boolean);
+    return { ok: true, verdict: classifySafeToPushCommitFromData({ subject, parentCount, paths }) };
+}
+
+/** true/false = safe unpushed scaffold commit exists; null = probe failed. */
+export function hasUnpushedScaffoldCommits(baseBranch: string, cwd: string): boolean | null {
+    const unpushed = getUnpushedBaseCommits(baseBranch, cwd);
+    if (!unpushed.ok) return null;
+    for (const commit of unpushed.commits) {
+        const result = classifySafeToPushCommit(commit.sha, commit.subject, cwd);
+        if (!result.ok) return null;
+        if (result.verdict.safe) return true;
+    }
+    return false;
+}
+
 export type ScopedDiff = {
     diff: string;
     truncated: boolean;

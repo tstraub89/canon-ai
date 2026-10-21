@@ -63,6 +63,7 @@ export type AttachClassification =
     | { kind: 'read_error'; file: string; reason: string };
 
 export type IdleClassification =
+    | { kind: 'live'; state: string; pid: number }
     | { kind: 'checkpoint'; state: string; phase: string; verdict?: Verdict; pid?: number }
     | { kind: 'complete'; state: string; pid?: number }
     | { kind: 'auto_block'; state: string; phase: string; pid?: number }
@@ -129,6 +130,12 @@ function findFirstBlockedPhase(status: StatusJson): Phase | null {
         if ((status.phases[phase]?.status ?? 'pending') === 'blocked') return phase;
     }
     return null;
+}
+
+function isFullSendTailPending(status: StatusJson): boolean {
+    return status.full_send === true
+        && status.status === 'human_review'
+        && (status.phases.human_review?.status ?? 'pending') === 'pending';
 }
 
 function findPreviousDonePhase(status: StatusJson, beforePhase: Phase): Phase | null {
@@ -294,6 +301,8 @@ function parseWatchArgs(args: string[]): ParsedWatchArgs {
 
 function summarizeIdle(result: IdleClassification): SummaryLine {
     switch (result.kind) {
+        case 'live':
+            throw new Error('summarizeIdle called for live result');
         case 'checkpoint':
             return { state: result.state, reason: 'checkpoint', phase: result.phase, verdict: result.verdict, pid: result.pid };
         case 'complete':
@@ -363,6 +372,15 @@ export function classifyAttach(
     }
 
     if (status) {
+        if (isFullSendTailPending(status)) {
+            if (orchestratorLive && ctx.resolvedPid != null) {
+                return { kind: 'live', pid: ctx.resolvedPid, state };
+            }
+            const heartbeatPrimary = ctx.heartbeatResult.kind === 'found' ? ctx.heartbeatResult.record.task_ids[0] : undefined;
+            const primaryId = typeof heartbeatPrimary === 'string' && heartbeatPrimary.length > 0 ? heartbeatPrimary : taskId;
+            const reason = findCrashEvidence(ctx, taskId, probeAlive, primaryId, orchestratorLive);
+            if (reason) return { kind: 'death', state, hint: `run \`canon run ${taskId}\` to resume`, reason };
+        }
         const currentPhase = PHASE_ORDER.find(phase => (status.phases[phase]?.status ?? 'pending') !== 'done');
         const currentStatus = currentPhase ? (status.phases[currentPhase]?.status ?? 'pending') : null;
         if (currentPhase && currentPhase !== 'human_review' && (currentStatus === 'pending' || currentStatus === 'in_progress')) {
@@ -445,6 +463,13 @@ export function classifyIdle(
     }
 
     if (state === 'human_review') {
+        if (isFullSendTailPending(status)) {
+            if (orchestratorLive && ctx.resolvedPid != null) {
+                return { kind: 'live', state, pid: ctx.resolvedPid };
+            }
+            const crashReason = findCrashEvidence(ctx, taskId, probeAlive, primaryTaskId, orchestratorLive);
+            if (crashReason) return { kind: 'death', state, pid: ctx.resolvedPid ?? undefined, reason: crashReason };
+        }
         const verdict = status.phases.code_review?.verdict || undefined;
         return {
             kind: 'checkpoint',
@@ -507,7 +532,7 @@ function phaseSettled(ctx: RunContext, phase: Phase, probeAlive: (pid: number) =
 // (scaffold commit, telemetry absorption, `git worktree add`, node_modules symlink,
 // and agent session-init all shell out via execSync / sync fs and block the event
 // loop). If the resolved orchestrator pid is still alive and the run hasn't
-// reached a real stop — an auto-block, human_review checkpoint, or completion — it is
+// reached a real stop — an auto-block, a non-full-send human_review checkpoint, or completion — it is
 // progressing, not settled, so the idle classifier must keep blocking instead of
 // reporting a false step_done.
 //
@@ -529,6 +554,7 @@ export function orchestratorStillProgressing(
         : null;
     if (status == null) return false;
     if (findFirstBlockedPhase(status) && !blockedPhaseLivenessTrusted(ctx, orchestratorLive, now)) return false;
+    if (isFullSendTailPending(status)) return true;
     const state = status.status;
     return state !== 'human_review' && state !== 'complete';
 }
@@ -891,6 +917,11 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
         }
 
         const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now(), rememberedPrimaryTaskId ?? undefined);
+        if (idleResult.kind === 'live') {
+            reportPhasePointer(freshCtx);
+            if (parsed.follow) tailRunLog(freshCtx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? undefined);
+            continue;
+        }
         if (idleResult.kind === 'death' && idleResult.reason) {
             stderr(`canon watch: ${idleResult.reason}; run \`canon run ${taskId}\` to resume\n`);
         }

@@ -21,7 +21,7 @@ import {
     resolveQaPrBody,
     shouldParkCrashedReview,
 } from '../src/orchestrator/main.js';
-import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../src/orchestrator/git.js';
+import { classifySafeToPushCommitFromData, ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../src/orchestrator/git.js';
 import { commitArchiveChanges, stageArchiveChanges } from '../src/orchestrator/main.js';
 import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../src/orchestrator/state.js';
 import {
@@ -1065,6 +1065,18 @@ function setupDivergentBaseRepo(dir: string, taskId: string): { localDir: string
     writeAffectedFilesSpec(path.join(localDir, 'tasks'), taskId, []);
     return { localDir, shortSha };
 }
+
+void test('safe scaffold push classifier requires an exact subject, only allowed paths, and no merge parent', () => {
+    const safe = (subject: string, paths: string[], parentCount = 1) =>
+        classifySafeToPushCommitFromData({ subject, paths, parentCount });
+    assert.deepEqual(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json']), { safe: true });
+    assert.deepEqual(safe('chore: absorb pre-implement telemetry into scaffold for task-a, task-b', ['docs/lessons-learned.md']), { safe: true });
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline suffix', ['tasks/task-a/status.json']).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['src/module.ts']).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['src/module.ts', 'tasks/task-a/module.ts']).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json'], 2).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json', 'src/module.ts']).safe, false);
+});
 
 function makeCompleteStatus(taskId: string, branch: string): Record<string, unknown> {
     return {
@@ -5811,6 +5823,75 @@ void test('main --push blocks when local base has unpushed commits', () => {
         assert.match(result.stderr, new RegExp(shortSha));
         assert.match(result.stderr, /--allow-divergent-base/);
         assert.match(result.stderr, /Base divergence detected/);
+    });
+});
+
+void test('plain --pr still refuses an unpushed base commit without pushing it', () => {
+    withTempDir('run-task-plain-pr-base-divergence-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = setupDivergentBaseRepo(dir, taskId);
+        const baseBefore = execFileSync('git', ['--git-dir', path.join(dir, 'origin.git'), 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runMainInline(taskId, ['--pr'], {
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: path.join(localDir, 'tasks'),
+        }, localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Base divergence detected/);
+        const baseAfter = execFileSync('git', ['--git-dir', path.join(dir, 'origin.git'), 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        assert.equal(baseAfter, baseBefore);
+    });
+});
+
+void test('main full-send tail pushes an unpushed scaffold tip SHA before the divergence gate', () => {
+    withTempDir('run-task-full-send-scaffold-push-', dir => {
+        const taskId = 'task-a';
+        const { localDir: clonedDir, originDir } = makeGitFixture(dir);
+        const localDir = path.join(dir, 'worktrees', taskId);
+        fs.mkdirSync(path.dirname(localDir), { recursive: true });
+        fs.renameSync(clonedDir, localDir);
+        fs.mkdirSync(path.join(localDir, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'src/module.ts'), 'export const value = 1;\n', 'utf8');
+        gitIn(localDir, 'add', 'src/module.ts');
+        gitIn(localDir, 'commit', '-m', 'add tracked module');
+        gitIn(localDir, 'push', 'origin', 'main');
+
+        const status = makeCompleteStatus(taskId, `task/${taskId}`);
+        status.full_send = true;
+        (status.phases as Record<string, { status: string; agent: string }>).human_review = { status: 'pending', agent: 'human' };
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(localDir, 'tasks'), taskId, []);
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', `task(${taskId}): commit artifacts pre-pipeline`);
+        fs.copyFileSync(path.join(localDir, 'src/module.ts'), path.join(localDir, 'tasks', taskId, 'module-copy.ts'));
+        gitIn(localDir, 'add', `tasks/${taskId}/module-copy.ts`);
+        gitIn(localDir, 'commit', '-m', `task(${taskId}): commit artifacts pre-pipeline`);
+        const scaffoldTip = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        const taskBranch = `task/${taskId}`;
+        gitIn(localDir, 'checkout', '-b', taskBranch);
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), [
+            '# Implementation Handoff', '', '## Validation Outcomes', '', '| Check | Result | Notes |', '|---|---|---|', '| `lint` | Pass | ok |', '',
+        ].join('\n'), 'utf8');
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runMainInline(taskId, ['--full-send'], {
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: path.join(localDir, 'tasks'),
+            CANON_WORKTREES_ROOT: path.dirname(localDir),
+            FAKE_GH_LOG: path.join(dir, 'gh.log'),
+            FAKE_GH_PR_STATE_FILE: path.join(dir, 'pr-state.txt'),
+        }, localDir);
+
+        assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+        assert.match(result.stdout, /Full-send: pushed 2 unpushed main commit\(s\)/);
+        const remoteTip = execFileSync('git', ['--git-dir', originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        assert.equal(remoteTip, scaffoldTip);
+        const ghLog = fs.readFileSync(path.join(dir, 'gh.log'), 'utf8');
+        assert.match(ghLog, /^pr create /m);
     });
 });
 

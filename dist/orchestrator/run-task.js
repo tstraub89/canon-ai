@@ -1056,6 +1056,45 @@ function getUnpushedBaseCommits(baseBranch, cwd) {
   }
   return { commits, ok: true, stderr: "" };
 }
+var CANON_TASK_ID_PATTERN = "[a-z0-9][a-z0-9._-]*";
+var SCAFFOLD_ARTIFACTS_SUBJECT = new RegExp(`^task\\(${CANON_TASK_ID_PATTERN}\\): commit artifacts pre-pipeline$`);
+var SCAFFOLD_TELEMETRY_SUBJECT = new RegExp(
+  `^chore: absorb pre-implement telemetry into scaffold for ${CANON_TASK_ID_PATTERN}(?:, ${CANON_TASK_ID_PATTERN})*$`
+);
+function isScaffoldCommitSubject(subject) {
+  return SCAFFOLD_ARTIFACTS_SUBJECT.test(subject) || SCAFFOLD_TELEMETRY_SUBJECT.test(subject);
+}
+function classifySafeToPushCommitFromData(input) {
+  if (!isScaffoldCommitSubject(input.subject)) return { safe: false, reason: "subject is not a canon scaffold subject" };
+  if (input.parentCount > 1) return { safe: false, reason: "merge commit" };
+  const disallowed = input.paths.find(
+    (candidate) => !candidate.startsWith("tasks/") && !PIPELINE_TELEMETRY_FILES.includes(candidate)
+  );
+  if (disallowed) return { safe: false, reason: `changes ${disallowed} outside tasks/ and pipeline telemetry` };
+  return { safe: true };
+}
+function classifySafeToPushCommit(sha, subject, cwd) {
+  if (!isScaffoldCommitSubject(subject)) {
+    return { ok: true, verdict: { safe: false, reason: "subject is not a canon scaffold subject" } };
+  }
+  const parents = gitSafeAtRaw(cwd, "rev-list", "--parents", "-n", "1", sha);
+  if (!parents.ok || !parents.stdout.trim()) return { ok: false, stderr: parents.stderr || "could not read commit parents" };
+  const parentCount = Math.max(0, parents.stdout.trim().split(/\s+/).length - 1);
+  const changed = gitSafeAtRaw(cwd, "diff-tree", "--no-commit-id", "--root", "-r", "--name-only", "--no-renames", "-z", sha);
+  if (!changed.ok) return { ok: false, stderr: changed.stderr };
+  const paths = changed.stdout.split("\0").filter(Boolean);
+  return { ok: true, verdict: classifySafeToPushCommitFromData({ subject, parentCount, paths }) };
+}
+function hasUnpushedScaffoldCommits(baseBranch, cwd) {
+  const unpushed = getUnpushedBaseCommits(baseBranch, cwd);
+  if (!unpushed.ok) return null;
+  for (const commit of unpushed.commits) {
+    const result = classifySafeToPushCommit(commit.sha, commit.subject, cwd);
+    if (!result.ok) return null;
+    if (result.verdict.safe) return true;
+  }
+  return false;
+}
 function truncateUtf8(input, capBytes) {
   const bytes = Buffer.from(input, "utf8");
   if (bytes.length <= capBytes) return input;
@@ -6458,9 +6497,17 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
   if (!worktreeAlreadyCreated) {
     commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
     const scaffoldBase = getBaseBranch(taskIds);
-    info(
-      `Scaffold committed to local ${scaffoldBase}; run \`git push origin ${scaffoldBase}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`
-    );
+    const unpushedScaffold = hasUnpushedScaffoldCommits(scaffoldBase, process.cwd());
+    const allFullSend = taskIds.every((id) => readStatus(id).full_send === true);
+    if (unpushedScaffold === null || unpushedScaffold && !allFullSend) {
+      info(
+        `Scaffold committed to local ${scaffoldBase}; run \`git push origin ${scaffoldBase}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`
+      );
+    } else if (unpushedScaffold) {
+      info(
+        `Scaffold committed to local ${scaffoldBase}; the full-send tail pushes unpushed base commits that carry only task artifacts and pipeline telemetry, and stops if any other commit is unpushed on ${scaffoldBase}.`
+      );
+    }
   }
   ensureBranch(taskIds, { force });
   const activeCwd = getActiveCwd(taskIds);
@@ -7779,6 +7826,37 @@ function shouldRunFullSendTail(taskIds) {
     return status.full_send === true && status.phases.qa?.status === "done" && status.phases.human_review?.status === "pending";
   });
 }
+function pushScaffoldBaseCommitsForFullSend(taskIds, cwd) {
+  const baseBranch = getBaseBranch(taskIds);
+  const fetch = gitSafeAt(cwd, "fetch", "origin", baseBranch);
+  if (!fetch.ok) die2(`Full-send tail aborted: could not fetch origin/${baseBranch} (${fetch.stderr || "unknown error"}). Nothing was pushed.`);
+  const unpushed = getUnpushedBaseCommits(baseBranch, cwd);
+  if (!unpushed.ok) die2(`Full-send tail aborted: could not list unpushed ${baseBranch} commits (${unpushed.stderr || "unknown error"}). Nothing was pushed.`);
+  if (unpushed.commits.length === 0) return;
+  for (const commit of unpushed.commits) {
+    const result = classifySafeToPushCommit(commit.sha, commit.subject, cwd);
+    if (!result.ok) {
+      die2(`Full-send tail aborted: could not inspect ${commit.sha.slice(0, 7)} on ${baseBranch} (${result.stderr || "unknown error"}). Nothing was pushed.`);
+      return;
+    }
+    if (!result.verdict.safe) {
+      info2(`Full-send: not pushing ${baseBranch}; ${commit.sha.slice(0, 7)} ${commit.subject} is not safe to push (${result.verdict.reason}).`);
+      return;
+    }
+  }
+  const tipSha = unpushed.commits[0].sha;
+  const push2 = gitSafeAt(cwd, "push", "origin", `${tipSha}:refs/heads/${baseBranch}`);
+  if (!push2.ok) {
+    die2(
+      `Full-send tail aborted: pushing ${baseBranch} scaffold commits to origin failed: ${push2.stderr || "unknown error"}
+The base branch may be protected. Push or merge these commits to origin/${baseBranch} manually (they carry only task artifacts and pipeline telemetry), then re-run \`canon run ${taskIds.join(" ")}\`.`
+    );
+  }
+  info2(
+    `Full-send: pushed ${unpushed.commits.length} unpushed ${baseBranch} commit(s) to origin/${baseBranch} (canon scaffold subjects; only task artifacts and pipeline telemetry):
+` + unpushed.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
+  );
+}
 function commitHumanReviewFiles(taskIds, cwd, createPR) {
   const docSets = resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null);
   if (createPR) {
@@ -8904,6 +8982,7 @@ async function runPhase(phase, state) {
           die2(gateResult.reason);
         }
       }
+      pushScaffoldBaseCommitsForFullSend(taskIds2, cwd);
       commitHumanReviewFiles(taskIds2, cwd, true);
       for (const taskId of taskIds2) {
         const status = readStatus(taskId);

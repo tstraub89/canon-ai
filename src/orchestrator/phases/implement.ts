@@ -2,7 +2,7 @@ import { info, warn } from '../cli.js';
 import { getCodexConfig, getMaxReviewLoops } from '../policy.js';
 import { runCodex } from '../agents/codex.js';
 import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
-import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, parsePorcelain, ensureBranch } from '../git.js';
+import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, hasUnpushedScaffoldCommits, parsePorcelain, ensureBranch } from '../git.js';
 import { getActiveCwd, TASK_ARTIFACT_FILES } from '../worktree.js';
 import { autoBlockPhase, readStatus, writeStatus } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
@@ -62,10 +62,18 @@ export async function runImplementPhase(
     if (!worktreeAlreadyCreated) {
         commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
         const scaffoldBase = getBaseBranch(taskIds);
-        info(
-            `Scaffold committed to local ${scaffoldBase}; run ` +
-            `\`git push origin ${scaffoldBase}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`,
-        );
+        const unpushedScaffold = hasUnpushedScaffoldCommits(scaffoldBase, process.cwd());
+        const allFullSend = taskIds.every(id => readStatus(id).full_send === true);
+        if (unpushedScaffold === null || (unpushedScaffold && !allFullSend)) {
+            info(
+                `Scaffold committed to local ${scaffoldBase}; run ` +
+                `\`git push origin ${scaffoldBase}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`,
+            );
+        } else if (unpushedScaffold) {
+            info(
+                `Scaffold committed to local ${scaffoldBase}; the full-send tail pushes unpushed base commits that carry only task artifacts and pipeline telemetry, and stops if any other commit is unpushed on ${scaffoldBase}.`,
+            );
+        }
     }
     ensureBranch(taskIds, { force });
 
