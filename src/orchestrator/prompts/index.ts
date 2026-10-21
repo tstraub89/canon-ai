@@ -62,7 +62,7 @@ export function promptArtifactFixup(input: {
         '',
         'Do not change any other file — including notes.md, status.json, and source or test files. Canon compares the working tree before and after this turn and stops the run if anything else changed.',
     ];
-    if (input.phase === 'implement') lines.push('Do not run git add or git commit; the orchestrator commits after this turn.');
+    lines.push('Do not run git add or git commit; the orchestrator commits after this turn.');
     lines.push('', ARTIFACT_CITATION_RULE, '', 'Fix each listed reference — correct the path, switch a missing file to the markdown-link form, or rephrase it as plain prose if it is not a file reference. Reply with tool calls only.');
     return lines.join('\n');
 }

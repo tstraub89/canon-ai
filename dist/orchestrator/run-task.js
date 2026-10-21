@@ -5093,7 +5093,7 @@ function promptArtifactFixup(input) {
     "",
     "Do not change any other file \u2014 including notes.md, status.json, and source or test files. Canon compares the working tree before and after this turn and stops the run if anything else changed."
   ];
-  if (input.phase === "implement") lines.push("Do not run git add or git commit; the orchestrator commits after this turn.");
+  lines.push("Do not run git add or git commit; the orchestrator commits after this turn.");
   lines.push("", ARTIFACT_CITATION_RULE, "", "Fix each listed reference \u2014 correct the path, switch a missing file to the markdown-link form, or rephrase it as plain prose if it is not a file reference. Reply with tool calls only.");
   return lines.join("\n");
 }
@@ -7272,6 +7272,8 @@ function diffScopeSnapshots(before, after, exempt) {
 function snapshotOutsideArtifacts(cwd, taskIds) {
   const status = gitSafeAtRaw2(cwd, "status", "--porcelain=v1", "-uall");
   if (!status.ok) return { ok: false, error: status.stderr || "git status failed" };
+  const head = gitSafeAtRaw2(cwd, "rev-parse", "HEAD");
+  if (!head.ok || head.stdout.trim() === "") return { ok: false, error: head.stderr || "git rev-parse HEAD failed" };
   const entries = parsePorcelainEntries(status.stdout);
   const statusByPath = /* @__PURE__ */ new Map();
   for (const entry of entries) {
@@ -7282,6 +7284,7 @@ function snapshotOutsideArtifacts(cwd, taskIds) {
     if (!statusByPath.has(statusPath)) statusByPath.set(statusPath, "  ");
   }
   const snap = /* @__PURE__ */ new Map();
+  snap.set("[git HEAD]", head.stdout.trim());
   try {
     for (const [filePath, xy] of statusByPath) {
       const absolute = path22.join(cwd, filePath);

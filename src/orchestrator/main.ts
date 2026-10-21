@@ -397,6 +397,8 @@ function snapshotOutsideArtifacts(cwd: string, taskIds: readonly string[]):
     { ok: true; snap: ScopeSnapshot } | { ok: false; error: string } {
     const status = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
     if (!status.ok) return { ok: false, error: status.stderr || 'git status failed' };
+    const head = gitSafeAtRaw(cwd, 'rev-parse', 'HEAD');
+    if (!head.ok || head.stdout.trim() === '') return { ok: false, error: head.stderr || 'git rev-parse HEAD failed' };
     const entries = splitGit.parsePorcelainEntries(status.stdout);
     const statusByPath = new Map<string, string>();
     for (const entry of entries) {
@@ -407,6 +409,7 @@ function snapshotOutsideArtifacts(cwd: string, taskIds: readonly string[]):
         if (!statusByPath.has(statusPath)) statusByPath.set(statusPath, '  ');
     }
     const snap: ScopeSnapshot = new Map();
+    snap.set('[git HEAD]', head.stdout.trim());
     try {
         for (const [filePath, xy] of statusByPath) {
             const absolute = path.join(cwd, filePath);

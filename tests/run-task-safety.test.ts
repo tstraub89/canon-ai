@@ -52,6 +52,7 @@ void test('docs-refs findings parse, filter to own artifacts, and scope snapshot
     assert.deepEqual(filterArtifactFindings(findings, ['tasks/a/handoff.md']).map(f => f.line), [12, 14]);
     assert.deepEqual(diffScopeSnapshots(new Map([['a', ' M:one'], ['b', '??:old']]), new Map([['a', ' M:two'], ['b', '??:old'], ['c', '??:new']]), new Set(['b'])), ['a', 'c']);
     assert.deepEqual(diffScopeSnapshots(new Map([['a', ' M:x']]), new Map([['a', ' M:x']]), new Set()), []);
+    assert.deepEqual(diffScopeSnapshots(new Map([['[git HEAD]', 'before']]), new Map([['[git HEAD]', 'after']]), new Set()), ['[git HEAD]']);
     assert.equal(runDocsRefsCheck(process.cwd(), path.join(os.tmpdir(), 'missing-docs-refs-checker.mjs')).kind, 'absent');
 });
 
@@ -430,9 +431,16 @@ function prepareImplementFixupFixture(dir: string, taskId: string, options: {
     hook?: 'checker' | 'fail' | 'absent';
     resumeScript?: string;
     failResume?: boolean;
+    commitCleanFile?: boolean;
 }) {
     fs.mkdirSync(dir, { recursive: true });
     const { localDir } = makeGitFixture(dir);
+    if (options.commitCleanFile) {
+        fs.writeFileSync(path.join(localDir, 'clean-tracked.txt'), 'baseline\n');
+        gitIn(localDir, 'add', 'clean-tracked.txt');
+        gitIn(localDir, 'commit', '-m', 'add clean tracked fixture file');
+        gitIn(localDir, 'push', 'origin', 'main');
+    }
     const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
     fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
     if (options.artifactFinding === 'handoff') fs.appendFileSync(path.join(tasksRoot, taskId, 'handoff.md'), '\nSee `src/removed-by-task.ts` for details.\n');
@@ -461,6 +469,7 @@ function prepareImplementFixupFixture(dir: string, taskId: string, options: {
     ].join('\n'), { mode: 0o755 });
     const agentLog = path.join(dir, 'agent-invocations.log');
     const argvLog = path.join(dir, 'agent-argv.jsonl');
+    const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
     const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
         FAKE_AGENT_COMPLETE_PHASE: 'implement',
         FAKE_AGENT_ARGV_LOG: argvLog,
@@ -468,7 +477,7 @@ function prepareImplementFixupFixture(dir: string, taskId: string, options: {
         ...(options.resumeScript ? { FAKE_AGENT_EDIT_SCRIPT: options.resumeScript } : {}),
         ...(options.failResume ? { FAKE_AGENT_FAIL_RESUME: '1' } : {}),
     });
-    return { result, localDir, tasksRoot, agentLog, argvLog };
+    return { result, localDir, tasksRoot, agentLog, argvLog, headBefore };
 }
 
 function countResumes(argvLog: string): number {
@@ -7674,6 +7683,27 @@ void test('implement docs-refs fix-up stops on edits outside its artifacts and c
             assert.match(output, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
             assert.equal(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), '2');
         }
+
+        const commitDir = path.join(root, 'committed-edit');
+        const commitScript = path.join(commitDir, 'commit-edit.mjs');
+        fs.mkdirSync(commitDir, { recursive: true });
+        fs.writeFileSync(commitScript, [
+            "import fs from 'node:fs';",
+            "import { execFileSync } from 'node:child_process';",
+            "fs.writeFileSync('clean-tracked.txt', 'changed and committed by fix session\\n');",
+            "execFileSync('git', ['add', 'clean-tracked.txt']);",
+            "execFileSync('git', ['commit', '--no-verify', '-m', 'agent out-of-scope commit'], { stdio: 'ignore' });",
+        ].join('\n'));
+        const committedEdit = prepareImplementFixupFixture(commitDir, 'artifact-fixup-committed-edit', {
+            artifactFinding: 'handoff', session: true, hook: 'checker', resumeScript: commitScript, commitCleanFile: true,
+        });
+        const committedOutput = combinedOutput(committedEdit.result);
+        assert.equal(committedEdit.result.status, 1, committedOutput);
+        assert.match(committedOutput, /changed files outside its own artifacts/);
+        assert.match(committedOutput, /\[git HEAD\]/);
+        assert.equal(execFileSync('git', ['rev-list', '--count', `${committedEdit.headBefore}..HEAD`], { cwd: committedEdit.localDir, encoding: 'utf8' }).trim(), '1');
+        assert.equal(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: committedEdit.localDir, encoding: 'utf8' }).trim(), 'agent out-of-scope commit');
+        assert.equal(execFileSync('git', ['show', 'HEAD:clean-tracked.txt'], { cwd: committedEdit.localDir, encoding: 'utf8' }), 'changed and committed by fix session\n');
 
         const failedDir = path.join(root, 'failed-resume');
         const failed = prepareImplementFixupFixture(failedDir, 'artifact-fixup-failed-resume', {
