@@ -1,25 +1,23 @@
 # Implementation Handoff: base-drift-conflicts-only
 
 > Author: Codex | Spec: `tasks/base-drift-conflicts-only/spec.md` | Plan: `tasks/base-drift-conflicts-only/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/git.ts` | Added typed `probeMergeConflicts` using NUL-delimited `git merge-tree` output and exit/OID disambiguation. |
+| `src/orchestrator/validation.ts` | Return the conflict probe with base drift results and build conflict/scope abort messages. |
+| `src/orchestrator/main.ts` | Run the gate immediately before each push; soft-reset the just-created human_review commit on dirty-path aborts; report clean base advance and handle force/unsupported/error outcomes. |
+| `src/orchestrator/cli.ts`, `src/cli/index.ts` | Updated `--pr` and `--push` help text; corrected the divergent-base gate description. |
+| `tests/run-task-safety.test.ts` | Stubbed merge-tree/reset/three-dot fake-git behavior and added real-git and fake-git gate, rollback, hook, retry, force, and probe-failure coverage. |
+| `tests/run-task-validation.test.ts` | Updated message and result assertions; added clean/conflict/bad-ref merge-tree probe coverage including a spaced path. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documented the conflict-only base-side gate, rollback, version handling, and bypass rules; synced the managed mirror. |
+| `docs/codebase-map.md` | Documented the conflict probe helper and push-time gate. |
+| `docs/patterns.md` | Added merge-tree exit semantics and distinguished mergeability from tree-diff questions. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Regenerated build output. |
 
 ## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
 
 | Field | Source |
 |---|---|
@@ -31,91 +29,92 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The gate now probes the commit Git recorded, including pre-commit hook rewrites. Clean base advancement is informational; actual conflicts and task-changed files outside Affected Files remain blocking. If a dirty-path gate aborts after the human_review commit, a soft reset restores the previous HEAD and leaves the changes staged for a retry.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | Implemented the specified probe placement, fake-git behavior, tests, and docs. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Rewritten real-git test passes on clean non-overlapping advance. Pre-fix run failed with the old base-advance abort naming `docs/BACKLOG.md`; command: `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='passes when the base advances on non-overlapping files' tests/run-task-safety.test.ts`. |
+| AC-2 | Met | Real-git test passes with another task's spec and status artifacts added to base. |
+| AC-3 | Met | Real same-line conflict names the declared path and remediation; HEAD is restored and no task branch is pushed. |
+| AC-4 | Met | Existing out-of-scope drift tests still abort; fake-git assertions now verify commit then soft reset and no push. Abort message unit coverage distinguishes causes. |
+| AC-4b | Met | Combined conflict and task-scope drift output includes both sections. |
+| AC-4c | Met | Dirty admitted-doc, hook-rewritten commit, and clean-tree retry conflict cases are covered. |
+| AC-4d | Met | After reverting the base-side edit, rerun succeeds and commits the staged document with task artifacts. |
+| AC-5 | Met | Fake-git force case bypasses conflicts with both paths in the warning; force on clean base advance has no override warning. |
+| AC-6 | Met | Unsupported Git warns and proceeds; generic probe errors fail closed with and without force; failed soft-reset message includes manual recovery. |
+| AC-7 | Met | Help and docs describe conflict-only base blocking; managed mirror synced; required stale-string and restatement greps return no hits. |
+| AC-8 | Met | Build, lint, type check, full tests, docs refs, and template sync checks passed. |
 
 ## Edge Cases Considered
 
-- ...
+- Exit 1 with a tree OID means conflicts; exit 1 without an OID means a probe error.
+- Conflict path lists may be empty and still represent a conflict.
+- Paths containing spaces are parsed with NUL delimiters.
+- Git 2.38 or newer is required; exit 129 warns and proceeds.
+- Probe errors remain blocking with `--force`.
+- Hook rewrites are checked on recorded HEAD, and a failed undo reports the leftover commit and manual reset command.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm run build` | Pass | Build output regenerated. |
+| `npm run docs-refs-check` | Pass | |
+| `npm run sync-templates:check` | Pass | |
+| `npm test` | Pass | 1,534 tests: 1,533 passed, 1 skipped, 0 failed. |
+| E2E | N/A | The task prompt marks E2E as N/A. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
+## Iteration 2 — addressing review round 1
 
 ### Changes
 
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+| `tests/run-task-safety.test.ts` | Require both the conflict-abort header and soft-reset message in the dirty admitted-doc and hook-rewrite cases. Isolated fake-main fixtures in their own temporary Git root so repository-level task artifacts cannot preempt the merge-tree assertions. |
+| `src/cli/index.ts` | Updated `--force` help to include the base-drift gate. |
+| `src/orchestrator/main.ts` | Avoided implying that all base-advanced files merge cleanly when a separate conflict is reported. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Clarified when remote-boundary gates run and stated scope-drift remediation directly; regenerated the managed mirror. |
+| `docs/patterns.md` | Recorded that the merge-tree behavior was verified on git 2.55. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt after CLI and orchestrator edits. |
 
 ### Findings addressed
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+- _correctness bug:_ AC-4c dirty-doc and hook tests could pass because the configured-doc warning printed the path → both tests now require `conflicts with origin/main` and `human_review commit was undone` (`tests/run-task-safety.test.ts:6757`, `:6796`).
+- _risk/guardrail:_ top-level `--force` help omitted the base-drift bypass → help now lists it (`src/cli/index.ts:98`).
+- _optional cleanup/nit:_ clarified gate timing and scope remediation in the pipeline guide, annotated the Git version in the merge-tree note, and made the post-conflict info line unambiguous.
 
-### AC deltas (if any)
+### AC deltas
 
-- AC-N: was Partial → now Met (file:line)
+- AC-4c: Partial → Met. Both dirty-doc and hook-rewrite tests assert a conflict abort and rollback.
+- AC-7: Partial → Met. `--force` help now documents the base-drift bypass.
 
-### Re-run validation (only checks that re-ran)
+### Re-run validation
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm run build` | Pass | Rebuilt distribution bundles. |
+| `npm run sync-templates:check` | Pass | |
+| Focused base-drift safety tests | Pass | 8 passed, 0 failed; includes both strengthened AC-4c cases and fake probe outcomes. |
+| `npm run docs-refs-check` | Fail – unrelated | The current `tasks/base-drift-conflicts-only/review.md` contains an unresolved example path at line 28; that review artifact is outside the task's Affected Files. |
