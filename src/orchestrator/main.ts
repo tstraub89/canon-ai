@@ -1315,6 +1315,124 @@ function shouldRunFullSendTail(taskIds: string[]): boolean {
     });
 }
 
+function pushScaffoldBaseCommitsForFullSend(taskIds: string[], cwd: string): void {
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const fetch = splitGit.gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
+    if (!fetch.ok) die(`Full-send tail aborted: could not fetch origin/${baseBranch} (${fetch.stderr || 'unknown error'}). Nothing was pushed.`);
+
+    const unpushed = splitGit.getUnpushedBaseCommits(baseBranch, cwd);
+    if (!unpushed.ok) die(`Full-send tail aborted: could not list unpushed ${baseBranch} commits (${unpushed.stderr || 'unknown error'}). Nothing was pushed.`);
+    if (unpushed.commits.length === 0) return;
+
+    for (const commit of unpushed.commits) {
+        const result = splitGit.classifySafeToPushCommit(commit.sha, commit.subject, cwd);
+        if (!result.ok) {
+            die(`Full-send tail aborted: could not inspect ${commit.sha.slice(0, 7)} on ${baseBranch} (${result.stderr || 'unknown error'}). Nothing was pushed.`);
+            return;
+        }
+        if (!result.verdict.safe) {
+            info(`Full-send: not pushing ${baseBranch}; ${commit.sha.slice(0, 7)} ${commit.subject} is not safe to push (${result.verdict.reason}).`);
+            return;
+        }
+    }
+
+    const tipSha = unpushed.commits[0].sha;
+    const push = splitGit.gitSafeAt(cwd, 'push', 'origin', `${tipSha}:refs/heads/${baseBranch}`);
+    if (!push.ok) {
+        die(
+            `Full-send tail aborted: pushing ${baseBranch} scaffold commits to origin failed: ${push.stderr || 'unknown error'}\n` +
+            `The base branch may be protected. Push or merge these commits to origin/${baseBranch} manually ` +
+            `(they carry only task artifacts and pipeline telemetry), then re-run \`canon run ${taskIds.join(' ')}\`.`,
+        );
+    }
+    info(
+        `Full-send: pushed ${unpushed.commits.length} unpushed ${baseBranch} commit(s) to origin/${baseBranch} ` +
+        `(canon scaffold subjects; only task artifacts and pipeline telemetry):\n` +
+        unpushed.commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'),
+    );
+}
+
+function undoHumanReviewCommit(cwd: string, preSha: string, branchName: string, message: string): string {
+    const head = splitGit.gitSafeAt(cwd, 'rev-parse', 'HEAD');
+    const leftover = head.ok ? head.stdout.trim() : '(unknown)';
+    const reset = splitGit.gitSafeAt(cwd, 'reset', '--soft', preSha);
+    if (reset.ok) {
+        return `${message}\n\nThe human_review commit was undone (HEAD reset to ${preSha.slice(0, 7)}); its changes are still staged. Re-run after resolving.`;
+    }
+    return `${message}\n\nCould not undo the human_review commit ${leftover} on ${branchName}: ${reset.stderr || 'unknown error'}\nUndo it manually with: git reset --soft ${preSha}`;
+}
+
+function runBaseDriftGate(
+    taskIds: string[],
+    baseBranch: string,
+    cwd: string,
+    abort: (message: string) => never,
+): void {
+    const result = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
+    if (result.fetchFailed) return;
+    if (result.diffFailed) {
+        abort(
+            `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.\n` +
+            `Git error: ${result.diffError ?? 'unknown error'}\n` +
+            `This failure cannot be bypassed with --force.`,
+        );
+    }
+    const probe = result.conflict;
+    if (probe?.kind === 'error') {
+        abort(
+            `--pr aborted: could not check for merge conflicts with origin/${baseBranch}.\n` +
+            `Git error: ${probe.stderr || 'unknown error'}\n` +
+            `This failure cannot be bypassed with --force.`,
+        );
+    }
+    if (probe?.kind === 'unsupported') {
+        splitCli.warn(`Skipping the merge-conflict check against origin/${baseBranch}: git merge-tree --write-tree requires git 2.38 or newer. Conflicts were not checked.`);
+    }
+    const hasConflict = probe?.kind === 'conflicts';
+    const conflicts = hasConflict ? probe.paths : [];
+    let baseAdvanced: string[] = [];
+    let taskChangedOutOfScope: string[] = [];
+    if (result.drift.length > 0) {
+        const taskChanged = splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd);
+        if (!taskChanged.ok) {
+            abort(
+                `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.\n` +
+                `Drifted files:\n${result.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
+                `Git error: ${taskChanged.stderr || 'unknown error'}\n` +
+                `This failure cannot be bypassed with --force.`,
+            );
+        }
+        ({ baseAdvanced, taskChangedOutOfScope } = splitValidation.classifyBaseDriftFilesFromData(
+            result.drift, new Set(taskChanged.files),
+        ));
+    }
+    if (hasConflict || taskChangedOutOfScope.length > 0) {
+        if (!cliArgs.force) {
+            abort(splitValidation.buildBaseDriftAbortMessage(
+                baseBranch, { conflicts, taskChangedOutOfScope }, hasConflict,
+            ));
+        }
+        if (hasConflict) {
+            splitCli.warn(
+                `--force override: merge conflicts with origin/${baseBranch}; proceeding at user request. Conflicted files:\n` +
+                (conflicts.length ? conflicts.map(filePath => `  ${filePath}`).join('\n') : '  (git did not report paths)'),
+            );
+        }
+        if (taskChangedOutOfScope.length > 0) {
+            splitCli.warn(
+                `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +
+                taskChangedOutOfScope.map(filePath => `  ${filePath}`).join('\n'),
+            );
+        }
+    }
+    if (baseAdvanced.length > 0) {
+        const unchecked = probe?.kind === 'unsupported'
+            ? '; not checked for conflicts.'
+            : hasConflict ? '; these files were not reported as conflicted.' : '; they merge cleanly.';
+        splitCli.info(`origin/${baseBranch} advanced on ${baseAdvanced.length} file${baseAdvanced.length === 1 ? '' : 's'} outside this task's Affected Files${unchecked}`);
+    }
+}
+
 export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR: boolean): void {
     const docSets = resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null);
     if (createPR) {
@@ -1357,38 +1475,6 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 );
             }
         }
-    }
-
-    const baseDriftResult = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
-    if (baseDriftResult.fetchFailed) {
-        // warn already emitted by verifyBaseDrift; offline runs keep the prior best-effort behavior.
-    } else if (baseDriftResult.diffFailed) {
-        die(
-            `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.\n` +
-            `Git error: ${baseDriftResult.diffError ?? 'unknown error'}\n` +
-            `This failure cannot be bypassed with --force.`
-        );
-    } else if (baseDriftResult.drift.length > 0) {
-        // A probe failure cannot be bypassed, including under --force.
-        const taskChanged = splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd);
-        if (!taskChanged.ok) {
-            splitCli.die(
-                `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.\n` +
-                `Drifted files:\n${baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
-                `Git error: ${taskChanged.stderr || 'unknown error'}\n` +
-                `This failure cannot be bypassed with --force.`
-            );
-        }
-        if (!cliArgs.force) {
-            const classification = splitValidation.classifyBaseDriftFilesFromData(
-                baseDriftResult.drift, new Set(taskChanged.files),
-            );
-            die(splitValidation.buildBaseDriftAbortMessage(baseBranch, classification));
-        }
-        warn(
-            `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +
-            baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')
-        );
     }
 
     const affectedManagedDocs = new Set<string>();
@@ -1467,6 +1553,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
             // commits landed after the PR was opened (clean tree + open
             // PR is NOT a guarantee that origin matches HEAD).
             // (Spec ACs 1+3, complete-state banner contract; PR #75 iter 2.)
+            runBaseDriftGate(taskIds, baseBranch, cwd, message => die(message));
             info(`Clean tree. Pushing ${branchName}...`);
             const pushResult = gitSafeAt(cwd, 'push', '-u', 'origin', branchName);
             if (!pushResult.ok) {
@@ -1574,12 +1661,18 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     const branchName = branchResult.stdout.trim();
     const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
     const commitMessage = `chore: add task artifacts for ${label}`;
+    const preCommit = splitGit.gitSafeAt(cwd, 'rev-parse', 'HEAD');
+    if (!preCommit.ok || !preCommit.stdout.trim()) {
+        die(`Human review commit aborted: could not record HEAD before committing: ${preCommit.stderr || 'unknown error'}`);
+    }
+    const preSha = preCommit.stdout.trim();
     const commitResult = gitSafeAt(cwd, 'commit', '-m', commitMessage);
     if (!commitResult.ok) {
         die(`Human review commit aborted: ${commitResult.stderr || 'unknown error'}`);
     }
 
     info(`Committed human_review artifacts on ${branchName}: ${commitMessage}`);
+    runBaseDriftGate(taskIds, baseBranch, cwd, message => die(undoHumanReviewCommit(cwd, preSha, branchName, message)));
     info(`Pushing ${branchName}...`);
     const pushResult = gitSafeAt(cwd, 'push', '-u', 'origin', branchName);
     if (!pushResult.ok) {
@@ -1730,13 +1823,13 @@ function assertTaskBranchPushed(taskId: string, branchName?: string): void {
 
 /**
  * Verify origin/task/<id> no longer exists at the point we're about to ship. A
- * successful PR merge (via gh pr merge --delete-branch) removes the remote ref,
+ * successful PR merge (followed by mergeOpenPRsAndPull's remote delete) removes the remote ref,
  * so its absence is the post-condition we expect when shipping. Presence here —
  * combined with mergeOpenPRsAndPull() returning false — means either:
  *   - The remote branch has commits that were never PR'd (someone pushed to it
  *     directly from another checkout without opening a PR), so its work is not
  *     in any base-branch merge.
- *   - A prior merge succeeded but `--delete-branch` failed to drop the remote
+ *   - A prior merge succeeded but the remote delete failed to drop the remote
  *     ref (rare — surface this so the operator can clean up manually rather
  *     than have the safety check pass spuriously next time).
  * Either way, shipping silently would orphan the remote commits.
@@ -2049,13 +2142,12 @@ function findPRNumberExact(branch: string, baseBranch: string | null, state: 'op
 }
 
 /**
- * For each task branch with an open PR: squash-merge it (deleting the remote
- * branch), then pull the base branch. Returns true if any PR was merged.
+ * For each task branch with an open PR: squash-merge it, delete the remote
+ * branch, then pull the base branch. Returns true if any PR was merged.
  *
- * The `--delete-branch` flag on `gh pr merge` deletes the remote branch and
- * attempts to delete the local branch too. The local deletion may fail if the
- * branch is used by a worktree — that's fine; we clean local branches ourselves
- * after teardown.
+ * The merge does not pass `--delete-branch`: gh would also try to delete the
+ * local branch, which fails while the task worktree still has it checked out.
+ * The remote branch is deleted here; local branches are deleted after teardown.
  */
 function mergeOpenPRsAndPull(
     taskIds: string[],
@@ -2073,8 +2165,7 @@ function mergeOpenPRsAndPull(
         const prNum = findOpenPRNumber(branch, baseBranch);
         if (!prNum) continue;
         splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via squash...`);
-        // --delete-branch removes the remote branch; local cleanup happens post-teardown.
-        const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), '--squash', '--delete-branch']);
+        const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), '--squash']);
         const outcome = classifyMergeOutcome({
             exitOk: result.ok,
             mergeConfirmed: result.ok ? true : isPRMerged(prNum),
@@ -2083,19 +2174,18 @@ function mergeOpenPRsAndPull(
             splitCli.die(`Failed to merge PR #${prNum}: ${result.stderr}`);
         }
         if (!result.ok) {
-            splitCli.warn(`PR #${prNum} merged; branch-delete step failed and was tolerated: ${result.stderr.trim() || 'unknown error'}`);
-            // gh's --delete-branch on a non-zero exit does not guarantee both remote
-            // and local deletes succeeded. Setting anyMerged = true below skips the
-            // downstream !merged safety net, so verify the remote branch is absent
-            // here for every task mapped to this branch.
-            for (const taskId of taskIds) {
-                const branchName = branchByTaskId.get(taskId);
-                if (branchName === branch) {
-                    assertOriginTaskBranchAbsent(branchName, baseBranch);
-                }
-            }
+            splitCli.warn(`PR #${prNum} merged, but gh exited non-zero and was tolerated: ${result.stderr.trim() || 'unknown error'}`);
         } else {
             splitCli.info(`PR #${prNum} merged.`);
+        }
+        const del = splitGit.gitSafe('push', 'origin', '--delete', branch);
+        if (del.ok) {
+            splitCli.info(`Deleted remote branch ${branch}.`);
+        } else if (!del.stderr.includes('remote ref does not exist')) {
+            // Setting anyMerged = true below skips the downstream !merged safety
+            // net, so verify the remote branch is absent here instead. The check
+            // retries the delete only when origin's tip matches the merged head.
+            assertOriginTaskBranchAbsent(branch, baseBranch);
         }
         anyMerged = true;
     }
@@ -2981,6 +3071,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
                 }
             }
 
+            pushScaffoldBaseCommitsForFullSend(taskIds, cwd);
             commitHumanReviewFiles(taskIds, cwd, true);
 
             for (const taskId of taskIds) {

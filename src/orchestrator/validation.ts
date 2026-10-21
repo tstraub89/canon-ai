@@ -6,7 +6,7 @@ import path from 'node:path';
 import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies, scanAllTables } from './markdown-table.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
-import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
+import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries, probeMergeConflicts, type MergeConflictProbe } from './git.js';
 import { readStatus, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
@@ -1631,12 +1631,17 @@ export function classifyBaseDriftFilesFromData(
 
 export function buildBaseDriftAbortMessage(
     baseBranch: string,
-    classification: { baseAdvanced: readonly string[]; taskChangedOutOfScope: readonly string[] },
+    classification: { conflicts: readonly string[]; taskChangedOutOfScope: readonly string[] },
+    hasConflict = classification.conflicts.length > 0,
 ): string {
-    const sections = ['--pr aborted: base-drift detected.'];
-    if (classification.baseAdvanced.length > 0) sections.push(
-        `The base branch advanced. These files changed only on origin/${baseBranch}:\n` +
-        classification.baseAdvanced.map(file => `  ${file}`).join('\n') + '\n' +
+    const sections = [hasConflict
+        ? `--pr aborted: the task branch conflicts with origin/${baseBranch}.`
+        : '--pr aborted: base-drift detected.'];
+    if (hasConflict) sections.push(
+        `Merging origin/${baseBranch} into this branch would conflict in:\n` +
+        (classification.conflicts.length > 0
+            ? classification.conflicts.map(file => `  ${file}`).join('\n')
+            : '  (git did not report paths)') + '\n' +
         `Merge or rebase the base branch into the task branch, then rerun:\n` +
         `  git fetch origin ${baseBranch} && git rebase origin/${baseBranch}\n` +
         `  (or: git merge origin/${baseBranch})`
@@ -1652,6 +1657,7 @@ export function buildBaseDriftAbortMessage(
         `  git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'\n` +
         `  or: git revert <sha>`
     );
+    if (hasConflict) sections.push(`A conflict will still block --ship's merge until it is resolved.`);
     sections.push(`Bypass with --force if you've verified the drift is intentional.`);
     return sections.join('\n\n');
 }
@@ -1713,7 +1719,7 @@ export function verifyBaseDrift(
     taskIds: string[],
     baseBranch: string,
     cwd: string,
-): { drift: string[]; fetchFailed: boolean; diffFailed: boolean; diffError?: string } {
+): { drift: string[]; fetchFailed: boolean; diffFailed: boolean; diffError?: string; conflict?: MergeConflictProbe } {
     const docSets = resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null);
     const fetchResult = gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
     if (!fetchResult.ok) {
@@ -1745,6 +1751,7 @@ export function verifyBaseDrift(
         drift: verifyBaseDriftFromData(driftResult.files, allowlist.paths, taskIds, allowlist.prefixes),
         fetchFailed: false,
         diffFailed: false,
+        conflict: probeMergeConflicts('HEAD', `origin/${baseBranch}`, cwd),
     };
 }
 

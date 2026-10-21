@@ -52,6 +52,33 @@ export function gitSafeAtRaw(cwd: string, ...args: string[]): CommandResult {
     return { ok: result.status === 0, stdout: result.stdout ?? '', stderr: (result.stderr ?? '').trim() };
 }
 
+export type MergeConflictProbe =
+    | { kind: 'clean' }
+    | { kind: 'conflicts'; paths: string[] }
+    | { kind: 'unsupported' }
+    | { kind: 'error'; stderr: string };
+
+/** Check whether merging baseRef into headRef would conflict without changing the index or worktree. */
+export function probeMergeConflicts(headRef: string, baseRef: string, cwd: string): MergeConflictProbe {
+    const result = spawnSync('git', ['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', headRef, baseRef], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stdout = result.stdout ?? '';
+    const stderr = (result.stderr ?? '').trim();
+    if (result.error) return { kind: 'error', stderr: result.error.message };
+    if (result.status === 0) return { kind: 'clean' };
+    if (result.status === 129) return { kind: 'unsupported' };
+    if (result.status === 1) {
+        const fields = stdout.split('\0');
+        if (/^[0-9a-f]{40,64}$/i.test(fields[0] ?? '')) {
+            return { kind: 'conflicts', paths: fields.slice(1).filter(Boolean) };
+        }
+    }
+    return { kind: 'error', stderr: stderr || stdout.trim() || `git merge-tree exited ${String(result.status)}` };
+}
+
 /**
  * Returns the subset of `paths` that `git check-ignore` reports as gitignored
  * in `cwd`. Used to exempt build-generated artifacts (e.g. regenerated
@@ -191,6 +218,61 @@ export function getUnpushedBaseCommits(
         });
     }
     return { commits, ok: true, stderr: '' };
+}
+
+const CANON_TASK_ID_PATTERN = '[a-z0-9][a-z0-9._-]*';
+const SCAFFOLD_ARTIFACTS_SUBJECT = new RegExp(`^task\\(${CANON_TASK_ID_PATTERN}\\): commit artifacts pre-pipeline$`);
+const SCAFFOLD_TELEMETRY_SUBJECT = new RegExp(
+    `^chore: absorb pre-implement telemetry into scaffold for ${CANON_TASK_ID_PATTERN}(?:, ${CANON_TASK_ID_PATTERN})*$`,
+);
+
+export function isScaffoldCommitSubject(subject: string): boolean {
+    return SCAFFOLD_ARTIFACTS_SUBJECT.test(subject) || SCAFFOLD_TELEMETRY_SUBJECT.test(subject);
+}
+
+export type SafeToPushVerdict = { safe: true } | { safe: false; reason: string };
+
+export function classifySafeToPushCommitFromData(input: {
+    subject: string;
+    parentCount: number;
+    paths: readonly string[];
+}): SafeToPushVerdict {
+    if (!isScaffoldCommitSubject(input.subject)) return { safe: false, reason: 'subject is not a canon scaffold subject' };
+    if (input.parentCount > 1) return { safe: false, reason: 'merge commit' };
+    const disallowed = input.paths.find(candidate =>
+        !candidate.startsWith('tasks/') && !(PIPELINE_TELEMETRY_FILES as readonly string[]).includes(candidate),
+    );
+    if (disallowed) return { safe: false, reason: `changes ${disallowed} outside tasks/ and pipeline telemetry` };
+    return { safe: true };
+}
+
+export function classifySafeToPushCommit(
+    sha: string,
+    subject: string,
+    cwd: string,
+): { ok: true; verdict: SafeToPushVerdict } | { ok: false; stderr: string } {
+    if (!isScaffoldCommitSubject(subject)) {
+        return { ok: true, verdict: { safe: false, reason: 'subject is not a canon scaffold subject' } };
+    }
+    const parents = gitSafeAtRaw(cwd, 'rev-list', '--parents', '-n', '1', sha);
+    if (!parents.ok || !parents.stdout.trim()) return { ok: false, stderr: parents.stderr || 'could not read commit parents' };
+    const parentCount = Math.max(0, parents.stdout.trim().split(/\s+/).length - 1);
+    const changed = gitSafeAtRaw(cwd, 'diff-tree', '--no-commit-id', '--root', '-r', '--name-only', '--no-renames', '-z', sha);
+    if (!changed.ok) return { ok: false, stderr: changed.stderr };
+    const paths = changed.stdout.split('\0').filter(Boolean);
+    return { ok: true, verdict: classifySafeToPushCommitFromData({ subject, parentCount, paths }) };
+}
+
+/** true/false = safe unpushed scaffold commit exists; null = probe failed. */
+export function hasUnpushedScaffoldCommits(baseBranch: string, cwd: string): boolean | null {
+    const unpushed = getUnpushedBaseCommits(baseBranch, cwd);
+    if (!unpushed.ok) return null;
+    for (const commit of unpushed.commits) {
+        const result = classifySafeToPushCommit(commit.sha, commit.subject, cwd);
+        if (!result.ok) return null;
+        if (result.verdict.safe) return true;
+    }
+    return false;
 }
 
 export type ScopedDiff = {

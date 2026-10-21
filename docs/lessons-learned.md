@@ -178,3 +178,19 @@ A `process.on('exit')` cleanup that removes runtime files runs on every exit pat
 *(2026-10-20, source: watch-crash-not-step-done)*
 
 The crash fix went into the idle classifier, but `canon watch` also classifies at attach time, and the spec's Non-Goals left that path alone. A crash that happened before watch attached still reports `nothing_to_watch` (exit 2), and cold review flagged it as a spec_gap that the operator then accepted. The bug also sat in an earlier specific return (pending-after-done → `step_done`) that shadowed the generic `death` fallback, so the fallback was never reached. Rule of thumb: before scoping a fix to how a status shape is classified, grep every function that classifies that shape (attach-time, loop-time, `--until`), fix each one or name it as a non-goal with its user-visible result, and check whether an early return matches the crash shape before the fallback.
+
+---
+
+### Probe the commit you are about to push, after hooks have run
+
+*(date 2026-10-20, source: base-drift-conflicts-only)*
+
+A gate that checks a commit before a push must read the commit git recorded, not a candidate built beforehand. A pre-commit hook can rewrite the index after the candidate is built, so a check that passed on the candidate can still push a conflicting tree. This task's spec review rejected a pre-commit candidate probe for that reason and probed `HEAD` after `git commit` instead. When a gate aborts after the commit, undo it with `git reset --soft` to the recorded pre-commit HEAD, which keeps the content staged. Check the fixture for a hook that rewrites the index: the test should fail if the gate probes the pre-hook index. Canonical example: the base-drift gate in `src/orchestrator/main.ts`, with the hook-rewrite case in `tests/run-task-safety.test.ts`.
+
+---
+
+### Inject a concurrent base commit before ref resolution, not from a pre-push hook
+
+*(2026-10-21, source: full-send-tail-push-and-watch)*
+
+A real-git test that asserts "a push by SHA excludes a commit that lands after the listing" cannot inject that commit from a `pre-push` hook. Git resolves the refspec before it runs the hook, so a branch-name push and a SHA push both look correct, and the test stays green for the wrong reason. The working injection point is a `git` wrapper earlier on PATH that commits to local base and then `exec`s the real git, so the commit lands before ref resolution. Rule of thumb: for any race test around a push, check the push variant that should fail (a push by branch name) turns the test red with the injection in place, and inject from a wrapper or before the listing call, not from a hook.

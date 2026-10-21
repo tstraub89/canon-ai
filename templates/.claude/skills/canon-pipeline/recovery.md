@@ -30,7 +30,7 @@ canon task reset-spec-review <task-id>
 MAX_REVIEW_LOOPS=6 canon run <task-id>
 ```
 
-`reset-spec-review` marks `spec` done — accepting the current spec as-is — archives the existing review file as `*-prior-<N>.md` (so the next pass doesn't re-emit the same complaints), resets the review phase to pending, clears verdict and iteration counter, and drops the session ID. The next run re-reviews without another spec revision; raise the cap instead when the deferred spec revision should run before review.
+`reset-spec-review` marks `spec` done — accepting the current spec as-is — archives the existing review file as `*-prior-<N>.md` (so the next pass doesn't re-emit the same complaints), resets the review phase to pending, clears verdict and iteration counter, drops the session ID, and re-arms the spec gate unless the task is full-send (the gate disarms itself when it halts, so without this a reset after a halt would run straight through). The next run re-reviews without another spec revision; raise the cap instead when the deferred spec revision should run before review.
 
 Stop the reviewer loop once findings turn wording-only. Self-grep for flagged phrases in the current spec/code before running another expensive review pass.
 

@@ -22,7 +22,7 @@ import {
     resolveQaPrBody,
     shouldParkCrashedReview,
 } from '../src/orchestrator/main.js';
-import { ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../src/orchestrator/git.js';
+import { classifySafeToPushCommitFromData, ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths, hasUnpushedScaffoldCommits } from '../src/orchestrator/git.js';
 import { commitArchiveChanges, stageArchiveChanges } from '../src/orchestrator/main.js';
 import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../src/orchestrator/state.js';
 import {
@@ -32,6 +32,7 @@ import {
     worktreePath,
 } from '../src/orchestrator/worktree.js';
 import { evaluateCodeReviewLoop } from '../src/orchestrator/review-loop.js';
+import { scaffoldCommitHint } from '../src/orchestrator/phases/implement.js';
 import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
 import { taskCmd } from '../src/task/index.js';
 import { filterArtifactFindings, parseDocsRefsFindings, runDocsRefsCheck } from '../src/orchestrator/validation.js';
@@ -154,6 +155,13 @@ function setupFakeGit(scriptDir: string): void {
         '    printf "%s\\n" "${FAKE_GIT_AFFECTED_DIFF_ERROR:-affected diff failed}" >&2',
         '    exit 128',
         '  fi',
+        '  if [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}...HEAD" ] && [ -n "${FAKE_GIT_AFFECTED_FILES+x}" ]; then',
+        '    OLDIFS="$IFS"',
+        '    IFS=","',
+        '    for FILE in $FAKE_GIT_AFFECTED_FILES; do printf "M\\0%s\\0" "$FILE"; done',
+        '    IFS="$OLDIFS"',
+        '    exit 0',
+        '  fi',
         '  if [ "${FAKE_GIT_DRIFT_DIFF_FAIL:-}" = "1" ]; then',
         '    printf "%s\\n" "${FAKE_GIT_DRIFT_DIFF_ERROR:-tree diff failed}" >&2',
         '    exit 1',
@@ -177,6 +185,21 @@ function setupFakeGit(scriptDir: string): void {
         '    printf "%s\\n" "commit failed" >&2',
         '    exit 1',
         '  fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "merge-tree" ]; then',
+        '  MERGE_STATUS="${FAKE_GIT_MERGE_TREE_STATUS:-0}"',
+        '  if [ "$MERGE_STATUS" = "0" ]; then printf "%s\\0" 0000000000000000000000000000000000000001; exit 0; fi',
+        '  if [ "$MERGE_STATUS" = "1" ]; then',
+        '    printf "%s\\0" 0000000000000000000000000000000000000001',
+        '    OLDIFS="$IFS"; IFS=","; for FILE in ${FAKE_GIT_MERGE_TREE_CONFLICTS:-}; do [ -z "$FILE" ] || printf "%s\\0" "$FILE"; done; IFS="$OLDIFS"',
+        '    exit 1',
+        '  fi',
+        '  printf "%s\\n" "${FAKE_GIT_MERGE_TREE_ERROR:-merge-tree failed}" >&2',
+        '  exit "$MERGE_STATUS"',
+        'fi',
+        'if [ "${1:-}" = "reset" ] && [ "${2:-}" = "--soft" ]; then',
+        '  if [ "${FAKE_GIT_RESET_SOFT_FAIL:-}" = "1" ]; then printf "%s\\n" "reset failed" >&2; exit 1; fi',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "push" ] && [ "${FAKE_GIT_FAIL_PUSH:-}" = "1" ]; then',
@@ -860,6 +883,64 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     return { localDir, originDir };
 }
 
+// Real-git base-drift tests drive main(), which requires the agent CLIs on
+// PATH before routing; put fakes first so CI runners without them still pass.
+function baseDriftEnv(dir: string, tasksRoot: string): NodeJS.ProcessEnv {
+    const fakeBins = path.join(dir, 'fake-agent-cli');
+    if (!fs.existsSync(fakeBins)) {
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+    }
+    return {
+        ...process.env,
+        CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+    };
+}
+
+function makeBaseDriftFixture(
+    dir: string,
+    options: { seedFiles?: Record<string, string>; taskFiles?: Record<string, string>; declared: string[] },
+): { localDir: string; originDir: string; tasksRoot: string; thirdParty(fn: (cwd: string) => void): void } {
+    const { localDir, originDir } = makeGitFixture(dir);
+    for (const [relative, content] of Object.entries(options.seedFiles ?? {})) {
+        const target = path.join(localDir, relative);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content, 'utf8');
+        gitIn(localDir, 'add', relative);
+    }
+    if (Object.keys(options.seedFiles ?? {}).length > 0) {
+        gitIn(localDir, 'commit', '-m', 'shared base seed');
+        gitIn(localDir, 'push', 'origin', 'main');
+    }
+    gitIn(localDir, 'checkout', '-b', 'task/demo');
+    for (const [relative, content] of Object.entries(options.taskFiles ?? {})) {
+        const target = path.join(localDir, relative);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content, 'utf8');
+        gitIn(localDir, 'add', relative);
+    }
+    if (Object.keys(options.taskFiles ?? {}).length > 0) gitIn(localDir, 'commit', '-m', 'task change');
+    const tasksRoot = path.join(dir, 'tasks');
+    writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/demo'));
+    writeAffectedFilesSpec(tasksRoot, 'task-a', options.declared);
+    return {
+        localDir,
+        originDir,
+        tasksRoot,
+        thirdParty(fn) {
+            const thirdPartyDir = path.join(dir, 'third-party');
+            execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
+            gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
+            gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
+            fn(thirdPartyDir);
+            gitIn(thirdPartyDir, 'add', '-A');
+            gitIn(thirdPartyDir, 'commit', '-m', 'base advance');
+            gitIn(thirdPartyDir, 'push', 'origin', 'main');
+        },
+    };
+}
+
 function makeOutOfRootTaskFixture(dir: string, taskId: string, linkedWorktree: string): {
     localDir: string;
     branch: string;
@@ -1213,6 +1294,99 @@ function setupDivergentBaseRepo(dir: string, taskId: string): { localDir: string
     return { localDir, shortSha };
 }
 
+function setupFullSendTailFixture(
+    dir: string,
+    addExtraCommit?: (localDir: string, taskId: string) => void,
+): { localDir: string; originDir: string; originBaseSha: string; taskId: string; fakeBins: string } {
+    const taskId = 'task-a';
+    const { localDir: clonedDir, originDir } = makeGitFixture(dir);
+    const localDir = path.join(dir, 'worktrees', taskId);
+    fs.mkdirSync(path.dirname(localDir), { recursive: true });
+    fs.renameSync(clonedDir, localDir);
+    fs.mkdirSync(path.join(localDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(localDir, 'src/module.ts'), 'export const value = 1;\n', 'utf8');
+    gitIn(localDir, 'add', 'src/module.ts');
+    gitIn(localDir, 'commit', '-m', 'add tracked module');
+    gitIn(localDir, 'push', 'origin', 'main');
+    const originBaseSha = execFileSync('git', ['--git-dir', originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+
+    const status = makeCompleteStatus(taskId, `task/${taskId}`);
+    status.full_send = true;
+    (status.phases as Record<string, { status: string; agent: string }>).human_review = { status: 'pending', agent: 'human' };
+    writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+    writeAffectedFilesSpec(path.join(localDir, 'tasks'), taskId, []);
+    gitIn(localDir, 'add', 'tasks');
+    gitIn(localDir, 'commit', '-m', `task(${taskId}): commit artifacts pre-pipeline`);
+    addExtraCommit?.(localDir, taskId);
+    gitIn(localDir, 'checkout', '-b', `task/${taskId}`);
+    fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), [
+        '# Implementation Handoff', '', '## Validation Outcomes', '', '| Check | Result | Notes |', '|---|---|---|', '| `lint` | Pass | ok |', '',
+    ].join('\n'), 'utf8');
+    const fakeBins = path.join(dir, 'fake-bins');
+    fs.mkdirSync(fakeBins, { recursive: true });
+    setupFakeCliTools(fakeBins);
+    return { localDir, originDir, originBaseSha, taskId, fakeBins };
+}
+
+function runFullSendTailFixture(
+    fixture: ReturnType<typeof setupFullSendTailFixture>,
+    dir: string,
+    env: NodeJS.ProcessEnv = {},
+): { status: number | null; stderr: string; stdout: string } {
+    return runMainInline(fixture.taskId, ['--full-send', '--force'], {
+        PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        CANON_TASKS_DIR_OVERRIDE: path.join(fixture.localDir, 'tasks'),
+        CANON_WORKTREES_ROOT: path.dirname(fixture.localDir),
+        FAKE_GH_LOG: path.join(dir, 'gh.log'),
+        FAKE_GH_PR_STATE_FILE: path.join(dir, 'pr-state.txt'),
+        ...env,
+    }, fixture.localDir);
+}
+
+void test('safe scaffold push classifier requires an exact subject, only allowed paths, and no merge parent', () => {
+    const safe = (subject: string, paths: string[], parentCount = 1) =>
+        classifySafeToPushCommitFromData({ subject, paths, parentCount });
+    assert.deepEqual(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json']), { safe: true });
+    assert.deepEqual(safe('chore: absorb pre-implement telemetry into scaffold for task-a, task-b', ['docs/lessons-learned.md']), { safe: true });
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline suffix', ['tasks/task-a/status.json']).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['src/module.ts']).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['src/module.ts', 'tasks/task-a/module.ts']).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json'], 2).safe, false);
+    assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json', 'src/module.ts']).safe, false);
+});
+
+void test('hasUnpushedScaffoldCommits probes safe, unsafe, and unavailable base history', () => {
+    withTempDir('run-task-scaffold-probe-', dir => {
+        const safeDir = path.join(dir, 'safe');
+        fs.mkdirSync(safeDir, { recursive: true });
+        const { localDir: safeRepo } = makeGitFixture(safeDir);
+        assert.equal(hasUnpushedScaffoldCommits('main', safeRepo), false);
+
+        fs.mkdirSync(path.join(safeRepo, 'tasks', 'task-a'), { recursive: true });
+        fs.writeFileSync(path.join(safeRepo, 'tasks', 'task-a', 'status.json'), '{}\n', 'utf8');
+        gitIn(safeRepo, 'add', 'tasks/task-a/status.json');
+        gitIn(safeRepo, 'commit', '-m', 'task(task-a): commit artifacts pre-pipeline');
+        assert.equal(hasUnpushedScaffoldCommits('main', safeRepo), true);
+
+        const unsafeDir = path.join(dir, 'unsafe');
+        fs.mkdirSync(unsafeDir, { recursive: true });
+        const { localDir: unsafeRepo } = makeGitFixture(unsafeDir);
+        fs.writeFileSync(path.join(unsafeRepo, 'operator-source.txt'), 'operator change\n', 'utf8');
+        gitIn(unsafeRepo, 'add', 'operator-source.txt');
+        gitIn(unsafeRepo, 'commit', '-m', 'operator source commit');
+        assert.equal(hasUnpushedScaffoldCommits('main', unsafeRepo), false);
+
+        assert.equal(hasUnpushedScaffoldCommits('missing-base', safeRepo), null);
+    });
+});
+
+void test('scaffold hint is absent without safe commits and selects wording by full-send state', () => {
+    assert.equal(scaffoldCommitHint('main', false, true), null);
+    assert.match(scaffoldCommitHint('main', null, true) ?? '', /git push origin main/);
+    assert.match(scaffoldCommitHint('main', true, false) ?? '', /git push origin main/);
+    assert.match(scaffoldCommitHint('main', true, true) ?? '', /full-send tail pushes unpushed base commits/);
+});
+
 function makeCompleteStatus(taskId: string, branch: string): Record<string, unknown> {
     return {
         id: taskId,
@@ -1352,6 +1526,7 @@ type HumanReviewHarness = {
 };
 
 function setupHumanReviewHarness(dir: string, taskIds: readonly string[]): HumanReviewHarness {
+    execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
     const tasksRoot = path.join(dir, 'tasks');
     const fakeBins = path.join(dir, 'fake-bins');
     const fakeGitDir = path.join(fakeBins, 'git-bin');
@@ -1398,6 +1573,32 @@ function runHumanReviewCommit(
         FAKE_GIT_TASK_BRANCH: 'task/task-a',
         ...env,
     });
+}
+
+function runHumanReviewMain(
+    harness: HumanReviewHarness,
+    args: readonly string[],
+    env: Record<string, string>,
+): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+        `.then(m => { process.argv = ['node', 'canon', 'task-a', ...${JSON.stringify(args)}]; return m.main(); })`,
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), {
+        ...process.env,
+        PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        CANON_TASKS_DIR_OVERRIDE: harness.tasksRoot,
+        FAKE_GIT_LOG: harness.gitLogPath,
+        FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
+        FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+        FAKE_GIT_REMOTE_EXISTS: '1',
+        FAKE_GIT_BASE_BRANCH: 'main',
+        FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        FAKE_GIT_COMMON_DIR: '.git',
+        FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+        FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+        ...env,
+    }, harness.dir);
 }
 
 function combinedOutput(result: { stderr: string; stdout: string }): string {
@@ -5352,6 +5553,8 @@ void test('main prints the state-aware unpushed banner when the task is complete
 void test('main --pr on complete is idempotent when an open PR already exists', () => {
     withTempDir('run-task-complete-pr-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5359,7 +5562,9 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
         setupFakeGit(fakeGitDir);
         setupFakeCliTools(fakeBins);
 
-        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
@@ -5371,6 +5576,7 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -5442,6 +5648,8 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
 void test('main --pr at human_review is idempotent when an open PR already exists', () => {
     withTempDir('run-task-human-review-pr-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5450,6 +5658,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.human_review = { status: 'pending', agent: 'human' };
         writeTaskStatus(tasksRoot, 'task-a', status);
@@ -5464,6 +5673,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -5540,6 +5750,8 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
     // prior run) caused canon to exit 1 even though the work succeeded.
     withTempDir('run-task-human-review-pr-dirty-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5548,6 +5760,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.human_review = { status: 'pending', agent: 'human' };
         writeTaskStatus(tasksRoot, 'task-a', status);
@@ -5562,6 +5775,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -5591,6 +5805,8 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
 void test('main --pr on complete still rejects dirty files outside the human_review allowlist', () => {
     withTempDir('run-task-complete-pr-dirty-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5598,7 +5814,9 @@ void test('main --pr on complete still rejects dirty files outside the human_rev
         setupFakeGit(fakeGitDir);
         setupFakeCliTools(fakeBins);
 
-        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
@@ -5610,6 +5828,7 @@ void test('main --pr on complete still rejects dirty files outside the human_rev
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -6074,6 +6293,214 @@ void test('main --push blocks when local base has unpushed commits', () => {
     });
 });
 
+void test('plain --pr still refuses an unpushed base commit without pushing it', () => {
+    withTempDir('run-task-plain-pr-base-divergence-', dir => {
+        const taskId = 'task-a';
+        const { localDir } = setupDivergentBaseRepo(dir, taskId);
+        const baseBefore = execFileSync('git', ['--git-dir', path.join(dir, 'origin.git'), 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runMainInline(taskId, ['--pr'], {
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: path.join(localDir, 'tasks'),
+        }, localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Base divergence detected/);
+        const baseAfter = execFileSync('git', ['--git-dir', path.join(dir, 'origin.git'), 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        assert.equal(baseAfter, baseBefore);
+    });
+});
+
+void test('main full-send tail pushes an unpushed scaffold tip SHA before the divergence gate', () => {
+    withTempDir('run-task-full-send-scaffold-push-', dir => {
+        const taskId = 'task-a';
+        const { localDir: clonedDir, originDir } = makeGitFixture(dir);
+        const localDir = path.join(dir, 'worktrees', taskId);
+        fs.mkdirSync(path.dirname(localDir), { recursive: true });
+        fs.renameSync(clonedDir, localDir);
+        fs.mkdirSync(path.join(localDir, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'src/module.ts'), 'export const value = 1;\n', 'utf8');
+        gitIn(localDir, 'add', 'src/module.ts');
+        gitIn(localDir, 'commit', '-m', 'add tracked module');
+        gitIn(localDir, 'push', 'origin', 'main');
+        const originMainSha = execFileSync('git', ['rev-parse', 'origin/main'], { cwd: localDir, encoding: 'utf8' }).trim();
+
+        const status = makeCompleteStatus(taskId, `task/${taskId}`);
+        status.full_send = true;
+        (status.phases as Record<string, { status: string; agent: string }>).human_review = { status: 'pending', agent: 'human' };
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
+        writeAffectedFilesSpec(path.join(localDir, 'tasks'), taskId, []);
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', `task(${taskId}): commit artifacts pre-pipeline`);
+        fs.copyFileSync(path.join(localDir, 'src/module.ts'), path.join(localDir, 'tasks', taskId, 'module-copy.ts'));
+        gitIn(localDir, 'add', `tasks/${taskId}/module-copy.ts`);
+        gitIn(localDir, 'commit', '-m', `task(${taskId}): commit artifacts pre-pipeline`);
+        const scaffoldTip = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        const taskBranch = `task/${taskId}`;
+        gitIn(localDir, 'checkout', '-b', taskBranch);
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), [
+            '# Implementation Handoff', '', '## Validation Outcomes', '', '| Check | Result | Notes |', '|---|---|---|', '| `lint` | Pass | ok |', '',
+        ].join('\n'), 'utf8');
+
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+        const result = runMainInline(taskId, ['--full-send'], {
+            PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            CANON_TASKS_DIR_OVERRIDE: path.join(localDir, 'tasks'),
+            CANON_WORKTREES_ROOT: path.dirname(localDir),
+            FAKE_GH_LOG: path.join(dir, 'gh.log'),
+            FAKE_GH_PR_STATE_FILE: path.join(dir, 'pr-state.txt'),
+        }, localDir);
+
+        assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+        assert.match(result.stdout, /Full-send: pushed 2 unpushed main commit\(s\)/);
+        const listedCommits = execFileSync('git', ['log', `${originMainSha}..${scaffoldTip}`, '--format=%H%x09%s'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        }).trim().split('\n');
+        assert.equal(listedCommits.length, 2);
+        for (const line of listedCommits) {
+            const [sha, subject] = line.split('\t');
+            assert.ok(sha && subject);
+            assert.ok(result.stdout.includes(`${sha.slice(0, 7)}  ${subject}`), `missing pushed commit ${sha} ${subject}`);
+        }
+        const remoteTip = execFileSync('git', ['--git-dir', originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        assert.equal(remoteTip, scaffoldTip);
+        const ghLog = fs.readFileSync(path.join(dir, 'gh.log'), 'utf8');
+        assert.match(ghLog, /^pr create /m);
+    });
+});
+
+void test('full-send tail leaves every unsafe scaffold-looking commit off origin', () => {
+    const variants: { name: string; add: (repo: string, id: string) => void }[] = [
+        {
+            name: 'arbitrary subject',
+            add: (repo, id) => {
+                fs.writeFileSync(path.join(repo, 'tasks', id, 'extra.txt'), 'extra\n');
+                gitIn(repo, 'add', `tasks/${id}/extra.txt`);
+                gitIn(repo, 'commit', '-m', 'operator data');
+            },
+        },
+        {
+            name: 'suffixed subject',
+            add: (repo, id) => {
+                fs.writeFileSync(path.join(repo, 'tasks', id, 'extra.txt'), 'extra\n');
+                gitIn(repo, 'add', `tasks/${id}/extra.txt`);
+                gitIn(repo, 'commit', '-m', `task(${id}): commit artifacts pre-pipeline amended`);
+            },
+        },
+        {
+            name: 'embedded subject',
+            add: (repo, id) => {
+                fs.writeFileSync(path.join(repo, 'tasks', id, 'extra.txt'), 'extra\n');
+                gitIn(repo, 'add', `tasks/${id}/extra.txt`);
+                gitIn(repo, 'commit', '-m', `wip: task(${id}): commit artifacts pre-pipeline`);
+            },
+        },
+        {
+            name: 'outside source path',
+            add: (repo, id) => {
+                fs.writeFileSync(path.join(repo, 'src/module.ts'), 'export const value = 2;\n');
+                gitIn(repo, 'add', 'src/module.ts');
+                gitIn(repo, 'commit', '-m', `task(${id}): commit artifacts pre-pipeline`);
+            },
+        },
+        {
+            name: 'rename from source into tasks',
+            add: (repo, id) => {
+                gitIn(repo, 'mv', 'src/module.ts', `tasks/${id}/module.ts`);
+                gitIn(repo, 'commit', '-m', `task(${id}): commit artifacts pre-pipeline`);
+            },
+        },
+        {
+            name: 'merge commit',
+            add: (repo, id) => {
+                gitIn(repo, 'checkout', '-b', 'side-scaffold');
+                fs.writeFileSync(path.join(repo, 'tasks', id, 'side.txt'), 'side\n');
+                gitIn(repo, 'add', `tasks/${id}/side.txt`);
+                gitIn(repo, 'commit', '-m', `task(${id}): commit artifacts pre-pipeline`);
+                gitIn(repo, 'checkout', 'main');
+                fs.writeFileSync(path.join(repo, 'tasks', id, 'main.txt'), 'main\n');
+                gitIn(repo, 'add', `tasks/${id}/main.txt`);
+                gitIn(repo, 'commit', '-m', `task(${id}): commit artifacts pre-pipeline`);
+                gitIn(repo, 'merge', '--no-ff', 'side-scaffold', '-m', `task(${id}): commit artifacts pre-pipeline`);
+            },
+        },
+    ];
+    for (const variant of variants) {
+        withTempDir(`run-task-full-send-unsafe-${variant.name.replaceAll(' ', '-')}-`, dir => {
+            const fixture = setupFullSendTailFixture(dir, variant.add);
+            const result = runFullSendTailFixture(fixture, dir);
+            assert.notEqual(result.status, 0, variant.name);
+            assert.match(result.stderr, /Base divergence detected/, variant.name);
+            const remoteTip = execFileSync('git', ['--git-dir', fixture.originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+            assert.equal(remoteTip, fixture.originBaseSha, variant.name);
+            const ghLog = fs.existsSync(path.join(dir, 'gh.log')) ? fs.readFileSync(path.join(dir, 'gh.log'), 'utf8') : '';
+            assert.doesNotMatch(ghLog, /^pr create /m, variant.name);
+        });
+    }
+});
+
+void test('full-send tail fails closed on a rejected base push and a commit-list probe error', () => {
+    withTempDir('run-task-full-send-rejected-push-', dir => {
+        const fixture = setupFullSendTailFixture(dir);
+        const hook = path.join(fixture.originDir, 'hooks', 'pre-receive');
+        writeExecutable(path.dirname(hook), 'pre-receive', ['echo "protected branch rejection" >&2', 'exit 1']);
+        const result = runFullSendTailFixture(fixture, dir);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /protected branch rejection/);
+        assert.match(result.stderr, /base branch may be protected/i);
+        const ghLog = fs.existsSync(path.join(dir, 'gh.log')) ? fs.readFileSync(path.join(dir, 'gh.log'), 'utf8') : '';
+        assert.doesNotMatch(ghLog, /^pr create /m);
+        const remoteTip = execFileSync('git', ['--git-dir', fixture.originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        assert.equal(remoteTip, fixture.originBaseSha);
+    });
+
+    withTempDir('run-task-full-send-probe-error-', dir => {
+        const fixture = setupFullSendTailFixture(dir);
+        const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+        writeExecutable(fixture.fakeBins, 'git', [
+            'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/main..main" ]; then echo "simulated commit-list failure" >&2; exit 1; fi',
+            `exec "${realGit}" "$@"`,
+        ]);
+        const result = runFullSendTailFixture(fixture, dir);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /could not list unpushed main commits/);
+        assert.match(result.stderr, /simulated commit-list failure/);
+        const remoteTip = execFileSync('git', ['--git-dir', fixture.originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        assert.equal(remoteTip, fixture.originBaseSha);
+    });
+});
+
+void test('full-send tail pushes the checked tip but not a concurrent operator commit', () => {
+    withTempDir('run-task-full-send-concurrent-base-', dir => {
+        const fixture = setupFullSendTailFixture(dir);
+        const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+        writeExecutable(fixture.fakeBins, 'git', [
+            'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ]; then',
+            '  case "${3:-}" in main|*:refs/heads/main)',
+            '  "$REAL_GIT" -C "$TAIL_REPO" checkout -q main',
+            '  echo operator > "$TAIL_REPO/operator-source.txt"',
+            '  "$REAL_GIT" -C "$TAIL_REPO" add operator-source.txt',
+            '  "$REAL_GIT" -C "$TAIL_REPO" commit -qm "operator source commit"',
+            '  "$REAL_GIT" -C "$TAIL_REPO" checkout -q task/task-a',
+            '  ;; esac',
+            'fi',
+            'exec "$REAL_GIT" "$@"',
+        ]);
+        const result = runFullSendTailFixture(fixture, dir, { REAL_GIT: realGit, TAIL_REPO: fixture.localDir });
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Base divergence detected/);
+        const remoteTip = execFileSync('git', ['--git-dir', fixture.originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
+        const checkedScaffoldTip = execFileSync('git', ['rev-parse', 'task/task-a'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const localMainTip = execFileSync('git', ['rev-parse', 'main'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        assert.equal(remoteTip, checkedScaffoldTip);
+        assert.notEqual(remoteTip, localMainTip);
+    });
+});
+
 void test('main --push --allow-divergent-base warns and proceeds past the divergence gate', () => {
     withTempDir('run-task-base-divergence-bypass-', dir => {
         const taskId = 'task-a';
@@ -6175,6 +6602,8 @@ void test('main --full-send --force advances to draft PR and marks human_review 
 void test('main full-send tail reports the PR URL after pinning pr.number', () => {
     withTempDir('run-task-full-send-pr-placeholder-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -6183,6 +6612,7 @@ void test('main full-send tail reports the PR URL after pinning pr.number', () =
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.qa = { status: 'done', agent: 'claude' };
         phases.human_review = { status: 'pending', agent: 'human' };
@@ -6212,6 +6642,7 @@ void test('main full-send tail reports the PR URL after pinning pr.number', () =
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -6620,7 +7051,8 @@ void test('commitHumanReviewFiles base-drift gate dies on drift outside the allo
         assert.match(output, /git revert <sha>/);
         assert.doesNotMatch(output, /git checkout HEAD --/);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
-        assert.doesNotMatch(gitLog, /^commit /m);
+        assert.match(gitLog, /^commit [\s\S]*^reset --soft abc123$/m);
+        assert.doesNotMatch(gitLog, /^push /m);
     });
 });
 
@@ -6658,10 +7090,95 @@ void test('commitHumanReviewFiles base-drift gate warns and proceeds with --forc
     });
 });
 
+void test('base-drift --force warns about merge conflicts and proceeds', () => {
+    withTempDir('run-task-base-drift-force-conflict-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push', '--force'], {
+            FAKE_GIT_MERGE_TREE_STATUS: '1',
+            FAKE_GIT_MERGE_TREE_CONFLICTS: 'docs/patterns.md,src/a.ts',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const output = combinedOutput(result);
+        assert.match(output, /--force override: merge conflicts with origin\/main/);
+        assert.match(output, /docs\/patterns\.md/);
+        assert.match(output, /src\/a\.ts/);
+        const log = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(log, /^push -u origin task\/task-a$/m);
+        assert.doesNotMatch(log, /^reset --soft/m);
+    });
+});
+
+void test('base-drift --force reports clean base advance without override warning', () => {
+    withTempDir('run-task-base-drift-force-base-advance-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push', '--force'], {
+            FAKE_GIT_DRIFT_FILES: 'docs/BACKLOG.md',
+            FAKE_GIT_AFFECTED_FILES: '',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const output = combinedOutput(result);
+        assert.match(output, /advanced on 1 file .*merge cleanly/);
+        assert.doesNotMatch(output, /--force override/);
+        assert.match(fs.readFileSync(harness.gitLogPath, 'utf8'), /^push -u origin task\/task-a$/m);
+    });
+});
+
+void test('base-drift unsupported merge-tree warns and proceeds', () => {
+    withTempDir('run-task-base-drift-unsupported-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push'], {
+            FAKE_GIT_MERGE_TREE_STATUS: '129',
+            FAKE_GIT_MERGE_TREE_ERROR: 'usage: git merge-tree --write-tree',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(combinedOutput(result), /2\.38[\s\S]*Conflicts were not checked/);
+        assert.match(fs.readFileSync(harness.gitLogPath, 'utf8'), /^push -u origin task\/task-a$/m);
+    });
+});
+
+for (const force of [false, true]) {
+    void test(`base-drift merge-tree errors fail closed (force=${force})`, () => {
+        withTempDir('run-task-base-drift-probe-error-', dir => {
+            const harness = setupHumanReviewHarness(dir, ['task-a']);
+            const result = runHumanReviewMain(harness, force ? ['--push', '--force'] : ['--push'], {
+                FAKE_GIT_MERGE_TREE_STATUS: '128',
+                FAKE_GIT_MERGE_TREE_ERROR: 'fatal: simulated merge-tree failure',
+            });
+            assert.notEqual(result.status, 0);
+            assert.match(combinedOutput(result), /could not check for merge conflicts/);
+            assert.match(combinedOutput(result), /fatal: simulated merge-tree failure/);
+            assert.match(combinedOutput(result), /cannot be bypassed with --force/);
+            const log = fs.readFileSync(harness.gitLogPath, 'utf8');
+            assert.match(log, /^commit [\s\S]*^reset --soft abc123$/m);
+            assert.doesNotMatch(log, /^push /m);
+        });
+    });
+}
+
+void test('base-drift abort explains failed soft reset and gives manual recovery', () => {
+    withTempDir('run-task-base-drift-reset-failure-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push'], {
+            FAKE_GIT_MERGE_TREE_STATUS: '128',
+            FAKE_GIT_MERGE_TREE_ERROR: 'fatal: simulated merge-tree failure',
+            FAKE_GIT_RESET_SOFT_FAIL: '1',
+        });
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /Could not undo the human_review commit/);
+        assert.match(combinedOutput(result), /git reset --soft abc123/);
+        assert.doesNotMatch(fs.readFileSync(harness.gitLogPath, 'utf8'), /^push /m);
+    });
+});
+
 for (const force of [false, true]) {
     void test(`commitHumanReviewFiles fails closed when only the task-changed diff fails (force=${force})`, () => {
         withTempDir('run-task-affected-diff-fail-', dir => {
             const harness = setupHumanReviewHarness(dir, ['task-a']);
+            const worktreesRoot = path.join(dir, 'worktrees');
+            fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
+            const status = makeCompleteStatus('task-a', 'task/task-a');
+            status.worktree = true;
+            writeTaskStatus(harness.tasksRoot, 'task-a', status);
             const env = {
                 FAKE_GIT_DRIFT_FILES: 'docs/BACKLOG.md',
                 FAKE_GIT_AFFECTED_DIFF_FAIL: '1',
@@ -6677,6 +7194,7 @@ for (const force of [false, true]) {
                 ...process.env,
                 PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
                 CANON_TASKS_DIR_OVERRIDE: harness.tasksRoot,
+                CANON_WORKTREES_ROOT: worktreesRoot,
                 FAKE_GIT_LOG: harness.gitLogPath,
                 FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
                 FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -6695,7 +7213,8 @@ for (const force of [false, true]) {
             const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
             assert.match(gitLog, /^diff origin\/main HEAD --name-status -M -z$/m);
             assert.match(gitLog, /^diff origin\/main\.\.\.HEAD --name-status -M -z$/m);
-            assert.doesNotMatch(gitLog, /^commit /m);
+            assert.match(gitLog, /^commit [\s\S]*^reset --soft abc123$/m);
+            assert.doesNotMatch(gitLog, /^push /m);
         });
     });
 }
@@ -6717,11 +7236,12 @@ void test('commitHumanReviewFiles base-drift gate fails closed when tree diff fa
         assert.match(output, /fatal: simulated tree diff failure/);
         assert.match(output, /cannot be bypassed with --force/);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
-        assert.doesNotMatch(gitLog, /^commit /m);
+        assert.match(gitLog, /^commit [\s\S]*^reset --soft abc123$/m);
+        assert.doesNotMatch(gitLog, /^push /m);
     });
 });
 
-void test('commitHumanReviewFiles base-drift gate dies when the base branch advanced outside Affected Files', () => {
+void test('commitHumanReviewFiles base-drift gate passes when the base advances on non-overlapping files', () => {
     withTempDir('run-task-base-drift-mode1-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
         const { localDir, originDir } = makeGitFixture(dir);
@@ -6731,9 +7251,11 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         gitIn(localDir, 'checkout', '-b', 'task/demo');
         const taskFile = path.join(localDir, 'src', 'orchestrator', 'main.ts');
         fs.mkdirSync(path.dirname(taskFile), { recursive: true });
-        fs.writeFileSync(taskFile, 'task content\n', 'utf8');
+        fs.writeFileSync(taskFile, 'export {};\n', 'utf8');
         gitIn(localDir, 'add', 'src/orchestrator/main.ts');
         gitIn(localDir, 'commit', '-m', 'task change');
+        fs.mkdirSync(path.join(localDir, 'tasks', 'task-a'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'tasks', 'task-a', 'done.md'), 'done\n', 'utf8');
 
         const thirdPartyDir = path.join(dir, 'third-party');
         execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
@@ -6749,18 +7271,177 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         gitIn(thirdPartyDir, 'push', 'origin', 'main');
 
         const result = runNodeInline([
-            "import { commitHumanReviewFiles } from './src/orchestrator/main.ts';",
-            `commitHumanReviewFiles(['task-a'], ${JSON.stringify(localDir)}, false);`,
-        ].join('\n'), {
-            ...process.env,
-            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
-        });
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            `.then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, tasksRoot), localDir);
 
-        assert.notEqual(result.status, 0);
+        assert.equal(result.status, 0, result.stderr);
         const output = combinedOutput(result);
-        assert.match(output, /base-drift detected/);
-        assert.match(output, /docs\/BACKLOG\.md/);
-        assert.doesNotMatch(output, /src\/orchestrator\/main\.ts\s*$/m);
+        assert.match(output, /advanced on 1 file outside this task's Affected Files; they merge cleanly/);
+        assert.doesNotMatch(output, /base-drift detected|conflicts with origin/);
+        assert.match(execFileSync('git', ['ls-remote', '--heads', originDir, 'task/demo'], { encoding: 'utf8' }), /task\/demo$/m);
+    });
+});
+
+void test('commitHumanReviewFiles base-drift allows another task artifacts on the base', () => {
+    withTempDir('run-task-base-drift-other-task-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            taskFiles: { 'src/example.ts': 'export {};\n' },
+            declared: ['`src/example.ts`'],
+        });
+        fixture.thirdParty(baseDir => {
+            fs.mkdirSync(path.join(baseDir, 'tasks/other-id'), { recursive: true });
+            fs.writeFileSync(path.join(baseDir, 'tasks/other-id/spec.md'), '# Other\n', 'utf8');
+            fs.writeFileSync(path.join(baseDir, 'tasks/other-id/status.json'), '{}\n', 'utf8');
+        });
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(combinedOutput(result), /advanced on 2 files outside this task's Affected Files; they merge cleanly/);
+    });
+});
+
+void test('commitHumanReviewFiles aborts on a real conflict and undoes its human_review commit', () => {
+    withTempDir('run-task-base-drift-conflict-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            taskFiles: { 'docs/patterns.md': 'TASK\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.match(combinedOutput(result), /docs\/patterns\.md/);
+        assert.match(combinedOutput(result), /git rebase origin\/main/);
+        assert.match(combinedOutput(result), /human_review commit was undone/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+    });
+});
+
+void test('commitHumanReviewFiles reports conflict and scope drift together', () => {
+    withTempDir('run-task-base-drift-conflict-scope-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            taskFiles: { 'docs/patterns.md': 'TASK\nb\nc\n', 'src/extra.ts': 'export {};\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.match(combinedOutput(result), /not in the spec's Affected Files[\s\S]*src\/extra\.ts/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+    });
+});
+
+void test('human_review conflict in a dirty admitted doc is undone and rerunnable', () => {
+    withTempDir('run-task-base-drift-dirty-doc-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        const thirdPartyDir = path.join(dir, 'third-party');
+        execFileSync('git', ['clone', '-b', 'main', fixture.originDir, thirdPartyDir], { stdio: 'ignore' });
+        gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
+        gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
+        fs.writeFileSync(path.join(thirdPartyDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8');
+        gitIn(thirdPartyDir, 'commit', '-am', 'base edit');
+        gitIn(thirdPartyDir, 'push', 'origin', 'main');
+        fs.writeFileSync(path.join(fixture.localDir, 'docs/patterns.md'), 'TASK\nb\nc\n', 'utf8');
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const invoke = () => runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        const blocked = invoke();
+        assert.notEqual(blocked.status, 0);
+        assert.match(combinedOutput(blocked), /conflicts with origin\/main/);
+        assert.match(combinedOutput(blocked), /docs\/patterns\.md/);
+        assert.match(combinedOutput(blocked), /human_review commit was undone/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.match(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: fixture.localDir, encoding: 'utf8' }), /docs\/patterns\.md/);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+
+        gitIn(thirdPartyDir, 'revert', '--no-edit', 'HEAD');
+        gitIn(thirdPartyDir, 'push', 'origin', 'main');
+        const resumed = invoke();
+        assert.equal(resumed.status, 0, resumed.stderr);
+        assert.notEqual(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+        assert.match(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: fixture.localDir, encoding: 'utf8' }), /^chore: add task artifacts for task-a\s*$/);
+        assert.match(execFileSync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }), /docs\/patterns\.md/);
+    });
+});
+
+void test('human_review gate probes the recorded commit after a pre-commit hook rewrite', () => {
+    withTempDir('run-task-base-drift-hook-conflict-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        fs.writeFileSync(path.join(fixture.localDir, 'docs/patterns.md'), 'a\nb\nTASK\n', 'utf8');
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const hooks = path.join(dir, 'hooks');
+        fs.mkdirSync(hooks, { recursive: true });
+        fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\nsed \'1s/.*/HOOK/\' docs/patterns.md > docs/patterns.md.tmp && mv docs/patterns.md.tmp docs/patterns.md && git add docs/patterns.md\n', { mode: 0o755 });
+        gitIn(fixture.localDir, 'config', 'core.hooksPath', hooks);
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.match(combinedOutput(result), /docs\/patterns\.md/);
+        assert.match(combinedOutput(result), /human_review commit was undone/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+    });
+});
+
+void test('clean-tree --pr retries still block on an allowlisted conflict without changing HEAD', () => {
+    withTempDir('run-task-base-drift-clean-conflict-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            taskFiles: { 'docs/patterns.md': 'TASK\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--pr']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
     });
 });
 
@@ -7009,6 +7690,8 @@ void test('main rejects hand-edited full_send plus delicate without --force', ()
 void test('main full-send tail fails closed when draft PR creation fails', () => {
     withTempDir('run-task-full-send-pr-fail-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -7017,6 +7700,7 @@ void test('main full-send tail fails closed when draft PR creation fails', () =>
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.qa = { status: 'done', agent: 'claude' };
         phases.human_review = { status: 'pending', agent: 'human' };
@@ -7045,6 +7729,7 @@ void test('main full-send tail fails closed when draft PR creation fails', () =>
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
