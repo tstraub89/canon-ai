@@ -46,6 +46,27 @@ function render(name: string, view: object): string {
     return renderTemplate(loadTemplate(name), view);
 }
 
+export const ARTIFACT_CITATION_RULE = '**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix — never a path relative to a package or to the current directory. For a file that does not exist — one this task deleted, or one only planned — use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.';
+
+export function promptArtifactFixup(input: {
+    phase: 'implement' | 'qa'; findings: readonly string[]; artifacts: readonly string[]; attempt: number; maxAttempts: number;
+}): string {
+    const lines = [
+        `ARTIFACT FIX-UP (${input.attempt}/${input.maxAttempts}): before committing, canon ran docs-refs-check and found broken references in task artifacts you wrote:`,
+        ...input.findings.map(line => `    ${line}`),
+        '',
+        `The ${input.phase} phase is already complete. This turn overrides the session instructions above about finishing with a phase command: do not run \`canon task phase\` or any other \`canon\` command.`,
+        '',
+        'Edit only these files:',
+        ...input.artifacts.map(file => `- ${file}`),
+        '',
+        'Do not change any other file — including notes.md, status.json, and source or test files. Canon compares the working tree before and after this turn and stops the run if anything else changed.',
+    ];
+    lines.push('Do not run git add or git commit; the orchestrator commits after this turn.');
+    lines.push('', ARTIFACT_CITATION_RULE, '', 'Fix each listed reference — correct the path, switch a missing file to the markdown-link form, or rephrase it as plain prose if it is not a file reference. Reply with tool calls only.');
+    return lines.join('\n');
+}
+
 function buildAffectedFilesBlock(affectedFiles: readonly string[] | null | undefined, baseBranch: string | undefined): string {
     // null means the committed diff probe failed; undefined omits the block.
     if (affectedFiles === undefined) return '';

@@ -24,6 +24,7 @@ For each task:
 
    {{{prTemplate}}}
    {{/prTemplate}}
+
    {{^prTemplate}}
    No PR template found. Use this structure:
 
@@ -41,6 +42,8 @@ For each task:
    {{/prTemplate}}
    ⚠️ Write as the human engineer who did the work — not as the AI or tool that produced it (Claude, Codex, canon, an LLM). ✅ e.g. "Fix the pagination off-by-one that dropped the last row." ❌ e.g. "🤖 Generated with Claude Code."
    Skip this step entirely for bundle tasks — per-task bodies are not combined for bundle PRs.
+
+**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix — never a path relative to a package or to the current directory. For a file that does not exist — one this task deleted, or one only planned — use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.
 
 After writing all done.md files:
 - Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to its own lessons fragment, using the entry format in docs/lessons-learned.md. The fragment holds only `###` entries: create it if it doesn't exist, and give it no title or other `#`/`##` heading. Do not edit docs/lessons-learned.md; `--ship` folds the fragments into it. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries — not this task's earlier entries, and never another task's. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action — never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md → "How to use this doc".)

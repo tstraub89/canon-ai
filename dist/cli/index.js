@@ -3068,7 +3068,7 @@ function watchCmd(args2, deps = {}) {
 }
 
 // src/task/index.ts
-import { spawnSync as spawnSync8 } from "child_process";
+import { spawnSync as spawnSync9 } from "child_process";
 import fs16 from "fs";
 import path16 from "path";
 
@@ -3215,6 +3215,7 @@ function isPristineTaskArtifact(content, basename2, taskId, title) {
 }
 
 // src/orchestrator/validation.ts
+import { spawnSync as spawnSync8 } from "child_process";
 import fs14 from "fs";
 import path14 from "path";
 function computeLatestValidationResults(handoffContent) {
@@ -3884,13 +3885,13 @@ function writeStatusAtomic(filePath, status) {
 }
 function runGit(args2, options = {}) {
   if (options.stdio === "inherit") {
-    return spawnSync8("git", args2, {
+    return spawnSync9("git", args2, {
       cwd: options.cwd ?? process.cwd(),
       encoding: "utf8",
       stdio: "inherit"
     });
   }
-  return spawnSync8("git", args2, {
+  return spawnSync9("git", args2, {
     cwd: options.cwd ?? process.cwd(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -4654,7 +4655,7 @@ function taskResetCodeReview(id) {
   );
 }
 function ensureGitAvailable() {
-  const result = spawnSync8("git", ["--version"], { stdio: "ignore" });
+  const result = spawnSync9("git", ["--version"], { stdio: "ignore" });
   if (result.error || result.status !== 0) {
     throw new Error("Error: git is required.");
   }
@@ -5035,7 +5036,7 @@ function taskCmd2(args2) {
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync3, realpathSync as realpathSync2, writeFileSync as writeFileSync2 } from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
 import { dirname as dirname4, join as join4 } from "path";
-import { spawnSync as spawnSync9 } from "child_process";
+import { spawnSync as spawnSync10 } from "child_process";
 var packageDir3 = join4(dirname4(fileURLToPath4(import.meta.url)), "../..");
 function detectInstallType(pkgDirOverride) {
   const dir = pkgDirOverride ?? packageDir3;
@@ -5088,7 +5089,7 @@ function nonInteractiveSshCommand(configuredCommand) {
   return `${command2} -oBatchMode=yes`;
 }
 function defaultGitRunner(args2) {
-  const result = spawnSync9("git", args2, {
+  const result = spawnSync10("git", args2, {
     encoding: "utf8",
     timeout: GIT_RESOLUTION_TIMEOUT_MS,
     env: {
@@ -5285,7 +5286,7 @@ function ownPackageName(pkgDir) {
 }
 var NPM_VIEW_TIMEOUT_MS = 3e4;
 function defaultNpmViewRunner(args2, cwd) {
-  const result = spawnSync9("npm", args2, { encoding: "utf8", timeout: NPM_VIEW_TIMEOUT_MS, ...cwd ? { cwd } : {} });
+  const result = spawnSync10("npm", args2, { encoding: "utf8", timeout: NPM_VIEW_TIMEOUT_MS, ...cwd ? { cwd } : {} });
   if (result.error) return { status: null, stdout: "", stderr: result.error.message };
   return { status: result.status, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
 }
@@ -5341,7 +5342,7 @@ function updateCmd(args2, deps = {}) {
   const pkgDir = deps.packageDir ?? packageDir3;
   const pkgName = ownPackageName(pkgDir);
   const cwd = deps.cwd ?? process.cwd();
-  const spawn2 = deps.spawnRunner ?? ((cmd, cmdArgs, opts) => spawnSync9(cmd, cmdArgs, { stdio: "inherit", cwd: opts.cwd }));
+  const spawn2 = deps.spawnRunner ?? ((cmd, cmdArgs, opts) => spawnSync10(cmd, cmdArgs, { stdio: "inherit", cwd: opts.cwd }));
   const runGit2 = deps.gitRunner ?? defaultGitRunner;
   const nowIso = deps.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
   let options;
@@ -5472,7 +5473,7 @@ function updateCmd(args2, deps = {}) {
 import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
 import { fileURLToPath as fileURLToPath5 } from "url";
 import { basename, dirname as dirname5, join as join5, relative as relative3, resolve } from "path";
-import { spawnSync as spawnSync10 } from "child_process";
+import { spawnSync as spawnSync11 } from "child_process";
 
 // src/lib/canon-owned.ts
 var CANON_OWNED = [
@@ -5581,7 +5582,7 @@ function classifyDestinations(cwd, relPaths) {
   const classes = /* @__PURE__ */ new Map();
   const uniqueRelPaths = [...new Set(relPaths)];
   if (uniqueRelPaths.length === 0) return classes;
-  const probe = spawnSync10("git", ["rev-parse", "--is-inside-work-tree"], {
+  const probe = spawnSync11("git", ["rev-parse", "--is-inside-work-tree"], {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"]
@@ -5593,12 +5594,12 @@ function classifyDestinations(cwd, relPaths) {
     }
     return classes;
   }
-  const lsFiles = spawnSync10("git", ["ls-files", "-z", "--", ...uniqueRelPaths], {
+  const lsFiles = spawnSync11("git", ["ls-files", "-z", "--", ...uniqueRelPaths], {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"]
   });
-  const status = spawnSync10("git", ["status", "--porcelain=v1", "-z", "--", ...uniqueRelPaths], {
+  const status = spawnSync11("git", ["status", "--porcelain=v1", "-z", "--", ...uniqueRelPaths], {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"]
@@ -5903,7 +5904,7 @@ function upgradeCmd(args2) {
     process.exit(2);
   }
   if (upgraded.length > 0 && !options.noStage) {
-    const r = spawnSync10("git", ["add", ...upgraded], { cwd: process.cwd(), stdio: "inherit" });
+    const r = spawnSync11("git", ["add", ...upgraded], { cwd: process.cwd(), stdio: "inherit" });
     if (r.status !== 0) {
       console.error("\nwarning: failed to stage changes \u2014 run `git add` manually.");
     }

@@ -12,6 +12,7 @@ import {
     buildHumanReviewStagePaths,
     classifyMergeOutcome,
     commitQaArtifacts,
+    diffScopeSnapshots,
     enableFullSend,
     findPullRequestTemplate,
     formatCompleteStateBanner,
@@ -34,9 +35,27 @@ import { evaluateCodeReviewLoop } from '../src/orchestrator/review-loop.js';
 import { scaffoldCommitHint } from '../src/orchestrator/phases/implement.js';
 import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
 import { taskCmd } from '../src/task/index.js';
+import { filterArtifactFindings, parseDocsRefsFindings, runDocsRefsCheck } from '../src/orchestrator/validation.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+
+void test('docs-refs findings parse, filter to own artifacts, and scope snapshots diff content and status', () => {
+    const findings = parseDocsRefsFindings([
+        'tasks/a/handoff.md:12: `pkg/src/missing.ts` — missing file',
+        'tasks/b/done.md:2: https://x — broken link',
+        'Found 2 broken refs',
+        'garbage',
+        'tasks/a/handoff.md:14: `a:b` — missing file',
+    ].join('\n'));
+    assert.equal(findings.length, 3);
+    assert.equal(findings[2].ref, '`a:b`');
+    assert.deepEqual(filterArtifactFindings(findings, ['tasks/a/handoff.md']).map(f => f.line), [12, 14]);
+    assert.deepEqual(diffScopeSnapshots(new Map([['a', ' M:one'], ['b', '??:old']]), new Map([['a', ' M:two'], ['b', '??:old'], ['c', '??:new']]), new Set(['b'])), ['a', 'c']);
+    assert.deepEqual(diffScopeSnapshots(new Map([['a', ' M:x']]), new Map([['a', ' M:x']]), new Set()), []);
+    assert.deepEqual(diffScopeSnapshots(new Map([['[git HEAD]', 'before']]), new Map([['[git HEAD]', 'after']]), new Set()), ['[git HEAD]']);
+    assert.equal(runDocsRefsCheck(process.cwd(), path.join(os.tmpdir(), 'missing-docs-refs-checker.mjs')).kind, 'absent');
+});
 
 function canonicalizeTestPath(candidate: string): string {
     try {
@@ -392,7 +411,7 @@ function setupInvocationLoggingCliTools(scriptDir: string): void {
         "status.phases[phase].status = 'done';",
         "if (phase === 'spec_review' || phase === 'code_review') status.phases[phase].verdict = 'approved';",
         "if (phase === 'spec_review') fs.writeFileSync(path.join(tasksRoot, taskId, 'spec-review.md'), '# Spec Review\\n\\n## Verdict\\n\\n- [x] **Approved**\\n- [ ] **Changes requested**\\n');",
-        "status.status = phase === 'spec' ? 'spec_review' : phase === 'spec_review' ? 'plan' : phase === 'plan' ? 'implement' : phase === 'implement' ? 'code_review' : phase === 'code_review' ? 'qa' : status.status;",
+        "status.status = phase === 'spec' ? 'spec_review' : phase === 'spec_review' ? 'plan' : phase === 'plan' ? 'implement' : phase === 'implement' ? 'code_review' : phase === 'code_review' ? 'qa' : phase === 'qa' ? 'human_review' : status.status;",
         "fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\\n`);",
         '',
     ].join('\n'), 'utf8');
@@ -400,10 +419,150 @@ function setupInvocationLoggingCliTools(scriptDir: string): void {
         writeExecutable(scriptDir, agent, [
             'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
             `printf "%s\\n" "${agent}" >> "$FAKE_AGENT_LOG"`,
-            'if [ -n "${FAKE_AGENT_COMPLETE_PHASE:-}${FAKE_AGENT_COMPLETE_SEQUENCE:-}" ]; then node "$FAKE_AGENT_COMPLETER"; fi',
+        'if [ -n "${FAKE_AGENT_ARGV_LOG:-}" ]; then node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:process.argv[1],argv:process.argv.slice(2)})+"\\n")\' "' + agent + '" "$@"; fi',
+        'is_resume=0; for arg in "$@"; do case "$arg" in resume|--resume) is_resume=1 ;; esac; done',
+        'if [ -n "${FAKE_AGENT_EDIT_SCRIPT:-}" ]; then node "$FAKE_AGENT_EDIT_SCRIPT" "' + agent + '" "$@" || exit $?; fi',
+        'if [ "' + agent + '" = "claude" ] && [ "${FAKE_AGENT_FAIL_RESUME:-0}" = "1" ] && [ "$is_resume" = "1" ]; then exit 7; fi',
+        'if [ -n "${FAKE_AGENT_COMPLETE_PHASE:-}${FAKE_AGENT_COMPLETE_SEQUENCE:-}" ] && { [ "${FAKE_AGENT_SKIP_COMPLETE_ON_RESUME:-0}" != "1" ] || [ "$is_resume" != "1" ]; }; then node "$FAKE_AGENT_COMPLETER"; fi',
+        'if [ "' + agent + '" = "codex" ] && [ -n "${FAKE_CODEX_THREAD_ID:-}" ]; then printf \'{"type":"thread.started","thread_id":"%s"}\\n\' "$FAKE_CODEX_THREAD_ID"; fi',
+        'if [ "' + agent + '" = "claude" ] && [ -n "${FAKE_CLAUDE_SESSION_ID:-}" ]; then printf \'{"type":"result","result":"ok","session_id":"%s"}\\n\' "$FAKE_CLAUDE_SESSION_ID"; fi',
             'exit 0',
         ]);
     }
+}
+
+function installDocsRefsChecker(repoDir: string, options: { hook: boolean }): void {
+    const scriptsDir = path.join(repoDir, 'scripts');
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    fs.copyFileSync(path.join(WORKTREE_ROOT, 'scripts/docs-refs-check.mjs'), path.join(scriptsDir, 'docs-refs-check.mjs'));
+    gitIn(repoDir, 'add', 'scripts/docs-refs-check.mjs');
+    gitIn(repoDir, 'commit', '-m', 'add docs refs checker fixture');
+    if (options.hook) {
+        const hooksDir = path.resolve(repoDir, execFileSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: repoDir, encoding: 'utf8' }).trim());
+        fs.mkdirSync(hooksDir, { recursive: true });
+        // On macOS the temp path can have a /var alias while Git reports /private/var.
+        // Use the canonical path so the checker's import.meta.url entry guard runs.
+        const checkerPath = fs.realpathSync(path.join(repoDir, 'scripts/docs-refs-check.mjs'));
+        fs.writeFileSync(path.join(hooksDir, 'pre-commit'), `#!/bin/sh\nexec node '${checkerPath}'\n`, { mode: 0o755 });
+        gitIn(repoDir, 'config', 'core.hooksPath', hooksDir);
+    }
+}
+
+function prepareImplementFixupFixture(dir: string, taskId: string, options: {
+    artifactFinding?: 'handoff' | 'review' | 'none';
+    session?: boolean;
+    hook?: 'checker' | 'fail' | 'absent';
+    resumeScript?: string;
+    failResume?: boolean;
+    commitCleanFile?: boolean;
+}) {
+    fs.mkdirSync(dir, { recursive: true });
+    const { localDir } = makeGitFixture(dir);
+    if (options.commitCleanFile) {
+        fs.writeFileSync(path.join(localDir, 'clean-tracked.txt'), 'baseline\n');
+        gitIn(localDir, 'add', 'clean-tracked.txt');
+        gitIn(localDir, 'commit', '-m', 'add clean tracked fixture file');
+        gitIn(localDir, 'push', 'origin', 'main');
+    }
+    const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+    fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
+    // The broken ref is written during the implement run (FAKE_AGENT_SEED_FILE),
+    // after the pre-implement scaffold commit, as it would be in a real run.
+    const seedFile = options.artifactFinding === 'handoff' ? path.join(tasksRoot, taskId, 'handoff.md')
+        : options.artifactFinding === 'review' ? path.join(tasksRoot, taskId, 'review.md') : '';
+    if (options.hook !== 'absent') installDocsRefsChecker(localDir, { hook: options.hook !== undefined });
+    if (options.hook === 'fail') {
+        const hooksDir = path.resolve(localDir, execFileSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: localDir, encoding: 'utf8' }).trim());
+        // Reject only commits that stage something outside tasks/, so the
+        // pre-implement scaffold commit (task artifacts only) still lands.
+        fs.writeFileSync(path.join(hooksDir, 'pre-commit'), "#!/bin/sh\ngit diff --cached --name-only | grep -qv '^tasks/' || exit 0\nexit 1\n", { mode: 0o755 });
+    }
+    const fakeBins = path.join(dir, 'fake-bins');
+    fs.mkdirSync(fakeBins, { recursive: true });
+    setupInvocationLoggingCliTools(fakeBins);
+    fs.writeFileSync(path.join(fakeBins, 'codex'), [
+        '#!/bin/sh',
+        'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+        'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
+        'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' "$@"',
+        'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
+        'if [ "$is_resume" = "1" ] && [ -n "${FAKE_AGENT_EDIT_SCRIPT:-}" ]; then node "$FAKE_AGENT_EDIT_SCRIPT" codex "$@"; fi',
+        'if [ "$is_resume" = "1" ] && [ "${FAKE_AGENT_FAIL_RESUME:-0}" = "1" ]; then exit 7; fi',
+        'if [ "$is_resume" = "1" ]; then exit 0; fi',
+        'printf "fixture\\n" > initial-fixture.txt',
+        'if [ -n "${FAKE_AGENT_SEED_FILE:-}" ]; then printf "\\nSee \\`src/removed-by-task.ts\\` for details.\\n" >> "$FAKE_AGENT_SEED_FILE"; fi',
+        'node "$FAKE_AGENT_COMPLETER"',
+        options.session ? 'printf \'{"type":"thread.started","thread_id":"fixture-implement-session"}\\n\'' : ':',
+        'exit 0',
+    ].join('\n'), { mode: 0o755 });
+    const agentLog = path.join(dir, 'agent-invocations.log');
+    const argvLog = path.join(dir, 'agent-argv.jsonl');
+    const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+    const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
+        FAKE_AGENT_COMPLETE_PHASE: 'implement',
+        ...(seedFile ? { FAKE_AGENT_SEED_FILE: seedFile } : {}),
+        FAKE_AGENT_ARGV_LOG: argvLog,
+        FAKE_AGENT_LOG: agentLog,
+        ...(options.resumeScript ? { FAKE_AGENT_EDIT_SCRIPT: options.resumeScript } : {}),
+        ...(options.failResume ? { FAKE_AGENT_FAIL_RESUME: '1' } : {}),
+    });
+    return { result, localDir, tasksRoot, agentLog, argvLog, headBefore };
+}
+
+// Commits after `base` other than the pre-implement scaffold commit. That
+// commit only lands where the fixture's task dir resolves inside the repo
+// (Linux CI); macOS tmpdir aliasing skips it.
+function nonScaffoldCommits(repoDir: string, base: string): string[] {
+    return execFileSync('git', ['log', '--format=%s', `${base}..HEAD`], { cwd: repoDir, encoding: 'utf8' })
+        .split('\n').filter(Boolean).filter(subject => !/^task\([^)]+\): commit artifacts pre-pipeline$/.test(subject));
+}
+
+function countResumes(argvLog: string): number {
+    return fs.readFileSync(argvLog, 'utf8').trim().split('\n').filter(Boolean)
+        .map(line => JSON.parse(line) as string[] | { argv: string[] })
+        .filter(entry => (Array.isArray(entry) ? entry : entry.argv).some(arg => arg === 'resume' || arg === '--resume' || arg.startsWith('--resume='))).length;
+}
+
+function prepareQaFixupFixture(dir: string, taskId: string, options: {
+    session?: boolean;
+    failResume?: boolean;
+    editOutside?: boolean;
+}) {
+    fs.mkdirSync(dir, { recursive: true });
+    const { localDir } = makeGitFixture(dir);
+    const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+    const statusPath = path.join(tasksRoot, taskId, 'status.json');
+    const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as { status: string; phases: Record<string, { status: string; verdict?: string }> };
+    status.status = 'qa';
+    status.phases.code_review.status = 'done';
+    status.phases.code_review.verdict = 'approved';
+    status.phases.qa.status = 'pending';
+    fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`);
+    installDocsRefsChecker(localDir, { hook: false });
+    const fakeBins = path.join(dir, 'fake-bins');
+    fs.mkdirSync(fakeBins, { recursive: true });
+    setupInvocationLoggingCliTools(fakeBins);
+    const editScript = path.join(dir, 'qa-edit.mjs');
+    const donePath = path.join(tasksRoot, taskId, 'done.md');
+    fs.writeFileSync(editScript, [
+        "import fs from 'node:fs';",
+        `const done = ${JSON.stringify(donePath)};`,
+        "const resume = process.argv.includes('--resume');",
+        "if (!resume) fs.writeFileSync(done, '# Completed\\n\\nSee `src/removed-by-task.ts` for details.\\n');",
+        options.editOutside ? "if (resume) fs.appendFileSync('initial-fixture.txt', 'changed outside artifacts\\n');" : '',
+    ].filter(Boolean).join('\n'));
+    const argvLog = path.join(dir, 'agent-argv.jsonl');
+    const agentLog = path.join(dir, 'agent-invocations.log');
+    const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
+        FAKE_AGENT_COMPLETE_PHASE: 'qa',
+        ...(options.session ? { FAKE_CLAUDE_SESSION_ID: 'qa-fixup-session' } : {}),
+        ...(options.failResume ? { FAKE_AGENT_FAIL_RESUME: '1' } : {}),
+        FAKE_AGENT_EDIT_SCRIPT: editScript,
+        FAKE_AGENT_SKIP_COMPLETE_ON_RESUME: '1',
+        FAKE_AGENT_ARGV_LOG: argvLog,
+        FAKE_AGENT_LOG: agentLog,
+    }, false);
+    return { result, localDir, tasksRoot, argvLog, agentLog };
 }
 
 type FakeRunHarness = {
@@ -819,7 +978,9 @@ function makeBootstrappedTaskWorktreeFixture(dir: string, taskId: string, initia
 } {
     const { localDir } = makeGitFixture(dir);
     for (const [file, content] of Object.entries(initialFiles)) {
-        fs.writeFileSync(path.join(localDir, file), content, 'utf8');
+        const filePath = path.join(localDir, file);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, content, 'utf8');
     }
     if (Object.keys(initialFiles).length > 0) {
         gitIn(localDir, 'add', '--', ...Object.keys(initialFiles));
@@ -1485,7 +1646,7 @@ function runAutoCommitCodeInline(taskId: string, cwd: string): { status: number 
 function runReviewEntryRetryInline(taskId: string, cwd: string): { status: number | null; stderr: string; stdout: string } {
     return runNodeInline([
         `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
-        `.then(m => { m.retryImplementAutoCommitAtReviewEntry([${JSON.stringify(taskId)}], ${JSON.stringify(cwd)}); })`,
+        `.then(m => m.retryImplementAutoCommitAtReviewEntry([${JSON.stringify(taskId)}], ${JSON.stringify(cwd)}))`,
         '.catch(err => { console.error(err); process.exit(1); });',
     ].join('\n'), { ...childEnvWithoutTasksOverride(), CANON_TASKS_DIR_OVERRIDE: path.join(cwd, 'tasks') }, cwd);
 }
@@ -1693,10 +1854,11 @@ function prepareReviewEntryMainFixture(dir: string, taskId: string, commitSource
     return { localDir, worktreeDir, tasksRoot, statusPath, fakeBins };
 }
 
-function runReviewEntryMainFixture(fixture: ReturnType<typeof prepareReviewEntryMainFixture>, taskId: string) {
+function runReviewEntryMainFixture(fixture: ReturnType<typeof prepareReviewEntryMainFixture>, taskId: string, extraEnv: NodeJS.ProcessEnv = {}) {
     return runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], {
         CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon', 'worktrees'),
         FAKE_AGENT_COMPLETE_PHASE: 'code_review',
+        ...extraEnv,
     });
 }
 
@@ -1717,6 +1879,118 @@ void test('main retries before code_review preflight in a task worktree', { conc
             cwd: worktreeDir, encoding: 'utf8',
         }).trim());
         assert.deepEqual(readAgentInvocations(path.join(localDir, 'agent-invocations.log')), ['claude']);
+    });
+});
+
+void test('review-entry docs-refs fix-up resumes the stored implement session in the task worktree', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-review-entry-', dir => {
+        const taskId = 'artifact-fixup-review-entry';
+        const fixture = prepareReviewEntryMainFixture(dir, taskId, false, true);
+        installDocsRefsChecker(fixture.localDir, { hook: true });
+        const handoff = path.join(fixture.worktreeDir, 'tasks', taskId, 'handoff.md');
+        fs.appendFileSync(handoff, '\nSee `src/removed-by-task.ts` for details.\n');
+        const taskStatus = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as { sessions?: Record<string, string> };
+        taskStatus.sessions = { ...(taskStatus.sessions ?? {}), codex: 'stored-implement-session' };
+        fs.writeFileSync(fixture.statusPath, `${JSON.stringify(taskStatus, null, 2)}\n`);
+        const editScript = path.join(dir, 'fix-artifact.mjs');
+        fs.writeFileSync(editScript, [
+            "import fs from 'node:fs';",
+            `const file = ${JSON.stringify(handoff)};`,
+            "fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('`src/removed-by-task.ts`', '[src/removed-by-task.ts](src/removed-by-task.ts)'));",
+        ].join('\n'));
+        fs.writeFileSync(path.join(fixture.fakeBins, 'codex'), [
+            '#!/bin/sh',
+            'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+            'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:"codex",argv:process.argv.slice(1)})+"\\n")\' "$@"',
+            'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
+            'if [ "$is_resume" = "1" ]; then node "$FAKE_AGENT_EDIT_SCRIPT"; exit 0; fi',
+            'node -e \'console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"clean review"}})); console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}}))\'',
+        ].join('\n'), { mode: 0o755 });
+        const argvLog = path.join(dir, 'agent-argv.jsonl');
+        const result = runReviewEntryMainFixture(fixture, taskId, { FAKE_AGENT_ARGV_LOG: argvLog, FAKE_AGENT_EDIT_SCRIPT: editScript });
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.match(result.stdout, /Artifact fix-up \(attempt 1\/2\)/);
+        assert.match(fs.readFileSync(handoff, 'utf8'), /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
+        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+        assert.equal(entries.filter(entry => entry.agent === 'codex' && entry.argv.includes('resume') && entry.argv.includes('stored-implement-session')).length, 1);
+    });
+});
+
+void test('review-entry docs-refs fix-up contains a non-zero Codex resume and continues', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-review-entry-failed-', dir => {
+        const taskId = 'artifact-fixup-review-entry-failed';
+        const fixture = prepareReviewEntryMainFixture(dir, taskId, false, true);
+        installDocsRefsChecker(fixture.localDir, { hook: false });
+        const handoff = path.join(fixture.worktreeDir, 'tasks', taskId, 'handoff.md');
+        fs.appendFileSync(handoff, '\nSee `src/removed-by-task.ts` for details.\n');
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as { sessions?: Record<string, string> };
+        status.sessions = { ...(status.sessions ?? {}), codex: 'stored-implement-session' };
+        fs.writeFileSync(fixture.statusPath, `${JSON.stringify(status, null, 2)}\n`);
+        fs.writeFileSync(path.join(fixture.fakeBins, 'codex'), [
+            '#!/bin/sh',
+            'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+            'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' "$@"',
+            'fail_resume=0; for arg in "$@"; do if [ "$arg" = "stored-implement-session" ]; then fail_resume=1; fi; done',
+            'if [ "$fail_resume" = "1" ]; then exit 7; fi',
+            'node -e \'console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"clean review"}})); console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}}))\'',
+            'exit 0',
+        ].join('\n'), { mode: 0o755 });
+        const argvLog = path.join(dir, 'argv.jsonl');
+        const result = runReviewEntryMainFixture(fixture, taskId, { FAKE_AGENT_ARGV_LOG: argvLog });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 0, output);
+        assert.match(output, /Artifact fix-up failed/);
+        assert.match(output, /Retrying the implement auto-commit/);
+        assert.equal(countResumes(argvLog), 1);
+        assert.ok(execFileSync('git', ['log', '--format=%H', 'main..HEAD', '--', 'initial-fixture.txt'], { cwd: fixture.worktreeDir, encoding: 'utf8' }).trim());
+    });
+});
+
+void test('QA docs-refs fix-up resumes its in-process Claude session before committing done.md', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-qa-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'artifact-fixup-qa';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+        const statusPath = path.join(tasksRoot, taskId, 'status.json');
+        const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as { status: string; phases: Record<string, { status: string; verdict?: string }> };
+        status.status = 'qa';
+        status.phases.code_review.status = 'done';
+        status.phases.code_review.verdict = 'approved';
+        status.phases.qa.status = 'pending';
+        fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`);
+        installDocsRefsChecker(localDir, { hook: false });
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const editScript = path.join(dir, 'qa-artifact-edit.mjs');
+        const donePath = path.join(tasksRoot, taskId, 'done.md');
+        fs.writeFileSync(editScript, [
+            "import fs from 'node:fs';",
+            `const file = ${JSON.stringify(donePath)};`,
+            "const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';",
+            "if (process.argv.includes('--resume')) fs.writeFileSync(file, content.replace('`src/removed-by-task.ts`', '[src/removed-by-task.ts](src/removed-by-task.ts)'));",
+            `else fs.writeFileSync(file, ${JSON.stringify('# Completed\n\nSee `src/removed-by-task.ts` for details.\n')});`,
+        ].join('\n'));
+        const argvLog = path.join(dir, 'qa-agent-argv.jsonl');
+        const agentLog = path.join(dir, 'qa-agent-invocations.log');
+        const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, ['--expect', 'qa'], {
+            FAKE_AGENT_COMPLETE_PHASE: 'qa',
+            FAKE_CLAUDE_SESSION_ID: 'qa-session-for-fixup',
+            FAKE_AGENT_EDIT_SCRIPT: editScript,
+            FAKE_AGENT_SKIP_COMPLETE_ON_RESUME: '1',
+            FAKE_AGENT_ARGV_LOG: argvLog,
+            FAKE_AGENT_LOG: agentLog,
+        });
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.match(result.stdout, /Artifact fix-up \(attempt 1\/2\)/);
+        assert.match(result.stdout, /QA artifacts/);
+        const committed = execFileSync('git', ['show', `HEAD:tasks/${taskId}/done.md`], { cwd: localDir, encoding: 'utf8' });
+        assert.match(committed, /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
+        assert.doesNotMatch(committed, /`src\/removed-by-task\.ts`/);
+        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+        assert.equal(entries.filter(entry => entry.agent === 'claude' && entry.argv.includes('--resume') && entry.argv.includes('qa-session-for-fixup')).length, 1);
     });
 });
 
@@ -7957,6 +8231,240 @@ void test('main runs the first implement pass when MAX_REVIEW_LOOPS=0 on a genui
             phases?: { implement?: { status?: string } };
         };
         assert.equal(updated.phases?.implement?.status, 'done');
+    });
+});
+
+void test('implement docs-refs fix-up resumes Codex before the auto-commit hook', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-implement-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'artifact-fixup-implement';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+        fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
+        // Fixture-only self-listing row makes the fixed handoff part of the auto-commit,
+        // allowing this test to verify the committed artifact blob.
+        fs.writeFileSync(path.join(tasksRoot, taskId, 'handoff.md'), fs.readFileSync(path.join(tasksRoot, taskId, 'handoff.md'), 'utf8')
+            .replace('| `initial-fixture.txt` | fixture |', `| \`initial-fixture.txt\` | fixture |\n| \`tasks/${taskId}/handoff.md\` | fixed artifact |`));
+        installDocsRefsChecker(localDir, { hook: true });
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        const editScript = path.join(dir, 'implement-artifact-edit.mjs');
+        fs.writeFileSync(editScript, [
+            "import fs from 'node:fs';",
+            `const file = ${JSON.stringify(path.join(tasksRoot, taskId, 'handoff.md'))};`,
+            "fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('`src/removed-by-task.ts`', '[src/removed-by-task.ts](src/removed-by-task.ts)'));",
+        ].join('\n'));
+        fs.writeFileSync(path.join(fakeBins, 'codex'), [
+            '#!/bin/sh',
+            'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+            'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:"codex",argv:process.argv.slice(1)})+"\\n")\' "$@"',
+            'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
+            'if [ "$is_resume" = "1" ]; then node "$FAKE_AGENT_EDIT_SCRIPT"; exit 0; fi',
+            'printf "fixture\\n" > initial-fixture.txt',
+            'if [ -n "${FAKE_AGENT_SEED_FILE:-}" ]; then printf "\\nSee \\`src/removed-by-task.ts\\` for details.\\n" >> "$FAKE_AGENT_SEED_FILE"; fi',
+            'if [ -n "${FAKE_AGENT_COMPLETER:-}" ]; then node "$FAKE_AGENT_COMPLETER"; fi',
+            'printf \'{"type":"thread.started","thread_id":"implement-session-for-fixup"}\\n\'',
+            'exit 0',
+        ].join('\n'), { mode: 0o755 });
+        const argvLog = path.join(dir, 'implement-agent-argv.jsonl');
+        const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
+            FAKE_AGENT_COMPLETE_PHASE: 'implement',
+            FAKE_AGENT_SEED_FILE: path.join(tasksRoot, taskId, 'handoff.md'),
+            FAKE_AGENT_EDIT_SCRIPT: editScript,
+            FAKE_AGENT_ARGV_LOG: argvLog,
+            FAKE_AGENT_LOG: path.join(dir, 'implement-agent-invocations.log'),
+        });
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.match(result.stdout, /Artifact fix-up \(attempt 1\/2\)/);
+        assert.match(fs.readFileSync(path.join(tasksRoot, taskId, 'handoff.md'), 'utf8'), /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
+        const committedHandoff = execFileSync('git', ['show', `HEAD:tasks/${taskId}/handoff.md`], { cwd: localDir, encoding: 'utf8' });
+        assert.match(committedHandoff, /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
+        assert.doesNotMatch(committedHandoff, /`src\/removed-by-task\.ts`/);
+        assert.equal(execFileSync('git', ['show', 'HEAD:initial-fixture.txt'], { cwd: localDir, encoding: 'utf8' }), 'fixture\n');
+        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { argv: string[] });
+        assert.equal(entries.filter(entry => entry.argv.includes('resume') && entry.argv.includes('implement-session-for-fixup')).length, 1);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as { status: string; phases: { implement: { status: string } } };
+        assert.equal(status.status, 'code_review');
+        assert.equal(status.phases.implement.status, 'done');
+    });
+});
+
+void test('implement docs-refs fix-up retries twice then preserves the rejecting-hook failure', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-implement-fallback-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'artifact-fixup-implement-fallback';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+        fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
+        installDocsRefsChecker(localDir, { hook: true });
+        const fakeBins = path.join(dir, 'fake-bins');
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupInvocationLoggingCliTools(fakeBins);
+        fs.writeFileSync(path.join(fakeBins, 'codex'), [
+            '#!/bin/sh',
+            'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
+            'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' "$@"',
+            'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
+            'if [ "$is_resume" = "1" ]; then exit 0; fi',
+            'printf "fixture\\n" > initial-fixture.txt',
+            'if [ -n "${FAKE_AGENT_SEED_FILE:-}" ]; then printf "\\nSee \\`src/removed-by-task.ts\\` for details.\\n" >> "$FAKE_AGENT_SEED_FILE"; fi',
+            'node "$FAKE_AGENT_COMPLETER"',
+            'printf \'{"type":"thread.started","thread_id":"fallback-implement-session"}\\n\'',
+            'exit 0',
+        ].join('\n'), { mode: 0o755 });
+        const argvLog = path.join(dir, 'agent-argv.jsonl');
+        const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
+            FAKE_AGENT_COMPLETE_PHASE: 'implement',
+            FAKE_AGENT_SEED_FILE: path.join(tasksRoot, taskId, 'handoff.md'),
+            FAKE_AGENT_ARGV_LOG: argvLog,
+            FAKE_AGENT_LOG: path.join(dir, 'agent-invocations.log'),
+        });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 1, output);
+        assert.match(output, /after 2 fix-up attempts/);
+        assert.match(output, /tasks\/artifact-fixup-implement-fallback\/handoff\.md:.*missing file/);
+        assert.match(output, /Auto-commit failed:/);
+        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]);
+        assert.equal(entries.filter(argv => argv.includes('resume') && argv.includes('fallback-implement-session')).length, 2);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases: { implement: { status: string }; code_review: { preflight_rejections_current_loop: number; iterations_current_loop: number } };
+        };
+        assert.equal(status.phases.implement.status, 'done');
+        assert.equal(status.phases.code_review.preflight_rejections_current_loop, 0);
+        assert.equal(status.phases.code_review.iterations_current_loop, 0);
+        assert.deepEqual(nonScaffoldCommits(localDir, headBefore), []);
+    });
+});
+
+void test('implement docs-refs fix-up makes no resume for unrelated, absent-session, and non-owned findings', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-no-resume-', root => {
+        const unrelated = prepareImplementFixupFixture(path.join(root, 'unrelated'), 'artifact-fixup-unrelated-hook', { artifactFinding: 'none', session: true, hook: 'fail' });
+        assert.equal(unrelated.result.status, 1, combinedOutput(unrelated.result));
+        assert.match(combinedOutput(unrelated.result), /Auto-commit failed:/);
+        assert.equal(countResumes(unrelated.argvLog), 0);
+
+        const noSession = prepareImplementFixupFixture(path.join(root, 'no-session'), 'artifact-fixup-no-session', { artifactFinding: 'handoff', session: false, hook: 'checker' });
+        assert.equal(noSession.result.status, 1, combinedOutput(noSession.result));
+        assert.match(combinedOutput(noSession.result), /no codex session is available/i);
+        assert.match(combinedOutput(noSession.result), /Auto-commit failed:/);
+        assert.equal(countResumes(noSession.argvLog), 0);
+
+        const unrelatedFinding = prepareImplementFixupFixture(path.join(root, 'review-only'), 'artifact-fixup-review-only', { artifactFinding: 'review', session: true, hook: 'checker' });
+        assert.equal(unrelatedFinding.result.status, 1, combinedOutput(unrelatedFinding.result));
+        assert.match(combinedOutput(unrelatedFinding.result), /Auto-commit failed:/);
+        assert.match(combinedOutput(unrelatedFinding.result), /tasks\/artifact-fixup-review-only\/review\.md:.*missing file/);
+        assert.equal(countResumes(unrelatedFinding.argvLog), 0);
+
+        const checkerAbsent = prepareImplementFixupFixture(path.join(root, 'checker-absent'), 'artifact-fixup-checker-absent', {
+            artifactFinding: 'handoff', session: true, hook: 'absent',
+        });
+        const checkerAbsentOutput = combinedOutput(checkerAbsent.result);
+        assert.equal(checkerAbsent.result.status, 0, checkerAbsentOutput);
+        assert.equal(countResumes(checkerAbsent.argvLog), 0);
+        assert.equal(execFileSync('git', ['show', 'HEAD:initial-fixture.txt'], { cwd: checkerAbsent.localDir, encoding: 'utf8' }), 'fixture\n');
+    });
+});
+
+void test('implement docs-refs fix-up stops on edits outside its artifacts and catches failed resumes locally', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-scope-', root => {
+        for (const [taskId, target] of [
+            ['artifact-fixup-dirty-source', 'initial-fixture.txt'],
+            ['artifact-fixup-status-edit', 'tasks/artifact-fixup-status-edit/status.json'],
+        ]) {
+            const dir = path.join(root, taskId);
+            const editScript = path.join(dir, 'edit.mjs');
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(editScript, `import fs from 'node:fs';\nfs.appendFileSync(${JSON.stringify(target)}, '\\nchanged by fix-up');\n`);
+            const fixture = prepareImplementFixupFixture(dir, taskId, { artifactFinding: 'handoff', session: true, hook: 'checker', resumeScript: editScript });
+            const output = combinedOutput(fixture.result);
+            assert.equal(fixture.result.status, 1, output);
+            assert.match(output, /changed files outside its own artifacts/);
+            assert.match(output, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+            assert.deepEqual(nonScaffoldCommits(fixture.localDir, fixture.headBefore), []);
+        }
+
+        const commitDir = path.join(root, 'committed-edit');
+        const commitScript = path.join(commitDir, 'commit-edit.mjs');
+        fs.mkdirSync(commitDir, { recursive: true });
+        fs.writeFileSync(commitScript, [
+            "import fs from 'node:fs';",
+            "import { execFileSync } from 'node:child_process';",
+            "fs.writeFileSync('clean-tracked.txt', 'changed and committed by fix session\\n');",
+            "execFileSync('git', ['add', 'clean-tracked.txt']);",
+            "execFileSync('git', ['commit', '--no-verify', '-m', 'agent out-of-scope commit'], { stdio: 'ignore' });",
+        ].join('\n'));
+        const committedEdit = prepareImplementFixupFixture(commitDir, 'artifact-fixup-committed-edit', {
+            artifactFinding: 'handoff', session: true, hook: 'checker', resumeScript: commitScript, commitCleanFile: true,
+        });
+        const committedOutput = combinedOutput(committedEdit.result);
+        assert.equal(committedEdit.result.status, 1, committedOutput);
+        assert.match(committedOutput, /changed files outside its own artifacts/);
+        assert.match(committedOutput, /\[git HEAD\]/);
+        assert.equal(nonScaffoldCommits(committedEdit.localDir, committedEdit.headBefore).length, 1);
+        assert.equal(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: committedEdit.localDir, encoding: 'utf8' }).trim(), 'agent out-of-scope commit');
+        assert.equal(execFileSync('git', ['show', 'HEAD:clean-tracked.txt'], { cwd: committedEdit.localDir, encoding: 'utf8' }), 'changed and committed by fix session\n');
+
+        const failedDir = path.join(root, 'failed-resume');
+        const failed = prepareImplementFixupFixture(failedDir, 'artifact-fixup-failed-resume', {
+            artifactFinding: 'handoff', session: true, hook: 'fail', failResume: true,
+        });
+        const failedOutput = combinedOutput(failed.result);
+        assert.equal(failed.result.status, 1, failedOutput);
+        assert.match(failedOutput, /Codex exited with status 7/);
+        assert.match(failedOutput, /Auto-commit failed:/);
+        const failedStatus = JSON.parse(fs.readFileSync(path.join(failed.tasksRoot, 'artifact-fixup-failed-resume/status.json'), 'utf8')) as {
+            phases: { implement: { status: string } };
+        };
+        assert.equal(failedStatus.phases.implement.status, 'done');
+        assert.equal(countResumes(failed.argvLog), 1);
+    });
+});
+
+void test('QA artifact fix-up warns after two failures and continues when no session exists', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-qa-fallbacks-', root => {
+        const neverFixed = prepareQaFixupFixture(path.join(root, 'never-fixed'), 'artifact-fixup-qa-never-fixed', { session: true });
+        const neverOutput = combinedOutput(neverFixed.result);
+        assert.equal(neverFixed.result.status, 0, neverOutput);
+        assert.match(neverOutput, /after 2 fix-up attempts/);
+        assert.match(neverOutput, /tasks\/artifact-fixup-qa-never-fixed\/done\.md:.*missing file/);
+        assert.match(neverOutput, /human_review/);
+        assert.equal(countResumes(neverFixed.argvLog), 2);
+        const neverStatus = JSON.parse(fs.readFileSync(path.join(neverFixed.tasksRoot, 'artifact-fixup-qa-never-fixed/status.json'), 'utf8')) as { phases: { qa: { status: string } } };
+        assert.equal(neverStatus.phases.qa.status, 'done');
+        assert.ok(execFileSync('git', ['show', 'HEAD:tasks/artifact-fixup-qa-never-fixed/done.md'], { cwd: neverFixed.localDir, encoding: 'utf8' }));
+
+        const noSession = prepareQaFixupFixture(path.join(root, 'no-session'), 'artifact-fixup-qa-no-session', {});
+        const noSessionOutput = combinedOutput(noSession.result);
+        assert.equal(noSession.result.status, 0, noSessionOutput);
+        assert.match(noSessionOutput, /no claude session is available/i);
+        assert.match(noSessionOutput, /human_review/);
+        assert.equal(countResumes(noSession.argvLog), 0);
+        const noSessionStatus = JSON.parse(fs.readFileSync(path.join(noSession.tasksRoot, 'artifact-fixup-qa-no-session/status.json'), 'utf8')) as { phases: { qa: { status: string } } };
+        assert.equal(noSessionStatus.phases.qa.status, 'done');
+        assert.ok(execFileSync('git', ['show', 'HEAD:tasks/artifact-fixup-qa-no-session/done.md'], { cwd: noSession.localDir, encoding: 'utf8' }));
+    });
+});
+
+void test('QA fix-up catches a failed resume locally and guards non-artifact edits', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-qa-guard-', root => {
+        const failed = prepareQaFixupFixture(path.join(root, 'failed'), 'artifact-fixup-qa-failed', { session: true, failResume: true });
+        const failedOutput = combinedOutput(failed.result);
+        assert.equal(failed.result.status, 0, failedOutput);
+        assert.match(failedOutput, /Artifact fix-up session failed/);
+        assert.equal(countResumes(failed.argvLog), 1);
+        const failedStatus = JSON.parse(fs.readFileSync(path.join(failed.tasksRoot, 'artifact-fixup-qa-failed/status.json'), 'utf8')) as { status: string; phases: { qa: { status: string } } };
+        assert.equal(failedStatus.status, 'human_review');
+        assert.equal(failedStatus.phases.qa.status, 'done');
+        assert.ok(execFileSync('git', ['show', 'HEAD:tasks/artifact-fixup-qa-failed/done.md'], { cwd: failed.localDir, encoding: 'utf8' }));
+
+        const escaped = prepareQaFixupFixture(path.join(root, 'escaped'), 'artifact-fixup-qa-scope', { session: true, editOutside: true });
+        const escapedOutput = combinedOutput(escaped.result);
+        assert.equal(escaped.result.status, 1, escapedOutput);
+        assert.match(escapedOutput, /changed files outside its own artifacts/);
+        assert.match(escapedOutput, /initial-fixture\.txt/);
+        assert.equal(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: escaped.localDir, encoding: 'utf8' }).trim(), '2');
     });
 });
 
