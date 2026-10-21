@@ -6477,6 +6477,13 @@ Add them to the affected task spec's ### Affected Files table in the active chec
 }
 
 // src/orchestrator/phases/implement.ts
+function scaffoldCommitHint(baseBranch, unpushedScaffold, allFullSend) {
+  if (unpushedScaffold === false) return null;
+  if (unpushedScaffold === true && allFullSend) {
+    return `Scaffold committed to local ${baseBranch}; the full-send tail pushes unpushed base commits that carry only task artifacts and pipeline telemetry, and stops if any other commit is unpushed on ${baseBranch}.`;
+  }
+  return `Scaffold committed to local ${baseBranch}; run \`git push origin ${baseBranch}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`;
+}
 function shouldUseImplementRevision(tasks) {
   return tasks.some((t) => {
     const preflightCount = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
@@ -6499,15 +6506,8 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
     const scaffoldBase = getBaseBranch(taskIds);
     const unpushedScaffold = hasUnpushedScaffoldCommits(scaffoldBase, process.cwd());
     const allFullSend = taskIds.every((id) => readStatus(id).full_send === true);
-    if (unpushedScaffold === null || unpushedScaffold && !allFullSend) {
-      info(
-        `Scaffold committed to local ${scaffoldBase}; run \`git push origin ${scaffoldBase}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`
-      );
-    } else if (unpushedScaffold) {
-      info(
-        `Scaffold committed to local ${scaffoldBase}; the full-send tail pushes unpushed base commits that carry only task artifacts and pipeline telemetry, and stops if any other commit is unpushed on ${scaffoldBase}.`
-      );
-    }
+    const hint = scaffoldCommitHint(scaffoldBase, unpushedScaffold, allFullSend);
+    if (hint) info(hint);
   }
   ensureBranch(taskIds, { force });
   const activeCwd = getActiveCwd(taskIds);

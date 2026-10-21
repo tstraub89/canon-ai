@@ -495,6 +495,10 @@ void test('live full-send tail stays live through a stale heartbeat and an old c
         assert.equal(classifyIdle(ctx, 't1', () => true).kind, 'live');
         assert.equal(classifyAttach(ctx, 't1', () => true, NOW).kind, 'live');
         assert.equal(orchestratorStillProgressing(ctx, () => true, NOW), true);
+        fs.writeFileSync(path.join(taskDir, '.canon-run.log'), '', 'utf8');
+        assert.equal(classifyIdle(ctx, 't1', () => true).kind, 'live');
+        assert.equal(classifyAttach(ctx, 't1', () => true, NOW).kind, 'live');
+        assert.equal(orchestratorStillProgressing(ctx, () => true, NOW), true);
     });
 });
 
