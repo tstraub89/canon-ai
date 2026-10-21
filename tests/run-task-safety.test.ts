@@ -21,7 +21,7 @@ import {
     resolveQaPrBody,
     shouldParkCrashedReview,
 } from '../src/orchestrator/main.js';
-import { classifySafeToPushCommitFromData, ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths } from '../src/orchestrator/git.js';
+import { classifySafeToPushCommitFromData, ensureBranch, ensureCheckedOutBaseBranch, findDirtyRepoRootSourcePaths, hasUnpushedScaffoldCommits } from '../src/orchestrator/git.js';
 import { commitArchiveChanges, stageArchiveChanges } from '../src/orchestrator/main.js';
 import { classifyInvocationRoot, effectiveWorktreesRoot, resolveTaskCwd } from '../src/orchestrator/state.js';
 import {
@@ -1126,6 +1126,31 @@ void test('safe scaffold push classifier requires an exact subject, only allowed
     assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['src/module.ts', 'tasks/task-a/module.ts']).safe, false);
     assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json'], 2).safe, false);
     assert.equal(safe('task(task-a): commit artifacts pre-pipeline', ['tasks/task-a/status.json', 'src/module.ts']).safe, false);
+});
+
+void test('hasUnpushedScaffoldCommits probes safe, unsafe, and unavailable base history', () => {
+    withTempDir('run-task-scaffold-probe-', dir => {
+        const safeDir = path.join(dir, 'safe');
+        fs.mkdirSync(safeDir, { recursive: true });
+        const { localDir: safeRepo } = makeGitFixture(safeDir);
+        assert.equal(hasUnpushedScaffoldCommits('main', safeRepo), false);
+
+        fs.mkdirSync(path.join(safeRepo, 'tasks', 'task-a'), { recursive: true });
+        fs.writeFileSync(path.join(safeRepo, 'tasks', 'task-a', 'status.json'), '{}\n', 'utf8');
+        gitIn(safeRepo, 'add', 'tasks/task-a/status.json');
+        gitIn(safeRepo, 'commit', '-m', 'task(task-a): commit artifacts pre-pipeline');
+        assert.equal(hasUnpushedScaffoldCommits('main', safeRepo), true);
+
+        const unsafeDir = path.join(dir, 'unsafe');
+        fs.mkdirSync(unsafeDir, { recursive: true });
+        const { localDir: unsafeRepo } = makeGitFixture(unsafeDir);
+        fs.writeFileSync(path.join(unsafeRepo, 'operator-source.txt'), 'operator change\n', 'utf8');
+        gitIn(unsafeRepo, 'add', 'operator-source.txt');
+        gitIn(unsafeRepo, 'commit', '-m', 'operator source commit');
+        assert.equal(hasUnpushedScaffoldCommits('main', unsafeRepo), false);
+
+        assert.equal(hasUnpushedScaffoldCommits('missing-base', safeRepo), null);
+    });
 });
 
 void test('scaffold hint is absent without safe commits and selects wording by full-send state', () => {
@@ -5174,7 +5199,7 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
 
         const result = runNodeInline([
             "import { main } from './src/orchestrator/main.ts';",
-            "process.argv = ['node', 'canon', 'task-a', '--pr', '--force'];",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
             ...process.env,
@@ -5267,7 +5292,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
 
         const result = runNodeInline([
             "import { main } from './src/orchestrator/main.ts';",
-            "process.argv = ['node', 'canon', 'task-a', '--pr', '--force'];",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
             ...process.env,
@@ -5365,7 +5390,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
 
         const result = runNodeInline([
             "import { main } from './src/orchestrator/main.ts';",
-            "process.argv = ['node', 'canon', 'task-a', '--pr', '--force'];",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
             ...process.env,
@@ -5413,7 +5438,7 @@ void test('main --pr on complete still rejects dirty files outside the human_rev
 
         const result = runNodeInline([
             "import { main } from './src/orchestrator/main.ts';",
-            "process.argv = ['node', 'canon', 'task-a', '--pr', '--force'];",
+            "process.argv = ['node', 'canon', 'task-a', '--pr'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
             ...process.env,
@@ -6068,17 +6093,17 @@ void test('full-send tail pushes the checked tip but not a concurrent operator c
     withTempDir('run-task-full-send-concurrent-base-', dir => {
         const fixture = setupFullSendTailFixture(dir);
         const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-        const hookDir = path.join(fixture.localDir, '.git', 'hooks');
-        writeExecutable(hookDir, 'pre-push', [
-            'remote_ref=""',
-            'while read local_ref local_sha remote_ref_line remote_sha; do remote_ref="$remote_ref_line"; done',
-            'if [ "$remote_ref" = "refs/heads/main" ]; then',
+        writeExecutable(fixture.fakeBins, 'git', [
+            'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ]; then',
+            '  case "${3:-}" in main|*:refs/heads/main)',
             '  "$REAL_GIT" -C "$TAIL_REPO" checkout -q main',
             '  echo operator > "$TAIL_REPO/operator-source.txt"',
             '  "$REAL_GIT" -C "$TAIL_REPO" add operator-source.txt',
             '  "$REAL_GIT" -C "$TAIL_REPO" commit -qm "operator source commit"',
             '  "$REAL_GIT" -C "$TAIL_REPO" checkout -q task/task-a',
+            '  ;; esac',
             'fi',
+            'exec "$REAL_GIT" "$@"',
         ]);
         const result = runFullSendTailFixture(fixture, dir, { REAL_GIT: realGit, TAIL_REPO: fixture.localDir });
         assert.notEqual(result.status, 0);
@@ -6223,7 +6248,7 @@ void test('main full-send tail reports the PR URL after pinning pr.number', () =
 
         const result = runNodeInline([
             "import { main } from './src/orchestrator/main.ts';",
-            "process.argv = ['node', 'canon', 'task-a', '--full-send', '--force'];",
+            "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
             ...process.env,
@@ -6777,7 +6802,7 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         const output = combinedOutput(result);
         assert.match(output, /base-drift detected/);
         assert.match(output, /docs\/BACKLOG\.md/);
-        assert.doesNotMatch(output, /src\/orchestrator\/main\.ts\s*$/m);
+        assert.doesNotMatch(output, /src\//);
     });
 });
 
@@ -7056,7 +7081,7 @@ void test('main full-send tail fails closed when draft PR creation fails', () =>
 
         const result = runNodeInline([
             "import { main } from './src/orchestrator/main.ts';",
-            "process.argv = ['node', 'canon', 'task-a', '--full-send', '--force'];",
+            "process.argv = ['node', 'canon', 'task-a', '--full-send'];",
             "main().catch(err => { console.error(err); process.exit(1); });",
         ].join('\n'), {
             ...process.env,
