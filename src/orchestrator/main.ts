@@ -1168,6 +1168,87 @@ function shouldRunFullSendTail(taskIds: string[]): boolean {
     });
 }
 
+function undoHumanReviewCommit(cwd: string, preSha: string, branchName: string, message: string): string {
+    const head = splitGit.gitSafeAt(cwd, 'rev-parse', 'HEAD');
+    const leftover = head.ok ? head.stdout.trim() : '(unknown)';
+    const reset = splitGit.gitSafeAt(cwd, 'reset', '--soft', preSha);
+    if (reset.ok) {
+        return `${message}\n\nThe human_review commit was undone (HEAD reset to ${preSha.slice(0, 7)}); its changes are still staged. Re-run after resolving.`;
+    }
+    return `${message}\n\nCould not undo the human_review commit ${leftover} on ${branchName}: ${reset.stderr || 'unknown error'}\nUndo it manually with: git reset --soft ${preSha}`;
+}
+
+function runBaseDriftGate(
+    taskIds: string[],
+    baseBranch: string,
+    cwd: string,
+    abort: (message: string) => never,
+): void {
+    const result = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
+    if (result.fetchFailed) return;
+    if (result.diffFailed) {
+        abort(
+            `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.\n` +
+            `Git error: ${result.diffError ?? 'unknown error'}\n` +
+            `This failure cannot be bypassed with --force.`,
+        );
+    }
+    const probe = result.conflict;
+    if (probe?.kind === 'error') {
+        abort(
+            `--pr aborted: could not check for merge conflicts with origin/${baseBranch}.\n` +
+            `Git error: ${probe.stderr || 'unknown error'}\n` +
+            `This failure cannot be bypassed with --force.`,
+        );
+    }
+    if (probe?.kind === 'unsupported') {
+        splitCli.warn(`Skipping the merge-conflict check against origin/${baseBranch}: git merge-tree --write-tree requires git 2.38 or newer. Conflicts were not checked.`);
+    }
+    const hasConflict = probe?.kind === 'conflicts';
+    const conflicts = hasConflict ? probe.paths : [];
+    let baseAdvanced: string[] = [];
+    let taskChangedOutOfScope: string[] = [];
+    if (result.drift.length > 0) {
+        const taskChanged = splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd);
+        if (!taskChanged.ok) {
+            abort(
+                `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.\n` +
+                `Drifted files:\n${result.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
+                `Git error: ${taskChanged.stderr || 'unknown error'}\n` +
+                `This failure cannot be bypassed with --force.`,
+            );
+        }
+        ({ baseAdvanced, taskChangedOutOfScope } = splitValidation.classifyBaseDriftFilesFromData(
+            result.drift, new Set(taskChanged.files),
+        ));
+    }
+    if (hasConflict || taskChangedOutOfScope.length > 0) {
+        if (!cliArgs.force) {
+            abort(splitValidation.buildBaseDriftAbortMessage(
+                baseBranch, { conflicts, taskChangedOutOfScope }, hasConflict,
+            ));
+        }
+        if (hasConflict) {
+            splitCli.warn(
+                `--force override: merge conflicts with origin/${baseBranch}; proceeding at user request. Conflicted files:\n` +
+                (conflicts.length ? conflicts.map(filePath => `  ${filePath}`).join('\n') : '  (git did not report paths)'),
+            );
+        }
+        if (taskChangedOutOfScope.length > 0) {
+            splitCli.warn(
+                `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +
+                taskChangedOutOfScope.map(filePath => `  ${filePath}`).join('\n'),
+            );
+        }
+    }
+    if (baseAdvanced.length > 0) {
+        const unchecked = probe?.kind === 'unsupported'
+            ? '; not checked for conflicts.'
+            : hasConflict ? '; these files were not reported as conflicted.' : '; they merge cleanly.';
+        splitCli.info(`origin/${baseBranch} advanced on ${baseAdvanced.length} file${baseAdvanced.length === 1 ? '' : 's'} outside this task's Affected Files${unchecked}`);
+    }
+}
+
 export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR: boolean): void {
     const docSets = resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null);
     if (createPR) {
@@ -1210,38 +1291,6 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
                 );
             }
         }
-    }
-
-    const baseDriftResult = splitValidation.verifyBaseDrift(taskIds, baseBranch, cwd);
-    if (baseDriftResult.fetchFailed) {
-        // warn already emitted by verifyBaseDrift; offline runs keep the prior best-effort behavior.
-    } else if (baseDriftResult.diffFailed) {
-        die(
-            `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.\n` +
-            `Git error: ${baseDriftResult.diffError ?? 'unknown error'}\n` +
-            `This failure cannot be bypassed with --force.`
-        );
-    } else if (baseDriftResult.drift.length > 0) {
-        // A probe failure cannot be bypassed, including under --force.
-        const taskChanged = splitGit.getAffectedFiles(`origin/${baseBranch}`, cwd);
-        if (!taskChanged.ok) {
-            splitCli.die(
-                `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.\n` +
-                `Drifted files:\n${baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')}\n` +
-                `Git error: ${taskChanged.stderr || 'unknown error'}\n` +
-                `This failure cannot be bypassed with --force.`
-            );
-        }
-        if (!cliArgs.force) {
-            const classification = splitValidation.classifyBaseDriftFilesFromData(
-                baseDriftResult.drift, new Set(taskChanged.files),
-            );
-            die(splitValidation.buildBaseDriftAbortMessage(baseBranch, classification));
-        }
-        warn(
-            `--force override: base-drift detected; proceeding at user request. Drifted files:\n` +
-            baseDriftResult.drift.map(filePath => `  ${filePath}`).join('\n')
-        );
     }
 
     const affectedManagedDocs = new Set<string>();
@@ -1320,6 +1369,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
             // commits landed after the PR was opened (clean tree + open
             // PR is NOT a guarantee that origin matches HEAD).
             // (Spec ACs 1+3, complete-state banner contract; PR #75 iter 2.)
+            runBaseDriftGate(taskIds, baseBranch, cwd, message => die(message));
             info(`Clean tree. Pushing ${branchName}...`);
             const pushResult = gitSafeAt(cwd, 'push', '-u', 'origin', branchName);
             if (!pushResult.ok) {
@@ -1427,12 +1477,18 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     const branchName = branchResult.stdout.trim();
     const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(', ');
     const commitMessage = `chore: add task artifacts for ${label}`;
+    const preCommit = splitGit.gitSafeAt(cwd, 'rev-parse', 'HEAD');
+    if (!preCommit.ok || !preCommit.stdout.trim()) {
+        die(`Human review commit aborted: could not record HEAD before committing: ${preCommit.stderr || 'unknown error'}`);
+    }
+    const preSha = preCommit.stdout.trim();
     const commitResult = gitSafeAt(cwd, 'commit', '-m', commitMessage);
     if (!commitResult.ok) {
         die(`Human review commit aborted: ${commitResult.stderr || 'unknown error'}`);
     }
 
     info(`Committed human_review artifacts on ${branchName}: ${commitMessage}`);
+    runBaseDriftGate(taskIds, baseBranch, cwd, message => die(undoHumanReviewCommit(cwd, preSha, branchName, message)));
     info(`Pushing ${branchName}...`);
     const pushResult = gitSafeAt(cwd, 'push', '-u', 'origin', branchName);
     if (!pushResult.ok) {

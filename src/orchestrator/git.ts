@@ -52,6 +52,33 @@ export function gitSafeAtRaw(cwd: string, ...args: string[]): CommandResult {
     return { ok: result.status === 0, stdout: result.stdout ?? '', stderr: (result.stderr ?? '').trim() };
 }
 
+export type MergeConflictProbe =
+    | { kind: 'clean' }
+    | { kind: 'conflicts'; paths: string[] }
+    | { kind: 'unsupported' }
+    | { kind: 'error'; stderr: string };
+
+/** Check whether merging baseRef into headRef would conflict without changing the index or worktree. */
+export function probeMergeConflicts(headRef: string, baseRef: string, cwd: string): MergeConflictProbe {
+    const result = spawnSync('git', ['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', headRef, baseRef], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stdout = result.stdout ?? '';
+    const stderr = (result.stderr ?? '').trim();
+    if (result.error) return { kind: 'error', stderr: result.error.message };
+    if (result.status === 0) return { kind: 'clean' };
+    if (result.status === 129) return { kind: 'unsupported' };
+    if (result.status === 1) {
+        const fields = stdout.split('\0');
+        if (/^[0-9a-f]{40,64}$/i.test(fields[0] ?? '')) {
+            return { kind: 'conflicts', paths: fields.slice(1).filter(Boolean) };
+        }
+    }
+    return { kind: 'error', stderr: stderr || stdout.trim() || `git merge-tree exited ${String(result.status)}` };
+}
+
 /**
  * Returns the subset of `paths` that `git check-ignore` reports as gitignored
  * in `cwd`. Used to exempt build-generated artifacts (e.g. regenerated

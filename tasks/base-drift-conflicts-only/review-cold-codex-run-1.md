@@ -1,0 +1,3 @@
+<!-- round=1 reviewed_sha=87d476325052194e63ed4722f176893ca5427eec scope=full base=main reason="Round 1 (initial review)" -->
+
+The base-drift and merge-conflict checks are applied before pushes, and failures after the human_review commit attempt to undo that commit while preserving its changes. I found no verified, actionable regression in the diff. The test run was interrupted before completion, so full-suite validation remains unconfirmed.

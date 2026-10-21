@@ -209,11 +209,11 @@ function printUsage() {
   console.log(`                      protected/configured docs listed in spec.md's "### Affected Files"`);
   console.log("                      table (all admitted docs once QA is done). Dirty files outside");
   console.log("                      that set die with a remediation message.");
-  console.log("                      Aborts if HEAD's tree differs from origin/<base> on files not in");
-  console.log("                      spec's Affected Files (bypass with --force).");
+  console.log("                      Aborts if merging origin/<base> conflicts, or branch changes files");
+  console.log("                      outside spec's Affected Files (bypass with --force).");
   console.log("  --push              At human_review: push branch only, no PR (requires gh). Same");
-  console.log("                      allow-list as --pr. Aborts if HEAD's tree differs from origin/<base>");
-  console.log("                      on files not in spec's Affected Files (bypass with --force).");
+  console.log("                      allow-list as --pr. Aborts if merging origin/<base> conflicts, or");
+  console.log("                      branch changes files outside spec's Affected Files (bypass with --force).");
   console.log("  --full-send         Skip the spec gate and auto-open a draft PR after clean QA");
   console.log("  --force             Acknowledge high-commitment combinations and bypass");
   console.log("                      explicit safety gates where documented (currently:");
@@ -222,7 +222,7 @@ function printUsage() {
   console.log("  --allow-divergent-base");
   console.log("                      At --push, --pr, and --ship: bypass only the commit-divergence");
   console.log("                      block when local <base> has commits not yet on origin/<base>.");
-  console.log("                      Does NOT bypass the file-allow-list gate; use --force for that.");
+  console.log("                      Does NOT bypass the base-drift gate; use --force for that.");
   console.log("                      Independent of --force \u2014 both may be needed to pass both gates.");
   console.log("  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear");
   console.log("                      down the worktree, archive the task dir, and pull the base branch. Run");
@@ -951,6 +951,25 @@ function gitSafeAtRaw(cwd, ...args) {
   const result = spawnSync3("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (result.error) return { ok: false, stdout: "", stderr: result.error.message };
   return { ok: result.status === 0, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
+}
+function probeMergeConflicts(headRef, baseRef, cwd) {
+  const result = spawnSync3("git", ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", headRef, baseRef], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const stdout = result.stdout ?? "";
+  const stderr = (result.stderr ?? "").trim();
+  if (result.error) return { kind: "error", stderr: result.error.message };
+  if (result.status === 0) return { kind: "clean" };
+  if (result.status === 129) return { kind: "unsupported" };
+  if (result.status === 1) {
+    const fields = stdout.split("\0");
+    if (/^[0-9a-f]{40,64}$/i.test(fields[0] ?? "")) {
+      return { kind: "conflicts", paths: fields.slice(1).filter(Boolean) };
+    }
+  }
+  return { kind: "error", stderr: stderr || stdout.trim() || `git merge-tree exited ${String(result.status)}` };
 }
 function filterGitIgnoredPaths(paths, cwd) {
   if (paths.length === 0) return /* @__PURE__ */ new Set();
@@ -3955,11 +3974,11 @@ function classifyBaseDriftFilesFromData(driftFiles, taskChangedFiles) {
   }
   return { baseAdvanced, taskChangedOutOfScope };
 }
-function buildBaseDriftAbortMessage(baseBranch, classification) {
-  const sections = ["--pr aborted: base-drift detected."];
-  if (classification.baseAdvanced.length > 0) sections.push(
-    `The base branch advanced. These files changed only on origin/${baseBranch}:
-` + classification.baseAdvanced.map((file) => `  ${file}`).join("\n") + `
+function buildBaseDriftAbortMessage(baseBranch, classification, hasConflict = classification.conflicts.length > 0) {
+  const sections = [hasConflict ? `--pr aborted: the task branch conflicts with origin/${baseBranch}.` : "--pr aborted: base-drift detected."];
+  if (hasConflict) sections.push(
+    `Merging origin/${baseBranch} into this branch would conflict in:
+` + (classification.conflicts.length > 0 ? classification.conflicts.map((file) => `  ${file}`).join("\n") : "  (git did not report paths)") + `
 Merge or rebase the base branch into the task branch, then rerun:
   git fetch origin ${baseBranch} && git rebase origin/${baseBranch}
   (or: git merge origin/${baseBranch})`
@@ -3972,6 +3991,7 @@ Add legitimate paths to the spec's '### Affected Files' table (both sides of a r
   git checkout origin/${baseBranch} -- <path> && git commit -m 'revert drift on <path>'
   or: git revert <sha>`
   );
+  if (hasConflict) sections.push(`A conflict will still block --ship's merge until it is resolved.`);
   sections.push(`Bypass with --force if you've verified the drift is intentional.`);
   return sections.join("\n\n");
 }
@@ -4052,7 +4072,8 @@ function verifyBaseDrift(taskIds, baseBranch, cwd) {
   return {
     drift: verifyBaseDriftFromData(driftResult.files, allowlist.paths, taskIds, allowlist.prefixes),
     fetchFailed: false,
-    diffFailed: false
+    diffFailed: false,
+    conflict: probeMergeConflicts("HEAD", `origin/${baseBranch}`, cwd)
   };
 }
 function verifyBaseDivergenceFromData(commits) {
@@ -7779,6 +7800,87 @@ function shouldRunFullSendTail(taskIds) {
     return status.full_send === true && status.phases.qa?.status === "done" && status.phases.human_review?.status === "pending";
   });
 }
+function undoHumanReviewCommit(cwd, preSha, branchName, message) {
+  const head = gitSafeAt(cwd, "rev-parse", "HEAD");
+  const leftover = head.ok ? head.stdout.trim() : "(unknown)";
+  const reset = gitSafeAt(cwd, "reset", "--soft", preSha);
+  if (reset.ok) {
+    return `${message}
+
+The human_review commit was undone (HEAD reset to ${preSha.slice(0, 7)}); its changes are still staged. Re-run after resolving.`;
+  }
+  return `${message}
+
+Could not undo the human_review commit ${leftover} on ${branchName}: ${reset.stderr || "unknown error"}
+Undo it manually with: git reset --soft ${preSha}`;
+}
+function runBaseDriftGate(taskIds, baseBranch, cwd, abort) {
+  const result = verifyBaseDrift(taskIds, baseBranch, cwd);
+  if (result.fetchFailed) return;
+  if (result.diffFailed) {
+    abort(
+      `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.
+Git error: ${result.diffError ?? "unknown error"}
+This failure cannot be bypassed with --force.`
+    );
+  }
+  const probe = result.conflict;
+  if (probe?.kind === "error") {
+    abort(
+      `--pr aborted: could not check for merge conflicts with origin/${baseBranch}.
+Git error: ${probe.stderr || "unknown error"}
+This failure cannot be bypassed with --force.`
+    );
+  }
+  if (probe?.kind === "unsupported") {
+    warn(`Skipping the merge-conflict check against origin/${baseBranch}: git merge-tree --write-tree requires git 2.38 or newer. Conflicts were not checked.`);
+  }
+  const hasConflict = probe?.kind === "conflicts";
+  const conflicts = hasConflict ? probe.paths : [];
+  let baseAdvanced = [];
+  let taskChangedOutOfScope = [];
+  if (result.drift.length > 0) {
+    const taskChanged = getAffectedFiles(`origin/${baseBranch}`, cwd);
+    if (!taskChanged.ok) {
+      abort(
+        `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.
+Drifted files:
+${result.drift.map((filePath) => `  ${filePath}`).join("\n")}
+Git error: ${taskChanged.stderr || "unknown error"}
+This failure cannot be bypassed with --force.`
+      );
+    }
+    ({ baseAdvanced, taskChangedOutOfScope } = classifyBaseDriftFilesFromData(
+      result.drift,
+      new Set(taskChanged.files)
+    ));
+  }
+  if (hasConflict || taskChangedOutOfScope.length > 0) {
+    if (!cliArgs.force) {
+      abort(buildBaseDriftAbortMessage(
+        baseBranch,
+        { conflicts, taskChangedOutOfScope },
+        hasConflict
+      ));
+    }
+    if (hasConflict) {
+      warn(
+        `--force override: merge conflicts with origin/${baseBranch}; proceeding at user request. Conflicted files:
+` + (conflicts.length ? conflicts.map((filePath) => `  ${filePath}`).join("\n") : "  (git did not report paths)")
+      );
+    }
+    if (taskChangedOutOfScope.length > 0) {
+      warn(
+        `--force override: base-drift detected; proceeding at user request. Drifted files:
+` + taskChangedOutOfScope.map((filePath) => `  ${filePath}`).join("\n")
+      );
+    }
+  }
+  if (baseAdvanced.length > 0) {
+    const unchecked = probe?.kind === "unsupported" ? "; not checked for conflicts." : hasConflict ? "; these files were not reported as conflicted." : "; they merge cleanly.";
+    info(`origin/${baseBranch} advanced on ${baseAdvanced.length} file${baseAdvanced.length === 1 ? "" : "s"} outside this task's Affected Files${unchecked}`);
+  }
+}
 function commitHumanReviewFiles(taskIds, cwd, createPR) {
   const docSets = resolveDocsFreshness(requireDocsFreshnessConfig(cwd), null);
   if (createPR) {
@@ -7817,37 +7919,6 @@ Fix the references and re-run --pr/--push. Use --force to bypass.`
         );
       }
     }
-  }
-  const baseDriftResult = verifyBaseDrift(taskIds, baseBranch, cwd);
-  if (baseDriftResult.fetchFailed) {
-  } else if (baseDriftResult.diffFailed) {
-    die2(
-      `--pr aborted: could not compute base-drift diff against origin/${baseBranch}.
-Git error: ${baseDriftResult.diffError ?? "unknown error"}
-This failure cannot be bypassed with --force.`
-    );
-  } else if (baseDriftResult.drift.length > 0) {
-    const taskChanged = getAffectedFiles(`origin/${baseBranch}`, cwd);
-    if (!taskChanged.ok) {
-      die(
-        `--pr aborted: base-drift detected, but the task-changed files could not be computed against origin/${baseBranch}.
-Drifted files:
-${baseDriftResult.drift.map((filePath) => `  ${filePath}`).join("\n")}
-Git error: ${taskChanged.stderr || "unknown error"}
-This failure cannot be bypassed with --force.`
-      );
-    }
-    if (!cliArgs.force) {
-      const classification = classifyBaseDriftFilesFromData(
-        baseDriftResult.drift,
-        new Set(taskChanged.files)
-      );
-      die2(buildBaseDriftAbortMessage(baseBranch, classification));
-    }
-    warn2(
-      `--force override: base-drift detected; proceeding at user request. Drifted files:
-` + baseDriftResult.drift.map((filePath) => `  ${filePath}`).join("\n")
-    );
   }
   const affectedManagedDocs = /* @__PURE__ */ new Set();
   const affectedPrefixes = /* @__PURE__ */ new Set();
@@ -7892,6 +7963,7 @@ This failure cannot be bypassed with --force.`
     const branchResult2 = gitSafeAt2(cwd, "rev-parse", "--abbrev-ref", "HEAD");
     const branchName2 = branchResult2.ok ? branchResult2.stdout.trim() : "";
     if (branchName2) {
+      runBaseDriftGate(taskIds, baseBranch, cwd, (message) => die2(message));
       info2(`Clean tree. Pushing ${branchName2}...`);
       const pushResult2 = gitSafeAt2(cwd, "push", "-u", "origin", branchName2);
       if (!pushResult2.ok) {
@@ -7980,11 +8052,17 @@ If this is a source or test file, it should have been committed during the imple
   const branchName = branchResult.stdout.trim();
   const label = taskIds.length === 1 ? taskIds[0] : taskIds.join(", ");
   const commitMessage = `chore: add task artifacts for ${label}`;
+  const preCommit = gitSafeAt(cwd, "rev-parse", "HEAD");
+  if (!preCommit.ok || !preCommit.stdout.trim()) {
+    die2(`Human review commit aborted: could not record HEAD before committing: ${preCommit.stderr || "unknown error"}`);
+  }
+  const preSha = preCommit.stdout.trim();
   const commitResult = gitSafeAt2(cwd, "commit", "-m", commitMessage);
   if (!commitResult.ok) {
     die2(`Human review commit aborted: ${commitResult.stderr || "unknown error"}`);
   }
   info2(`Committed human_review artifacts on ${branchName}: ${commitMessage}`);
+  runBaseDriftGate(taskIds, baseBranch, cwd, (message) => die2(undoHumanReviewCommit(cwd, preSha, branchName, message)));
   info2(`Pushing ${branchName}...`);
   const pushResult = gitSafeAt2(cwd, "push", "-u", "origin", branchName);
   if (!pushResult.ok) {

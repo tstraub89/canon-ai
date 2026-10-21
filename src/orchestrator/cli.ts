@@ -128,11 +128,11 @@ export function printUsage(): void {
     console.log('                      protected/configured docs listed in spec.md\'s "### Affected Files"');
     console.log('                      table (all admitted docs once QA is done). Dirty files outside');
     console.log('                      that set die with a remediation message.');
-    console.log('                      Aborts if HEAD\'s tree differs from origin/<base> on files not in');
-    console.log('                      spec\'s Affected Files (bypass with --force).');
+    console.log('                      Aborts if merging origin/<base> conflicts, or branch changes files');
+    console.log('                      outside spec\'s Affected Files (bypass with --force).');
     console.log('  --push              At human_review: push branch only, no PR (requires gh). Same');
-    console.log('                      allow-list as --pr. Aborts if HEAD\'s tree differs from origin/<base>');
-    console.log('                      on files not in spec\'s Affected Files (bypass with --force).');
+    console.log('                      allow-list as --pr. Aborts if merging origin/<base> conflicts, or');
+    console.log('                      branch changes files outside spec\'s Affected Files (bypass with --force).');
     console.log('  --full-send         Skip the spec gate and auto-open a draft PR after clean QA');
     console.log('  --force             Acknowledge high-commitment combinations and bypass');
     console.log('                      explicit safety gates where documented (currently:');
@@ -141,7 +141,7 @@ export function printUsage(): void {
     console.log('  --allow-divergent-base');
     console.log('                      At --push, --pr, and --ship: bypass only the commit-divergence');
     console.log('                      block when local <base> has commits not yet on origin/<base>.');
-    console.log('                      Does NOT bypass the file-allow-list gate; use --force for that.');
+    console.log('                      Does NOT bypass the base-drift gate; use --force for that.');
     console.log('                      Independent of --force — both may be needed to pass both gates.');
     console.log('  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear');
     console.log('                      down the worktree, archive the task dir, and pull the base branch. Run');
