@@ -964,6 +964,37 @@ void test('task reset-spec-review archives prior review and resets loop-local fi
     });
 });
 
+void test('task reset-spec-review re-arms a spec gate that already halted, except under full-send', () => {
+    withTasksRoot(tasksRoot => {
+        const approvedSpecReview = {
+            status: 'done', agent: 'codex', verdict: 'approved', iterations: 1, iterations_current_loop: 1,
+            iterations_total: 1, changes_requested_total: 0, auto_block_count: 0,
+        } as const;
+        const haltedDir = writeTask(tasksRoot, 'gate-halted', makeStatus('gate-halted', {
+            human_spec_gate: false,
+            phases: { ...makeStatus('gate-halted').phases, spec_review: approvedSpecReview },
+        }));
+        const haltedOut = captureStdout(() => taskResetSpecReview('gate-halted'));
+        assert.equal(readStatusFile(haltedDir).human_spec_gate, true);
+        assert.match(haltedOut, /Re-armed the spec gate/);
+
+        const fullSendDir = writeTask(tasksRoot, 'gate-full-send', makeStatus('gate-full-send', {
+            human_spec_gate: false,
+            full_send: true,
+            phases: { ...makeStatus('gate-full-send').phases, spec_review: approvedSpecReview },
+        }));
+        const fullSendOut = captureStdout(() => taskResetSpecReview('gate-full-send'));
+        assert.equal(readStatusFile(fullSendDir).human_spec_gate, false);
+        assert.equal(readStatusFile(fullSendDir).full_send, true);
+        assert.doesNotMatch(fullSendOut, /Re-armed/);
+
+        const armedDir = writeTask(tasksRoot, 'gate-armed', makeStatus('gate-armed', { human_spec_gate: true }));
+        const armedOut = captureStdout(() => taskResetSpecReview('gate-armed'));
+        assert.equal(readStatusFile(armedDir).human_spec_gate, true);
+        assert.doesNotMatch(armedOut, /Re-armed/);
+    });
+});
+
 void test('task reset-code-review archives prior review, resets loop-local fields incl. legacy iterations alias, and preserves iterations_total', () => {
     withTasksRoot(tasksRoot => {
         const taskDir = writeTask(tasksRoot, 'reset-cr-task', makeStatus('reset-cr-task', {
