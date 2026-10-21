@@ -11,3 +11,10 @@ Raw observations from any phase. Prefix with phase name. Distilled into the task
 - [plan] Spec Affected Files says `commitTaskArtifactsToBase` "reports whether it committed"; no caller needs it (the Decision 3 hint keys on the no-fetch unpushed-commit probe, which also counts commits left by an earlier call). Plan omits the return value — code_review should not flag its absence.
 - [plan] Tail fetch failure now dies (spec fail-closed) where `verifyBaseDivergence` used to warn-and-skip; accepted under full-send since the PR push needs the network anyway.
 - [plan] Spec-review nit (telemetry-absorb positive case) folded into the AC-4 fixture; AC-4 fixture pushes 3 commits (artifacts, telemetry absorb, copy case).
+- [implement] The full-send tail's base push can be exercised against a real bare `origin` from a task worktree fixture; the integration fixture confirmed it pushes the checked scaffold range before the existing PR flow.
+- [implement-revision] A real-git pre-push hook can create an operator commit after the commit range has been listed. The explicit-SHA refspec pushes only the checked scaffold tip; the later divergence gate sees the new local commit.
+- [implement-revision] `docs-refs-check` scans the live task review artifact as part of the active checkout and reports a missing source-file reference. The artifact is outside this task's Affected Files and is left for review/pipeline ownership.
+
+[implement-revision] A Git pre-push hook runs after Git has resolved the refspec, so it cannot prove a branch-name push would include a concurrent commit. Inject the commit in a PATH Git wrapper before execing the real push.
+
+[implement-revision] Fake CLI tests that invoke the docs-refs gate should route active worktree lookup to a temporary fixture worktree. Otherwise they scan the live task artifacts and can fail on unrelated review references.
