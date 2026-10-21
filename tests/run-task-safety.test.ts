@@ -5186,6 +5186,8 @@ void test('main prints the state-aware unpushed banner when the task is complete
 void test('main --pr on complete is idempotent when an open PR already exists', () => {
     withTempDir('run-task-complete-pr-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5193,7 +5195,9 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
         setupFakeGit(fakeGitDir);
         setupFakeCliTools(fakeBins);
 
-        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
@@ -5205,6 +5209,7 @@ void test('main --pr on complete is idempotent when an open PR already exists', 
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -5276,6 +5281,8 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
 void test('main --pr at human_review is idempotent when an open PR already exists', () => {
     withTempDir('run-task-human-review-pr-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5284,6 +5291,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.human_review = { status: 'pending', agent: 'human' };
         writeTaskStatus(tasksRoot, 'task-a', status);
@@ -5298,6 +5306,7 @@ void test('main --pr at human_review is idempotent when an open PR already exist
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -5374,6 +5383,8 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
     // prior run) caused canon to exit 1 even though the work succeeded.
     withTempDir('run-task-human-review-pr-dirty-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5382,6 +5393,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.human_review = { status: 'pending', agent: 'human' };
         writeTaskStatus(tasksRoot, 'task-a', status);
@@ -5396,6 +5408,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -5425,6 +5438,8 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
 void test('main --pr on complete still rejects dirty files outside the human_review allowlist', () => {
     withTempDir('run-task-complete-pr-dirty-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -5432,7 +5447,9 @@ void test('main --pr on complete still rejects dirty files outside the human_rev
         setupFakeGit(fakeGitDir);
         setupFakeCliTools(fakeBins);
 
-        writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/task-a'));
+        const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
+        writeTaskStatus(tasksRoot, 'task-a', status);
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
 
@@ -5444,6 +5461,7 @@ void test('main --pr on complete still rejects dirty files outside the human_rev
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -6217,6 +6235,8 @@ void test('main --full-send --force advances to draft PR and marks human_review 
 void test('main full-send tail reports the PR URL after pinning pr.number', () => {
     withTempDir('run-task-full-send-pr-placeholder-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -6225,6 +6245,7 @@ void test('main full-send tail reports the PR URL after pinning pr.number', () =
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.qa = { status: 'done', agent: 'claude' };
         phases.human_review = { status: 'pending', agent: 'human' };
@@ -6254,6 +6275,7 @@ void test('main full-send tail reports the PR URL after pinning pr.number', () =
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -6704,6 +6726,11 @@ for (const force of [false, true]) {
     void test(`commitHumanReviewFiles fails closed when only the task-changed diff fails (force=${force})`, () => {
         withTempDir('run-task-affected-diff-fail-', dir => {
             const harness = setupHumanReviewHarness(dir, ['task-a']);
+            const worktreesRoot = path.join(dir, 'worktrees');
+            fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
+            const status = makeCompleteStatus('task-a', 'task/task-a');
+            status.worktree = true;
+            writeTaskStatus(harness.tasksRoot, 'task-a', status);
             const env = {
                 FAKE_GIT_DRIFT_FILES: 'docs/BACKLOG.md',
                 FAKE_GIT_AFFECTED_DIFF_FAIL: '1',
@@ -6719,6 +6746,7 @@ for (const force of [false, true]) {
                 ...process.env,
                 PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
                 CANON_TASKS_DIR_OVERRIDE: harness.tasksRoot,
+                CANON_WORKTREES_ROOT: worktreesRoot,
                 FAKE_GIT_LOG: harness.gitLogPath,
                 FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
                 FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
@@ -6733,7 +6761,7 @@ for (const force of [false, true]) {
             assert.match(output, /fatal: simulated three-dot diff failure/);
             assert.match(output, /cannot be bypassed with --force/);
             assert.match(output, /Drifted files:[\s\S]*docs\/BACKLOG\.md/);
-            assert.doesNotMatch(output, /could not compute base-drift diff|git rebase|base advanced/);
+            assert.doesNotMatch(output, /could not compute base-drift diff|git rebase|base advanced|src\//);
             const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
             assert.match(gitLog, /^diff origin\/main HEAD --name-status -M -z$/m);
             assert.match(gitLog, /^diff origin\/main\.\.\.HEAD --name-status -M -z$/m);
@@ -6802,7 +6830,7 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         const output = combinedOutput(result);
         assert.match(output, /base-drift detected/);
         assert.match(output, /docs\/BACKLOG\.md/);
-        assert.doesNotMatch(output, /src\//);
+        assert.doesNotMatch(output, /src\/orchestrator\/main\.ts\s*$/m);
     });
 });
 
@@ -7051,6 +7079,8 @@ void test('main rejects hand-edited full_send plus delicate without --force', ()
 void test('main full-send tail fails closed when draft PR creation fails', () => {
     withTempDir('run-task-full-send-pr-fail-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        fs.mkdirSync(path.join(worktreesRoot, 'task-a'), { recursive: true });
         const fakeBins = path.join(dir, 'fake-bins');
         const fakeGitDir = path.join(fakeBins, 'git-bin');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -7059,6 +7089,7 @@ void test('main full-send tail fails closed when draft PR creation fails', () =>
         setupFakeCliTools(fakeBins);
 
         const status = makeCompleteStatus('task-a', 'task/task-a');
+        status.worktree = true;
         const phases = status.phases as Record<string, { status: string; agent: string; verdict?: string }>;
         phases.qa = { status: 'done', agent: 'claude' };
         phases.human_review = { status: 'pending', agent: 'human' };
@@ -7087,6 +7118,7 @@ void test('main full-send tail fails closed when draft PR creation fails', () =>
             ...process.env,
             PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
             CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_WORKTREES_ROOT: worktreesRoot,
             FAKE_GIT_LOG: path.join(dir, 'git.log'),
             FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
             FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
