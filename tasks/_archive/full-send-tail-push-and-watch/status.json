@@ -1,7 +1,7 @@
 {
   "id": "full-send-tail-push-and-watch",
   "title": "Full-send tail pushes canon scaffold commits; watch reports a dead tail",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-21",
   "updated": "2026-10-21",
   "branch": "task/full-send-tail-push-and-watch",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
