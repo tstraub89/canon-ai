@@ -435,6 +435,73 @@ void test('classifyIdle: checkpoint when human_review settled', () => {
     }
 });
 
+void test('classifyIdle: full-send tail reports a fresh non-zero exit and keeps clean/non-full-send stops', () => {
+    withTempDir(dir => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        const status = makeStatus('human_review', { qa: { status: 'done', agent: 'claude' } });
+        status.full_send = true;
+        writeExitLog(taskDir, [exitLine('1', 'tail push rejected')]);
+        fs.utimesSync(statusFile, Date.now() / 1000 - 10, Date.now() / 1000 - 10);
+        const ctx = makeContext({ taskDir, statusFile, statusResult: { kind: 'ok', file: statusFile, status } });
+        const crashed = classifyIdle(ctx, 't1');
+        assert.equal(crashed.kind, 'death');
+        if (crashed.kind === 'death') assert.match(crashed.reason ?? '', /tail push rejected/);
+
+        writeExitLog(taskDir, [exitLine('0', 'clean')]);
+        assert.equal(classifyIdle(ctx, 't1').kind, 'checkpoint');
+        status.full_send = false;
+        writeExitLog(taskDir, [exitLine('1', 'tail push rejected')]);
+        assert.equal(classifyIdle(ctx, 't1').kind, 'checkpoint');
+    });
+});
+
+void test('classifyAttach and watchCmd report a dead full-send tail after it has exited', () => {
+    withTempDir(dir => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        const status = makeStatus('human_review', { qa: { status: 'done', agent: 'claude' } });
+        status.full_send = true;
+        writeExitLog(taskDir, [exitLine('1', 'tail push rejected')]);
+        fs.utimesSync(statusFile, Date.now() / 1000 - 10, Date.now() / 1000 - 10);
+        const ctx = makeContext({ taskDir, statusFile, statusResult: { kind: 'ok', file: statusFile, status } });
+        const attach = classifyAttach(ctx, 't1', () => false, NOW);
+        assert.equal(attach.kind, 'death');
+        if (attach.kind === 'death') assert.match(attach.reason ?? '', /tail push rejected/);
+
+        const result = runWatchCommand(['t1'], { gatherContextImpl: () => ctx });
+        assert.equal(result.exitCode, 4);
+        assert.match(result.stdout.join(''), /state=human_review reason=death/);
+        assert.match(result.stderr.join(''), /tail push rejected/);
+    });
+});
+
+void test('live full-send tail stays live through a stale heartbeat and an old crash marker', () => {
+    withTempDir(dir => {
+        const taskDir = path.join(dir, 't1');
+        const statusFile = path.join(taskDir, 'status.json');
+        const status = makeStatus('human_review', { qa: { status: 'done', agent: 'claude' } });
+        status.full_send = true;
+        writeExitLog(taskDir, [exitLine('1', 'earlier tail died')]);
+        fs.utimesSync(statusFile, Date.now() / 1000 - 10, Date.now() / 1000 - 10);
+        const ctx = makeContext({
+            taskDir,
+            statusFile,
+            statusResult: { kind: 'ok', file: statusFile, status },
+            heartbeatResult: { kind: 'found', record: makeHeartbeat(1234, NOW - 60_000) },
+            canonPid: 1234,
+            resolvedPid: 1234,
+        });
+        assert.equal(classifyIdle(ctx, 't1', () => true).kind, 'live');
+        assert.equal(classifyAttach(ctx, 't1', () => true, NOW).kind, 'live');
+        assert.equal(orchestratorStillProgressing(ctx, () => true, NOW), true);
+        fs.writeFileSync(path.join(taskDir, '.canon-run.log'), '', 'utf8');
+        assert.equal(classifyIdle(ctx, 't1', () => true).kind, 'live');
+        assert.equal(classifyAttach(ctx, 't1', () => true, NOW).kind, 'live');
+        assert.equal(orchestratorStillProgressing(ctx, () => true, NOW), true);
+    });
+});
+
 void test('classifyIdle: complete when all phases are done', () => {
     const ctx = makeContext({
         statusResult: {

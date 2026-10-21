@@ -403,6 +403,11 @@ function filterGitIgnoredPaths(paths, cwd) {
   const stdout = result.stdout ?? "";
   return new Set(stdout.split("\0").filter((p) => p.length > 0));
 }
+var CANON_TASK_ID_PATTERN = "[a-z0-9][a-z0-9._-]*";
+var SCAFFOLD_ARTIFACTS_SUBJECT = new RegExp(`^task\\(${CANON_TASK_ID_PATTERN}\\): commit artifacts pre-pipeline$`);
+var SCAFFOLD_TELEMETRY_SUBJECT = new RegExp(
+  `^chore: absorb pre-implement telemetry into scaffold for ${CANON_TASK_ID_PATTERN}(?:, ${CANON_TASK_ID_PATTERN})*$`
+);
 
 // src/orchestrator/worktree.ts
 var PIPELINE_TELEMETRY_FILES = [
@@ -2382,6 +2387,9 @@ function findFirstBlockedPhase(status) {
   }
   return null;
 }
+function isFullSendTailPending(status) {
+  return status.full_send === true && status.status === "human_review" && (status.phases.human_review?.status ?? "pending") === "pending";
+}
 function findPreviousDonePhase(status, beforePhase) {
   const index = PHASE_ORDER.indexOf(beforePhase);
   for (let i = index - 1; i >= 0; i -= 1) {
@@ -2518,6 +2526,8 @@ function parseWatchArgs(args2) {
 }
 function summarizeIdle(result) {
   switch (result.kind) {
+    case "live":
+      throw new Error("summarizeIdle called for live result");
     case "checkpoint":
       return { state: result.state, reason: "checkpoint", phase: result.phase, verdict: result.verdict, pid: result.pid };
     case "complete":
@@ -2572,6 +2582,15 @@ function classifyAttach(ctx, taskId, probeAlive, now) {
     return { kind: "launch_window", state };
   }
   if (status) {
+    if (isFullSendTailPending(status)) {
+      if (orchestratorLive && ctx.resolvedPid != null) {
+        return { kind: "live", pid: ctx.resolvedPid, state };
+      }
+      const heartbeatPrimary = ctx.heartbeatResult.kind === "found" ? ctx.heartbeatResult.record.task_ids[0] : void 0;
+      const primaryId = typeof heartbeatPrimary === "string" && heartbeatPrimary.length > 0 ? heartbeatPrimary : taskId;
+      const reason = findCrashEvidence(ctx, taskId, probeAlive, primaryId, orchestratorLive);
+      if (reason) return { kind: "death", state, hint: `run \`canon run ${taskId}\` to resume`, reason };
+    }
     const currentPhase = PHASE_ORDER.find((phase) => (status.phases[phase]?.status ?? "pending") !== "done");
     const currentStatus = currentPhase ? status.phases[currentPhase]?.status ?? "pending" : null;
     if (currentPhase && currentPhase !== "human_review" && (currentStatus === "pending" || currentStatus === "in_progress")) {
@@ -2634,6 +2653,13 @@ function classifyIdle(ctx, taskId, probeAlive = () => false, now = Date.now(), p
     return { kind: "auto_block", state: "blocked", phase: blockedPhase, pid: ctx.resolvedPid ?? void 0 };
   }
   if (state === "human_review") {
+    if (isFullSendTailPending(status)) {
+      if (orchestratorLive && ctx.resolvedPid != null) {
+        return { kind: "live", state, pid: ctx.resolvedPid };
+      }
+      const crashReason = findCrashEvidence(ctx, taskId, probeAlive, primaryTaskId, orchestratorLive);
+      if (crashReason) return { kind: "death", state, pid: ctx.resolvedPid ?? void 0, reason: crashReason };
+    }
     const verdict = status.phases.code_review?.verdict || void 0;
     return {
       kind: "checkpoint",
@@ -2689,6 +2715,7 @@ function orchestratorStillProgressing(ctx, probeAlive, now = Date.now()) {
   const status = ctx.statusResult.kind === "ok" && isStatusJson(ctx.statusResult.status) ? ctx.statusResult.status : null;
   if (status == null) return false;
   if (findFirstBlockedPhase(status) && !blockedPhaseLivenessTrusted(ctx, orchestratorLive, now)) return false;
+  if (isFullSendTailPending(status)) return true;
   const state = status.status;
   return state !== "human_review" && state !== "complete";
 }
@@ -3007,6 +3034,11 @@ function watchCmd(args2, deps = {}) {
       return exit(0);
     }
     const idleResult = classifyIdle(freshCtx, taskId, isOrchestratorAlive, now(), rememberedPrimaryTaskId ?? void 0);
+    if (idleResult.kind === "live") {
+      reportPhasePointer(freshCtx);
+      if (parsed.follow) tailRunLog(freshCtx, taskId, { stderr }, tailState, rememberedPrimaryTaskId ?? void 0);
+      continue;
+    }
     if (idleResult.kind === "death" && idleResult.reason) {
       stderr(`canon watch: ${idleResult.reason}; run \`canon run ${taskId}\` to resume
 `);

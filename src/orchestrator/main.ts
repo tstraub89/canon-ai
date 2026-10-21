@@ -1168,6 +1168,43 @@ function shouldRunFullSendTail(taskIds: string[]): boolean {
     });
 }
 
+function pushScaffoldBaseCommitsForFullSend(taskIds: string[], cwd: string): void {
+    const baseBranch = splitGit.getBaseBranch(taskIds);
+    const fetch = splitGit.gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
+    if (!fetch.ok) die(`Full-send tail aborted: could not fetch origin/${baseBranch} (${fetch.stderr || 'unknown error'}). Nothing was pushed.`);
+
+    const unpushed = splitGit.getUnpushedBaseCommits(baseBranch, cwd);
+    if (!unpushed.ok) die(`Full-send tail aborted: could not list unpushed ${baseBranch} commits (${unpushed.stderr || 'unknown error'}). Nothing was pushed.`);
+    if (unpushed.commits.length === 0) return;
+
+    for (const commit of unpushed.commits) {
+        const result = splitGit.classifySafeToPushCommit(commit.sha, commit.subject, cwd);
+        if (!result.ok) {
+            die(`Full-send tail aborted: could not inspect ${commit.sha.slice(0, 7)} on ${baseBranch} (${result.stderr || 'unknown error'}). Nothing was pushed.`);
+            return;
+        }
+        if (!result.verdict.safe) {
+            info(`Full-send: not pushing ${baseBranch}; ${commit.sha.slice(0, 7)} ${commit.subject} is not safe to push (${result.verdict.reason}).`);
+            return;
+        }
+    }
+
+    const tipSha = unpushed.commits[0].sha;
+    const push = splitGit.gitSafeAt(cwd, 'push', 'origin', `${tipSha}:refs/heads/${baseBranch}`);
+    if (!push.ok) {
+        die(
+            `Full-send tail aborted: pushing ${baseBranch} scaffold commits to origin failed: ${push.stderr || 'unknown error'}\n` +
+            `The base branch may be protected. Push or merge these commits to origin/${baseBranch} manually ` +
+            `(they carry only task artifacts and pipeline telemetry), then re-run \`canon run ${taskIds.join(' ')}\`.`,
+        );
+    }
+    info(
+        `Full-send: pushed ${unpushed.commits.length} unpushed ${baseBranch} commit(s) to origin/${baseBranch} ` +
+        `(canon scaffold subjects; only task artifacts and pipeline telemetry):\n` +
+        unpushed.commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'),
+    );
+}
+
 function undoHumanReviewCommit(cwd: string, preSha: string, branchName: string, message: string): string {
     const head = splitGit.gitSafeAt(cwd, 'rev-parse', 'HEAD');
     const leftover = head.ok ? head.stdout.trim() : '(unknown)';
@@ -2887,6 +2924,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
                 }
             }
 
+            pushScaffoldBaseCommitsForFullSend(taskIds, cwd);
             commitHumanReviewFiles(taskIds, cwd, true);
 
             for (const taskId of taskIds) {
