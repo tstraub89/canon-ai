@@ -1,0 +1,10 @@
+# Notes
+
+Raw observations from any phase. Prefix with phase name. Distilled into the task’s `lessons.md` fragment during QA; `--ship` folds it into `docs/lessons-learned.md`.
+
+<!-- Append below this line -->
+- spec (rev 2): spec_review round 1 found AC-3 ("no commit") contradicted post-commit probing. Chose a pre-commit candidate probe (staged index → commit-tree, parent HEAD) and moved the base-drift gate to just before the human_review commit / clean-tree push, so every abort leaves HEAD unchanged. Alternative rejected: allowing a leftover local commit on abort.
+- spec (rev 3): spec_review round 2 found a pre-commit hook can rewrite the index after the pre-commit candidate probe. Rounds 1 and 2 share one root (probing something other than the pushed commit). Dropped the candidate mechanism: probe the real human_review commit after `git commit`, before push, and on abort undo it with `git reset --soft` to the recorded pre-commit HEAD. Added hook-introduced-conflict case (AC-4c) and re-run-after-undo (AC-4d).
+- [plan] Spec contradiction: AC-4 says existing scope-drift tests keep "current assertions", but three fake-git abort tests assert no `commit` in the git log; under Decision §1 the dirty path commits then soft-resets. Plan replaces that one assertion with "commit then `reset --soft abc123`, no push". Spec not changed.
+- [plan] Verified on git 2.55: `git merge-tree --write-tree` exits 1 for an unresolvable ref (empty stdout) — same status as conflicts. Probe must require the tree-OID first token before reading exit 1 as conflicts; otherwise a bad ref reads as "conflicts" (and becomes force-bypassable). Unknown option → 129; unrelated histories → 128.
+- [plan] Spec-review nit (Non-Goals "fail-closed probe message covers old git"): implementing Decision §4/AC-6 — old git warns and proceeds.
