@@ -1270,6 +1270,7 @@ type HumanReviewHarness = {
 };
 
 function setupHumanReviewHarness(dir: string, taskIds: readonly string[]): HumanReviewHarness {
+    execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
     const tasksRoot = path.join(dir, 'tasks');
     const fakeBins = path.join(dir, 'fake-bins');
     const fakeGitDir = path.join(fakeBins, 'git-bin');
@@ -1337,10 +1338,11 @@ function runHumanReviewMain(
         FAKE_GIT_REMOTE_EXISTS: '1',
         FAKE_GIT_BASE_BRANCH: 'main',
         FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        FAKE_GIT_COMMON_DIR: '.git',
         FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
         FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
         ...env,
-    });
+    }, harness.dir);
 }
 
 function combinedOutput(result: { stderr: string; stdout: string }): string {
@@ -6774,7 +6776,9 @@ void test('human_review conflict in a dirty admitted doc is undone and rerunnabl
         ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
         const blocked = invoke();
         assert.notEqual(blocked.status, 0);
+        assert.match(combinedOutput(blocked), /conflicts with origin\/main/);
         assert.match(combinedOutput(blocked), /docs\/patterns\.md/);
+        assert.match(combinedOutput(blocked), /human_review commit was undone/);
         assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
         assert.match(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: fixture.localDir, encoding: 'utf8' }), /docs\/patterns\.md/);
         assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
@@ -6810,7 +6814,9 @@ void test('human_review gate probes the recorded commit after a pre-commit hook 
             '.catch(err => { console.error(err); process.exit(1); });',
         ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
         assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
         assert.match(combinedOutput(result), /docs\/patterns\.md/);
+        assert.match(combinedOutput(result), /human_review commit was undone/);
         assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
         assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
     });

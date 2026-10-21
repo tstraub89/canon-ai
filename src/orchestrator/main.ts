@@ -1242,7 +1242,9 @@ function runBaseDriftGate(
         }
     }
     if (baseAdvanced.length > 0) {
-        const unchecked = probe?.kind === 'unsupported' ? '; not checked for conflicts.' : '; they merge cleanly.';
+        const unchecked = probe?.kind === 'unsupported'
+            ? '; not checked for conflicts.'
+            : hasConflict ? '; these files were not reported as conflicted.' : '; they merge cleanly.';
         splitCli.info(`origin/${baseBranch} advanced on ${baseAdvanced.length} file${baseAdvanced.length === 1 ? '' : 's'} outside this task's Affected Files${unchecked}`);
     }
 }
