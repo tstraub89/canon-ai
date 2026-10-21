@@ -737,6 +737,21 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     return { localDir, originDir };
 }
 
+// Real-git base-drift tests drive main(), which requires the agent CLIs on
+// PATH before routing; put fakes first so CI runners without them still pass.
+function baseDriftEnv(dir: string, tasksRoot: string): NodeJS.ProcessEnv {
+    const fakeBins = path.join(dir, 'fake-agent-cli');
+    if (!fs.existsSync(fakeBins)) {
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+    }
+    return {
+        ...process.env,
+        CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+    };
+}
+
 function makeBaseDriftFixture(
     dir: string,
     options: { seedFiles?: Record<string, string>; taskFiles?: Record<string, string>; declared: string[] },
@@ -6669,10 +6684,7 @@ void test('commitHumanReviewFiles base-drift gate passes when the base advances 
             `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             `.then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })`,
             '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), {
-            ...process.env,
-            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
-        }, localDir);
+        ].join('\n'), baseDriftEnv(dir, tasksRoot), localDir);
 
         assert.equal(result.status, 0, result.stderr);
         const output = combinedOutput(result);
@@ -6699,7 +6711,7 @@ void test('commitHumanReviewFiles base-drift allows another task artifacts on th
             `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
             '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
         assert.equal(result.status, 0, result.stderr);
         assert.match(combinedOutput(result), /advanced on 2 files outside this task's Affected Files; they merge cleanly/);
     });
@@ -6720,7 +6732,7 @@ void test('commitHumanReviewFiles aborts on a real conflict and undoes its human
             `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
             '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
         assert.notEqual(result.status, 0);
         assert.match(combinedOutput(result), /conflicts with origin\/main/);
         assert.match(combinedOutput(result), /docs\/patterns\.md/);
@@ -6746,7 +6758,7 @@ void test('commitHumanReviewFiles reports conflict and scope drift together', ()
             `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
             '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
         assert.notEqual(result.status, 0);
         assert.match(combinedOutput(result), /conflicts with origin\/main/);
         assert.match(combinedOutput(result), /not in the spec's Affected Files[\s\S]*src\/extra\.ts/);
@@ -6773,7 +6785,7 @@ void test('human_review conflict in a dirty admitted doc is undone and rerunnabl
             `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
             '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
         const blocked = invoke();
         assert.notEqual(blocked.status, 0);
         assert.match(combinedOutput(blocked), /conflicts with origin\/main/);
@@ -6812,7 +6824,7 @@ void test('human_review gate probes the recorded commit after a pre-commit hook 
             `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
             '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
         assert.notEqual(result.status, 0);
         assert.match(combinedOutput(result), /conflicts with origin\/main/);
         assert.match(combinedOutput(result), /docs\/patterns\.md/);
@@ -6835,7 +6847,7 @@ void test('clean-tree --pr retries still block on an allowlisted conflict withou
             `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
             ".then(m => { process.argv = ['node', 'canon', 'task-a', '--pr']; return m.main(); })",
             '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
         assert.notEqual(result.status, 0);
         assert.match(combinedOutput(result), /conflicts with origin\/main/);
         assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
