@@ -224,7 +224,7 @@ function printUsage() {
   console.log("                      block when local <base> has commits not yet on origin/<base>.");
   console.log("                      Does NOT bypass the base-drift gate; use --force for that.");
   console.log("                      Independent of --force \u2014 both may be needed to pass both gates.");
-  console.log("  --ship              Merge the open PR (calls gh pr merge --squash --delete-branch), tear");
+  console.log("  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear");
   console.log("                      down the worktree, archive the task dir, and pull the base branch. Run");
   console.log("                      after the PR is approved \u2014 do NOT merge the PR manually first. If you");
   console.log("                      already merged externally, --ship detects the merged state and resumes");
@@ -8350,7 +8350,7 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
     const prNum = findOpenPRNumber(branch, baseBranch);
     if (!prNum) continue;
     info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via squash...`);
-    const result = runCommand("gh", ["pr", "merge", String(prNum), "--squash", "--delete-branch"]);
+    const result = runCommand("gh", ["pr", "merge", String(prNum), "--squash"]);
     const outcome = classifyMergeOutcome({
       exitOk: result.ok,
       mergeConfirmed: result.ok ? true : isPRMerged(prNum)
@@ -8359,15 +8359,15 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
       die(`Failed to merge PR #${prNum}: ${result.stderr}`);
     }
     if (!result.ok) {
-      warn(`PR #${prNum} merged; branch-delete step failed and was tolerated: ${result.stderr.trim() || "unknown error"}`);
-      for (const taskId of taskIds) {
-        const branchName = branchByTaskId.get(taskId);
-        if (branchName === branch) {
-          assertOriginTaskBranchAbsent(branchName, baseBranch);
-        }
-      }
+      warn(`PR #${prNum} merged, but gh exited non-zero and was tolerated: ${result.stderr.trim() || "unknown error"}`);
     } else {
       info(`PR #${prNum} merged.`);
+    }
+    const del = gitSafe("push", "origin", "--delete", branch);
+    if (del.ok) {
+      info(`Deleted remote branch ${branch}.`);
+    } else if (!del.stderr.includes("remote ref does not exist")) {
+      assertOriginTaskBranchAbsent(branch, baseBranch);
     }
     anyMerged = true;
   }

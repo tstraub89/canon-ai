@@ -99,7 +99,7 @@ canon run options:
                           explicit safety gates where documented (currently:
                           --full-send on delicate tasks, reroute amendment gate,
                           base-drift gate, and dirty REPO_ROOT worktree-start gate)
-  --ship                  Merge the open PR (calls gh pr merge --squash --delete-branch), tear
+  --ship                  Merge the open PR (gh pr merge --squash), delete its remote branch, tear
                           down the worktree, archive the task dir, and pull the base branch. Run
                           after the PR is approved — do NOT merge the PR manually first. If you
                           already merged externally, --ship detects the merged state and resumes

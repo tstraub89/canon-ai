@@ -143,7 +143,7 @@ export function printUsage(): void {
     console.log('                      block when local <base> has commits not yet on origin/<base>.');
     console.log('                      Does NOT bypass the base-drift gate; use --force for that.');
     console.log('                      Independent of --force — both may be needed to pass both gates.');
-    console.log('  --ship              Merge the open PR (calls gh pr merge --squash --delete-branch), tear');
+    console.log('  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear');
     console.log('                      down the worktree, archive the task dir, and pull the base branch. Run');
     console.log('                      after the PR is approved — do NOT merge the PR manually first. If you');
     console.log('                      already merged externally, --ship detects the merged state and resumes');

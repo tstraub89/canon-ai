@@ -1639,13 +1639,13 @@ function assertTaskBranchPushed(taskId: string, branchName?: string): void {
 
 /**
  * Verify origin/task/<id> no longer exists at the point we're about to ship. A
- * successful PR merge (via gh pr merge --delete-branch) removes the remote ref,
+ * successful PR merge (followed by mergeOpenPRsAndPull's remote delete) removes the remote ref,
  * so its absence is the post-condition we expect when shipping. Presence here —
  * combined with mergeOpenPRsAndPull() returning false — means either:
  *   - The remote branch has commits that were never PR'd (someone pushed to it
  *     directly from another checkout without opening a PR), so its work is not
  *     in any base-branch merge.
- *   - A prior merge succeeded but `--delete-branch` failed to drop the remote
+ *   - A prior merge succeeded but the remote delete failed to drop the remote
  *     ref (rare — surface this so the operator can clean up manually rather
  *     than have the safety check pass spuriously next time).
  * Either way, shipping silently would orphan the remote commits.
@@ -1958,13 +1958,12 @@ function findPRNumberExact(branch: string, baseBranch: string | null, state: 'op
 }
 
 /**
- * For each task branch with an open PR: squash-merge it (deleting the remote
- * branch), then pull the base branch. Returns true if any PR was merged.
+ * For each task branch with an open PR: squash-merge it, delete the remote
+ * branch, then pull the base branch. Returns true if any PR was merged.
  *
- * The `--delete-branch` flag on `gh pr merge` deletes the remote branch and
- * attempts to delete the local branch too. The local deletion may fail if the
- * branch is used by a worktree — that's fine; we clean local branches ourselves
- * after teardown.
+ * The merge does not pass `--delete-branch`: gh would also try to delete the
+ * local branch, which fails while the task worktree still has it checked out.
+ * The remote branch is deleted here; local branches are deleted after teardown.
  */
 function mergeOpenPRsAndPull(
     taskIds: string[],
@@ -1982,8 +1981,7 @@ function mergeOpenPRsAndPull(
         const prNum = findOpenPRNumber(branch, baseBranch);
         if (!prNum) continue;
         splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via squash...`);
-        // --delete-branch removes the remote branch; local cleanup happens post-teardown.
-        const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), '--squash', '--delete-branch']);
+        const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), '--squash']);
         const outcome = classifyMergeOutcome({
             exitOk: result.ok,
             mergeConfirmed: result.ok ? true : isPRMerged(prNum),
@@ -1992,19 +1990,18 @@ function mergeOpenPRsAndPull(
             splitCli.die(`Failed to merge PR #${prNum}: ${result.stderr}`);
         }
         if (!result.ok) {
-            splitCli.warn(`PR #${prNum} merged; branch-delete step failed and was tolerated: ${result.stderr.trim() || 'unknown error'}`);
-            // gh's --delete-branch on a non-zero exit does not guarantee both remote
-            // and local deletes succeeded. Setting anyMerged = true below skips the
-            // downstream !merged safety net, so verify the remote branch is absent
-            // here for every task mapped to this branch.
-            for (const taskId of taskIds) {
-                const branchName = branchByTaskId.get(taskId);
-                if (branchName === branch) {
-                    assertOriginTaskBranchAbsent(branchName, baseBranch);
-                }
-            }
+            splitCli.warn(`PR #${prNum} merged, but gh exited non-zero and was tolerated: ${result.stderr.trim() || 'unknown error'}`);
         } else {
             splitCli.info(`PR #${prNum} merged.`);
+        }
+        const del = splitGit.gitSafe('push', 'origin', '--delete', branch);
+        if (del.ok) {
+            splitCli.info(`Deleted remote branch ${branch}.`);
+        } else if (!del.stderr.includes('remote ref does not exist')) {
+            // Setting anyMerged = true below skips the downstream !merged safety
+            // net, so verify the remote branch is absent here instead. The check
+            // retries the delete only when origin's tip matches the merged head.
+            assertOriginTaskBranchAbsent(branch, baseBranch);
         }
         anyMerged = true;
     }
