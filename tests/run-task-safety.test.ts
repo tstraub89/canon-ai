@@ -136,6 +136,13 @@ function setupFakeGit(scriptDir: string): void {
         '    printf "%s\\n" "${FAKE_GIT_AFFECTED_DIFF_ERROR:-affected diff failed}" >&2',
         '    exit 128',
         '  fi',
+        '  if [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}...HEAD" ] && [ -n "${FAKE_GIT_AFFECTED_FILES+x}" ]; then',
+        '    OLDIFS="$IFS"',
+        '    IFS=","',
+        '    for FILE in $FAKE_GIT_AFFECTED_FILES; do printf "M\\0%s\\0" "$FILE"; done',
+        '    IFS="$OLDIFS"',
+        '    exit 0',
+        '  fi',
         '  if [ "${FAKE_GIT_DRIFT_DIFF_FAIL:-}" = "1" ]; then',
         '    printf "%s\\n" "${FAKE_GIT_DRIFT_DIFF_ERROR:-tree diff failed}" >&2',
         '    exit 1',
@@ -159,6 +166,21 @@ function setupFakeGit(scriptDir: string): void {
         '    printf "%s\\n" "commit failed" >&2',
         '    exit 1',
         '  fi',
+        '  exit 0',
+        'fi',
+        'if [ "${1:-}" = "merge-tree" ]; then',
+        '  MERGE_STATUS="${FAKE_GIT_MERGE_TREE_STATUS:-0}"',
+        '  if [ "$MERGE_STATUS" = "0" ]; then printf "%s\\0" 0000000000000000000000000000000000000001; exit 0; fi',
+        '  if [ "$MERGE_STATUS" = "1" ]; then',
+        '    printf "%s\\0" 0000000000000000000000000000000000000001',
+        '    OLDIFS="$IFS"; IFS=","; for FILE in ${FAKE_GIT_MERGE_TREE_CONFLICTS:-}; do [ -z "$FILE" ] || printf "%s\\0" "$FILE"; done; IFS="$OLDIFS"',
+        '    exit 1',
+        '  fi',
+        '  printf "%s\\n" "${FAKE_GIT_MERGE_TREE_ERROR:-merge-tree failed}" >&2',
+        '  exit "$MERGE_STATUS"',
+        'fi',
+        'if [ "${1:-}" = "reset" ] && [ "${2:-}" = "--soft" ]; then',
+        '  if [ "${FAKE_GIT_RESET_SOFT_FAIL:-}" = "1" ]; then printf "%s\\n" "reset failed" >&2; exit 1; fi',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "push" ] && [ "${FAKE_GIT_FAIL_PUSH:-}" = "1" ]; then',
@@ -714,6 +736,64 @@ function makeGitFixture(dir: string): { localDir: string; originDir: string } {
     gitIn(localDir, 'commit', '-m', 'initial');
     gitIn(localDir, 'push', '-u', 'origin', 'main');
     return { localDir, originDir };
+}
+
+// Real-git base-drift tests drive main(), which requires the agent CLIs on
+// PATH before routing; put fakes first so CI runners without them still pass.
+function baseDriftEnv(dir: string, tasksRoot: string): NodeJS.ProcessEnv {
+    const fakeBins = path.join(dir, 'fake-agent-cli');
+    if (!fs.existsSync(fakeBins)) {
+        fs.mkdirSync(fakeBins, { recursive: true });
+        setupFakeCliTools(fakeBins);
+    }
+    return {
+        ...process.env,
+        CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+        PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+    };
+}
+
+function makeBaseDriftFixture(
+    dir: string,
+    options: { seedFiles?: Record<string, string>; taskFiles?: Record<string, string>; declared: string[] },
+): { localDir: string; originDir: string; tasksRoot: string; thirdParty(fn: (cwd: string) => void): void } {
+    const { localDir, originDir } = makeGitFixture(dir);
+    for (const [relative, content] of Object.entries(options.seedFiles ?? {})) {
+        const target = path.join(localDir, relative);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content, 'utf8');
+        gitIn(localDir, 'add', relative);
+    }
+    if (Object.keys(options.seedFiles ?? {}).length > 0) {
+        gitIn(localDir, 'commit', '-m', 'shared base seed');
+        gitIn(localDir, 'push', 'origin', 'main');
+    }
+    gitIn(localDir, 'checkout', '-b', 'task/demo');
+    for (const [relative, content] of Object.entries(options.taskFiles ?? {})) {
+        const target = path.join(localDir, relative);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content, 'utf8');
+        gitIn(localDir, 'add', relative);
+    }
+    if (Object.keys(options.taskFiles ?? {}).length > 0) gitIn(localDir, 'commit', '-m', 'task change');
+    const tasksRoot = path.join(dir, 'tasks');
+    writeTaskStatus(tasksRoot, 'task-a', makeCompleteStatus('task-a', 'task/demo'));
+    writeAffectedFilesSpec(tasksRoot, 'task-a', options.declared);
+    return {
+        localDir,
+        originDir,
+        tasksRoot,
+        thirdParty(fn) {
+            const thirdPartyDir = path.join(dir, 'third-party');
+            execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
+            gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
+            gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
+            fn(thirdPartyDir);
+            gitIn(thirdPartyDir, 'add', '-A');
+            gitIn(thirdPartyDir, 'commit', '-m', 'base advance');
+            gitIn(thirdPartyDir, 'push', 'origin', 'main');
+        },
+    };
 }
 
 function makeOutOfRootTaskFixture(dir: string, taskId: string, linkedWorktree: string): {
@@ -1299,6 +1379,7 @@ type HumanReviewHarness = {
 };
 
 function setupHumanReviewHarness(dir: string, taskIds: readonly string[]): HumanReviewHarness {
+    execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
     const tasksRoot = path.join(dir, 'tasks');
     const fakeBins = path.join(dir, 'fake-bins');
     const fakeGitDir = path.join(fakeBins, 'git-bin');
@@ -1345,6 +1426,32 @@ function runHumanReviewCommit(
         FAKE_GIT_TASK_BRANCH: 'task/task-a',
         ...env,
     });
+}
+
+function runHumanReviewMain(
+    harness: HumanReviewHarness,
+    args: readonly string[],
+    env: Record<string, string>,
+): { status: number | null; stderr: string; stdout: string } {
+    return runNodeInline([
+        `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+        `.then(m => { process.argv = ['node', 'canon', 'task-a', ...${JSON.stringify(args)}]; return m.main(); })`,
+        '.catch(err => { console.error(err); process.exit(1); });',
+    ].join('\n'), {
+        ...process.env,
+        PATH: `${harness.fakeGitDir}${path.delimiter}${harness.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        CANON_TASKS_DIR_OVERRIDE: harness.tasksRoot,
+        FAKE_GIT_LOG: harness.gitLogPath,
+        FAKE_GIT_CURRENT_BRANCH: harness.currentBranchPath,
+        FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+        FAKE_GIT_REMOTE_EXISTS: '1',
+        FAKE_GIT_BASE_BRANCH: 'main',
+        FAKE_GIT_TASK_BRANCH: 'task/task-a',
+        FAKE_GIT_COMMON_DIR: '.git',
+        FAKE_GIT_STATUS_OUTPUT: ' M tasks/task-a/done.md',
+        FAKE_GIT_DIFF_OUTPUT: 'tasks/task-a/done.md',
+        ...env,
+    }, harness.dir);
 }
 
 function combinedOutput(result: { stderr: string; stdout: string }): string {
@@ -6684,7 +6791,8 @@ void test('commitHumanReviewFiles base-drift gate dies on drift outside the allo
         assert.match(output, /git revert <sha>/);
         assert.doesNotMatch(output, /git checkout HEAD --/);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
-        assert.doesNotMatch(gitLog, /^commit /m);
+        assert.match(gitLog, /^commit [\s\S]*^reset --soft abc123$/m);
+        assert.doesNotMatch(gitLog, /^push /m);
     });
 });
 
@@ -6719,6 +6827,86 @@ void test('commitHumanReviewFiles base-drift gate warns and proceeds with --forc
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
         assert.match(gitLog, /^commit /m);
         assert.match(gitLog, /^push -u origin task\/task-a$/m);
+    });
+});
+
+void test('base-drift --force warns about merge conflicts and proceeds', () => {
+    withTempDir('run-task-base-drift-force-conflict-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push', '--force'], {
+            FAKE_GIT_MERGE_TREE_STATUS: '1',
+            FAKE_GIT_MERGE_TREE_CONFLICTS: 'docs/patterns.md,src/a.ts',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const output = combinedOutput(result);
+        assert.match(output, /--force override: merge conflicts with origin\/main/);
+        assert.match(output, /docs\/patterns\.md/);
+        assert.match(output, /src\/a\.ts/);
+        const log = fs.readFileSync(harness.gitLogPath, 'utf8');
+        assert.match(log, /^push -u origin task\/task-a$/m);
+        assert.doesNotMatch(log, /^reset --soft/m);
+    });
+});
+
+void test('base-drift --force reports clean base advance without override warning', () => {
+    withTempDir('run-task-base-drift-force-base-advance-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push', '--force'], {
+            FAKE_GIT_DRIFT_FILES: 'docs/BACKLOG.md',
+            FAKE_GIT_AFFECTED_FILES: '',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const output = combinedOutput(result);
+        assert.match(output, /advanced on 1 file .*merge cleanly/);
+        assert.doesNotMatch(output, /--force override/);
+        assert.match(fs.readFileSync(harness.gitLogPath, 'utf8'), /^push -u origin task\/task-a$/m);
+    });
+});
+
+void test('base-drift unsupported merge-tree warns and proceeds', () => {
+    withTempDir('run-task-base-drift-unsupported-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push'], {
+            FAKE_GIT_MERGE_TREE_STATUS: '129',
+            FAKE_GIT_MERGE_TREE_ERROR: 'usage: git merge-tree --write-tree',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(combinedOutput(result), /2\.38[\s\S]*Conflicts were not checked/);
+        assert.match(fs.readFileSync(harness.gitLogPath, 'utf8'), /^push -u origin task\/task-a$/m);
+    });
+});
+
+for (const force of [false, true]) {
+    void test(`base-drift merge-tree errors fail closed (force=${force})`, () => {
+        withTempDir('run-task-base-drift-probe-error-', dir => {
+            const harness = setupHumanReviewHarness(dir, ['task-a']);
+            const result = runHumanReviewMain(harness, force ? ['--push', '--force'] : ['--push'], {
+                FAKE_GIT_MERGE_TREE_STATUS: '128',
+                FAKE_GIT_MERGE_TREE_ERROR: 'fatal: simulated merge-tree failure',
+            });
+            assert.notEqual(result.status, 0);
+            assert.match(combinedOutput(result), /could not check for merge conflicts/);
+            assert.match(combinedOutput(result), /fatal: simulated merge-tree failure/);
+            assert.match(combinedOutput(result), /cannot be bypassed with --force/);
+            const log = fs.readFileSync(harness.gitLogPath, 'utf8');
+            assert.match(log, /^commit [\s\S]*^reset --soft abc123$/m);
+            assert.doesNotMatch(log, /^push /m);
+        });
+    });
+}
+
+void test('base-drift abort explains failed soft reset and gives manual recovery', () => {
+    withTempDir('run-task-base-drift-reset-failure-', dir => {
+        const harness = setupHumanReviewHarness(dir, ['task-a']);
+        const result = runHumanReviewMain(harness, ['--push'], {
+            FAKE_GIT_MERGE_TREE_STATUS: '128',
+            FAKE_GIT_MERGE_TREE_ERROR: 'fatal: simulated merge-tree failure',
+            FAKE_GIT_RESET_SOFT_FAIL: '1',
+        });
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /Could not undo the human_review commit/);
+        assert.match(combinedOutput(result), /git reset --soft abc123/);
+        assert.doesNotMatch(fs.readFileSync(harness.gitLogPath, 'utf8'), /^push /m);
     });
 });
 
@@ -6765,7 +6953,8 @@ for (const force of [false, true]) {
             const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
             assert.match(gitLog, /^diff origin\/main HEAD --name-status -M -z$/m);
             assert.match(gitLog, /^diff origin\/main\.\.\.HEAD --name-status -M -z$/m);
-            assert.doesNotMatch(gitLog, /^commit /m);
+            assert.match(gitLog, /^commit [\s\S]*^reset --soft abc123$/m);
+            assert.doesNotMatch(gitLog, /^push /m);
         });
     });
 }
@@ -6787,11 +6976,12 @@ void test('commitHumanReviewFiles base-drift gate fails closed when tree diff fa
         assert.match(output, /fatal: simulated tree diff failure/);
         assert.match(output, /cannot be bypassed with --force/);
         const gitLog = fs.readFileSync(harness.gitLogPath, 'utf8');
-        assert.doesNotMatch(gitLog, /^commit /m);
+        assert.match(gitLog, /^commit [\s\S]*^reset --soft abc123$/m);
+        assert.doesNotMatch(gitLog, /^push /m);
     });
 });
 
-void test('commitHumanReviewFiles base-drift gate dies when the base branch advanced outside Affected Files', () => {
+void test('commitHumanReviewFiles base-drift gate passes when the base advances on non-overlapping files', () => {
     withTempDir('run-task-base-drift-mode1-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
         const { localDir, originDir } = makeGitFixture(dir);
@@ -6801,9 +6991,11 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         gitIn(localDir, 'checkout', '-b', 'task/demo');
         const taskFile = path.join(localDir, 'src', 'orchestrator', 'main.ts');
         fs.mkdirSync(path.dirname(taskFile), { recursive: true });
-        fs.writeFileSync(taskFile, 'task content\n', 'utf8');
+        fs.writeFileSync(taskFile, 'export {};\n', 'utf8');
         gitIn(localDir, 'add', 'src/orchestrator/main.ts');
         gitIn(localDir, 'commit', '-m', 'task change');
+        fs.mkdirSync(path.join(localDir, 'tasks', 'task-a'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'tasks', 'task-a', 'done.md'), 'done\n', 'utf8');
 
         const thirdPartyDir = path.join(dir, 'third-party');
         execFileSync('git', ['clone', '-b', 'main', originDir, thirdPartyDir], { stdio: 'ignore' });
@@ -6819,18 +7011,177 @@ void test('commitHumanReviewFiles base-drift gate dies when the base branch adva
         gitIn(thirdPartyDir, 'push', 'origin', 'main');
 
         const result = runNodeInline([
-            "import { commitHumanReviewFiles } from './src/orchestrator/main.ts';",
-            `commitHumanReviewFiles(['task-a'], ${JSON.stringify(localDir)}, false);`,
-        ].join('\n'), {
-            ...process.env,
-            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
-        });
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            `.then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, tasksRoot), localDir);
 
-        assert.notEqual(result.status, 0);
+        assert.equal(result.status, 0, result.stderr);
         const output = combinedOutput(result);
-        assert.match(output, /base-drift detected/);
-        assert.match(output, /docs\/BACKLOG\.md/);
-        assert.doesNotMatch(output, /src\/orchestrator\/main\.ts\s*$/m);
+        assert.match(output, /advanced on 1 file outside this task's Affected Files; they merge cleanly/);
+        assert.doesNotMatch(output, /base-drift detected|conflicts with origin/);
+        assert.match(execFileSync('git', ['ls-remote', '--heads', originDir, 'task/demo'], { encoding: 'utf8' }), /task\/demo$/m);
+    });
+});
+
+void test('commitHumanReviewFiles base-drift allows another task artifacts on the base', () => {
+    withTempDir('run-task-base-drift-other-task-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            taskFiles: { 'src/example.ts': 'export {};\n' },
+            declared: ['`src/example.ts`'],
+        });
+        fixture.thirdParty(baseDir => {
+            fs.mkdirSync(path.join(baseDir, 'tasks/other-id'), { recursive: true });
+            fs.writeFileSync(path.join(baseDir, 'tasks/other-id/spec.md'), '# Other\n', 'utf8');
+            fs.writeFileSync(path.join(baseDir, 'tasks/other-id/status.json'), '{}\n', 'utf8');
+        });
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(combinedOutput(result), /advanced on 2 files outside this task's Affected Files; they merge cleanly/);
+    });
+});
+
+void test('commitHumanReviewFiles aborts on a real conflict and undoes its human_review commit', () => {
+    withTempDir('run-task-base-drift-conflict-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            taskFiles: { 'docs/patterns.md': 'TASK\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.match(combinedOutput(result), /docs\/patterns\.md/);
+        assert.match(combinedOutput(result), /git rebase origin\/main/);
+        assert.match(combinedOutput(result), /human_review commit was undone/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+    });
+});
+
+void test('commitHumanReviewFiles reports conflict and scope drift together', () => {
+    withTempDir('run-task-base-drift-conflict-scope-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            taskFiles: { 'docs/patterns.md': 'TASK\nb\nc\n', 'src/extra.ts': 'export {};\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.match(combinedOutput(result), /not in the spec's Affected Files[\s\S]*src\/extra\.ts/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+    });
+});
+
+void test('human_review conflict in a dirty admitted doc is undone and rerunnable', () => {
+    withTempDir('run-task-base-drift-dirty-doc-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        const thirdPartyDir = path.join(dir, 'third-party');
+        execFileSync('git', ['clone', '-b', 'main', fixture.originDir, thirdPartyDir], { stdio: 'ignore' });
+        gitIn(thirdPartyDir, 'config', 'user.email', 'third@example.com');
+        gitIn(thirdPartyDir, 'config', 'user.name', 'Third Party');
+        fs.writeFileSync(path.join(thirdPartyDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8');
+        gitIn(thirdPartyDir, 'commit', '-am', 'base edit');
+        gitIn(thirdPartyDir, 'push', 'origin', 'main');
+        fs.writeFileSync(path.join(fixture.localDir, 'docs/patterns.md'), 'TASK\nb\nc\n', 'utf8');
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const invoke = () => runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        const blocked = invoke();
+        assert.notEqual(blocked.status, 0);
+        assert.match(combinedOutput(blocked), /conflicts with origin\/main/);
+        assert.match(combinedOutput(blocked), /docs\/patterns\.md/);
+        assert.match(combinedOutput(blocked), /human_review commit was undone/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.match(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: fixture.localDir, encoding: 'utf8' }), /docs\/patterns\.md/);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+
+        gitIn(thirdPartyDir, 'revert', '--no-edit', 'HEAD');
+        gitIn(thirdPartyDir, 'push', 'origin', 'main');
+        const resumed = invoke();
+        assert.equal(resumed.status, 0, resumed.stderr);
+        assert.notEqual(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+        assert.match(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: fixture.localDir, encoding: 'utf8' }), /^chore: add task artifacts for task-a\s*$/);
+        assert.match(execFileSync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }), /docs\/patterns\.md/);
+    });
+});
+
+void test('human_review gate probes the recorded commit after a pre-commit hook rewrite', () => {
+    withTempDir('run-task-base-drift-hook-conflict-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        fs.writeFileSync(path.join(fixture.localDir, 'docs/patterns.md'), 'a\nb\nTASK\n', 'utf8');
+        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
+        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
+        const hooks = path.join(dir, 'hooks');
+        fs.mkdirSync(hooks, { recursive: true });
+        fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\nsed \'1s/.*/HOOK/\' docs/patterns.md > docs/patterns.md.tmp && mv docs/patterns.md.tmp docs/patterns.md && git add docs/patterns.md\n', { mode: 0o755 });
+        gitIn(fixture.localDir, 'config', 'core.hooksPath', hooks);
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.match(combinedOutput(result), /docs\/patterns\.md/);
+        assert.match(combinedOutput(result), /human_review commit was undone/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
+    });
+});
+
+void test('clean-tree --pr retries still block on an allowlisted conflict without changing HEAD', () => {
+    withTempDir('run-task-base-drift-clean-conflict-', dir => {
+        const fixture = makeBaseDriftFixture(dir, {
+            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
+            taskFiles: { 'docs/patterns.md': 'TASK\nb\nc\n' },
+            declared: ['`docs/patterns.md`'],
+        });
+        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
+        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--pr']; return m.main(); })",
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
     });
 });
 

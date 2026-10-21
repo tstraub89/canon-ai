@@ -9,6 +9,7 @@ import {
     filterStageablePaths,
     getAffectedFiles,
     parseNameStatusOutput,
+    probeMergeConflicts,
 } from '../src/orchestrator/git.js';
 import {
     autoBlockPhase,
@@ -2002,23 +2003,25 @@ void test('classifyBaseDriftFilesFromData partitions task and base changes', () 
 });
 
 void test('base-drift abort message varies with drift cause', () => {
-    const baseOnly = buildBaseDriftAbortMessage('main', {
-        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: [],
+    const conflictOnly = buildBaseDriftAbortMessage('main', {
+        conflicts: ['docs/patterns.md'], taskChangedOutOfScope: [],
     });
-    assert.match(baseOnly, /base branch advanced/);
-    assert.match(baseOnly, /git fetch origin main && git rebase origin\/main/);
-    assert.doesNotMatch(baseOnly, /not in the spec's Affected Files/);
+    assert.match(conflictOnly, /conflicts with origin\/main/);
+    assert.match(conflictOnly, /git fetch origin main && git rebase origin\/main/);
+    assert.match(conflictOnly, /docs\/patterns\.md/);
+    assert.doesNotMatch(conflictOnly, /not in the spec's Affected Files|base-drift detected/);
 
     const taskOnly = buildBaseDriftAbortMessage('main', {
-        baseAdvanced: [], taskChangedOutOfScope: ['src/task-only.ts'],
+        conflicts: [], taskChangedOutOfScope: ['src/task-only.ts'],
     });
+    assert.match(taskOnly, /base-drift detected/);
     assert.match(taskOnly, /not in the spec's Affected Files/);
-    assert.doesNotMatch(taskOnly, /base branch advanced/);
+    assert.doesNotMatch(taskOnly, /conflicts with origin/);
 
     const mixed = buildBaseDriftAbortMessage('main', {
-        baseAdvanced: ['docs/base-only.md'], taskChangedOutOfScope: ['src/task-only.ts'],
+        conflicts: ['docs/patterns.md'], taskChangedOutOfScope: ['src/task-only.ts'],
     });
-    assert.match(mixed, /docs\/base-only\.md/);
+    assert.match(mixed, /docs\/patterns\.md/);
     assert.match(mixed, /src\/task-only\.ts/);
 });
 
@@ -2125,7 +2128,7 @@ void test('verifyBaseDrift: malformed affected-file rows warn and do not enter t
         const { localDir } = makeGitFixture(dir);
         withTempTaskSpecs({ 'task-a': ['`<path>`'] }, () => {
             const { result, stderr } = captureConsoleError(() => verifyBaseDrift(['task-a'], 'main', localDir));
-            assert.deepEqual(result, { drift: [], fetchFailed: false, diffFailed: false });
+            assert.deepEqual(result, { drift: [], fetchFailed: false, diffFailed: false, conflict: { kind: 'clean' } });
             assert.match(stderr, /task-a spec\.md Affected Files row malformed/);
         });
     } finally {
@@ -2395,7 +2398,35 @@ void test('verifyBaseDrift: two-dot diff catches base-advance drift that three-d
             assert.equal(result.fetchFailed, false);
             assert.equal(result.diffFailed, false);
             assert.deepEqual(result.drift, ['docs/decisions.md']);
+            assert.deepEqual(result.conflict, { kind: 'clean' });
         });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('probeMergeConflicts distinguishes clean merges, conflicts, and bad refs', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-tree-probe-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        const file = path.join(localDir, 'file with space.txt');
+        fs.writeFileSync(file, 'base\n', 'utf8');
+        gitIn(localDir, 'add', 'file with space.txt');
+        gitIn(localDir, 'commit', '-m', 'seed conflict file');
+        gitIn(localDir, 'branch', 'task-probe');
+        gitIn(localDir, 'checkout', '-b', 'base-probe');
+        fs.writeFileSync(file, 'base side\n', 'utf8');
+        gitIn(localDir, 'commit', '-am', 'base edit');
+        gitIn(localDir, 'checkout', 'task-probe');
+        fs.writeFileSync(file, 'task side\n', 'utf8');
+        gitIn(localDir, 'commit', '-am', 'task edit');
+
+        assert.deepEqual(probeMergeConflicts('task-probe', 'HEAD~1', localDir), { kind: 'clean' });
+        const conflict = probeMergeConflicts('task-probe', 'base-probe', localDir);
+        assert.deepEqual(conflict, { kind: 'conflicts', paths: ['file with space.txt'] });
+        const badRef = probeMergeConflicts('task-probe', 'origin/nosuch', localDir);
+        assert.equal(badRef.kind, 'error');
+        assert.notEqual(badRef.kind, 'conflicts');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }

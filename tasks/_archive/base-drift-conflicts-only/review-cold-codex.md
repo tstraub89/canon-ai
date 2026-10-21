@@ -1,0 +1,1 @@
+The changes clarify the conflict status message, update the --force help text, and strengthen the human_review conflict tests. The targeted tests pass, and no actionable regressions were found.
