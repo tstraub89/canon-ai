@@ -25,7 +25,6 @@ For each task:
    {{{prTemplate}}}
    {{/prTemplate}}
 
-**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix — never a path relative to a package or to the current directory. For a file that does not exist — one this task deleted, or one only planned — use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.
    {{^prTemplate}}
    No PR template found. Use this structure:
 
@@ -41,6 +40,7 @@ For each task:
    ## Notes for Reviewer
    Any context, caveats, or follow-up items.
    {{/prTemplate}}
+**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix — never a path relative to a package or to the current directory. For a file that does not exist — one this task deleted, or one only planned — use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.
    ⚠️ Write as the human engineer who did the work — not as the AI or tool that produced it (Claude, Codex, canon, an LLM). ✅ e.g. "Fix the pagination off-by-one that dropped the last row." ❌ e.g. "🤖 Generated with Claude Code."
    Skip this step entirely for bundle tasks — per-task bodies are not combined for bundle PRs.
 

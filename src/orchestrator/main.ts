@@ -446,7 +446,7 @@ async function fixUpOwnArtifactRefs(opts: {
     const artifacts = opts.taskIds.flatMap(taskId => opts.artifactNames.map(name => `tasks/${taskId}/${name}`));
     const checkerPath = path.join(REPO_ROOT, 'scripts', 'docs-refs-check.mjs');
     const consequence = opts.phase === 'implement'
-        ? 'Committing as before; a pre-commit hook that runs docs-refs-check will reject the commit.'
+        ? 'Committing as before; the --pr docs-refs gate will stop on these findings, and a pre-commit hook may also reject the commit.'
         : 'Fix them before --pr; its docs-refs gate will stop on them.';
     const runCheck = () => splitValidation.runDocsRefsCheck(opts.cwd, checkerPath);
     const filter = (result: splitValidation.DocsRefsRunResult) =>

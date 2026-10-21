@@ -414,7 +414,10 @@ function installDocsRefsChecker(repoDir: string, options: { hook: boolean }): vo
     if (options.hook) {
         const hooksDir = path.resolve(repoDir, execFileSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: repoDir, encoding: 'utf8' }).trim());
         fs.mkdirSync(hooksDir, { recursive: true });
-        fs.writeFileSync(path.join(hooksDir, 'pre-commit'), `#!/bin/sh\nexec node '${path.join(repoDir, 'scripts/docs-refs-check.mjs')}'\n`, { mode: 0o755 });
+        // On macOS the temp path can have a /var alias while Git reports /private/var.
+        // Use the canonical path so the checker's import.meta.url entry guard runs.
+        const checkerPath = fs.realpathSync(path.join(repoDir, 'scripts/docs-refs-check.mjs'));
+        fs.writeFileSync(path.join(hooksDir, 'pre-commit'), `#!/bin/sh\nexec node '${checkerPath}'\n`, { mode: 0o755 });
         gitIn(repoDir, 'config', 'core.hooksPath', hooksDir);
     }
 }
@@ -7401,6 +7404,8 @@ void test('implement docs-refs fix-up resumes Codex before the auto-commit hook'
         const taskId = 'artifact-fixup-implement';
         const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
         fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
+        fs.writeFileSync(path.join(tasksRoot, taskId, 'handoff.md'), fs.readFileSync(path.join(tasksRoot, taskId, 'handoff.md'), 'utf8')
+            .replace('| `initial-fixture.txt` | fixture |', `| \`initial-fixture.txt\` | fixture |\n| \`tasks/${taskId}/handoff.md\` | fixed artifact |`));
         fs.appendFileSync(path.join(tasksRoot, taskId, 'handoff.md'), '\nSee `src/removed-by-task.ts` for details.\n');
         installDocsRefsChecker(localDir, { hook: true });
         const fakeBins = path.join(dir, 'fake-bins');
@@ -7434,6 +7439,10 @@ void test('implement docs-refs fix-up resumes Codex before the auto-commit hook'
         assert.equal(result.status, 0, combinedOutput(result));
         assert.match(result.stdout, /Artifact fix-up \(attempt 1\/2\)/);
         assert.match(fs.readFileSync(path.join(tasksRoot, taskId, 'handoff.md'), 'utf8'), /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
+        const committedHandoff = execFileSync('git', ['show', `HEAD:tasks/${taskId}/handoff.md`], { cwd: localDir, encoding: 'utf8' });
+        assert.match(committedHandoff, /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
+        assert.doesNotMatch(committedHandoff, /`src\/removed-by-task\.ts`/);
+        assert.equal(execFileSync('git', ['show', 'HEAD:initial-fixture.txt'], { cwd: localDir, encoding: 'utf8' }), 'fixture\n');
         const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { argv: string[] });
         assert.equal(entries.filter(entry => entry.argv.includes('resume') && entry.argv.includes('implement-session-for-fixup')).length, 1);
         const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as { status: string; phases: { implement: { status: string } } };
