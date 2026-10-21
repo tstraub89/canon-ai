@@ -194,3 +194,11 @@ A gate that checks a commit before a push must read the commit git recorded, not
 *(2026-10-21, source: full-send-tail-push-and-watch)*
 
 A real-git test that asserts "a push by SHA excludes a commit that lands after the listing" cannot inject that commit from a `pre-push` hook. Git resolves the refspec before it runs the hook, so a branch-name push and a SHA push both look correct, and the test stays green for the wrong reason. The working injection point is a `git` wrapper earlier on PATH that commits to local base and then `exec`s the real git, so the commit lands before ref resolution. Rule of thumb: for any race test around a push, check the push variant that should fail (a push by branch name) turns the test red with the injection in place, and inject from a wrapper or before the listing call, not from a hook.
+
+---
+
+### A scope guard over dirty paths must also snapshot HEAD
+
+*(2026-10-21, source: artifact-lint-agent-fixup)*
+
+A guard that fences what an agent session may change by comparing `git status` output misses a session that stages and commits a previously clean tracked file: the porcelain state returns to clean, so the guard sees nothing. This task's round 2 review caught that gap, and the fix added the resolved `HEAD` to every snapshot. The fix also needs the content of each dirty path, not just the set of paths, because an edit to an already-dirty file leaves the same path list. Rule of thumb: before writing a "the agent may not change X" guard, snapshot the content of every candidate path and the `HEAD` SHA, then compare both after the session. A test should have the session commit an edit to a clean tracked file, not only edit a dirty one.

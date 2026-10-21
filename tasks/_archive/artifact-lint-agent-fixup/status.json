@@ -1,7 +1,7 @@
 {
   "id": "artifact-lint-agent-fixup",
   "title": "Send task-artifact docs-refs failures back to the agent session that wrote them",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-21",
   "updated": "2026-10-21",
   "branch": "task/artifact-lint-agent-fixup",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
