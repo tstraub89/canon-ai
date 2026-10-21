@@ -81,7 +81,7 @@ After the PR is marked ready and approved — do **not** merge it manually:
 canon run <task-id> --ship              # squash-merge the PR, pull base, tear down worktree, archive, clean up branches
 ```
 
-`--ship` runs `gh pr merge --squash --delete-branch` itself, then pulls/fast-forwards the base branch, proves the merge (forge-proof gate) before deleting any local task branch, tears down the worktree, and archives `tasks/<id>/`. If the PR was already merged externally, `--ship` detects that and picks up at cleanup — and `canon task post-merge-sync` exists as a recovery helper if the local base has diverged after an external squash-merge, not as a standard pre-ship step.
+`--ship` runs `gh pr merge --squash` itself, deletes the remote task branch, then pulls/fast-forwards the base branch, proves the merge (forge-proof gate) before deleting any local task branch, tears down the worktree, and archives `tasks/<id>/`. If the PR was already merged externally, `--ship` detects that and picks up at cleanup — and `canon task post-merge-sync` exists as a recovery helper if the local base has diverged after an external squash-merge, not as a standard pre-ship step.
 
 If the task targeted a release branch (`base_branch` in `status.json`), `--ship` merges and archives there — not main.
 

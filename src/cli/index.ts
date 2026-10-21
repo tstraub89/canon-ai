@@ -96,7 +96,7 @@ canon run options:
                           in spec's Affected Files (bypass with --force).
   --full-send             Skip the spec gate and auto-open a draft PR after clean QA
   --force                 Acknowledge high-commitment combinations (currently: --full-send on a delicate task)
-  --ship                  Merge the open PR (calls gh pr merge --squash --delete-branch), tear
+  --ship                  Merge the open PR (gh pr merge --squash), delete its remote branch, tear
                           down the worktree, archive the task dir, and pull the base branch. Run
                           after the PR is approved — do NOT merge the PR manually first. If you
                           already merged externally, --ship detects the merged state and resumes

@@ -4562,9 +4562,16 @@ function taskResetSpecReview(id) {
   if (status.sessions && Object.hasOwn(status.sessions, "claude_spec")) {
     delete status.sessions.claude_spec;
   }
+  const rearmGate = status.full_send !== true && status.human_spec_gate !== true;
+  if (rearmGate) status.human_spec_gate = true;
   status.updated = today();
   writeStatusAtomic(statusPath, status);
   console.log(`Reset ${id}: spec \u2192 done, spec_review \u2192 pending (iter=0, verdict cleared, claude_spec session dropped)`);
+  if (rearmGate) {
+    console.log(
+      `Re-armed the spec gate: the next \`canon run ${id}\` stops after spec_review approves. To continue past it instead, run \`canon task set ${id} human_spec_gate false\` first.`
+    );
+  }
 }
 function taskResetCodeReview(id) {
   if (!id) throw new Error("Error: usage: canon task reset-code-review <TASK-ID>");
@@ -5999,7 +6006,7 @@ canon run options:
                           in spec's Affected Files (bypass with --force).
   --full-send             Skip the spec gate and auto-open a draft PR after clean QA
   --force                 Acknowledge high-commitment combinations (currently: --full-send on a delicate task)
-  --ship                  Merge the open PR (calls gh pr merge --squash --delete-branch), tear
+  --ship                  Merge the open PR (gh pr merge --squash), delete its remote branch, tear
                           down the worktree, archive the task dir, and pull the base branch. Run
                           after the PR is approved \u2014 do NOT merge the PR manually first. If you
                           already merged externally, --ship detects the merged state and resumes

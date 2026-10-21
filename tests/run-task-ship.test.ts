@@ -1308,6 +1308,34 @@ void test('--ship honors CANON_TASKS_DIR_OVERRIDE when resolving ship cwd', () =
     });
 });
 
+void test('--ship merges without gh --delete-branch and deletes the remote branch itself', () => {
+    withTempDir('run-task-ship-remote-delete-', dir => {
+        const taskId = 'ship-remote-delete';
+        const { localDir, originDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            deleteRemote: false,
+        });
+        const ghLog = path.join(dir, 'gh.log');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_LOG: ghLog,
+            FAKE_GH_OPEN_PR_NUMBER: '107',
+            FAKE_GH_MERGED_PR_NUMBER: '107',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const log = fs.readFileSync(ghLog, 'utf8');
+        assert.match(log, /^pr merge 107 --squash$/m);
+        assert.doesNotMatch(log, /--delete-branch/);
+        assert.match(result.stdout, new RegExp(`Deleted remote branch ${branch}\\.`));
+        assert.doesNotMatch(result.stdout + result.stderr, /tolerated/);
+        assert.equal(gitIn(originDir, 'branch', '--list', branch), '');
+        expectArchivedAndDeleted(localDir, taskId, branch);
+    });
+});
+
 void test('--ship tolerates remote branch already gone during stale-remote cleanup', () => {
     withTempDir('run-task-ship-remote-delete-race-', dir => {
         const taskId = 'ship-remote-delete-race';

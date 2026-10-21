@@ -1090,9 +1090,19 @@ export function taskResetSpecReview(id: string): void {
     if (status.sessions && Object.hasOwn(status.sessions, 'claude_spec')) {
         delete status.sessions.claude_spec;
     }
+    // The spec gate disarms itself when it halts, so a reset after that halt
+    // would otherwise let the next run continue straight past spec_review.
+    const rearmGate = status.full_send !== true && status.human_spec_gate !== true;
+    if (rearmGate) status.human_spec_gate = true;
     status.updated = today();
     writeStatusAtomic(statusPath, status);
     console.log(`Reset ${id}: spec → done, spec_review → pending (iter=0, verdict cleared, claude_spec session dropped)`);
+    if (rearmGate) {
+        console.log(
+            `Re-armed the spec gate: the next \`canon run ${id}\` stops after spec_review approves. ` +
+            `To continue past it instead, run \`canon task set ${id} human_spec_gate false\` first.`,
+        );
+    }
 }
 
 export function taskResetCodeReview(id: string): void {
