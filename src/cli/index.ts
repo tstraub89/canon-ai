@@ -89,11 +89,11 @@ canon run options:
                           protected/configured docs listed in spec.md's "### Affected Files"
                           table (all admitted docs once QA is done). Dirty files outside
                           that set die with a remediation message.
-                          Aborts if HEAD's tree differs from origin/<base> on files not in
-                          spec's Affected Files (bypass with --force).
+                          Aborts if merging origin/<base> conflicts, or branch changes files
+                          outside spec's Affected Files (bypass with --force).
   --push                  At human_review: push branch only, no PR (requires gh). Same allow-list
-                          as --pr. Aborts if HEAD's tree differs from origin/<base> on files not
-                          in spec's Affected Files (bypass with --force).
+                          as --pr. Aborts if merging origin/<base> conflicts, or branch changes
+                          files outside spec's Affected Files (bypass with --force).
   --full-send             Skip the spec gate and auto-open a draft PR after clean QA
   --force                 Acknowledge high-commitment combinations (currently: --full-send on a delicate task)
   --ship                  Merge the open PR (calls gh pr merge --squash --delete-branch), tear
