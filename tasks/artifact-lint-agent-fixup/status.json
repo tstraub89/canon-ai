@@ -1,18 +1,18 @@
 {
   "id": "artifact-lint-agent-fixup",
   "title": "Send task-artifact docs-refs failures back to the agent session that wrote them",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-21",
   "updated": "2026-10-21",
-  "branch": "",
+  "branch": "task/artifact-lint-agent-fixup",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "e79c7692e78329e763c0474547432fdd80ff3c0c",
-    "orchestrator_commit": "e79c7692e78329e763c0474547432fdd80ff3c0c",
+    "upstream_commit": "90874e62077e8221625699ce8b84481f9de2409d",
+    "orchestrator_commit": "90874e62077e8221625699ce8b84481f9de2409d",
     "canon_version": "3.11.0",
     "codex_cli": "codex-cli 0.163.0",
-    "claude_code": "2.1.305 (Claude Code)"
+    "claude_code": "2.1.306 (Claude Code)"
   },
   "task_size": "L",
   "delicate": false,
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 5,
+      "changes_requested_total": 4,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -63,10 +64,19 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-10-21",
+      "phase": "code_review",
+      "iteration_count": 3,
+      "reason": "claude session exited 1 (possible budget exhaustion — see CLAUDE_BUDGET). Fix the cause (auth, budget — raise `CLAUDE_BUDGET`, network), then re-run `canon run artifact-lint-agent-fixup`."
+    }
+  ],
   "sessions": {
     "codex_spec_review": "01a15c3f-ccfe-70f1-9348-5cd876303dcd",
-    "claude_spec": "1d03ef13-4bc6-4822-a9ee-49dbf9a3e776"
+    "claude_spec": "1d03ef13-4bc6-4822-a9ee-49dbf9a3e776",
+    "codex": "01a15c47-4e72-7391-80ef-81ca6d192a7b",
+    "claude_review": "af8437ed-647f-4075-a697-a16c165b6eff"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

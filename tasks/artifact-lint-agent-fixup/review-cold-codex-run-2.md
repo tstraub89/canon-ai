@@ -1,0 +1,3 @@
+<!-- round=2 reviewed_sha=1b0b7742c12b42b8dd154e6999df298fea5d30f5 scope=delta base=cadb24f08952d526248cff955675094b7a62ab7e reason="delta" -->
+
+The changes correct the implement fallback warning, make the pre-commit test fixture resolve the checker through its canonical path, and strengthen the test’s commit assertions. The QA prompt guidance change preserves its behavior while applying it across both PR-template cases.
