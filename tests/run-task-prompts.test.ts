@@ -12,6 +12,8 @@ import {
     promptImplement,
     promptImplementReroute,
     promptImplementRevisions,
+    promptArtifactFixup,
+    ARTIFACT_CITATION_RULE,
     promptPlan,
     promptQa,
     promptSpec,
@@ -396,6 +398,24 @@ for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
 void test('promptImplement_fresh', () => {
     const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));
     recordOrAssert('promptImplement_fresh', actual);
+});
+
+void test('task artifact prompts carry the canonical file citation rule', () => {
+    const prompts = [
+        promptImplement(baseState),
+        promptImplementRevisions(iterState, [], 'main'),
+        promptImplementReroute(rerouteState),
+        promptQa(baseState),
+    ];
+    for (const prompt of prompts) assert.ok(prompt.includes(ARTIFACT_CITATION_RULE));
+    const implementFixup = normalize(promptArtifactFixup({ phase: 'implement', findings: ['tasks/test-pf-001/handoff.md:1: `gone.ts` — missing file', 'other'], artifacts: ['tasks/test-pf-001/handoff.md'], attempt: 1, maxAttempts: 2 }));
+    const qaFixup = normalize(promptArtifactFixup({ phase: 'qa', findings: ['tasks/test-pf-001/done.md:1: `gone.ts` — missing file'], artifacts: ['tasks/test-pf-001/done.md', 'tasks/test-pf-001/pr-body.md'], attempt: 2, maxAttempts: 2 }));
+    for (const [key, prompt] of [['promptArtifactFixup_implement', implementFixup], ['promptArtifactFixup_qa', qaFixup]] as const) {
+        assert.ok(prompt.includes(ARTIFACT_CITATION_RULE));
+        assert.match(prompt, /phase is already complete/);
+        assert.match(prompt, /do not run `canon task phase`/);
+        recordOrAssert(key, prompt);
+    }
 });
 
 void test('promptImplement renders empty affected-files branch', () => {

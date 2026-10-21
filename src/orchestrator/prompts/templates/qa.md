@@ -24,6 +24,8 @@ For each task:
 
    {{{prTemplate}}}
    {{/prTemplate}}
+
+**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix — never a path relative to a package or to the current directory. For a file that does not exist — one this task deleted, or one only planned — use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.
    {{^prTemplate}}
    No PR template found. Use this structure:
 

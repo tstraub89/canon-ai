@@ -1,4 +1,5 @@
 import { requireDocsFreshnessConfig, resolveDocsFreshness } from './docs-freshness.js';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -8,6 +9,44 @@ import { warn } from './cli.js';
 import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries } from './git.js';
 import { readStatus, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
+
+export type DocsRefsFinding = { file: string; line: number; ref: string; reason: string; raw: string };
+export type DocsRefsRunResult =
+    | { kind: 'absent' }
+    | { kind: 'clean' }
+    | { kind: 'findings'; findings: DocsRefsFinding[] }
+    | { kind: 'error'; output: string };
+
+export function parseDocsRefsFindings(stderr: string): DocsRefsFinding[] {
+    const findings: DocsRefsFinding[] = [];
+    for (const raw of stderr.split(/\r?\n/)) {
+        const match = raw.match(/^(.+?):(\d+): (.+) — (.+)$/);
+        if (!match) continue;
+        findings.push({ file: match[1], line: Number(match[2]), ref: match[3], reason: match[4], raw });
+    }
+    return findings;
+}
+
+export function filterArtifactFindings(
+    findings: readonly DocsRefsFinding[], artifactPaths: readonly string[],
+): DocsRefsFinding[] {
+    const artifactSet = new Set(artifactPaths);
+    return findings.filter(finding => artifactSet.has(finding.file));
+}
+
+export function runDocsRefsCheck(cwd: string, scriptPath: string): DocsRefsRunResult {
+    if (!fs.existsSync(scriptPath)) return { kind: 'absent' };
+    const result = spawnSync('node', [scriptPath], {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8',
+    });
+    if (result.status === 0) return { kind: 'clean' };
+    const output = `${result.stderr ?? ''}${result.stdout ? `\n${result.stdout}` : ''}`.trim();
+    const findings = parseDocsRefsFindings(result.stderr ?? '');
+    if (result.error || findings.length === 0) return { kind: 'error', output: output || result.error?.message || 'unknown checker error' };
+    return { kind: 'findings', findings };
+}
 
 export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
     if (!handoffContent.split('\n').some(line => line.trimEnd() === '## AC Coverage')) {

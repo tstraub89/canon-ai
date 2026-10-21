@@ -1,6 +1,7 @@
 import { AgentSessionError, isAgentSessionError } from './agents/errors.js';
 import { loadDocsFreshnessConfig, requireDocsFreshnessConfig, resolveDocsFreshness, formatUnknownKeysWarning } from './docs-freshness.js';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +22,7 @@ import * as splitPolicy from './policy.js';
 import * as splitValidation from './validation.js';
 import * as splitClaude from './agents/claude.js';
 import * as splitCodex from './agents/codex.js';
+import { promptArtifactFixup } from './prompts/index.js';
 import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
 import { detachAndExit, readCanonPid, removeCanonPid, shouldAutoDetach } from './detach.js';
 import { isHeartbeatStale, readHeartbeat, startHeartbeat, stopAllHeartbeats } from './heartbeat.js';
@@ -384,8 +386,149 @@ function operatorAcceptedImplement(taskIds: readonly string[], cwd: string): boo
     return sourceDirty.length === 0;
 }
 
+type ScopeSnapshot = Map<string, string>;
+
+export function diffScopeSnapshots(before: ScopeSnapshot, after: ScopeSnapshot, exempt: ReadonlySet<string>): string[] {
+    const paths = new Set([...before.keys(), ...after.keys()]);
+    return [...paths].filter(filePath => !exempt.has(filePath) && before.get(filePath) !== after.get(filePath)).sort();
+}
+
+function snapshotOutsideArtifacts(cwd: string, taskIds: readonly string[]):
+    { ok: true; snap: ScopeSnapshot } | { ok: false; error: string } {
+    const status = gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
+    if (!status.ok) return { ok: false, error: status.stderr || 'git status failed' };
+    const entries = splitGit.parsePorcelainEntries(status.stdout);
+    const statusByPath = new Map<string, string>();
+    for (const entry of entries) {
+        for (const filePath of porcelainEntryPaths(entry)) statusByPath.set(filePath, `${entry.indexStatus}${entry.worktreeStatus}`);
+    }
+    for (const taskId of taskIds) {
+        const statusPath = `tasks/${taskId}/status.json`;
+        if (!statusByPath.has(statusPath)) statusByPath.set(statusPath, '  ');
+    }
+    const snap: ScopeSnapshot = new Map();
+    try {
+        for (const [filePath, xy] of statusByPath) {
+            const absolute = path.join(cwd, filePath);
+            let fingerprint: string;
+            try {
+                const stat = fs.lstatSync(absolute);
+                if (stat.isSymbolicLink()) fingerprint = `symlink:${fs.readlinkSync(absolute)}`;
+                else if (stat.isDirectory()) fingerprint = 'dir';
+                else if (stat.isFile()) fingerprint = createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+                else fingerprint = `other:${stat.mode}`;
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                fingerprint = 'absent';
+            }
+            snap.set(filePath, `${xy}:${fingerprint}`);
+        }
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    return { ok: true, snap };
+}
+
+const ARTIFACT_FIXUP_MAX_ATTEMPTS = 2;
+
+function fixupTaskContexts(taskIds: readonly string[]): TaskContext[] {
+    return taskIds.map(taskId => {
+        const status = splitState.readStatus(taskId);
+        return { taskId, title: status.title ?? taskId, specReviewVerdict: '', iterations: 0,
+            iterations_current_loop: 0, iterations_total: 0, rerouteCount: 0, status };
+    });
+}
+
+async function fixUpOwnArtifactRefs(opts: {
+    phase: 'implement' | 'qa'; taskIds: string[]; cwd: string; sessionId: string | null;
+    artifactNames: readonly string[]; runSession: (prompt: string) => Promise<boolean>;
+}): Promise<void> {
+    const artifacts = opts.taskIds.flatMap(taskId => opts.artifactNames.map(name => `tasks/${taskId}/${name}`));
+    const checkerPath = path.join(REPO_ROOT, 'scripts', 'docs-refs-check.mjs');
+    const consequence = opts.phase === 'implement'
+        ? 'Committing as before; a pre-commit hook that runs docs-refs-check will reject the commit.'
+        : 'Fix them before --pr; its docs-refs gate will stop on them.';
+    const runCheck = () => splitValidation.runDocsRefsCheck(opts.cwd, checkerPath);
+    const filter = (result: splitValidation.DocsRefsRunResult) =>
+        result.kind === 'findings' ? splitValidation.filterArtifactFindings(result.findings, artifacts) : [];
+    const initial = runCheck();
+    if (initial.kind === 'absent' || initial.kind === 'clean') return;
+    if (initial.kind === 'error') {
+        warn(`Artifact fix-up skipped: docs-refs-check could not run in ${opts.cwd}:\n${initial.output}`);
+        return;
+    }
+    let own = filter(initial);
+    if (own.length === 0) return;
+    if (!opts.sessionId) {
+        const agent = opts.phase === 'implement' ? 'codex' : 'claude';
+        warn(`docs-refs-check found broken references in the ${opts.phase} artifacts, but no ${agent} session is available to fix them:\n` +
+            `${own.map(f => f.raw).join('\n')}\n${consequence}`);
+        return;
+    }
+    const exempt = new Set<string>(artifacts);
+    for (const taskId of opts.taskIds) {
+        for (const name of ['metrics.md', '.heartbeat.json', '.canon-pid', '.canon-run.log']) exempt.add(`tasks/${taskId}/${name}`);
+    }
+    for (let attempt = 1; attempt <= ARTIFACT_FIXUP_MAX_ATTEMPTS; attempt += 1) {
+        const pre = snapshotOutsideArtifacts(opts.cwd, opts.taskIds);
+        if (!pre.ok) {
+            warn(`Artifact fix-up skipped: could not inspect the working tree before the fix session (${pre.error}).`);
+            return;
+        }
+        info(`Artifact fix-up (attempt ${attempt}/${ARTIFACT_FIXUP_MAX_ATTEMPTS}): resuming the ${opts.phase} session to fix ${own.length} broken reference(s) in ${artifacts.join(', ')}.`);
+        let ok = false;
+        try {
+            ok = await opts.runSession(promptArtifactFixup({ phase: opts.phase, findings: own.map(f => f.raw), artifacts,
+                attempt, maxAttempts: ARTIFACT_FIXUP_MAX_ATTEMPTS }));
+        } catch (error) {
+            if (!isAgentSessionError(error)) throw error;
+            warn(`Artifact fix-up session failed: ${error.reason}`);
+        }
+        const post = snapshotOutsideArtifacts(opts.cwd, opts.taskIds);
+        if (!post.ok) {
+            die(`Artifact fix-up stopped the run: could not inspect the working tree after the fix session (${post.error}). Nothing was committed; inspect the tree before re-running.`);
+            return;
+        }
+        const changed = diffScopeSnapshots(pre.snap, post.snap, exempt);
+        if (changed.length > 0) {
+            die(`Artifact fix-up stopped the run: the ${opts.phase} fix session changed files outside its own artifacts:\n` +
+                `${changed.map(file => `    ${file}`).join('\n')}\nNothing was committed. Review and revert those changes, then re-run canon run ${opts.taskIds.join(' ')}.`);
+        }
+        if (!ok) {
+            warn(`Artifact fix-up failed; remaining findings:\n${own.map(f => f.raw).join('\n')}\n${consequence}`);
+            return;
+        }
+        const checked = runCheck();
+        if (checked.kind === 'absent') return;
+        if (checked.kind === 'error') {
+            warn(`Artifact fix-up could not re-run docs-refs-check in ${opts.cwd}:\n${checked.output}`);
+            return;
+        }
+        own = filter(checked);
+        if (own.length === 0) {
+            info('Artifact fix-up fixed the broken references.');
+            return;
+        }
+    }
+    warn(`docs-refs-check still reports broken references in the ${opts.phase} artifacts after ${ARTIFACT_FIXUP_MAX_ATTEMPTS} fix-up attempts:\n` +
+        `${own.map(f => f.raw).join('\n')}\n${consequence}`);
+}
+
+async function fixUpImplementArtifactRefs(taskIds: string[], cwd: string): Promise<void> {
+    if (operatorAcceptedImplement(taskIds, cwd)) return;
+    const sessionId = splitState.readStatus(taskIds[0]).sessions?.codex ?? null;
+    await fixUpOwnArtifactRefs({ phase: 'implement', taskIds, cwd, sessionId, artifactNames: ['handoff.md'],
+        runSession: async prompt => {
+            const cfg = splitPolicy.getCodexConfig('implement', fixupTaskContexts(taskIds));
+            const result = await splitCodex.runCodex(prompt, false, sessionId, cfg.model, cfg.effort,
+                { taskId: taskIds[0], phase: 'implement_fixup', activeCwd: cwd }, cwd, false);
+            return result.exitCode === 0;
+        },
+    });
+}
+
 /** Retry a failed implement commit before code_review reads committed history. */
-export function retryImplementAutoCommitAtReviewEntry(taskIds: string[], cwd: string): boolean {
+export async function retryImplementAutoCommitAtReviewEntry(taskIds: string[], cwd: string): Promise<boolean> {
     if (implementAcceptedAtHead(taskIds, cwd)) return false;
 
     const handoffFiles = new Set<string>();
@@ -400,6 +543,7 @@ export function retryImplementAutoCommitAtReviewEntry(taskIds: string[], cwd: st
     if (![...dirty].some(file => handoffFiles.has(file))) return false;
 
     splitCli.info('Retrying the implement auto-commit that did not complete…');
+    await fixUpImplementArtifactRefs(taskIds, cwd);
     autoCommitCode(taskIds, cwd);
     return true;
 }
@@ -3458,9 +3602,12 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             return;
         }
 
-        case 'implement':
-            autoCommitCode(taskIds, splitWorktree.getActiveCwd(taskIds));
+        case 'implement': {
+            const cwd = splitWorktree.getActiveCwd(taskIds);
+            await fixUpImplementArtifactRefs(taskIds, cwd);
+            autoCommitCode(taskIds, cwd);
             return;
+        }
 
         case 'code_review': {
             const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], 'code_review') === 'spec_gap');
@@ -3531,9 +3678,20 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             return;
         }
 
-        case 'qa':
-            commitQaArtifacts(taskIds, splitWorktree.getActiveCwd(taskIds));
+        case 'qa': {
+            const cwd = splitWorktree.getActiveCwd(taskIds);
+            const sessionId = lastClaudeSessionId;
+            await fixUpOwnArtifactRefs({ phase: 'qa', taskIds, cwd, sessionId, artifactNames: ['done.md', 'pr-body.md'],
+                runSession: async prompt => {
+                    const cfg = splitPolicy.getClaudeConfig('qa', fixupTaskContexts(taskIds));
+                    await splitClaude.runClaude(prompt, false, sessionId, cfg.model, cfg.effort, cfg.budget,
+                        { taskId: taskIds[0], phase: 'qa_fixup', activeCwd: cwd }, cwd);
+                    return true;
+                },
+            });
+            commitQaArtifacts(taskIds, cwd);
             return;
+        }
 
         default:
             return;
@@ -3812,7 +3970,7 @@ export async function main(): Promise<void> {
         console.log('────────────────────────────────────────');
 
         if (currentPhase === 'code_review') {
-            retryImplementAutoCommitAtReviewEntry(taskIds, splitWorktree.getActiveCwd(taskIds));
+            await retryImplementAutoCommitAtReviewEntry(taskIds, splitWorktree.getActiveCwd(taskIds));
         }
 
         const state = buildPipelineState(taskIds);
