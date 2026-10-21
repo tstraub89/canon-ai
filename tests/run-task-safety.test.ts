@@ -466,12 +466,16 @@ function prepareImplementFixupFixture(dir: string, taskId: string, options: {
     }
     const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
     fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
-    if (options.artifactFinding === 'handoff') fs.appendFileSync(path.join(tasksRoot, taskId, 'handoff.md'), '\nSee `src/removed-by-task.ts` for details.\n');
-    if (options.artifactFinding === 'review') fs.appendFileSync(path.join(tasksRoot, taskId, 'review.md'), '\nSee `src/removed-by-task.ts` for details.\n');
+    // The broken ref is written during the implement run (FAKE_AGENT_SEED_FILE),
+    // after the pre-implement scaffold commit, as it would be in a real run.
+    const seedFile = options.artifactFinding === 'handoff' ? path.join(tasksRoot, taskId, 'handoff.md')
+        : options.artifactFinding === 'review' ? path.join(tasksRoot, taskId, 'review.md') : '';
     if (options.hook !== 'absent') installDocsRefsChecker(localDir, { hook: options.hook !== undefined });
     if (options.hook === 'fail') {
         const hooksDir = path.resolve(localDir, execFileSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: localDir, encoding: 'utf8' }).trim());
-        fs.writeFileSync(path.join(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+        // Reject only commits that stage something outside tasks/, so the
+        // pre-implement scaffold commit (task artifacts only) still lands.
+        fs.writeFileSync(path.join(hooksDir, 'pre-commit'), "#!/bin/sh\ngit diff --cached --name-only | grep -qv '^tasks/' || exit 0\nexit 1\n", { mode: 0o755 });
     }
     const fakeBins = path.join(dir, 'fake-bins');
     fs.mkdirSync(fakeBins, { recursive: true });
@@ -486,6 +490,7 @@ function prepareImplementFixupFixture(dir: string, taskId: string, options: {
         'if [ "$is_resume" = "1" ] && [ "${FAKE_AGENT_FAIL_RESUME:-0}" = "1" ]; then exit 7; fi',
         'if [ "$is_resume" = "1" ]; then exit 0; fi',
         'printf "fixture\\n" > initial-fixture.txt',
+        'if [ -n "${FAKE_AGENT_SEED_FILE:-}" ]; then printf "\\nSee \\`src/removed-by-task.ts\\` for details.\\n" >> "$FAKE_AGENT_SEED_FILE"; fi',
         'node "$FAKE_AGENT_COMPLETER"',
         options.session ? 'printf \'{"type":"thread.started","thread_id":"fixture-implement-session"}\\n\'' : ':',
         'exit 0',
@@ -495,12 +500,21 @@ function prepareImplementFixupFixture(dir: string, taskId: string, options: {
     const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
     const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
         FAKE_AGENT_COMPLETE_PHASE: 'implement',
+        ...(seedFile ? { FAKE_AGENT_SEED_FILE: seedFile } : {}),
         FAKE_AGENT_ARGV_LOG: argvLog,
         FAKE_AGENT_LOG: agentLog,
         ...(options.resumeScript ? { FAKE_AGENT_EDIT_SCRIPT: options.resumeScript } : {}),
         ...(options.failResume ? { FAKE_AGENT_FAIL_RESUME: '1' } : {}),
     });
     return { result, localDir, tasksRoot, agentLog, argvLog, headBefore };
+}
+
+// Commits after `base` other than the pre-implement scaffold commit. That
+// commit only lands where the fixture's task dir resolves inside the repo
+// (Linux CI); macOS tmpdir aliasing skips it.
+function nonScaffoldCommits(repoDir: string, base: string): string[] {
+    return execFileSync('git', ['log', '--format=%s', `${base}..HEAD`], { cwd: repoDir, encoding: 'utf8' })
+        .split('\n').filter(Boolean).filter(subject => !/^task\([^)]+\): commit artifacts pre-pipeline$/.test(subject));
 }
 
 function countResumes(argvLog: string): number {
@@ -8230,7 +8244,6 @@ void test('implement docs-refs fix-up resumes Codex before the auto-commit hook'
         // allowing this test to verify the committed artifact blob.
         fs.writeFileSync(path.join(tasksRoot, taskId, 'handoff.md'), fs.readFileSync(path.join(tasksRoot, taskId, 'handoff.md'), 'utf8')
             .replace('| `initial-fixture.txt` | fixture |', `| \`initial-fixture.txt\` | fixture |\n| \`tasks/${taskId}/handoff.md\` | fixed artifact |`));
-        fs.appendFileSync(path.join(tasksRoot, taskId, 'handoff.md'), '\nSee `src/removed-by-task.ts` for details.\n');
         installDocsRefsChecker(localDir, { hook: true });
         const fakeBins = path.join(dir, 'fake-bins');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -8249,6 +8262,7 @@ void test('implement docs-refs fix-up resumes Codex before the auto-commit hook'
             'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
             'if [ "$is_resume" = "1" ]; then node "$FAKE_AGENT_EDIT_SCRIPT"; exit 0; fi',
             'printf "fixture\\n" > initial-fixture.txt',
+            'if [ -n "${FAKE_AGENT_SEED_FILE:-}" ]; then printf "\\nSee \\`src/removed-by-task.ts\\` for details.\\n" >> "$FAKE_AGENT_SEED_FILE"; fi',
             'if [ -n "${FAKE_AGENT_COMPLETER:-}" ]; then node "$FAKE_AGENT_COMPLETER"; fi',
             'printf \'{"type":"thread.started","thread_id":"implement-session-for-fixup"}\\n\'',
             'exit 0',
@@ -8256,6 +8270,7 @@ void test('implement docs-refs fix-up resumes Codex before the auto-commit hook'
         const argvLog = path.join(dir, 'implement-agent-argv.jsonl');
         const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
             FAKE_AGENT_COMPLETE_PHASE: 'implement',
+            FAKE_AGENT_SEED_FILE: path.join(tasksRoot, taskId, 'handoff.md'),
             FAKE_AGENT_EDIT_SCRIPT: editScript,
             FAKE_AGENT_ARGV_LOG: argvLog,
             FAKE_AGENT_LOG: path.join(dir, 'implement-agent-invocations.log'),
@@ -8281,7 +8296,6 @@ void test('implement docs-refs fix-up retries twice then preserves the rejecting
         const taskId = 'artifact-fixup-implement-fallback';
         const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
         fs.appendFileSync(path.join(tasksRoot, taskId, 'spec.md'), '\n## Validation Required\n\n- [x] `npm test`\n');
-        fs.appendFileSync(path.join(tasksRoot, taskId, 'handoff.md'), '\nSee `src/removed-by-task.ts` for details.\n');
         installDocsRefsChecker(localDir, { hook: true });
         const fakeBins = path.join(dir, 'fake-bins');
         fs.mkdirSync(fakeBins, { recursive: true });
@@ -8294,6 +8308,7 @@ void test('implement docs-refs fix-up retries twice then preserves the rejecting
             'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
             'if [ "$is_resume" = "1" ]; then exit 0; fi',
             'printf "fixture\\n" > initial-fixture.txt',
+            'if [ -n "${FAKE_AGENT_SEED_FILE:-}" ]; then printf "\\nSee \\`src/removed-by-task.ts\\` for details.\\n" >> "$FAKE_AGENT_SEED_FILE"; fi',
             'node "$FAKE_AGENT_COMPLETER"',
             'printf \'{"type":"thread.started","thread_id":"fallback-implement-session"}\\n\'',
             'exit 0',
@@ -8302,6 +8317,7 @@ void test('implement docs-refs fix-up retries twice then preserves the rejecting
         const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
         const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, [], {
             FAKE_AGENT_COMPLETE_PHASE: 'implement',
+            FAKE_AGENT_SEED_FILE: path.join(tasksRoot, taskId, 'handoff.md'),
             FAKE_AGENT_ARGV_LOG: argvLog,
             FAKE_AGENT_LOG: path.join(dir, 'agent-invocations.log'),
         });
@@ -8318,7 +8334,7 @@ void test('implement docs-refs fix-up retries twice then preserves the rejecting
         assert.equal(status.phases.implement.status, 'done');
         assert.equal(status.phases.code_review.preflight_rejections_current_loop, 0);
         assert.equal(status.phases.code_review.iterations_current_loop, 0);
-        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim(), headBefore);
+        assert.deepEqual(nonScaffoldCommits(localDir, headBefore), []);
     });
 });
 
@@ -8366,7 +8382,7 @@ void test('implement docs-refs fix-up stops on edits outside its artifacts and c
             assert.equal(fixture.result.status, 1, output);
             assert.match(output, /changed files outside its own artifacts/);
             assert.match(output, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-            assert.equal(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), '2');
+            assert.deepEqual(nonScaffoldCommits(fixture.localDir, fixture.headBefore), []);
         }
 
         const commitDir = path.join(root, 'committed-edit');
@@ -8386,7 +8402,7 @@ void test('implement docs-refs fix-up stops on edits outside its artifacts and c
         assert.equal(committedEdit.result.status, 1, committedOutput);
         assert.match(committedOutput, /changed files outside its own artifacts/);
         assert.match(committedOutput, /\[git HEAD\]/);
-        assert.equal(execFileSync('git', ['rev-list', '--count', `${committedEdit.headBefore}..HEAD`], { cwd: committedEdit.localDir, encoding: 'utf8' }).trim(), '1');
+        assert.equal(nonScaffoldCommits(committedEdit.localDir, committedEdit.headBefore).length, 1);
         assert.equal(execFileSync('git', ['log', '-1', '--format=%s'], { cwd: committedEdit.localDir, encoding: 'utf8' }).trim(), 'agent out-of-scope commit');
         assert.equal(execFileSync('git', ['show', 'HEAD:clean-tracked.txt'], { cwd: committedEdit.localDir, encoding: 'utf8' }), 'changed and committed by fix session\n');
 
