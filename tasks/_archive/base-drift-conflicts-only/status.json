@@ -1,7 +1,7 @@
 {
   "id": "base-drift-conflicts-only",
   "title": "--pr base-drift blocks only on real merge conflicts",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-21",
   "updated": "2026-10-21",
   "branch": "task/base-drift-conflicts-only",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
