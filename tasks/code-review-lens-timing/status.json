@@ -1,10 +1,10 @@
 {
   "id": "code-review-lens-timing",
   "title": "Record per-lens duration and tokens for code_review sub-agents",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-23",
   "updated": "2026-10-23",
-  "branch": "",
+  "branch": "task/code-review-lens-timing",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a16670-afdd-7250-bed6-012ab17a3e32"
+    "codex_spec_review": "01a16670-afdd-7250-bed6-012ab17a3e32",
+    "codex": "01a16672-263f-7392-92a2-5b10acef40ee",
+    "claude_review": "79298f22-1fa2-450c-ba79-8c3d18115659"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

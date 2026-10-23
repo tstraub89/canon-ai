@@ -6,127 +6,80 @@
 
 Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did Codex's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: session row then `claude:code-review-anchored` row, deduped transcript tokens, `476.4s` | Pass | Test 1 in `tests/claude-subagent-metrics.test.ts`; asserts Tokens 20 (not 999). |
+| AC-2: two lens rows in stream order | Pass | Test 2. |
+| AC-3: failed status, model fallback, `-` tokens (no notification / unreadable / zero sum) | Pass | Test 2 and the zero-usage case. |
+| AC-4: no row for non-lens, missing duration, nested, malformed | Pass | Negative-stream test asserts exactly one row. |
+| AC-5: rows kept after session failure; recording never throws | Pass | Fake `claude` exits 1; lens row kept, session row `failed`. `sumTranscriptTokens` and the recording loop are fail-soft. |
+| AC-6: Agent cell escaped, nine cells | Pass | `safeCell(entry.agent)` in `recordMetric`; tests in both test files. |
+| AC-7: identical header note in skeleton and template; orchestrator doc updated | Pass | Equality test; `docs/pipeline-orchestrator.md` and its mirror carry the same sentence. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The implementation matches the spec closely. It collects top-level sub-agent results and notification output files in `onLine`, and records lens rows in `finally` after the session row. Transcript summation dedups by `message.id`, and every failure path is fail-soft. No lens found a code-bug. The survivors are nits.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `tests/claude-subagent-metrics.test.ts:126-137` — the test titled "deduplicates results across resume fallback" doesn't exercise dedup. The first attempt emits no events, so removing the `subagentResults.some(...)` guard would still pass. It does confirm that rows are recorded once across a fallback, which the spec requires, so no AC is uncovered. Rename the test, or have the first attempt emit a duplicate result. (anchored; confidence high, severity low)
+- `src/orchestrator/agents/claude.ts:~193` — `!toolUseId ||` skips the dedup guard when a result has no `tool_use_id`. Such a row gets Tokens `-` anyway, and the spec doesn't cover it. (flagged by anchored and cold-Claude; severity low)
+- `src/orchestrator/agents/claude.ts` `finally` — the outer `try/catch` around the lens-row loop is nearly dead code, because `recordMetric` already catches its own write errors. It is defensive only, and no test covers a write failure for lens rows. (anchored; low)
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): root `docs/pipeline-invocations.md` lacks the new header note — the spec's Non-Goals explicitly exclude editing that header, because `canon upgrade` refreshes it from the template. `--ship` folds rows only.
+- Dismissed (cold-Claude): `sumTranscriptTokens` keeps only the first entry per `message.id`, which may undercount streamed output — this is the spec-mandated algorithm ("counting each `message.id` once"), and the spec records that it matched the harness figure on the captured run. Low confidence.
+- Dismissed (cold-Claude): cache-read tokens re-counted per turn make the figure not comparable — the spec defines Tokens as input + cache creation + cache read + output, the same sum as the session row's cumulative usage.
+- Dismissed (cold-Claude): rows from a discarded resume attempt are still recorded, and null-id events could duplicate — the spec says results are collected across both attempts and recorded once. The first attempt exits resume-not-found before emitting events. The null-id edge is covered in the nits above.
+- Dismissed (cold-Claude): the transcript may not exist or be flushed when read in `finally`, giving `-` — this is the specified safe failure (AC-3, Known Risks "Transcript timing").
+- Dismissed (cold-Claude): timestamps are taken at session end rather than at sub-agent completion — the spec says "the time the row is written, at the session's end, like every other row."
+- Dismissed (cold-Codex): no actionable findings.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
 ---
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
