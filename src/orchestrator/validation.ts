@@ -1440,7 +1440,7 @@ const HANDOFF_DIFF_EXEMPT_PATHS: ReadonlySet<string> = new Set<string>(PIPELINE_
 // canon-ai issue #41) hit a preflight loop where Codex iterating to address
 // nonexistent findings just appends more iteration sections to handoff/notes,
 // triggering the same rejection again.
-function isPipelineOwnedTaskArtifact(filePath: string, taskIds: readonly string[]): boolean {
+export function isPipelineOwnedTaskArtifact(filePath: string, taskIds: readonly string[]): boolean {
     return taskIds.some(id => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`));
 }
 
@@ -1526,6 +1526,9 @@ export function verifyHandoffAgainstDiffFromData(
         const files = handoffFilesByTask.get(taskId) ?? [];
         for (const filePath of files) {
             if (gitIgnored.has(filePath)) continue;
+            // A task's own listed artifact needs no committed change: the
+            // pipeline rewrites these, often with content identical to the base.
+            if (isPipelineOwnedTaskArtifact(filePath, [taskId])) continue;
             if (!coveredPaths.has(filePath)) {
                 issues.push(`[${taskId}] handoff→diff: ${filePath} listed in handoff but not in diff — it has no committed change against the task base. If it was untouched or rewritten with identical content, drop the row`);
             }

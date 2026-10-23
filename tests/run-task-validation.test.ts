@@ -1834,6 +1834,37 @@ void test('verifyHandoffAgainstDiffFromData exempts gitignored handoff entries f
     assert.deepEqual(issues, []);
 });
 
+void test('verifyHandoffAgainstDiffFromData skips a listed artifact of the task under review but not telemetry or another task\'s artifact', () => {
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a'],
+        {
+            diffFiles: ['src/foo.ts'],
+            handoffFilesByTask: makeHandoffMap({
+                'task-a': ['src/foo.ts', 'tasks/task-a/review.md', 'tasks/task-b/review.md', 'docs/pipeline-invocations.md'],
+            }),
+        },
+    );
+    assert.equal(issues.length, 2, issues.join('\n'));
+    assert.ok(issues.some(i => i.includes('tasks/task-b/review.md')));
+    assert.ok(issues.some(i => i.includes('docs/pipeline-invocations.md')));
+    assert.ok(!issues.some(i => i.includes('tasks/task-a/review.md')));
+});
+
+void test('verifyHandoffAgainstDiffFromData does not let one bundle member\'s handoff claim another member\'s artifact', () => {
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a', 'task-b'],
+        {
+            diffFiles: ['src/foo.ts'],
+            handoffFilesByTask: makeHandoffMap({
+                'task-a': ['src/foo.ts', 'tasks/task-b/review.md'],
+                'task-b': ['src/foo.ts', 'tasks/task-b/review.md'],
+            }),
+        },
+    );
+    assert.equal(issues.length, 1, issues.join('\n'));
+    assert.match(issues[0], /^\[task-a\] handoff→diff: tasks\/task-b\/review\.md/);
+});
+
 void test('verifyHandoffAgainstDiffFromData rejects a handoff file missing from diff', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
