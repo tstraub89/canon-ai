@@ -1913,7 +1913,7 @@ function assertOriginTaskBranchAbsent(branchName: string, baseBranch: string): v
         `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
         `  failed to delete it. Shipping silently would orphan the remote work.\n` +
         `  Resolve manually:\n` +
-        `    - If unmerged work: open + merge a PR (gh pr create --base ${baseBranch} --head ${branchName} ...).\n` +
+        `    - If unmerged work: open + merge a PR (gh pr create --base ${splitState.shellQuoteArg(baseBranch)} --head ${splitState.shellQuoteArg(branchName)} ...).\n` +
         `    - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`,
     );
 }

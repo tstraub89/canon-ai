@@ -2312,6 +2312,13 @@ void test('verifyBaseDivergenceFromData: single commit includes short-sha and fu
     );
 });
 
+void test('verifyBaseDivergenceFromData quotes a base branch the shell would otherwise reinterpret', () => {
+    const message = verifyBaseDivergenceFromData([
+        { sha: 'abcdef1234567890', subject: 'task(foo): commit artifacts' },
+    ], "release;next's");
+    assert.match(message, /^Fix: git push origin 'release;next'\\''s'$/m);
+});
+
 void test('verifyBaseDivergenceFromData: multiple commits listed in input order on separate lines', () => {
     const message = verifyBaseDivergenceFromData([
         { sha: 'aaaaaaa000000001', subject: 'first commit' },
