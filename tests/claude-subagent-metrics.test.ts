@@ -37,7 +37,9 @@ async function runFixture(events: Array<object | string>, options: { exit?: numb
         }
         const resolvedStream = stream.map(line => line.replaceAll('__TRANSCRIPT__', transcriptFiles.transcript ?? ''));
         const code = options.resumeId
-            ? `#!/usr/bin/env node\nif (process.argv.includes('--resume')) { console.error('No conversation found with session ID'); process.exit(1); }\n${resolvedStream.map(line => `console.log(${JSON.stringify(line)});`).join('\n')}\n`
+            // The failed resume attempt emits the same events before failing, so
+            // the fallback attempt sees each sub-agent result a second time.
+            ? `#!/usr/bin/env node\n${resolvedStream.map(line => `console.log(${JSON.stringify(line)});`).join('\n')}\nif (process.argv.includes('--resume')) { console.error('No conversation found with session ID'); process.exit(1); }\n`
             : `#!/usr/bin/env node\n${resolvedStream.map(line => `console.log(${JSON.stringify(line)});`).join('\n')}\nprocess.exit(${options.exit ?? 0});\n`;
         const executable = path.join(bin, 'claude');
         fs.writeFileSync(executable, code, { mode: 0o755 });
