@@ -411,6 +411,9 @@ void test('implement prompts state red-first evidence and pre-fix commit', () =>
     }
     assert.match(revisions, /scratch checkout of that commit with only the test applied/);
     assert.match(reroute, /Carry existing Red-First Evidence rows forward/);
+    // A reroute rewrites the handoff whole, so new rows go in its one table, not an Iteration subsection.
+    assert.match(reroute, /rewritten handoff’s `## Red-First Evidence` table/);
+    assert.doesNotMatch(reroute, /this round’s Iteration subsection/);
 });
 
 void test('round-N foreman reads red-first evidence across the whole handoff', () => {

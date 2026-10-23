@@ -7,7 +7,7 @@ import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies, scanA
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
 import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries, probeMergeConflicts, type MergeConflictProbe } from './git.js';
-import { readStatus, taskDirFor } from './state.js';
+import { readStatus, shellQuoteArg, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
 export type DocsRefsFinding = { file: string; line: number; ref: string; reason: string; raw: string };
@@ -1760,13 +1760,14 @@ export function verifyBaseDrift(
 
 export function verifyBaseDivergenceFromData(
     commits: readonly { sha: string; subject: string }[],
+    baseBranch: string,
 ): string {
     if (commits.length === 0) return '';
     const noun = commits.length === 1 ? 'commit' : 'commits';
     return [
-        `Base divergence detected: ${commits.length} colliding ${noun} on <base> not yet on origin/<base>; they will collide when <base> is pulled:`,
+        `Base divergence detected: ${commits.length} colliding ${noun} on ${baseBranch} not yet on origin/${baseBranch}; they will collide when ${baseBranch} is pulled:`,
         ...commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`),
-        'Fix: git push origin <base>',
+        `Fix: git push origin ${shellQuoteArg(baseBranch)}`,
         'Override: rerun with --allow-divergent-base to skip this commit-divergence check only.',
     ].join('\n');
 }

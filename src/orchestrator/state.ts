@@ -129,6 +129,12 @@ export function shellQuotePath(p: string): string {
     return `'${p.replace(/'/g, `'\\''`)}'`;
 }
 
+// Same, for a single argument such as a branch name: left bare when it holds
+// only characters the shell passes through literally, quoted otherwise.
+export function shellQuoteArg(arg: string): string {
+    return /^[A-Za-z0-9._\/@%+=:,-]+$/.test(arg) ? arg : shellQuotePath(arg);
+}
+
 export function assertTaskWorktreeWithinRoot(taskId: string): void {
     if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
     const resolved = resolveTaskCwd(taskId);

@@ -1509,7 +1509,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
         die(`--pr aborted: git error checking base divergence: ${baseDivergenceResult.stderr || 'unknown error'}`);
     } else if (!baseDivergenceResult.fetchFailed && baseDivergenceResult.commits.length > 0) {
         if (!cliArgs.allowDivergentBase) {
-            die(splitValidation.verifyBaseDivergenceFromData(baseDivergenceResult.commits));
+            die(splitValidation.verifyBaseDivergenceFromData(baseDivergenceResult.commits, baseBranch));
         }
         warn(
             `--allow-divergent-base override: bypassing base-divergence gate. Divergent commits:\n` +
@@ -1977,7 +1977,7 @@ function assertOriginTaskBranchAbsent(branchName: string, baseBranch: string): v
         `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
         `  failed to delete it. Shipping silently would orphan the remote work.\n` +
         `  Resolve manually:\n` +
-        `    - If unmerged work: open + merge a PR (gh pr create --base <base> --head ${branchName} ...).\n` +
+        `    - If unmerged work: open + merge a PR (gh pr create --base ${splitState.shellQuoteArg(baseBranch)} --head ${splitState.shellQuoteArg(branchName)} ...).\n` +
         `    - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`,
     );
 }
@@ -2577,7 +2577,7 @@ function shipTasks(taskIds: string[]): void {
         splitCli.die(`--ship aborted: git error checking base divergence: ${shipBaseDivergenceResult.stderr || 'unknown error'}`);
     } else if (!shipBaseDivergenceResult.fetchFailed && shipBaseDivergenceResult.commits.length > 0) {
         if (!cliArgs.allowDivergentBase) {
-            splitCli.die(splitValidation.verifyBaseDivergenceFromData(shipBaseDivergenceResult.commits));
+            splitCli.die(splitValidation.verifyBaseDivergenceFromData(shipBaseDivergenceResult.commits, baseBranch));
         }
         splitCli.warn(
             `--allow-divergent-base override: bypassing base-divergence gate at --ship. Divergent commits:\n` +
