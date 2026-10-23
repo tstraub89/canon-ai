@@ -1,5 +1,6 @@
 import { AgentSessionError } from './errors.js';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import { REPO_ROOT } from '../env.js';
 import { info, setExitReason, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
@@ -9,6 +10,32 @@ import type { ClaudeRunResult } from '../types.js';
 
 export const CLAUDE_RESUME_NOT_FOUND_RE = /No conversation found with session ID/i;
 export const CLAUDE_UNKNOWN_EFFORT_RE = /unknown (?:option|flag)[^\n]*--effort/i;
+
+function sumTranscriptTokens(file: string): number | undefined {
+    try {
+        const seen = new Set<string>();
+        let total = 0;
+        for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+            let entry: Record<string, unknown>;
+            try { entry = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+            if (entry.type !== 'assistant') continue;
+            const message = entry.message as { id?: unknown; usage?: Record<string, unknown> } | undefined;
+            if (!message?.usage) continue;
+            if (typeof message.id === 'string') {
+                if (seen.has(message.id)) continue;
+                seen.add(message.id);
+            }
+            const usage = message.usage;
+            for (const key of ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens']) {
+                const value = usage[key];
+                if (typeof value === 'number' && Number.isFinite(value)) total += value;
+            }
+        }
+        return total > 0 ? total : undefined;
+    } catch {
+        return undefined;
+    }
+}
 
 const CLAUDE_TOO_OLD_HINT = 'Claude Code is too old for canon — run `canon doctor` to verify (canon requires Claude Code 2.1.72+).';
 
@@ -75,6 +102,8 @@ export async function runClaude(
     let tokens: number | undefined;
     let processedText = '';
     let sessionId: string | null = null;
+    const subagentResults: Array<{ toolUseId: string | null; agentType: string; resolvedModel: string | null; durationMs: number; ok: boolean }> = [];
+    const notificationFiles = new Map<string, string>();
 
     try {
         if (interactive) {
@@ -149,6 +178,28 @@ export async function runClaude(
                     captured.text = (event.result as string | undefined) ?? null;
                     captured.sessionId = (event.session_id as string | undefined) ?? null;
                     captured.usage = (event.usage as ClaudeUsage | undefined) ?? null;
+                }
+                if (event.type === 'system' && event.subtype === 'task_notification'
+                    && typeof event.tool_use_id === 'string' && typeof event.output_file === 'string') {
+                    notificationFiles.set(event.tool_use_id, event.output_file);
+                }
+                if (event.type === 'user' && event.parent_tool_use_id == null) {
+                    const result = event.tool_use_result as Record<string, unknown> | undefined;
+                    if (result && typeof result.agentType === 'string'
+                        && typeof result.totalDurationMs === 'number' && Number.isFinite(result.totalDurationMs)) {
+                        const message = event.message as { content?: Array<Record<string, unknown>> } | undefined;
+                        const toolResult = message?.content?.find(block => block.type === 'tool_result' && typeof block.tool_use_id === 'string');
+                        const toolUseId = toolResult && typeof toolResult.tool_use_id === 'string' ? toolResult.tool_use_id : null;
+                        if (!toolUseId || !subagentResults.some(item => item.toolUseId === toolUseId)) {
+                            subagentResults.push({
+                                toolUseId,
+                                agentType: result.agentType,
+                                resolvedModel: typeof result.resolvedModel === 'string' ? result.resolvedModel : null,
+                                durationMs: result.totalDurationMs,
+                                ok: result.status === 'completed',
+                            });
+                        }
+                    }
                 }
             };
 
@@ -239,5 +290,16 @@ export async function runClaude(
         throw err;
     } finally {
         if (metricsContext) recordMetric({ ...metricsContext, agent: 'claude', model, durationMs: Date.now() - startMs, status, tokens });
+        if (metricsContext) {
+            try {
+                for (const result of subagentResults) {
+                    const file = result.toolUseId ? notificationFiles.get(result.toolUseId) : undefined;
+                    recordMetric({ ...metricsContext, agent: `claude:${result.agentType}`, model: result.resolvedModel ?? model,
+                        durationMs: result.durationMs, status: result.ok ? 'ok' : 'failed', tokens: file ? sumTranscriptTokens(file) : undefined });
+                }
+            } catch (error) {
+                warn(`metrics: could not record Claude sub-agent rows: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
     }
 }

@@ -1,0 +1,76 @@
+{
+  "id": "red-first-evidence-slot",
+  "title": "Red-first evidence section in the handoff, checked by the anchored lens",
+  "status": "complete",
+  "created": "2026-10-23",
+  "updated": "2026-10-23",
+  "branch": "task/red-first-evidence-slot",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "<unavailable>",
+    "orchestrator_commit": "920134261f744ac18416a0d5cec7fcf62b2d13be",
+    "canon_version": "3.12.0",
+    "codex_cli": "codex-cli 0.163.0",
+    "claude_code": "2.1.309 (Claude Code)"
+  },
+  "task_size": "S",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": true,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "done",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "done",
+      "agent": "claude",
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "qa": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "done",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "codex_spec_review": "01a16670-aee3-7d80-bdfa-c4791fd18571",
+    "codex": "01a16672-059b-7d41-bd4a-9baf7b3b25f6",
+    "claude_review": "9931fd9e-fcba-42c7-8779-3211afa45c9f"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`)."
+}

@@ -70,9 +70,19 @@ Installed-package mode identifies canon by `canon_version` rather than a borrowe
 
 ---
 
+## Red-first evidence is checked in anchored Stage 1, not pre-flight
+
+**Decision**: Red-first evidence is judged by the anchored code-review lens in Stage 1. No pre-flight or orchestrator code reads the evidence section or `[wrong-premise]` label.
+
+**Why**: The validation-outcome pre-flight is structural, not spec-matching (`docs/pipeline-orchestrator.md`, “The validation-outcome pre-flight is structural, not spec-matching”). Identifying red-first ACs requires reading the spec, so the anchored lens is the right place for this check.
+
+**Rule**: Check the handoff evidence across its baseline section and Iteration subsections for each AC the spec states as a red-first regression test.
+
+---
+
 ## Two-stage code review with Stage 1 as a gate
 
-**Decision**: Code review runs in two stages. Stage 1 verifies spec compliance (validation outcomes, AC coverage, dropped sections); if Stage 1 fails, Stage 2 (code quality) is skipped entirely and the review sends back to Codex.
+**Decision**: Code review runs in two stages. Stage 1 verifies spec compliance (validation outcomes, AC coverage, red-first evidence, dropped sections); if Stage 1 fails, Stage 2 (code quality) is skipped entirely and the review sends back to Codex.
 
 **Why**: The alternative — one review pass that mixes both — was simpler but produced two failure modes. **(1)** Stage 2 findings written against code that's about to change waste tokens (Codex re-implements; the Stage 2 nits become irrelevant or wrong). **(2)** Reviewers fall into "code quality" mode and miss spec-compliance failures because the code looks fine on its own. Stage 1 as a gate forces the reviewer to assess "does this match the spec?" before "is this well-written?" — a different lens that catches different bugs. The cost (re-running both stages on iteration) is bounded by `MAX_REVIEW_LOOPS`.
 

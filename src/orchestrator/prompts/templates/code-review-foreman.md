@@ -18,7 +18,7 @@ Tasks:
 This is Round 1, the initial code review.
 {{/isRound1}}
 {{^isRound1}}
-This is Round {{roundN}}: re-review after iteration {{priorIteration}}. All three lenses run again this round. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.
+This is Round {{roundN}}: re-review after iteration {{priorIteration}}. All three lenses run again this round. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}. Also tell the anchored lens that red-first evidence is read across the whole handoff (baseline section and every Iteration subsection), not only that Iteration section.
 {{#tightenLine}}
 {{{tightenLine}}}
 {{/tightenLine}}

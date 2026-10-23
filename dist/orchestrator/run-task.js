@@ -1922,12 +1922,12 @@ function resolveDocsFreshness(config3, diff) {
 // src/orchestrator/main.ts
 import { spawnSync as spawnSync7 } from "child_process";
 import { createHash } from "crypto";
-import fs23 from "fs";
+import fs24 from "fs";
 import os from "os";
 import path22 from "path";
 
 // src/orchestrator/phases/code-review.ts
-import fs17 from "fs";
+import fs18 from "fs";
 import path16 from "path";
 
 // src/lib/pipeline-policy.ts
@@ -2184,6 +2184,7 @@ function isPlanCombined2(status) {
 
 // src/orchestrator/agents/claude.ts
 import { spawn as spawn2 } from "child_process";
+import fs9 from "fs";
 
 // src/orchestrator/metrics.ts
 import fs8 from "fs";
@@ -2193,6 +2194,7 @@ var METRICS_SKELETON = [
   "",
   "> Auto-logged by canon's orchestrator. One row per agent invocation.",
   "> Tokens: per-invocation total (input + cache + output). Parsed from the agent's structured output \u2014 `claude -p --output-format stream-json` for Claude, `codex exec --json` for Codex. Interactive-mode invocations are not tracked.",
+  "> Sub-agent rows: a Claude session that spawns sub-agents also logs one row per top-level sub-agent, Agent `claude:<agent type>`. Their Tokens are that sub-agent's own cumulative usage and are separate from (not included in) the session row.",
   "",
   "| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |",
   "|---|---|---|---|---|---|---|---|---|",
@@ -2221,7 +2223,7 @@ function recordMetric(entry) {
     const tok = entry.tokens != null ? String(entry.tokens) : "-";
     fs8.appendFileSync(
       metricsFile,
-      `| ${(/* @__PURE__ */ new Date()).toISOString()} | ${entry.taskId} | ${entry.phase} | ${entry.agent} | ${safeCell(entry.model)} | ${entry.iteration ?? "-"} | ${dur} | ${tok} | ${entry.status} |
+      `| ${(/* @__PURE__ */ new Date()).toISOString()} | ${entry.taskId} | ${entry.phase} | ${safeCell(entry.agent)} | ${safeCell(entry.model)} | ${entry.iteration ?? "-"} | ${dur} | ${tok} | ${entry.status} |
 `
     );
   } catch (error) {
@@ -2382,6 +2384,35 @@ function formatLiveTick(event) {
 // src/orchestrator/agents/claude.ts
 var CLAUDE_RESUME_NOT_FOUND_RE = /No conversation found with session ID/i;
 var CLAUDE_UNKNOWN_EFFORT_RE = /unknown (?:option|flag)[^\n]*--effort/i;
+function sumTranscriptTokens(file) {
+  try {
+    const seen = /* @__PURE__ */ new Set();
+    let total = 0;
+    for (const line of fs9.readFileSync(file, "utf8").split(/\r?\n/)) {
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry.type !== "assistant") continue;
+      const message = entry.message;
+      if (!message?.usage) continue;
+      if (typeof message.id === "string") {
+        if (seen.has(message.id)) continue;
+        seen.add(message.id);
+      }
+      const usage = message.usage;
+      for (const key of ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"]) {
+        const value = usage[key];
+        if (typeof value === "number" && Number.isFinite(value)) total += value;
+      }
+    }
+    return total > 0 ? total : void 0;
+  } catch {
+    return void 0;
+  }
+}
 var CLAUDE_TOO_OLD_HINT = "Claude Code is too old for canon \u2014 run `canon doctor` to verify (canon requires Claude Code 2.1.72+).";
 function printClaudeTooOldHint(capturedStderr) {
   if (CLAUDE_UNKNOWN_EFFORT_RE.test(capturedStderr)) {
@@ -2428,6 +2459,8 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
   let tokens;
   let processedText = "";
   let sessionId = null;
+  const subagentResults = [];
+  const notificationFiles = /* @__PURE__ */ new Map();
   try {
     if (interactive) {
       console.log("");
@@ -2504,6 +2537,26 @@ ${renderedPrompt}`;
           captured.text = event.result ?? null;
           captured.sessionId = event.session_id ?? null;
           captured.usage = event.usage ?? null;
+        }
+        if (event.type === "system" && event.subtype === "task_notification" && typeof event.tool_use_id === "string" && typeof event.output_file === "string") {
+          notificationFiles.set(event.tool_use_id, event.output_file);
+        }
+        if (event.type === "user" && event.parent_tool_use_id == null) {
+          const result2 = event.tool_use_result;
+          if (result2 && typeof result2.agentType === "string" && typeof result2.totalDurationMs === "number" && Number.isFinite(result2.totalDurationMs)) {
+            const message = event.message;
+            const toolResult = message?.content?.find((block) => block.type === "tool_result" && typeof block.tool_use_id === "string");
+            const toolUseId = toolResult && typeof toolResult.tool_use_id === "string" ? toolResult.tool_use_id : null;
+            if (!toolUseId || !subagentResults.some((item) => item.toolUseId === toolUseId)) {
+              subagentResults.push({
+                toolUseId,
+                agentType: result2.agentType,
+                resolvedModel: typeof result2.resolvedModel === "string" ? result2.resolvedModel : null,
+                durationMs: result2.totalDurationMs,
+                ok: result2.status === "completed"
+              });
+            }
+          }
         }
       };
       const result = await streamProcess("claude", args, {
@@ -2582,6 +2635,23 @@ ${renderedPrompt}`;
     throw err;
   } finally {
     if (metricsContext) recordMetric({ ...metricsContext, agent: "claude", model, durationMs: Date.now() - startMs, status, tokens });
+    if (metricsContext) {
+      try {
+        for (const result of subagentResults) {
+          const file = result.toolUseId ? notificationFiles.get(result.toolUseId) : void 0;
+          recordMetric({
+            ...metricsContext,
+            agent: `claude:${result.agentType}`,
+            model: result.resolvedModel ?? model,
+            durationMs: result.durationMs,
+            status: result.ok ? "ok" : "failed",
+            tokens: file ? sumTranscriptTokens(file) : void 0
+          });
+        }
+      } catch (error) {
+        warn(`metrics: could not record Claude sub-agent rows: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 }
 
@@ -2842,7 +2912,7 @@ function evaluateCodeReviewLoop(tasks, cap) {
 
 // src/orchestrator/validation.ts
 import { spawnSync as spawnSync4 } from "child_process";
-import fs9 from "fs";
+import fs10 from "fs";
 import path8 from "path";
 
 // src/orchestrator/markdown-table.ts
@@ -3126,7 +3196,7 @@ function filterArtifactFindings(findings, artifactPaths) {
   return findings.filter((finding) => artifactSet.has(finding.file));
 }
 function runDocsRefsCheck(cwd, scriptPath) {
-  if (!fs9.existsSync(scriptPath)) return { kind: "absent" };
+  if (!fs10.existsSync(scriptPath)) return { kind: "absent" };
   const result = spawnSync4("node", [scriptPath], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
@@ -3186,7 +3256,7 @@ function normalizeCheckLabel(value) {
 }
 function parseValidationRequiredChecks(specPath) {
   try {
-    const content = fs9.readFileSync(specPath, "utf8");
+    const content = fs10.readFileSync(specPath, "utf8");
     const section = content.match(/## Validation Required\n\n([\s\S]*?)(?:\n## |\n# |$)/);
     if (!section) return null;
     const checks = [];
@@ -3278,7 +3348,7 @@ function verifyRerouteAmendment(taskId, requiredRound) {
   const specPath = path8.join(taskDirFor(taskId), "spec.md");
   let content;
   try {
-    content = fs9.readFileSync(specPath, "utf8");
+    content = fs10.readFileSync(specPath, "utf8");
   } catch {
     return { amended: false, reason: `spec.md missing at ${specPath}` };
   }
@@ -3453,7 +3523,7 @@ function classifyPreflightBlockers(taskId, changedFiles, bundleDiffIssues = []) 
   const handoffPath = path8.join(taskDirFor(taskId), "handoff.md");
   const specPath = path8.join(taskDirFor(taskId), "spec.md");
   try {
-    const content = fs9.readFileSync(handoffPath, "utf8");
+    const content = fs10.readFileSync(handoffPath, "utf8");
     const latestResults = computeLatestValidationResults(content);
     const requiredChecks = parseValidationRequiredChecks(specPath);
     const { malformed } = parseHandoffChangesRows(taskId);
@@ -3485,7 +3555,7 @@ function validateHandoffAgainstSpec(specPath, handoffPath, latestResults, change
     rowMap = latestResults;
   } else {
     try {
-      const content = fs9.readFileSync(handoffPath, "utf8");
+      const content = fs10.readFileSync(handoffPath, "utf8");
       rowMap = computeLatestValidationResults(content);
     } catch {
       rowMap = /* @__PURE__ */ new Map();
@@ -3539,7 +3609,7 @@ function isTemplateUnfilled(content) {
 function isDoneMdTemplate(donePath) {
   let content;
   try {
-    content = fs9.readFileSync(donePath, "utf8");
+    content = fs10.readFileSync(donePath, "utf8");
   } catch {
     return true;
   }
@@ -3548,7 +3618,7 @@ function isDoneMdTemplate(donePath) {
 function isPrBodyTemplate(prBodyPath) {
   let content;
   try {
-    content = fs9.readFileSync(prBodyPath, "utf8");
+    content = fs10.readFileSync(prBodyPath, "utf8");
   } catch {
     return true;
   }
@@ -3594,7 +3664,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     const artifactPath = path8.join(taskDir, config3.artifactName);
     let content;
     try {
-      content = fs9.readFileSync(artifactPath, "utf8");
+      content = fs10.readFileSync(artifactPath, "utf8");
     } catch {
       return { ok: false, reason: `${config3.artifactName} is missing for phase '${phase}'` };
     }
@@ -3606,7 +3676,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     if (phase === "spec_review" || phase === "plan") {
       let statusRaw;
       try {
-        statusRaw = fs9.readFileSync(path8.join(taskDir, "status.json"), "utf8");
+        statusRaw = fs10.readFileSync(path8.join(taskDir, "status.json"), "utf8");
       } catch {
         return { ok: false, reason: `cannot determine reroute state for '${phase}': status.json in ${taskDir} is missing or unreadable` };
       }
@@ -3644,7 +3714,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     const handoffPath = path8.join(taskDir, "handoff.md");
     let handoffContent;
     try {
-      handoffContent = fs9.readFileSync(handoffPath, "utf8");
+      handoffContent = fs10.readFileSync(handoffPath, "utf8");
     } catch {
       return { ok: false, reason: `closing human_review requires a handoff.md \u2014 none found in ${taskDir}` };
     }
@@ -3653,7 +3723,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     const donePath = path8.join(taskDir, "done.md");
     let doneContent = "";
     try {
-      doneContent = fs9.readFileSync(donePath, "utf8");
+      doneContent = fs10.readFileSync(donePath, "utf8");
     } catch {
     }
     if (hasHumanPendingWaiver(doneContent)) return { ok: true };
@@ -3674,7 +3744,7 @@ function parseHandoffChangesRows(taskId) {
   const handoffPath = path8.join(taskDirFor(taskId), "handoff.md");
   let content;
   try {
-    content = fs9.readFileSync(handoffPath, "utf8");
+    content = fs10.readFileSync(handoffPath, "utf8");
   } catch {
     return { files: [], malformed: [] };
   }
@@ -3701,7 +3771,7 @@ function parseAffectedFilesFromSpec(taskId) {
   const specPath = path8.join(taskDirFor(taskId), "spec.md");
   let content;
   try {
-    content = fs9.readFileSync(specPath, "utf8");
+    content = fs10.readFileSync(specPath, "utf8");
   } catch {
     return { files: [], malformed: [] };
   }
@@ -4095,7 +4165,7 @@ function verifyHandoffAgainstDiff(taskIds, baseRef) {
   for (const taskId of taskIds) {
     let content;
     try {
-      content = fs9.readFileSync(path8.join(taskDirFor(taskId), "handoff.md"), "utf8");
+      content = fs10.readFileSync(path8.join(taskDirFor(taskId), "handoff.md"), "utf8");
     } catch {
       continue;
     }
@@ -4158,7 +4228,7 @@ function verifyBaseDivergenceFromData(commits) {
 function verifyBaseDivergence(baseBranch, cwd) {
   const fetchResult = gitSafeAt(cwd, "fetch", "origin", baseBranch);
   if (!fetchResult.ok) {
-    if (!fs9.existsSync(cwd)) {
+    if (!fs10.existsSync(cwd)) {
       return { commits: [], ok: false, stderr: fetchResult.stderr, fetchFailed: false };
     }
     warn(
@@ -4242,11 +4312,11 @@ function buildSharedDocAbortMessage(abortedFiles) {
 }
 
 // src/orchestrator/prompts/index.ts
-import fs13 from "fs";
+import fs14 from "fs";
 import path12 from "path";
 
 // src/orchestrator/context.ts
-import fs10 from "fs";
+import fs11 from "fs";
 import path9 from "path";
 function extractAffectedFiles(taskId) {
   try {
@@ -4260,7 +4330,7 @@ function isSafeRepoPath(file) {
   const resolved = path9.resolve(REPO_ROOT, file);
   if (!resolved.startsWith(REPO_ROOT + path9.sep)) return false;
   try {
-    const real = fs10.realpathSync(resolved);
+    const real = fs11.realpathSync(resolved);
     if (!real.startsWith(REPO_ROOT + path9.sep)) return false;
   } catch {
   }
@@ -4274,7 +4344,7 @@ function buildContextBlock(taskIds) {
       if (!isSafeRepoPath(file)) continue;
       const filePath = path9.join(REPO_ROOT, file);
       try {
-        allFiles.set(file, fs10.readFileSync(filePath, "utf8"));
+        allFiles.set(file, fs11.readFileSync(filePath, "utf8"));
       } catch {
       }
     }
@@ -4305,7 +4375,7 @@ ${content}
 function buildKnownPitfalls(taskIds) {
   const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path9.join(getActiveCwd(taskIds), "docs/patterns.md");
   try {
-    const content = fs10.readFileSync(patternsPath, "utf8");
+    const content = fs11.readFileSync(patternsPath, "utf8");
     const match = content.match(/## Known Pitfalls\n\n([\s\S]*?)(?:\n## |\n---|\n# |$)/);
     if (!match) return "";
     return `
@@ -4322,7 +4392,7 @@ function buildKnownRisks(taskIds) {
   const riskBlocks = taskIds.map((taskId) => {
     const specPath = path9.join(taskDirFor(taskId), "spec.md");
     try {
-      const content = fs10.readFileSync(specPath, "utf8");
+      const content = fs11.readFileSync(specPath, "utf8");
       const match = content.match(/## Known Risks\n\n([\s\S]*?)(?:\n## |\n# |$)/);
       if (!match) return "";
       const risks = match[1].trim();
@@ -4349,7 +4419,7 @@ function summarizePreloadStatus(taskIds) {
       if (!isSafeRepoPath(file)) continue;
       const filePath = path9.join(REPO_ROOT, file);
       try {
-        files.set(file, fs10.statSync(filePath).size);
+        files.set(file, fs11.statSync(filePath).size);
       } catch {
         files.set(file, 0);
       }
@@ -4366,7 +4436,7 @@ function summarizePreloadStatus(taskIds) {
 function extractValidationChecks(taskId) {
   const specPath = path9.join(taskDirFor(taskId), "spec.md");
   try {
-    const content = fs10.readFileSync(specPath, "utf8");
+    const content = fs11.readFileSync(specPath, "utf8");
     const section = content.match(/## Validation Required\n\n([\s\S]*?)(?:\n## |\n# |$)/);
     if (!section) return [];
     const checks = [];
@@ -4382,7 +4452,7 @@ function extractValidationChecks(taskId) {
 function extractAcSummary(taskId) {
   const specPath = path9.join(taskDirFor(taskId), "spec.md");
   try {
-    const content = fs10.readFileSync(specPath, "utf8");
+    const content = fs11.readFileSync(specPath, "utf8");
     const lines = [];
     for (const line of content.split("\n")) {
       const match = line.match(/^-\s+\[[ x]\]\s+(AC-[\w.-]+):\s+(.+)$/);
@@ -4472,11 +4542,11 @@ ${acSection}`;
 }
 
 // src/orchestrator/review-archive.ts
-import fs12 from "fs";
+import fs13 from "fs";
 import path11 from "path";
 
 // src/task/templates.ts
-import fs11 from "fs";
+import fs12 from "fs";
 import path10 from "path";
 function tasksRoot() {
   return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
@@ -4489,17 +4559,17 @@ function taskTemplateOverrideRoot() {
 }
 function resolveTaskTemplateSource(basename) {
   const override = path10.join(taskTemplateOverrideRoot(), basename);
-  if (fs11.existsSync(override)) return override;
+  if (fs12.existsSync(override)) return override;
   const managed = path10.join(templatesRoot(), basename);
-  return fs11.existsSync(managed) ? managed : null;
+  return fs12.existsSync(managed) ? managed : null;
 }
 function renderTaskTemplate(source, taskId, title) {
-  return fs11.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
+  return fs12.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
 }
 function scaffoldTaskArtifact(taskDir, basename, taskId, title) {
   const source = resolveTaskTemplateSource(basename);
   if (!source) return null;
-  fs11.writeFileSync(path10.join(taskDir, basename), renderTaskTemplate(source, taskId, title), "utf8");
+  fs12.writeFileSync(path10.join(taskDir, basename), renderTaskTemplate(source, taskId, title), "utf8");
   return source;
 }
 function isPristineTaskArtifact(content, basename, taskId, title) {
@@ -4519,13 +4589,13 @@ var COLD_CODEX_ARCHIVE_PREFIX = "review-cold-codex-run-";
 var COLD_CODEX_ARCHIVE_RE = /^review-cold-codex-run-(\d+)\.md$/;
 function writeColdCodexArchive(taskDir, header, findings) {
   let newest = 0;
-  for (const name2 of fs12.readdirSync(taskDir)) {
+  for (const name2 of fs13.readdirSync(taskDir)) {
     const match = COLD_CODEX_ARCHIVE_RE.exec(name2);
     if (match) newest = Math.max(newest, Number(match[1]));
   }
   const name = `${COLD_CODEX_ARCHIVE_PREFIX}${newest + 1}.md`;
   const reason = header.reason.replaceAll('"', "'");
-  fs12.writeFileSync(
+  fs13.writeFileSync(
     path11.join(taskDir, name),
     `<!-- round=${header.round} reviewed_sha=${header.reviewedSha} scope=${header.scope} base=${header.base} reason="${reason}" -->
 
@@ -4548,7 +4618,7 @@ function parseColdCodexArchiveHeader(content) {
 function findColdCodexArchiveForRound(taskDir, round) {
   let names;
   try {
-    names = fs12.readdirSync(taskDir);
+    names = fs13.readdirSync(taskDir);
   } catch {
     return null;
   }
@@ -4559,7 +4629,7 @@ function findColdCodexArchiveForRound(taskDir, round) {
   for (const { name } of numbered) {
     let content;
     try {
-      content = fs12.readFileSync(path11.join(taskDir, name), "utf8");
+      content = fs13.readFileSync(path11.join(taskDir, name), "utf8");
     } catch {
       continue;
     }
@@ -4571,14 +4641,14 @@ function findColdCodexArchiveForRound(taskDir, round) {
 function hasMalformedColdCodexArchive(taskDir) {
   let names;
   try {
-    names = fs12.readdirSync(taskDir);
+    names = fs13.readdirSync(taskDir);
   } catch {
     return false;
   }
   return names.some((name) => {
     if (!COLD_CODEX_ARCHIVE_RE.test(name)) return false;
     try {
-      return parseColdCodexArchiveHeader(fs12.readFileSync(path11.join(taskDir, name), "utf8")) === null;
+      return parseColdCodexArchiveHeader(fs13.readFileSync(path11.join(taskDir, name), "utf8")) === null;
     } catch {
       return true;
     }
@@ -4587,7 +4657,7 @@ function hasMalformedColdCodexArchive(taskDir) {
 var REVIEW_ARCHIVE_RE = new RegExp(`^${REVIEW_ARCHIVE_PREFIX}(\\d+)\\.md$`);
 function newestReviewArchiveNumber(taskDir) {
   let newest = 0;
-  for (const name of fs12.readdirSync(taskDir)) {
+  for (const name of fs13.readdirSync(taskDir)) {
     const match = REVIEW_ARCHIVE_RE.exec(name);
     if (match) newest = Math.max(newest, Number(match[1]));
   }
@@ -4599,21 +4669,21 @@ function findNewestReviewArchive(taskDir) {
 }
 function archivePriorReview(taskDir, options = {}) {
   const reviewPath = path11.join(taskDir, "review.md");
-  if (!fs12.existsSync(reviewPath)) return null;
+  if (!fs13.existsSync(reviewPath)) return null;
   if (options.skipUnfilledTemplate) {
-    const content = fs12.readFileSync(reviewPath, "utf8");
+    const content = fs13.readFileSync(reviewPath, "utf8");
     if (isTemplateUnfilled(content)) return null;
     if (options.scaffold && isPristineTaskArtifact(content, "review.md", options.scaffold.taskId, options.scaffold.title)) {
       return null;
     }
   }
   const archiveName = `${REVIEW_ARCHIVE_PREFIX}${newestReviewArchiveNumber(taskDir) + 1}.md`;
-  fs12.renameSync(reviewPath, path11.join(taskDir, archiveName));
+  fs13.renameSync(reviewPath, path11.join(taskDir, archiveName));
   return archiveName;
 }
 function rescaffoldReview(taskDir, identity) {
   try {
-    if (fs12.existsSync(path11.join(taskDir, "review.md"))) return { outcome: "exists" };
+    if (fs13.existsSync(path11.join(taskDir, "review.md"))) return { outcome: "exists" };
     const source = scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
     return source ? { outcome: "written", source } : { outcome: "no-template" };
   } catch (error) {
@@ -5087,16 +5157,16 @@ function renderTemplate(template, view) {
 }
 
 // src/orchestrator/prompts/templates/code-review-foreman.md
-var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n## Code-Review Rules of Thumb (Foreman)\n\n- **Reviewer diffs against the task baseline, not `main`, on release branches**: on a shared release branch ahead of `main`, always diff against the task's baseline \u2014 diffing against `main` attributes unrelated work to the task.\n- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: when operating across REPO_ROOT and a task worktree, `git -C /absolute/path` avoids silent cwd reversion between tool calls.\n- **Don't infer one git invariant from another**: `git status --porcelain` empty \u2260 origin matches HEAD; `origin/<branch>` exists \u2260 origin matches HEAD; PR exists \u2260 PR is in the expected state. Do the actual check directly.\n- **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At \u22653 sites, extract the shared helper and route all sites through it.\n\nYour job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. All three lenses run again this round. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n**Scope:** {{{scopeWord}}} \u2014 base `{{{scopeBase}}}` \u2014 reason: {{{scopeReason}}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give the Claude lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold-Claude lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n{{#isDeltaScope}}\n\n{{#hasDeltaDiff}}\nDelta diff (`{{{deltaBase}}}..HEAD`) \u2014 give this delta to the cold-Claude lens:\n\n```diff\n{{{deltaDiffContent}}}\n```\n{{#deltaDiffTruncated}}\n> Delta diff truncated at 50 000 bytes. Give the cold-Claude lens the visible delta first; for the remainder, direct it to `git diff {{{deltaBase}}}..HEAD`.\n{{/deltaDiffTruncated}}\n{{/hasDeltaDiff}}\n{{^hasDeltaDiff}}\nThe delta diff could not be injected. Retrieve it with `git diff {{{deltaBase}}}..HEAD` and give it to the cold-Claude lens before it reviews.\n{{/hasDeltaDiff}}\n{{/isDeltaScope}}\n\n## Injected Cold-Codex Findings\n\n{{#hasColdCodexFindings}}\nThe orchestrator ran `codex review` before spawning you. Its findings are reproduced below. These are unanchored: Codex reviewed adversarially without the spec as a checklist. Treat them as the third lens input. Do not re-run Codex; synthesize these findings alongside the Claude lens outputs.\n{{#isDeltaScope}}\nFor this round, cold-Codex reviewed only `{{{deltaBase}}}..HEAD`.\n{{/isDeltaScope}}\n{{^isDeltaScope}}\nFor this round, cold-Codex reviewed the full task diff against `{{{baseBranch}}}`.\n{{/isDeltaScope}}\n\n{{{coldCodexFindings}}}\n{{/hasColdCodexFindings}}\n{{^hasColdCodexFindings}}\nNo cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.\n{{/hasColdCodexFindings}}\n\n{{#hasOutOfScopeFiles}}\n## Full-Send Scope Judgment\n\nThe task changed these files outside the spec's `### Affected Files` table:\n\n{{{outOfScopeFilesList}}}\n\nJudge each file against the owning task's ACs and record its outcome and reason in `review.md`:\n\n1. **Appropriate scope expansion:** If needed to meet the ACs and consistent with the spec's intent, append an `## Amendment (full-send scope)` section to the owning task's `spec.md` (use exactly that heading; a bare `## Amendment` is reserved for human reroute amendments). Include an exact `### Affected Files` heading and table row naming the file, plus a one-line reason that calls it a full-send scope expansion.\n2. **Spec miss:** If the spec should have listed the file, append the same `## Amendment (full-send scope)` section and exact `### Affected Files` table row, with a one-line reason that calls it a spec miss.\n3. **Should not have been changed:** Do not amend the spec. Write a finding requiring the file to be reverted or removed, and set the verdict to `changes_requested`.\n\nFor a bundle, amend the member spec whose ACs the file serves. The orchestrator checks after code review completes: every listed file must be in a member's Affected Files or a `changes_requested` verdict must route it back to implement. The legacy `needs_re_review` verdict routes the same way. A `spec_gap` verdict blocks for human triage and names any files still outside Affected Files; blessing that verdict does not amend the spec. An approved review with unjudged files auto-blocks.\n\n{{/hasOutOfScopeFiles}}\n## Foreman Protocol\n\n### 1. Spawn Claude Lenses In Parallel\n\nSpawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in older harnesses) in a single message so they run concurrently, and run them **in the foreground** (`run_in_background: false`) so the call returns their findings. Do not spawn them in the background and do not end your turn to wait for them: a turn that ends while a lens is still running ends the code review with no `review.md` and no verdict, and the phase is retried from scratch. Your turn ends only after step 5 below has run.\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n{{#isDeltaScope}}\n- Retrieve the full task diff with `git diff {{{baseBranch}}}...HEAD` and give it that full diff, not the delta, plus `spec.md`, `handoff.md`, and prior `review.md`.\n{{/isDeltaScope}}\n{{^isDeltaScope}}\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n{{/isDeltaScope}}\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold-Claude lens** (`subagent_type: code-review-cold`)\n{{#isDeltaScope}}\n- This round is delta-scoped. Give it the delta (`{{{deltaBase}}}..HEAD`) and the delta base ref only.\n{{/isDeltaScope}}\n{{^isDeltaScope}}\n- Give it the full diff and base ref only.\n{{/isDeltaScope}}\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- Separately, its sibling-site sweep may search other code files for guards, checks, and invariants that need the same treatment. Keep the search spec-blind.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nThe injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.\n\nSpawn exactly the two Claude lenses above each round, plus at most one re-spawn of a lens whose return is missing. Spawn no other reviewers or review agents, run no review skills, and never substitute your own review for a lens's return.\n\nA lens return is valid when it follows that lens's charter return format. This includes a clean empty form (`STAGE_2_FINDINGS: (none)` or `COLD_FINDINGS: (none)`) and the anchored Stage 1 fail form (`STAGE_1: fail`, no Stage 2 findings, `OVERALL_SIGNAL: changes_requested`). A return is missing if absent or outside the charter format. Re-spawn a missing lens once with the same inputs. If still missing, do not approve or guess at its findings: it is not approval evidence. Write `review.md` recording which lens was missing and what came back, check no verdict box, then run the `code_review blocked` commands in step 5 for every task. Other lenses' findings may be recorded but not adjudicated into a verdict.\n\n### 2. Adjudicate\n\nUse the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs. A clean return in the charter's empty form is a valid result; only a missing return (step 1) is a lens failure. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record \"flagged by N lenses.\" A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement \u2014 the same behavior flagged by cold-Claude and cold-Codex \u2014 must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.\n2. Keep the two reconciliation checks separate:\n   - Does it hold against the code? For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.\n   - Is it in spec scope? Apply this only to anchored-lens findings as part of the Stage 1 / Stage 2 charter.\n   - Forbidden: do not dismiss a verified cold-Claude or cold-Codex finding merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Optional nits or cleanup without blocking findings -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nWhen you cite a section of a Markdown doc with the quoted form `\xA7\"\u2026\"`, the quoted text must be an exact heading in that file. To point at a bold-lead paragraph or anything that is not a heading, use `file:line` or the unquoted `\xA7Name` form instead.\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nEvery round \u2014 the Round 1 body and each `## Round N` section \u2014 includes one scope line near the top: **Scope:** {{{scopeWord}}} \u2014 base `{{{scopeBase}}}` \u2014 reason: {{{scopeReason}}}. The numbered cold-Codex archive header is the machine-readable record.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable (except the missing-lens stop in step 1, which checks none).\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n\nIf a lens was still missing after its re-spawn (step 1), write `review.md` first, then run these instead, with no verdict \u2014 this stops the run for the human:\n{{{blockedCommands}}}\n";
+var code_review_foreman_default = "You are the synthesis foreman for the code review phase for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n## Code-Review Rules of Thumb (Foreman)\n\n- **Reviewer diffs against the task baseline, not `main`, on release branches**: on a shared release branch ahead of `main`, always diff against the task's baseline \u2014 diffing against `main` attributes unrelated work to the task.\n- **Use `git -C <absolute-path>` for every worktree git op, not `cd` + git**: when operating across REPO_ROOT and a task worktree, `git -C /absolute/path` avoids silent cwd reversion between tool calls.\n- **Don't infer one git invariant from another**: `git status --porcelain` empty \u2260 origin matches HEAD; `origin/<branch>` exists \u2260 origin matches HEAD; PR exists \u2260 PR is in the expected state. Do the actual check directly.\n- **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At \u22653 sites, extract the shared helper and route all sites through it.\n\nYour job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.\n\nTasks:\n{{{taskLines}}}\n\n{{#isRound1}}\nThis is Round 1, the initial code review.\n{{/isRound1}}\n{{^isRound1}}\nThis is Round {{roundN}}: re-review after iteration {{priorIteration}}. All three lenses run again this round. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}. Also tell the anchored lens that red-first evidence is read across the whole handoff (baseline section and every Iteration subsection), not only that Iteration section.\n{{#tightenLine}}\n{{{tightenLine}}}\n{{/tightenLine}}\n{{/isRound1}}\n\n**Scope:** {{{scopeWord}}} \u2014 base `{{{scopeBase}}}` \u2014 reason: {{{scopeReason}}}\n\n{{#hasDiff}}\nTask diff against {{{baseBranch}}}:\n\n```diff\n{{{diffContent}}}\n```\n{{#diffTruncated}}\n> Diff truncated at 50 000 bytes. Give the Claude lenses the visible diff first; for the omitted remainder, direct them to inspect only the changed files named in the handoff Changes table. Do not give the cold-Claude lens spec, AC, or canon-doc context.\n{{/diffTruncated}}\n{{/hasDiff}}\n{{^hasDiff}}\nRetrieve the task diff with `git diff {{{baseBranch}}}...HEAD`.\n{{/hasDiff}}\n{{#isDeltaScope}}\n\n{{#hasDeltaDiff}}\nDelta diff (`{{{deltaBase}}}..HEAD`) \u2014 give this delta to the cold-Claude lens:\n\n```diff\n{{{deltaDiffContent}}}\n```\n{{#deltaDiffTruncated}}\n> Delta diff truncated at 50 000 bytes. Give the cold-Claude lens the visible delta first; for the remainder, direct it to `git diff {{{deltaBase}}}..HEAD`.\n{{/deltaDiffTruncated}}\n{{/hasDeltaDiff}}\n{{^hasDeltaDiff}}\nThe delta diff could not be injected. Retrieve it with `git diff {{{deltaBase}}}..HEAD` and give it to the cold-Claude lens before it reviews.\n{{/hasDeltaDiff}}\n{{/isDeltaScope}}\n\n## Injected Cold-Codex Findings\n\n{{#hasColdCodexFindings}}\nThe orchestrator ran `codex review` before spawning you. Its findings are reproduced below. These are unanchored: Codex reviewed adversarially without the spec as a checklist. Treat them as the third lens input. Do not re-run Codex; synthesize these findings alongside the Claude lens outputs.\n{{#isDeltaScope}}\nFor this round, cold-Codex reviewed only `{{{deltaBase}}}..HEAD`.\n{{/isDeltaScope}}\n{{^isDeltaScope}}\nFor this round, cold-Codex reviewed the full task diff against `{{{baseBranch}}}`.\n{{/isDeltaScope}}\n\n{{{coldCodexFindings}}}\n{{/hasColdCodexFindings}}\n{{^hasColdCodexFindings}}\nNo cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.\n{{/hasColdCodexFindings}}\n\n{{#hasOutOfScopeFiles}}\n## Full-Send Scope Judgment\n\nThe task changed these files outside the spec's `### Affected Files` table:\n\n{{{outOfScopeFilesList}}}\n\nJudge each file against the owning task's ACs and record its outcome and reason in `review.md`:\n\n1. **Appropriate scope expansion:** If needed to meet the ACs and consistent with the spec's intent, append an `## Amendment (full-send scope)` section to the owning task's `spec.md` (use exactly that heading; a bare `## Amendment` is reserved for human reroute amendments). Include an exact `### Affected Files` heading and table row naming the file, plus a one-line reason that calls it a full-send scope expansion.\n2. **Spec miss:** If the spec should have listed the file, append the same `## Amendment (full-send scope)` section and exact `### Affected Files` table row, with a one-line reason that calls it a spec miss.\n3. **Should not have been changed:** Do not amend the spec. Write a finding requiring the file to be reverted or removed, and set the verdict to `changes_requested`.\n\nFor a bundle, amend the member spec whose ACs the file serves. The orchestrator checks after code review completes: every listed file must be in a member's Affected Files or a `changes_requested` verdict must route it back to implement. The legacy `needs_re_review` verdict routes the same way. A `spec_gap` verdict blocks for human triage and names any files still outside Affected Files; blessing that verdict does not amend the spec. An approved review with unjudged files auto-blocks.\n\n{{/hasOutOfScopeFiles}}\n## Foreman Protocol\n\n### 1. Spawn Claude Lenses In Parallel\n\nSpawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in older harnesses) in a single message so they run concurrently, and run them **in the foreground** (`run_in_background: false`) so the call returns their findings. Do not spawn them in the background and do not end your turn to wait for them: a turn that ends while a lens is still running ends the code review with no `review.md` and no verdict, and the phase is retried from scratch. Your turn ends only after step 5 below has run.\n\n**Anchored lens** (`subagent_type: code-review-anchored`)\n{{#isDeltaScope}}\n- Retrieve the full task diff with `git diff {{{baseBranch}}}...HEAD` and give it that full diff, not the delta, plus `spec.md`, `handoff.md`, and prior `review.md`.\n{{/isDeltaScope}}\n{{^isDeltaScope}}\n- Give it the full diff, `spec.md`, `handoff.md`, and prior `review.md` if this is a re-review.\n{{/isDeltaScope}}\n- It applies canon's anchored Stage 1 / Stage 2 code-review charter.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\n**Cold-Claude lens** (`subagent_type: code-review-cold`)\n{{#isDeltaScope}}\n- This round is delta-scoped. Give it the delta (`{{{deltaBase}}}..HEAD`) and the delta base ref only.\n{{/isDeltaScope}}\n{{^isDeltaScope}}\n- Give it the full diff and base ref only.\n{{/isDeltaScope}}\n- Do not give it `spec.md`, ACs, handoff rationale, canon docs, known risks, or your anchored-lens prompt.\n- If it needs to inspect files for truncated diff context, constrain it to changed files only and preserve the spec-blind framing.\n- Separately, its sibling-site sweep may search other code files for guards, checks, and invariants that need the same treatment. Keep the search spec-blind.\n- It returns structured findings to you. It must not write `review.md` or run `canon task phase`.\n\nThe injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.\n\nSpawn exactly the two Claude lenses above each round, plus at most one re-spawn of a lens whose return is missing. Spawn no other reviewers or review agents, run no review skills, and never substitute your own review for a lens's return.\n\nA lens return is valid when it follows that lens's charter return format. This includes a clean empty form (`STAGE_2_FINDINGS: (none)` or `COLD_FINDINGS: (none)`) and the anchored Stage 1 fail form (`STAGE_1: fail`, no Stage 2 findings, `OVERALL_SIGNAL: changes_requested`). A return is missing if absent or outside the charter format. Re-spawn a missing lens once with the same inputs. If still missing, do not approve or guess at its findings: it is not approval evidence. Write `review.md` recording which lens was missing and what came back, check no verdict box, then run the `code_review blocked` commands in step 5 for every task. Other lenses' findings may be recorded but not adjudicated into a verdict.\n\n### 2. Adjudicate\n\nUse the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.\n\nThe lenses are instructed to over-report \u2014 to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs. A clean return in the charter's empty form is a valid result; only a missing return (step 1) is a lens failure. Rank surviving findings by confidence \xD7 severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence \u2014 verify it against the spec/diff first, then rank.\n\n1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record \"flagged by N lenses.\" A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement \u2014 the same behavior flagged by cold-Claude and cold-Codex \u2014 must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.\n2. Keep the two reconciliation checks separate:\n   - Does it hold against the code? For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.\n   - Is it in spec scope? Apply this only to anchored-lens findings as part of the Stage 1 / Stage 2 charter.\n   - Forbidden: do not dismiss a verified cold-Claude or cold-Codex finding merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.\n3. Altitude classification: every surviving finding is either:\n   - `code-bug`: the implementation is wrong or test integrity is compromised.\n   - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.\n\n### 3. Choose Verdict\n\n- Any `code-bug` finding -> `changes_requested`.\n- Any `spec-gap` finding and no code-bugs -> `spec_gap`.\n- Optional nits or cleanup without blocking findings -> `approved_with_nits`.\n- No surviving findings -> `approved`.\n\nTest-integrity findings are always code-bugs.\n\n### 4. Write `review.md`\n\nWhen you cite a section of a Markdown doc with the quoted form `\xA7\"\u2026\"`, the quoted text must be an exact heading in that file. To point at a bold-lead paragraph or anything that is not a heading, use `file:line` or the unquoted `\xA7Name` form instead.\n\nFor each task, write `tasks/<id>/review.md`.\n\nRound 1 fills the existing template structure directly \u2014 do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.\n\nEvery round \u2014 the Round 1 body and each `## Round N` section \u2014 includes one scope line near the top: **Scope:** {{{scopeWord}}} \u2014 base `{{{scopeBase}}}` \u2014 reason: {{{scopeReason}}}. The numbered cold-Codex archive header is the machine-readable record.\n\nInclude:\n- Stage 1: anchored lens validation gate result and AC table.\n- Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.\n- Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.\n- Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable (except the missing-lens stop in step 1, which checks none).\n\n### 5. Set Phase Verdict\n\nRun one command per task with the actual verdict:\n{{{phaseCommands}}}\n\nIf a lens was still missing after its re-spawn (step 1), write `review.md` first, then run these instead, with no verdict \u2014 this stops the run for the human:\n{{{blockedCommands}}}\n";
 
 // src/orchestrator/prompts/templates/implement.md
-var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\n## Implementation Rules\n\n**Safe-First Rules** \u2014 always applicable regardless of stack:\n1. For storage, reload, sync, or data-affecting flows: ship the safer guarded behavior first.\n2. Behavior that reloads the app, replaces local state, or dismisses user work must be gated by explicit user action.\n3. Prefer shared types over duplicating signatures.\n\n**Scope Discipline** \u2014 always applicable; the spec is the contract:\n1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec\'s *Affected Files* table, do not make that edit. Record the gap in `handoff.md` under *Blockers* \u2014 the handoff is how it reaches a human \u2014 then finish the remaining in-scope work, the handoff, and the phase command. Do not silently expand scope. New helpers, fixtures, and test files introduced during implementation count against this cap too.\n2. **No unauthorized new abstractions.** Do not introduce new top-level modules, services, packages, or routing layers that the spec did not authorize. Minor refactors within an authorized file are fine; new abstractions are an architecture decision and belong in the spec.\n3. **No incidental dependency changes.** Do not add, remove, upgrade, or downgrade dependencies (or their pinned versions) unless the spec explicitly requests it.\n\n**Lint & Type Safety Policy** \u2014 always applicable:\n1. **Suppressing a lint or type error is a last resort**, not a convenience escape hatch. Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*.\n2. **`any` / dynamic typing**: When the shape is truly unknown at the boundary, type as `unknown` and narrow explicitly.\n\n**Bug/Flake-Fix Red-First Checkpoint** \u2014 applicable when a spec\'s ACs include a red-first regression test:\nWrite the test and run it against the pre-fix code first; confirm it fails *for the reason the spec states*, then apply the fix and confirm it passes. Report the red run (command + observed failure) in handoff.md. If the test cannot be made to fail on the pre-fix code for the stated reason, do not implement a fix on a premise you could not reproduce \u2014 record a `[wrong-premise]` Blocker in handoff.md instead, then finish the remaining in-scope work, the handoff, and the phase command. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative before fixing if it is executable in your sandbox (e.g. an integration fixture) and report the outcome in handoff.md the same way; if it is not executable (e.g. a documented manual repro), state that in handoff.md instead \u2014 never report an outcome for a run that did not happen.\n\n**Parsing Structured Input** \u2014 always applicable when implementing a parser for author-facing structured input:\nParse cell-by-cell with explicit rejection, not a permissive whole-string regex. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason at the parse boundary.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md. The universal change-type \u2192 check-category matrix:\n\n| Change Type | Required Check Categories |\n|---|---|\n| Most changes | Linting, type checking, unit tests |\n| Docs references | Docs references |\n| Routes / config / build | Full build |\n| UI / interaction changes | End-to-end tests |\n| Content / SEO / metadata | Prerender / sitemap / feed regeneration |\n| Schema / migration | Migration runner + manual review |\n| Cross-platform | Subset of the above on each platform |\n\nFor which command runs each category: see `docs/architecture.md` \xA7Validation (project command bindings). Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\n\n**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
+var implement_default = 'You are implementing {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{startup}}}\n{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks to implement:\n{{{taskLines}}}{{#isBundle}}\nThese tasks are related \u2014 implement them together. Consider shared code paths and cross-task interactions.{{/isBundle}}\n\nGrounding rule: before you write handoff.md, re-open the files you changed and verify the current diff against the spec. Do not treat a previous session\'s memory as proof that the work is already in place.\n\n**Spec ACs are binding. Plan approach is guidance.**\n- Every Acceptance Criterion in spec.md MUST be met \u2014 these are non-negotiable.\n- If you find a better implementation approach than what\'s in the plan, use it. Document every deviation in handoff.md under "Deviations" with specific rationale.\n- You may NOT silently drop an AC, skip a required validation check, or omit a spec requirement.\n- If an AC is infeasible as written, document it in Blockers \u2014 do not silently skip.\n- If an AC is ambiguous enough that two reasonable implementations exist, document your interpretation in handoff.md under Blockers with label `[ambiguity]` \u2014 do not silently guess. Claude will evaluate whether the interpretation was correct.\n\n## Implementation Rules\n\n**Safe-First Rules** \u2014 always applicable regardless of stack:\n1. For storage, reload, sync, or data-affecting flows: ship the safer guarded behavior first.\n2. Behavior that reloads the app, replaces local state, or dismisses user work must be gated by explicit user action.\n3. Prefer shared types over duplicating signatures.\n\n**Scope Discipline** \u2014 always applicable; the spec is the contract:\n1. **Affected Files is the scope cap.** If satisfying an AC genuinely requires editing files outside the spec\'s *Affected Files* table, do not make that edit. Record the gap in `handoff.md` under *Blockers* \u2014 the handoff is how it reaches a human \u2014 then finish the remaining in-scope work, the handoff, and the phase command. Do not silently expand scope. New helpers, fixtures, and test files introduced during implementation count against this cap too.\n2. **No unauthorized new abstractions.** Do not introduce new top-level modules, services, packages, or routing layers that the spec did not authorize. Minor refactors within an authorized file are fine; new abstractions are an architecture decision and belong in the spec.\n3. **No incidental dependency changes.** Do not add, remove, upgrade, or downgrade dependencies (or their pinned versions) unless the spec explicitly requests it.\n\n**Lint & Type Safety Policy** \u2014 always applicable:\n1. **Suppressing a lint or type error is a last resort**, not a convenience escape hatch. Never add a suppression without a same-line justification explaining *why the rule is wrong for this specific case*.\n2. **`any` / dynamic typing**: When the shape is truly unknown at the boundary, type as `unknown` and narrow explicitly.\n\n**Bug/Flake-Fix Red-First Checkpoint** \u2014 applicable when a spec\'s ACs include a red-first regression test:\nWrite the test and run it against the pre-fix code first; confirm it fails *for the reason the spec states*, then apply the fix and confirm it passes. Record the red run as a row in the handoff\u2019s Red-First Evidence section (AC, command, the commit it ran against, observed failure, post-fix result). The pre-fix state is the task\u2019s base commit: write the test and run it before changing any non-test code; files that exist only to support tests count as test files. If the test cannot be made to fail on the pre-fix code for the stated reason, do not implement a fix on a premise you could not reproduce \u2014 record a `[wrong-premise]` Blocker in handoff.md instead, then finish the remaining in-scope work, the handoff, and the phase command. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative before fixing if it is executable in your sandbox (e.g. an integration fixture) and record the outcome in the Red-First Evidence section; if it is not executable (e.g. a documented manual repro), state that in handoff.md instead \u2014 never report an outcome for a run that did not happen.\n\n**Parsing Structured Input** \u2014 always applicable when implementing a parser for author-facing structured input:\nParse cell-by-cell with explicit rejection, not a permissive whole-string regex. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason at the parse boundary.\n\nRun ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md. The universal change-type \u2192 check-category matrix:\n\n| Change Type | Required Check Categories |\n|---|---|\n| Most changes | Linting, type checking, unit tests |\n| Docs references | Docs references |\n| Routes / config / build | Full build |\n| UI / interaction changes | End-to-end tests |\n| Content / SEO / metadata | Prerender / sitemap / feed regeneration |\n| Schema / migration | Migration runner + manual review |\n| Cross-platform | Subset of the above on each platform |\n\nFor which command runs each category: see `docs/architecture.md` \xA7Validation (project command bindings). Required checks must be recorded as Pass or Fail; do not mark a required check N/A unless the spec explicitly removed it.\n\n**Test flakiness in your sandbox.** Validation suites \u2014 especially E2E or integration tests \u2014 can hit transient failures (timing races, environment quirks, network jitter) that have nothing to do with the code in your spec\'s Affected Files. **If a failure is in a test / file outside your Affected Files table, do NOT fix it.** Note the observed test name, file, line, and a one-line repro hint in handoff.md \u2192 Blockers (or "Validation Outcomes" Notes column with status `Fail \u2013 unrelated`), then continue. `Fail \u2013 unrelated` is only valid for failures in files outside your Affected Files; a failure in a file you changed is yours to fix. Scope discipline > fixing adjacent bugs you spot during validation. The reviewer/operator will decide whether to triage the unrelated failure separately.\n\nFor each task, write tasks/<id>/handoff.md using the template. The Validation Outcomes table must have no Fail results EXCEPT for unrelated-flake rows clearly labeled in the Notes column.\n\n**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.\nAppend to tasks/<id>/notes.md for any surprising codebase behavior (prefix: [implement]).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
 // src/orchestrator/prompts/templates/implement-reroute.md
-var implement_reroute_default = "A human wrote a spec amendment and rerouted {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n0. If a task's line above marks it EXEMPT, skip steps 1-2 for that task entirely \u2014 its spec has NO Amendment section and its plan has NO Reroute Plan section, by design. For exempt tasks, follow the task-specific line above: approved siblings only need shared-behavior re-verification, while siblings with prior review findings must still address those findings.\n1. For each task above, read `tasks/<id>/spec.md` from your current working directory (the worktree). REPO_ROOT's copy is the pre-implement scaffold and does NOT contain operator amendments. Locate the exact heading named in its entry \u2014 `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.\n2. Check `tasks/<id>/plan.md` for `## Reroute Plan` (round 1) or `## Reroute Plan Round N` (N = that task's reroute round). If present, use that section as the delta guide. If absent (fast-tier reroute with no conversational reroute plan), read the base plan for orientation.\n3. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n4. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n5. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n6. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec's Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n7. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. The reviewer reads handoff.md as the single source of truth, not your prior session's context.\n\n**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\n**Bug/flake-fix red-first checkpoint** \u2014 if the amendment adds or modifies a red-first regression-test AC: write and run the test against the task's current state **before** making this round's fix edits, and confirm it fails *for the reason the spec states*; then apply the fix and confirm it passes. Report the red run in handoff.md. If it cannot be made to fail for that reason, record a `[wrong-premise]` Blocker instead of implementing on an unconfirmed premise. If the amendment instead relies on the environment-bound-and-impractical escape, run its named deterministic alternative if it is executable in your sandbox and report the outcome in handoff.md; if it is not executable (e.g. a documented manual repro), state that instead \u2014 never report an outcome for a run that did not happen.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
+var implement_reroute_default = "A human wrote a spec amendment and rerouted {{taskScope}} for {{projectName}}.\n\n{{{stateHeader}}}\n{{{roundBanner}}}{{{preamble}}}\n\n{{#startup}}{{{startup}}}\n{{/startup}}{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}\n{{{affectedFilesBlock}}}\nTasks with amended specs:\n{{{taskLines}}}\n\n{{{groundingRule}}}\n\n**How to approach this:**\n0. If a task's line above marks it EXEMPT, skip steps 1-2 for that task entirely \u2014 its spec has NO Amendment section and its plan has NO Reroute Plan section, by design. For exempt tasks, follow the task-specific line above: approved siblings only need shared-behavior re-verification, while siblings with prior review findings must still address those findings.\n1. For each task above, read `tasks/<id>/spec.md` from your current working directory (the worktree). REPO_ROOT's copy is the pre-implement scaffold and does NOT contain operator amendments. Locate the exact heading named in its entry \u2014 `## Amendment` for round 1, or `## Amendment Round N` for round 2+. Each task carries its own reroute round (bundles may mix rounds), so use the heading specified in that task's line, not a bundle-wide assumption. Treat that section's content as the new requirements; ignore prior-round sections when implementing this one.\n2. Check `tasks/<id>/plan.md` for `## Reroute Plan` (round 1) or `## Reroute Plan Round N` (N = that task's reroute round). If present, use that section as the delta guide. If absent (fast-tier reroute with no conversational reroute plan), read the base plan for orientation.\n3. Read tasks/<id>/handoff.md to understand what you previously shipped. Do NOT assume the handoff covers the amendment \u2014 it was written before the amendment existed.\n4. Identify the delta: which ACs are new, which changed, which were already addressed by the previous implementation.\n5. Implement the delta. Previously-correct work stays; only change what the amendment requires. If the amendment conflicts with a prior AC, the amendment wins.\n6. Re-run ALL applicable validation checks (lint, type-check, test, build, e2e as applicable per the spec's Validation Required). Required checks must be recorded as Pass or Fail; do not mark a required check N/A.\n7. **Rewrite handoff.md** to reflect the complete current state of the implementation \u2014 including the round-1 work that still applies plus the new amendment work. Carry existing Red-First Evidence rows forward. The reviewer reads handoff.md as the single source of truth, not your prior session's context.\n\n**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.\n\n**Spec ACs are binding** \u2014 including both original ACs and amendment ACs. If you think an amendment AC is infeasible as written, document it under Blockers in handoff.md. Do not silently drop any AC.\n\n**Bug/flake-fix red-first checkpoint** \u2014 if the amendment adds or modifies a red-first regression-test AC: write and run the test against the task's current state **before** making this round's fix edits, and confirm it fails *for the reason the spec states*; then apply the fix and confirm it passes. Record the red run as a row in this round\u2019s Iteration subsection, `### Red-First Evidence` (AC, command, the commit it ran against, observed failure, post-fix result). The pre-fix state is the task branch\u2019s HEAD before this round\u2019s edits: write the test and run it before changing any non-test code; files that exist only to support tests count as test files. If it cannot be made to fail for that reason, record a `[wrong-premise]` Blocker instead of implementing on an unconfirmed premise. If the amendment instead relies on the environment-bound-and-impractical escape, run its named deterministic alternative if it is executable in your sandbox and record the outcome in the Red-First Evidence section; if it is not executable (e.g. a documented manual repro), state that instead \u2014 never report an outcome for a run that did not happen.\n\nAppend to tasks/<id>/notes.md for any surprising behavior found while re-reading the codebase (prefix: `[implement-reroute]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // src/orchestrator/prompts/templates/implement-revisions.md
-var implement_revisions_default = '{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you\'re resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template\'s "On revision rounds" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n{{#hasPreflightFindings}}\nYour prior iteration was rejected by the orchestrator\'s pre-flight gate **before any Claude review ran**. The rejection details are recorded in `review.md` under `## Validation Gate` / `## Pre-Flight Rejection`.\n\nTasks with pre-flight rejection feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the pre-flight block in `tasks/<id>/review.md` and follow **whichever framing it carries**:\n   - **"Fix the handoff"** items \u2192 fix `handoff.md` (Validation Outcomes rows, AC Coverage table, Changes table).\n   - **"Fix the code"** items \u2192 a required check failed on a file you changed. Fix the regression, re-run the check, and update the handoff.\n   - Both framings may be present \u2014 address all items from both before resubmitting.\n2. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}`. Include the delta: which items you addressed and how.\n{{/hasPreflightFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\n\n**Iteration rules:**\n\n- **Reverting a file**: For a byte-perfect revert to the task baseline, use `git show origin/<base-branch>:<path>` (read-only git, always allowed) and write the output to the file.\n  - *Perfect revert* (file no longer in `git diff base...HEAD`): delete it from all prior iteration Changes tables in `handoff.md`.\n  - *Imperfect revert* (trailing newline or other residual remains): add it to the current iteration\'s Changes table with "Reverted to original (describe residual diff)".\n- **Referencing deleted (or not-yet-created) files in artifacts**: **Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference. In the handoff Changes-table first column this is the only accepted form for a deleted path \u2014 backtick form fails both checks.\n- **Rerouted / revised tasks \u2014 the pre-flight diff is cumulative**: the verifier checks the union of all Changes tables against `git diff <base>...HEAD`. Before submitting, run `git diff <base>...HEAD --name-only` and confirm every listed path is covered by at least one Changes-table row across ALL iterations.\n- **Bug/flake-fix red-first checkpoint**: if this round adds or modifies the spec\'s red-first regression test, write and run the test **before** making this round\'s fix edits and confirm it fails *for the reason the spec states*; then apply the fix and confirm it passes. Report the red run in the handoff delta. If it cannot be made to fail for that reason, do not implement around an unconfirmed premise \u2014 record a `[wrong-premise]` Blocker in handoff.md instead, then finish the remaining in-scope work, the handoff, and the phase command. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative if it is executable in your sandbox and report the outcome in the handoff delta; if it is not executable (e.g. a documented manual repro), state that instead \u2014 never report an outcome for a run that did not happen.\n\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
+var implement_revisions_default = '{{{iterBanner}}}\n\n{{{stateHeader}}}\n{{{startup}}}\n\n{{{affectedFilesBlock}}}\n\n{{#hasReviewFindings}}\nYour prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you\'re resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context \u2014 skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.\n\nTasks with new review feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the most recent `## Round {{priorRound}}` section of `tasks/<id>/review.md`. That is the entire scope of this iteration.\n2. Address every `correctness bug`, `risk/guardrail`, and `spec gap` finding from that round (blocking). `optional cleanup/nit` is at your discretion{{#tightenLine}}{{{tightenLine}}}{{/tightenLine}}\n3. Re-run only the validation checks affected by your changes (typically lint, type-check, plus whatever the diff touches).\n4. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}` (the template\'s "On revision rounds" comment shows the shape). Do NOT rewrite the file from scratch \u2014 earlier iterations stay as the cumulative record. Include only the delta: findings addressed, AC deltas, re-run validation results.\n{{/hasReviewFindings}}\n{{#hasPreflightFindings}}\nYour prior iteration was rejected by the orchestrator\'s pre-flight gate **before any Claude review ran**. The rejection details are recorded in `review.md` under `## Validation Gate` / `## Pre-Flight Rejection`.\n\nTasks with pre-flight rejection feedback:\n{{{reviewLines}}}\n\nFor each task:\n1. Read the pre-flight block in `tasks/<id>/review.md` and follow **whichever framing it carries**:\n   - **"Fix the handoff"** items \u2192 fix `handoff.md` (Validation Outcomes rows, AC Coverage table, Changes table).\n   - **"Fix the code"** items \u2192 a required check failed on a file you changed. Fix the regression, re-run the check, and update the handoff.\n   - Both framings may be present \u2014 address all items from both before resubmitting.\n2. **APPEND** to `tasks/<id>/handoff.md` a new section `{{{handoffAppend}}}`. Include the delta: which items you addressed and how.\n{{/hasPreflightFindings}}\n\nSpec ACs remain binding. If the review identifies a dropped AC, restore it.\n\n**Iteration rules:**\n\n- **Reverting a file**: For a byte-perfect revert to the task baseline, use `git show origin/<base-branch>:<path>` (read-only git, always allowed) and write the output to the file.\n  - *Perfect revert* (file no longer in `git diff base...HEAD`): delete it from all prior iteration Changes tables in `handoff.md`.\n  - *Imperfect revert* (trailing newline or other residual remains): add it to the current iteration\'s Changes table with "Reverted to original (describe residual diff)".\n- **Referencing deleted (or not-yet-created) files in artifacts**: **Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference. In the handoff Changes-table first column this is the only accepted form for a deleted path \u2014 backtick form fails both checks.\n- **Rerouted / revised tasks \u2014 the pre-flight diff is cumulative**: the verifier checks the union of all Changes tables against `git diff <base>...HEAD`. Before submitting, run `git diff <base>...HEAD --name-only` and confirm every listed path is covered by at least one Changes-table row across ALL iterations.\n- **Bug/flake-fix red-first checkpoint**: if this round adds or modifies the spec\'s red-first regression test, write and run the test **before** making this round\'s fix edits and confirm it fails *for the reason the spec states*; then apply the fix and confirm it passes. Record the red run as a row in this round\u2019s Iteration subsection, `### Red-First Evidence` (AC, command, the commit it ran against, observed failure, post-fix result). The pre-fix state is the task branch\u2019s HEAD before this round\u2019s edits: write the test and run it before changing any non-test code; files that exist only to support tests count as test files. If a review round flagged missing red-first evidence, run the test against the recorded pre-fix commit (for example in a scratch checkout of that commit with only the test applied) and record the row; you do not need to redo the fix. If it cannot be made to fail for that reason, do not implement around an unconfirmed premise \u2014 record a `[wrong-premise]` Blocker in handoff.md instead, then finish the remaining in-scope work, the handoff, and the phase command. If the spec instead uses the environment-bound-and-impractical escape, run its named deterministic alternative if it is executable in your sandbox and record the outcome in this round\u2019s `### Red-First Evidence` subsection; if it is not executable (e.g. a documented manual repro), state that instead \u2014 never report an outcome for a run that did not happen.\n\nAppend to `tasks/<id>/notes.md` for new pitfalls found (prefix: `[implement-revision]`).\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
 // src/orchestrator/prompts/templates/plan-reroute.md
 var plan_reroute_default = "You are updating the implementation plan for {{taskScope}} for {{projectName}} after a human reroute.\n\n{{{startup}}}\n\nA human amended the spec and rerouted the task after a completed implementation round. Codex has reviewed the amendment. Your job is to **append** a reroute plan section to `plan.md`; do not rewrite or remove existing plan content.\n\n{{{roundBanner}}}Amendment review verdicts:\n{{{verdictLines}}}\n\nFor each task \u2014 EXCEPT tasks whose line above marks them EXEMPT (those have no amendment; skip every step below for them and append NO Reroute Plan section to their plan.md):\n1. Read `tasks/<id>/spec.md` from your current directory, including the amendment for the round listed above.\n2. Read `tasks/<id>/plan.md` to understand the prior plan.\n3. Read `tasks/<id>/handoff.md` to understand what Codex previously shipped.\n4. Read `tasks/<id>/spec-review.md` for the latest reroute amendment review and any nits to incorporate.\n5. Append a new section to `tasks/<id>/plan.md`:\n   - Round 1: `## Reroute Plan`\n   - Round N >= 2: `## Reroute Plan Round N`\n6. Plan only the delta from the amendment. Reference specific files, functions, and existing patterns. Acknowledge prior plan steps that still apply without re-planning them.\n7. {{{feasibilityCheck}}}\n\nDo **not** rewrite or remove existing sections from `plan.md`. The appended reroute plan is what implement-reroute reads as its delta guide.\n\nWhen done, run:\n{{{phaseCommands}}}\n\n<!-- per-round append shape:\n## Reroute Plan [Round N]\n### Delta\n- Feasibility: ...\n- ...ordered steps for the amendment delta only...\n-->\n";
@@ -5484,7 +5554,7 @@ function bundleHasRealPriorReview(taskIds) {
   return taskIds.every((taskId) => {
     const reviewPath = path12.join(taskDirFor(taskId), "review.md");
     try {
-      const content = fs13.readFileSync(reviewPath, "utf8");
+      const content = fs14.readFileSync(reviewPath, "utf8");
       const hasH2 = /^## Stage 1\b/m.test(content);
       const hasNested = /^## Round \d+\b/m.test(content) && /^### Stage 1\b/m.test(content);
       return (hasH2 || hasNested) && !content.includes("[TASK-ID]");
@@ -5576,12 +5646,12 @@ function promptQa(state, prTemplate, docs = { editable: DEFAULT_PROTECTED_DOCS, 
 
 // src/task/index.ts
 import { spawnSync as spawnSync6 } from "child_process";
-import fs16 from "fs";
+import fs17 from "fs";
 import path15 from "path";
 
 // src/orchestrator/canon-snapshot.ts
 import { spawnSync as spawnSync5 } from "child_process";
-import fs14 from "fs";
+import fs15 from "fs";
 import path13 from "path";
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
 function isInstalledSourcePath(sourcePath) {
@@ -5667,14 +5737,14 @@ function applyCanonSnapshot(status, canon) {
   return next;
 }
 function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
-  const status = JSON.parse(fs14.readFileSync(statusFilePath, "utf8"));
+  const status = JSON.parse(fs15.readFileSync(statusFilePath, "utf8"));
   const canon = captureCanonSnapshot(REPO_ROOT, options);
   const next = applyCanonSnapshot(status, canon);
   const serialized = `${JSON.stringify(next, null, 2)}
 `;
-  const current = fs14.readFileSync(statusFilePath, "utf8");
+  const current = fs15.readFileSync(statusFilePath, "utf8");
   if (current !== serialized) {
-    fs14.writeFileSync(statusFilePath, serialized, "utf8");
+    fs15.writeFileSync(statusFilePath, serialized, "utf8");
   }
   return canon;
 }
@@ -5683,7 +5753,7 @@ function refreshCanonSnapshotsAtPaths(statusFilePaths, options = {}) {
 }
 
 // src/orchestrator/quality-log.ts
-import fs15 from "fs";
+import fs16 from "fs";
 import path14 from "path";
 var CANON_LOG_HEADERS = [
   "Date",
@@ -5875,11 +5945,11 @@ function renderRowLine(headerCells, row) {
 function writeFileAtomic(filePath, content) {
   const tempPath = `${filePath}.tmp`;
   try {
-    fs15.writeFileSync(tempPath, content, "utf8");
-    fs15.renameSync(tempPath, filePath);
+    fs16.writeFileSync(tempPath, content, "utf8");
+    fs16.renameSync(tempPath, filePath);
   } finally {
     try {
-      fs15.unlinkSync(tempPath);
+      fs16.unlinkSync(tempPath);
     } catch {
     }
   }
@@ -5908,7 +5978,7 @@ function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
   try {
     let content;
     try {
-      content = fs15.readFileSync(logFilePath, "utf8");
+      content = fs16.readFileSync(logFilePath, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") {
         content = STANDARD_QUALITY_LOG_SKELETON;
@@ -5950,11 +6020,11 @@ function writeQualityLogForTask(taskId, _activeCwd, donePath, status) {
   try {
     let doneContent = "";
     try {
-      doneContent = fs15.readFileSync(donePath, "utf8");
+      doneContent = fs16.readFileSync(donePath, "utf8");
     } catch {
     }
     const target = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path14.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path14.join(path14.dirname(donePath), "quality-log.md");
-    if (!process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) fs15.mkdirSync(path14.dirname(target), { recursive: true });
+    if (!process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) fs16.mkdirSync(path14.dirname(target), { recursive: true });
     upsertQualityLogRow(
       target,
       {
@@ -6025,7 +6095,7 @@ function taskRootForGate(cwd) {
 }
 function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs16.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs17.readFileSync(filePath, "utf8"));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Error: failed to read ${filePath}: ${message}`);
@@ -6033,9 +6103,9 @@ function readJsonFile(filePath) {
 }
 function writeJsonAtomic(filePath, data) {
   const tmpFile = `${filePath}.tmp`;
-  fs16.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
+  fs17.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
 `, "utf8");
-  fs16.renameSync(tmpFile, filePath);
+  fs17.renameSync(tmpFile, filePath);
 }
 function writeStatusAtomic(filePath, status) {
   status.status = deriveTopLevelStatus(status);
@@ -6108,7 +6178,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   assertValidVerdict(phaseArg, verdictArg);
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs16.existsSync(statusPath)) {
+  if (!fs17.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
   }
   const status = readJsonFile(statusPath);
@@ -6170,7 +6240,7 @@ function taskPhasePreflightRejected(id, phaseArg) {
   }
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs16.existsSync(statusPath)) {
+  if (!fs17.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
   }
   const status = readJsonFile(statusPath);
@@ -6354,7 +6424,7 @@ function writePreflightReviewArtifacts(tasks, preflightFailed, route) {
     const reviewPath = path16.join(taskDirFor(t.taskId), "review.md");
     let existing = "";
     try {
-      existing = fs17.readFileSync(reviewPath, "utf8");
+      existing = fs18.readFileSync(reviewPath, "utf8");
     } catch {
     }
     const hasH2Stage1 = /^## Stage 1\b/m.test(existing);
@@ -6370,7 +6440,7 @@ function writePreflightReviewArtifacts(tasks, preflightFailed, route) {
 ${blockedBlock}` : `# Code Review: ${t.taskId}
 
 ${blockedBlock}`;
-      fs17.writeFileSync(reviewPath, reviewContent2, "utf8");
+      fs18.writeFileSync(reviewPath, reviewContent2, "utf8");
       continue;
     }
     const currentPreflight = t.status.phases.code_review?.preflight_rejections_current_loop ?? 0;
@@ -6381,7 +6451,7 @@ ${blockedBlock}`;
 ---
 
 ${stub}` : stub;
-    fs17.writeFileSync(reviewPath, reviewContent, "utf8");
+    fs18.writeFileSync(reviewPath, reviewContent, "utf8");
   }
   return true;
 }
@@ -6504,7 +6574,7 @@ Add them to the affected task spec's ### Affected Files table in the active chec
     });
   }
   for (const t of tasks) {
-    fs17.writeFileSync(
+    fs18.writeFileSync(
       path16.join(taskDirFor(t.taskId), "review-cold-codex.md"),
       coldReview.findings,
       "utf8"
@@ -6533,7 +6603,7 @@ Add them to the affected task spec's ### Affected Files table in the active chec
     const reviewPath = path16.join(taskDirFor(t.taskId), "review.md");
     let reviewContent = null;
     try {
-      reviewContent = fs17.readFileSync(reviewPath, "utf8");
+      reviewContent = fs18.readFileSync(reviewPath, "utf8");
     } catch {
     }
     if (isTemplateUnfilled(reviewContent)) {
@@ -6646,7 +6716,7 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
 }
 
 // src/orchestrator/phases/plan.ts
-import fs18 from "fs";
+import fs19 from "fs";
 import path17 from "path";
 async function runPlanPhase(state, interactive) {
   const { tasks } = state;
@@ -6665,7 +6735,7 @@ async function runPlanPhase(state, interactive) {
     const planPath = path17.join(taskDirFor(t.taskId), "plan.md");
     let planContent = null;
     try {
-      planContent = fs18.readFileSync(planPath, "utf8");
+      planContent = fs19.readFileSync(planPath, "utf8");
     } catch {
     }
     if (isTemplateUnfilled(planContent)) {
@@ -6677,7 +6747,7 @@ async function runPlanPhase(state, interactive) {
 }
 
 // src/orchestrator/phases/qa.ts
-import fs19 from "fs";
+import fs20 from "fs";
 import path18 from "path";
 function resolveQaDocsFreshness(taskIds, activeCwd, deps = { getBaseBranch, getAffectedFiles }) {
   const config3 = requireDocsFreshnessConfig(activeCwd);
@@ -6707,7 +6777,7 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
     if (isDoneMdTemplate(donePath)) {
       const salvaged = extractDoneMdFromStdout(result.capturedStdout);
       if (salvaged) {
-        fs19.writeFileSync(donePath, salvaged);
+        fs20.writeFileSync(donePath, salvaged);
         warn(`Salvaged tasks/${taskId}/done.md from captured stdout \u2014 QA sub-agent streamed content instead of using the Write tool.`);
         const phaseStatus = readStatus(taskId).phases.qa?.status ?? "pending";
         if (phaseStatus !== "done") {
@@ -6759,7 +6829,7 @@ async function runSpecPhase(state, interactive, resumeId) {
 }
 
 // src/orchestrator/phases/spec-review.ts
-import fs20 from "fs";
+import fs21 from "fs";
 import path19 from "path";
 function autoBlockSpecReview(taskIds, iterationCount, reason) {
   autoBlockPhase(taskIds, "spec_review", iterationCount, reason);
@@ -6768,14 +6838,14 @@ function recordFastTierSpecApproval(taskId) {
   const artifactPath = path19.join(taskDirFor(taskId), "spec-review.md");
   let content;
   try {
-    content = fs20.readFileSync(artifactPath, "utf8");
+    content = fs21.readFileSync(artifactPath, "utf8");
   } catch {
     return;
   }
   if (extractCheckedVerdict(content)) return;
   const checked = content.replace(/^- \[ \] (\*\*Approved\*\*)/m, "- [x] $1");
   const note = "\n> Fast tier: Codex spec review skipped \u2014 human conversational spec approval recorded by the orchestrator.\n";
-  fs20.writeFileSync(
+  fs21.writeFileSync(
     artifactPath,
     (checked !== content ? checked : `${content}
 ## Verdict
@@ -6847,7 +6917,7 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
     const reviewPath = path19.join(resolveTaskCwd(t.taskId), "tasks", t.taskId, "spec-review.md");
     let reviewContent = null;
     try {
-      reviewContent = fs20.readFileSync(reviewPath, "utf8");
+      reviewContent = fs21.readFileSync(reviewPath, "utf8");
     } catch {
     }
     if (isTemplateUnfilled(reviewContent)) {
@@ -6860,7 +6930,7 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
 
 // src/orchestrator/detach.ts
 import { spawn as spawn3 } from "child_process";
-import fs21 from "fs";
+import fs22 from "fs";
 import path20 from "path";
 var DETACH_CHILD_FLAG = "CANON_DETACHED";
 var DETACH_DISABLE_FLAG = "CANON_NO_DETACH";
@@ -6897,7 +6967,7 @@ function detachAndExit(options) {
   }
   const primaryDir = options.resolveTaskDir(options.taskIds[0]);
   try {
-    fs21.mkdirSync(primaryDir, { recursive: true });
+    fs22.mkdirSync(primaryDir, { recursive: true });
   } catch (error) {
     stderrWrite(`canon: cannot create task dir for log file: ${error.message}
 `);
@@ -6906,7 +6976,7 @@ function detachAndExit(options) {
   const logPath = path20.join(primaryDir, LOG_FILENAME);
   let logFd;
   try {
-    logFd = fs21.openSync(logPath, "a");
+    logFd = fs22.openSync(logPath, "a");
   } catch (error) {
     stderrWrite(`canon: cannot open ${logPath}: ${error.message}
 `);
@@ -6919,7 +6989,7 @@ function detachAndExit(options) {
     env: { ...process.env, [DETACH_CHILD_FLAG]: "1" }
   });
   try {
-    fs21.closeSync(logFd);
+    fs22.closeSync(logFd);
   } catch {
   }
   if (child.pid == null) {
@@ -6930,8 +7000,8 @@ function detachAndExit(options) {
   for (const taskId of options.taskIds) {
     try {
       const dir = options.resolveTaskDir(taskId);
-      fs21.mkdirSync(dir, { recursive: true });
-      fs21.writeFileSync(path20.join(dir, PID_FILENAME), `${child.pid}
+      fs22.mkdirSync(dir, { recursive: true });
+      fs22.writeFileSync(path20.join(dir, PID_FILENAME), `${child.pid}
 `, "utf8");
     } catch (error) {
       pidWriteFailures.push({
@@ -6987,7 +7057,7 @@ ${rule}
 function readCanonPid(taskDir) {
   const file = path20.join(taskDir, PID_FILENAME);
   try {
-    const raw = fs21.readFileSync(file, "utf8").trim();
+    const raw = fs22.readFileSync(file, "utf8").trim();
     const pid = Number.parseInt(raw, 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -6996,13 +7066,13 @@ function readCanonPid(taskDir) {
 }
 function removeCanonPid(taskDir) {
   try {
-    fs21.unlinkSync(path20.join(taskDir, PID_FILENAME));
+    fs22.unlinkSync(path20.join(taskDir, PID_FILENAME));
   } catch {
   }
 }
 
 // src/orchestrator/telemetry-fold.ts
-import fs22 from "fs";
+import fs23 from "fs";
 import path21 from "path";
 import { randomUUID } from "crypto";
 var LESSONS_SKELETON = "# Lessons Learned\n\n> Distilled cross-task insights. Task lessons fragments are folded here by `canon run --ship`.\n";
@@ -7038,7 +7108,7 @@ function sharedTelemetryDocsTouched(paths) {
 }
 function readOptional(file) {
   try {
-    return fs22.readFileSync(file, "utf8");
+    return fs23.readFileSync(file, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -7078,22 +7148,22 @@ function applyTelemetryFold(plan) {
   const deleted = [];
   try {
     for (const write of plan.writes) {
-      fs22.mkdirSync(path21.dirname(write.target), { recursive: true });
+      fs23.mkdirSync(path21.dirname(write.target), { recursive: true });
       const temp = `${write.target}.${randomUUID()}.canon-fold.tmp`;
-      const fd = fs22.openSync(temp, "wx");
+      const fd = fs23.openSync(temp, "wx");
       temps.push(temp);
       try {
-        fs22.writeFileSync(fd, write.after, "utf8");
+        fs23.writeFileSync(fd, write.after, "utf8");
       } finally {
-        fs22.closeSync(fd);
+        fs23.closeSync(fd);
       }
     }
     for (let index = 0; index < plan.writes.length; index += 1) {
-      fs22.renameSync(temps[index], plan.writes[index].target);
+      fs23.renameSync(temps[index], plan.writes[index].target);
       written.push(plan.writes[index]);
     }
     for (const fragment of plan.fragments) {
-      fs22.unlinkSync(fragment.path);
+      fs23.unlinkSync(fragment.path);
       deleted.push(fragment);
     }
   } catch (error) {
@@ -7107,17 +7177,17 @@ function applyTelemetryFold(plan) {
     };
     for (const write of written.reverse()) {
       restore(() => {
-        if (write.before === null) fs22.unlinkSync(write.target);
-        else fs22.writeFileSync(write.target, write.before, "utf8");
+        if (write.before === null) fs23.unlinkSync(write.target);
+        else fs23.writeFileSync(write.target, write.before, "utf8");
       });
     }
-    for (const fragment of deleted) restore(() => fs22.writeFileSync(fragment.path, fragment.content, "utf8"));
+    for (const fragment of deleted) restore(() => fs23.writeFileSync(fragment.path, fragment.content, "utf8"));
     if (rollbackErrors.length) throw new Error(`${String(error)}; rollback failed: ${rollbackErrors.join("; ")}`);
     throw error;
   } finally {
     for (const temp of temps) {
       try {
-        fs22.unlinkSync(temp);
+        fs23.unlinkSync(temp);
       } catch {
       }
     }
@@ -7267,21 +7337,21 @@ function backupIndexFile(cwd) {
   const source = indexPath.stdout.trim();
   const backup = `${source}.canon-autocommit-backup`;
   try {
-    fs23.copyFileSync(source, backup);
+    fs24.copyFileSync(source, backup);
   } catch {
     return null;
   }
   return {
     restore() {
       try {
-        fs23.renameSync(backup, source);
+        fs24.renameSync(backup, source);
         return true;
       } catch {
         return false;
       }
     },
     discard() {
-      fs23.rmSync(backup, { force: true });
+      fs24.rmSync(backup, { force: true });
     }
   };
 }
@@ -7396,10 +7466,10 @@ function snapshotOutsideArtifacts(cwd, taskIds) {
       const absolute = path22.join(cwd, filePath);
       let fingerprint;
       try {
-        const stat = fs23.lstatSync(absolute);
-        if (stat.isSymbolicLink()) fingerprint = `symlink:${fs23.readlinkSync(absolute)}`;
+        const stat = fs24.lstatSync(absolute);
+        if (stat.isSymbolicLink()) fingerprint = `symlink:${fs24.readlinkSync(absolute)}`;
         else if (stat.isDirectory()) fingerprint = "dir";
-        else if (stat.isFile()) fingerprint = createHash("sha256").update(fs23.readFileSync(absolute)).digest("hex");
+        else if (stat.isFile()) fingerprint = createHash("sha256").update(fs24.readFileSync(absolute)).digest("hex");
         else fingerprint = `other:${stat.mode}`;
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
@@ -7615,7 +7685,7 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     if (dirtyFiles.has(f)) continue;
     if (gitIgnoredHandoffFiles.has(f)) continue;
     if (ownedArtifacts.has(f)) continue;
-    const exists = fs23.existsSync(path22.join(cwd, f));
+    const exists = fs24.existsSync(path22.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);
       if (committed.ok && committed.stdout.trim()) {
@@ -7781,8 +7851,8 @@ function exemptNodeModulesPath(entry, cwd, resolvedWorkspaceDirs) {
   let cwdReal;
   let repoRootReal;
   try {
-    cwdReal = fs23.realpathSync(cwd);
-    repoRootReal = fs23.realpathSync(REPO_ROOT2);
+    cwdReal = fs24.realpathSync(cwd);
+    repoRootReal = fs24.realpathSync(REPO_ROOT2);
   } catch {
     return null;
   }
@@ -7846,7 +7916,7 @@ function findPullRequestTemplate(repoRoot) {
     path22.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
   ];
   for (const candidate of candidates) {
-    if (fs23.existsSync(candidate)) return candidate;
+    if (fs24.existsSync(candidate)) return candidate;
   }
   return null;
 }
@@ -7866,7 +7936,7 @@ function resolveQaPrBody(taskIds, activeCwd) {
   }
   return {
     kind: "fallback",
-    reason: fs23.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
+    reason: fs24.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
   };
 }
 function commitQaArtifacts(taskIds, cwd) {
@@ -7994,8 +8064,8 @@ function recordPinnedPRNumber(taskIds, prNum) {
   if (alreadyPinned) return;
   for (const taskId of taskIds) {
     const sidecarPath = sidecarPathFor(taskId);
-    fs23.mkdirSync(path22.dirname(sidecarPath), { recursive: true });
-    fs23.writeFileSync(sidecarPath, String(prNum), "utf8");
+    fs24.mkdirSync(path22.dirname(sidecarPath), { recursive: true });
+    fs24.writeFileSync(sidecarPath, String(prNum), "utf8");
   }
 }
 function reportOrCreatePR(taskIds, branchName, cwd) {
@@ -8236,7 +8306,7 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
     );
   }
   const docsRefsScript = path22.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
-  if (fs23.existsSync(docsRefsScript)) {
+  if (fs24.existsSync(docsRefsScript)) {
     const docsRefsResult = spawnSync7("node", [docsRefsScript], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -8568,7 +8638,7 @@ function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
   const sidecarPath = sidecarPathFor(taskId, taskDir);
   let raw;
   try {
-    raw = fs23.readFileSync(sidecarPath, "utf8").trim();
+    raw = fs24.readFileSync(sidecarPath, "utf8").trim();
   } catch {
     return null;
   }
@@ -8715,7 +8785,7 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
 }
 function runPostMergeHook() {
   const hookPath = path22.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
-  if (!fs23.existsSync(hookPath)) return;
+  if (!fs24.existsSync(hookPath)) return;
   info2("Running .canon/hooks/post-merge.sh...");
   const result = runCommand2("bash", [hookPath]);
   if (!result.ok) {
@@ -8743,8 +8813,8 @@ function rewriteArchivedTaskRefs(taskIds) {
     path22.join(REPO_ROOT2, "docs", "task-quality-log.md")
   ];
   for (const filePath of targets) {
-    if (!fs23.existsSync(filePath)) continue;
-    let content = fs23.readFileSync(filePath, "utf8");
+    if (!fs24.existsSync(filePath)) continue;
+    let content = fs24.readFileSync(filePath, "utf8");
     let changed = false;
     for (const taskId of taskIds) {
       const stale = `tasks/${taskId}/`;
@@ -8755,7 +8825,7 @@ function rewriteArchivedTaskRefs(taskIds) {
       }
     }
     if (changed) {
-      fs23.writeFileSync(filePath, content, "utf8");
+      fs24.writeFileSync(filePath, content, "utf8");
       info2(`Updated stale task refs in ${path22.relative(REPO_ROOT2, filePath)}.`);
     }
   }
@@ -8791,7 +8861,7 @@ function classifyAndPreserveSharedDocDirt() {
     if (porcelainCode !== " M") {
       return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
     }
-    const workingContent = fs23.readFileSync(path22.join(REPO_ROOT2, relPath), "utf8");
+    const workingContent = fs24.readFileSync(path22.join(REPO_ROOT2, relPath), "utf8");
     const headResult = gitSafeAtRaw(REPO_ROOT2, "show", `HEAD:${relPath}`);
     return {
       relPath,
@@ -8808,11 +8878,11 @@ function classifyAndPreserveSharedDocDirt() {
   }
   const preserve = verdict.preserve;
   if (preserve.length === 0) return [];
-  const backupDir = fs23.mkdtempSync(path22.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
+  const backupDir = fs24.mkdtempSync(path22.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
   const preserved = [];
   for (const { relPath, suffix } of preserve) {
     const backupPath = path22.join(backupDir, relPath.replace(/[\\/]/g, "__"));
-    fs23.writeFileSync(backupPath, suffix, "utf8");
+    fs24.writeFileSync(backupPath, suffix, "utf8");
     info2(`Preserving uncommitted ${relPath} dirt during --ship; backup: ${backupPath}`);
     const checkoutResult = gitSafe("checkout", "HEAD", "--", relPath);
     if (!checkoutResult.ok) {
@@ -8840,7 +8910,7 @@ function shipTasks(taskIds) {
       path22.join(taskDirForRepoRoot2(taskId), "status.json")
     ];
     for (const candidate of candidates) {
-      if (fs23.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
+      if (fs24.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
     }
     const snapshot = taskStatuses.get(taskId);
     if (snapshot) return snapshot;
@@ -8906,8 +8976,8 @@ function shipTasks(taskIds) {
   let preservedSharedDocDirt = [];
   const restorePreservedSharedDocDirt = () => {
     for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-      fs23.appendFileSync(path22.join(REPO_ROOT2, relPath), suffix, "utf8");
-      fs23.rmSync(backupPath, { force: true });
+      fs24.appendFileSync(path22.join(REPO_ROOT2, relPath), suffix, "utf8");
+      fs24.rmSync(backupPath, { force: true });
       info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
     }
     preservedSharedDocDirt = [];
@@ -9001,7 +9071,7 @@ Recovery:
   const localBranchesToDelete = [];
   try {
     const archiveDir = path22.join(TASKS_DIR2, "_archive");
-    if (!fs23.existsSync(archiveDir)) fs23.mkdirSync(archiveDir, { recursive: true });
+    if (!fs24.existsSync(archiveDir)) fs24.mkdirSync(archiveDir, { recursive: true });
     for (const taskId of taskIds) {
       const { worktree: hasWorktree } = taskSnapshot(taskId);
       const status = readShipStatus(taskId);
@@ -9012,7 +9082,7 @@ Recovery:
       writeStatusToFile(path22.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
       const src = taskDirForRepoRoot2(taskId);
       const dest = path22.join(archiveDir, taskId);
-      fs23.renameSync(src, dest);
+      fs24.renameSync(src, dest);
       info2(`\u{1F4E6} ${taskId} \u2192 tasks/_archive/${taskId}`);
       const branchName = taskSnapshot(taskId).branch;
       if (branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
@@ -9297,7 +9367,7 @@ async function runPhase(phase, state) {
   if (phase === "qa") {
     const activeCwd = getActiveCwd(taskIds);
     const qaTemplatePath = state.isBundle ? null : findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
-    const resolvedPrTemplate = qaTemplatePath ? fs23.readFileSync(qaTemplatePath, "utf8") : null;
+    const resolvedPrTemplate = qaTemplatePath ? fs24.readFileSync(qaTemplatePath, "utf8") : null;
     return runQaPhase(state, cliArgs.interactive, resolvedPrTemplate);
   }
   if (phase === "human_review") {
@@ -9381,7 +9451,7 @@ var extractCheckedVerdict2 = extractCheckedVerdict;
 function readArtifact(taskId, name) {
   const p = path22.join(taskDirFor2(taskId), name);
   try {
-    return fs23.readFileSync(p, "utf8");
+    return fs24.readFileSync(p, "utf8");
   } catch {
     return null;
   }
@@ -9405,7 +9475,7 @@ function checkImplementEvidence(taskId) {
   const sForEvidence = readStatus(taskId);
   if (sForEvidence.worktree === true) {
     const wt = worktreePath(taskId);
-    if (fs23.existsSync(wt)) checkRoots.push(wt);
+    if (fs24.existsSync(wt)) checkRoots.push(wt);
   }
   const ignoreCwd = checkRoots[checkRoots.length - 1];
   const gitIgnored = filterGitIgnoredPaths(files, ignoreCwd);
@@ -9417,7 +9487,7 @@ function checkImplementEvidence(taskId) {
     };
   }
   const existingFiles = verifiableFiles.filter(
-    (f) => checkRoots.some((root) => fs23.existsSync(path22.join(root, f)))
+    (f) => checkRoots.some((root) => fs24.existsSync(path22.join(root, f)))
   );
   if (existingFiles.length === 0) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
@@ -9915,8 +9985,8 @@ function checkDeps(taskIds, skipAgentDeps = false) {
   for (const taskId of taskIds) {
     validateTaskId(taskId);
     const repoRootStatusFile = path22.join(REPO_ROOT2, "tasks", taskId, "status.json");
-    const statusFile = cliArgs.ship && fs23.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
-    if (!fs23.existsSync(statusFile)) {
+    const statusFile = cliArgs.ship && fs24.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
+    if (!fs24.existsSync(statusFile)) {
       die(`No status.json at tasks/${taskId}/status.json \u2014 run canon task new ${taskId} first`);
     }
   }
@@ -9962,7 +10032,7 @@ async function main() {
   let heartbeatStarted = false;
   const earlyHeartbeatResolver = (id) => {
     const repoRootStatusFile = path22.join(REPO_ROOT2, "tasks", id, "status.json");
-    return path22.dirname(cliArgs.ship && fs23.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
+    return path22.dirname(cliArgs.ship && fs24.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
   };
   if (!cliArgs.ship && !cliArgs.dryRun) {
     guardConcurrentRun(cliArgs.taskIds, earlyHeartbeatResolver);
