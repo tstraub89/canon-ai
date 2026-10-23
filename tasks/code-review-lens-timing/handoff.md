@@ -1,25 +1,21 @@
 # Implementation Handoff: code-review-lens-timing
 
 > Author: Codex | Spec: `tasks/code-review-lens-timing/spec.md` | Plan: `tasks/code-review-lens-timing/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/agents/claude.ts` | Capture top-level sub-agent results and notification transcripts; write per-lens rows with deduplicated cumulative usage. |
+| `src/orchestrator/types.ts` | Permit `claude:<agent type>` metric agents. |
+| `src/orchestrator/metrics.ts` | Escape Agent cells and document the sub-agent row contract in the skeleton. |
+| `templates/docs/pipeline-invocations.md` | Keep adopter metrics header note identical to the runtime skeleton. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Document the per-lens metrics behavior and synced template. |
+| `tests/metrics.test.ts` | Check header-note equality and Agent-cell escaping. |
+| `tests/claude-subagent-metrics.test.ts` | Exercise sub-agent metrics through a fake Claude executable and transcript fixtures. |
+| `dist/orchestrator/run-task.js` | Rebuilt published bundle. |
 
 ## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
 
 | Field | Source |
 |---|---|
@@ -31,91 +27,50 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Claude stream results are now retained until session completion so their corresponding transcript can be read after the session exits. Each qualifying top-level sub-agent gets a separate row after the foreman row, and transcript read or metrics-write failures remain fail-soft.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | Implemented the planned stream capture, transcript summation, docs, tests, and generated bundle. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Fake Claude harness verifies session and anchored-lens rows, model, duration, deduplicated transcript total, and status. |
+| AC-2 | Met | Verifies anchored then cold lens order. |
+| AC-3 | Met | Verifies failed status, session-model fallback, missing notification, unreadable transcript, and zero token total. |
+| AC-4 | Met | Non-lens, missing duration, nested, and malformed events leave only the session row. |
+| AC-5 | Met | Non-zero Claude exit retains the lens row and failed session row; metrics writer already has fail-soft warning coverage. |
+| AC-6 | Met | Hostile Agent value remains a nine-cell row after escaping. |
+| AC-7 | Met | Runtime skeleton and adopter template notes compare equal; orchestrator reference and template are synced. |
 
 ## Edge Cases Considered
 
-- ...
+- Duplicate transcript assistant entries with the same message ID count once; entries without IDs count independently.
+- Results are deduplicated by tool_use_id across resume-not-found fallback attempts.
+- Missing notification or transcript data yields `-` tokens; nested results are ignored.
+- A missing `parent_tool_use_id` is treated as top-level (`== null`), consistent with excluding non-null nested events.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 1,562 passed, 1 skipped, 0 failed. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js`; CLI bundle had no delta. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale

@@ -60,6 +60,17 @@ void test('metrics warn without throwing when task directory cannot be written',
     assert.match(warnings.join('\n'), /metrics: could not record spec row/);
 }));
 
+void test('metrics skeleton notes match adopter header and Agent cells escape delimiters', () => fixture(root => {
+    const template = fs.readFileSync(path.join(process.cwd(), 'templates/docs/pipeline-invocations.md'), 'utf8');
+    const notes = (value: string) => value.split('\n').filter(line => line.startsWith('>'));
+    assert.deepEqual(notes(METRICS_SKELETON), notes(template));
+    process.env.CANON_METRICS_FILE_OVERRIDE = path.join(root, 'metrics.md');
+    recordMetric({ ...entry(root), agent: 'claude:a|b\nc' });
+    const row = fs.readFileSync(path.join(root, 'metrics.md'), 'utf8').split('\n').find(line => line.startsWith('| 20'));
+    assert.ok(row);
+    assert.equal(row.split(/(?<!\\)\|/).length - 2, 9);
+}));
+
 void test('early phases leave all shared telemetry clean in a real main checkout', () => fixture(root => {
     const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     git('init', '-b', 'main');
