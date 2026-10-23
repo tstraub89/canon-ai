@@ -152,7 +152,9 @@ export function commitTaskArtifactsToBase(taskIds: string[], _artifactFiles: Rea
         if (status.ok && status.stdout.trim().length > 0) dirtyTelemetry.push(relPath);
     }
     if (dirtyTelemetry.length > 0) {
-        for (const relPath of dirtyTelemetry) git('add', '--', relPath);
+        // A telemetry file removed with `git rm` has nothing left to add; the
+        // pathspec commit below still records the staged removal.
+        for (const relPath of filterStageablePaths(dirtyTelemetry, REPO_ROOT)) git('add', '--', relPath);
         git(
             'commit',
             '-m',

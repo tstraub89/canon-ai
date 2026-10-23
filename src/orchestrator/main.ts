@@ -251,6 +251,46 @@ function assertSamePhase(taskIds: string[]): CurrentPhase {
     return phases[0];
 }
 
+function backupIndexFile(cwd: string): { restore(): boolean; discard(): void } | null {
+    const indexPath = splitGit.gitSafeAt(cwd, 'rev-parse', '--path-format=absolute', '--git-path', 'index');
+    if (!indexPath.ok) return null;
+    const source = indexPath.stdout.trim();
+    const backup = `${source}.canon-autocommit-backup`;
+    try {
+        fs.copyFileSync(source, backup);
+    } catch {
+        return null;
+    }
+    return {
+        restore(): boolean {
+            try {
+                fs.renameSync(backup, source);
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        discard(): void {
+            fs.rmSync(backup, { force: true });
+        },
+    };
+}
+
+// A listed task artifact is exempt only when every task that lists it owns it,
+// so one bundle member cannot claim another member's artifact.
+function ownedTaskArtifactRows(taskIds: readonly string[]): Set<string> {
+    const owned = new Set<string>();
+    const foreign = new Set<string>();
+    for (const taskId of taskIds) {
+        for (const file of splitValidation.parseHandoffChangesRows(taskId).files) {
+            if (splitValidation.isPipelineOwnedTaskArtifact(file, [taskId])) owned.add(file);
+            else foreign.add(file);
+        }
+    }
+    for (const file of foreign) owned.delete(file);
+    return owned;
+}
+
 function verifyHandoffFilesCommitted(
     taskIds: string[],
     cwd: string,
@@ -264,7 +304,10 @@ function verifyHandoffFilesCommitted(
     // `verifyHandoffAgainstDiff`; without it here, the success path still aborts
     // after staging on a perfectly-valid generator+artifact handoff.
     const gitIgnoredHandoffFiles = splitGit.filterGitIgnoredPaths(handoffFiles, cwd);
-    const verifiableHandoffFiles = handoffFiles.filter(f => !gitIgnoredHandoffFiles.has(f));
+    // A task's own listed artifacts are exempt too: the pipeline may have
+    // rewritten one identical to the base, leaving no commit to find.
+    const ownedArtifacts = ownedTaskArtifactRows(taskIds);
+    const verifiableHandoffFiles = handoffFiles.filter(f => !gitIgnoredHandoffFiles.has(f) && !ownedArtifacts.has(f));
     if (verifiableHandoffFiles.length === 0) {
         return;
     }
@@ -654,9 +697,13 @@ export function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // Stage-path filtering below also handles index-staged removals.
     const missing: string[] = [];
     const baseRefForLog = splitGit.getBaseBranch(taskIds);
+    // A task's own listed artifacts are not checked here either; see
+    // verifyHandoffFilesCommitted.
+    const ownedArtifacts = ownedTaskArtifactRows(taskIds);
     for (const f of allHandoffFiles) {
         if (dirtyFiles.has(f)) continue;
         if (gitIgnoredHandoffFiles.has(f)) continue;
+        if (ownedArtifacts.has(f)) continue;
         const exists = fs.existsSync(path.join(cwd, f));
         if (!exists) {
             // Path is absent from the working tree — accept it if a commit on
@@ -708,11 +755,28 @@ export function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // omissions dropping a valid handoff file from the commit.
     //
     // A staged removal has nothing left in the index or working tree for
-    // `git add` to match. It still needs the commit below.
-    const stageable = splitGit.filterStageablePaths(handoffFiles, cwd);
+    // `git add` to match. It still needs the commit below. A gitignored entry
+    // is never staged: `git add` refuses it and fails the whole call. The
+    // default `check-ignore` does not report tracked files, so a tracked file
+    // matching an ignore rule stays in the stage set.
+    const stageable = splitGit.filterStageablePaths(
+        handoffFiles.filter(f => !gitIgnoredHandoffFiles.has(f)),
+        cwd,
+    );
     if (stageable.length > 0) {
+        // `git add` can fail after staging some paths. Copy the index file first
+        // so a failure restores it byte for byte, keeping anything staged
+        // beforehand (including intent-to-add entries).
+        const indexBackup = backupIndexFile(cwd);
         const addResult = splitGit.gitSafeAt(cwd, 'add', '-A', '--', ...stageable);
-        if (!addResult.ok) die(`Failed to stage files: ${addResult.stderr || 'unknown error'}`);
+        if (!addResult.ok) {
+            // An add that never took the index lock staged nothing; the index may
+            // now belong to another git process, so leave it alone.
+            if (/index\.lock/.test(addResult.stderr)) indexBackup?.discard();
+            else if (!indexBackup?.restore()) splitGit.gitSafeAt(cwd, 'reset', 'HEAD', '--', ...handoffFiles);
+            die(`Failed to stage files: ${addResult.stderr || 'unknown error'}`);
+        }
+        indexBackup?.discard();
     }
 
     const preCheck = splitGit.gitSafeAtRaw(cwd, 'status', '--porcelain=v1', '-uall');
@@ -3248,7 +3312,7 @@ function checkImplementEvidence(taskId: string): EvidenceResult {
         );
         const baseBranch = sForEvidence.base_branch || splitGit.getDefaultBaseBranch();
         const committedDiff = splitGit.gitSafeAt(
-            evidenceCwd, 'diff', '--name-status', `${baseBranch}...HEAD`,
+            evidenceCwd, 'diff', '--name-status', '--no-renames', `${baseBranch}...HEAD`,
         );
         const deletedInCommits = new Set(
             committedDiff.stdout.split('\n')
