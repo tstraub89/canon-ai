@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [3.13.0] — 2026-10-23
+
+### Added
+
+- **Bug-fix tasks record red-first evidence in the handoff, and code review checks for it.** The handoff template has a Red-First Evidence section with one row per red-first acceptance criterion: the test command, the commit the pre-fix code was at, the failure it showed there, and the post-fix result. A `[wrong-premise]` blocker can stand in when the test cannot be made to fail for the reason the spec states. The implement prompts point at the section and say which pre-fix state to run against. The anchored code-review lens flags a red-first criterion with no pre-fix run as a spec-compliance gap, and a revision round can close the gap by running the test against the pre-fix commit without redoing the fix.
+- **Claude sub-agents get their own metrics rows.** When a pipeline phase's Claude session spawns sub-agents, each top-level sub-agent gets a row with Agent `claude:<agent type>`, its duration, and its own cumulative tokens. For `code_review` that separates the anchored and cold reviewers from the foreman. The session's own row is unchanged.
+
+### Fixed
+
+- **The spec_gap halt's fix hint names the amendment heading the next `--reroute` requires.** After a task's first reroute, it says `## Amendment Round N` instead of a bare `## Amendment` that `--reroute` refuses.
+- **Implement auto-commit no longer fails on a gitignored generated file listed beside its generator.** The ignored file is not passed to `git add`. If staging fails partway, the index is restored to its state before the attempt.
+- **A handoff row for one of the task's own artifacts no longer fails the coverage checks** when the pipeline rewrote it identical to the base. Another bundle member's artifact is still rejected.
+- **The scaffold commit no longer fails when a telemetry file was removed with `git rm`**, and a committed rename's old path counts as deletion evidence at implement close.
+- **The base-divergence and orphaned-branch messages name the actual branch** instead of a literal `<base>`, quoted when the name needs it, so the printed `git push` and `gh pr create` commands can be pasted as is.
+
 ## [3.12.0] — 2026-10-21
 
 ### Added
