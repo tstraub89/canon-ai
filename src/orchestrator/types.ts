@@ -159,7 +159,7 @@ export type CommandResult = {
 export type MetricEntry = {
     taskId: string;
     phase: string;
-    agent: 'claude' | 'codex';
+    agent: 'claude' | 'codex' | `claude:${string}`;
     model: string;
     iteration?: number;
     durationMs: number;

@@ -3716,6 +3716,7 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
     const files = handoffFilesByTask.get(taskId) ?? [];
     for (const filePath of files) {
       if (gitIgnored.has(filePath)) continue;
+      if (isPipelineOwnedTaskArtifact(filePath, [taskId])) continue;
       if (!coveredPaths.has(filePath)) {
         issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff \u2014 it has no committed change against the task base. If it was untouched or rewritten with identical content, drop the row`);
       }

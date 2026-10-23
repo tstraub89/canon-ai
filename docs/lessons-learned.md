@@ -210,3 +210,11 @@ A guard that fences what an agent session may change by comparing `git status` o
 *(2026-10-22, source: red-first-evidence-slot)*
 
 A test that pins a reviewer charter with independent substring matches (one for a heading, one for a term, each found somewhere in the section) keeps passing after the one clause that makes a check closable is deleted, because each keyword still appears elsewhere. This task's review flagged it: a Stage 1 item whose late-evidence clause makes a gap recoverable would have had no test that fails without it. The same test also sliced the template from the first HTML comment, so an added earlier comment would have moved the slice silently. Rule of thumb: when a test pins guidance prose, match the specific clause as one phrase and assert that phrase within the exact section it belongs to, and check that removing the clause turns the test red.
+
+---
+
+### Fixture-encoded stream shapes prove the parser, not the harness
+
+*(date 2026-10-22, source: code-review-lens-timing)*
+
+A parser for a CLI's output stream (Claude Code's `stream-json`, Codex's `--json`) written against fixtures passes its tests even when the field paths are wrong, because the fixtures encode the same assumption the parser makes. This task's plan noted that the `tool_use_id` path was not re-verified against a real capture, and that a mismatch would only degrade to `-` values. Before the feature ships, capture one real run of the harness and check each field path the parser reads, then confirm the output in a live run. When a field can only be verified by a live run, say so in the spec's Human Test Plan and in the PR body, not only in the test names. Rule of thumb: for any new read of harness output, grep the captured stream for each key path before writing the fixture, and make the fixture a copy of the capture, not a new hand-written shape.

@@ -1834,6 +1834,37 @@ void test('verifyHandoffAgainstDiffFromData exempts gitignored handoff entries f
     assert.deepEqual(issues, []);
 });
 
+void test('verifyHandoffAgainstDiffFromData skips a listed artifact of the task under review but not telemetry or another task\'s artifact', () => {
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a'],
+        {
+            diffFiles: ['src/foo.ts'],
+            handoffFilesByTask: makeHandoffMap({
+                'task-a': ['src/foo.ts', 'tasks/task-a/review.md', 'tasks/task-b/review.md', 'docs/pipeline-invocations.md'],
+            }),
+        },
+    );
+    assert.equal(issues.length, 2, issues.join('\n'));
+    assert.ok(issues.some(i => i.includes('tasks/task-b/review.md')));
+    assert.ok(issues.some(i => i.includes('docs/pipeline-invocations.md')));
+    assert.ok(!issues.some(i => i.includes('tasks/task-a/review.md')));
+});
+
+void test('verifyHandoffAgainstDiffFromData does not let one bundle member\'s handoff claim another member\'s artifact', () => {
+    const issues = verifyHandoffAgainstDiffFromData(
+        ['task-a', 'task-b'],
+        {
+            diffFiles: ['src/foo.ts'],
+            handoffFilesByTask: makeHandoffMap({
+                'task-a': ['src/foo.ts', 'tasks/task-b/review.md'],
+                'task-b': ['src/foo.ts', 'tasks/task-b/review.md'],
+            }),
+        },
+    );
+    assert.equal(issues.length, 1, issues.join('\n'));
+    assert.match(issues[0], /^\[task-a\] handoff→diff: tasks\/task-b\/review\.md/);
+});
+
 void test('verifyHandoffAgainstDiffFromData rejects a handoff file missing from diff', () => {
     const issues = verifyHandoffAgainstDiffFromData(
         ['task-a'],
@@ -2292,38 +2323,45 @@ void test('verifyBaseDriftFromData: empty allowedPrefixes leaves the legacy 3-ar
 });
 
 void test('verifyBaseDivergenceFromData: empty commits returns empty string', () => {
-    assert.equal(verifyBaseDivergenceFromData([]), '');
+    assert.equal(verifyBaseDivergenceFromData([], 'main'), '');
 });
 
 void test('verifyBaseDivergenceFromData: single commit includes short-sha and full subject', () => {
     const message = verifyBaseDivergenceFromData([
         { sha: 'abcdef1234567890', subject: 'task(foo): commit artifacts' },
-    ]);
+    ], 'release/2.x');
     assert.match(message, /abcdef1/);
     assert.match(message, /task\(foo\): commit artifacts/);
     assert.equal(
         message,
         [
-            'Base divergence detected: 1 colliding commit on <base> not yet on origin/<base>; they will collide when <base> is pulled:',
+            'Base divergence detected: 1 colliding commit on release/2.x not yet on origin/release/2.x; they will collide when release/2.x is pulled:',
             '  abcdef1  task(foo): commit artifacts',
-            'Fix: git push origin <base>',
+            'Fix: git push origin release/2.x',
             'Override: rerun with --allow-divergent-base to skip this commit-divergence check only.',
         ].join('\n'),
     );
+});
+
+void test('verifyBaseDivergenceFromData quotes a base branch the shell would otherwise reinterpret', () => {
+    const message = verifyBaseDivergenceFromData([
+        { sha: 'abcdef1234567890', subject: 'task(foo): commit artifacts' },
+    ], "release;next's");
+    assert.match(message, /^Fix: git push origin 'release;next'\\''s'$/m);
 });
 
 void test('verifyBaseDivergenceFromData: multiple commits listed in input order on separate lines', () => {
     const message = verifyBaseDivergenceFromData([
         { sha: 'aaaaaaa000000001', subject: 'first commit' },
         { sha: 'bbbbbbb000000002', subject: 'second commit' },
-    ]);
+    ], 'release/2.x');
     assert.match(message, /\n  aaaaaaa  first commit\n  bbbbbbb  second commit\n/);
 });
 
 void test('verifyBaseDivergenceFromData: message includes operator fix and override literals', () => {
     const message = verifyBaseDivergenceFromData([
         { sha: 'deadbeef00000000', subject: 'some change' },
-    ]);
+    ], 'release/2.x');
     assert.match(message, /git push origin/);
     assert.match(message, /--allow-divergent-base/);
 });

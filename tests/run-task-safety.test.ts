@@ -2046,6 +2046,114 @@ void test('autoCommitCode commits an already-staged deletion instead of failing 
     });
 });
 
+function commitIgnoreRules(cwd: string, rules: string): void {
+    fs.writeFileSync(path.join(cwd, '.gitignore'), rules, 'utf8');
+    gitIn(cwd, 'add', '.gitignore');
+    gitIn(cwd, 'commit', '-m', 'ignore rules');
+}
+
+void test('autoCommitCode commits the generator and skips a gitignored artifact listed beside it', () => {
+    withTempDir('run-task-autocommit-ignored-artifact-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'gen.ts': 'export const v = 1;\n' }, ['`gen.ts`', '`gen.out`']);
+        commitIgnoreRules(localDir, 'gen.out\n');
+        fs.writeFileSync(path.join(localDir, 'gen.ts'), 'export const v = 2;\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'gen.out'), 'generated\n', 'utf8');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['M\tgen.ts']));
+        assert.equal(execFileSync('git', ['status', '--porcelain=v1', '-uall'], { cwd: localDir, encoding: 'utf8' }), '');
+    });
+});
+
+void test('autoCommitCode still commits a tracked file that matches an ignore rule', () => {
+    withTempDir('run-task-autocommit-tracked-ignored-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'settings.cfg': 'a=1\n' }, ['`settings.cfg`']);
+        commitIgnoreRules(localDir, '*.cfg\n');
+        fs.writeFileSync(path.join(localDir, 'settings.cfg'), 'a=2\n', 'utf8');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['M\tsettings.cfg']));
+    });
+});
+
+void test('autoCommitCode accepts a listed task artifact that matches the base', () => {
+    withTempDir('run-task-autocommit-identical-artifact-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'a.ts': 'export const a = 1;\n' }, ['`a.ts`', '`tasks/task-a/spec.md`']);
+        fs.writeFileSync(path.join(localDir, 'a.ts'), 'export const a = 2;\n', 'utf8');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['M\ta.ts']));
+    });
+});
+
+void test('autoCommitCode accepts a listed own task artifact that does not exist, beside a dirty source file', () => {
+    withTempDir('run-task-autocommit-missing-own-artifact-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'a.ts': 'export const a = 1;\n' }, ['`a.ts`', '`tasks/task-a/never-written.md`']);
+        fs.writeFileSync(path.join(localDir, 'a.ts'), 'export const a = 2;\n', 'utf8');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['M\ta.ts']));
+    });
+});
+
+void test('autoCommitCode does not exempt another bundle member\'s artifact listed in a handoff', () => {
+    withTempDir('run-task-autocommit-foreign-artifact-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'a.ts': 'export const a = 1;\n' }, ['`a.ts`', '`tasks/task-b/spec.md`']);
+        gitIn(localDir, 'checkout', 'main');
+        const tasksRoot = path.join(localDir, 'tasks');
+        writeImplementEvidenceFixture(tasksRoot, 'task-b', ['`a.ts`']);
+        writeTaskStatus(tasksRoot, 'task-b', makeCompleteStatus('task-b', 'task/task-a'));
+        gitIn(localDir, 'add', '--', 'tasks/task-b');
+        gitIn(localDir, 'commit', '-m', 'second bundle member');
+        gitIn(localDir, 'checkout', '-B', 'task/task-a', 'main');
+        fs.writeFileSync(path.join(localDir, 'a.ts'), 'export const a = 2;\n', 'utf8');
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            `.then(m => { m.autoCommitCode(['task-a', 'task-b'], ${JSON.stringify(localDir)}); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join('\n'), childEnvWithoutTasksOverride(), localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /tasks\/task-b\/spec\.md — no commit touches this path/);
+    });
+});
+
+void test('autoCommitCode restores the pre-existing index when git add fails partway', () => {
+    withTempDir('run-task-autocommit-add-failure-reset-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'a.ts': 'export const a = 1;\n' }, ['`a.ts`', '`vendor/kept.ts`']);
+        fs.mkdirSync(path.join(localDir, 'vendor'));
+        fs.writeFileSync(path.join(localDir, 'vendor', 'kept.ts'), 'export const k = 1;\n', 'utf8');
+        gitIn(localDir, 'add', 'vendor/kept.ts');
+        gitIn(localDir, 'commit', '-m', 'track vendored file');
+        // A tracked file under an ignored directory: `git add` stages it but
+        // exits 1, after already staging `a.ts`.
+        commitIgnoreRules(localDir, 'vendor/\n');
+        // Version 2 of a.ts is staged before auto-commit runs and version 3 is
+        // only in the working tree. A failed add must leave version 2 staged.
+        fs.writeFileSync(path.join(localDir, 'a.ts'), 'export const a = 2;\n', 'utf8');
+        gitIn(localDir, 'add', 'a.ts');
+        fs.writeFileSync(path.join(localDir, 'a.ts'), 'export const a = 3;\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'vendor', 'kept.ts'), 'export const k = 2;\n', 'utf8');
+        // An intent-to-add entry has no blob in the index tree; it must survive too.
+        fs.writeFileSync(path.join(localDir, 'a-planned.ts'), 'export const p = 1;\n', 'utf8');
+        gitIn(localDir, 'add', '-N', 'a-planned.ts');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Failed to stage files/);
+        assert.equal(execFileSync('git', ['ls-files', '--', 'a-planned.ts'], { cwd: localDir, encoding: 'utf8' }), 'a-planned.ts\n');
+        assert.equal(
+            execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: localDir, encoding: 'utf8' }),
+            'a.ts\n',
+        );
+        assert.equal(execFileSync('git', ['show', ':a.ts'], { cwd: localDir, encoding: 'utf8' }), 'export const a = 2;\n');
+    });
+});
+
 void test('checkAndRoute commits a staged deletion for a non-worktree implement task', () => {
     withTempDir('run-task-routed-staged-deletion-', dir => {
         const localDir = makeAutoCommitFixture(dir, { 'dead.ts': 'export const dead = true;\n' }, ['`dead.ts`']);
@@ -5182,6 +5290,38 @@ void test('commitTaskArtifactsToBase absorbs dirty pre-implement telemetry in a 
         });
         assert.match(log.stdout, /chore: absorb pre-implement telemetry into scaffold for telemetry-absorb/);
         assert.match(log.stdout, /task\(telemetry-absorb\): commit artifacts pre-pipeline/);
+    });
+});
+
+void test('commitTaskArtifactsToBase commits a telemetry file removed with git rm instead of failing to stage it', () => {
+    withTempDir('run-task-telemetry-staged-delete-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'telemetry-staged-delete';
+        fs.mkdirSync(path.join(localDir, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), 'old row\n', 'utf8');
+        gitIn(localDir, 'add', 'docs/pipeline-invocations.md');
+        gitIn(localDir, 'commit', '-m', 'seed telemetry');
+        gitIn(localDir, 'rm', '--quiet', 'docs/pipeline-invocations.md');
+        writeTaskStatus(path.join(localDir, 'tasks'), taskId, makeCompleteStatus(taskId, ''));
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/git.ts')).href)})`,
+            `.then(m => { m.commitTaskArtifactsToBase([${JSON.stringify(taskId)}], new Set()); })`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join(''), childEnvWithoutTasksOverride(), localDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const status = spawnSync('git', ['status', '--porcelain', '--', 'docs/pipeline-invocations.md'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.equal(status.stdout.trim(), '');
+        const removed = spawnSync('git', ['show', '--name-status', '--format=%s', 'HEAD'], {
+            cwd: localDir,
+            encoding: 'utf8',
+        });
+        assert.match(removed.stdout, /chore: absorb pre-implement telemetry into scaffold for telemetry-staged-delete/);
+        assert.match(removed.stdout, /^D\tdocs\/pipeline-invocations\.md$/m);
     });
 });
 
@@ -9158,6 +9298,56 @@ void test('checkAndRoute honors deletion-only implement evidence (listed file ab
         };
         assert.equal(updated.phases?.implement?.status, 'done');
         assert.doesNotMatch(result.stderr, /Retry/);
+    });
+});
+
+void test('checkAndRoute honors a committed rename\'s old path as deletion evidence (real git)', () => {
+    withTempDir('implement-evidence-committed-rename-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const taskId = 'task-a';
+        const legacy = Array.from({ length: 20 }, (_, i) => `export const line${i} = ${i};`).join('\n') + '\n';
+        fs.mkdirSync(path.join(localDir, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'src', 'legacy.ts'), legacy, 'utf8');
+        gitIn(localDir, 'add', 'src/legacy.ts');
+        gitIn(localDir, 'commit', '-m', 'seed legacy');
+        gitIn(localDir, 'checkout', '-b', 'task/task-a');
+        // A similar add pairs with the delete, so a rename-detecting diff
+        // reports `R` and the old path never shows up as `D`.
+        gitIn(localDir, 'mv', 'src/legacy.ts', 'src/renamed.ts');
+        gitIn(localDir, 'commit', '-m', 'rename legacy');
+
+        writeImplementEvidenceFixture(tasksRoot, taskId, ['`src/legacy.ts`']);
+        writeTaskStatus(tasksRoot, taskId, {
+            id: taskId,
+            title: taskId,
+            base_branch: 'main',
+            branch: 'task/task-a',
+            worktree: false,
+            sessions: { codex: 'resume-1234567890' },
+            phases: {
+                spec: { status: 'done', agent: 'claude' },
+                spec_review: { status: 'done', agent: 'codex', verdict: 'approved' },
+                plan: { status: 'done', agent: 'claude' },
+                implement: { status: 'done', agent: 'codex' },
+                code_review: { status: 'pending', agent: 'claude', verdict: '' },
+                qa: { status: 'pending', agent: 'claude' },
+                human_review: { status: 'pending', agent: 'human' },
+            },
+        });
+
+        const result = runNodeInline([
+            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
+            `.then(m => m.checkAndRoute('implement', [${JSON.stringify(taskId)}]))`,
+            '.catch(err => { console.error(err); process.exit(1); });',
+        ].join(''), baseDriftEnv(dir, tasksRoot), localDir);
+
+        assert.equal(result.status, 0, result.stderr);
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
+            phases?: { implement?: { status?: string } };
+        };
+        assert.equal(updated.phases?.implement?.status, 'done');
+        assert.doesNotMatch(result.stderr + result.stdout, /none exist on disk/);
     });
 });
 
