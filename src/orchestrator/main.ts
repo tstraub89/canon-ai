@@ -2775,6 +2775,11 @@ const REROUTE_ADMITTED_PHASES: ReadonlySet<CurrentPhase> = new Set([
     'human_review',
 ]);
 
+export function rerouteAmendmentHeading(status: StatusJson): { round: number; heading: string } {
+    const round = (status.phases.implement?.reroute_count ?? 0) + 1;
+    return { round, heading: round === 1 ? '## Amendment' : `## Amendment Round ${round}` };
+}
+
 function describeRerouteEntryPhase(status: StatusJson): string {
     const phase = getCurrentPhase(status);
     if (phase === 'code_review') {
@@ -2822,14 +2827,14 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
         if (isSpecGapReroute && codeReviewVerdict !== 'spec_gap') {
             continue;
         }
-        const requiredRound = (status.phases.implement?.reroute_count ?? 0) + 1;
+        const { round: requiredRound, heading: expectedHeading } = rerouteAmendmentHeading(status);
         const result = splitValidation.verifyRerouteAmendment(taskId, requiredRound);
         if (!result.amended) {
             amendmentFailures.push({
                 taskId,
                 specPath: path.join(taskDirFor(taskId), 'spec.md'),
                 requiredRound,
-                expectedHeading: requiredRound === 1 ? '## Amendment' : `## Amendment Round ${requiredRound}`,
+                expectedHeading,
                 reason: result.reason,
             });
         }
@@ -3770,10 +3775,16 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
         case 'code_review': {
             const specGapIds = taskIds.filter((_, index) => getVerdict(statuses[index], 'code_review') === 'spec_gap');
             if (specGapIds.length > 0) {
+                const amendHeadings = specGapIds.map(id => ({
+                    id,
+                    heading: rerouteAmendmentHeading(statuses[taskIds.indexOf(id)]).heading,
+                }));
+                const fullSendScopeAction =
+                    `add them to Affected Files under ${splitValidation.FULL_SEND_SCOPE_AMENDMENT_HEADING} or remove them from the branch`;
                 const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
                 const scopeNote = specGapScopeFiles.length > 0
                     ? `Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
-                        `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files (as an ## Amendment) or remove them from the branch. `
+                        `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, ${fullSendScopeAction}. `
                     : specGapScopeError !== null
                         ? `Full-send scope could not be verified: the committed diff against the base branch could not be read.\n` +
                             `Git error: ${specGapScopeError}\n` +
@@ -3784,7 +3795,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                     `The implementation cannot resolve this — the root cause is in the spec. ` +
                     scopeNote +
                     `Recovery options (both operate on the full blocked bundle [${taskIds.join(' ')}]):\n` +
-                    `  FIX: amend spec.md with ## Amendment, then: canon run ${taskIds.join(' ')} --reroute\n` +
+                    `  FIX: add ${amendHeadings.map(a => `${a.heading} to tasks/${a.id}/spec.md`).join('; ')}, then: canon run ${taskIds.join(' ')} --reroute\n` +
                     `  BLESS: canon task accept ${taskIds.join(' ')} code_review --reason "<why>"`;
                 console.log('');
                 console.log('════════════════════════════════════════════════════════');
@@ -3797,7 +3808,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                     console.log('  Full-send files still outside Affected Files:');
                     for (const file of specGapScopeFiles) console.log(`    ${file}`);
                     console.log('  BLESS does not amend the spec, so --pr will still reject these files.');
-                    console.log('  Before blessing, add them to Affected Files (## Amendment) or remove them.');
+                    console.log(`  Before blessing, ${fullSendScopeAction}.`);
                 } else if (specGapScopeError !== null) {
                     console.log('  Full-send scope could not be verified.');
                     console.log(`  Git error: ${specGapScopeError}`);
@@ -3807,8 +3818,8 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 console.log('  Two recovery options:');
                 console.log('');
                 console.log('  FIX  — Amend the spec and re-run the full review chain:');
-                for (const id of specGapIds) {
-                    console.log(`    # Edit tasks/${id}/spec.md — add a ## Amendment section`);
+                for (const { id, heading } of amendHeadings) {
+                    console.log(`    # Edit tasks/${id}/spec.md — add a ${heading} section`);
                 }
                 console.log(`    canon run ${taskIds.join(' ')} --reroute`);
                 console.log('');

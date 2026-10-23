@@ -1,0 +1,3 @@
+<!-- round=3 reviewed_sha=bee80f49416113f9d67f377d2315850f8ea84b9b scope=delta base=37ddaa285942b8e6878a1137ef7a7a27fb244f3e reason="delta" -->
+
+The changed recovery hint now points to the full-send scope amendment heading rather than a round-specific human reroute heading, and the regression test checks that the scope addition does not satisfy a later reroute gate. Type-check and build pass; no actionable defects found.

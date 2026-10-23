@@ -1,0 +1,1 @@
+The changed recovery hint now points to the full-send scope amendment heading rather than a round-specific human reroute heading, and the regression test checks that the scope addition does not satisfy a later reroute gate. Type-check and build pass; no actionable defects found.
