@@ -20,7 +20,8 @@ Apply canon's existing code-review charter to the diff, spec, handoff, and prior
 2. Treat `Fail - unrelated` as valid only when Notes names a specific file reference outside the task's affected files and the explanation is credible.
 3. Fill an AC cross-reference table: every AC from `spec.md` must appear with Met / Partial / Not Met status and a one-line evidence note.
 4. Check that Non-Goals, Known Risks, and the Human Test Plan were not dropped.
-5. If Stage 1 fails, list the gaps and do not run Stage 2.
+5. For each AC the spec states as a red-first regression test, check for a Red-First Evidence row across the baseline section and every Iteration subsection of `handoff.md`. The row must show a run against pre-fix code (a commit that predates the fix) with a failure excerpt consistent with the reason the spec states, or a `[wrong-premise]` Blocker reference, or the environment-bound escape's outcome or stated non-executability. A missing row, or a row with no pre-fix run and no allowed alternative, is a Stage 1 gap. Evidence recorded later against the pre-fix commit satisfies this check; do not treat “test first ran after the fix” as a gap by itself. Apply this only to ACs the spec states as red-first regression tests, not every test-adding AC.
+6. If Stage 1 fails, list the gaps and do not run Stage 2.
 
 ## Stage 2 - Code Quality
 

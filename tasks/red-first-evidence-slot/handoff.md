@@ -16,6 +16,15 @@
 
 | File | What Changed |
 |---|---|
+| `.canon/templates/handoff.md`, `templates/.canon/templates/handoff.md` | Added the baseline and Iteration Red-First Evidence tables and `[wrong-premise]` blocker guidance. |
+| `.canon/templates/review.md`, `templates/.canon/templates/review.md` | Added the Stage 1 red-first evidence gate. |
+| `.claude/agents/code-review-anchored.md`, `templates/.claude/agents/code-review-anchored.md` | Added the Stage 1 evidence check, including late evidence against the pre-fix commit. |
+| `src/orchestrator/prompts/templates/implement.md`, `src/orchestrator/prompts/templates/implement-revisions.md`, `src/orchestrator/prompts/templates/implement-reroute.md` | Named the evidence section, pre-fix state, and relevant recovery/carry-forward instructions. |
+| `src/orchestrator/prompts/templates/code-review-foreman.md` | Directed round 2+ anchored review to read evidence across the whole handoff. |
+| `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Added rendered prompt assertions and regenerated snapshots. |
+| `tests/red-first-evidence-template.test.ts` | Added handoff, review template, and charter structure assertions. |
+| `docs/decisions.md` | Recorded anchored Stage 1 ownership and updated its scope list. |
+| `dist/orchestrator/run-task.js` | Rebuilt bundled prompts. |
 
 ## Canon Governance
 
@@ -31,7 +40,7 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Updated the handoff contract and review guidance, then aligned author prompts and rendered prompt tests. The evidence check remains reviewer-facing; no orchestrator code reads the section or label.
 
 ## Deviations from Plan
 
@@ -39,7 +48,7 @@ Brief explanation of the approach taken and why.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Reroute evidence is placed in that round’s Iteration subsection as the AC requires, while the reroute handoff rewrite carries baseline rows forward. | The explicit acceptance criterion requires revisions and reroutes to name the Iteration subsection for new rows; handoff rewriting preserves cumulative evidence. | AC-3 met. |
 
 ## AC Coverage
 
@@ -47,17 +56,22 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Handoff section order, instructions, and five-column table are asserted in the template test. |
+| AC-2 | Met | Blocker labels and commented Iteration table are asserted; charter Stage 1 item added. |
+| AC-3 | Met | All three rendered implement prompts assert section/pre-fix language, old sentence absence, revision recovery, and reroute carry-forward; goldens regenerated. |
+| AC-4 | Met | Anchored charter assertion covers Red-First Evidence, `[wrong-premise]`, and pre-fix evidence; template sync check passes. |
+| AC-5 | Met | Round-2 foreman rendered assertion and review-template checkbox are covered; goldens regenerated. |
+| AC-6 | Met | `grep -rniE 'red-first|wrong-premise' src/ --include='*.ts'` matched only `src/orchestrator/prompts/index.ts:157`. |
+| AC-7 | Met | Mirrors synchronized and checked; bundle rebuilt. |
+| AC-8 | Met | Decision added with the structural pre-flight citation and Stage 1 scope update. |
 
 ## Edge Cases Considered
 
-- ...
+- This task has no red-first regression-test AC; it is a handoff/reviewer guidance feature, so no pre-fix regression run applies.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- None. No material ambiguity; reroute evidence is explicitly placed in the round’s Iteration subsection per AC-3.
 
 ## Validation Outcomes
 
@@ -78,13 +92,21 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 1,561 passed, 1 skipped, 0 failed; full suite completed in 153 seconds. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js`. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `node --test --import ./tests/md-loader-register.mjs --import tsx tests/run-task-prompts.test.ts` | Pass | 55 tests; run with `UPDATE_GOLDENS=1` to regenerate prompt snapshots. |
+| `node --test --import ./tests/md-loader-register.mjs --import tsx tests/red-first-evidence-template.test.ts` | Pass | 2 tests. |
+| AC-6 source grep | Pass | Only `src/orchestrator/prompts/index.ts:157` matched. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
 ---
 

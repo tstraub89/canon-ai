@@ -58,6 +58,15 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 - (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
 - Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
+- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+
+## Red-First Evidence
+
+> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
 
 ## Validation Outcomes
 
@@ -112,6 +121,13 @@ On revision rounds, append below this line:
 ### AC deltas (if any)
 
 - AC-N: was Partial → now Met (file:line)
+
+### Red-First Evidence
+
+_Include only when this round adds or changes a red-first test or adds missing evidence._
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
 
 ### Re-run validation (only checks that re-ran)
 

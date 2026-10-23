@@ -1,132 +1,82 @@
 # Code Review: red-first-evidence-slot
 
-> Reviewer: Claude | Spec: `tasks/red-first-evidence-slot/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman) | Spec: `tasks/red-first-evidence-slot/spec.md`
 
-Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
+Synthesized from three lenses: anchored Claude, cold-Claude, and pre-obtained cold-Codex (which returned a clean summary with no findings and confirmed the template mirror check passes).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did Codex's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence recorded for each red-first AC (none required: the spec states no red-first test applies to this task; handoff Edge Cases says the same)
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: handoff template `## Red-First Evidence` section | Pass | Single H2 between Blockers and Validation Outcomes, guidance note, five columns, "none" placeholder row; asserted in `tests/red-first-evidence-template.test.ts`. |
+| AC-2: `[wrong-premise]` in Blockers + Iteration skeleton subsection | Pass | Blockers names both labels; commented skeleton has `### Red-First Evidence` with the same five columns. |
+| AC-3: three implement prompts | Pass | Each names the section and pre-fix state (base commit / branch HEAD before this round's edits); revisions recovery and reroute carry-forward present; old "Report the red run" gone; goldens regenerated. Anchored lens ran the prompt tests: 57 pass. |
+| AC-4: anchored charter Stage 1 item | Pass | Item 5 implements Decision 3 including late-evidence acceptance; no internal template named; sync check passes. |
+| AC-5: foreman round-2+ directive + review template checkbox | Pass | Directive keeps the Iteration pointer and adds the whole-handoff sentence; checkbox present at `.canon/templates/review.md:22`. |
+| AC-6: no orchestrator code reads the section/label | Pass | Grep matches only `src/orchestrator/prompts/index.ts:157`, under `src/orchestrator/prompts/`. |
+| AC-7: mirrors in sync, dist rebuilt | Pass | `sync-templates:check` passes; rebuild leaves `dist/` unchanged; bundle carries the new text. |
+| AC-8: `docs/decisions.md` entry | Pass | Cites "The validation-outcome pre-flight is structural, not spec-matching" (matches `docs/pipeline-orchestrator.md:399`); Stage 1 scope list updated. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The change is small, consistent across template, charter, prompts, goldens, and dist, and respects the no-pre-flight decision. No surviving correctness bugs. Remaining items are low-severity nits.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- **Reroute prompt placement ambiguity** (flagged by 2 lenses: anchored, cold-Claude; low severity). `src/orchestrator/prompts/templates/implement-reroute.md:22,28` — step 7 says to rewrite handoff.md wholesale, while line 28 says to record new rows in "this round's Iteration subsection". A rewritten handoff may have no Iteration section, so the implementer must invent one or use the baseline table. This is spec-mandated wording (AC-3 and the handoff Deviations row), and the anchored charter reads across both locations, so the failure mode is mild ambiguity, not a missed check. Not blocking.
+- **Charter test is loose** (anchored + cold-Claude; low). `tests/red-first-evidence-template.test.ts` uses independent substring matches (`/pre-fix/`, `/Red-First Evidence/`) over all of Stage 1; dropping the late-evidence clause would not fail it. The test's `handoff.slice(indexOf('<!--'))` also takes the first HTML comment, which breaks if an earlier comment is added. Consider tightening both.
+- **Typographic apostrophes** (cold-Claude; low). The new text in the implement prompts uses `’` where neighbouring text uses `'`, and the test regexes depend on the curly character. Cosmetic; normalize with the test in the same edit if touched again.
+- **Iteration skeleton lacks revision-recovery note** (anchored; low). The `### Red-First Evidence` skeleton note says only "Include only when…", while the revisions prompt covers adding missing evidence. Consistent with the spec.
+- **Docs mention** (anchored; low confidence). `docs/pipeline-orchestrator.md` does not mention red-first evidence in Stage 1; the spec's Docs Impact leaves this to QA.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none surviving; the reroute placement ambiguity above stems from the spec's own wording but is low severity and does not block.)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): reroute carry-forward appears only in step 7 and nothing checks rows are preserved - the spec adds no mechanical check by design (Non-Goals, `docs/decisions.md`); the anchored lens's missing-row check is the backstop.
+- Dismissed (cold-Claude): round-1 foreman prompt does not repeat "read across the whole handoff" - the charter carries it, and AC-5 scopes the directive to round 2+; a test pins the asymmetry deliberately.
+- Dismissed (cold-Claude): fresh-implement prompt gives no way to identify the base commit - the status.json/git history names it, and the spec states the pre-fix state as the base commit; a recorded branch-HEAD hash equal to base is acceptable.
+- Cold-Codex: no findings returned; nothing to dismiss.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
