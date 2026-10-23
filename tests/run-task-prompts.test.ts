@@ -400,6 +400,24 @@ void test('promptImplement_fresh', () => {
     recordOrAssert('promptImplement_fresh', actual);
 });
 
+void test('implement prompts state red-first evidence and pre-fix commit', () => {
+    const fresh = promptImplement(baseState, 'fresh', [], 'main');
+    const revisions = promptImplementRevisions(iterState, [], 'main');
+    const reroute = promptImplementReroute(rerouteState);
+    for (const [prompt, phrase] of [[fresh, /base commit/], [revisions, /HEAD before this round’s edits/], [reroute, /HEAD before this round’s edits/]] as const) {
+        assert.match(prompt, /Red-First Evidence/);
+        assert.match(prompt, phrase);
+        assert.doesNotMatch(prompt, /Report the red run/);
+    }
+    assert.match(revisions, /scratch checkout of that commit with only the test applied/);
+    assert.match(reroute, /Carry existing Red-First Evidence rows forward/);
+});
+
+void test('round-N foreman reads red-first evidence across the whole handoff', () => {
+    assert.doesNotMatch(promptCodeReview(baseState), /red-first evidence is read across the whole handoff/);
+    assert.match(promptCodeReview(codeReviewRoundNState), /red-first evidence is read across the whole handoff \(baseline section and every Iteration subsection\)/);
+});
+
 void test('task artifact prompts carry the canonical file citation rule', () => {
     const prompts = [
         promptImplement(baseState),

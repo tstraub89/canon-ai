@@ -19,6 +19,7 @@ Did Codex's `handoff.md` pass all applicable checks?
 - [ ] Validation Outcomes table has no `Fail` results
 - [ ] All checks required by the spec's "Validation Required" section were run
 - [ ] No required checks were skipped without justification
+- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
 
 ### Acceptance Criteria Check
 
