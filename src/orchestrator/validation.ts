@@ -1757,13 +1757,14 @@ export function verifyBaseDrift(
 
 export function verifyBaseDivergenceFromData(
     commits: readonly { sha: string; subject: string }[],
+    baseBranch: string,
 ): string {
     if (commits.length === 0) return '';
     const noun = commits.length === 1 ? 'commit' : 'commits';
     return [
-        `Base divergence detected: ${commits.length} colliding ${noun} on <base> not yet on origin/<base>; they will collide when <base> is pulled:`,
+        `Base divergence detected: ${commits.length} colliding ${noun} on ${baseBranch} not yet on origin/${baseBranch}; they will collide when ${baseBranch} is pulled:`,
         ...commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`),
-        'Fix: git push origin <base>',
+        `Fix: git push origin ${baseBranch}`,
         'Override: rerun with --allow-divergent-base to skip this commit-divergence check only.',
     ].join('\n');
 }
