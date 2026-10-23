@@ -180,7 +180,7 @@ Two mechanisms halt or redirect the pipeline:
 Three gates protect the implement → review boundary:
 - **`autoCommitCode()`** (pre-commit): cross-checks dirty tree against handoff Changes table both directions. Fails if files aren't accounted for.
 - **`validateHandoff()`** (pre-review, per-task): rejects handoffs with `Fail` validation outcomes, missing AC coverage tables, or skipped required checks.
-- **`verifyHandoffAgainstDiff()`** (pre-review, bundle-wide): post-commit cross-check that the committed diff matches the union of all bundle members' handoff Changes tables — catches hallucinated handoff entries and silent edits that slipped past the pre-commit check.
+- **`verifyHandoffAgainstDiff()`** (pre-review, bundle-wide): post-commit cross-check that the committed diff matches the union of all bundle members' handoff Changes tables — catches hallucinated handoff entries and silent edits that slipped past the pre-commit check. A row naming one of the listing task's own artifacts under `tasks/<id>/` is exempt, since the pipeline may rewrite those identical to the base; a row naming another bundle member's artifact is not.
 
 ### Concerns that don't apply
 
