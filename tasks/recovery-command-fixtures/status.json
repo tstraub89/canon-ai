@@ -1,10 +1,10 @@
 {
   "id": "recovery-command-fixtures",
   "title": "Pin every recovery-command hint to a test that runs it from the emitting state",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-23",
   "updated": "2026-10-23",
-  "branch": "",
+  "branch": "task/recovery-command-fixtures",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a1667b-48be-7d31-b509-89b5d2f2bf1b"
+    "codex_spec_review": "01a1667b-48be-7d31-b509-89b5d2f2bf1b",
+    "codex": "01a16684-07f0-7382-9d35-bd320fff6fec",
+    "claude_review": "e997c6d1-c912-4eb8-b883-909e653e27a2"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
