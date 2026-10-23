@@ -3715,10 +3715,12 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                     id,
                     heading: rerouteAmendmentHeading(statuses[taskIds.indexOf(id)]).heading,
                 }));
+                const fullSendScopeAction =
+                    `add them to Affected Files under ${splitValidation.FULL_SEND_SCOPE_AMENDMENT_HEADING} or remove them from the branch`;
                 const maxIter = statuses.reduce((max, s) => Math.max(max, getIterations(s)), 0);
                 const scopeNote = specGapScopeFiles.length > 0
                     ? `Full-send files remain outside Affected Files: ${specGapScopeFiles.join(', ')}. ` +
-                        `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, add them to the spec's Affected Files under ${amendHeadings.map(a => `${a.heading} in tasks/${a.id}/spec.md`).join('; ')} or remove them from the branch. `
+                        `A BLESS accepts the verdict but does not amend the spec, so --pr will still reject these files: before blessing, ${fullSendScopeAction}. `
                     : specGapScopeError !== null
                         ? `Full-send scope could not be verified: the committed diff against the base branch could not be read.\n` +
                             `Git error: ${specGapScopeError}\n` +
@@ -3742,7 +3744,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                     console.log('  Full-send files still outside Affected Files:');
                     for (const file of specGapScopeFiles) console.log(`    ${file}`);
                     console.log('  BLESS does not amend the spec, so --pr will still reject these files.');
-                    console.log(`  Before blessing, add them to Affected Files under ${amendHeadings.map(a => `${a.heading} in tasks/${a.id}/spec.md`).join('; ')} or remove them.`);
+                    console.log(`  Before blessing, ${fullSendScopeAction}.`);
                 } else if (specGapScopeError !== null) {
                     console.log('  Full-send scope could not be verified.');
                     console.log(`  Git error: ${specGapScopeError}`);

@@ -816,7 +816,7 @@ void test('spec_gap fix hint at reroute_count 1: the printed heading and reroute
   assert.ok(fs.existsSync(path.join(tasks, 'gap/review-prior-1.md')));
 }));
 
-void test('spec_gap scope hint names the round-specific amendment heading', () => withTempDir(dir => {
+void test('spec_gap scope hint uses a scope-only heading that does not satisfy a later reroute', () => withTempDir(dir => {
   const cwd = makeRepo(dir);
   git(cwd, 'checkout', '-b', 'task/gap');
   const tasks = fixtureTask(cwd, 'gap', 1);
@@ -828,9 +828,26 @@ void test('spec_gap scope hint names the round-specific amendment heading', () =
   git(cwd, 'add', 'scope-leak.txt');
   git(cwd, 'commit', '-m', 'add unscoped full-send file');
   const emitted = emitSpecGap(cwd, tasks, ['gap']);
-  assert.match(emitted.reason, /Affected Files.*## Amendment Round 2/);
-  assert.match(emitted.output, /Affected Files.*## Amendment Round 2/);
-  assert.doesNotMatch(emitted.reason, /Affected Files \(as an ## Amendment\)/);
+  const scopeHeading = '## Amendment (full-send scope)';
+  const reasonScopeNote = emitted.reason.split('before blessing, ')[1]?.split(' or remove')[0] ?? '';
+  const outputScopeNote = emitted.output.split('Before blessing, ')[1]?.split(' or remove')[0] ?? '';
+  const suggestedHeading = reasonScopeNote.match(/under (## Amendment(?: Round \d+| \(full-send scope\))?)/)?.[1];
+  assert.ok(suggestedHeading, reasonScopeNote);
+  fs.appendFileSync(path.join(tasks, 'gap/spec.md'), `\n${suggestedHeading}\n\n| File | Reason |\n| --- | --- |\n| scope-leak.txt | Full-send scope fixture |\n`);
+  const bless = emitted.output.match(/canon task accept gap code_review --reason "<why this gap is acceptable>"/)?.[0];
+  assert.ok(bless, emitted.output);
+  const blessed = runPrinted(bless, cwd, tasks, 'gap');
+  assert.equal(blessed.status, 0, blessed.stdout + blessed.stderr);
+  assert.equal(derive(endStatus(tasks, 'gap')), 'qa');
+  const reroute = emitted.output.match(/canon run gap --reroute/)?.[0];
+  assert.ok(reroute, emitted.output);
+  const refused = runPrinted(reroute, cwd, tasks, 'gap');
+  assert.notEqual(refused.status, 0, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /expected heading: ## Amendment Round 2/);
+  assert.ok(reasonScopeNote.includes(scopeHeading), reasonScopeNote);
+  assert.ok(outputScopeNote.includes(scopeHeading), outputScopeNote);
+  assert.doesNotMatch(reasonScopeNote, /## Amendment Round 2/);
+  assert.doesNotMatch(outputScopeNote, /## Amendment Round 2/);
 }));
 
 void test('spec_gap fix hint in a bundle names a heading only for the spec_gap task and its reroute is accepted', () => withTempDir(dir => {
