@@ -625,6 +625,9 @@ current root shown above and, from the main checkout, run
 function shellQuotePath(p) {
   return `'${p.replace(/'/g, `'\\''`)}'`;
 }
+function shellQuoteArg(arg) {
+  return /^[A-Za-z0-9._\/@%+=:,-]+$/.test(arg) ? arg : shellQuotePath(arg);
+}
 function assertTaskWorktreeWithinRoot(taskId) {
   if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
   const resolved = resolveTaskCwd(taskId);
@@ -4221,7 +4224,7 @@ function verifyBaseDivergenceFromData(commits, baseBranch) {
   return [
     `Base divergence detected: ${commits.length} colliding ${noun} on ${baseBranch} not yet on origin/${baseBranch}; they will collide when ${baseBranch} is pulled:`,
     ...commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`),
-    `Fix: git push origin ${baseBranch}`,
+    `Fix: git push origin ${shellQuoteArg(baseBranch)}`,
     "Override: rerun with --allow-divergent-base to skip this commit-divergence check only."
   ].join("\n");
 }
@@ -8606,7 +8609,7 @@ function assertOriginTaskBranchAbsent(branchName, baseBranch) {
   Either the remote branch has commits that were never PR'd, or a prior merge
   failed to delete it. Shipping silently would orphan the remote work.
   Resolve manually:
-    - If unmerged work: open + merge a PR (gh pr create --base ${baseBranch} --head ${branchName} ...).
+    - If unmerged work: open + merge a PR (gh pr create --base ${shellQuoteArg(baseBranch)} --head ${shellQuoteArg(branchName)} ...).
     - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`
   );
 }
