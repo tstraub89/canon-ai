@@ -1018,7 +1018,7 @@ function commitTaskArtifactsToBase(taskIds, _artifactFiles) {
     if (status.ok && status.stdout.trim().length > 0) dirtyTelemetry.push(relPath);
   }
   if (dirtyTelemetry.length > 0) {
-    for (const relPath of dirtyTelemetry) git("add", "--", relPath);
+    for (const relPath of filterStageablePaths(dirtyTelemetry, REPO_ROOT)) git("add", "--", relPath);
     git(
       "commit",
       "-m",
@@ -3972,6 +3972,7 @@ function verifyHandoffAgainstDiffFromData(taskIds, inputs) {
     const files = handoffFilesByTask.get(taskId) ?? [];
     for (const filePath of files) {
       if (gitIgnored.has(filePath)) continue;
+      if (isPipelineOwnedTaskArtifact(filePath, [taskId])) continue;
       if (!coveredPaths.has(filePath)) {
         issues.push(`[${taskId}] handoff\u2192diff: ${filePath} listed in handoff but not in diff \u2014 it has no committed change against the task base. If it was untouched or rewritten with identical content, drop the row`);
       }
@@ -7260,10 +7261,47 @@ function assertSamePhase(taskIds) {
   }
   return phases[0];
 }
+function backupIndexFile(cwd) {
+  const indexPath = gitSafeAt(cwd, "rev-parse", "--path-format=absolute", "--git-path", "index");
+  if (!indexPath.ok) return null;
+  const source = indexPath.stdout.trim();
+  const backup = `${source}.canon-autocommit-backup`;
+  try {
+    fs23.copyFileSync(source, backup);
+  } catch {
+    return null;
+  }
+  return {
+    restore() {
+      try {
+        fs23.renameSync(backup, source);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    discard() {
+      fs23.rmSync(backup, { force: true });
+    }
+  };
+}
+function ownedTaskArtifactRows(taskIds) {
+  const owned = /* @__PURE__ */ new Set();
+  const foreign = /* @__PURE__ */ new Set();
+  for (const taskId of taskIds) {
+    for (const file of parseHandoffChangesRows(taskId).files) {
+      if (isPipelineOwnedTaskArtifact(file, [taskId])) owned.add(file);
+      else foreign.add(file);
+    }
+  }
+  for (const file of foreign) owned.delete(file);
+  return owned;
+}
 function verifyHandoffFilesCommitted(taskIds, cwd, handoffFiles) {
   const baseRef = getBaseBranch2(taskIds);
   const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
-  const verifiableHandoffFiles = handoffFiles.filter((f) => !gitIgnoredHandoffFiles.has(f));
+  const ownedArtifacts = ownedTaskArtifactRows(taskIds);
+  const verifiableHandoffFiles = handoffFiles.filter((f) => !gitIgnoredHandoffFiles.has(f) && !ownedArtifacts.has(f));
   if (verifiableHandoffFiles.length === 0) {
     return;
   }
@@ -7614,10 +7652,19 @@ ${stagedBeforeUnexpected.map((f) => `    ${f}`).join("\n")}
     info("Handoff files are already committed or unchanged \u2014 skipping auto-commit.");
     return;
   }
-  const stageable = filterStageablePaths(handoffFiles, cwd);
+  const stageable = filterStageablePaths(
+    handoffFiles.filter((f) => !gitIgnoredHandoffFiles.has(f)),
+    cwd
+  );
   if (stageable.length > 0) {
+    const indexBackup = backupIndexFile(cwd);
     const addResult = gitSafeAt(cwd, "add", "-A", "--", ...stageable);
-    if (!addResult.ok) die2(`Failed to stage files: ${addResult.stderr || "unknown error"}`);
+    if (!addResult.ok) {
+      if (/index\.lock/.test(addResult.stderr)) indexBackup?.discard();
+      else if (!indexBackup?.restore()) gitSafeAt(cwd, "reset", "HEAD", "--", ...handoffFiles);
+      die2(`Failed to stage files: ${addResult.stderr || "unknown error"}`);
+    }
+    indexBackup?.discard();
   }
   const preCheck = gitSafeAtRaw(cwd, "status", "--porcelain=v1", "-uall");
   const remaining = preCheck.ok ? findUncoveredTrackedChanges(preCheck.stdout, allHandoffFiles) : [];
@@ -9381,6 +9428,7 @@ function checkImplementEvidence(taskId) {
       evidenceCwd,
       "diff",
       "--name-status",
+      "--no-renames",
       `${baseBranch}...HEAD`
     );
     const deletedInCommits = new Set(
