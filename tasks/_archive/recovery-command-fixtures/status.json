@@ -1,7 +1,7 @@
 {
   "id": "recovery-command-fixtures",
   "title": "Pin every recovery-command hint to a test that runs it from the emitting state",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-23",
   "updated": "2026-10-23",
   "branch": "task/recovery-command-fixtures",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
