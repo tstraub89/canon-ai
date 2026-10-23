@@ -5,9 +5,10 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { evaluateCodeReviewLoop, evaluateSpecReviewLoop } from '../src/orchestrator/review-loop.js';
 
-type HintSite = { file: string; snippet: string; kind: 'actionable'; covers: ReadonlyArray<{state:string;test:string}> } | { file:string; snippet:string; kind:'exempt'; reason:string };
+type HintSite =
+  | { file: string; snippet: string; kind: 'actionable'; covers: ReadonlyArray<{ state: string; test: string }> }
+  | { file: string; snippet: string; kind: 'exempt'; reason: string };
 const HINT_PATTERN = /--reroute|reset-code-review|reset-spec-review|canon task accept/;
 const HINT_SITES: readonly HintSite[] = [
   {
@@ -110,7 +111,7 @@ const HINT_SITES: readonly HintSite[] = [
     "file": "src/orchestrator/main.ts",
     "snippet": "splitCli.info(`combine the flags in this one command: \\`canon run <id> --reroute --step --expect ${stepPhase}\\`.`);",
     "kind": "exempt",
-    "reason": "Not an actionable recovery hint: descriptive state, audit, or pointer text"
+    "reason": "Emitted while describing a reroute invocation already in progress; this is flag-combination advice, not a next-step recovery command."
   },
   {
     "file": "src/orchestrator/main.ts",
@@ -333,6 +334,10 @@ const HINT_SITES: readonly HintSite[] = [
       {
         "state": "code_review spec_gap halt",
         "test": "task phase sanctioned redirect: the printed accept command is accepted from a spec_gap halt"
+      },
+      {
+        "state": "spec_review sanctioned redirect",
+        "test": "task phase spec_review sanctioned redirect emits and accepts the spec_review command"
       }
     ]
   },
@@ -435,45 +440,647 @@ const HINT_SITES: readonly HintSite[] = [
   }
 ];
 
-export function checkHintRegistry(sources: ReadonlyMap<string,string>, sites: readonly HintSite[], testSources: readonly string[]): string[] {
- const failures:string[]=[];
- for(const [file,source] of sources) source.split('\n').forEach((line,i)=>{if(HINT_PATTERN.test(line)&&!sites.some(s=>s.file===file&&line.includes(s.snippet))) failures.push(`${file}:${i+1}: unregistered recovery-command hint: ${line.trim()} — add a HINT_SITES entry in tests/recovery-hints.test.ts (actionable with covering tests, or exempt with a reason).`);});
- for(const site of sites){const lines=(sources.get(site.file)??'').split('\n').filter(l=>l.includes(site.snippet));if(lines.length===0) failures.push(`${site.file}: stale HINT_SITES snippet not found: ${site.snippet} — the hint was reworded or removed; update or delete the entry.`);else if(lines.length>1) failures.push(`${site.file}: HINT_SITES snippet matches ${lines.length} lines: ${site.snippet} — lengthen it until it is unique in the file.`);else if(!HINT_PATTERN.test(lines[0])) failures.push(`${site.file}: stale HINT_SITES snippet no longer names a recovery command: ${site.snippet}`);if(site.kind==='exempt'&&!site.reason.trim()) failures.push(`${site.file}: exempt HINT_SITES entry has blank reason: ${site.snippet}`);if(site.kind==='actionable'){if(site.covers.length===0) failures.push(`${site.file}: actionable HINT_SITES entry has no covering tests: ${site.snippet}`);for(const c of site.covers){const escaped=c.test.replace(/[.*+?^{}()|[\]\\]/g,'\\$&');const re=new RegExp(`\\btest\\(\\s*(['\"\`])${escaped}\\1`);if(!testSources.some(s=>re.test(s))) failures.push(`${site.file}: actionable hint ${site.snippet} names covering test "${c.test}", which no tests/*.test.ts declares — write the chained fixture or fix the title.`);}}}
- return failures;
+export function checkHintRegistry(
+  sources: ReadonlyMap<string, string>,
+  sites: readonly HintSite[],
+  testSources: readonly string[],
+): string[] {
+  const failures: string[] = [];
+  for (const [file, source] of sources) {
+    source.split('\n').forEach((line, index) => {
+      if (HINT_PATTERN.test(line) && !sites.some(site => site.file === file && line.includes(site.snippet))) {
+        failures.push(
+          `${file}:${index + 1}: unregistered recovery-command hint: ${line.trim()} — ` +
+          'add a HINT_SITES entry in tests/recovery-hints.test.ts (actionable with covering tests, or exempt with a reason).',
+        );
+      }
+    });
+  }
+
+  for (const site of sites) {
+    const lines = (sources.get(site.file) ?? '').split('\n').filter(line => line.includes(site.snippet));
+    if (lines.length === 0) {
+      failures.push(
+        `${site.file}: stale HINT_SITES snippet not found: ${site.snippet} — ` +
+        'the hint was reworded or removed; update or delete the entry.',
+      );
+    } else if (lines.length > 1) {
+      failures.push(
+        `${site.file}: HINT_SITES snippet matches ${lines.length} lines: ${site.snippet} — ` +
+        'lengthen it until it is unique in the file.',
+      );
+    } else if (!HINT_PATTERN.test(lines[0])) {
+      failures.push(`${site.file}: stale HINT_SITES snippet no longer names a recovery command: ${site.snippet}`);
+    }
+
+    if (site.kind === 'exempt') {
+      if (!site.reason.trim()) failures.push(`${site.file}: exempt HINT_SITES entry has blank reason: ${site.snippet}`);
+      continue;
+    }
+    if (site.covers.length === 0) failures.push(`${site.file}: actionable HINT_SITES entry has no covering tests: ${site.snippet}`);
+    for (const cover of site.covers) {
+      const escaped = cover.test.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const declaration = new RegExp("\\btest\\(\\s*(['\"`])" + escaped + "\\1");
+      if (!testSources.some(testSource => declaration.test(testSource))) {
+        failures.push(
+          `${site.file}: actionable hint ${site.snippet} names covering test "${cover.test}", ` +
+          'which no tests/*.test.ts declares — write the chained fixture or fix the title.',
+        );
+      }
+    }
+  }
+  return failures;
 }
-function loadSources(root=process.cwd()):Map<string,string>{const map=new Map<string,string>();const walk=(d:string):void=>{for(const x of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,x.name);if(x.isDirectory())walk(p);else map.set(path.relative(root,p).split(path.sep).join('/'),fs.readFileSync(p,'utf8'));}};walk(path.join(root,'src'));return map;}
-function loadTests(root=process.cwd()):string[]{return fs.readdirSync(path.join(root,'tests')).filter(f=>f.endsWith('.test.ts')).map(f=>fs.readFileSync(path.join(root,'tests',f),'utf8'));}
+
+function loadSources(root = process.cwd()): Map<string, string> {
+  const sources = new Map<string, string>();
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const filePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(filePath);
+      } else {
+        sources.set(path.relative(root, filePath).split(path.sep).join('/'), fs.readFileSync(filePath, 'utf8'));
+      }
+    }
+  };
+  walk(path.join(root, 'src'));
+  return sources;
+}
+
+function loadTests(root = process.cwd()): string[] {
+  return fs.readdirSync(path.join(root, 'tests'))
+    .filter(file => file.endsWith('.test.ts'))
+    .map(file => fs.readFileSync(path.join(root, 'tests', file), 'utf8'));
+}
 
 const ROOT = process.cwd();
 const MD_LOADER = path.join(ROOT, 'tests/md-loader-register.mjs');
 const TSX_LOADER = path.join(ROOT, 'node_modules/tsx/dist/loader.mjs');
 const MAIN_URL = pathToFileURL(path.join(ROOT, 'src/orchestrator/main.ts')).href;
-function withTempDir<T>(fn:(dir:string)=>T):T{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'recovery-hints-'));try{return fn(dir);}finally{fs.rmSync(dir,{recursive:true,force:true});}}
-function git(cwd:string,...args:string[]):string{return execFileSync('git',args,{cwd,encoding:'utf8'}).trim();}
-function makeRepo(dir:string):string{const cwd=path.join(dir,'repo');fs.mkdirSync(cwd);git(cwd,'init','-q','--initial-branch=main');git(cwd,'config','user.email','fixture@example.test');git(cwd,'config','user.name','Fixture');fs.writeFileSync(path.join(cwd,'seed.txt'),'seed\n');git(cwd,'add','.');git(cwd,'commit','-m','base');return cwd;}
-function writeStatus(tasksRoot:string,id:string,status:Record<string,unknown>):void{const d=path.join(tasksRoot,id);fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,'status.json'),`${JSON.stringify(status,null,2)}\n`);}
-function statusFor(id:string,reroutes=0,verdict='spec_gap'):Record<string,unknown>{return {id,title:id,status:'code_review',branch:`task/${id}`,base_branch:'main',task_size:'M',delicate:false,human_spec_gate:false,full_send:false,worktree:false,phases:{spec:{status:'done',agent:'claude'},spec_review:{status:'done',agent:'codex',verdict:'approved',iterations:1},plan:{status:'done',agent:'claude'},implement:{status:'done',agent:'codex',reroute_count:reroutes},code_review:{status:'done',agent:'claude',verdict,iterations:1,iterations_current_loop:1},qa:{status:'pending',agent:'claude'},human_review:{status:'pending',agent:'human'}},escalations:[],sessions:{}};}
-function fixtureTask(cwd:string,id:string,reroutes=0,verdict='spec_gap'):string{const tasksRoot=path.join(cwd,'tasks');writeStatus(tasksRoot,id,statusFor(id,reroutes,verdict));const d=path.join(tasksRoot,id);fs.writeFileSync(path.join(d,'spec.md'),`# Spec\n\n## Design\n\n### Affected Files\n\n| File | Change |\n|---|---|\n| \`seed.txt\` | fixture |\n\n## Validation Required\n\n- [x] \`npm test\`\n`);fs.writeFileSync(path.join(d,'review.md'),'# Code Review\n\n## Final Verdict\n\n- [x] **Spec Gap**\n');fs.writeFileSync(path.join(d,'handoff.md'),'# Handoff\n\n## Changes\n\n| File | Change |\n|---|---|\n| `seed.txt` | fixture |\n\n## AC Coverage\n\n| AC | Status | Evidence |\n|---|---|---|\n| AC-1 | Met | fixture |\n\n## Validation Outcomes\n\n| Check | Result | Notes |\n|---|---|---|\n| `npm test` | Pass | fixture |\n');return tasksRoot;}
-function runInline(cwd:string,script:string,env:NodeJS.ProcessEnv={}):{status:number|null;stdout:string;stderr:string}{const r=spawnSync(process.execPath,['--import',MD_LOADER,'--import',TSX_LOADER,'-e',script],{cwd,encoding:'utf8',env:{...process.env,CANON_NO_DETACH:'1',CANON_METRICS_FILE_OVERRIDE:path.join(cwd,'metrics.md'),...env}});return {status:r.status,stdout:r.stdout??'',stderr:r.stderr??''};}
-function setupCodex(dir:string):void{fs.mkdirSync(dir,{recursive:true});const script=`#!/usr/bin/env node\nconst fs=require('node:fs'),path=require('node:path');const ids=(process.env.FAKE_AGENT_TASK_IDS||process.env.FAKE_AGENT_TASK_ID||'').split(',').filter(Boolean);for(const id of ids){const d=path.join(process.cwd(),'tasks',id);const p=path.join(d,'status.json');const s=JSON.parse(fs.readFileSync(p,'utf8'));s.phases.spec_review.status='done';s.phases.spec_review.verdict='approved';s.status='plan';fs.writeFileSync(p,JSON.stringify(s,null,2)+'\\n');fs.writeFileSync(path.join(d,'spec-review.md'),'# Spec Review\\n\\n## Verdict\\n\\n- [x] **Approved**\\n');}console.log(JSON.stringify({type:'thread.started',thread_id:'fixture'}));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}));\n`;const claude=`#!/usr/bin/env node\nconst fs=require('node:fs'),path=require('node:path');const ids=(process.env.FAKE_AGENT_TASK_IDS||process.env.FAKE_AGENT_TASK_ID||'').split(',').filter(Boolean);for(const id of ids){const d=path.join(process.cwd(),'tasks',id);const p=path.join(d,'status.json');const s=JSON.parse(fs.readFileSync(p,'utf8'));s.phases.plan.status='done';s.status='implement';fs.writeFileSync(p,JSON.stringify(s,null,2)+'\\n');fs.writeFileSync(path.join(d,'plan.md'),'# Plan\\n\\nFixture plan.\\n');}console.log(JSON.stringify({type:'result',session_id:'fixture',usage:{}}));\n`;fs.writeFileSync(path.join(dir,'codex'),script,{mode:0o755});fs.writeFileSync(path.join(dir,'claude'),claude,{mode:0o755});}
-function emitSpecGap(cwd:string,tasksRoot:string,ids:string[]):{output:string;reason:string}{const r=runInline(cwd,`import {checkAndRoute} from ${JSON.stringify(MAIN_URL)}; await checkAndRoute('code_review',${JSON.stringify(ids)});`,{CANON_TASKS_DIR_OVERRIDE:tasksRoot});assert.equal(r.status,2,r.stderr+r.stdout);const statuses=ids.map(id=>JSON.parse(fs.readFileSync(path.join(tasksRoot,id,'status.json'),'utf8')) as {escalations:Array<{reason:string}>});return {output:r.stdout+r.stderr,reason:statuses[0].escalations.at(-1)?.reason??''};}
-function runPrinted(command:string,cwd:string,tasksRoot:string,id:string,phase:string|null='spec_review',ids=[id]):{status:number|null;stdout:string;stderr:string}{const filled=command.replaceAll('<id>',id).replace(/"<[^>]+>"/g,'"fixture reason"');const tokens=filled.match(/"[^"]*"|\S+/g)?.map(t=>t.replace(/^"|"$/g,''))??[];assert.equal(tokens[0],'canon');if(tokens[1]==='task'){const script=`import {taskCmd} from ${JSON.stringify(path.join(ROOT,'src/task/index.ts'))}; taskCmd(${JSON.stringify(tokens.slice(2))});`;return runInline(cwd,script,{CANON_TASKS_DIR_OVERRIDE:tasksRoot});}const args=[...tokens.slice(2),'--step',...(phase?['--expect',phase]:[])];const bin=path.join(cwd,'fake-bin');setupCodex(bin);const script=`import {main} from ${JSON.stringify(MAIN_URL)}; process.argv=['node','canon',...${JSON.stringify(args)}]; await main();`;return runInline(cwd,script,{PATH:`${bin}${path.delimiter}${process.env.PATH??''}`,CANON_TASKS_DIR_OVERRIDE:tasksRoot,FAKE_AGENT_TASK_ID:id,FAKE_AGENT_TASK_IDS:ids.join(','),FAKE_AGENT_LOG:path.join(cwd,'agents.log')});}
-function endStatus(tasksRoot:string,id:string):Record<string,unknown>{return JSON.parse(fs.readFileSync(path.join(tasksRoot,id,'status.json'),'utf8')) as Record<string,unknown>;}
-function derive(status:Record<string,unknown>):string{const phases=status.phases as Record<string,{status?:string}>;return ['spec','spec_review','plan','implement','code_review','qa','human_review'].find(p=>phases[p]?.status!=='done')??'complete';}
-function context(id:string,status:Record<string,unknown>):{taskId:string;title:string;specReviewVerdict:string;iterations:number;iterations_current_loop:number;iterations_total:number;rerouteCount:number;status:Record<string,unknown>}{const phases=status.phases as Record<string,Record<string,unknown>>;const review=phases.code_review??{};const impl=phases.implement??{};const verdict=phases.spec_review?.verdict;return {taskId:id,title:id,specReviewVerdict:typeof verdict==='string'?verdict:'',iterations:Number(review.iterations??0),iterations_current_loop:Number(review.iterations_current_loop??0),iterations_total:Number(review.iterations_total??0),rerouteCount:Number(impl.reroute_count??0),status};}
-void test('recovery hint registry covers every recovery-command line in src',()=>assert.deepEqual(checkHintRegistry(loadSources(),HINT_SITES,loadTests()),[]));
-void test('recovery hint registry reports unregistered, stale and uncovered entries',()=>{const unregistered=checkHintRegistry(new Map([['src/x.ts',"die('run canon run a --reroute');"]]),[],[]);assert.match(unregistered.join('\n'),/unregistered recovery-command hint/);const stale=checkHintRegistry(new Map([['src/x.ts','']]),[{file:'src/x.ts',snippet:'missing --reroute',kind:'exempt',reason:'old'}],[]);assert.match(stale.join('\n'),/stale HINT_SITES snippet/);const uncovered=checkHintRegistry(new Map([['src/x.ts','run --reroute']]),[{file:'src/x.ts',snippet:'run --reroute',kind:'actionable',covers:[{state:'x',test:'no such recovery test'}]}],[]);assert.match(uncovered.join('\n'),/names covering test/);});
+function withTempDir<T>(fn: (dir: string) => T): T {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recovery-hints-'));
+  try {
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
-void test('spec_gap fix hint at reroute_count 0: the printed heading and reroute are accepted',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/gap');const tasks=fixtureTask(cwd,'gap',0);const emitted=emitSpecGap(cwd,tasks,['gap']);const reasonHeading=emitted.reason.match(/FIX: add (## Amendment(?: Round \d+)?) to tasks\/gap\/spec\.md/)?.[1];const outputHeading=emitted.output.match(/add a (## Amendment(?: Round \d+)?) section/)?.[1];assert.equal(reasonHeading,'## Amendment');assert.equal(outputHeading,reasonHeading);fs.appendFileSync(path.join(tasks,'gap/spec.md'),`\n${reasonHeading}\n\nFixture amendment.\n`);const command=emitted.output.match(/canon run gap --reroute/)?.[0];assert.ok(command,emitted.output);assert.ok(emitted.reason.includes(command));const r=runPrinted(command,cwd,tasks,'gap');assert.equal(r.status,0,r.stdout+r.stderr);const s=endStatus(tasks,'gap');const phases=s.phases as Record<string,{status:string;verdict?:string}>;assert.equal(phases.spec_review.status,'done');assert.equal(phases.code_review.status,'pending');assert.ok(fs.existsSync(path.join(tasks,'gap/review-prior-1.md')));}));
-void test('spec_gap fix hint at reroute_count 1: the printed heading and reroute are accepted',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/gap');const tasks=fixtureTask(cwd,'gap',1);fs.appendFileSync(path.join(tasks,'gap/spec.md'),'\n## Amendment\n\nPrior reroute.\n');const emitted=emitSpecGap(cwd,tasks,['gap']);const outputHeading=emitted.output.match(/add a (## Amendment(?: Round \d+)?) section/)?.[1];assert.ok(outputHeading,emitted.output);assert.ok(emitted.reason.includes(outputHeading),emitted.reason);fs.appendFileSync(path.join(tasks,'gap/spec.md'),`\n${outputHeading}\n\nFixture amendment.\n`);const command=emitted.output.match(/canon run gap --reroute/)?.[0];assert.ok(command,emitted.output);const r=runPrinted(command,cwd,tasks,'gap');assert.equal(r.status,0,r.stdout+r.stderr);assert.equal(outputHeading,'## Amendment Round 2');const s=endStatus(tasks,'gap');assert.equal((s.phases as Record<string,{status:string}>).spec_review.status,'done');}));
-void test('spec_gap fix hint in a bundle names a heading only for the spec_gap task and its reroute is accepted',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/bundle');const tasks=fixtureTask(cwd,'gap-a',1);fixtureTask(cwd,'ok-b',0,'approved');fs.appendFileSync(path.join(tasks,'gap-a/spec.md'),'\n## Amendment\n\nPrior reroute.\n');for(const id of ['gap-a','ok-b']){const p=path.join(tasks,id,'status.json');const s=JSON.parse(fs.readFileSync(p,'utf8')) as Record<string,unknown>;s.branch='task/bundle';fs.writeFileSync(p,JSON.stringify(s,null,2));}fs.writeFileSync(path.join(cwd,'seed.txt'),'task implementation\n');git(cwd,'add','.');git(cwd,'commit','-m','fixture implementation');const emitted=emitSpecGap(cwd,tasks,['gap-a','ok-b']);assert.match(emitted.reason,/## Amendment Round 2 to tasks\/gap-a\/spec\.md/);assert.doesNotMatch(emitted.reason,/FIX:[^\n]*tasks\/ok-b/);fs.appendFileSync(path.join(tasks,'gap-a/spec.md'),'\n## Amendment Round 2\n\nFixture amendment.\n');const command=emitted.output.match(/canon run gap-a ok-b --reroute/)?.[0];assert.ok(command,emitted.output);const r=runPrinted(command,cwd,tasks,'gap-a','implement',['gap-a','ok-b']);assert.equal(r.status,0,r.stdout+r.stderr);assert.equal((endStatus(tasks,'gap-a').phases as Record<string,{status:string}>).implement.status,'done');assert.equal((endStatus(tasks,'ok-b').phases as Record<string,{status:string}>).implement.status,'done');}));
-void test('spec_gap bless hint: the printed accept command sanctions code_review and advances to qa',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/gap');const tasks=fixtureTask(cwd,'gap');const emitted=emitSpecGap(cwd,tasks,['gap']);const command=emitted.output.match(/canon task accept gap code_review --reason "<why this gap is acceptable>"/)?.[0];assert.ok(command,emitted.output);assert.ok(emitted.reason.includes('canon task accept gap code_review --reason "<why>"'));const r=runPrinted(command,cwd,tasks,'gap');assert.equal(r.status,0,r.stdout+r.stderr);const s=endStatus(tasks,'gap');const phase=s.phases as Record<string,{status:string;verdict?:string;operator_accepted?:boolean}>;assert.equal(phase.code_review.verdict,'sanctioned');assert.equal(phase.code_review.operator_accepted,true);assert.equal(phase.code_review.status,'done');assert.equal(derive(s),'qa');}));
-void test('task phase sanctioned redirect: the printed accept command is accepted from a spec_gap halt',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/gap');const tasks=fixtureTask(cwd,'gap');emitSpecGap(cwd,tasks,['gap']);const rejected=runInline(cwd,`import {taskCmd} from ${JSON.stringify(path.join(ROOT,'src/task/index.ts'))}; taskCmd(['phase','gap','code_review','done','sanctioned']);`,{CANON_TASKS_DIR_OVERRIDE:tasks});assert.notEqual(rejected.status,0);const command=rejected.stderr.match(/canon task accept <id> code_review --reason "<why>"/)?.[0];assert.ok(command,rejected.stderr);const accepted=runPrinted(command,cwd,tasks,'gap');assert.equal(accepted.status,0,accepted.stderr);assert.equal((endStatus(tasks,'gap').phases as Record<string,{operator_accepted?:boolean}>).code_review.operator_accepted,true);}));
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
 
-void test('code_review pre-flight auto-block: the printed reset-code-review is accepted and the re-run passes pre-flight',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/preflight');const tasks=fixtureTask(cwd,'preflight');const handoff=path.join(tasks,'preflight/handoff.md');fs.writeFileSync(handoff,fs.readFileSync(handoff,'utf8').replace('| `npm test` | Pass | fixture |','| `npm test` | blocked | CI runner unavailable |'));const runReview=()=>runInline(cwd,`import {runCodeReviewPhase} from ${JSON.stringify(path.join(ROOT,'src/orchestrator/phases/code-review.ts'))}; import {readStatus} from ${JSON.stringify(path.join(ROOT,'src/orchestrator/state.ts'))}; const id='preflight'; const status=readStatus(id); const phases=status.phases; const review=phases.code_review; const task={taskId:id,title:id,specReviewVerdict:'approved',iterations:review.iterations??0,iterations_current_loop:review.iterations_current_loop??0,iterations_total:review.iterations_total??0,rerouteCount:0,status}; const deps={verifyBranch(){},getBaseBranch(){return 'main'},getActiveCwd(){return process.cwd()},getAffectedFiles(){return {ok:true,files:[]}},verifyHandoffAgainstDiff(){return []},getMaxReviewLoops(){return 3},resolveCommit(){return 'fixture-head'},getEffectiveSize(){return 'M'},getCodexConfig(){return {model:'fixture',effort:'low'}},runColdCodexReview:async()=>({success:true,findings:''}),writeColdCodexArchive(){},findColdCodexArchiveForRound(){return null},hasMalformedColdCodexArchive(){return false},getClaudeConfig(){return {model:'fixture',effort:'low',budget:1}},getScopedDiff(){return ''},runClaude:async()=>{fs.writeFileSync(path.join(process.cwd(),'agent-called.txt'),'yes');return {sessionId:'fixture',exitCode:0}}}; await runCodeReviewPhase({tasks:[task],tier:'full',isBundle:false},false,null,deps);`,{CANON_TASKS_DIR_OVERRIDE:tasks});const blocked=runReview();assert.equal(blocked.status,2,`exit ${blocked.status}: ${blocked.stderr}${blocked.stdout}`);const status=endStatus(tasks,'preflight');assert.equal((status.phases as Record<string,{status:string}>).code_review.status,'blocked');const reason=(status.escalations as Array<{reason:string}>).at(-1)?.reason??'';const emitted=blocked.stdout+blocked.stderr;const command=emitted.match(/canon task reset-code-review <id>/)?.[0];assert.ok(command,emitted);assert.ok(reason.includes(command),JSON.stringify(status.escalations));assert.match(reason,/only blocked validation rows/);const reset=runPrinted(command,cwd,tasks,'preflight');assert.equal(reset.status,0,reset.stdout+reset.stderr);const pending=endStatus(tasks,'preflight');assert.equal((pending.phases as Record<string,{status:string}>).code_review.status,'pending');assert.equal((pending.phases as Record<string,{status:string}>).implement.status,'done');fs.writeFileSync(handoff,fs.readFileSync(handoff,'utf8').replace('| `npm test` | blocked | CI runner unavailable |','| `npm test` | Pass | fixture |'));const resumed=runReview();assert.equal(resumed.status,0,resumed.stderr+resumed.stdout);assert.doesNotMatch(resumed.stdout+resumed.stderr,/Validation pre-flight FAILED/);assert.equal(fs.readFileSync(path.join(cwd,'agent-called.txt'),'utf8'),'yes');}));
+function makeRepo(dir: string): string {
+  const cwd = path.join(dir, 'repo');
+  fs.mkdirSync(cwd);
+  git(cwd, 'init', '-q', '--initial-branch=main');
+  git(cwd, 'config', 'user.email', 'fixture@example.test');
+  git(cwd, 'config', 'user.name', 'Fixture');
+  fs.writeFileSync(path.join(cwd, 'seed.txt'), 'seed\n');
+  git(cwd, 'add', '.');
+  git(cwd, 'commit', '-m', 'base');
+  return cwd;
+}
 
-void test('spec gate done note: the printed reroute is accepted and the armed gate fires from code_review, qa and human_review',()=>withTempDir(dir=>{for(const phase of ['code_review','qa','human_review']){const root=path.join(dir,phase);fs.mkdirSync(root,{recursive:true});const cwd=makeRepo(root);git(cwd,'checkout','-b',`task/${phase}`);const tasks=fixtureTask(cwd,phase,0,'approved');const s=endStatus(tasks,phase);const phases=s.phases as Record<string,{status:string;verdict?:string}>;if(phase!=='code_review')phases.code_review.status='done';if(phase==='qa'||phase==='human_review')phases.qa.status='done';if(phase==='human_review')phases.human_review.status='pending';s.status=phase;writeStatus(tasks,phase,s);const note=runInline(cwd,`import {taskCmd} from ${JSON.stringify(path.join(ROOT,'src/task/index.ts'))}; taskCmd(['set',${JSON.stringify(phase)},'human_spec_gate','true']);`,{CANON_TASKS_DIR_OVERRIDE:tasks});assert.match(note.stdout,/armed gate fires after the next spec_review/);const command=note.stdout.match(/canon run --reroute [\w-]+/)?.[0];assert.ok(command,note.stdout);fs.appendFileSync(path.join(tasks,phase,'spec.md'),'\n## Amendment\n\nFixture amendment.\n');const rerouted=runPrinted(command,cwd,tasks,phase);assert.equal(rerouted.status,0,rerouted.stdout+rerouted.stderr);assert.match(rerouted.stdout,/SPEC GATE/);assert.equal(endStatus(tasks,phase).human_spec_gate,false);}}));
+function writeStatus(tasksRoot: string, id: string, status: Record<string, unknown>): void {
+  const taskDir = path.join(tasksRoot, id);
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(taskDir, 'status.json'), `${JSON.stringify(status, null, 2)}\n`);
+}
 
-void test('spec loop cap at spec_review entry: the printed reset-spec-review is accepted',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/spec-cap');const tasks=fixtureTask(cwd,'spec-cap');const s=endStatus(tasks,'spec-cap');s.status='spec_review';const phases=s.phases as Record<string,Record<string,unknown>>;phases.spec_review={status:'pending',agent:'codex',verdict:'',iterations:3,iterations_current_loop:3,iterations_total:3};phases.plan.status='pending';phases.implement.status='pending';writeStatus(tasks,'spec-cap',s);fs.writeFileSync(path.join(tasks,'spec-cap/spec-review.md'),'# Spec Review\n\nprior\n');const evaluated=evaluateSpecReviewLoop([context('spec-cap',s) as never],3);assert.equal(evaluated.blocked,true);const command=evaluated.reason.match(/canon task reset-spec-review spec-cap/)?.[0];assert.ok(command,evaluated.reason);assert.equal(runPrinted(command,cwd,tasks,'spec-cap').status,0);assert.equal((endStatus(tasks,'spec-cap').phases as Record<string,{status:string}>).spec_review.status,'pending');assert.ok(fs.existsSync(path.join(tasks,'spec-cap/spec-review-prior-1.md')));}));
+function statusFor(id: string, reroutes = 0, verdict = 'spec_gap'): Record<string, unknown> {
+  return {
+    id,
+    title: id,
+    status: 'code_review',
+    branch: `task/${id}`,
+    base_branch: 'main',
+    task_size: 'M',
+    delicate: false,
+    human_spec_gate: false,
+    full_send: false,
+    worktree: false,
+    phases: {
+      spec: { status: 'done', agent: 'claude' },
+      spec_review: { status: 'done', agent: 'codex', verdict: 'approved', iterations: 1 },
+      plan: { status: 'done', agent: 'claude' },
+      implement: { status: 'done', agent: 'codex', reroute_count: reroutes },
+      code_review: { status: 'done', agent: 'claude', verdict, iterations: 1, iterations_current_loop: 1 },
+      qa: { status: 'pending', agent: 'claude' },
+      human_review: { status: 'pending', agent: 'human' },
+    },
+    escalations: [],
+    sessions: {},
+  };
+}
 
-void test('code loop cap at code_review entry: the printed reset-code-review is accepted',()=>withTempDir(dir=>{const cwd=makeRepo(dir);git(cwd,'checkout','-b','task/code-cap');const tasks=fixtureTask(cwd,'code-cap',0,'');const s=endStatus(tasks,'code-cap');s.status='code_review';const phases=s.phases as Record<string,Record<string,unknown>>;phases.code_review={status:'pending',agent:'claude',verdict:'',iterations:3,iterations_current_loop:3,iterations_total:3,preflight_rejections_current_loop:0};writeStatus(tasks,'code-cap',s);fs.writeFileSync(path.join(tasks,'code-cap/review.md'),'# Code Review\n\nprior\n');const evaluated=evaluateCodeReviewLoop([context('code-cap',s) as never],3);assert.equal(evaluated.blocked,true);const command=evaluated.reason.match(/canon task reset-code-review code-cap/)?.[0];assert.ok(command,evaluated.reason);assert.equal(runPrinted(command,cwd,tasks,'code-cap').status,0);assert.equal((endStatus(tasks,'code-cap').phases as Record<string,{status:string}>).code_review.status,'pending');assert.equal((endStatus(tasks,'code-cap').phases as Record<string,{status:string}>).implement.status,'done');}));
+function fixtureTask(cwd: string, id: string, reroutes = 0, verdict = 'spec_gap'): string {
+  const tasksRoot = path.join(cwd, 'tasks');
+  writeStatus(tasksRoot, id, statusFor(id, reroutes, verdict));
+  const taskDir = path.join(tasksRoot, id);
+  fs.writeFileSync(path.join(taskDir, 'spec.md'), [
+    '# Spec',
+    '',
+    '## Design',
+    '',
+    '### Affected Files',
+    '',
+    '| File | Change |',
+    '|---|---|',
+    '| `seed.txt` | fixture |',
+    '',
+    '## Validation Required',
+    '',
+    '- [x] `npm test`',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(taskDir, 'review.md'), '# Code Review\n\n## Final Verdict\n\n- [x] **Spec Gap**\n');
+  fs.writeFileSync(path.join(taskDir, 'handoff.md'), [
+    '# Handoff',
+    '',
+    '## Changes',
+    '',
+    '| File | Change |',
+    '|---|---|',
+    '| `seed.txt` | fixture |',
+    '',
+    '## AC Coverage',
+    '',
+    '| AC | Status | Evidence |',
+    '|---|---|---|',
+    '| AC-1 | Met | fixture |',
+    '',
+    '## Validation Outcomes',
+    '',
+    '| Check | Result | Notes |',
+    '|---|---|---|',
+    '| `npm test` | Pass | fixture |',
+    '',
+  ].join('\n'));
+  return tasksRoot;
+}
+
+function runInline(cwd: string, script: string, env: NodeJS.ProcessEnv = {}): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  const result = spawnSync(process.execPath, ['--import', MD_LOADER, '--import', TSX_LOADER, '-e', script], {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CANON_NO_DETACH: '1',
+      CANON_METRICS_FILE_OVERRIDE: path.join(cwd, 'metrics.md'),
+      ...env,
+    },
+  });
+  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+function setupCodex(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const codex = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const ids = (process.env.FAKE_AGENT_TASK_IDS || process.env.FAKE_AGENT_TASK_ID || '').split(',').filter(Boolean);
+for (const id of ids) {
+  const taskDir = path.join(process.cwd(), 'tasks', id);
+  const statusPath = path.join(taskDir, 'status.json');
+  const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+  status.phases.spec_review.status = 'done';
+  status.phases.spec_review.verdict = 'approved';
+  status.status = 'plan';
+  fs.writeFileSync(statusPath, JSON.stringify(status, null, 2) + '\\n');
+  fs.writeFileSync(path.join(taskDir, 'spec-review.md'), '# Spec Review\\n\\n## Verdict\\n\\n- [x] **Approved**\\n');
+}
+console.log(JSON.stringify({ type: 'thread.started', thread_id: 'fixture' }));
+console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }));
+`;
+  const claude = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const ids = (process.env.FAKE_AGENT_TASK_IDS || process.env.FAKE_AGENT_TASK_ID || '').split(',').filter(Boolean);
+for (const id of ids) {
+  const taskDir = path.join(process.cwd(), 'tasks', id);
+  const statusPath = path.join(taskDir, 'status.json');
+  const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+  status.phases.plan.status = 'done';
+  status.status = 'implement';
+  fs.writeFileSync(statusPath, JSON.stringify(status, null, 2) + '\\n');
+  fs.writeFileSync(path.join(taskDir, 'plan.md'), '# Plan\\n\\nFixture plan.\\n');
+}
+console.log(JSON.stringify({ type: 'result', session_id: 'fixture', usage: {} }));
+`;
+  fs.writeFileSync(path.join(dir, 'codex'), codex, { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'claude'), claude, { mode: 0o755 });
+}
+
+function emitSpecGap(cwd: string, tasksRoot: string, ids: string[]): { output: string; reason: string } {
+  const result = runInline(cwd, `
+    import { checkAndRoute } from ${JSON.stringify(MAIN_URL)};
+    await checkAndRoute('code_review', ${JSON.stringify(ids)});
+  `, { CANON_TASKS_DIR_OVERRIDE: tasksRoot });
+  assert.equal(result.status, 2, result.stderr + result.stdout);
+  const statuses = ids.map(id => JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as {
+    escalations: Array<{ reason: string }>;
+  });
+  return { output: result.stdout + result.stderr, reason: statuses[0].escalations.at(-1)?.reason ?? '' };
+}
+
+function runPrinted(
+  command: string,
+  cwd: string,
+  tasksRoot: string,
+  id: string,
+  phase: string | null = 'spec_review',
+  ids = [id],
+): { status: number | null; stdout: string; stderr: string } {
+  const filled = command.replaceAll('<id>', id).replace(/"<[^>]+>"/g, '"fixture reason"');
+  const tokens = filled.match(/"[^"]*"|\S+/g)?.map(token => token.replace(/^"|"$/g, '')) ?? [];
+  assert.equal(tokens[0], 'canon');
+  if (tokens[1] === 'task') {
+    const script = `
+      import { taskCmd } from ${JSON.stringify(path.join(ROOT, 'src/task/index.ts'))};
+      taskCmd(${JSON.stringify(tokens.slice(2))});
+    `;
+    return runInline(cwd, script, { CANON_TASKS_DIR_OVERRIDE: tasksRoot });
+  }
+  const args = [...tokens.slice(2), '--step', ...(phase ? ['--expect', phase] : [])];
+  const bin = path.join(cwd, 'fake-bin');
+  setupCodex(bin);
+  const script = `
+    import { main } from ${JSON.stringify(MAIN_URL)};
+    process.argv = ['node', 'canon', ...${JSON.stringify(args)}];
+    await main();
+  `;
+  return runInline(cwd, script, {
+    PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
+    CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+    FAKE_AGENT_TASK_ID: id,
+    FAKE_AGENT_TASK_IDS: ids.join(','),
+    FAKE_AGENT_LOG: path.join(cwd, 'agents.log'),
+  });
+}
+
+function runLoopCap(cwd: string, tasksRoot: string, id: string, phase: string): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  const bin = path.join(cwd, 'cap-fake-bin');
+  setupCodex(bin);
+  const script = `
+    import { main } from ${JSON.stringify(MAIN_URL)};
+    process.argv = ['node', 'canon', ${JSON.stringify(id)}, '--step', '--expect', ${JSON.stringify(phase)}];
+    await main();
+  `;
+  return runInline(cwd, script, {
+    PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
+    CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+    MAX_REVIEW_LOOPS: '3',
+    FAKE_AGENT_TASK_ID: id,
+    FAKE_AGENT_LOG: path.join(cwd, 'agents.log'),
+  });
+}
+
+function endStatus(tasksRoot: string, id: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as Record<string, unknown>;
+}
+
+function derive(status: Record<string, unknown>): string {
+  const phases = status.phases as Record<string, { status?: string }>;
+  return ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review']
+    .find(phase => phases[phase]?.status !== 'done') ?? 'complete';
+}
+
+void test('recovery hint registry covers every recovery-command line in src', () => {
+  assert.deepEqual(checkHintRegistry(loadSources(), HINT_SITES, loadTests()), []);
+});
+
+void test('recovery hint registry reports unregistered, stale and uncovered entries', () => {
+  const unregistered = checkHintRegistry(new Map([['src/x.ts', "die('run canon run a --reroute');"]]), [], []);
+  assert.match(unregistered.join('\n'), /unregistered recovery-command hint/);
+  const stale = checkHintRegistry(new Map([['src/x.ts', '']]), [
+    { file: 'src/x.ts', snippet: 'missing --reroute', kind: 'exempt', reason: 'old' },
+  ], []);
+  assert.match(stale.join('\n'), /stale HINT_SITES snippet/);
+  const uncovered = checkHintRegistry(new Map([['src/x.ts', 'run --reroute']]), [
+    { file: 'src/x.ts', snippet: 'run --reroute', kind: 'actionable', covers: [{ state: 'x', test: 'no such recovery test' }] },
+  ], []);
+  assert.match(uncovered.join('\n'), /names covering test/);
+});
+
+void test('spec_gap fix hint at reroute_count 0: the printed heading and reroute are accepted', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/gap');
+  const tasks = fixtureTask(cwd, 'gap', 0);
+  const emitted = emitSpecGap(cwd, tasks, ['gap']);
+  const reasonHeading = emitted.reason.match(/FIX: add (## Amendment(?: Round \d+)?) to tasks\/gap\/spec\.md/)?.[1];
+  const outputHeading = emitted.output.match(/add a (## Amendment(?: Round \d+)?) section/)?.[1];
+  assert.equal(reasonHeading, '## Amendment');
+  assert.equal(outputHeading, reasonHeading);
+  fs.appendFileSync(path.join(tasks, 'gap/spec.md'), `\n${reasonHeading}\n\nFixture amendment.\n`);
+  const command = emitted.output.match(/canon run gap --reroute/)?.[0];
+  assert.ok(command, emitted.output);
+  assert.ok(emitted.reason.includes(command));
+  const result = runPrinted(command, cwd, tasks, 'gap');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const status = endStatus(tasks, 'gap');
+  const phases = status.phases as Record<string, { status: string }>;
+  assert.equal(phases.spec_review.status, 'done');
+  assert.equal(phases.code_review.status, 'pending');
+  assert.ok(fs.existsSync(path.join(tasks, 'gap/review-prior-1.md')));
+}));
+
+void test('spec_gap fix hint at reroute_count 1: the printed heading and reroute are accepted', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/gap');
+  const tasks = fixtureTask(cwd, 'gap', 1);
+  fs.appendFileSync(path.join(tasks, 'gap/spec.md'), '\n## Amendment\n\nPrior reroute.\n');
+  const emitted = emitSpecGap(cwd, tasks, ['gap']);
+  const reasonHeading = emitted.reason.match(/FIX: add (## Amendment(?: Round \d+)?) to tasks\/gap\/spec\.md/)?.[1];
+  const outputHeading = emitted.output.match(/add a (## Amendment(?: Round \d+)?) section/)?.[1];
+  assert.equal(reasonHeading, '## Amendment Round 2');
+  assert.equal(outputHeading, reasonHeading);
+  fs.appendFileSync(path.join(tasks, 'gap/spec.md'), `\n${reasonHeading}\n\nFixture amendment.\n`);
+  const command = emitted.output.match(/canon run gap --reroute/)?.[0];
+  assert.ok(command, emitted.output);
+  const result = runPrinted(command, cwd, tasks, 'gap');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const status = endStatus(tasks, 'gap');
+  const phases = status.phases as Record<string, { status: string; reroute_count?: number }>;
+  assert.equal(phases.spec_review.status, 'done');
+  assert.equal(phases.implement.reroute_count, 2);
+  assert.ok(fs.existsSync(path.join(tasks, 'gap/review-prior-1.md')));
+}));
+
+void test('spec_gap scope hint names the round-specific amendment heading', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/gap');
+  const tasks = fixtureTask(cwd, 'gap', 1);
+  fs.appendFileSync(path.join(tasks, 'gap/spec.md'), '\n## Amendment\n\nPrior reroute.\n');
+  const status = endStatus(tasks, 'gap');
+  status.full_send = true;
+  writeStatus(tasks, 'gap', status);
+  fs.writeFileSync(path.join(cwd, 'scope-leak.txt'), 'outside affected files\n');
+  git(cwd, 'add', 'scope-leak.txt');
+  git(cwd, 'commit', '-m', 'add unscoped full-send file');
+  const emitted = emitSpecGap(cwd, tasks, ['gap']);
+  assert.match(emitted.reason, /Affected Files.*## Amendment Round 2/);
+  assert.match(emitted.output, /Affected Files.*## Amendment Round 2/);
+  assert.doesNotMatch(emitted.reason, /Affected Files \(as an ## Amendment\)/);
+}));
+
+void test('spec_gap fix hint in a bundle names a heading only for the spec_gap task and its reroute is accepted', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/bundle');
+  const tasks = fixtureTask(cwd, 'gap-a', 1);
+  fixtureTask(cwd, 'ok-b', 0, 'approved');
+  fs.appendFileSync(path.join(tasks, 'gap-a/spec.md'), '\n## Amendment\n\nPrior reroute.\n');
+  for (const id of ['gap-a', 'ok-b']) {
+    const statusPath = path.join(tasks, id, 'status.json');
+    const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Record<string, unknown>;
+    status.branch = 'task/bundle';
+    fs.writeFileSync(statusPath, JSON.stringify(status, null, 2));
+  }
+  fs.writeFileSync(path.join(cwd, 'seed.txt'), 'task implementation\n');
+  git(cwd, 'add', '.');
+  git(cwd, 'commit', '-m', 'fixture implementation');
+  const emitted = emitSpecGap(cwd, tasks, ['gap-a', 'ok-b']);
+  assert.match(emitted.reason, /## Amendment Round 2 to tasks\/gap-a\/spec\.md/);
+  assert.doesNotMatch(emitted.reason, /FIX:[^\n]*tasks\/ok-b/);
+  fs.appendFileSync(path.join(tasks, 'gap-a/spec.md'), '\n## Amendment Round 2\n\nFixture amendment.\n');
+  const command = emitted.output.match(/canon run gap-a ok-b --reroute/)?.[0];
+  assert.ok(command, emitted.output);
+  const result = runPrinted(command, cwd, tasks, 'gap-a', 'implement', ['gap-a', 'ok-b']);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(((endStatus(tasks, 'gap-a').phases) as Record<string, { status: string }>).implement.status, 'done');
+  assert.equal(((endStatus(tasks, 'ok-b').phases) as Record<string, { status: string }>).implement.status, 'done');
+}));
+
+void test('spec_gap bless hint: the printed accept command sanctions code_review and advances to qa', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/gap');
+  const tasks = fixtureTask(cwd, 'gap');
+  const emitted = emitSpecGap(cwd, tasks, ['gap']);
+  const command = emitted.output.match(/canon task accept gap code_review --reason "<why this gap is acceptable>"/)?.[0];
+  assert.ok(command, emitted.output);
+  assert.ok(emitted.reason.includes('canon task accept gap code_review --reason "<why>"'));
+  const result = runPrinted(command, cwd, tasks, 'gap');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const status = endStatus(tasks, 'gap');
+  const phases = status.phases as Record<string, { status: string; verdict?: string; operator_accepted?: boolean }>;
+  assert.equal(phases.code_review.verdict, 'sanctioned');
+  assert.equal(phases.code_review.operator_accepted, true);
+  assert.equal(phases.code_review.status, 'done');
+  assert.equal(derive(status), 'qa');
+}));
+
+void test('task phase sanctioned redirect: the printed accept command is accepted from a spec_gap halt', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/gap');
+  const tasks = fixtureTask(cwd, 'gap');
+  emitSpecGap(cwd, tasks, ['gap']);
+  const rejected = runInline(cwd, `
+    import { taskCmd } from ${JSON.stringify(path.join(ROOT, 'src/task/index.ts'))};
+    taskCmd(['phase', 'gap', 'code_review', 'done', 'sanctioned']);
+  `, { CANON_TASKS_DIR_OVERRIDE: tasks });
+  assert.notEqual(rejected.status, 0);
+  const command = rejected.stderr.match(/canon task accept <id> code_review --reason "<why>"/)?.[0];
+  assert.ok(command, rejected.stderr);
+  const accepted = runPrinted(command, cwd, tasks, 'gap');
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  const phases = endStatus(tasks, 'gap').phases as Record<string, { operator_accepted?: boolean }>;
+  assert.equal(phases.code_review.operator_accepted, true);
+}));
+
+void test('task phase spec_review sanctioned redirect emits and accepts the spec_review command', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/spec-accept');
+  const tasks = fixtureTask(cwd, 'spec-accept');
+  const status = endStatus(tasks, 'spec-accept');
+  status.status = 'spec_review';
+  const phases = status.phases as Record<string, { status: string; verdict?: string }>;
+  phases.spec_review.status = 'changes_requested';
+  phases.spec_review.verdict = 'changes_requested';
+  phases.plan.status = 'pending';
+  phases.implement.status = 'pending';
+  phases.code_review.status = 'pending';
+  writeStatus(tasks, 'spec-accept', status);
+  const rejected = runInline(cwd, `
+    import { taskCmd } from ${JSON.stringify(path.join(ROOT, 'src/task/index.ts'))};
+    taskCmd(['phase', 'spec-accept', 'spec_review', 'done', 'sanctioned']);
+  `, { CANON_TASKS_DIR_OVERRIDE: tasks });
+  assert.notEqual(rejected.status, 0);
+  const command = rejected.stderr.match(/canon task accept <id> spec_review --reason "<why>"/)?.[0];
+  assert.ok(command, rejected.stderr);
+  const accepted = runPrinted(command, cwd, tasks, 'spec-accept');
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  const result = endStatus(tasks, 'spec-accept');
+  const nextPhases = result.phases as Record<string, { status: string; verdict?: string; operator_accepted?: boolean }>;
+  assert.equal(nextPhases.spec_review.status, 'done');
+  assert.equal(nextPhases.spec_review.verdict, 'sanctioned');
+  assert.equal(nextPhases.spec_review.operator_accepted, true);
+  assert.equal(derive(result), 'plan');
+}));
+
+void test('code_review pre-flight auto-block: the printed reset-code-review is accepted and the re-run passes pre-flight', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/preflight');
+  const tasks = fixtureTask(cwd, 'preflight');
+  const handoff = path.join(tasks, 'preflight/handoff.md');
+  fs.writeFileSync(handoff, fs.readFileSync(handoff, 'utf8').replace(
+    '| `npm test` | Pass | fixture |', '| `npm test` | blocked | CI runner unavailable |',
+  ));
+  const runReview = () => runInline(cwd, `
+    import { runCodeReviewPhase } from ${JSON.stringify(path.join(ROOT, 'src/orchestrator/phases/code-review.ts'))};
+    import { readStatus } from ${JSON.stringify(path.join(ROOT, 'src/orchestrator/state.ts'))};
+    const id = 'preflight';
+    const status = readStatus(id);
+    const review = status.phases.code_review;
+    const task = {
+      taskId: id,
+      title: id,
+      specReviewVerdict: 'approved',
+      iterations: review.iterations ?? 0,
+      iterations_current_loop: review.iterations_current_loop ?? 0,
+      iterations_total: review.iterations_total ?? 0,
+      rerouteCount: 0,
+      status,
+    };
+    const deps = {
+      verifyBranch() {},
+      getBaseBranch() { return 'main'; },
+      getActiveCwd() { return process.cwd(); },
+      getAffectedFiles() { return { ok: true, files: [] }; },
+      verifyHandoffAgainstDiff() { return []; },
+      getMaxReviewLoops() { return 3; },
+      resolveCommit() { return 'fixture-head'; },
+      getEffectiveSize() { return 'M'; },
+      getCodexConfig() { return { model: 'fixture', effort: 'low' }; },
+      async runColdCodexReview() { return { success: true, findings: '' }; },
+      writeColdCodexArchive() {},
+      findColdCodexArchiveForRound() { return null; },
+      hasMalformedColdCodexArchive() { return false; },
+      getClaudeConfig() { return { model: 'fixture', effort: 'low', budget: 1 }; },
+      getScopedDiff() { return ''; },
+      async runClaude() {
+        fs.writeFileSync(path.join(process.cwd(), 'agent-called.txt'), 'yes');
+        return { sessionId: 'fixture', exitCode: 0 };
+      },
+    };
+    await runCodeReviewPhase({ tasks: [task], tier: 'full', isBundle: false }, false, null, deps);
+  `, { CANON_TASKS_DIR_OVERRIDE: tasks });
+  const blocked = runReview();
+  assert.equal(blocked.status, 2, `exit ${blocked.status}: ${blocked.stderr}${blocked.stdout}`);
+  const status = endStatus(tasks, 'preflight');
+  assert.equal(((status.phases) as Record<string, { status: string }>).code_review.status, 'blocked');
+  const reason = ((status.escalations) as Array<{ reason: string }>).at(-1)?.reason ?? '';
+  const emitted = blocked.stdout + blocked.stderr;
+  const command = emitted.match(/canon task reset-code-review <id>/)?.[0];
+  assert.ok(command, emitted);
+  assert.ok(reason.includes(command), JSON.stringify(status.escalations));
+  assert.match(reason, /only blocked validation rows/);
+
+  fs.writeFileSync(handoff, fs.readFileSync(handoff, 'utf8').replace(
+    '| `npm test` | blocked | CI runner unavailable |', '| `npm test` | Pass | fixture |',
+  ));
+  const reset = runPrinted(command, cwd, tasks, 'preflight');
+  assert.equal(reset.status, 0, reset.stdout + reset.stderr);
+  const pending = endStatus(tasks, 'preflight').phases as Record<string, { status: string }>;
+  assert.equal(pending.code_review.status, 'pending');
+  assert.equal(pending.implement.status, 'done');
+  const resumed = runReview();
+  assert.equal(resumed.status, 0, resumed.stderr + resumed.stdout);
+  assert.doesNotMatch(resumed.stdout + resumed.stderr, /Validation pre-flight FAILED/);
+  assert.equal(fs.readFileSync(path.join(cwd, 'agent-called.txt'), 'utf8'), 'yes');
+}));
+
+void test('spec gate done note: the printed reroute is accepted and the armed gate fires from code_review, qa and human_review', () => withTempDir(dir => {
+  for (const phase of ['code_review', 'qa', 'human_review']) {
+    const root = path.join(dir, phase);
+    fs.mkdirSync(root, { recursive: true });
+    const cwd = makeRepo(root);
+    git(cwd, 'checkout', '-b', `task/${phase}`);
+    const tasks = fixtureTask(cwd, phase, 0, 'approved');
+    const status = endStatus(tasks, phase);
+    const phases = status.phases as Record<string, { status: string; verdict?: string }>;
+    phases.code_review.status = phase === 'code_review' ? 'pending' : 'done';
+    if (phase === 'human_review') phases.qa.status = 'done';
+    if (phase === 'human_review') phases.human_review.status = 'pending';
+    writeStatus(tasks, phase, status);
+    assert.equal(derive(endStatus(tasks, phase)), phase);
+    const note = runInline(cwd, `
+      import { taskCmd } from ${JSON.stringify(path.join(ROOT, 'src/task/index.ts'))};
+      taskCmd(['set', ${JSON.stringify(phase)}, 'human_spec_gate', 'true']);
+    `, { CANON_TASKS_DIR_OVERRIDE: tasks });
+    assert.match(note.stdout, /armed gate fires after the next spec_review/);
+    const command = note.stdout.match(/canon run --reroute [\w-]+/)?.[0];
+    assert.ok(command, note.stdout);
+    fs.appendFileSync(path.join(tasks, phase, 'spec.md'), '\n## Amendment\n\nFixture amendment.\n');
+    const rerouted = runPrinted(command, cwd, tasks, phase);
+    assert.equal(rerouted.status, 0, rerouted.stdout + rerouted.stderr);
+    assert.match(rerouted.stdout, /SPEC GATE/);
+    assert.equal(endStatus(tasks, phase).human_spec_gate, false);
+  }
+}));
+
+void test('spec loop cap at spec_review entry: the printed reset-spec-review is accepted', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/spec-cap');
+  const tasks = fixtureTask(cwd, 'spec-cap');
+  const status = endStatus(tasks, 'spec-cap');
+  status.status = 'spec_review';
+  const phases = status.phases as Record<string, Record<string, unknown>>;
+  phases.spec_review = { status: 'pending', agent: 'codex', verdict: '', iterations: 3, iterations_current_loop: 3, iterations_total: 3 };
+  phases.plan.status = 'pending';
+  phases.implement.status = 'pending';
+  writeStatus(tasks, 'spec-cap', status);
+  fs.writeFileSync(path.join(tasks, 'spec-cap/spec-review.md'), '# Spec Review\n\nPrior review.\n');
+
+  const blockedRun = runLoopCap(cwd, tasks, 'spec-cap', 'spec_review');
+  assert.equal(blockedRun.status, 2, blockedRun.stderr + blockedRun.stdout);
+  const blocked = endStatus(tasks, 'spec-cap');
+  const reason = ((blocked.escalations) as Array<{ reason: string }>).at(-1)?.reason ?? '';
+  const command = reason.match(/canon task reset-spec-review ([\w-]+)/)?.[0];
+  assert.ok(command, reason);
+  assert.ok((blockedRun.stdout + blockedRun.stderr).includes(command));
+  const reset = runPrinted(command, cwd, tasks, 'spec-cap');
+  assert.equal(reset.status, 0, reset.stdout + reset.stderr);
+  const resetStatus = endStatus(tasks, 'spec-cap');
+  const resetPhases = resetStatus.phases as Record<string, { status: string; iterations_current_loop?: number }>;
+  assert.equal(resetPhases.spec_review.status, 'pending');
+  assert.equal(resetPhases.spec_review.iterations_current_loop, 0);
+  assert.ok(fs.existsSync(path.join(tasks, 'spec-cap/spec-review-prior-1.md')));
+}));
+
+void test('code loop cap at code_review entry: the printed reset-code-review is accepted', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/code-cap');
+  const tasks = fixtureTask(cwd, 'code-cap', 0, '');
+  const status = endStatus(tasks, 'code-cap');
+  status.status = 'code_review';
+  const phases = status.phases as Record<string, Record<string, unknown>>;
+  phases.code_review = {
+    status: 'pending', agent: 'claude', verdict: '', iterations: 3, iterations_current_loop: 3,
+    iterations_total: 3, preflight_rejections_current_loop: 0,
+  };
+  writeStatus(tasks, 'code-cap', status);
+  fs.writeFileSync(path.join(tasks, 'code-cap/review.md'), '# Code Review\n\nPrior review.\n');
+
+  const blockedRun = runLoopCap(cwd, tasks, 'code-cap', 'code_review');
+  assert.equal(blockedRun.status, 2, blockedRun.stderr + blockedRun.stdout);
+  const blocked = endStatus(tasks, 'code-cap');
+  const reason = ((blocked.escalations) as Array<{ reason: string }>).at(-1)?.reason ?? '';
+  const command = reason.match(/canon task reset-code-review ([\w-]+)/)?.[0];
+  assert.ok(command, reason);
+  assert.ok((blockedRun.stdout + blockedRun.stderr).includes(command));
+  const reset = runPrinted(command, cwd, tasks, 'code-cap');
+  assert.equal(reset.status, 0, reset.stdout + reset.stderr);
+  const resetStatus = endStatus(tasks, 'code-cap');
+  const resetPhases = resetStatus.phases as Record<string, { status: string }>;
+  assert.equal(resetPhases.code_review.status, 'pending');
+  assert.equal(resetPhases.implement.status, 'done');
+}));
