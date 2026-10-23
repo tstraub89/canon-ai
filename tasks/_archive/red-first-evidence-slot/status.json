@@ -1,7 +1,7 @@
 {
   "id": "red-first-evidence-slot",
   "title": "Red-first evidence section in the handoff, checked by the anchored lens",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-23",
   "updated": "2026-10-23",
   "branch": "task/red-first-evidence-slot",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

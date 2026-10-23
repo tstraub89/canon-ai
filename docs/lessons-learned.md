@@ -202,3 +202,11 @@ A real-git test that asserts "a push by SHA excludes a commit that lands after t
 *(2026-10-21, source: artifact-lint-agent-fixup)*
 
 A guard that fences what an agent session may change by comparing `git status` output misses a session that stages and commits a previously clean tracked file: the porcelain state returns to clean, so the guard sees nothing. This task's round 2 review caught that gap, and the fix added the resolved `HEAD` to every snapshot. The fix also needs the content of each dirty path, not just the set of paths, because an edit to an already-dirty file leaves the same path list. Rule of thumb: before writing a "the agent may not change X" guard, snapshot the content of every candidate path and the `HEAD` SHA, then compare both after the session. A test should have the session commit an edit to a clean tracked file, not only edit a dirty one.
+
+---
+
+### Test guidance prose by the clause it must enforce, not by separate keywords
+
+*(2026-10-22, source: red-first-evidence-slot)*
+
+A test that pins a reviewer charter with independent substring matches (one for a heading, one for a term, each found somewhere in the section) keeps passing after the one clause that makes a check closable is deleted, because each keyword still appears elsewhere. This task's review flagged it: a Stage 1 item whose late-evidence clause makes a gap recoverable would have had no test that fails without it. The same test also sliced the template from the first HTML comment, so an added earlier comment would have moved the slice silently. Rule of thumb: when a test pins guidance prose, match the specific clause as one phrase and assert that phrase within the exact section it belongs to, and check that removing the clause turns the test red.
