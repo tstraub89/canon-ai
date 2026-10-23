@@ -7610,9 +7610,11 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
   const gitIgnoredHandoffFiles = filterGitIgnoredPaths(handoffFiles, cwd);
   const missing = [];
   const baseRefForLog = getBaseBranch(taskIds);
+  const ownedArtifacts = ownedTaskArtifactRows(taskIds);
   for (const f of allHandoffFiles) {
     if (dirtyFiles.has(f)) continue;
     if (gitIgnoredHandoffFiles.has(f)) continue;
+    if (ownedArtifacts.has(f)) continue;
     const exists = fs23.existsSync(path22.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);

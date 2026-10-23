@@ -2089,6 +2089,17 @@ void test('autoCommitCode accepts a listed task artifact that matches the base',
     });
 });
 
+void test('autoCommitCode accepts a listed own task artifact that does not exist, beside a dirty source file', () => {
+    withTempDir('run-task-autocommit-missing-own-artifact-', dir => {
+        const localDir = makeAutoCommitFixture(dir, { 'a.ts': 'export const a = 1;\n' }, ['`a.ts`', '`tasks/task-a/never-written.md`']);
+        fs.writeFileSync(path.join(localDir, 'a.ts'), 'export const a = 2;\n', 'utf8');
+
+        const result = runAutoCommitCodeInline('task-a', localDir);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(latestNameStatuses(localDir), new Set(['M\ta.ts']));
+    });
+});
+
 void test('autoCommitCode does not exempt another bundle member\'s artifact listed in a handoff', () => {
     withTempDir('run-task-autocommit-foreign-artifact-', dir => {
         const localDir = makeAutoCommitFixture(dir, { 'a.ts': 'export const a = 1;\n' }, ['`a.ts`', '`tasks/task-b/spec.md`']);

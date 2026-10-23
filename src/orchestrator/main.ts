@@ -697,9 +697,13 @@ export function autoCommitCode(taskIds: string[], cwd = REPO_ROOT): void {
     // Stage-path filtering below also handles index-staged removals.
     const missing: string[] = [];
     const baseRefForLog = splitGit.getBaseBranch(taskIds);
+    // A task's own listed artifacts are not checked here either; see
+    // verifyHandoffFilesCommitted.
+    const ownedArtifacts = ownedTaskArtifactRows(taskIds);
     for (const f of allHandoffFiles) {
         if (dirtyFiles.has(f)) continue;
         if (gitIgnoredHandoffFiles.has(f)) continue;
+        if (ownedArtifacts.has(f)) continue;
         const exists = fs.existsSync(path.join(cwd, f));
         if (!exists) {
             // Path is absent from the working tree — accept it if a commit on
