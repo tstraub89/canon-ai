@@ -1096,11 +1096,23 @@ void test('reviewer block covers a mixed bundle, and reset restores the review p
         const result = runCheckAndRouteInFixture(tasksRoot, activeCwd, ['blocked-peer', 'active-peer']);
         assert.equal(result.status, 2, result.output);
         assert.doesNotMatch(result.output, /Evidence insufficient/);
+        const outputCommands = [...result.output.matchAll(/canon task (reset-code-review) ([\w-]+)/g)].map(match => [match[1], match[2]] as const);
+        const outputIds = [...new Set(outputCommands.map(([, id]) => id))].sort();
+        const reasonIds = [...new Set(['blocked-peer', 'active-peer'].flatMap(id => {
+            const status = readStatus(id);
+            const reason = status.escalations?.[0]?.reason ?? '';
+            const matches = [...reason.matchAll(/canon task reset-code-review ([\w-]+)/g)].map(match => match[1]);
+            assert.ok(matches.length > 0, reason);
+            return matches;
+        }))].sort();
+        assert.deepEqual(outputIds, ['active-peer', 'blocked-peer']);
+        assert.deepEqual(reasonIds, outputIds);
         for (const id of ['blocked-peer', 'active-peer']) {
             assert.match(result.output, new RegExp(`${id}/review\\.md`));
             assert.equal(readStatus(id).phases.code_review?.status, 'blocked');
             assert.equal(readStatus(id).escalations?.length, 1);
-            const script = `import { taskCmd } from ${JSON.stringify(path.join(process.cwd(), 'src/task/index.ts'))}; taskCmd(['reset-code-review', ${JSON.stringify(id)}]);`;
+            const [command, commandId] = outputCommands.find(([, emittedId]) => emittedId === id)!;
+            const script = `import { taskCmd } from ${JSON.stringify(path.join(process.cwd(), 'src/task/index.ts'))}; taskCmd([${JSON.stringify(command)}, ${JSON.stringify(commandId)}]);`;
             const reset = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script], {
                 cwd: process.cwd(), env: { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, encoding: 'utf8',
             });

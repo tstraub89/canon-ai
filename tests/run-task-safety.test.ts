@@ -8042,8 +8042,12 @@ void test('main blocks a capped spec loop before revision, re-blocks on resume, 
         assert.equal(reblocked.escalations?.length, 2);
         assert.equal(reblocked.phases?.spec_review?.auto_block_count, 2);
 
+        const specReset = blocked.escalations?.[0]?.reason?.match(/canon task (reset-spec-review) ([^\s;]+)/);
+        assert.ok(specReset, blocked.escalations?.[0]?.reason);
+        assert.equal(specReset[2], taskId);
+        assert.ok(combinedOutput(first).includes(`canon task ${specReset[1]} ${specReset[2]}`));
         withFakeGitEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot }, () => {
-            taskCmd(['reset-spec-review', taskId]);
+            taskCmd([specReset[1], specReset[2]]);
         });
         const reset = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
             status?: string;
@@ -8123,8 +8127,12 @@ void test('main blocks a capped code loop before implementation side effects, re
         const preservedTotal = reblocked.phases?.code_review?.iterations_total;
         const preservedAutoBlocks = reblocked.phases?.code_review?.auto_block_count;
 
+        const codeReset = blocked.escalations?.[0]?.reason?.match(/canon task (reset-code-review) ([^\s;]+)/);
+        assert.ok(codeReset, blocked.escalations?.[0]?.reason);
+        assert.equal(codeReset[2], taskId);
+        assert.ok(combinedOutput(first).includes(`canon task ${codeReset[1]} ${codeReset[2]}`));
         withFakeGitEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot }, () => {
-            taskCmd(['reset-code-review', taskId]);
+            taskCmd([codeReset[1], codeReset[2]]);
         });
         const reset = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as {
             status?: string;
