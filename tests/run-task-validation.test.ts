@@ -6,6 +6,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+    classifyBasePushRejection,
+    getLocalOnlyBaseCommits,
+    getUnpushedBaseCommits,
+    probeOriginBranch,
     filterStageablePaths,
     getAffectedFiles,
     parseNameStatusOutput,
@@ -42,6 +46,7 @@ import {
     parseHandoffFiles,
     parseHandoffPathCell,
     validateHandoffAgainstSpec,
+    buildMissingRemoteBaseBlock,
     verifyBaseDivergence,
     verifyBaseDivergenceFromData,
     verifyBaseDrift,
@@ -2375,6 +2380,79 @@ void test('verifyBaseDivergence: clean repo with no divergent commits returns em
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+void test('scaffold base probe distinguishes exact branches, missing branches, and network errors', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scaffold-probe-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        assert.deepEqual(probeOriginBranch('main', localDir), { kind: 'present' });
+        assert.deepEqual(probeOriginBranch('feat/x', localDir), { kind: 'missing' });
+        gitIn(localDir, 'push', 'origin', 'main:refs/heads/feat/x');
+        assert.deepEqual(probeOriginBranch('x', localDir), { kind: 'missing' });
+        assert.equal(probeOriginBranch('main', path.join(dir, 'absent')).kind, 'error');
+        gitIn(localDir, 'remote', 'set-url', 'origin', path.join(dir, 'unreachable'));
+        assert.equal(probeOriginBranch('main', localDir).kind, 'error');
+        assert.deepEqual(verifyBaseDivergence('main', localDir, { classifyMissingRemote: true }), {
+            commits: [], ok: true, stderr: '', fetchFailed: true,
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('scaffold missing-remote classification is opt-in; ship keeps warn-and-skip', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scaffold-ship-'));
+    try {
+        const { localDir } = makeGitFixture(dir);
+        gitIn(localDir, 'checkout', '-b', 'feat/x');
+        fs.mkdirSync(path.join(localDir, 'tasks', 'example'), { recursive: true });
+        fs.writeFileSync(path.join(localDir, 'tasks/example/spec.md'), 'scaffold\n');
+        gitIn(localDir, 'add', 'tasks');
+        gitIn(localDir, 'commit', '-m', 'task(example): commit artifacts pre-pipeline');
+        const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: localDir, encoding: 'utf8' }).trim();
+        // A deleted origin branch must not conceal this commit from the range.
+        gitIn(localDir, 'update-ref', 'refs/remotes/origin/wip', sha);
+        assert.deepEqual(verifyBaseDivergence('feat/x', localDir), {
+            commits: [], ok: true, stderr: '', fetchFailed: true,
+        });
+        const commits = [{ sha, subject: 'task(example): commit artifacts pre-pipeline' }];
+        assert.deepEqual(getLocalOnlyBaseCommits('feat/x', localDir), { ok: true, tipSha: sha, commits });
+        assert.deepEqual(verifyBaseDivergence('feat/x', localDir, { classifyMissingRemote: true }), {
+            commits, ok: true, stderr: '', fetchFailed: false, remoteMissing: true, tipSha: sha,
+        });
+        const missingLocal = verifyBaseDivergence('missing-local', localDir, { classifyMissingRemote: true });
+        assert.equal(missingLocal.ok, false);
+        assert.equal(missingLocal.fetchFailed, false);
+        assert.ok(missingLocal.stderr);
+        // A same-named tag must not stand in for the local base branch.
+        gitIn(localDir, 'tag', 'feat/x', `${sha}~1`);
+        assert.deepEqual(getLocalOnlyBaseCommits('feat/x', localDir), { ok: true, tipSha: sha, commits });
+        assert.deepEqual(getUnpushedBaseCommits('feat/x', localDir, `${sha}~1`), { commits, ok: true, stderr: '' });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('scaffold missing-remote block labels every commit and quotes shell arguments', () => {
+    assert.equal(buildMissingRemoteBaseBlock('feat/x;echo', [
+        { sha: 'abcdef012345', subject: 'safe scaffold', verdict: { safe: true } },
+        { sha: '123456789abc', subject: 'operator work', verdict: { safe: false, reason: 'operator subject' } },
+    ], '--push'), [
+        '--push aborted: origin has no feat/x;echo branch, and local feat/x;echo has commits that are on no origin branch:',
+        '  abcdef0  safe scaffold  [canon-safe]',
+        '  1234567  operator work  [not canon-safe: operator subject]',
+        "Fix: push feat/x;echo yourself (git push origin 'feat/x;echo'), then re-run.",
+        '--allow-divergent-base does not apply: the PR has no origin/feat/x;echo to target.',
+    ].join('\n'));
+});
+
+void test('scaffold push rejection distinguishes non-fast-forward from hook refusals', () => {
+    for (const reason of ['fetch first', 'non-fast-forward']) {
+        assert.equal(classifyBasePushRejection(` ! [rejected] abc -> main (${reason})`), 'non-fast-forward');
+    }
+    assert.equal(classifyBasePushRejection(' ! [remote rejected] main -> main (pre-receive hook declined)'), 'other');
+    assert.equal(classifyBasePushRejection(''), 'other');
 });
 
 void test('verifyBaseDivergence: non-existent cwd returns ok:false with non-empty stderr', () => {

@@ -479,3 +479,13 @@ _Generation: Opus 5.5 / Sonnet 5.5._
 **Plan-quality follow-up**: A feasibility check now asks planners to verify real call paths, callers, test inputs, predicates, and scope before writing steps. The 422-task observational analysis found that implementation changed a plan's approach in about 6% of tasks, while about 40% of sampled non-hygiene blocking findings traced to a plan prescribing the wrong mechanism, a regression test that could not fail, or a missed caller/file or boundary value. These classifications were not verified against code, and the sample was small. This check rides with the calibration because it edits the same planning prompts; tstraub89/canon-ai#68 tracks the separate plan-review-phase decision.
 
 The `/canon-spec-review` sub-agents now run under one read-only `spec-review-lens` charter, with delegation bounded by its tool list. The lens is coverage-first; synthesis does the filtering.
+
+---
+
+## --pr/--push push canon's own scaffold commits to base (2026-10)
+
+**Decision**: `--pr` and `--push`, including full-send's PR step, are consent to push classifier-proven canon scaffold and telemetry commits to base. They may create a missing `origin/<base>` only when every local-only commit is canon-safe or the range is empty because every commit is already on a live origin branch.
+
+**Why**: Every non-full-send task otherwise needed a manual base push before opening its PR. This reverses the non-goal in `tasks/_archive/full-send-tail-push-and-watch/spec.md`, which treated `--full-send` as the only consent to push scaffold commits to base.
+
+**Rule**: The unchanged classifier and the all-or-nothing rule provide the safety: an operator commit prevents the entire push, and the push uses the checked tip SHA. Repos whose main accepts only PRs should use a pushable feature or integration branch as the task's base, or rely on `--allow-divergent-base` and the squash merge. That override tolerates a rejected scaffold push to an existing base; it cannot bypass a missing remote base. `--ship` does not push the scaffold to base.

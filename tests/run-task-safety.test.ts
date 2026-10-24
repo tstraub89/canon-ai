@@ -224,10 +224,10 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_TASK_BRANCH:-}" ]; then',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
+        'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && { [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ] || [ "${3:-}" = "+refs/heads/${FAKE_GIT_BASE_BRANCH:-main}:refs/remotes/origin/${FAKE_GIT_BASE_BRANCH:-main}" ]; }; then',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}..${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
+        'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}..refs/heads/${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
         '  if [ "${FAKE_GIT_BASE_LOG_FAIL:-}" = "1" ]; then',
         '    printf "%s\\n" "${FAKE_GIT_BASE_LOG_ERROR:-base log failed}" >&2',
         '    exit 1',
@@ -1311,6 +1311,7 @@ function setupDivergentBaseRepo(dir: string, taskId: string): { localDir: string
 function setupFullSendTailFixture(
     dir: string,
     addExtraCommit?: (localDir: string, taskId: string) => void,
+    options: { fullSend?: boolean; baseBranch?: string } = {},
 ): { localDir: string; originDir: string; originBaseSha: string; taskId: string; fakeBins: string } {
     const taskId = 'task-a';
     const { localDir: clonedDir, originDir } = makeGitFixture(dir);
@@ -1325,7 +1326,9 @@ function setupFullSendTailFixture(
     const originBaseSha = execFileSync('git', ['--git-dir', originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
 
     const status = makeCompleteStatus(taskId, `task/${taskId}`);
-    status.full_send = true;
+    status.full_send = options.fullSend ?? true;
+    status.base_branch = options.baseBranch ?? 'main';
+    if (options.baseBranch) gitIn(localDir, 'checkout', '-b', options.baseBranch);
     (status.phases as Record<string, { status: string; agent: string }>).human_review = { status: 'pending', agent: 'human' };
     writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
     writeAffectedFilesSpec(path.join(localDir, 'tasks'), taskId, []);
@@ -1355,6 +1358,263 @@ function runFullSendTailFixture(
         FAKE_GH_PR_STATE_FILE: path.join(dir, 'pr-state.txt'),
         ...env,
     }, fixture.localDir);
+}
+
+function scaffoldGitOutput(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
+
+function runScaffoldFixture(
+    fixture: ReturnType<typeof setupFullSendTailFixture>, dir: string, args: string[], env: NodeJS.ProcessEnv = {},
+): { status: number | null; stderr: string; stdout: string } {
+    return runMainInline(fixture.taskId, args, {
+        PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        CANON_TASKS_DIR_OVERRIDE: path.join(fixture.localDir, 'tasks'),
+        CANON_WORKTREES_ROOT: path.dirname(fixture.localDir),
+        FAKE_GH_LOG: path.join(dir, 'gh.log'),
+        FAKE_GH_PR_STATE_FILE: path.join(dir, 'pr-state.txt'),
+        ...env,
+    }, fixture.localDir);
+}
+
+function remoteScaffoldTip(fixture: ReturnType<typeof setupFullSendTailFixture>, base = 'main'): string {
+    const result = spawnSync('git', ['--git-dir', fixture.originDir, 'rev-parse', '--verify', `refs/heads/${base}`], { encoding: 'utf8' });
+    return result.status === 0 ? result.stdout.trim() : '';
+}
+
+function scaffoldGhLog(dir: string): string {
+    return fs.existsSync(path.join(dir, 'gh.log')) ? fs.readFileSync(path.join(dir, 'gh.log'), 'utf8') : '';
+}
+
+function rejectScaffoldBase(fixture: ReturnType<typeof setupFullSendTailFixture>, base: string): void {
+    writeExecutable(path.join(fixture.originDir, 'hooks'), 'pre-receive', [
+        `while read old new ref; do if [ "$ref" = "refs/heads/${base}" ]; then echo 'protected branch rejection' >&2; exit 1; fi; done`,
+        'exit 0',
+    ]);
+}
+
+for (const args of [['--pr'], ['--push'], ['--pr', '--allow-divergent-base'], ['--full-send', '--force']]) {
+    void test(`scaffold base push: ${args.join(' ')} pushes a safe scaffold`, () => {
+        withTempDir('scaffold-safe-', dir => {
+            const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: args.includes('--full-send') });
+            const tip = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'main').trim();
+            const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+            const log = path.join(dir, 'git.log');
+            writeExecutable(fixture.fakeBins, 'git', ['printf "%s\\n" "$*" >> "$GIT_ARGV_LOG"', 'exec "$REAL_GIT" "$@"']);
+            const result = runScaffoldFixture(fixture, dir, args, { REAL_GIT: realGit, GIT_ARGV_LOG: log });
+            assert.equal(result.status, 0, combinedOutput(result));
+            assert.equal(remoteScaffoldTip(fixture), tip);
+            assert.ok(remoteScaffoldTip(fixture, 'task/task-a'));
+            assert.match(result.stdout, /Pushed 1 unpushed main commit\(s\)/);
+            assert.doesNotMatch(combinedOutput(result), /Base divergence detected|--allow-divergent-base override/);
+            if (!args.includes('--full-send')) assert.doesNotMatch(combinedOutput(result), /Full-send/);
+            if (args.includes('--pr') || args.includes('--full-send')) assert.match(scaffoldGhLog(dir), /^pr create /m);
+            const commands = fs.readFileSync(log, 'utf8').trim().split('\n');
+            const pushIndex = commands.indexOf(`push origin ${tip}:refs/heads/main`);
+            assert.ok(pushIndex >= 0, commands.join('\n'));
+            assert.equal(commands.filter(line => line === `push origin ${tip}:refs/heads/main`).length, 1);
+            assert.doesNotMatch(commands[pushIndex], /--force|(?:^| )-(?:f|u)(?: |$)/);
+            assert.equal(commands.slice(0, pushIndex).filter(line => line.startsWith('fetch ')).length, 1);
+        });
+    });
+}
+
+void test('scaffold base push: mixed operator and safe commits block all pushes', () => {
+    withTempDir('scaffold-mixed-', dir => {
+        const fixture = setupFullSendTailFixture(dir, repo => {
+            fs.writeFileSync(path.join(repo, 'operator-source.txt'), 'operator\n');
+            gitIn(repo, 'add', 'operator-source.txt');
+            gitIn(repo, 'commit', '-m', 'operator commit');
+        }, { fullSend: false });
+        const shas = scaffoldGitOutput(fixture.localDir, 'log', 'origin/main..main', '--format=%h').trim().split('\n');
+        const result = runScaffoldFixture(fixture, dir, ['--pr']);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Base divergence detected/);
+        assert.match(result.stderr, /Fix: git push origin main/);
+        for (const sha of shas) assert.ok(result.stderr.includes(sha));
+        assert.equal(remoteScaffoldTip(fixture), fixture.originBaseSha);
+        assert.doesNotMatch(scaffoldGhLog(dir), /^pr create /m);
+    });
+});
+
+for (const published of [false, true]) {
+    for (const override of [false, true]) {
+        void test(`scaffold base push: missing base published=${published} override=${override}`, () => {
+            withTempDir('scaffold-missing-', dir => {
+                const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false, baseBranch: 'feat/x' });
+                const tip = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'feat/x').trim();
+                if (published) gitIn(fixture.localDir, 'push', 'origin', 'feat/x:refs/heads/task/task-a');
+                const result = runScaffoldFixture(fixture, dir, ['--pr', ...(override ? ['--allow-divergent-base'] : [])]);
+                // Assert the remote first: the old path can open a fake PR without creating its base.
+                assert.equal(remoteScaffoldTip(fixture, 'feat/x'), tip, combinedOutput(result));
+                assert.equal(result.status, 0, combinedOutput(result));
+                assert.match(scaffoldGhLog(dir), /^pr create .*--base feat\/x/m);
+                if (published) assert.match(result.stdout, /Created origin\/feat\/x at/);
+            });
+        });
+    }
+}
+
+void test('scaffold base push: a stale origin/main outside the fetch refspec cannot hide an operator commit', () => {
+    withTempDir('scaffold-stale-present-', dir => {
+        const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false });
+        const scaffold = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'main').trim();
+        // Local main: origin's tip -> operator commit -> scaffold. origin/main claims the
+        // operator commit, as if origin was reset behind it, and the fetch refspec skips main.
+        gitIn(fixture.localDir, 'checkout', 'main');
+        gitIn(fixture.localDir, 'reset', '--hard', fixture.originBaseSha);
+        fs.writeFileSync(path.join(fixture.localDir, 'operator-source.txt'), 'operator\n');
+        gitIn(fixture.localDir, 'add', 'operator-source.txt');
+        gitIn(fixture.localDir, 'commit', '-m', 'operator commit');
+        const operator = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'HEAD').trim();
+        gitIn(fixture.localDir, 'cherry-pick', scaffold);
+        gitIn(fixture.localDir, 'checkout', `task/${fixture.taskId}`);
+        gitIn(fixture.localDir, 'update-ref', 'refs/remotes/origin/main', operator);
+        gitIn(fixture.localDir, 'config', 'remote.origin.fetch', '+refs/heads/other:refs/remotes/origin/other');
+        const result = runScaffoldFixture(fixture, dir, ['--pr']);
+        assert.equal(remoteScaffoldTip(fixture), fixture.originBaseSha, combinedOutput(result));
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Base divergence detected/);
+        assert.doesNotMatch(scaffoldGhLog(dir), /^pr create /m);
+    });
+});
+
+void test('scaffold base push: missing empty base rejects creation despite override', () => {
+    withTempDir('scaffold-empty-rejected-', dir => {
+        const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false, baseBranch: 'feat/x' });
+        gitIn(fixture.localDir, 'push', 'origin', 'feat/x:refs/heads/task/task-a');
+        rejectScaffoldBase(fixture, 'feat/x');
+        const result = runScaffoldFixture(fixture, dir, ['--pr', '--allow-divergent-base']);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /may be protected/);
+        assert.equal(remoteScaffoldTip(fixture, 'feat/x'), '');
+        assert.doesNotMatch(scaffoldGhLog(dir), /^pr create /m);
+    });
+});
+
+for (const [stale, narrowed] of [[false, false], [true, false], [true, true]] as const) {
+    void test(`scaffold base push: missing unsafe base blocks even with override stale=${stale} narrowed=${narrowed}`, () => {
+        withTempDir('scaffold-missing-unsafe-', dir => {
+            const fixture = setupFullSendTailFixture(dir, repo => {
+                fs.writeFileSync(path.join(repo, 'operator-source.txt'), 'operator\n');
+                gitIn(repo, 'add', 'operator-source.txt');
+                gitIn(repo, 'commit', '-m', 'operator commit');
+            }, { fullSend: false, baseBranch: 'feat/x' });
+            if (stale) gitIn(fixture.localDir, 'update-ref', 'refs/remotes/origin/wip', 'feat/x');
+            // A single-branch fetch refspec leaves origin/wip outside what a plain --prune covers.
+            if (narrowed) gitIn(fixture.localDir, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
+            const shas = scaffoldGitOutput(fixture.localDir, 'log', 'main..feat/x', '--format=%h').trim().split('\n');
+            for (const args of [['--pr'], ['--pr', '--allow-divergent-base']]) {
+                const result = runScaffoldFixture(fixture, dir, args);
+                assert.notEqual(result.status, 0);
+                assert.match(result.stderr, /origin has no feat\/x branch/);
+                assert.match(result.stderr, /\[canon-safe\]/);
+                assert.match(result.stderr, /\[not canon-safe:/);
+                assert.match(result.stderr, /push feat\/x yourself/);
+                assert.match(result.stderr, /--allow-divergent-base does not apply/);
+                for (const sha of shas) assert.ok(result.stderr.includes(sha));
+                assert.equal(remoteScaffoldTip(fixture, 'feat/x'), '');
+                assert.equal(remoteScaffoldTip(fixture, 'task/task-a'), '');
+                assert.doesNotMatch(scaffoldGhLog(dir), /^pr create /m);
+            }
+        });
+    });
+}
+
+for (const fullSend of [false, true]) {
+    void test(`scaffold base push: fetch failure warns and skips fullSend=${fullSend}`, () => {
+        withTempDir('scaffold-fetch-failed-', dir => {
+            const fixture = setupFullSendTailFixture(dir, undefined, { fullSend });
+            const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+            writeExecutable(fixture.fakeBins, 'git', [
+                'if [ "$1" = fetch ]; then echo "fatal: Could not resolve host example.invalid" >&2; exit 128; fi',
+                `exec "${realGit}" "$@"`,
+            ]);
+            const result = runScaffoldFixture(fixture, dir, fullSend ? ['--full-send', '--force'] : ['--pr']);
+            assert.match(combinedOutput(result), /Could not fetch origin\/main.*Skipping base-divergence check/);
+            assert.doesNotMatch(combinedOutput(result), /origin has no main branch/);
+            assert.equal(remoteScaffoldTip(fixture), fixture.originBaseSha);
+            assert.match(scaffoldGhLog(dir), /^pr create /m);
+        });
+    });
+    void test(`scaffold base push: non-fast-forward names rebase fullSend=${fullSend}`, () => {
+        withTempDir('scaffold-non-ff-', dir => {
+            const fixture = setupFullSendTailFixture(dir, undefined, { fullSend });
+            const other = path.join(dir, 'other');
+            gitIn(dir, 'clone', '--branch', 'main', fixture.originDir, other);
+            gitIn(other, 'config', 'user.email', 'test@example.com');
+            gitIn(other, 'config', 'user.name', 'Test');
+            fs.writeFileSync(path.join(other, 'remote.txt'), 'remote\n');
+            gitIn(other, 'add', 'remote.txt');
+            gitIn(other, 'commit', '-m', 'remote advance');
+            gitIn(other, 'push', 'origin', 'main');
+            const remoteTip = remoteScaffoldTip(fixture);
+            const result = runScaffoldFixture(fixture, dir, fullSend ? ['--full-send', '--force'] : ['--pr']);
+            assert.notEqual(result.status, 0);
+            assert.match(combinedOutput(result), /git pull --rebase/);
+            assert.doesNotMatch(combinedOutput(result), /protected/i);
+            assert.equal(remoteScaffoldTip(fixture), remoteTip);
+        });
+    });
+}
+
+for (const override of [false, true]) {
+    void test(`scaffold base push: protected present base override=${override}`, () => {
+        withTempDir('scaffold-protected-', dir => {
+            const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false });
+            rejectScaffoldBase(fixture, 'main');
+            const result = runScaffoldFixture(fixture, dir, ['--pr', ...(override ? ['--allow-divergent-base'] : [])]);
+            if (override) {
+                assert.equal(result.status, 0, combinedOutput(result));
+                assert.match(result.stderr, /Scaffold commits were not pushed to origin\/main/);
+                assert.match(result.stderr, /--allow-divergent-base override/);
+                const sha = scaffoldGitOutput(fixture.localDir, 'rev-parse', '--short=7', 'main').trim();
+                assert.ok(result.stderr.includes(sha));
+                assert.match(scaffoldGhLog(dir), /^pr create /m);
+            } else {
+                assert.notEqual(result.status, 0);
+                assert.match(result.stderr, /may be protected/);
+                assert.doesNotMatch(combinedOutput(result), /Full-send/);
+                assert.doesNotMatch(scaffoldGhLog(dir), /^pr create /m);
+            }
+            assert.equal(remoteScaffoldTip(fixture), fixture.originBaseSha);
+        });
+    });
+}
+
+for (const failure of ['prune', 'list', 'inspect', 'relist']) {
+    void test(`scaffold base push: ${failure} probe failure stays guarded`, () => {
+        withTempDir('scaffold-probe-failed-', dir => {
+            const missing = failure === 'prune';
+            const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false, ...(missing ? { baseBranch: 'feat/x' } : {}) });
+            const tip = scaffoldGitOutput(fixture.localDir, 'rev-parse', missing ? 'feat/x' : 'main').trim();
+            const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+            const conditions: Record<string, string> = {
+                prune: '[ "$1" = fetch ] && [ "${2:-}" = --prune ]',
+                list: '[ "$1" = log ] && [ "${2:-}" = origin/main..refs/heads/main ]',
+                inspect: '[ "$1" = diff-tree ]',
+                relist: `[ "$1" = log ] && [ "\${2:-}" = ${tip}..refs/heads/main ]`,
+            };
+            writeExecutable(fixture.fakeBins, 'git', [
+                `if ${conditions[failure]}; then echo 'simulated ${failure} failure' >&2; exit 128; fi`,
+                `exec "${realGit}" "$@"`,
+            ]);
+            const result = runScaffoldFixture(fixture, dir, ['--pr', '--allow-divergent-base']);
+            if (failure === 'prune') {
+                assert.match(result.stderr, /Could not fetch origin\/feat\/x.*simulated prune failure.*Skipping base-divergence check/);
+                assert.equal(remoteScaffoldTip(fixture, 'feat/x'), '');
+                assert.doesNotMatch(result.stdout, /Created origin|Pushed .*unpushed/);
+            } else {
+                assert.notEqual(result.status, 0);
+                assert.match(result.stderr, new RegExp(`--pr aborted:.*(?:list|inspect).*main`));
+                assert.match(result.stderr, new RegExp(`simulated ${failure} failure`));
+                assert.equal(remoteScaffoldTip(fixture), failure === 'relist' ? tip : fixture.originBaseSha);
+                if (failure === 'relist') assert.doesNotMatch(result.stderr, /Nothing was pushed/);
+                assert.doesNotMatch(scaffoldGhLog(dir), /^pr create /m);
+                assert.equal(remoteScaffoldTip(fixture, 'task/task-a'), '');
+            }
+        });
+    });
 }
 
 void test('safe scaffold push classifier requires an exact subject, only allowed paths, and no merge parent', () => {
@@ -1394,11 +1654,11 @@ void test('hasUnpushedScaffoldCommits probes safe, unsafe, and unavailable base 
     });
 });
 
-void test('scaffold hint is absent without safe commits and selects wording by full-send state', () => {
-    assert.equal(scaffoldCommitHint('main', false, true), null);
-    assert.match(scaffoldCommitHint('main', null, true) ?? '', /git push origin main/);
-    assert.match(scaffoldCommitHint('main', true, false) ?? '', /git push origin main/);
-    assert.match(scaffoldCommitHint('main', true, true) ?? '', /full-send tail pushes unpushed base commits/);
+void test('scaffold hint is absent without safe commits and uses one wording for every mode', () => {
+    assert.equal(scaffoldCommitHint('main', false), null);
+    assert.equal(scaffoldCommitHint('main', true), scaffoldCommitHint('main', null));
+    assert.match(scaffoldCommitHint('main', true) ?? '', /--pr, --push and full-send push it/);
+    assert.doesNotMatch(scaffoldCommitHint('main', true) ?? '', /git push origin/);
 });
 
 function makeCompleteStatus(taskId: string, branch: string): Record<string, unknown> {
@@ -5397,7 +5657,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
         });
 
         assert.equal(result.status, 0, result.stderr);
-        assert.equal((result.stdout.match(/git push origin main/g) ?? []).length, 1);
+        assert.equal((result.stdout.match(/--pr, --push and full-send push it to origin\/main/g) ?? []).length, 1);
         const rootTaskStatus = spawnSync('git', ['status', '--porcelain', '--', `tasks/${taskId}`], {
             cwd: localDir,
             encoding: 'utf8',
@@ -5435,7 +5695,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
             env: childEnv,
         });
         assert.equal(secondResult.status, 0, secondResult.stderr);
-        assert.doesNotMatch(secondResult.stdout, /git push origin main/);
+        assert.doesNotMatch(secondResult.stdout, /--pr, --push and full-send push it to origin\/main/);
 
         if (fs.existsSync(worktreeDir)) {
             spawnSync('git', ['worktree', 'remove', '--force', worktreeDir], {
@@ -6447,7 +6707,7 @@ void test('main --push blocks when local base has unpushed commits', () => {
     });
 });
 
-void test('plain --pr still refuses an unpushed base commit without pushing it', () => {
+void test('plain --pr refuses an unsafe (out-of-tasks/) unpushed base commit without pushing it', () => {
     withTempDir('run-task-plain-pr-base-divergence-', dir => {
         const taskId = 'task-a';
         const { localDir } = setupDivergentBaseRepo(dir, taskId);
@@ -6509,7 +6769,7 @@ void test('main full-send tail pushes an unpushed scaffold tip SHA before the di
         }, localDir);
 
         assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-        assert.match(result.stdout, /Full-send: pushed 2 unpushed main commit\(s\)/);
+        assert.match(result.stdout, /Pushed 2 unpushed main commit\(s\) to origin\/main/);
         const listedCommits = execFileSync('git', ['log', `${originMainSha}..${scaffoldTip}`, '--format=%H%x09%s'], {
             cwd: localDir,
             encoding: 'utf8',
@@ -6616,7 +6876,7 @@ void test('full-send tail fails closed on a rejected base push and a commit-list
         const fixture = setupFullSendTailFixture(dir);
         const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
         writeExecutable(fixture.fakeBins, 'git', [
-            'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/main..main" ]; then echo "simulated commit-list failure" >&2; exit 1; fi',
+            'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/main..refs/heads/main" ]; then echo "simulated commit-list failure" >&2; exit 1; fi',
             `exec "${realGit}" "$@"`,
         ]);
         const result = runFullSendTailFixture(fixture, dir);

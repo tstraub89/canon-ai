@@ -1379,41 +1379,63 @@ function shouldRunFullSendTail(taskIds: string[]): boolean {
     });
 }
 
-function pushScaffoldBaseCommitsForFullSend(taskIds: string[], cwd: string): void {
+function pushScaffoldBaseCommits(taskIds: string[], cwd: string, createPR: boolean): void {
     const baseBranch = splitGit.getBaseBranch(taskIds);
-    const fetch = splitGit.gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
-    if (!fetch.ok) die(`Full-send tail aborted: could not fetch origin/${baseBranch} (${fetch.stderr || 'unknown error'}). Nothing was pushed.`);
+    const modePrefix = createPR ? '--pr' : '--push';
+    const divergence = splitValidation.verifyBaseDivergence(baseBranch, cwd, { classifyMissingRemote: true });
+    if (!divergence.ok) {
+        die(`${modePrefix} aborted: git error checking base divergence: could not list unpushed ${baseBranch} commits (${divergence.stderr || 'unknown error'}). Nothing was pushed.`);
+    }
+    if (divergence.fetchFailed) return;
+    const missing = 'remoteMissing' in divergence;
+    if (!missing && divergence.commits.length === 0) return;
 
-    const unpushed = splitGit.getUnpushedBaseCommits(baseBranch, cwd);
-    if (!unpushed.ok) die(`Full-send tail aborted: could not list unpushed ${baseBranch} commits (${unpushed.stderr || 'unknown error'}). Nothing was pushed.`);
-    if (unpushed.commits.length === 0) return;
-
-    for (const commit of unpushed.commits) {
+    const entries = divergence.commits.map(commit => {
         const result = splitGit.classifySafeToPushCommit(commit.sha, commit.subject, cwd);
         if (!result.ok) {
-            die(`Full-send tail aborted: could not inspect ${commit.sha.slice(0, 7)} on ${baseBranch} (${result.stderr || 'unknown error'}). Nothing was pushed.`);
-            return;
+            return splitCli.die(`${modePrefix} aborted: could not inspect ${commit.sha.slice(0, 7)} on ${baseBranch} (${result.stderr || 'unknown error'}). Nothing was pushed.`);
         }
-        if (!result.verdict.safe) {
-            info(`Full-send: not pushing ${baseBranch}; ${commit.sha.slice(0, 7)} ${commit.subject} is not safe to push (${result.verdict.reason}).`);
-            return;
-        }
-    }
+        return { ...commit, verdict: result.verdict };
+    });
+    const allSafe = entries.every(entry => entry.verdict.safe);
+    if (missing && !allSafe) die(splitValidation.buildMissingRemoteBaseBlock(baseBranch, entries, modePrefix));
 
-    const tipSha = unpushed.commits[0].sha;
-    const push = splitGit.gitSafeAt(cwd, 'push', 'origin', `${tipSha}:refs/heads/${baseBranch}`);
-    if (!push.ok) {
-        die(
-            `Full-send tail aborted: pushing ${baseBranch} scaffold commits to origin failed: ${push.stderr || 'unknown error'}\n` +
-            `The base branch may be protected. Push or merge these commits to origin/${baseBranch} manually ` +
-            `(they carry only task artifacts and pipeline telemetry), then re-run \`canon run ${taskIds.join(' ')}\`.`,
-        );
+    let remaining = divergence.commits;
+    if (allSafe) {
+        const tipSha = missing ? divergence.tipSha : divergence.commits[0].sha;
+        const push = splitGit.gitSafeAt(cwd, 'push', 'origin', `${tipSha}:refs/heads/${baseBranch}`);
+        if (!push.ok) {
+            const kind = splitGit.classifyBasePushRejection(push.stderr);
+            const rerun = `canon run ${taskIds.join(' ')} ${modePrefix}`;
+            const message = kind === 'non-fast-forward'
+                ? `${modePrefix} aborted: origin/${baseBranch} has commits that local ${baseBranch} lacks, so canon could not push its scaffold commits.\n${push.stderr}\n` +
+                  `Fix: on ${baseBranch}, run \`git pull --rebase origin ${splitState.shellQuoteArg(baseBranch)}\`, then re-run \`${rerun}\`. A plain pull would create a merge commit, which canon will not push.`
+                : `${modePrefix} aborted: pushing ${baseBranch} scaffold commits to origin failed: ${push.stderr || 'unknown error'}\n` +
+                  `The base branch may be protected. Push or merge these commits to origin/${baseBranch} manually ` +
+                  `(they carry only task artifacts and pipeline telemetry), then re-run \`${rerun}\`.`;
+            if (missing || !cliArgs.allowDivergentBase) {
+                die(message + (missing ? `\n--allow-divergent-base does not apply when origin has no ${baseBranch}.` : ''));
+            }
+            warn(`Scaffold commits were not pushed to origin/${baseBranch} (${kind}): ${push.stderr || 'unknown error'}`);
+        } else {
+            info(divergence.commits.length === 0
+                ? `Created origin/${baseBranch} at ${tipSha.slice(0, 7)}; every commit on local ${baseBranch} is already on an origin branch, so no new commit was published.`
+                : `Pushed ${divergence.commits.length} unpushed ${baseBranch} commit(s) to origin/${baseBranch}` +
+                  (missing ? ` and created origin/${baseBranch}` : '') +
+                  ` (canon scaffold subjects; only task artifacts and pipeline telemetry):\n` +
+                  divergence.commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'));
+            // Re-list from the checked SHA so concurrent local commits still reach the gate.
+            const relisted = splitGit.getUnpushedBaseCommits(baseBranch, cwd, tipSha);
+            if (!relisted.ok) {
+                die(`${modePrefix} aborted: pushed scaffold commits to origin/${baseBranch}, but could not re-list unpushed ${baseBranch} commits (${relisted.stderr || 'unknown error'}).`);
+            }
+            remaining = relisted.commits;
+        }
     }
-    info(
-        `Full-send: pushed ${unpushed.commits.length} unpushed ${baseBranch} commit(s) to origin/${baseBranch} ` +
-        `(canon scaffold subjects; only task artifacts and pipeline telemetry):\n` +
-        unpushed.commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'),
-    );
+    if (remaining.length === 0) return;
+    if (!cliArgs.allowDivergentBase) die(splitValidation.verifyBaseDivergenceFromData(remaining, baseBranch));
+    warn(`--allow-divergent-base override: bypassing base-divergence gate. Divergent commits:\n` +
+        remaining.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'));
 }
 
 function undoHumanReviewCommit(cwd: string, preSha: string, branchName: string, message: string): string {
@@ -1504,18 +1526,7 @@ export function commitHumanReviewFiles(taskIds: string[], cwd: string, createPR:
     }
 
     const baseBranch = splitGit.getBaseBranch(taskIds);
-    const baseDivergenceResult = splitValidation.verifyBaseDivergence(baseBranch, cwd);
-    if (!baseDivergenceResult.ok) {
-        die(`--pr aborted: git error checking base divergence: ${baseDivergenceResult.stderr || 'unknown error'}`);
-    } else if (!baseDivergenceResult.fetchFailed && baseDivergenceResult.commits.length > 0) {
-        if (!cliArgs.allowDivergentBase) {
-            die(splitValidation.verifyBaseDivergenceFromData(baseDivergenceResult.commits, baseBranch));
-        }
-        warn(
-            `--allow-divergent-base override: bypassing base-divergence gate. Divergent commits:\n` +
-            baseDivergenceResult.commits.map(commit => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join('\n'),
-        );
-    }
+    pushScaffoldBaseCommits(taskIds, cwd, createPR);
 
     // Docs-refs gate: catch broken refs in QA/review artifacts before they hit CI.
     // printFindings() in docs-refs-check.mjs writes to stderr (console.error);
@@ -3140,7 +3151,6 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
                 }
             }
 
-            pushScaffoldBaseCommitsForFullSend(taskIds, cwd);
             commitHumanReviewFiles(taskIds, cwd, true);
 
             for (const taskId of taskIds) {

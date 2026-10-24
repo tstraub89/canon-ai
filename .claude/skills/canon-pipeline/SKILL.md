@@ -71,7 +71,7 @@ Valid phases: `spec | spec_review | plan | implement | code_review | qa | human_
 canon run <task-id> --pr
 ```
 
-Pushes the task branch and opens a draft PR via `gh pr create` targeting `base_branch` from `status.json`. After it runs, read `tasks/<id>/handoff.md` and verify the auto-generated PR body matches actual scope — rewrite via `gh pr edit <num> --body-file ...` if code-review iterations expanded scope beyond the initial handoff.
+Pushes the task branch (first pushing canon's own unpushed scaffold commits on `base_branch`, or creating it on origin if missing when every local-only commit is canon-safe or already published) and opens a draft PR via `gh pr create` targeting `base_branch` from `status.json`. After it runs, read `tasks/<id>/handoff.md` and verify the auto-generated PR body matches actual scope — rewrite via `gh pr edit <num> --body-file ...` if code-review iterations expanded scope beyond the initial handoff.
 
 ### 4. Ship an approved task
 
