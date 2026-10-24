@@ -1515,7 +1515,7 @@ for (const fullSend of [false, true]) {
         withTempDir('scaffold-non-ff-', dir => {
             const fixture = setupFullSendTailFixture(dir, undefined, { fullSend });
             const other = path.join(dir, 'other');
-            gitIn(dir, 'clone', fixture.originDir, other);
+            gitIn(dir, 'clone', '--branch', 'main', fixture.originDir, other);
             gitIn(other, 'config', 'user.email', 'test@example.com');
             gitIn(other, 'config', 'user.name', 'Test');
             fs.writeFileSync(path.join(other, 'remote.txt'), 'remote\n');
