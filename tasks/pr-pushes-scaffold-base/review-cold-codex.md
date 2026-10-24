@@ -1,0 +1,1 @@
+No actionable regressions found in the changed code paths. Type-checking and the template sync check pass; broader test results were not verified.
