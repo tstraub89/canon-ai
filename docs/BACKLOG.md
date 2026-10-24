@@ -302,6 +302,17 @@
   - **Sequencing**: Independent. Useful immediately for canon-ai itself and any adopter. Layer on `validation-bindings.json` and `audits/` as their respective features land. Layer on `overrides/` if/when the role-file overlay design lands.
   - **Effort**: `M` for the day-one shape (`config.json` schema + read paths + AGENTS.md/docs updates pointing at it + `canon upgrade` integration so the schema can evolve safely). `S` per later addition.
 
+- [ ] **Version and schema-validate `status.json`** *(filed 2026-10-24 from a read of openai-agents-js, whose serialized `RunState` carries `CURRENT_SCHEMA_VERSION` + `SUPPORTED_SCHEMA_VERSIONS`, zod validation, and explicit legacy migration. Not a live bug — no cross-version breakage observed yet. Pick this up when the next `status.json` shape change is on the table, and land it as that change's first step.)*
+  - **Today**: `readStatusFromPath` (`src/orchestrator/state.ts`) parses, casts to `StatusJson`, and hand-checks a few counters in `validateStatus`. Several readers `JSON.parse` the file directly and skip even that (`state.ts` worktree/branch peeks, `task/index.ts` generic reader, `validation.ts` reroute view, `canon-snapshot.ts`). Back-compat lives as scattered aliases — e.g. the `iterations` → `iterations_current_loop` fallback from `counter-schema-migration`.
+  - **Design**:
+    - `schema_version: N` stamped by `writeStatusToFile`; an unstamped file reads as v1 (today's shape).
+    - One zod schema as the single source for both the `StatusJson` type and read-time validation; replaces `validateStatus`. zod becomes a runtime dependency (lightweight, accepted).
+    - Every reader routes through `readStatus*` — no direct `JSON.parse` of `status.json`.
+    - Ordered in-memory migrations (`v1→v2`, …) on read; the next normal write persists the upgraded shape. Existing legacy aliases move into migration steps.
+    - A file newer than this engine supports fails closed: "written by a newer canon; upgrade." Matters because `canon run` executes the globally installed engine, which can lag the canon that wrote the task.
+  - **Risks to watch**: an over-strict schema rejecting fields adopters' older tasks legitimately carry — schema should `passthrough` unknown keys rather than strip them, or a downgrade-then-write silently drops data. Partial-pick readers (worktree/branch only) must not become hard failures on otherwise-unrelated schema drift if they run on hot paths like `canon watch`.
+  - **Effort**: `S`–`M` (dependency + schema + reader consolidation + one fixture per historical shape).
+
 ## 🛠️ Tooling & Dev Experience
 
 - [ ] **Ship `canon-pane` — a live canon task pane as a Claude Code mod** *(framed 2026-10-02 from an experiment during `refactor-spec-correctness-audit-ac`. **Priority: low.**)*
