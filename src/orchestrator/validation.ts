@@ -1796,7 +1796,9 @@ export function verifyBaseDivergence(
     cwd: string,
     options: { classifyMissingRemote?: boolean } = {},
 ): BaseDivergenceResult | MissingRemoteBaseDivergence {
-    const fetchResult = gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
+    // Explicit refspec: a configured fetch refspec that skips the base would
+    // update only FETCH_HEAD and leave a stale origin/<base> to range against.
+    const fetchResult = gitSafeAt(cwd, 'fetch', 'origin', `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`);
     if (!fetchResult.ok) {
         if (!fs.existsSync(cwd)) {
             return { commits: [], ok: false, stderr: fetchResult.stderr, fetchFailed: false };

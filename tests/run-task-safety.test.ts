@@ -224,7 +224,7 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "push" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_TASK_BRANCH:-}" ]; then',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
+        'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && { [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ] || [ "${3:-}" = "+refs/heads/${FAKE_GIT_BASE_BRANCH:-main}:refs/remotes/origin/${FAKE_GIT_BASE_BRANCH:-main}" ]; }; then',
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}..refs/heads/${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
@@ -1454,6 +1454,30 @@ for (const published of [false, true]) {
         });
     }
 }
+
+void test('scaffold base push: a stale origin/main outside the fetch refspec cannot hide an operator commit', () => {
+    withTempDir('scaffold-stale-present-', dir => {
+        const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false });
+        const scaffold = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'main').trim();
+        // Local main: origin's tip -> operator commit -> scaffold. origin/main claims the
+        // operator commit, as if origin was reset behind it, and the fetch refspec skips main.
+        gitIn(fixture.localDir, 'checkout', 'main');
+        gitIn(fixture.localDir, 'reset', '--hard', fixture.originBaseSha);
+        fs.writeFileSync(path.join(fixture.localDir, 'operator-source.txt'), 'operator\n');
+        gitIn(fixture.localDir, 'add', 'operator-source.txt');
+        gitIn(fixture.localDir, 'commit', '-m', 'operator commit');
+        const operator = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'HEAD').trim();
+        gitIn(fixture.localDir, 'cherry-pick', scaffold);
+        gitIn(fixture.localDir, 'checkout', `task/${fixture.taskId}`);
+        gitIn(fixture.localDir, 'update-ref', 'refs/remotes/origin/main', operator);
+        gitIn(fixture.localDir, 'config', 'remote.origin.fetch', '+refs/heads/other:refs/remotes/origin/other');
+        const result = runScaffoldFixture(fixture, dir, ['--pr']);
+        assert.equal(remoteScaffoldTip(fixture), fixture.originBaseSha, combinedOutput(result));
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Base divergence detected/);
+        assert.doesNotMatch(scaffoldGhLog(dir), /^pr create /m);
+    });
+});
 
 void test('scaffold base push: missing empty base rejects creation despite override', () => {
     withTempDir('scaffold-empty-rejected-', dir => {

@@ -4274,7 +4274,7 @@ function buildMissingRemoteBaseBlock(baseBranch, entries, modePrefix) {
   ].join("\n");
 }
 function verifyBaseDivergence(baseBranch, cwd, options = {}) {
-  const fetchResult = gitSafeAt(cwd, "fetch", "origin", baseBranch);
+  const fetchResult = gitSafeAt(cwd, "fetch", "origin", `+refs/heads/${baseBranch}:refs/remotes/origin/${baseBranch}`);
   if (!fetchResult.ok) {
     if (!fs10.existsSync(cwd)) {
       return { commits: [], ok: false, stderr: fetchResult.stderr, fetchFailed: false };
