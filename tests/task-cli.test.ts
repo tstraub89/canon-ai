@@ -2876,6 +2876,12 @@ void test('task subcommand help runs before parsing or task creation', () => {
         const env = { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot };
         const cli = path.join(WORKSPACE_ROOT, 'src', 'cli', 'index.ts');
         const invoke = (args: string[]) => spawnSync(process.execPath, ['--import', TSX_LOADER, cli, 'task', ...args], { cwd: WORKSPACE_ROOT, env, encoding: 'utf8' });
+        const overview = invoke(['--help']);
+        assert.equal(overview.status, 0, overview.stderr);
+        for (const subcommand of ['new', 'list', 'status', 'phase', 'accept', 'set', 'reset-spec-review', 'reset-code-review', 'post-merge-sync']) {
+            assert.match(overview.stdout, new RegExp(`\\b${subcommand}\\b`));
+        }
+        assert.match(overview.stdout, /canon task <subcommand> --help/);
         const accept = invoke(['accept', 'foo', 'code_review', '-h']);
         assert.equal(accept.status, 0, accept.stderr);
         assert.match(accept.stdout, /Usage: canon task accept/);

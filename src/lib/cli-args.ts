@@ -25,9 +25,8 @@ export function preScanArgs(decl: ArgDeclaration, args: readonly string[]): PreS
     for (let i = 0; i < args.length; i += 1) {
         const arg = args[i];
         if (arg === '--help' || arg === '-h') {
-            const consumedAsValue = i > 0 && (values.has(args[i - 1]) || equalsValues.has(args[i - 1]?.split('=', 1)[0]));
             const freeText = decl.freeTextSlots?.includes(position) ?? false;
-            if (!consumedAsValue || freeText) help = true;
+            help = true;
             if (freeText) {
                 position += 1;
             }

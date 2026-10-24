@@ -1071,6 +1071,9 @@ void test('canon CLI help mentions watch', () => {
     assert.equal(update.status, 0, update.stderr);
     assert.match(update.stdout, /--channel main/);
     assert.match(update.stdout, /--ref <40-hex-sha>/);
+    const taskSet = runCanonCli(['task', 'set', '--help']);
+    assert.equal(taskSet.status, 0, taskSet.stderr);
+    assert.match(taskSet.stdout, /Usage: canon task set <TASK-ID> <field> <value>/);
 });
 
 void test('per-command help short-circuits command work and unknown flags are rejected', () => {
@@ -1113,6 +1116,16 @@ void test('per-command help short-circuits command work and unknown flags are re
     assert.match(runShortHelp.stdout, /Usage: canon run/);
 
     for (const command of ['init', 'doctor', 'watch', 'stop', 'update', 'upgrade']) {
+        if (command === 'init') {
+            withTempDir(empty => {
+                const before = fs.readdirSync(empty);
+                const rejected = runCanonCliIn(empty, ['init', '--bogus']);
+                assert.equal(rejected.status, 1, rejected.stderr);
+                assert.match(rejected.stderr, /Unknown option: --bogus/);
+                assert.deepEqual(fs.readdirSync(empty), before);
+            });
+            continue;
+        }
         const result = runCanonCli([command, '--bogus']);
         assert.equal(result.status, command === 'watch' ? 2 : 1, result.stderr);
         assert.match(result.stderr, /Unknown option: --bogus/);

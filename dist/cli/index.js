@@ -18,9 +18,8 @@ function preScanArgs(decl, args2) {
   for (let i = 0; i < args2.length; i += 1) {
     const arg = args2[i];
     if (arg === "--help" || arg === "-h") {
-      const consumedAsValue = i > 0 && (values.has(args2[i - 1]) || equalsValues.has(args2[i - 1]?.split("=", 1)[0]));
       const freeText2 = decl.freeTextSlots?.includes(position) ?? false;
-      if (!consumedAsValue || freeText2) help = true;
+      help = true;
       if (freeText2) {
         position += 1;
       }
