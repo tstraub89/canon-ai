@@ -1100,7 +1100,7 @@ function probeOriginBranch(baseBranch, cwd) {
   return exact ? { kind: "present" } : { kind: "missing" };
 }
 function getLocalOnlyBaseCommits(baseBranch, cwd) {
-  const prune = gitSafeAtRaw(cwd, "fetch", "--prune", "origin");
+  const prune = gitSafeAtRaw(cwd, "fetch", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*");
   if (!prune.ok) return { ok: false, pruneFailed: true, stderr: prune.stderr };
   const tip = gitSafeAt(cwd, "rev-parse", "--verify", `${baseBranch}^{commit}`);
   if (!tip.ok || !tip.stdout.trim()) {

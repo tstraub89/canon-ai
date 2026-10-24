@@ -245,7 +245,9 @@ export function probeOriginBranch(baseBranch: string, cwd: string): OriginBranch
 export function getLocalOnlyBaseCommits(baseBranch: string, cwd: string):
     | { ok: true; tipSha: string; commits: { sha: string; subject: string }[] }
     | { ok: false; pruneFailed: boolean; stderr: string } {
-    const prune = gitSafeAtRaw(cwd, 'fetch', '--prune', 'origin');
+    // Explicit refspec: plain --prune only covers the configured fetch refspec,
+    // so a narrowed clone could keep a stale origin/* ref that hides commits.
+    const prune = gitSafeAtRaw(cwd, 'fetch', '--prune', 'origin', '+refs/heads/*:refs/remotes/origin/*');
     if (!prune.ok) return { ok: false, pruneFailed: true, stderr: prune.stderr };
     const tip = gitSafeAt(cwd, 'rev-parse', '--verify', `${baseBranch}^{commit}`);
     if (!tip.ok || !tip.stdout.trim()) {

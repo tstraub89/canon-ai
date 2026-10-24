@@ -1468,8 +1468,8 @@ void test('scaffold base push: missing empty base rejects creation despite overr
     });
 });
 
-for (const stale of [false, true]) {
-    void test(`scaffold base push: missing unsafe base blocks even with override stale=${stale}`, () => {
+for (const [stale, narrowed] of [[false, false], [true, false], [true, true]] as const) {
+    void test(`scaffold base push: missing unsafe base blocks even with override stale=${stale} narrowed=${narrowed}`, () => {
         withTempDir('scaffold-missing-unsafe-', dir => {
             const fixture = setupFullSendTailFixture(dir, repo => {
                 fs.writeFileSync(path.join(repo, 'operator-source.txt'), 'operator\n');
@@ -1477,6 +1477,8 @@ for (const stale of [false, true]) {
                 gitIn(repo, 'commit', '-m', 'operator commit');
             }, { fullSend: false, baseBranch: 'feat/x' });
             if (stale) gitIn(fixture.localDir, 'update-ref', 'refs/remotes/origin/wip', 'feat/x');
+            // A single-branch fetch refspec leaves origin/wip outside what a plain --prune covers.
+            if (narrowed) gitIn(fixture.localDir, 'config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main');
             const shas = scaffoldGitOutput(fixture.localDir, 'log', 'main..feat/x', '--format=%h').trim().split('\n');
             for (const args of [['--pr'], ['--pr', '--allow-divergent-base']]) {
                 const result = runScaffoldFixture(fixture, dir, args);
