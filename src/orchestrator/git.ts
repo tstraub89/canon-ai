@@ -205,7 +205,7 @@ export function getUnpushedBaseCommits(
     cwd: string,
     upstreamRef = `origin/${baseBranch}`,
 ): { commits: { sha: string; subject: string }[]; ok: boolean; stderr: string } {
-    const result = gitSafeAtRaw(cwd, 'log', `${upstreamRef}..${baseBranch}`, '--format=%H%x09%s');
+    const result = gitSafeAtRaw(cwd, 'log', `${upstreamRef}..refs/heads/${baseBranch}`, '--format=%H%x09%s');
     if (!result.ok) {
         return { commits: [], ok: false, stderr: result.stderr };
     }
@@ -249,7 +249,7 @@ export function getLocalOnlyBaseCommits(baseBranch: string, cwd: string):
     // so a narrowed clone could keep a stale origin/* ref that hides commits.
     const prune = gitSafeAtRaw(cwd, 'fetch', '--prune', 'origin', '+refs/heads/*:refs/remotes/origin/*');
     if (!prune.ok) return { ok: false, pruneFailed: true, stderr: prune.stderr };
-    const tip = gitSafeAt(cwd, 'rev-parse', '--verify', `${baseBranch}^{commit}`);
+    const tip = gitSafeAt(cwd, 'rev-parse', '--verify', `refs/heads/${baseBranch}^{commit}`);
     if (!tip.ok || !tip.stdout.trim()) {
         return { ok: false, pruneFailed: false, stderr: tip.stderr || 'could not resolve base tip' };
     }

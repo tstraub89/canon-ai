@@ -1067,7 +1067,7 @@ function getBaseBranch(taskIds) {
   return getDefaultBaseBranch();
 }
 function getUnpushedBaseCommits(baseBranch, cwd, upstreamRef = `origin/${baseBranch}`) {
-  const result = gitSafeAtRaw(cwd, "log", `${upstreamRef}..${baseBranch}`, "--format=%H%x09%s");
+  const result = gitSafeAtRaw(cwd, "log", `${upstreamRef}..refs/heads/${baseBranch}`, "--format=%H%x09%s");
   if (!result.ok) {
     return { commits: [], ok: false, stderr: result.stderr };
   }
@@ -1102,7 +1102,7 @@ function probeOriginBranch(baseBranch, cwd) {
 function getLocalOnlyBaseCommits(baseBranch, cwd) {
   const prune = gitSafeAtRaw(cwd, "fetch", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*");
   if (!prune.ok) return { ok: false, pruneFailed: true, stderr: prune.stderr };
-  const tip = gitSafeAt(cwd, "rev-parse", "--verify", `${baseBranch}^{commit}`);
+  const tip = gitSafeAt(cwd, "rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`);
   if (!tip.ok || !tip.stdout.trim()) {
     return { ok: false, pruneFailed: false, stderr: tip.stderr || "could not resolve base tip" };
   }

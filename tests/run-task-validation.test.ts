@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
     classifyBasePushRejection,
     getLocalOnlyBaseCommits,
+    getUnpushedBaseCommits,
     probeOriginBranch,
     filterStageablePaths,
     getAffectedFiles,
@@ -2424,6 +2425,10 @@ void test('scaffold missing-remote classification is opt-in; ship keeps warn-and
         assert.equal(missingLocal.ok, false);
         assert.equal(missingLocal.fetchFailed, false);
         assert.ok(missingLocal.stderr);
+        // A same-named tag must not stand in for the local base branch.
+        gitIn(localDir, 'tag', 'feat/x', `${sha}~1`);
+        assert.deepEqual(getLocalOnlyBaseCommits('feat/x', localDir), { ok: true, tipSha: sha, commits });
+        assert.deepEqual(getUnpushedBaseCommits('feat/x', localDir, `${sha}~1`), { commits, ok: true, stderr: '' });
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }

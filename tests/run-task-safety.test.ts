@@ -227,7 +227,7 @@ function setupFakeGit(scriptDir: string): void {
         'if [ "${1:-}" = "fetch" ] && [ "${2:-}" = "origin" ] && [ "${3:-}" = "${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
         '  exit 0',
         'fi',
-        'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}..${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
+        'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/${FAKE_GIT_BASE_BRANCH:-main}..refs/heads/${FAKE_GIT_BASE_BRANCH:-main}" ]; then',
         '  if [ "${FAKE_GIT_BASE_LOG_FAIL:-}" = "1" ]; then',
         '    printf "%s\\n" "${FAKE_GIT_BASE_LOG_ERROR:-base log failed}" >&2',
         '    exit 1',
@@ -1567,9 +1567,9 @@ for (const failure of ['prune', 'list', 'inspect', 'relist']) {
             const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
             const conditions: Record<string, string> = {
                 prune: '[ "$1" = fetch ] && [ "${2:-}" = --prune ]',
-                list: '[ "$1" = log ] && [ "${2:-}" = origin/main..main ]',
+                list: '[ "$1" = log ] && [ "${2:-}" = origin/main..refs/heads/main ]',
                 inspect: '[ "$1" = diff-tree ]',
-                relist: `[ "$1" = log ] && [ "\${2:-}" = ${tip}..main ]`,
+                relist: `[ "$1" = log ] && [ "\${2:-}" = ${tip}..refs/heads/main ]`,
             };
             writeExecutable(fixture.fakeBins, 'git', [
                 `if ${conditions[failure]}; then echo 'simulated ${failure} failure' >&2; exit 128; fi`,
@@ -6852,7 +6852,7 @@ void test('full-send tail fails closed on a rejected base push and a commit-list
         const fixture = setupFullSendTailFixture(dir);
         const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
         writeExecutable(fixture.fakeBins, 'git', [
-            'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/main..main" ]; then echo "simulated commit-list failure" >&2; exit 1; fi',
+            'if [ "${1:-}" = "log" ] && [ "${2:-}" = "origin/main..refs/heads/main" ]; then echo "simulated commit-list failure" >&2; exit 1; fi',
             `exec "${realGit}" "$@"`,
         ]);
         const result = runFullSendTailFixture(fixture, dir);
