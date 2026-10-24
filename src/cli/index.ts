@@ -85,6 +85,8 @@ canon run options:
                                     code_review | qa | human_review
   --interactive, -I       Open interactive agent sessions (default: non-interactive)
   --pr                    At human_review: push branch and open a draft PR (requires gh).
+                          First pushes canon's own unpushed scaffold/telemetry commits on <base> to origin
+                          (creating origin/<base> if missing); any other unpushed <base> commit blocks.
                           Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and
                           protected/configured docs listed in spec.md's "### Affected Files"
                           table (all admitted docs once QA is done). Dirty files outside
@@ -92,13 +94,20 @@ canon run options:
                           Aborts if merging origin/<base> conflicts, or branch changes files
                           outside spec's Affected Files (bypass with --force).
   --push                  At human_review: push branch only, no PR (requires gh). Same allow-list
-                          as --pr. Aborts if merging origin/<base> conflicts, or branch changes
+                          and scaffold base push as --pr. Aborts if merging origin/<base> conflicts, or branch changes
                           files outside spec's Affected Files (bypass with --force).
-  --full-send             Skip the spec gate and auto-open a draft PR after clean QA
+  --full-send             Skip the spec gate and auto-open a draft PR after clean QA;
+                          pushes canon scaffold commits to base like --pr.
   --force                 Acknowledge high-commitment combinations and bypass
                           explicit safety gates where documented (currently:
                           --full-send on delicate tasks, reroute amendment gate,
                           base-drift gate, and dirty REPO_ROOT worktree-start gate)
+  --allow-divergent-base   At --push, --pr, and --ship: bypass only the commit-divergence
+                          block when local <base> has commits not yet on origin/<base>.
+                          If canon's scaffold base push is rejected, warns and continues.
+                          At --pr/--push, does not apply when origin has no <base> branch.
+                          Does NOT bypass the base-drift gate; use --force for that.
+                          Independent of --force — both may be needed to pass both gates.
   --ship                  Merge the open PR (gh pr merge --squash), delete its remote branch, tear
                           down the worktree, archive the task dir, and pull the base branch. Run
                           after the PR is approved — do NOT merge the PR manually first. If you

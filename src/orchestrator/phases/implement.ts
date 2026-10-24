@@ -9,13 +9,10 @@ import { evaluateCodeReviewLoop } from '../review-loop.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { taskPhase } from '../../task/index.js';
 
-export function scaffoldCommitHint(baseBranch: string, unpushedScaffold: boolean | null, allFullSend: boolean): string | null {
+export function scaffoldCommitHint(baseBranch: string, unpushedScaffold: boolean | null): string | null {
     if (unpushedScaffold === false) return null;
-    if (unpushedScaffold === true && allFullSend) {
-        return `Scaffold committed to local ${baseBranch}; the full-send tail pushes unpushed base commits that carry only task artifacts and pipeline telemetry, and stops if any other commit is unpushed on ${baseBranch}.`;
-    }
-    return `Scaffold committed to local ${baseBranch}; run ` +
-        `\`git push origin ${baseBranch}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`;
+    return `Scaffold committed to local ${baseBranch}; --pr, --push and full-send push it to origin/${baseBranch} ` +
+        `when every unpushed ${baseBranch} commit carries only task artifacts and pipeline telemetry.`;
 }
 
 export function shouldUseImplementRevision(
@@ -72,8 +69,7 @@ export async function runImplementPhase(
         commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
         const scaffoldBase = getBaseBranch(taskIds);
         const unpushedScaffold = hasUnpushedScaffoldCommits(scaffoldBase, process.cwd());
-        const allFullSend = taskIds.every(id => readStatus(id).full_send === true);
-        const hint = scaffoldCommitHint(scaffoldBase, unpushedScaffold, allFullSend);
+        const hint = scaffoldCommitHint(scaffoldBase, unpushedScaffold);
         if (hint) info(hint);
     }
     ensureBranch(taskIds, { force });

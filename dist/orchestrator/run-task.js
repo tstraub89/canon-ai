@@ -205,6 +205,8 @@ function printUsage() {
   console.log("  --step, -1          Run one phase then stop");
   console.log("  --expect <phase>    Assert current phase before running");
   console.log("  --pr                At human_review: push branch and open a draft PR (requires gh).");
+  console.log("                      First pushes canon's own unpushed scaffold/telemetry commits on <base> to origin");
+  console.log("                      (creating origin/<base> if missing); any other unpushed <base> commit blocks.");
   console.log("                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and");
   console.log(`                      protected/configured docs listed in spec.md's "### Affected Files"`);
   console.log("                      table (all admitted docs once QA is done). Dirty files outside");
@@ -212,9 +214,10 @@ function printUsage() {
   console.log("                      Aborts if merging origin/<base> conflicts, or branch changes files");
   console.log("                      outside spec's Affected Files (bypass with --force).");
   console.log("  --push              At human_review: push branch only, no PR (requires gh). Same");
-  console.log("                      allow-list as --pr. Aborts if merging origin/<base> conflicts, or");
+  console.log("                      allow-list and scaffold base push as --pr. Aborts if merging origin/<base> conflicts, or");
   console.log("                      branch changes files outside spec's Affected Files (bypass with --force).");
-  console.log("  --full-send         Skip the spec gate and auto-open a draft PR after clean QA");
+  console.log("  --full-send         Skip the spec gate and auto-open a draft PR after clean QA;");
+  console.log("                      pushes canon scaffold commits to base like --pr.");
   console.log("  --force             Acknowledge high-commitment combinations and bypass");
   console.log("                      explicit safety gates where documented (currently:");
   console.log("                      --full-send on delicate tasks, reroute amendment gate,");
@@ -222,6 +225,8 @@ function printUsage() {
   console.log("  --allow-divergent-base");
   console.log("                      At --push, --pr, and --ship: bypass only the commit-divergence");
   console.log("                      block when local <base> has commits not yet on origin/<base>.");
+  console.log("                      If canon's scaffold base push is rejected, warns and continues.");
+  console.log("                      At --pr/--push, does not apply when origin has no <base> branch.");
   console.log("                      Does NOT bypass the base-drift gate; use --force for that.");
   console.log("                      Independent of --force \u2014 both may be needed to pass both gates.");
   console.log("  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear");
@@ -1061,13 +1066,16 @@ function getBaseBranch(taskIds) {
   }
   return getDefaultBaseBranch();
 }
-function getUnpushedBaseCommits(baseBranch, cwd) {
-  const result = gitSafeAtRaw(cwd, "log", `origin/${baseBranch}..${baseBranch}`, "--format=%H%x09%s");
+function getUnpushedBaseCommits(baseBranch, cwd, upstreamRef = `origin/${baseBranch}`) {
+  const result = gitSafeAtRaw(cwd, "log", `${upstreamRef}..${baseBranch}`, "--format=%H%x09%s");
   if (!result.ok) {
     return { commits: [], ok: false, stderr: result.stderr };
   }
+  return { commits: parseBaseCommits(result.stdout), ok: true, stderr: "" };
+}
+function parseBaseCommits(stdout) {
   const commits = [];
-  for (const line of result.stdout.split("\n")) {
+  for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     const tabIndex = line.indexOf("	");
     if (tabIndex === -1) continue;
@@ -1076,7 +1084,35 @@ function getUnpushedBaseCommits(baseBranch, cwd) {
       subject: line.slice(tabIndex + 1)
     });
   }
-  return { commits, ok: true, stderr: "" };
+  return commits;
+}
+function probeOriginBranch(baseBranch, cwd) {
+  const ref = `refs/heads/${baseBranch}`;
+  const result = spawnSync3("git", ["ls-remote", "--exit-code", "origin", ref], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error) return { kind: "error", stderr: result.error.message };
+  if (result.status === 2) return { kind: "missing" };
+  if (result.status !== 0) return { kind: "error", stderr: (result.stderr ?? "").trim() };
+  const exact = result.stdout.split("\n").some((line) => line.split("	")[1]?.trim() === ref);
+  return exact ? { kind: "present" } : { kind: "missing" };
+}
+function getLocalOnlyBaseCommits(baseBranch, cwd) {
+  const prune = gitSafeAtRaw(cwd, "fetch", "--prune", "origin");
+  if (!prune.ok) return { ok: false, pruneFailed: true, stderr: prune.stderr };
+  const tip = gitSafeAt(cwd, "rev-parse", "--verify", `${baseBranch}^{commit}`);
+  if (!tip.ok || !tip.stdout.trim()) {
+    return { ok: false, pruneFailed: false, stderr: tip.stderr || "could not resolve base tip" };
+  }
+  const tipSha = tip.stdout.trim();
+  const result = gitSafeAtRaw(cwd, "log", tipSha, "--not", "--remotes=origin", "--format=%H%x09%s");
+  if (!result.ok) return { ok: false, pruneFailed: false, stderr: result.stderr };
+  return { ok: true, tipSha, commits: parseBaseCommits(result.stdout) };
+}
+function classifyBasePushRejection(stderr) {
+  return /\[rejected\]/.test(stderr) && /non-fast-forward|fetch first/.test(stderr) ? "non-fast-forward" : "other";
 }
 var CANON_TASK_ID_PATTERN = "[a-z0-9][a-z0-9._-]*";
 var SCAFFOLD_ARTIFACTS_SUBJECT = new RegExp(`^task\\(${CANON_TASK_ID_PATTERN}\\): commit artifacts pre-pipeline$`);
@@ -4229,11 +4265,27 @@ function verifyBaseDivergenceFromData(commits, baseBranch) {
     "Override: rerun with --allow-divergent-base to skip this commit-divergence check only."
   ].join("\n");
 }
-function verifyBaseDivergence(baseBranch, cwd) {
+function buildMissingRemoteBaseBlock(baseBranch, entries, modePrefix) {
+  return [
+    `${modePrefix} aborted: origin has no ${baseBranch} branch, and local ${baseBranch} has commits that are on no origin branch:`,
+    ...entries.map((entry) => `  ${entry.sha.slice(0, 7)}  ${entry.subject}  ` + (entry.verdict.safe ? "[canon-safe]" : `[not canon-safe: ${entry.verdict.reason}]`)),
+    `Fix: push ${baseBranch} yourself (git push origin ${shellQuoteArg(baseBranch)}), then re-run.`,
+    `--allow-divergent-base does not apply: the PR has no origin/${baseBranch} to target.`
+  ].join("\n");
+}
+function verifyBaseDivergence(baseBranch, cwd, options = {}) {
   const fetchResult = gitSafeAt(cwd, "fetch", "origin", baseBranch);
   if (!fetchResult.ok) {
     if (!fs10.existsSync(cwd)) {
       return { commits: [], ok: false, stderr: fetchResult.stderr, fetchFailed: false };
+    }
+    if (options.classifyMissingRemote && probeOriginBranch(baseBranch, cwd).kind === "missing") {
+      const local = getLocalOnlyBaseCommits(baseBranch, cwd);
+      if (local.ok) {
+        return { commits: local.commits, ok: true, stderr: "", fetchFailed: false, remoteMissing: true, tipSha: local.tipSha };
+      }
+      if (!local.pruneFailed) return { commits: [], ok: false, stderr: local.stderr, fetchFailed: false };
+      fetchResult.stderr = local.stderr;
     }
     warn(
       `Could not fetch origin/${baseBranch} (${fetchResult.stderr.trim() || "unknown"}). Skipping base-divergence check \u2014 re-run when network access is restored if you want this verified.`
@@ -6619,12 +6671,9 @@ Add them to the affected task spec's ### Affected Files table in the active chec
 }
 
 // src/orchestrator/phases/implement.ts
-function scaffoldCommitHint(baseBranch, unpushedScaffold, allFullSend) {
+function scaffoldCommitHint(baseBranch, unpushedScaffold) {
   if (unpushedScaffold === false) return null;
-  if (unpushedScaffold === true && allFullSend) {
-    return `Scaffold committed to local ${baseBranch}; the full-send tail pushes unpushed base commits that carry only task artifacts and pipeline telemetry, and stops if any other commit is unpushed on ${baseBranch}.`;
-  }
-  return `Scaffold committed to local ${baseBranch}; run \`git push origin ${baseBranch}\` to keep origin in sync and avoid base-divergence at --push/--pr/--ship.`;
+  return `Scaffold committed to local ${baseBranch}; --pr, --push and full-send push it to origin/${baseBranch} when every unpushed ${baseBranch} commit carries only task artifacts and pipeline telemetry.`;
 }
 function shouldUseImplementRevision(tasks) {
   return tasks.some((t) => {
@@ -6647,8 +6696,7 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
     commitTaskArtifactsToBase(taskIds, TASK_ARTIFACT_FILES);
     const scaffoldBase = getBaseBranch(taskIds);
     const unpushedScaffold = hasUnpushedScaffoldCommits(scaffoldBase, process.cwd());
-    const allFullSend = taskIds.every((id) => readStatus(id).full_send === true);
-    const hint = scaffoldCommitHint(scaffoldBase, unpushedScaffold, allFullSend);
+    const hint = scaffoldCommitHint(scaffoldBase, unpushedScaffold);
     if (hint) info(hint);
   }
   ensureBranch(taskIds, { force });
@@ -8179,36 +8227,55 @@ function shouldRunFullSendTail(taskIds) {
     return status.full_send === true && status.phases.qa?.status === "done" && status.phases.human_review?.status === "pending";
   });
 }
-function pushScaffoldBaseCommitsForFullSend(taskIds, cwd) {
+function pushScaffoldBaseCommits(taskIds, cwd, createPR) {
   const baseBranch = getBaseBranch(taskIds);
-  const fetch = gitSafeAt(cwd, "fetch", "origin", baseBranch);
-  if (!fetch.ok) die2(`Full-send tail aborted: could not fetch origin/${baseBranch} (${fetch.stderr || "unknown error"}). Nothing was pushed.`);
-  const unpushed = getUnpushedBaseCommits(baseBranch, cwd);
-  if (!unpushed.ok) die2(`Full-send tail aborted: could not list unpushed ${baseBranch} commits (${unpushed.stderr || "unknown error"}). Nothing was pushed.`);
-  if (unpushed.commits.length === 0) return;
-  for (const commit of unpushed.commits) {
+  const modePrefix = createPR ? "--pr" : "--push";
+  const divergence = verifyBaseDivergence(baseBranch, cwd, { classifyMissingRemote: true });
+  if (!divergence.ok) {
+    die2(`${modePrefix} aborted: git error checking base divergence: could not list unpushed ${baseBranch} commits (${divergence.stderr || "unknown error"}). Nothing was pushed.`);
+  }
+  if (divergence.fetchFailed) return;
+  const missing = "remoteMissing" in divergence;
+  if (!missing && divergence.commits.length === 0) return;
+  const entries = divergence.commits.map((commit) => {
     const result = classifySafeToPushCommit(commit.sha, commit.subject, cwd);
     if (!result.ok) {
-      die2(`Full-send tail aborted: could not inspect ${commit.sha.slice(0, 7)} on ${baseBranch} (${result.stderr || "unknown error"}). Nothing was pushed.`);
-      return;
+      return die(`${modePrefix} aborted: could not inspect ${commit.sha.slice(0, 7)} on ${baseBranch} (${result.stderr || "unknown error"}). Nothing was pushed.`);
     }
-    if (!result.verdict.safe) {
-      info2(`Full-send: not pushing ${baseBranch}; ${commit.sha.slice(0, 7)} ${commit.subject} is not safe to push (${result.verdict.reason}).`);
-      return;
+    return { ...commit, verdict: result.verdict };
+  });
+  const allSafe = entries.every((entry) => entry.verdict.safe);
+  if (missing && !allSafe) die2(buildMissingRemoteBaseBlock(baseBranch, entries, modePrefix));
+  let remaining = divergence.commits;
+  if (allSafe) {
+    const tipSha = missing ? divergence.tipSha : divergence.commits[0].sha;
+    const push2 = gitSafeAt(cwd, "push", "origin", `${tipSha}:refs/heads/${baseBranch}`);
+    if (!push2.ok) {
+      const kind = classifyBasePushRejection(push2.stderr);
+      const rerun = `canon run ${taskIds.join(" ")} ${modePrefix}`;
+      const message = kind === "non-fast-forward" ? `${modePrefix} aborted: origin/${baseBranch} has commits that local ${baseBranch} lacks, so canon could not push its scaffold commits.
+${push2.stderr}
+Fix: on ${baseBranch}, run \`git pull --rebase origin ${shellQuoteArg(baseBranch)}\`, then re-run \`${rerun}\`. A plain pull would create a merge commit, which canon will not push.` : `${modePrefix} aborted: pushing ${baseBranch} scaffold commits to origin failed: ${push2.stderr || "unknown error"}
+The base branch may be protected. Push or merge these commits to origin/${baseBranch} manually (they carry only task artifacts and pipeline telemetry), then re-run \`${rerun}\`.`;
+      if (missing || !cliArgs.allowDivergentBase) {
+        die2(message + (missing ? `
+--allow-divergent-base does not apply when origin has no ${baseBranch}.` : ""));
+      }
+      warn2(`Scaffold commits were not pushed to origin/${baseBranch} (${kind}): ${push2.stderr || "unknown error"}`);
+    } else {
+      info2(divergence.commits.length === 0 ? `Created origin/${baseBranch} at ${tipSha.slice(0, 7)}; every commit on local ${baseBranch} is already on an origin branch, so no new commit was published.` : `Pushed ${divergence.commits.length} unpushed ${baseBranch} commit(s) to origin/${baseBranch}` + (missing ? ` and created origin/${baseBranch}` : "") + ` (canon scaffold subjects; only task artifacts and pipeline telemetry):
+` + divergence.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n"));
+      const relisted = getUnpushedBaseCommits(baseBranch, cwd, tipSha);
+      if (!relisted.ok) {
+        die2(`${modePrefix} aborted: pushed scaffold commits to origin/${baseBranch}, but could not re-list unpushed ${baseBranch} commits (${relisted.stderr || "unknown error"}).`);
+      }
+      remaining = relisted.commits;
     }
   }
-  const tipSha = unpushed.commits[0].sha;
-  const push2 = gitSafeAt(cwd, "push", "origin", `${tipSha}:refs/heads/${baseBranch}`);
-  if (!push2.ok) {
-    die2(
-      `Full-send tail aborted: pushing ${baseBranch} scaffold commits to origin failed: ${push2.stderr || "unknown error"}
-The base branch may be protected. Push or merge these commits to origin/${baseBranch} manually (they carry only task artifacts and pipeline telemetry), then re-run \`canon run ${taskIds.join(" ")}\`.`
-    );
-  }
-  info2(
-    `Full-send: pushed ${unpushed.commits.length} unpushed ${baseBranch} commit(s) to origin/${baseBranch} (canon scaffold subjects; only task artifacts and pipeline telemetry):
-` + unpushed.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
-  );
+  if (remaining.length === 0) return;
+  if (!cliArgs.allowDivergentBase) die2(verifyBaseDivergenceFromData(remaining, baseBranch));
+  warn2(`--allow-divergent-base override: bypassing base-divergence gate. Divergent commits:
+` + remaining.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n"));
 }
 function undoHumanReviewCommit(cwd, preSha, branchName, message) {
   const head = gitSafeAt(cwd, "rev-parse", "HEAD");
@@ -8297,18 +8364,7 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
     ghAvailable = isCommandAvailable("gh");
   }
   const baseBranch = getBaseBranch(taskIds);
-  const baseDivergenceResult = verifyBaseDivergence(baseBranch, cwd);
-  if (!baseDivergenceResult.ok) {
-    die2(`--pr aborted: git error checking base divergence: ${baseDivergenceResult.stderr || "unknown error"}`);
-  } else if (!baseDivergenceResult.fetchFailed && baseDivergenceResult.commits.length > 0) {
-    if (!cliArgs.allowDivergentBase) {
-      die2(verifyBaseDivergenceFromData(baseDivergenceResult.commits, baseBranch));
-    }
-    warn2(
-      `--allow-divergent-base override: bypassing base-divergence gate. Divergent commits:
-` + baseDivergenceResult.commits.map((commit) => `  ${commit.sha.slice(0, 7)}  ${commit.subject}`).join("\n")
-    );
-  }
+  pushScaffoldBaseCommits(taskIds, cwd, createPR);
   const docsRefsScript = path22.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
   if (fs24.existsSync(docsRefsScript)) {
     const docsRefsResult = spawnSync7("node", [docsRefsScript], {
@@ -9396,7 +9452,6 @@ async function runPhase(phase, state) {
           die2(gateResult.reason);
         }
       }
-      pushScaffoldBaseCommitsForFullSend(taskIds2, cwd);
       commitHumanReviewFiles(taskIds2, cwd, true);
       for (const taskId of taskIds2) {
         const status = readStatus(taskId);

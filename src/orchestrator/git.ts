@@ -203,14 +203,19 @@ export function getBaseBranch(taskIds?: string[]): string {
 export function getUnpushedBaseCommits(
     baseBranch: string,
     cwd: string,
+    upstreamRef = `origin/${baseBranch}`,
 ): { commits: { sha: string; subject: string }[]; ok: boolean; stderr: string } {
-    const result = gitSafeAtRaw(cwd, 'log', `origin/${baseBranch}..${baseBranch}`, '--format=%H%x09%s');
+    const result = gitSafeAtRaw(cwd, 'log', `${upstreamRef}..${baseBranch}`, '--format=%H%x09%s');
     if (!result.ok) {
         return { commits: [], ok: false, stderr: result.stderr };
     }
 
+    return { commits: parseBaseCommits(result.stdout), ok: true, stderr: '' };
+}
+
+function parseBaseCommits(stdout: string): { sha: string; subject: string }[] {
     const commits: { sha: string; subject: string }[] = [];
-    for (const line of result.stdout.split('\n')) {
+    for (const line of stdout.split('\n')) {
         if (!line.trim()) continue;
         const tabIndex = line.indexOf('\t');
         if (tabIndex === -1) continue;
@@ -219,7 +224,41 @@ export function getUnpushedBaseCommits(
             subject: line.slice(tabIndex + 1),
         });
     }
-    return { commits, ok: true, stderr: '' };
+    return commits;
+}
+
+export type OriginBranchProbe = { kind: 'present' } | { kind: 'missing' } | { kind: 'error'; stderr: string };
+
+export function probeOriginBranch(baseBranch: string, cwd: string): OriginBranchProbe {
+    const ref = `refs/heads/${baseBranch}`;
+    const result = spawnSync('git', ['ls-remote', '--exit-code', 'origin', ref], {
+        cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.error) return { kind: 'error', stderr: result.error.message };
+    if (result.status === 2) return { kind: 'missing' };
+    if (result.status !== 0) return { kind: 'error', stderr: (result.stderr ?? '').trim() };
+    // ls-remote tail-matches patterns; require the complete ref name.
+    const exact = result.stdout.split('\n').some(line => line.split('\t')[1]?.trim() === ref);
+    return exact ? { kind: 'present' } : { kind: 'missing' };
+}
+
+export function getLocalOnlyBaseCommits(baseBranch: string, cwd: string):
+    | { ok: true; tipSha: string; commits: { sha: string; subject: string }[] }
+    | { ok: false; pruneFailed: boolean; stderr: string } {
+    const prune = gitSafeAtRaw(cwd, 'fetch', '--prune', 'origin');
+    if (!prune.ok) return { ok: false, pruneFailed: true, stderr: prune.stderr };
+    const tip = gitSafeAt(cwd, 'rev-parse', '--verify', `${baseBranch}^{commit}`);
+    if (!tip.ok || !tip.stdout.trim()) {
+        return { ok: false, pruneFailed: false, stderr: tip.stderr || 'could not resolve base tip' };
+    }
+    const tipSha = tip.stdout.trim();
+    const result = gitSafeAtRaw(cwd, 'log', tipSha, '--not', '--remotes=origin', '--format=%H%x09%s');
+    if (!result.ok) return { ok: false, pruneFailed: false, stderr: result.stderr };
+    return { ok: true, tipSha, commits: parseBaseCommits(result.stdout) };
+}
+
+export function classifyBasePushRejection(stderr: string): 'non-fast-forward' | 'other' {
+    return /\[rejected\]/.test(stderr) && /non-fast-forward|fetch first/.test(stderr) ? 'non-fast-forward' : 'other';
 }
 
 const CANON_TASK_ID_PATTERN = '[a-z0-9][a-z0-9._-]*';

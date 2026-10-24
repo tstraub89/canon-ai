@@ -124,6 +124,8 @@ export function printUsage(): void {
     console.log('  --step, -1          Run one phase then stop');
     console.log('  --expect <phase>    Assert current phase before running');
     console.log('  --pr                At human_review: push branch and open a draft PR (requires gh).');
+    console.log("                      First pushes canon's own unpushed scaffold/telemetry commits on <base> to origin");
+    console.log('                      (creating origin/<base> if missing); any other unpushed <base> commit blocks.');
     console.log('                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and');
     console.log('                      protected/configured docs listed in spec.md\'s "### Affected Files"');
     console.log('                      table (all admitted docs once QA is done). Dirty files outside');
@@ -131,9 +133,10 @@ export function printUsage(): void {
     console.log('                      Aborts if merging origin/<base> conflicts, or branch changes files');
     console.log('                      outside spec\'s Affected Files (bypass with --force).');
     console.log('  --push              At human_review: push branch only, no PR (requires gh). Same');
-    console.log('                      allow-list as --pr. Aborts if merging origin/<base> conflicts, or');
+    console.log('                      allow-list and scaffold base push as --pr. Aborts if merging origin/<base> conflicts, or');
     console.log('                      branch changes files outside spec\'s Affected Files (bypass with --force).');
-    console.log('  --full-send         Skip the spec gate and auto-open a draft PR after clean QA');
+    console.log('  --full-send         Skip the spec gate and auto-open a draft PR after clean QA;');
+    console.log('                      pushes canon scaffold commits to base like --pr.');
     console.log('  --force             Acknowledge high-commitment combinations and bypass');
     console.log('                      explicit safety gates where documented (currently:');
     console.log('                      --full-send on delicate tasks, reroute amendment gate,');
@@ -141,6 +144,8 @@ export function printUsage(): void {
     console.log('  --allow-divergent-base');
     console.log('                      At --push, --pr, and --ship: bypass only the commit-divergence');
     console.log('                      block when local <base> has commits not yet on origin/<base>.');
+    console.log("                      If canon's scaffold base push is rejected, warns and continues.");
+    console.log('                      At --pr/--push, does not apply when origin has no <base> branch.');
     console.log('                      Does NOT bypass the base-drift gate; use --force for that.');
     console.log('                      Independent of --force — both may be needed to pass both gates.');
     console.log('  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear');

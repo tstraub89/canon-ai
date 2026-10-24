@@ -6,7 +6,7 @@ import path from 'node:path';
 import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies, scanAllTables } from './markdown-table.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
-import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries, probeMergeConflicts, type MergeConflictProbe } from './git.js';
+import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, getLocalOnlyBaseCommits, probeOriginBranch, type SafeToPushVerdict, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries, probeMergeConflicts, type MergeConflictProbe } from './git.js';
 import { readStatus, shellQuoteArg, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
 
@@ -1772,14 +1772,42 @@ export function verifyBaseDivergenceFromData(
     ].join('\n');
 }
 
+export function buildMissingRemoteBaseBlock(
+    baseBranch: string,
+    entries: { sha: string; subject: string; verdict: SafeToPushVerdict }[],
+    modePrefix: string,
+): string {
+    return [
+        `${modePrefix} aborted: origin has no ${baseBranch} branch, and local ${baseBranch} has commits that are on no origin branch:`,
+        ...entries.map(entry => `  ${entry.sha.slice(0, 7)}  ${entry.subject}  ` +
+            (entry.verdict.safe ? '[canon-safe]' : `[not canon-safe: ${entry.verdict.reason}]`)),
+        `Fix: push ${baseBranch} yourself (git push origin ${shellQuoteArg(baseBranch)}), then re-run.`,
+        `--allow-divergent-base does not apply: the PR has no origin/${baseBranch} to target.`,
+    ].join('\n');
+}
+
+export type BaseDivergenceResult = {
+    commits: { sha: string; subject: string }[]; ok: boolean; stderr: string; fetchFailed: boolean;
+};
+export type MissingRemoteBaseDivergence = BaseDivergenceResult & { remoteMissing: true; tipSha: string };
+
 export function verifyBaseDivergence(
     baseBranch: string,
     cwd: string,
-): { commits: { sha: string; subject: string }[]; ok: boolean; stderr: string; fetchFailed: boolean } {
+    options: { classifyMissingRemote?: boolean } = {},
+): BaseDivergenceResult | MissingRemoteBaseDivergence {
     const fetchResult = gitSafeAt(cwd, 'fetch', 'origin', baseBranch);
     if (!fetchResult.ok) {
         if (!fs.existsSync(cwd)) {
             return { commits: [], ok: false, stderr: fetchResult.stderr, fetchFailed: false };
+        }
+        if (options.classifyMissingRemote && probeOriginBranch(baseBranch, cwd).kind === 'missing') {
+            const local = getLocalOnlyBaseCommits(baseBranch, cwd);
+            if (local.ok) {
+                return { commits: local.commits, ok: true, stderr: '', fetchFailed: false, remoteMissing: true, tipSha: local.tipSha };
+            }
+            if (!local.pruneFailed) return { commits: [], ok: false, stderr: local.stderr, fetchFailed: false };
+            fetchResult.stderr = local.stderr;
         }
         warn(
             `Could not fetch origin/${baseBranch} (${fetchResult.stderr.trim() || 'unknown'}). ` +
