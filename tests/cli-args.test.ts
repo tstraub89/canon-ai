@@ -38,9 +38,6 @@ void test('preScanArgs honors help precedence and positional value rules', () =>
     assert.equal(preScanArgs({ ...decl, freeTextSlots: [] }, ['--value']).kind, 'proceed');
     assert.equal(preScanArgs({ ...decl, rejectPositionals: false }, ['--value=ok']).kind, 'proceed');
     assert.equal(preScanArgs({ ...decl, equalsValueFlags: ['--value'] }, ['--value=ok']).kind, 'proceed');
-    assert.equal(preScanArgs({ ...decl, equalsValueFlags: ['--value'] }, ['--value=ok', '--help']).kind, 'help');
-    assert.equal(preScanArgs({ ...decl, equalsValueFlags: ['--base'] }, ['--base=main', '--help']).kind, 'help');
-    assert.equal(preScanArgs({ ...decl, valueFlags: ['--reason'] }, ['--reason', '--reason', '--help']).kind, 'help');
     assert.equal(preScanArgs(RUN_ARGS, ['--expect=plan']).kind, 'unknown');
     assert.equal(preScanArgs(RUN_ARGS, ['-']).kind, 'unknown');
     assert.equal(preScanArgs({ ...decl, valueFlags: ['--value'] }, ['--value']).kind, 'proceed');
@@ -89,6 +86,18 @@ void test('task declarations keep free-text values and equals-form flags out of 
     assert.equal(preScanArgs(TASK_SUBCOMMAND_ARGS.set, ['foo', 'title', '-draft']).kind, 'proceed');
     assert.equal(preScanArgs(TASK_SUBCOMMAND_ARGS.new, ['foo', '-draft title']).kind, 'proceed');
     assert.equal(preScanArgs(TASK_SUBCOMMAND_ARGS.new, ['bar', 'Title', '--base=main']).kind, 'proceed');
+});
+
+void test('watch help after an equals-form timeout is recognized', () => {
+    assert.equal(preScanArgs(WATCH_ARGS, ['foo', '--timeout=5s', '--help']).kind, 'help');
+});
+
+void test('task new help after an equals-form base is recognized', () => {
+    assert.equal(preScanArgs(TASK_SUBCOMMAND_ARGS.new, ['id', 'Title', '--base=main', '--help']).kind, 'help');
+});
+
+void test('task accept help after a consumed reason token is recognized', () => {
+    assert.equal(preScanArgs(TASK_SUBCOMMAND_ARGS.accept, ['id', 'qa', '--reason', '--reason', '--help']).kind, 'help');
 });
 
 void test('watch parser accepts --timeout=5s', () => {
