@@ -1,7 +1,7 @@
 {
   "id": "pr-pushes-scaffold-base",
   "title": "--pr and --push push canon's own scaffold commits to base",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-24",
   "updated": "2026-10-24",
   "branch": "task/pr-pushes-scaffold-base",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

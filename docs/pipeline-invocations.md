@@ -1279,3 +1279,13 @@
 | 2026-10-23T03:05:28.435Z | recovery-command-fixtures | code_review | codex | gpt-6-luna | 2 | 64.2s | - | ok |
 | 2026-10-23T03:07:14.060Z | recovery-command-fixtures | code_review | claude | opus | 2 | 105.6s | 882014 | ok |
 | 2026-10-23T03:08:29.232Z | recovery-command-fixtures | qa | claude | claude-haiku-5-5 | 0 | 75.1s | 917595 | ok |
+| 2026-10-24T13:09:15.089Z | pr-pushes-scaffold-base | spec_review | codex | gpt-6.1-sol | 0 | 210.9s | 812341 | ok |
+| 2026-10-24T13:10:46.396Z | pr-pushes-scaffold-base | spec | claude | opus | 0 | 91.2s | 682021 | ok |
+| 2026-10-24T13:13:06.199Z | pr-pushes-scaffold-base | spec_review | codex | gpt-6.1-sol | 1 | 139.7s | 1633827 | ok |
+| 2026-10-24T14:17:15.129Z | pr-pushes-scaffold-base | plan | claude | opus | 0 | 389.9s | 3072362 | ok |
+| 2026-10-24T14:46:15.605Z | pr-pushes-scaffold-base | implement | codex | gpt-6.1-sol | 0 | 694.2s | 5142946 | ok |
+| 2026-10-24T14:47:15.439Z | pr-pushes-scaffold-base | code_review | codex | gpt-6-luna | 0 | 58.9s | - | ok |
+| 2026-10-24T14:55:22.002Z | pr-pushes-scaffold-base | code_review | claude | opus | 0 | 486.5s | 981735 | ok |
+| 2026-10-24T14:55:22.009Z | pr-pushes-scaffold-base | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 208.0s | 1417358 | ok |
+| 2026-10-24T14:55:22.015Z | pr-pushes-scaffold-base | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 353.9s | 3112554 | ok |
+| 2026-10-24T14:56:26.667Z | pr-pushes-scaffold-base | qa | claude | claude-haiku-5-5 | 0 | 64.6s | 984240 | ok |
