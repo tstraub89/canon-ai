@@ -1,10 +1,10 @@
 {
   "id": "per-command-help",
   "title": "Per-command --help and unknown-flag rejection across the canon CLI",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-24",
   "updated": "2026-10-24",
-  "branch": "",
+  "branch": "task/per-command-help",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a16e65-301c-7700-bc32-a2015234fc9a"
+    "codex_spec_review": "01a16e65-301c-7700-bc32-a2015234fc9a",
+    "codex": "01a16ed1-efe5-70e0-9bf5-19812999c8b8",
+    "claude_review": "e9934ca5-e398-4643-a639-d2fb064261d8"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

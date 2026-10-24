@@ -1,0 +1,1 @@
+The changes add regression coverage using the production argument declarations; the added cases exercise the pre-scan behavior they are intended to protect. I found no introduced correctness issues.
