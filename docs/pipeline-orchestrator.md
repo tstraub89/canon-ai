@@ -24,6 +24,8 @@ A full-auto `canon run` **auto-detaches** whenever stdout is not a TTY — alway
 
 A read-only blocking observer. Attaches to an already-running orchestrator, streams phase transitions to stderr, and exits when the run goes idle.
 
+`canon watch --help` prints usage to stdout and exits 0 with no summary line; the summary-line contract covers watching, not help.
+
 ```bash
 # Normal two-step (Bash tool or headless):
 canon run <id>

@@ -2,12 +2,15 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { checkDepForFlag } from '../deps.js';
+import { handlePreScan } from '../../lib/cli-args.js';
+import { RUN_ARGS } from '../../orchestrator/cli.js';
 
 // dist/cli/index.js → ../../ = package root (node_modules/canon-ai/ when installed)
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const runTaskScript = join(packageDir, 'dist/orchestrator/run-task.js');
 
 export function runCmd(args: string[]): void {
+    handlePreScan(RUN_ARGS, args, { out: console.log, err: console.error, exit: code => process.exit(code) });
     for (const arg of args) {
         checkDepForFlag(arg);
     }

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
-import { findUntrackedClobberPaths, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskSet, taskStatus } from '../src/task/index.js';
+import { findUntrackedClobberPaths, parseTaskAcceptArgs, parseTaskNewArgs, taskAccept, taskCmd, taskList, taskNew, taskPhase, taskPostMergeSync, taskResetCodeReview, taskResetSpecReview, taskSet, taskStatus } from '../src/task/index.js';
 import { parseTable } from '../src/orchestrator/markdown-table.js';
 import type { StatusJson } from '../src/orchestrator/types.js';
 import { extractDoneMdFromStdout, isDoneMdTemplate } from '../src/orchestrator/validation.js';
@@ -2869,6 +2869,82 @@ void test('bundled orchestrator help is invocable once from dist', () => {
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Usage: canon run/);
+});
+
+void test('task subcommand help runs before parsing or task creation', () => {
+    withTempDir('task-subcommand-help-', tasksRoot => {
+        const env = { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot };
+        const cli = path.join(WORKSPACE_ROOT, 'src', 'cli', 'index.ts');
+        const invoke = (args: string[]) => spawnSync(process.execPath, ['--import', TSX_LOADER, cli, 'task', ...args], { cwd: WORKSPACE_ROOT, env, encoding: 'utf8' });
+        const accept = invoke(['accept', 'foo', 'code_review', '-h']);
+        assert.equal(accept.status, 0, accept.stderr);
+        assert.match(accept.stdout, /Usage: canon task accept/);
+        const create = invoke(['new', 'foo', '--help']);
+        assert.equal(create.status, 0, create.stderr);
+        assert.match(create.stdout, /Usage: canon task new/);
+        assert.equal(fs.existsSync(path.join(tasksRoot, 'foo')), false);
+        assert.deepEqual(fs.readdirSync(tasksRoot), []);
+    });
+});
+
+void test('task help bypasses managed-root checks and unknown flags stop before task effects', () => {
+    withTempDir('task-help-', root => {
+        const repo = path.join(root, 'repo');
+        const worktree = path.join(root, 'hand-wt');
+        fs.mkdirSync(repo, { recursive: true });
+        git(root, ['init', '-b', 'main', repo]);
+        git(repo, ['config', 'user.email', 'test@example.com']);
+        git(repo, ['config', 'user.name', 'Test User']);
+        fs.writeFileSync(path.join(repo, 'README.md'), 'fixture\n');
+        git(repo, ['add', 'README.md']);
+        git(repo, ['commit', '-m', 'init']);
+        git(repo, ['worktree', 'add', '-b', 'hand', worktree, 'main']);
+        const cli = path.join(WORKSPACE_ROOT, 'src', 'cli', 'index.ts');
+        const env = { ...process.env };
+        delete env.CANON_TASKS_DIR_OVERRIDE;
+        delete env.CANON_WORKTREES_ROOT;
+        const invoke = (args: string[]) => spawnSync(process.execPath, ['--import', TSX_LOADER, cli, 'task', ...args], { cwd: worktree, env, encoding: 'utf8' });
+        const overview = invoke(['--help']);
+        assert.equal(overview.status, 0, overview.stderr);
+        assert.match(overview.stdout, /canon task <subcommand> --help/);
+        const detail = invoke(['status', 'foo', '--help']);
+        assert.equal(detail.status, 0, detail.stderr);
+        assert.match(detail.stdout, /Usage: canon task status/);
+        const control = invoke(['list']);
+        assert.notEqual(control.status, 0);
+        assert.match(control.stderr, /does not manage/);
+    });
+
+    withTempDir('task-flags-', tasksRoot => {
+        const env = { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot };
+        const cli = path.join(WORKSPACE_ROOT, 'src', 'cli', 'index.ts');
+        const cases: string[][] = [
+            ['new', '--bogus'], ['list', '--bogus'], ['status', '--bogus'], ['phase', '--bogus'], ['accept', '--bogus', 'foo', 'code_review'],
+            ['set', 'foo', '--bogus', 'x'], ['reset-spec-review', '--bogus'], ['reset-code-review', '--bogus'], ['post-merge-sync', '--bogus'],
+        ];
+        for (const args of cases) {
+            const result = spawnSync(process.execPath, ['--import', TSX_LOADER, cli, 'task', ...args], { cwd: WORKSPACE_ROOT, env, encoding: 'utf8' });
+            assert.equal(result.status, 1, `${args.join(' ')}: ${result.stderr}`);
+            assert.match(result.stderr, /Unknown option: --bogus/);
+            const sub = args[0];
+            assert.match(result.stderr, new RegExp(`Run 'canon task ${sub} --help' for usage\\.`));
+        }
+        assert.deepEqual(fs.readdirSync(tasksRoot), []);
+    });
+});
+
+void test('task free-text slots accept dash-leading values and --base= form', () => {
+    withTempDir('task-free-text-', tasksRoot => withEnv({ CANON_TASKS_DIR_OVERRIDE: tasksRoot }, () => {
+        assert.equal(parseTaskNewArgs(['foo', '-draft title']).title, '-draft title');
+        taskNew(['foo', '-draft title']);
+        taskSet(['foo', 'title', '-draft']);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'foo', 'status.json'), 'utf8')) as { title: string };
+        assert.equal(status.title, '-draft');
+        taskNew(['bar', 'Title', '--base=main']);
+        const withBase = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'bar', 'status.json'), 'utf8')) as { base_branch: string };
+        assert.equal(withBase.base_branch, 'main');
+        assert.equal(parseTaskAcceptArgs(['foo', 'code_review', '--reason', '--help']).reason, '--help');
+    }));
 });
 
 void test('qa completion upserts its fragment on rerun and leaves shared quality log untouched', () => {

@@ -24,6 +24,7 @@ import {
 } from '../src/orchestrator/state.js';
 import { _VERDICT_VALUES } from '../src/orchestrator/types.js';
 import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
+import { TASK_SUBCOMMAND_ARGS } from '../src/task/index.js';
 import {
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
@@ -306,7 +307,7 @@ void test('sanctioned verdict is registered on status value surfaces but not art
     assert.ok(_VERDICT_VALUES.includes('sanctioned'));
     assert.ok(VALID_VERDICTS.has('sanctioned'));
 
-    const cliHelp = fs.readFileSync(path.join(process.cwd(), 'src', 'cli', 'index.ts'), 'utf8');
+    const cliHelp = TASK_SUBCOMMAND_ARGS.phase.usage;
     assert.match(cliHelp, /approved \| approved_with_nits \| changes_requested \| needs_re_review \| spec_gap \| sanctioned/);
     assert.match(cliHelp, /sanctioned is written via canon task accept --reason/);
 

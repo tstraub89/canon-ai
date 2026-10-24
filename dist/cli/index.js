@@ -6,6 +6,132 @@ import path6 from "path";
 
 // src/orchestrator/cli.ts
 import fs from "fs";
+
+// src/lib/cli-args.ts
+function preScanArgs(decl, args2) {
+  const booleans = new Set(decl.booleanFlags);
+  const values = new Set(decl.valueFlags);
+  const equalsValues = new Set(decl.equalsValueFlags ?? []);
+  let position = 0;
+  let help = false;
+  let firstError = null;
+  for (let i = 0; i < args2.length; i += 1) {
+    const arg = args2[i];
+    if (arg === "--help" || arg === "-h") {
+      const consumedAsValue = i > 0 && (values.has(args2[i - 1]) || equalsValues.has(args2[i - 1]?.split("=", 1)[0]));
+      const freeText2 = decl.freeTextSlots?.includes(position) ?? false;
+      if (!consumedAsValue || freeText2) help = true;
+      if (freeText2) {
+        position += 1;
+      }
+      continue;
+    }
+    const equalsFlag = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : "";
+    if (booleans.has(arg)) continue;
+    if (values.has(arg)) {
+      if (i + 1 < args2.length) {
+        i += 1;
+      }
+      continue;
+    }
+    if (equalsValues.has(equalsFlag)) continue;
+    const freeText = decl.freeTextSlots?.includes(position) ?? false;
+    if (arg.startsWith("-") && !freeText) {
+      if (firstError == null) firstError = { kind: "unknown", argument: arg };
+      continue;
+    }
+    if (decl.rejectPositionals && !freeText && firstError == null) {
+      firstError = { kind: "unexpected", argument: arg };
+    }
+    position += 1;
+  }
+  return help ? { kind: "help" } : firstError ?? { kind: "proceed" };
+}
+function unknownOptionMessage(command2, argument) {
+  return `Unknown option: ${argument}
+Run 'canon ${command2} --help' for usage.`;
+}
+function unexpectedArgumentMessage(command2, argument) {
+  return `Unexpected argument: ${argument}
+Run 'canon ${command2} --help' for usage.`;
+}
+function handlePreScan(decl, args2, io) {
+  const result = preScanArgs(decl, args2);
+  if (result.kind === "help") {
+    io.out(decl.usage);
+    io.exit(0);
+  }
+  if (result.kind === "unknown" || result.kind === "unexpected") {
+    io.err(result.kind === "unknown" ? unknownOptionMessage(decl.command, result.argument) : unexpectedArgumentMessage(decl.command, result.argument));
+    io.exit(decl.command === "watch" ? 2 : 1);
+  }
+  return "proceed";
+}
+
+// src/orchestrator/cli.ts
+var RUN_USAGE = [
+  "Usage: canon run <TASK-ID...> [options]",
+  "",
+  "  Single task:  canon run fix-hover-state",
+  "  Bundle:       canon run fix-hover-state dark-tokens empty-cta",
+  "",
+  "  Bundle mode runs all tasks together per phase (one agent session each).",
+  "  Fast tier (XS, non-delicate only) skips Codex spec review. Full tier (any S/M/L/XL",
+  "  or delicate task) runs the complete pipeline \u2014 any such task pulls the entire",
+  "  bundle to full tier.",
+  "",
+  "Options:",
+  "  --interactive, -I   Open interactive agent sessions",
+  "  --step, -1          Run one phase then stop",
+  "  --expect <phase>    Assert current phase before running",
+  "  --pr                At human_review: push branch and open a draft PR (requires gh).",
+  "                      First pushes canon's own unpushed scaffold/telemetry commits on <base> to origin",
+  "                      (creating origin/<base> if missing); any other unpushed <base> commit blocks.",
+  "                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and",
+  `                      protected/configured docs listed in spec.md's "### Affected Files"`,
+  "                      table (all admitted docs once QA is done). Dirty files outside",
+  "                      that set die with a remediation message.",
+  "                      Aborts if merging origin/<base> conflicts, or branch changes files",
+  "                      outside spec's Affected Files (bypass with --force).",
+  "  --push              At human_review: push branch only, no PR (requires gh). Same",
+  "                      allow-list and scaffold base push as --pr. Aborts if merging origin/<base> conflicts, or",
+  "                      branch changes files outside spec's Affected Files (bypass with --force).",
+  "  --full-send         Skip the spec gate and auto-open a draft PR after clean QA;",
+  "                      pushes canon scaffold commits to base like --pr.",
+  "  --force             Acknowledge high-commitment combinations and bypass",
+  "                      explicit safety gates where documented (currently:",
+  "                      --full-send on delicate tasks, reroute amendment gate,",
+  "                      base-drift gate, and dirty REPO_ROOT worktree-start gate).",
+  "  --allow-divergent-base",
+  "                      At --push, --pr, and --ship: bypass only the commit-divergence",
+  "                      block when local <base> has commits not yet on origin/<base>.",
+  "                      If canon's scaffold base push is rejected, warns and continues.",
+  "                      At --pr/--push, does not apply when origin has no <base> branch.",
+  "                      Does NOT bypass the base-drift gate; use --force for that.",
+  "                      Independent of --force \u2014 both may be needed to pass both gates.",
+  "  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear",
+  "                      down the worktree, archive the task dir, and pull the base branch. Run",
+  "                      after the PR is approved \u2014 do NOT merge the PR manually first. If you",
+  "                      already merged externally, --ship detects the merged state and resumes",
+  "                      at cleanup.",
+  "  --dry-run           Print each planned phase and exit without spawning any LLM",
+  "  --reroute           Reset a task from any phase reached after a completed implement round",
+  "                      (code_review, qa, or human_review) back into the post-review fix path.",
+  "                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier",
+  "                      tasks (XS) re-enter at implement.",
+  "                      Feedback channel: append a new section to tasks/<id>/spec.md describing",
+  "                      what to address. Codex re-reads spec.md only \u2014 additions to review.md",
+  "                      or PR comments are NOT consulted on reroute.",
+  "                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`",
+  "                      on round 2+. Bypass with --force. See docs/pipeline-orchestrator.md",
+  '                      \xA7"Human Reroute."'
+].join("\n");
+var RUN_ARGS = {
+  command: "run",
+  usage: RUN_USAGE,
+  booleanFlags: ["--interactive", "-I", "--step", "-1", "--pr", "--push", "--full-send", "--force", "--allow-divergent-base", "--ship", "--dry-run", "--reroute"],
+  valueFlags: ["--expect"]
+};
 var exitReason = null;
 var originalProcessExit = process.exit.bind(process);
 function setExitReason(reason) {
@@ -1317,6 +1443,8 @@ function checkDepForFlag(flag) {
 }
 
 // src/cli/commands/doctor.ts
+var DOCTOR_USAGE = "Usage: canon doctor\n\nVerify environment and canon setup.";
+var DOCTOR_ARGS = { command: "doctor", usage: DOCTOR_USAGE, booleanFlags: [], valueFlags: [] };
 var EXPECTED_TEMPLATES = [
   "spec.md",
   "plan.md",
@@ -1859,7 +1987,8 @@ function checkDocsFreshness(cwd) {
   const detail = `${source}: ${sets.protected.length} protected, ${globs.length} mappings, ${sets.flagOnly.length} flag-only`;
   return { label, status: warnings.length ? "warn" : "pass", detail: [detail, ...warnings].join("; ") };
 }
-function doctorCmd(_args) {
+function doctorCmd(args2) {
+  handlePreScan(DOCTOR_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
   const cwd = process.cwd();
   const envChecks = [
     checkPlatform(),
@@ -1952,6 +2081,8 @@ function assertNoSymlinkDestinations(root, relativePaths) {
 }
 
 // src/cli/commands/init.ts
+var INIT_USAGE = "Usage: canon init\n\nSet up canon in the current repo.";
+var INIT_ARGS = { command: "init", usage: INIT_USAGE, booleanFlags: [], valueFlags: [] };
 var packageDir = join2(dirname2(fileURLToPath2(import.meta.url)), "../..");
 var templatesDir = join2(packageDir, "templates");
 var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md"]);
@@ -1993,7 +2124,8 @@ function scaffoldTemplates(cwd, srcTemplatesDir) {
   }
   return { scaffolded, skipped };
 }
-function initCmd(_args) {
+function initCmd(args2) {
+  handlePreScan(INIT_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
   checkDeps();
   const cwd = process.cwd();
   assertNoSymlinkDestinations(cwd, [".gitignore", ".canon/version"]);
@@ -2058,6 +2190,7 @@ import { dirname as dirname3, join as join3 } from "path";
 var packageDir2 = join3(dirname3(fileURLToPath3(import.meta.url)), "../..");
 var runTaskScript = join3(packageDir2, "dist/orchestrator/run-task.js");
 function runCmd(args2) {
+  handlePreScan(RUN_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
   for (const arg of args2) {
     checkDepForFlag(arg);
   }
@@ -2075,6 +2208,12 @@ import { StringDecoder } from "string_decoder";
 
 // src/cli/commands/stop.ts
 import { existsSync as existsSync3 } from "fs";
+var STOP_USAGE = [
+  "Usage: canon stop <task-id>",
+  "",
+  "Stop a detached canon run (SIGTERM, then SIGKILL after 10s). During the launch window before the child writes its first heartbeat, canon waits up to CANON_STOP_WAIT_MS for proof of life (default 30000) before deciding whether to signal."
+].join("\n");
+var STOP_ARGS = { command: "stop", usage: STOP_USAGE, booleanFlags: [], valueFlags: [] };
 var SIGTERM_GRACE_MS = 1e4;
 var SIGTERM_POLL_INTERVAL_MS = 200;
 var STOP_WAIT_DEFAULT_MS = 3e4;
@@ -2254,12 +2393,13 @@ function stopCmd(args2, deps = {}) {
   const readCanonPidFn = deps.readCanonPidImpl ?? readCanonPid;
   const readHeartbeatStatusFn = deps.readHeartbeatStatusImpl ?? readHeartbeatStatus;
   const waitTimeoutMs = readWaitTimeoutMs(deps);
+  handlePreScan(STOP_ARGS, args2, { out: stdout, err: stderr, exit });
   const probeAlive = (pid2) => probePidAlive(pid2, (value) => {
     kill(value, 0);
   });
   const taskId = args2[0];
   if (!taskId) {
-    stderr("Usage: canon stop <task-id>");
+    stderr(STOP_USAGE);
     return exit(1);
   }
   const dir = deps.dirOverride ?? tolerantTaskDir(taskId);
@@ -2355,6 +2495,24 @@ function stopCmd(args2, deps = {}) {
 }
 
 // src/cli/commands/watch.ts
+var WATCH_USAGE = [
+  "Usage: canon watch <task-id> [--until <phase>] [--timeout <dur>] [--follow|-f]",
+  "",
+  "Blocks on an already-detached run until the orchestrator settles, then prints one final summary line to stdout.",
+  "Progress and log tailing go to stderr.",
+  "Exit codes: 0 healthy stop/until, 2 usage/nothing-to-watch/read-error/ambiguous_pid/launch-window-timeout,",
+  "            3 auto-block, 4 death, 5 timeout.",
+  "Summary line: state=<state> reason=<reason> [phase=<phase>] [verdict=<verdict>] [pid=<pid>]",
+  "Reasons: checkpoint, complete, auto_block, step_done, death, timeout, until, nothing_to_watch,",
+  "         launch_window_timeout, ambiguous_pid, read_error, usage_error."
+].join("\n");
+var WATCH_ARGS = {
+  command: "watch",
+  usage: WATCH_USAGE,
+  booleanFlags: ["--follow", "-f"],
+  valueFlags: ["--until", "--timeout"],
+  equalsValueFlags: ["--timeout"]
+};
 var WATCH_POLL_INTERVAL_MS = 3e3;
 function blockedPhaseLivenessTrusted(_ctx, orchestratorLive, _now) {
   return orchestratorLive;
@@ -2436,14 +2594,7 @@ function emitSummary(stdout, summary) {
 `);
 }
 function printUsage(stderr) {
-  stderr("Usage: canon watch <task-id> [--until <phase>] [--timeout <dur>] [--follow|-f]");
-  stderr("");
-  stderr("  Blocks until the detached orchestrator settles, then prints one summary line.");
-  stderr("  Exit codes: 0 healthy stop/until, 2 usage/nothing-to-watch/read-error/ambiguous_pid/launch-window-timeout,");
-  stderr("              3 auto-block, 4 death, 5 timeout.");
-  stderr("  Summary line: state=<state> reason=<reason> [phase=<phase>] [verdict=<verdict>] [pid=<pid>]");
-  stderr("  Reasons: checkpoint, complete, auto_block, step_done, death, timeout, until, nothing_to_watch,");
-  stderr("           launch_window_timeout, ambiguous_pid, read_error, usage_error.");
+  stderr(WATCH_USAGE);
 }
 function parseDurationMs(raw) {
   const trimmed = raw.trim();
@@ -2828,10 +2979,18 @@ function watchCmd(args2, deps = {}) {
   const pollIntervalMs = deps.pollIntervalMs ?? WATCH_POLL_INTERVAL_MS;
   const waitTimeoutMs = deps.waitTimeoutMs ?? STOP_WAIT_DEFAULT_MS;
   const isOrchestratorAlive = (pid) => probePidAlive(pid, deps.probeAliveImpl);
+  const preScan = preScanArgs(WATCH_ARGS, args2);
+  if (preScan.kind === "help") {
+    stdout(`${WATCH_USAGE}
+`);
+    return exit(0);
+  }
   const parsed = parseWatchArgs(args2);
   if (parsed.usageError) {
     printUsage(stderr);
-    stderr(`canon watch: ${parsed.usageError}
+    const pointer = preScan.kind === "unknown" ? `
+${unknownOptionMessage("watch", preScan.argument).split("\n")[1]}` : "";
+    stderr(`canon watch: ${parsed.usageError}${pointer}
 `);
     emitSummary(stdout, { state: "usage", reason: "usage_error" });
     return exit(2);
@@ -3825,21 +3984,44 @@ var TASK_SIZE_VALUES = /* @__PURE__ */ new Set(["XS", "S", "M", "L", "XL"]);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 }
+var TASK_USAGE = [
+  "Usage: canon task <subcommand> [args]",
+  "",
+  "Subcommands:",
+  "  new <TASK-ID> <title> [--base <branch>]   Create tasks/<id>/ from .canon/templates/",
+  "  list                                      Show all tasks and their current phase",
+  "  status <TASK-ID>                          Show full status.json detail",
+  "  phase <TASK-ID> <phase> <status> [verdict] Update a phase and its derived status",
+  '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]  Accept implementation or sanction a review',
+  "  set <TASK-ID> <field> <value>              Set task metadata",
+  "  reset-spec-review <TASK-ID>                Reset an auto-blocked spec review",
+  "  reset-code-review <TASK-ID>                Reset an auto-blocked code review",
+  "  post-merge-sync [<branch>]                 Reconcile local branch after squash merge",
+  "",
+  "Run 'canon task <subcommand> --help' for details."
+].join("\n");
+var noTaskFlags = { booleanFlags: [], valueFlags: [] };
+var TASK_SUBCOMMAND_ARGS = {
+  new: { command: "task new", usage: "Usage: canon task new <TASK-ID> <title> [--base <branch>]\n\nCreate a task directory from .canon/templates/. The base branch is auto-detected from the current checkout; --base overrides it.", booleanFlags: [], valueFlags: ["--base"], equalsValueFlags: ["--base"], freeTextSlots: [1] },
+  list: { command: "task list", usage: "Usage: canon task list\n\nShow all tasks and their current phase.", ...noTaskFlags },
+  status: { command: "task status", usage: "Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.", ...noTaskFlags },
+  phase: { command: "task phase", usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]
+
+Phases: ${PHASE_ORDER.join(" | ")}
+Pipeline phases (in order): ${PHASE_ORDER.join(" \u2192 ")}
+Statuses: ${[...VALID_STATUSES].join(" | ")}
+Verdicts: ${[...VALID_VERDICTS].join(" | ")}
+(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags },
+  accept: { command: "task accept", usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ["--force"], valueFlags: ["--reason"] },
+  set: { command: "task set", usage: `Usage: canon task set <TASK-ID> <field> <value>
+
+Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2] },
+  "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags },
+  "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags },
+  "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
+};
 function usage() {
-  return [
-    "Usage: canon task <command> [args]",
-    "",
-    "Commands:",
-    "  new <TASK-ID> <title> [--base <branch>]",
-    "  list",
-    "  status <TASK-ID>",
-    "  phase <TASK-ID> <phase> <status> [verdict]",
-    '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]',
-    "  set <TASK-ID> <field> <value>",
-    "  reset-spec-review <TASK-ID>",
-    "  reset-code-review <TASK-ID>",
-    "  post-merge-sync [<branch>]"
-  ].join("\n");
+  return TASK_USAGE;
 }
 function validateTaskId(id) {
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -3941,7 +4123,7 @@ function printCreatedTask(taskId, taskDir, baseBranch) {
   console.log(`  Defaults: task_size=M, delicate=false, human_spec_gate=true, base_branch=${baseBranch}`);
   console.log(`  Adjust with: canon task set ${taskId} <field> <value>`);
 }
-function taskNew(args2) {
+function parseTaskNewArgs(args2) {
   let id = "";
   let title = "";
   let baseBranch = "";
@@ -3965,6 +4147,11 @@ function taskNew(args2) {
   if (!id || !title) {
     throw new Error("Error: usage: canon task new <TASK-ID> <title> [--base <branch>]");
   }
+  return { id, title, baseBranch };
+}
+function taskNew(args2) {
+  const { id, title, baseBranch: parsedBaseBranch } = parseTaskNewArgs(args2);
+  let baseBranch = parsedBaseBranch;
   validateTaskId(id);
   if (title.includes("\n")) {
     throw new Error("Error: title must be single-line (no embedded newlines).");
@@ -4965,9 +5152,34 @@ function taskSet(args2) {
     `Error: unknown field '${field}'. Settable fields: ${SETTABLE_FIELDS.join(", ")}. Other recognized fields are redirected or immutable.`
   );
 }
+function parseTaskAcceptArgs(rest) {
+  const force = rest.includes("--force");
+  let reason;
+  const positional = [];
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === "--force") continue;
+    if (arg === "--reason") {
+      reason = rest[i + 1];
+      i += 1;
+      continue;
+    }
+    positional.push(arg);
+  }
+  if (positional.length < 2) {
+    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
+  }
+  return { ids: positional.slice(0, -1), phase: positional[positional.length - 1], force, reason };
+}
 function taskCmd(args2) {
   const [subcommand, ...rest] = args2;
   try {
+    if (subcommand === "--help" || subcommand === "-h") {
+      console.log(TASK_USAGE);
+      return;
+    }
+    const decl = subcommand && Object.hasOwn(TASK_SUBCOMMAND_ARGS, subcommand) ? TASK_SUBCOMMAND_ARGS[subcommand] : void 0;
+    if (decl) handlePreScan(decl, rest, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
     assertManagedInvocationRoot();
     switch (subcommand) {
       case "new":
@@ -4986,25 +5198,8 @@ function taskCmd(args2) {
         taskSet(rest);
         break;
       case "accept": {
-        const force = rest.includes("--force");
-        let reason;
-        const positional = [];
-        for (let i = 0; i < rest.length; i += 1) {
-          const arg = rest[i];
-          if (arg === "--force") continue;
-          if (arg === "--reason") {
-            reason = rest[i + 1];
-            i += 1;
-            continue;
-          }
-          positional.push(arg);
-        }
-        if (positional.length < 2) {
-          throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
-        }
-        const acceptPhase = positional[positional.length - 1];
-        const acceptIds = positional.slice(0, -1);
-        taskAccept(acceptIds, acceptPhase, { force, reason });
+        const parsed = parseTaskAcceptArgs(rest);
+        taskAccept(parsed.ids, parsed.phase, { force: parsed.force, reason: parsed.reason });
         break;
       }
       case "reset-spec-review":
@@ -5055,6 +5250,17 @@ function detectInstallType(pkgDirOverride) {
   }
   return { type: "global", installRoot: null };
 }
+var UPDATE_USAGE = [
+  "Usage: canon update [--channel main | --ref <ref|sha>]",
+  "",
+  "Update the canon-ai package itself. Resolves the install root (never the invocation cwd) and pins to the latest final release by default \u2014 refuses rather than falling back to an unpinned source.",
+  "Writes .canon/provenance.json after a successful install (written for future tooling; nothing reads it yet).",
+  "  --channel main       Pin to main\u2019s latest commit (dev)",
+  "  --ref <ref>           Pin to a named ref\u2019s resolved commit (dev)",
+  "  --ref <40-hex-sha>    Pin directly and skip resolution",
+  "  --channel and --ref are mutually exclusive."
+].join("\n");
+var UPDATE_ARGS = { command: "update", usage: UPDATE_USAGE, booleanFlags: [], valueFlags: ["--channel", "--ref"], rejectPositionals: true };
 function parseUpdateArgs(args2) {
   const options = {};
   for (let i = 0; i < args2.length; i++) {
@@ -5070,8 +5276,10 @@ function parseUpdateArgs(args2) {
       if (!value) throw new Error("canon update: --ref requires a value.");
       if (value.startsWith("-")) throw new Error("canon update: --ref value must not start with '-'.");
       options.ref = value;
+    } else if (arg.startsWith("-")) {
+      throw new Error(unknownOptionMessage("update", arg));
     } else {
-      throw new Error(`canon update: unknown flag '${arg}'. Supported: --channel main, --ref <ref|sha>.`);
+      throw new Error(unexpectedArgumentMessage("update", arg));
     }
   }
   if (options.channel && options.ref) {
@@ -5340,6 +5548,7 @@ function updateCmd(args2, deps = {}) {
   const stderr = deps.stderr ?? ((message) => {
     console.error(message);
   });
+  handlePreScan(UPDATE_ARGS, args2, { out: stdout, err: stderr, exit });
   const pkgDir = deps.packageDir ?? packageDir3;
   const pkgName = ownPackageName(pkgDir);
   const cwd = deps.cwd ?? process.cwd();
@@ -5509,6 +5718,15 @@ var DELIMITED = [];
 
 // src/cli/commands/upgrade.ts
 var packageDir4 = join5(dirname5(fileURLToPath5(import.meta.url)), "../..");
+var UPGRADE_USAGE = [
+  "Usage: canon upgrade [--check|--dry-run] [--force] [--no-stage]",
+  "",
+  "Sync canon-managed files to match the installed version.",
+  "  --check, --dry-run   Print the planned changes without writing files",
+  "  --force              Overwrite destinations that would otherwise be refused",
+  "  --no-stage           Skip the post-write git add"
+].join("\n");
+var UPGRADE_ARGS = { command: "upgrade", usage: UPGRADE_USAGE, booleanFlags: ["--check", "--dry-run", "--force", "--no-stage"], valueFlags: [], rejectPositionals: true };
 var CANON_END = "<!-- canon:end -->";
 var CANON_START_RE = /<!-- canon:start[^>]* -->/;
 var HEADER_ONLY_SYNC = [
@@ -5844,14 +6062,23 @@ function parseUpgradeArgs(args2) {
     if (arg === "--check" || arg === "--dry-run") options.check = true;
     else if (arg === "--force") options.force = true;
     else if (arg === "--no-stage") options.noStage = true;
-    else {
-      throw new Error(`canon upgrade: unknown flag '${arg}'. Supported: --check (--dry-run), --force, --no-stage.`);
+    else if (arg.startsWith("-")) {
+      throw new Error(unknownOptionMessage("upgrade", arg));
+    } else {
+      throw new Error(unexpectedArgumentMessage("upgrade", arg));
     }
   }
   return options;
 }
 function upgradeCmd(args2) {
-  const options = parseUpgradeArgs(args2);
+  handlePreScan(UPGRADE_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
+  let options;
+  try {
+    options = parseUpgradeArgs(args2);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
   const result = runUpgrade(process.cwd(), packageDir4, options);
   const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides } = result;
   console.log("\ncanon upgrade" + (options.check ? " --check" : "") + "\n");
@@ -5954,123 +6181,31 @@ function upgradeCmd(args2) {
 // src/cli/index.ts
 var [, , command, ...args] = process.argv;
 function printHelp() {
-  console.log(`
-canon-ai \u2014 spec-first multi-agent coding pipeline
+  console.log(`canon-ai \u2014 spec-first multi-agent coding pipeline
 
-Usage:
-  canon init                  Set up canon in the current repo
-  canon doctor                Verify environment and canon setup
-  canon task <sub> [args]     Create tasks and track pipeline phases
-  canon run <id> [opts]       Run the pipeline for a task
-  canon stop <id>             Stop a detached canon run (SIGTERM \u2192 SIGKILL after 10s).
-                                During the launch window before the child writes its first
-                                heartbeat, waits up to CANON_STOP_WAIT_MS for proof of life
-                                (default 30000) before deciding whether to signal.
-  canon watch <id>            Blocking observer for an already-detached canon run.
-                                Waits for idle / checkpoint / death / timeout and prints
-                                one final summary line to stdout. Progress and any log
-                                tailing go to stderr.
-                                Flags: --until <phase>, --timeout <dur>, --follow, -f
-                                Exit codes: 0 healthy stop/until, 2 usage/nothing/read
-                                error/ambiguous_pid/launch-window timeout, 3 auto-block, 4 death,
-                                5 timeout.
-  canon update                Update the canon-ai package itself. Resolves the install root
-                                (never the invocation cwd) and pins to the latest final release
-                                by default \u2014 refuses rather than falling back to an unpinned
-                                source. Writes .canon/provenance.json after a successful install
-                                (written for future tooling; nothing reads it yet).
-                                Flags: --channel main       pin to main's latest commit (dev)
-                                       --ref <ref>           pin to a named ref's resolved commit (dev)
-                                       --ref <40-hex-sha>    pin directly, skip resolution
-                                --channel and --ref are mutually exclusive.
-  canon upgrade               Sync vendored files to match the installed version
+Usage: canon <command> [args]
+
+Commands:
+  init                Set up canon in the current repo
+  doctor              Verify environment and canon setup
+  task <subcommand>   Create tasks and track pipeline phases
+  run <id...>         Run the pipeline for one or more tasks
+  watch <id>          Wait on a detached run; print one summary line
+  stop <id>           Stop a detached canon run
+  update              Update the canon-ai package itself
+  upgrade             Sync vendored files to match the installed version
 
 Typical workflow:
-  canon task new <id> "Title"   Create the task dir, then write spec.md
-                                  conversationally with Claude Code
-  canon run <id>                Run the pipeline (after spec is approved)
+  canon task new <id> "Title"   Create the task dir, then write spec.md with Claude Code
+  canon run <id>                Run the pipeline (after the spec is approved)
+  canon watch <id>              Wait for a detached run to settle
   canon run <id> --pr           Open a draft PR when the task reaches human_review
 
-Pipeline phases (in order):
-  spec \u2192 spec_review \u2192 plan \u2192 implement \u2192 code_review \u2192 qa \u2192 human_review
-
-  canon task subcommands:
-  new <id> "Title" [--base <branch>]
-                          Scaffold tasks/<id>/ from .canon/templates/. Auto-detects
-                          base branch from current checkout; --base to override.
-  list                    Show all tasks and their current phase
-  status <id>             Show full status.json detail for a task
-  phase <id> <phase> <status> [verdict]
-                          Update a phase and re-derive the top-level status pointer.
-                            phases:   spec | spec_review | plan | implement |
-                                      code_review | qa | human_review
-                            status:   pending | in_progress | done | changes_requested | blocked
-                            verdict:  approved | approved_with_nits | changes_requested | needs_re_review | spec_gap | sanctioned
-                                      (verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)
-  accept <id...> <phase> [--reason "<text>"] [--force]
-                          Accept implement, or sanction spec_review/code_review with an audit reason.
-                          --reason is required for spec_review and code_review.
-  set <id> <field> <value>
-                          Set task metadata fields with validation, redirects for guarded fields,
-                          and immutable-field refusals instead of raw status.json edits.
-  reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.
-                          Zeroes iterations, clears verdict, archives prior spec-review.md.
-  reset-code-review <id>  Clear state for a fresh code-review pass after an auto-block.
-                          Zeroes loop counters, clears verdict, archives prior review.md.
-  post-merge-sync [<branch>]
-                          After a squash-merge PR lands, reconcile local branch with origin.
-                          Hard-resets if the only divergence is pipeline telemetry; refuses
-                          if real unmerged work is present.
-
-canon run options:
-  --step, -1              Run one phase then stop
-  --expect <phase>        Fail fast if current phase doesn't match
-                            phases: spec | spec_review | plan | implement |
-                                    code_review | qa | human_review
-  --interactive, -I       Open interactive agent sessions (default: non-interactive)
-  --pr                    At human_review: push branch and open a draft PR (requires gh).
-                          First pushes canon's own unpushed scaffold/telemetry commits on <base> to origin
-                          (creating origin/<base> if missing); any other unpushed <base> commit blocks.
-                          Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and
-                          protected/configured docs listed in spec.md's "### Affected Files"
-                          table (all admitted docs once QA is done). Dirty files outside
-                          that set die with a remediation message.
-                          Aborts if merging origin/<base> conflicts, or branch changes files
-                          outside spec's Affected Files (bypass with --force).
-  --push                  At human_review: push branch only, no PR (requires gh). Same allow-list
-                          and scaffold base push as --pr. Aborts if merging origin/<base> conflicts, or branch changes
-                          files outside spec's Affected Files (bypass with --force).
-  --full-send             Skip the spec gate and auto-open a draft PR after clean QA;
-                          pushes canon scaffold commits to base like --pr.
-  --force                 Acknowledge high-commitment combinations and bypass
-                          explicit safety gates where documented (currently:
-                          --full-send on delicate tasks, reroute amendment gate,
-                          base-drift gate, and dirty REPO_ROOT worktree-start gate)
-  --allow-divergent-base   At --push, --pr, and --ship: bypass only the commit-divergence
-                          block when local <base> has commits not yet on origin/<base>.
-                          If canon's scaffold base push is rejected, warns and continues.
-                          At --pr/--push, does not apply when origin has no <base> branch.
-                          Does NOT bypass the base-drift gate; use --force for that.
-                          Independent of --force \u2014 both may be needed to pass both gates.
-  --ship                  Merge the open PR (gh pr merge --squash), delete its remote branch, tear
-                          down the worktree, archive the task dir, and pull the base branch. Run
-                          after the PR is approved \u2014 do NOT merge the PR manually first. If you
-                          already merged externally, --ship detects the merged state and resumes
-                          at cleanup.
-  --dry-run               Print planned phases without running any agents
-  --reroute               Reset a task from any phase reached after a completed implement round
-                          (code_review, qa, or human_review) back into the post-review fix path.
-                          Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier
-                          tasks (XS) re-enter at implement.
-                          Feedback channel: append a new section to tasks/<id>/spec.md describing
-                          what to address. Codex re-reads spec.md only \u2014 additions to review.md
-                          or PR comments are NOT consulted on reroute. See docs/pipeline-orchestrator.md
-                          \xA7"Human Reroute."
-
 Global:
-  --version           Print canon-ai version
-  --help              Show this help
-`);
+  --version, -v       Print canon-ai version
+  --help, -h          Show this help
+
+Run 'canon <command> --help' for details.`);
 }
 function printVersion() {
   console.log("3.13.0");

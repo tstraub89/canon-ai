@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 
 import { CANON_UPSTREAM_REPO } from '../../orchestrator/canon-snapshot.js';
+import { handlePreScan, type ArgDeclaration, unexpectedArgumentMessage, unknownOptionMessage } from '../../lib/cli-args.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -42,6 +43,18 @@ export interface UpdateOptions {
     ref?: string;
 }
 
+export const UPDATE_USAGE = [
+    'Usage: canon update [--channel main | --ref <ref|sha>]',
+    '',
+    'Update the canon-ai package itself. Resolves the install root (never the invocation cwd) and pins to the latest final release by default — refuses rather than falling back to an unpinned source.',
+    'Writes .canon/provenance.json after a successful install (written for future tooling; nothing reads it yet).',
+    '  --channel main       Pin to main’s latest commit (dev)',
+    '  --ref <ref>           Pin to a named ref’s resolved commit (dev)',
+    '  --ref <40-hex-sha>    Pin directly and skip resolution',
+    '  --channel and --ref are mutually exclusive.',
+].join('\n');
+export const UPDATE_ARGS: ArgDeclaration = { command: 'update', usage: UPDATE_USAGE, booleanFlags: [], valueFlags: ['--channel', '--ref'], rejectPositionals: true };
+
 export function parseUpdateArgs(args: string[]): UpdateOptions {
     const options: UpdateOptions = {};
     for (let i = 0; i < args.length; i++) {
@@ -57,8 +70,10 @@ export function parseUpdateArgs(args: string[]): UpdateOptions {
             if (!value) throw new Error('canon update: --ref requires a value.');
             if (value.startsWith('-')) throw new Error('canon update: --ref value must not start with \'-\'.');
             options.ref = value;
+        } else if (arg.startsWith('-')) {
+            throw new Error(unknownOptionMessage('update', arg));
         } else {
-            throw new Error(`canon update: unknown flag '${arg}'. Supported: --channel main, --ref <ref|sha>.`);
+            throw new Error(unexpectedArgumentMessage('update', arg));
         }
     }
     if (options.channel && options.ref) {
@@ -435,6 +450,7 @@ export function updateCmd(args: string[], deps: UpdateCmdDeps = {}): void {
     const exit = deps.exit ?? ((code: number): never => process.exit(code));
     const stdout = deps.stdout ?? ((message: string): void => { console.log(message); });
     const stderr = deps.stderr ?? ((message: string): void => { console.error(message); });
+    handlePreScan(UPDATE_ARGS, args, { out: stdout, err: stderr, exit });
     const pkgDir = deps.packageDir ?? packageDir;
     const pkgName = ownPackageName(pkgDir);
     const cwd = deps.cwd ?? process.cwd();

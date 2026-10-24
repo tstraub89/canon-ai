@@ -17,14 +17,15 @@ import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { isPlanCombined, type TaskSize } from '../lib/pipeline-policy.js';
 import { renderTaskTemplate, resolveTaskTemplateSource, tasksRoot, templatesRoot } from './templates.js';
+import { handlePreScan, type ArgDeclaration } from '../lib/cli-args.js';
 
 export { taskTemplateOverrideRoot } from './templates.js';
 
 const VALID_PHASES = new Set<string>(PHASE_ORDER);
-const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
+export const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
 export const VALID_VERDICTS = new Set<string>(['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap', 'sanctioned']);
 const REVIEW_PHASES = new Set<string>(['spec_review', 'code_review']);
-const SETTABLE_FIELDS = ['title', 'task_size', 'delicate', 'worktree', 'base_branch', 'human_spec_gate'] as const;
+export const SETTABLE_FIELDS = ['title', 'task_size', 'delicate', 'worktree', 'base_branch', 'human_spec_gate'] as const;
 const SETTABLE_FIELD_SET = new Set<string>(SETTABLE_FIELDS);
 const IMMUTABLE_FIELDS = new Set<string>(['id', 'created', 'updated']);
 const REDIRECT_MESSAGES: Record<string, string> = {
@@ -44,22 +45,33 @@ function today(): string {
     return new Date().toISOString().slice(0, 10);
 }
 
-function usage(): string {
-    return [
-        'Usage: canon task <command> [args]',
-        '',
-        'Commands:',
-        '  new <TASK-ID> <title> [--base <branch>]',
-        '  list',
-        '  status <TASK-ID>',
-        '  phase <TASK-ID> <phase> <status> [verdict]',
-        '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]',
-        '  set <TASK-ID> <field> <value>',
-        '  reset-spec-review <TASK-ID>',
-        '  reset-code-review <TASK-ID>',
-        '  post-merge-sync [<branch>]',
-    ].join('\n');
-}
+export const TASK_USAGE = [
+    'Usage: canon task <subcommand> [args]', '', 'Subcommands:',
+    '  new <TASK-ID> <title> [--base <branch>]   Create tasks/<id>/ from .canon/templates/',
+    '  list                                      Show all tasks and their current phase',
+    '  status <TASK-ID>                          Show full status.json detail',
+    '  phase <TASK-ID> <phase> <status> [verdict] Update a phase and its derived status',
+    '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]  Accept implementation or sanction a review',
+    '  set <TASK-ID> <field> <value>              Set task metadata',
+    '  reset-spec-review <TASK-ID>                Reset an auto-blocked spec review',
+    '  reset-code-review <TASK-ID>                Reset an auto-blocked code review',
+    '  post-merge-sync [<branch>]                 Reconcile local branch after squash merge',
+    '', "Run 'canon task <subcommand> --help' for details.",
+].join('\n');
+export const TASK_ARGS: ArgDeclaration = { command: 'task', usage: TASK_USAGE, booleanFlags: [], valueFlags: [] };
+const noTaskFlags = { booleanFlags: [] as readonly string[], valueFlags: [] as readonly string[] };
+export const TASK_SUBCOMMAND_ARGS: Readonly<Record<string, ArgDeclaration>> = {
+    new: { command: 'task new', usage: 'Usage: canon task new <TASK-ID> <title> [--base <branch>]\n\nCreate a task directory from .canon/templates/. The base branch is auto-detected from the current checkout; --base overrides it.', booleanFlags: [], valueFlags: ['--base'], equalsValueFlags: ['--base'], freeTextSlots: [1] },
+    list: { command: 'task list', usage: 'Usage: canon task list\n\nShow all tasks and their current phase.', ...noTaskFlags },
+    status: { command: 'task status', usage: 'Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.', ...noTaskFlags },
+    phase: { command: 'task phase', usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]\n\nPhases: ${PHASE_ORDER.join(' | ')}\nPipeline phases (in order): ${PHASE_ORDER.join(' → ')}\nStatuses: ${[...VALID_STATUSES].join(' | ')}\nVerdicts: ${[...VALID_VERDICTS].join(' | ')}\n(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags },
+    accept: { command: 'task accept', usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ['--force'], valueFlags: ['--reason'] },
+    set: { command: 'task set', usage: `Usage: canon task set <TASK-ID> <field> <value>\n\nSettable fields: ${SETTABLE_FIELDS.join(', ')}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2] },
+    'reset-spec-review': { command: 'task reset-spec-review', usage: 'Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.', ...noTaskFlags },
+    'reset-code-review': { command: 'task reset-code-review', usage: 'Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.', ...noTaskFlags },
+    'post-merge-sync': { command: 'task post-merge-sync', usage: 'Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.', ...noTaskFlags },
+};
+function usage(): string { return TASK_USAGE; }
 
 export function validateTaskId(id: string): void {
     if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -178,7 +190,7 @@ function printCreatedTask(taskId: string, taskDir: string, baseBranch: string): 
     console.log(`  Adjust with: canon task set ${taskId} <field> <value>`);
 }
 
-export function taskNew(args: string[]): void {
+export function parseTaskNewArgs(args: readonly string[]): { id: string; title: string; baseBranch: string } {
     let id = '';
     let title = '';
     let baseBranch = '';
@@ -204,6 +216,12 @@ export function taskNew(args: string[]): void {
     if (!id || !title) {
         throw new Error('Error: usage: canon task new <TASK-ID> <title> [--base <branch>]');
     }
+    return { id, title, baseBranch };
+}
+
+export function taskNew(args: string[]): void {
+    const { id, title, baseBranch: parsedBaseBranch } = parseTaskNewArgs(args);
+    let baseBranch = parsedBaseBranch;
     validateTaskId(id);
     if (title.includes('\n')) {
         throw new Error('Error: title must be single-line (no embedded newlines).');
@@ -1608,9 +1626,37 @@ export function taskSet(args: string[]): void {
     );
 }
 
+export function parseTaskAcceptArgs(rest: readonly string[]): { ids: string[]; phase: string; force: boolean; reason: string | undefined } {
+    const force = rest.includes('--force');
+    let reason: string | undefined;
+    const positional: string[] = [];
+    for (let i = 0; i < rest.length; i += 1) {
+        const arg = rest[i];
+        if (arg === '--force') continue;
+        if (arg === '--reason') {
+            reason = rest[i + 1];
+            i += 1;
+            continue;
+        }
+        positional.push(arg);
+    }
+    if (positional.length < 2) {
+        throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
+    }
+    return { ids: positional.slice(0, -1), phase: positional[positional.length - 1], force, reason };
+}
+
 export function taskCmd(args: string[]): void {
     const [subcommand, ...rest] = args;
     try {
+        if (subcommand === '--help' || subcommand === '-h') {
+            console.log(TASK_USAGE);
+            return;
+        }
+        const decl = subcommand && Object.hasOwn(TASK_SUBCOMMAND_ARGS, subcommand)
+            ? TASK_SUBCOMMAND_ARGS[subcommand]
+            : undefined;
+        if (decl) handlePreScan(decl, rest, { out: console.log, err: console.error, exit: code => process.exit(code) });
         assertManagedInvocationRoot();
         switch (subcommand) {
             case 'new':
@@ -1629,26 +1675,8 @@ export function taskCmd(args: string[]): void {
                 taskSet(rest);
                 break;
             case 'accept': {
-                const force = rest.includes('--force');
-                let reason: string | undefined;
-                const positional: string[] = [];
-                for (let i = 0; i < rest.length; i += 1) {
-                    const arg = rest[i];
-                    if (arg === '--force') continue;
-                    if (arg === '--reason') {
-                        reason = rest[i + 1];
-                        i += 1;
-                        continue;
-                    }
-                    positional.push(arg);
-                }
-                if (positional.length < 2) {
-                    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]');
-                }
-                // Last positional arg is the phase; everything before is a task ID.
-                const acceptPhase = positional[positional.length - 1];
-                const acceptIds = positional.slice(0, -1);
-                taskAccept(acceptIds, acceptPhase, { force, reason });
+                const parsed = parseTaskAcceptArgs(rest);
+                taskAccept(parsed.ids, parsed.phase, { force: parsed.force, reason: parsed.reason });
                 break;
             }
             case 'reset-spec-review':

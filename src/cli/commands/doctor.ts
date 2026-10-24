@@ -9,6 +9,10 @@ import { gatherRunContext, isStatusJson } from '../../orchestrator/run-context.j
 import { type StatusJson } from '../../orchestrator/types.js';
 import { CANON_RUNTIME_GITIGNORE_PATTERNS } from '../../lib/canon-block.js';
 import { isAvailable } from '../deps.js';
+import { handlePreScan, type ArgDeclaration } from '../../lib/cli-args.js';
+
+export const DOCTOR_USAGE = 'Usage: canon doctor\n\nVerify environment and canon setup.';
+export const DOCTOR_ARGS: ArgDeclaration = { command: 'doctor', usage: DOCTOR_USAGE, booleanFlags: [], valueFlags: [] };
 
 interface Check {
     label: string;
@@ -716,7 +720,8 @@ export function checkDocsFreshness(cwd: string): Check {
     return { label, status: warnings.length ? 'warn' : 'pass', detail: [detail, ...warnings].join('; ') };
 }
 
-export function doctorCmd(_args: string[]): void {
+export function doctorCmd(args: string[]): void {
+    handlePreScan(DOCTOR_ARGS, args, { out: console.log, err: console.error, exit: code => process.exit(code) });
     const cwd = process.cwd();
 
     const envChecks: Check[] = [

@@ -9,6 +9,23 @@ import { deriveTopLevelStatus } from '../../orchestrator/state.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type Verdict, type StatusJson } from '../../orchestrator/types.js';
 import { formatAge } from './doctor.js';
 import { STOP_WAIT_DEFAULT_MS, STOP_WAIT_POLL_INTERVAL_MS, waitForHeartbeat } from './stop.js';
+import { preScanArgs, type ArgDeclaration, unknownOptionMessage } from '../../lib/cli-args.js';
+
+export const WATCH_USAGE = [
+    'Usage: canon watch <task-id> [--until <phase>] [--timeout <dur>] [--follow|-f]',
+    '',
+    'Blocks on an already-detached run until the orchestrator settles, then prints one final summary line to stdout.',
+    'Progress and log tailing go to stderr.',
+    'Exit codes: 0 healthy stop/until, 2 usage/nothing-to-watch/read-error/ambiguous_pid/launch-window-timeout,',
+    '            3 auto-block, 4 death, 5 timeout.',
+    'Summary line: state=<state> reason=<reason> [phase=<phase>] [verdict=<verdict>] [pid=<pid>]',
+    'Reasons: checkpoint, complete, auto_block, step_done, death, timeout, until, nothing_to_watch,',
+    '         launch_window_timeout, ambiguous_pid, read_error, usage_error.',
+].join('\n');
+export const WATCH_ARGS: ArgDeclaration = {
+    command: 'watch', usage: WATCH_USAGE,
+    booleanFlags: ['--follow', '-f'], valueFlags: ['--until', '--timeout'], equalsValueFlags: ['--timeout'],
+};
 
 const WATCH_POLL_INTERVAL_MS = 3_000;
 
@@ -86,7 +103,7 @@ export interface WatchCmdDeps {
     pollIntervalMs?: number;
 }
 
-interface ParsedWatchArgs {
+export interface ParsedWatchArgs {
     taskId: string;
     follow: boolean;
     untilPhase: Phase | null;
@@ -206,14 +223,7 @@ function emitSummary(stdout: (s: string) => void, summary: SummaryLine): void {
 }
 
 function printUsage(stderr: (s: string) => void): void {
-    stderr('Usage: canon watch <task-id> [--until <phase>] [--timeout <dur>] [--follow|-f]');
-    stderr('');
-    stderr('  Blocks until the detached orchestrator settles, then prints one summary line.');
-    stderr('  Exit codes: 0 healthy stop/until, 2 usage/nothing-to-watch/read-error/ambiguous_pid/launch-window-timeout,');
-    stderr('              3 auto-block, 4 death, 5 timeout.');
-    stderr('  Summary line: state=<state> reason=<reason> [phase=<phase>] [verdict=<verdict>] [pid=<pid>]');
-    stderr('  Reasons: checkpoint, complete, auto_block, step_done, death, timeout, until, nothing_to_watch,');
-    stderr('           launch_window_timeout, ambiguous_pid, read_error, usage_error.');
+    stderr(WATCH_USAGE);
 }
 
 function parseDurationMs(raw: string): number | null {
@@ -226,7 +236,7 @@ function parseDurationMs(raw: string): number | null {
     return null;
 }
 
-function parseWatchArgs(args: string[]): ParsedWatchArgs {
+export function parseWatchArgs(args: string[]): ParsedWatchArgs {
     let taskId: string | null = null;
     let follow = false;
     let untilPhase: Phase | null = null;
@@ -688,10 +698,17 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
     const waitTimeoutMs = deps.waitTimeoutMs ?? STOP_WAIT_DEFAULT_MS;
     const isOrchestratorAlive = (pid: number): boolean => probePidAlive(pid, deps.probeAliveImpl);
 
+    const preScan = preScanArgs(WATCH_ARGS, args);
+    if (preScan.kind === 'help') {
+        stdout(`${WATCH_USAGE}\n`);
+        return exit(0);
+    }
+
     const parsed = parseWatchArgs(args);
     if (parsed.usageError) {
         printUsage(stderr);
-        stderr(`canon watch: ${parsed.usageError}\n`);
+        const pointer = preScan.kind === 'unknown' ? `\n${unknownOptionMessage('watch', preScan.argument).split('\n')[1]}` : '';
+        stderr(`canon watch: ${parsed.usageError}${pointer}\n`);
         emitSummary(stdout, { state: 'usage', reason: 'usage_error' });
         return exit(2);
     }

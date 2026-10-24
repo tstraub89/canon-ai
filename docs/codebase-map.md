@@ -43,7 +43,8 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | `canon stop` command | `src/cli/commands/stop.ts` | Gracefully terminates detached run; SIGTERM → SIGKILL; CASE A–D pid selection |
 | `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, task-quality-log header, and canon discovery nudge (warns when neither file exists or neither mentions canon) |
 | Canon runtime `.gitignore` block | `src/lib/canon-block.ts`, `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts`, `src/cli/commands/doctor.ts` | canon manages a `# canon:start`/`# canon:end` block in `.gitignore`; `canon upgrade` refreshes it. |
-| CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()`, top-level `switch` dispatch for all `canon` commands |
+| CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()` (command summary only; each command's usage lives with its declaration), top-level `switch` dispatch for all `canon` commands |
+| CLI argument declarations | `src/lib/cli-args.ts` | Argument declarations, help/unknown pre-scan, and shared message builders |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `src/lib/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
 | Task management helper (status.json updates, phase transitions) | `src/task/index.ts` | `taskCmd()` implementation; `src/cli/commands/task.ts` is the thin CLI wrapper |
@@ -127,6 +128,7 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Docs refs validator | `scripts/docs-refs-check.mjs` | Markdown reference gate; run via `npm run docs-refs-check` |
 | Docs refs config | `scripts/docs-refs-config.mjs` | Adopter-owned tuning surface loaded by `scripts/docs-refs-check.mjs`; canon-ai-dev re-adds `templates/` here so its own gate still scans templates. |
 | Canon-managed template sync | `tests/sync-canon-templates.test.ts` | Sync direction, delimiter preservation, CLI check, hook regression |
+| CLI argument tests | `tests/cli-args.test.ts` | Pre-scan behavior and declaration/usage/parser agreement |
 | CLI integration tests | `tests/cli.test.ts` | `canon upgrade`, `canon init`, canon-block extraction and upsert |
 | Orchestrator harness tests | `tests/run-task-harness.test.ts` | Affected-files extraction, AC summary, validation checks extraction |
 | Task CLI tests | `tests/task-cli.test.ts` | `canon task` subcommand dispatch and argument validation |
@@ -178,7 +180,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `src/lib/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
 
 **Add a new review verdict**:
-> `src/orchestrator/types.ts` (`Verdict` union) → `src/task/index.ts` (`VALID_VERDICTS` + `assertValidVerdict()` — the runtime validator diverges from the type union by design) → `src/cli/index.ts` (help text) → `src/orchestrator/validation.ts` (`extractCheckedVerdict()` regex) — all four. TypeScript compiles cleanly with only the first; `canon task phase … <new_verdict>` then fails at runtime with "unknown verdict".
+> `src/orchestrator/types.ts` (`Verdict` union) → `src/task/index.ts` (`VALID_VERDICTS` + `assertValidVerdict()` — the runtime validator diverges from the type union by design; `task phase` usage renders the verdict list) → `src/orchestrator/validation.ts` (`extractCheckedVerdict()` regex) — all three. TypeScript compiles cleanly with only the first; `canon task phase … <new_verdict>` then fails at runtime with "unknown verdict".
 
 **Add a new task-template field or section**:
 > `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `src/orchestrator/validation.ts`) → per-phase prompt templates in `src/orchestrator/prompts/templates/`
