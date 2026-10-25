@@ -1,7 +1,7 @@
 {
   "id": "reroute-from-implement",
   "title": "Allow --reroute once implementation has begun",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-25",
   "updated": "2026-10-25",
   "branch": "task/reroute-from-implement",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
