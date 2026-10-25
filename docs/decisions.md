@@ -489,3 +489,12 @@ The `/canon-spec-review` sub-agents now run under one read-only `spec-review-len
 **Why**: Every non-full-send task otherwise needed a manual base push before opening its PR. This reverses the non-goal in `tasks/_archive/full-send-tail-push-and-watch/spec.md`, which treated `--full-send` as the only consent to push scaffold commits to base.
 
 **Rule**: The unchanged classifier and the all-or-nothing rule provide the safety: an operator commit prevents the entire push, and the push uses the checked tip SHA. Repos whose main accepts only PRs should use a pushable feature or integration branch as the task's base, or rely on `--allow-divergent-base` and the squash merge. That override tolerates a rejected scaffold push to an existing base; it cannot bypass a missing remote base. `--ship` does not push the scaffold to base.
+
+
+## Human reroute once implementation has begun (2026-10)
+
+**Decision**: `--reroute` admits every named task at `code_review`, `qa`, or `human_review` (any status or verdict), or at `implement` when implement is `in_progress` or `blocked`, code_review is `blocked`, or either code_review current-loop counter (`iterations_current_loop` or `preflight_rejections_current_loop`) is positive. Missing or non-numeric counters provide no activity evidence. Implement `pending` with no blocked code review and no current-loop activity remains excluded, as do `spec`, `spec_review`, `plan`, and `complete`.
+
+**Why**: This reverses the “No reroute from implement” Non-Goal of `relax-reroute-gate-post-implement`. Its workaround hand-marked implement done, faking phase history into the same half-written state it sought to avoid. Route-back after review and the loop-cap auto-block also rest at implement entry, where implementation has already happened. `guardConcurrentRun()` already prevents rerouting a live run. Reroute leaves uncommitted source edits intact; prompts must cover unfinished original and earlier-amendment work alongside the newest amendment and account for dirty files in the handoff.
+
+**Rule**: One shared predicate governs admission and the spec-gate recovery note. Keep the all-task bundle gate and the narrower spec_gap exemption unchanged; a mixed spec_gap/implement-entry bundle requires amendments for every task. Reroute adds no git operations or persisted entry-phase field.

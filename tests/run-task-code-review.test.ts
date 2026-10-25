@@ -838,6 +838,8 @@ void test('review-loop recovery reasons keep invariant details while deriving st
 
     for (const reason of [codePending.reason, codeDone.reason]) {
         assert.match(reason, /Read tasks\/<id>\/review\.md/);
+        assert.match(reason, /If the spec itself needs to change, add the next Amendment section.*canon run task-a --reroute/);
+        assert.match(reason, /canon task reset-code-review task-a/);
         assert.match(reason, /Validation Outcomes rows using prose labels instead of backticked check keys/);
         assert.match(reason, /accepts the current implementation as-is/);
         assert.match(reason, /enters `code_review` without another implementation pass/);

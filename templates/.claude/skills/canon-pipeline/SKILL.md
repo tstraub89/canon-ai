@@ -147,7 +147,7 @@ Tasks land on the default branch; no version numbers, no CHANGELOG, no tags.
 
 ### 6. Reroute after review feedback
 
-`--reroute` is allowed from any phase reached after a completed `implement` round: `code_review`, `qa`, or `human_review` — for any status or verdict on that phase.
+`--reroute` is allowed once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection).
 
 **Deciding to reroute a task is a human decision, not something an agent driving canon infers on its own** — even under `--full-send` or another autonomous mode, get an explicit human decision before invoking `--reroute`.
 

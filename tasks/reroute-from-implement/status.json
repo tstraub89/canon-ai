@@ -1,10 +1,10 @@
 {
   "id": "reroute-from-implement",
   "title": "Allow --reroute once implementation has begun",
-  "status": "implement",
+  "status": "code_review",
   "created": "2026-10-25",
   "updated": "2026-10-25",
-  "branch": "",
+  "branch": "task/reroute-from-implement",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,7 +41,7 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
@@ -65,7 +65,8 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a17333-1d29-7222-a911-82ac752ce187"
+    "codex_spec_review": "01a17333-1d29-7222-a911-82ac752ce187",
+    "codex": "01a1733d-f58b-75c3-bbd2-4b9ab11b6546"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

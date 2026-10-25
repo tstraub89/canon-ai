@@ -438,6 +438,24 @@ export function deriveTopLevelStatus(status: StatusJson): CurrentPhase {
     return 'complete';
 }
 
+// Missing, malformed, or non-positive current-loop counters provide no activity evidence.
+export function currentLoopCount(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+export function isRerouteAdmitted(status: StatusJson): boolean {
+    const phase = deriveTopLevelStatus(status);
+    if (phase === 'code_review' || phase === 'qa' || phase === 'human_review') return true;
+    if (phase !== 'implement') return false;
+    const implementStatus = status.phases.implement?.status;
+    const codeReview = status.phases.code_review;
+    return implementStatus === 'in_progress'
+        || implementStatus === 'blocked'
+        || codeReview?.status === 'blocked'
+        || currentLoopCount(codeReview?.iterations_current_loop) > 0
+        || currentLoopCount(codeReview?.preflight_rejections_current_loop) > 0;
+}
+
 export function writeStatus(taskId: string, status: StatusJson): void {
     writeStatusToFile(statusFileFor(taskId), status);
 }

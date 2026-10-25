@@ -2780,12 +2780,6 @@ function shipTasks(taskIds: string[]): void {
 
 // ── Reroute ────────────────────────────────────────────────────────────────
 
-const REROUTE_ADMITTED_PHASES: ReadonlySet<CurrentPhase> = new Set([
-    'code_review',
-    'qa',
-    'human_review',
-]);
-
 export function rerouteAmendmentHeading(status: StatusJson): { round: number; heading: string } {
     const round = (status.phases.implement?.reroute_count ?? 0) + 1;
     return { round, heading: round === 1 ? '## Amendment' : `## Amendment Round ${round}` };
@@ -2793,6 +2787,16 @@ export function rerouteAmendmentHeading(status: StatusJson): { round: number; he
 
 function describeRerouteEntryPhase(status: StatusJson): string {
     const phase = getCurrentPhase(status);
+    if (phase === 'implement') {
+        const implementStatus = status.phases.implement?.status ?? 'pending';
+        const codeReview = status.phases.code_review;
+        const details = [`code_review ${codeReview?.status ?? 'pending'}`];
+        const rounds = splitState.currentLoopCount(codeReview?.iterations_current_loop);
+        const preflight = splitState.currentLoopCount(codeReview?.preflight_rejections_current_loop);
+        if (rounds > 0) details.push(`${rounds} review round${rounds === 1 ? '' : 's'} this loop`);
+        if (preflight > 0) details.push(`${preflight} pre-flight rejection${preflight === 1 ? '' : 's'} this loop`);
+        return `implement ${implementStatus} (${details.join(', ')})`;
+    }
     if (phase === 'code_review') {
         const codeReviewStatus = status.phases.code_review?.status ?? 'pending';
         const verdict = getVerdict(status, 'code_review');
@@ -2809,19 +2813,21 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
     });
     const someSpecGap = entryStatuses.some(({ status }) => getVerdict(status, 'code_review') === 'spec_gap');
     const isSpecGapReroute = allCodeReviewBlocked && someSpecGap;
-    const allAdmitted = entryStatuses.every(({ status }) => REROUTE_ADMITTED_PHASES.has(getCurrentPhase(status)));
+    const allAdmitted = entryStatuses.every(({ status }) => splitState.isRerouteAdmitted(status));
     if (!allAdmitted) {
         const summary = entryStatuses
             .map(({ taskId, status }) => {
                 const currentPhase = getCurrentPhase(status);
+                if (currentPhase === 'implement') return `'${taskId}': ${describeRerouteEntryPhase(status)}`;
                 const verdict = getVerdict(status, 'code_review') || 'none';
                 const codeReviewStatus = status.phases.code_review?.status ?? 'missing';
                 return `'${taskId}': ${currentPhase} (code_review ${codeReviewStatus}, verdict ${verdict})`;
             })
             .join(', ');
         splitCli.die(
-            `--reroute requires every named task's current phase to be code_review, qa, or human_review — ` +
-            `a phase reached only after a completed implement round. ` +
+            `--reroute requires implementation to have begun on every named task: current phase code_review, qa, or human_review; ` +
+            `or implement once implementation has begun — implement in progress or blocked, a blocked code review, ` +
+            `or a code review already run in the current loop (a review round or a pre-flight rejection). ` +
             `Current state: ${summary}`
         );
     }

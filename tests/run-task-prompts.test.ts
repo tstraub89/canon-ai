@@ -533,6 +533,11 @@ void test('promptImplementReroute', () => {
     recordOrAssert('promptImplementReroute', actual);
 });
 
+void test('promptImplementReroute_resumed', () => {
+    const actual = normalize(promptImplementReroute(rerouteState, true, [], 'main'));
+    recordOrAssert('promptImplementReroute_resumed', actual);
+});
+
 // Regression: a bundle of tasks at mixed reroute counts must NOT receive a single
 // bundle-wide round number in the banner (Codex P2 — anchoring problem: task A
 // entering reroute #1 was previously told the bundle was on "round 3 / reroute #2"
