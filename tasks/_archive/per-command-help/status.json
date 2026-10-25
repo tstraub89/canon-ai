@@ -1,9 +1,9 @@
 {
   "id": "per-command-help",
   "title": "Per-command --help and unknown-flag rejection across the canon CLI",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-24",
-  "updated": "2026-10-24",
+  "updated": "2026-10-25",
   "branch": "task/per-command-help",
   "base_branch": "main",
   "canon": {
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
