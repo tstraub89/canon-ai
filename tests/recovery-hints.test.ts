@@ -11,7 +11,18 @@ type HintSite =
   | { file: string; snippet: string; kind: 'exempt'; reason: string };
 const HINT_PATTERN = /--reroute|reset-code-review|reset-spec-review|canon task accept/;
 const HINT_SITES: readonly HintSite[] = [
-
+  {
+    file: 'src/orchestrator/main.ts',
+    snippet: "        splitCli.die(`Reroute must name every task of a shared-branch bundle: ${shared}. Nothing was changed. Name every bundle task in one reroute: canon run ${allIds.join(' ')} --reroute`);",
+    kind: 'actionable',
+    covers: [{ state: 'partial shared-branch bundle reroute', test: 'reroute refuses a partial shared-branch bundle and accepts the printed whole-bundle command' }],
+  },
+  {
+    "file": "src/orchestrator/review-loop.ts",
+    "snippet": "`If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md (the task worktree's copy when the task has one) and run canon run ${taskIds.join(' ')} --reroute instead (the reroute pre-flight names the exact heading it expects). ` +",
+    "kind": "actionable",
+    "covers": [{ "state": "implement-entry loop cap", "test": "code loop cap at implement entry: the printed reroute is accepted" }],
+  },
   {
     file: 'src/orchestrator/cli.ts',
     snippet: "    booleanFlags: ['--interactive', '-I', '--step', '-1', '--pr', '--push', '--full-send', '--force', '--allow-divergent-base', '--ship', '--dry-run', '--reroute'],",
@@ -52,7 +63,7 @@ const HINT_SITES: readonly HintSite[] = [
   },
   {
     "file": "src/orchestrator/cli.ts",
-    "snippet": "    '  --reroute           Reset a task from any phase reached after a completed implement round',",
+    "snippet": "    '  --reroute           Reset a task once implementation has begun: current phase code_review,',",
     "kind": "exempt",
     "reason": "Not an actionable recovery hint: usage, help, or argv handling"
   },
@@ -100,7 +111,7 @@ const HINT_SITES: readonly HintSite[] = [
   },
   {
     "file": "src/orchestrator/main.ts",
-    "snippet": "`--reroute requires every named task's current phase to be code_review, qa, or human_review — ` +",
+    "snippet": "`--reroute requires implementation to have begun on every named task: current phase code_review, qa, or human_review; ` +",
     "kind": "exempt",
     "reason": "Not an actionable recovery hint: descriptive state, audit, or pointer text"
   },
@@ -397,12 +408,6 @@ const HINT_SITES: readonly HintSite[] = [
     "snippet": "throw new Error(`Error: reset-code-review only operates on tasks currently at code_review. Current phase: ${currentPhase}.`);",
     "kind": "exempt",
     "reason": "Not an actionable recovery hint: refusal or abort explains a rejected invocation"
-  },
-  {
-    "file": "src/task/index.ts",
-    "snippet": "// `canon run --reroute` is accepted.",
-    "kind": "exempt",
-    "reason": "Not an actionable recovery hint: source comment stripped from runtime output"
   },
   {
     "file": "src/task/index.ts",
@@ -1115,4 +1120,39 @@ void test('code loop cap at code_review entry: the printed reset-code-review is 
   const resetPhases = resetStatus.phases as Record<string, { status: string }>;
   assert.equal(resetPhases.code_review.status, 'pending');
   assert.equal(resetPhases.implement.status, 'done');
+}));
+
+void test('code loop cap at implement entry: the printed reroute is accepted', () => withTempDir(dir => {
+  const cwd = makeRepo(dir);
+  git(cwd, 'checkout', '-b', 'task/code-cap');
+  const tasks = fixtureTask(cwd, 'code-cap', 0, '');
+  const status = endStatus(tasks, 'code-cap');
+  const phases = status.phases as Record<string, Record<string, unknown>>;
+  phases.implement.status = 'pending';
+  phases.code_review = {
+    status: 'pending', agent: 'claude', verdict: '', iterations: 3, iterations_current_loop: 3,
+    iterations_total: 3, preflight_rejections_current_loop: 0,
+  };
+  assert.equal(derive(status), 'implement');
+  writeStatus(tasks, 'code-cap', status);
+  const blockedRun = runLoopCap(cwd, tasks, 'code-cap', 'implement');
+  assert.equal(blockedRun.status, 2, blockedRun.stderr + blockedRun.stdout);
+  const blocked = endStatus(tasks, 'code-cap');
+  const blockedPhases = blocked.phases as Record<string, Record<string, unknown>>;
+  assert.equal(derive(blocked), 'implement');
+  assert.equal(blockedPhases.implement.status, 'pending');
+  assert.equal(blockedPhases.code_review.status, 'blocked');
+  assert.equal(blockedPhases.code_review.verdict, '');
+  const reason = ((blocked.escalations) as Array<{ reason: string }>).at(-1)?.reason ?? '';
+  const command = reason.match(/canon run code-cap --reroute/)?.[0];
+  assert.ok(command, reason);
+  assert.match(reason, /canon task reset-code-review code-cap/);
+  fs.appendFileSync(path.join(tasks, 'code-cap/spec.md'), '\n## Amendment\n\nRevise the approach.\n');
+  const rerouted = runPrinted(command, cwd, tasks, 'code-cap');
+  assert.equal(rerouted.status, 0, rerouted.stdout + rerouted.stderr);
+  assert.match(rerouted.stdout, /Rerouting: implement pending \(code_review blocked/);
+  const updated = endStatus(tasks, 'code-cap').phases as Record<string, Record<string, unknown>>;
+  assert.equal(updated.implement.rerouted, true);
+  assert.equal(updated.implement.reroute_count, 1);
+  assert.equal(updated.code_review.iterations_current_loop, 0);
 }));

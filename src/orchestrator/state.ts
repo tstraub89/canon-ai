@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { die } from './cli.js';
 import { REPO_ROOT, TASKS_DIR, WORKTREES_ROOT } from './env.js';
-import { PHASE_ORDER, type CurrentPhase, type Phase, type SessionSlot, type StatusJson } from './types.js';
+import { PHASE_ORDER, type CurrentPhase, type Phase, type PhaseEntry, type SessionSlot, type StatusJson } from './types.js';
 
 export function effectiveWorktreesRoot(): string {
     // Anchor a relative CANON_WORKTREES_ROOT on the supervising checkout
@@ -436,6 +436,29 @@ export function deriveTopLevelStatus(status: StatusJson): CurrentPhase {
         if (phaseStatus !== 'done') return phase;
     }
     return 'complete';
+}
+
+// Missing, malformed, or non-positive current-loop counters provide no activity evidence.
+export function currentLoopCount(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+// An absent or null current-loop field falls back to legacy iterations.
+export function currentLoopReviewRounds(codeReview: PhaseEntry | undefined): number {
+    return currentLoopCount(codeReview?.iterations_current_loop ?? codeReview?.iterations);
+}
+
+export function isRerouteAdmitted(status: StatusJson): boolean {
+    const phase = deriveTopLevelStatus(status);
+    if (phase === 'code_review' || phase === 'qa' || phase === 'human_review') return true;
+    if (phase !== 'implement' || !status.phases.implement) return false;
+    const implementStatus = status.phases.implement.status;
+    const codeReview = status.phases.code_review;
+    return implementStatus === 'in_progress'
+        || implementStatus === 'blocked'
+        || codeReview?.status === 'blocked'
+        || currentLoopReviewRounds(codeReview) > 0
+        || currentLoopCount(codeReview?.preflight_rejections_current_loop) > 0;
 }
 
 export function writeStatus(taskId: string, status: StatusJson): void {

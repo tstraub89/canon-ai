@@ -350,7 +350,8 @@ void test('reroute prompts mark reroute_exempt siblings exempt instead of direct
     assert.match(planOutput, /EXCEPT tasks whose line above marks them EXEMPT/);
     assert.ok(planOutput.indexOf('Feasibility check') > planOutput.indexOf('EXCEPT tasks whose line above marks them EXEMPT'));
     assert.ok(planOutput.indexOf('Feasibility check') < planOutput.indexOf('Do **not** rewrite'));
-    assert.match(planOutput, /### Delta/);
+    assert.match(planOutput, /### Round Scope/);
+    assert.doesNotMatch(planOutput, /### Delta/);
     assert.doesNotMatch(outputLineFor(planOutput, exemptId), /Feasibility|Real path/);
 
     const implementOutput = normalize(promptImplementReroute(state, false, [], 'main'));
@@ -395,6 +396,34 @@ for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
     });
 }
 
+for (const builder of ['plan', 'implement'] as const) {
+    for (const withArchive of [true, false]) {
+        void test(`non-exempt ${builder} reroute archive pointer (${withArchive ? 'with archive' : 'no archive'})`, () => {
+            const taskId = `test-pf-archive-${builder}-${String(withArchive)}`;
+            const task = makeReroutedTask(taskId, 2);
+            const taskDir = path.join(tmpRoot, taskId);
+            fs.mkdirSync(taskDir, { recursive: true });
+            fs.writeFileSync(path.join(taskDir, 'status.json'), JSON.stringify(task.status));
+            if (withArchive) {
+                fs.writeFileSync(path.join(taskDir, 'review-prior-2.md'), reviewTemplate);
+                fs.writeFileSync(path.join(taskDir, 'review-prior-10.md'), reviewTemplate);
+            }
+            const output = builder === 'plan'
+                ? promptPlan(makeState(task))
+                : promptImplementReroute(makeState(task), false, [], 'main');
+            const line = outputLineFor(normalize(output), taskId);
+            if (withArchive) {
+                assert.ok(line.includes(`tasks/${taskId}/review-prior-10.md`), line);
+                assert.doesNotMatch(line, /review-prior-2\.md/);
+                assert.match(line, /read it; its unresolved findings remain binding unless the amendment supersedes them/);
+                assert.match(line, /optional nits are not/);
+            } else {
+                assert.doesNotMatch(line, /review-prior|archived/i);
+            }
+        });
+    }
+}
+
 void test('promptImplement_fresh', () => {
     const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));
     recordOrAssert('promptImplement_fresh', actual);
@@ -404,7 +433,7 @@ void test('implement prompts state red-first evidence and pre-fix commit', () =>
     const fresh = promptImplement(baseState, 'fresh', [], 'main');
     const revisions = promptImplementRevisions(iterState, [], 'main');
     const reroute = promptImplementReroute(rerouteState);
-    for (const [prompt, phrase] of [[fresh, /base commit/], [revisions, /HEAD before this round’s edits/], [reroute, /HEAD before this round’s edits/]] as const) {
+    for (const [prompt, phrase] of [[fresh, /base commit/], [revisions, /HEAD before this round’s edits/], [reroute, /committed HEAD/]] as const) {
         assert.match(prompt, /Red-First Evidence/);
         assert.match(prompt, phrase);
         assert.doesNotMatch(prompt, /Report the red run/);
@@ -415,6 +444,29 @@ void test('implement prompts state red-first evidence and pre-fix commit', () =>
     assert.match(reroute, /rewritten handoff’s `## Red-First Evidence` table/);
     assert.doesNotMatch(reroute, /this round’s Iteration subsection/);
 });
+
+for (const resumed of [false, true]) {
+    void test(`reroute red-first verifies backups before clearing leftovers (resumed=${resumed})`, () => {
+        const prompt = promptImplementReroute(rerouteState, resumed, [], 'main');
+        const checkpoint = prompt.slice(prompt.indexOf('**Bug/flake-fix red-first checkpoint**'));
+        const verification = checkpoint.indexOf('Confirm every set-aside copy exists');
+        assert.ok(verification >= 0, 'the checkpoint must require backup verification');
+        for (const action of [
+            'restore their paths to committed contents',
+            'remove untracked non-test leftovers from the worktree',
+        ]) {
+            const actionIndex = checkpoint.indexOf(action);
+            assert.ok(actionIndex >= 0, `the checkpoint must direct agents to ${action}`);
+            assert.ok(verification < actionIndex, `verify backups before directing agents to ${action}`);
+        }
+        const redRun = checkpoint.indexOf('Run the red test against that isolated state');
+        const restore = checkpoint.indexOf('restore every set-aside file');
+        const fix = checkpoint.indexOf('before applying the fix');
+        assert.ok(checkpoint.indexOf('remove untracked non-test leftovers from the worktree') < redRun, 'isolate before the red run');
+        assert.ok(redRun < restore && restore < fix, 'restore every set-aside file after the red run and before the fix');
+        assert.match(checkpoint, /re-apply each noted deletion or rename/);
+    });
+}
 
 void test('round-N foreman reads red-first evidence across the whole handoff', () => {
     assert.doesNotMatch(promptCodeReview(baseState), /red-first evidence is read across the whole handoff/);
@@ -531,6 +583,11 @@ void test('promptImplementRevisions selects pre-flight branch when preflight cou
 void test('promptImplementReroute', () => {
     const actual = normalize(promptImplementReroute(rerouteState, false, [], 'main'));
     recordOrAssert('promptImplementReroute', actual);
+});
+
+void test('promptImplementReroute_resumed', () => {
+    const actual = normalize(promptImplementReroute(rerouteState, true, [], 'main'));
+    recordOrAssert('promptImplementReroute_resumed', actual);
 });
 
 // Regression: a bundle of tasks at mixed reroute counts must NOT receive a single
@@ -720,7 +777,7 @@ void test('plan feasibility reaches ordinary, bundle, reroute, and fast-tier com
     const peer = makeTask({ taskId: 'test-pf-bundle', title: 'Bundle peer' });
     const bundle: PipelineState = { tasks: [planState.tasks[0], peer], tier: 'full', isBundle: true };
     assert.match(promptPlan(bundle), /Feasibility check[\s\S]*Approach section/);
-    assert.match(promptPlan(makeState(makeReroutedTask())), /Feasibility check[\s\S]*### Delta/);
+    assert.match(promptPlan(makeState(makeReroutedTask())), /Feasibility check[\s\S]*### Round Scope/);
     for (const state of [
         { ...baseState, tier: 'fast' as const },
         { ...bundle, tier: 'fast' as const },

@@ -55,7 +55,7 @@ After writing all done.md files:
   ```markdown
   ## Quality Log
   - Spec verdict: <the FIRST spec_review verdict this task ever received — approved / approved_with_nits / changes_requested; leave blank only if truly unknown>
-  - Human reroute?: <Yes/No — did the human reject at human_review and force a re-implement? Do not infer this from any reroute counter; if this is a fresh QA pass with no human_review rejection yet, answer No>
+  - Human reroute?: <Yes/No — did the human reroute this task at any phase, forcing rework? Do not infer this from any reroute counter; if this is a fresh QA pass with no human reroute yet, answer No>
   - Dropped ACs: <count of ACs the implementation missed, caught in code review>
   - Validation gaps: <count of validation checks that should have run but did not>
   - Notes: <one-line summary of anything notable — single line, no embedded line breaks>

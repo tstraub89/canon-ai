@@ -23,7 +23,7 @@ The qa → done transition writes or updates this task's quality-log.md fragment
 | Code review iterations | How many code_review rounds before approval |
 | Dropped ACs | Count of ACs that the implementation missed (caught in code review) |
 | Validation gaps | Count of validation checks that should have run but didn't |
-| Human reroute? | Yes/No — did the human reject at human_review and force a re-implement? |
+| Human reroute? | Yes/No — did the human reroute this task at any phase, forcing rework? |
 | Notes | One-line summary of anything notable |
 
 ## Log
