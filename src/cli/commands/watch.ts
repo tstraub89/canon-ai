@@ -223,7 +223,7 @@ function emitSummary(stdout: (s: string) => void, summary: SummaryLine): void {
 }
 
 function printUsage(stderr: (s: string) => void): void {
-    stderr(WATCH_USAGE);
+    stderr(`${WATCH_USAGE}\n`);
 }
 
 function parseDurationMs(raw: string): number | null {

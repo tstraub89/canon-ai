@@ -2593,7 +2593,8 @@ function emitSummary(stdout, summary) {
 `);
 }
 function printUsage(stderr) {
-  stderr(WATCH_USAGE);
+  stderr(`${WATCH_USAGE}
+`);
 }
 function parseDurationMs(raw) {
   const trimmed = raw.trim();

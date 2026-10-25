@@ -1749,6 +1749,7 @@ void test('watch help is successful without a summary, and unknown flags include
     const unknown = runWatchCommand(['t1', '--bogus'], {});
     assert.equal(unknown.exitCode, 2);
     assert.match(unknown.stderr.join(''), /Unknown option: --bogus/);
+    assert.match(unknown.stderr.join(''), /usage_error\.\n/, 'usage block must end with a newline before the error line');
     assert.match(unknown.stderr.join(''), /Run 'canon watch --help' for usage\./);
     assert.match(unknown.stdout.join(''), /state=usage reason=usage_error/);
 
