@@ -180,3 +180,91 @@ Re-fill this table with every AC from spec.md against the latest code. Earlier A
 
 > Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
 -->
+
+## Round 2 — verifying iteration 2's response to round 1
+
+**Scope:** Full — base `main` — reason: delicate
+
+Reviewed HEAD: `b46d23c` (round 1 reviewed `531de25`). The handoff section is `## Iteration 2 — addressing review round 1`.
+
+### Stage 1 — Acceptance Criteria Re-Check
+
+Validation gate: Iteration 2's re-run table has no `Fail` rows. Red-first evidence was read across the whole handoff:
+- baseline rows for AC-1 (`d6c00c3`), AC-A6 (`f17a1d5`) and AC-B4 (`80b7023`);
+- the Iteration 2 row for F1/AC-B5 against `531de25`. The anchored lens reproduced it: both new ordering tests fail on a `531de25` snapshot with only the test applied.
+
+Checks the anchored lens re-ran this round, all passing:
+- the full `npm test`: 1722/1722 pass, 0 skipped, 0 cancelled. This closes round 1's "full suite not re-verified" gap.
+- `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`.
+- `npm run build`: `dist/` stays clean.
+- golden key compares. Against `531de25`, only `promptImplementReroute` and `promptImplementReroute_resumed` changed. Against `main`, one key was added and only the 6 permitted keys changed.
+
+Cold-Codex also reports type-check, tests, template sync and build as completing successfully.
+
+| AC | Status | Notes |
+|---|---|---|
+| AC-1 – AC-8 | Met (unchanged from round 1) | The routing, predicate, tests, operator text and wording sweep are untouched by this iteration. The full suite passes. |
+| AC-9 | Met | Only the red-first paragraph changed. (a)–(d) still hold in the fresh and resumed goldens. |
+| AC-10 | Met | Against `main`: one key added, and only the 6 permitted keys changed. |
+| AC-11, AC-12 | Met (unchanged from round 1) | Docs, help, recovery hints and the decision entry are unchanged. |
+| AC-13 | Met | `sync-templates:check` passes, and a rebuild leaves `dist/` clean. |
+| AC-A1, AC-A2 | Met (unchanged from round 1) | |
+| AC-A3 | Met | Partial-round coverage, the rule to keep carried-forward rows, the isolated pre-fix run, the escape clause and the `[wrong-premise]` clause are all intact. The F1 ordering is fixed. |
+| AC-A4 – AC-A8 | Met (unchanged from round 1) | |
+| AC-A9 | Met | The golden diff against the round-1 implementation commit touches only reroute keys. All gates pass. |
+| AC-B1 – AC-B3 | Met (unchanged from round 1) | B1 logic is unchanged; only a comment was added at `src/orchestrator/main.ts:2816`. |
+| AC-B4 | Met (unchanged from round 1) | The pointer is on every non-exempt line in both builders (`src/orchestrator/prompts/index.ts:288`, `:467`). See nit N9. |
+| AC-B5 | Met | `src/orchestrator/prompts/templates/implement-reroute.md:28` now orders the steps: copy every leftover, verify each copy exists and matches, only then restore tracked paths and move untracked files, confirm before the red run, restore everything after. Pinned for both variants at `tests/run-task-prompts.test.ts:447-462`. |
+| AC-B6 – AC-B8 | Met (unchanged from round 1) | |
+| AC-B9 | Met | Golden changes against `531de25` are limited to the two implement-reroute keys. All gates pass. |
+
+### Verifying Round 1 findings
+
+- _correctness bug:_ "F1 — the red-first set-aside step confirmed the backup only after the destructive restore" → addressed. `src/orchestrator/prompts/templates/implement-reroute.md:28` now verifies every copy before changing any worktree path. The fix is red-first tested on both prompt variants, and `dist/` is rebuilt. ✓ (anchored lens; cold-Claude raised no ordering issue this round)
+- _optional cleanup/nit:_ "N2 — `some()` without a justifying comment" → addressed at `src/orchestrator/main.ts:2816`. ✓
+- _risk/guardrail (non-blocking):_ "R1 — no guard against rerouting part of a shared-branch bundle" → still open as designed, and recorded in the handoff and notes as a follow-up. Cold-Claude flagged it again (medium/high). It stays non-blocking for the round 1 reasons:
+  - the same gap exists on `main` for code_review/qa/human_review members;
+  - Amendment Round 2 deliberately chose to document it rather than enforce it;
+  - enforcing it is a new gate, which is a design decision.
+
+  **Recommend opening a follow-up issue.**
+- _optional:_ N1 and N3–N8 → deferred as optional. Cold-Claude raised N1 (the "approved" sibling wording), N3 (auto-commit "blocks" wording), N4 (archive staleness) and N6 (the `validateStatus`-unreachable null handling, and raw `?? 0` readers) again. None got worse this iteration.
+
+### New findings (only NEW issues introduced by Iteration 2's changes)
+
+No blocking findings. Non-blocking nits:
+
+- **N9 (cold-Codex P2; anchored assessed; verified; non-blocking) — the archive pointer has no "read it" step.** The per-task line from `archivedReviewGuidance` (`src/orchestrator/prompts/index.ts:513`, rendered at `:467` and `:288`) names `review-prior-<n>.md` and says its unresolved findings remain binding.
+  - **What's missing:** no numbered step tells the agent to open that file. The scope definitions (implement-reroute steps 4 and 7, plan-reroute step 6) list only the amendment plus unfinished original or earlier-amendment work. The exempt-sibling line, by contrast, does say "read that file and address ALL findings".
+  - **Why non-blocking:**
+    - AC-B4 requires the prompt to point at the archive and state that it is binding, and the implementation does that.
+    - Implement-reroute step 1 tells the agent to work from the task's entry line, where the pointer sits.
+    - The next code review sees the archive.
+    - The code is unchanged since `531de25`, which round 1 passed for AC-B4.
+  - **Suggested fix, together with N4 (archive staleness):** add a read verb to `archivedReviewGuidance`, and fold "unresolved findings in the archived review named in its entry" into implement step 4 and plan step 6. Scope it to an archive this reroute created, or to blocking findings only, so stale archives and nits-only archives don't add noise.
+- **N10 (anchored + cold-Claude) — the set-aside doesn't cover tracked files the aborted round deleted or renamed.** There is nothing to copy, so restoring to HEAD brings the file back, and "restore every set-aside file" never re-applies the deletion. No content is lost; HEAD's copy comes back. This was already true at `531de25` and is a rare edge case, but it could be stated explicitly.
+- **N11 (anchored) — two rough edges from this iteration's fix:**
+  - Untracked leftovers are now copied and then also "moved out" to unnamed destinations. Once the copy is verified, the second step only needs to remove the file from the worktree.
+  - The new ordering test pins verify-before-clear, but not confirm-before-red-run or restore-after. Only the golden pins those two.
+- **N12 (cold-Claude) — the mid-reroute hint can be wrong for a past reroute.** The AC-B2 hint chooses its wording from `implement.rerouted === true`. A task that was rerouted in the past and later rejected alone as a sibling could get the "mid-reroute" variant. The hint's trailing "name every bundle task in one reroute" sentence covers the realistic case, and AC-B2's own wording uses that flag.
+- **N13 (cold-Claude) — the QA "Human reroute?" definition is stale.** `src/orchestrator/prompts/templates/qa.md:58` still defines it as a rejection at human_review. This was already inaccurate before the task, because reroute was admitted from code_review and qa. The spec explicitly kept it unchanged (Non-Goals: "No change to the `Human reroute?` quality-log metric … or the QA prompt's answer guidance"). It's a candidate for a follow-up together with R1.
+
+### Dismissed Cold Findings
+
+- Dismissed (cold-Claude): "`isRerouteAdmitted` admits implement `in_progress`/`blocked` even when a session failed before any edits" — this is the behaviour the spec chose.
+  - Spec Decision 1 and the AC-1 admit rows list implement `in_progress` and `blocked` unconditionally.
+  - The spec Problem item 2 names agent-session-failure blocks as a motivating case.
+  - Rerouting such a task is a human decision, and the result is a clean re-entry at spec_review or implement.
+- Dismissed (cold-Claude): "Sibling branch comparison trims for emptiness but compares untrimmed" — it fails closed (it rejects), and in practice it can't happen: `ensureBranch()` writes the identical branch string into every bundle member.
+- Cold-Codex's single finding is kept as N9 (verified, ranked non-blocking), not dismissed.
+
+### Verdict for this round
+
+- [ ] Approved
+- [x] Approved with nits
+- [ ] Changes requested
+- [ ] Spec gap
+
+F1 is fixed with red-first evidence, and the full suite passes (1722/1722). The remaining items are non-blocking:
+- **Follow-up issues recommended:** R1 (guard against rerouting part of a shared-branch bundle), N9 together with N4 (the archive pointer), and N13 (the QA metric definition).
+- **Optional:** the rest of the nits.
