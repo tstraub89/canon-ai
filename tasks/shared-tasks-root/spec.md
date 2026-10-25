@@ -98,6 +98,7 @@ Add one shared project-root resolver and one task-entry predicate, and route eve
 | `tests/task-cli.test.ts` | Subprocess regression tests for AC-1 to AC-7, AC-9, AC-11 and the AC-15 separate-git-dir `task list` case. |
 | `tests/cli.test.ts` | AC-10 doctor subprocess test. |
 | `tests/completion.test.ts` | AC-8 pin of the id rule against the `_`/`.` shell filter. |
+| `tests/run-task-signals.test.ts` | Refresh the comment explaining where `REPO_ROOT` comes from (now `resolveProjectRoot()`); comment only. |
 | `docs/patterns.md` | AC-14 edits. |
 | `docs/codebase-map.md` | AC-14 entry. |
 | `dist/cli/index.js` | Rebuilt. |
