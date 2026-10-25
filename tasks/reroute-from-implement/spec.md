@@ -258,6 +258,7 @@ Code review of amendment round 1 halted with one spec gap, one pre-existing guar
 | `src/orchestrator/prompts/templates/implement-reroute.md` | B4 archive pointer; B5 untracked set-aside |
 | `src/orchestrator/prompts/templates/plan-reroute.md` | B4 archive pointer |
 | `src/orchestrator/prompts/templates/qa.md` | Post-QA inline fix (human-approved): `Human reroute?` counts a human reroute at any phase |
+| `templates/docs/task-quality-log.md` | Same definition in the init seed (not sync-managed) |
 | `tests/run-task-reroute-preflight.test.ts` | B1, B2, B6, B7(8), B8 tests |
 | `tests/run-task-prompts.test.ts` | B4 with-archive and no-archive prompt cases |
 | `tests/run-task-prompts.golden.json` | Regenerate reroute keys; add archive-pointer keys |
