@@ -1,0 +1,1 @@
+The tcsh completion change avoids a slash in the embedded awk program while preserving the option-detection behavior. I found no definite regressions in the changed code.
