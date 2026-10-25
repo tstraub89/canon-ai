@@ -1649,14 +1649,12 @@ export function parseTaskAcceptArgs(rest: readonly string[]): { ids: string[]; p
 export function taskCmd(args: string[]): void {
     const [subcommand, ...rest] = args;
     try {
-        if (subcommand === '--help' || subcommand === '-h') {
-            console.log(TASK_USAGE);
-            return;
-        }
+        const io = { out: console.log, err: console.error, exit: (code: number) => process.exit(code) };
         const decl = subcommand && Object.hasOwn(TASK_SUBCOMMAND_ARGS, subcommand)
             ? TASK_SUBCOMMAND_ARGS[subcommand]
             : undefined;
-        if (decl) handlePreScan(decl, rest, { out: console.log, err: console.error, exit: code => process.exit(code) });
+        if (decl) handlePreScan(decl, rest, io);
+        else handlePreScan(TASK_ARGS, args, io);
         assertManagedInvocationRoot();
         switch (subcommand) {
             case 'new':

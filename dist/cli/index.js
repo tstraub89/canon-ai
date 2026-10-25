@@ -4000,6 +4000,7 @@ var TASK_USAGE = [
   "",
   "Run 'canon task <subcommand> --help' for details."
 ].join("\n");
+var TASK_ARGS = { command: "task", usage: TASK_USAGE, booleanFlags: [], valueFlags: [] };
 var noTaskFlags = { booleanFlags: [], valueFlags: [] };
 var TASK_SUBCOMMAND_ARGS = {
   new: { command: "task new", usage: "Usage: canon task new <TASK-ID> <title> [--base <branch>]\n\nCreate a task directory from .canon/templates/. The base branch is auto-detected from the current checkout; --base overrides it.", booleanFlags: [], valueFlags: ["--base"], equalsValueFlags: ["--base"], freeTextSlots: [1] },
@@ -5174,12 +5175,10 @@ function parseTaskAcceptArgs(rest) {
 function taskCmd(args2) {
   const [subcommand, ...rest] = args2;
   try {
-    if (subcommand === "--help" || subcommand === "-h") {
-      console.log(TASK_USAGE);
-      return;
-    }
+    const io = { out: console.log, err: console.error, exit: (code) => process.exit(code) };
     const decl = subcommand && Object.hasOwn(TASK_SUBCOMMAND_ARGS, subcommand) ? TASK_SUBCOMMAND_ARGS[subcommand] : void 0;
-    if (decl) handlePreScan(decl, rest, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
+    if (decl) handlePreScan(decl, rest, io);
+    else handlePreScan(TASK_ARGS, args2, io);
     assertManagedInvocationRoot();
     switch (subcommand) {
       case "new":

@@ -2882,6 +2882,22 @@ void test('task subcommand help runs before parsing or task creation', () => {
             assert.match(overview.stdout, new RegExp(`\\b${subcommand}\\b`));
         }
         assert.match(overview.stdout, /canon task <subcommand> --help/);
+        for (const args of [['--bogus', '--help'], ['bogus', '-h']]) {
+            const helpWins = invoke(args);
+            assert.equal(helpWins.status, 0, `${args.join(' ')}: ${helpWins.stderr}`);
+            assert.match(helpWins.stdout, /canon task <subcommand> --help/);
+        }
+        const unknown = invoke(['--bogus']);
+        assert.equal(unknown.status, 1);
+        assert.match(unknown.stderr, /Unknown option: --bogus\nRun 'canon task --help' for usage\./);
+        const bare = invoke([]);
+        assert.equal(bare.status, 1);
+        assert.match(bare.stderr, /Unknown subcommand: \(none\)/);
+        const unknownSubcommand = invoke(['bogus']);
+        assert.equal(unknownSubcommand.status, 1);
+        assert.match(unknownSubcommand.stderr, /Unknown subcommand: bogus/);
+        const recognized = invoke(['list']);
+        assert.equal(recognized.status, 0, recognized.stderr);
         const accept = invoke(['accept', 'foo', 'code_review', '-h']);
         assert.equal(accept.status, 0, accept.stderr);
         assert.match(accept.stdout, /Usage: canon task accept/);
