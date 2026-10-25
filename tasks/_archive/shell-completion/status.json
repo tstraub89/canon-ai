@@ -1,7 +1,7 @@
 {
   "id": "shell-completion",
   "title": "Shell completion for the canon CLI (bash, zsh, fish, tcsh)",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-25",
   "updated": "2026-10-25",
   "branch": "task/shell-completion",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
