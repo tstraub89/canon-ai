@@ -6295,7 +6295,7 @@ function valueFlagCaseEntries(model, shell) {
 function equalsFlagCaseEntries(model, shell) {
   return records(model).flatMap((record) => record.equalsValueFlags.map((flag) => {
     const prefix = q(`${record.path.join(" ")}:${flag}=`);
-    return shell === "fish" ? `case ${prefix}*
+    return shell === "fish" ? `case ${q(`${record.path.join(" ")}:${flag}=*`)}
           continue` : `${prefix}*) continue ;;`;
   })).join(shell === "fish" ? "\n        " : " ");
 }
@@ -6317,7 +6317,7 @@ function positionalCaseEntries(model, shell) {
     if (variadicIndex >= 0 && variadicIndex === slots.length - 1) {
       const action = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
       const path17 = q(record.path.join(" "));
-      return [shell === "fish" ? `case ${path17}:*
+      return [shell === "fish" ? `case ${q(`${record.path.join(" ")}:*`)}
       if test $n -ge ${variadicIndex}
         ${action}
       end` : `${path17}:*) if [ "$n" -ge ${variadicIndex} ]; then ${action}; fi ;;`];
@@ -6326,7 +6326,7 @@ function positionalCaseEntries(model, shell) {
       const taskIds = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
       const trailing = slots.slice(variadicIndex + 1).map((slot, offset) => positionalAction(slot.kind, record, variadicIndex + offset + 1, shell, model));
       const path17 = q(record.path.join(" "));
-      if (shell === "fish") return [`case ${path17}:*
+      if (shell === "fish") return [`case ${q(`${record.path.join(" ")}:*`)}
       if test $n -le ${variadicIndex}
         ${taskIds}
       else

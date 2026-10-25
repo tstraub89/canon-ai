@@ -101,7 +101,7 @@ function equalsFlagCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | '
     return records(model).flatMap(record => record.equalsValueFlags.map(flag => {
         const prefix = q(`${record.path.join(' ')}:${flag}=`);
         return shell === 'fish'
-            ? `case ${prefix}*\n          continue`
+            ? `case ${q(`${record.path.join(' ')}:${flag}=*`)}\n          continue`
             : `${prefix}*) continue ;;`;
     })).join(shell === 'fish' ? '\n        ' : ' ');
 }
@@ -124,14 +124,14 @@ function positionalCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | '
             const action = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
             const path = q(record.path.join(' '));
             return [shell === 'fish'
-                ? `case ${path}:*\n      if test $n -ge ${variadicIndex}\n        ${action}\n      end`
+                ? `case ${q(`${record.path.join(' ')}:*`)}\n      if test $n -ge ${variadicIndex}\n        ${action}\n      end`
                 : `${path}:*) if [ "$n" -ge ${variadicIndex} ]; then ${action}; fi ;;`];
         }
         if (variadicIndex >= 0 && variadicIndex < slots.length - 1) {
             const taskIds = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
             const trailing = slots.slice(variadicIndex + 1).map((slot, offset) => positionalAction(slot.kind, record, variadicIndex + offset + 1, shell, model));
             const path = q(record.path.join(' '));
-            if (shell === 'fish') return [`case ${path}:*\n      if test $n -le ${variadicIndex}\n        ${taskIds}\n      else\n        ${taskIds}\n        ${trailing.join('\n        ')}\n      end`];
+            if (shell === 'fish') return [`case ${q(`${record.path.join(' ')}:*`)}\n      if test $n -le ${variadicIndex}\n        ${taskIds}\n      else\n        ${taskIds}\n        ${trailing.join('\n        ')}\n      end`];
             return [`${path}:*) if [ "$n" -le ${variadicIndex} ]; then ${taskIds}; else ${taskIds}; ${trailing.join('; ')}; fi ;;`];
         }
         return slots.map((slot, index) => {
