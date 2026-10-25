@@ -31,6 +31,10 @@ function modelCommand(name: string, decl: ArgDeclaration, path: string[], subcom
     const slots = [...(decl.completion?.positionals ?? [])];
     const phase = slots.findIndex(s => s.kind === 'phase');
     const field = slots.findIndex(s => s.kind === 'settableField');
+    const variadicIndex = slots.findIndex(s => s.variadic);
+    if (variadicIndex >= 0 && slots.length - variadicIndex > 2) {
+        throw new Error(`Completion declaration ${path.join(' ')} has more than one fixed positional slot after a variadic slot`);
+    }
     const dependsOn: Record<number, number> = {};
     slots.forEach((slot, i) => { if (slot.kind === 'reviewVerdict' && phase >= 0) dependsOn[i] = phase; if (slot.kind === 'fieldValue' && field >= 0) dependsOn[i] = field; });
     return {
@@ -64,7 +68,7 @@ function records(model: CompletionModel): CompletionCommandModel[] {
 function positionalAction(kind: CompletionValueKind, record: CompletionCommandModel, slotIndex: number, shell: 'bash' | 'zsh' | 'fish', model: CompletionModel): string {
     const print = (values: readonly string[]) => shell === 'fish'
         ? `string split ' ' -- ${q(values.join(' '))}`
-        : shell === 'zsh' ? `items=${q(values.join(' '))}; print -l -- \${(s: :)items}` : `printf '%s\\n' ${q(values.join(' '))}`;
+        : shell === 'zsh' ? `items=${q(values.join(' '))}; print -l -- \${(s: :)items}` : `printf '%s\\n' ${values.map(q).join(' ')}`;
     if (kind === 'taskId') return shell === 'fish' ? '__canon_task_ids' : '_canon_task_ids';
     if (kind === 'reviewVerdict') {
         const dependency = record.dependsOn[slotIndex];
@@ -89,8 +93,8 @@ function valueFlagCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | 'f
     return records(model).flatMap(record => Object.entries(record.valueFlagKinds).map(([flag, kind]) => {
         const key = q(`${record.path.join(' ')}:${flag}`);
         return shell === 'fish'
-            ? `case ${key}\n          set pending 1\n          set valKind ${kind}\n          continue`
-            : `${key}) pending=1; val=${kind}; continue ;;`;
+            ? `case ${key}\n          set pending 1\n          set valKind ${kind}\n          set equalsAllowed ${record.equalsValueFlags.includes(flag) ? 1 : 0}\n          continue`
+            : `${key}) pending=1; val=${kind}; equalsAllowed=${record.equalsValueFlags.includes(flag) ? 1 : 0}; continue ;;`;
     })).join(shell === 'fish' ? '\n        ' : ' ');
 }
 function equalsFlagCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | 'fish'): string {
@@ -102,10 +106,13 @@ function equalsFlagCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | '
     })).join(shell === 'fish' ? '\n        ' : ' ');
 }
 function valueKindCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | 'fish'): string {
-    return Object.entries(model.values).map(([kind, values]) => {
+    const entries: Array<[string, readonly string[]]> = [...Object.entries(model.values), ['taskId', []]];
+    return entries.map(([kind, values]) => {
+        const taskIds = shell === 'fish' ? '__canon_task_ids' : '_canon_task_ids';
+        if (kind === 'taskId') return shell === 'fish' ? `case ${kind}\n          ${taskIds}` : `${kind}) ${taskIds} ;;`;
         const action = shell === 'fish' ? `string split ' ' -- ${q(values.join(' '))}`
             : shell === 'zsh' ? `items=${q(values.join(' '))}; print -l -- \${(s: :)items}`
-                : `printf '%s\\n' ${q(values.join(' '))}`;
+                : `printf '%s\\n' ${values.map(q).join(' ')}`;
         return shell === 'fish' ? `case ${kind}\n          ${action}` : `${kind}) ${action} ;;`;
     }).join(shell === 'fish' ? '\n        ' : ' ');
 }
@@ -113,6 +120,13 @@ function positionalCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | '
     return records(model).flatMap(record => {
         const slots = record.positionals;
         const variadicIndex = slots.findIndex(slot => slot.variadic);
+        if (variadicIndex >= 0 && variadicIndex === slots.length - 1) {
+            const action = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
+            const path = q(record.path.join(' '));
+            return [shell === 'fish'
+                ? `case ${path}:*\n      if test $n -ge ${variadicIndex}\n        ${action}\n      end`
+                : `${path}:*) if [ "$n" -ge ${variadicIndex} ]; then ${action}; fi ;;`];
+        }
         if (variadicIndex >= 0 && variadicIndex < slots.length - 1) {
             const taskIds = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
             const trailing = slots.slice(variadicIndex + 1).map((slot, offset) => positionalAction(slot.kind, record, variadicIndex + offset + 1, shell, model));
@@ -129,36 +143,34 @@ function positionalCaseEntries(model: CompletionModel, shell: 'bash' | 'zsh' | '
     }).join(shell === 'fish' ? '\n    ' : ' ');
 }
 function renderBash(model: CompletionModel): string {
-    const commands = q(model.commands.map(c => c.path[0]).join(' '));
     const task = taskCmd(model)!;
-    const subs = q((task.subcommands ?? []).map(c => c.path[1]).join(' '));
-    const flags = records(model).map(c => `${q(c.path.join(' '))}) printf '%s\\n' ${q(c.flags.join(' '))} ;;`).join(' ');
+    const flags = records(model).map(c => `${q(c.path.join(' '))}) printf '%s\\n' ${c.flags.map(q).join(' ')} ;;`).join(' ');
     const valueFlags = valueFlagCaseEntries(model, 'bash');
     const equalsFlags = equalsFlagCaseEntries(model, 'bash');
     const valueKinds = valueKindCaseEntries(model, 'bash');
     const positionals = positionalCaseEntries(model, 'bash');
     return `# Generated by canon's completion command.
-_canon_task_ids() { ( common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0; root=\${common%/*}; [ -d "$root/tasks" ] || exit 0; shopt -s nullglob; shopt -u failglob 2>/dev/null; for d in "$root"/tasks/*/; do d=\${d%/}; n=\${d##*/}; case $n in _*|.*) continue;; esac; printf '%s\\n' "$n"; done ); }
+_canon_task_ids() { ( common=$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0; root=\${common%/*}; [ -d "$root/tasks" ] || exit 0; shopt -s nullglob; shopt -u failglob 2>/dev/null; for d in "$root"/tasks/*/; do d=\${d%/}; n=\${d##*/}; case $n in _*|.*) continue;; esac; printf '%s\\n' "$n"; done ); }
 _canon_candidates() {
-  local cur="$1"; shift; local -a w=("$@") positionals=(); local cmd= sub= path= pending=0 val=none word n=0
+  local cur="$1"; shift; local -a w=("$@") positionals=(); local cmd= sub= path= pending=0 val=none word n=0 equalsAllowed=0
   cmd=\${w[0]-}; sub=\${w[1]-}; path="$cmd"
   if [ "$cmd" = task ] && [ -n "$sub" ] && [[ "$sub" != -* ]]; then path="task $sub"; fi
-  if [ -z "$cmd" ]; then if [[ "$cur" == -* ]]; then printf '%s\\n' ${q(model.globalFlags.join(' '))}; else printf '%s\\n' ${commands}; fi; return; fi
-  if [[ "$cur" == -* ]]; then case "$path" in ${flags} *) printf '%s\\n' ${q(model.globalFlags.join(' '))} ;; esac; return; fi
-  if [ "$cmd" = task ] && [ -z "$sub" ]; then printf '%s\\n' ${subs}; return; fi
+  if [ -z "$cmd" ]; then if [[ "$cur" == -* ]]; then printf '%s\\n' ${model.globalFlags.map(q).join(' ')}; else printf '%s\\n' ${model.commands.map(c => q(c.path[0])).join(' ')}; fi; return; fi
+  if [[ "$cur" == -* ]]; then case "$path" in ${flags} *) printf '%s\\n' ${model.globalFlags.map(q).join(' ')} ;; esac; return; fi
+  if [ "$cmd" = task ] && [ -z "$sub" ]; then printf '%s\\n' ${(task.subcommands ?? []).map(c => q(c.path[1])).join(' ')}; return; fi
   shift; if [ "$cmd" = task ] && [ -n "$sub" ] && [[ "$sub" != -* ]]; then shift; fi
   for word in "$@"; do
-    if [ "$pending" -eq 1 ]; then if [ "$word" = '=' ]; then continue; fi; pending=0; val=none; continue; fi
+    if [ "$pending" -eq 1 ]; then if [ "$word" = '=' ] && [ "$equalsAllowed" -eq 1 ]; then continue; fi; pending=0; val=none; equalsAllowed=0; if [ "$word" = '=' ]; then continue; fi; continue; fi
     case "$path:$word" in ${valueFlags} esac
     case "$path:$word" in ${equalsFlags} esac
     case "$word" in '=') continue;; -*) continue;; esac
     positionals+=("$word")
   done
-  if [ "$pending" -eq 1 ]; then case "$val" in ${valueKinds} esac; return; fi
+  if [ "$pending" -eq 1 ]; then if [[ "$cur" == =* ]] && [ "$equalsAllowed" -ne 1 ]; then return; fi; case "$val" in ${valueKinds} esac; return; fi
   n=\${#positionals[@]}
   case "$path:$n" in ${positionals} *) : ;; esac
 }
-_canon() { local cur=\${COMP_WORDS[COMP_CWORD]}; local -a words=(); local i; for ((i=1;i<COMP_CWORD;i++)); do words+=("\${COMP_WORDS[i]}"); done; COMPREPLY=( $(compgen -W "$(_canon_candidates "$cur" "\${words[@]}")" -- "$cur") ); }
+_canon() { local cur=\${COMP_WORDS[COMP_CWORD]} candidate; local -a words=(); COMPREPLY=(); local i; for ((i=1;i<COMP_CWORD;i++)); do words+=("\${COMP_WORDS[i]}"); done; while IFS= read -r candidate; do [[ $candidate == "$cur"* ]] && COMPREPLY+=("$candidate"); done < <(_canon_candidates "$cur" "\${words[@]}"); }
 complete -F _canon canon
 `;
 }
@@ -174,7 +186,7 @@ function renderZsh(model: CompletionModel): string {
     return `# Generated by canon's completion command.
 _canon_task_ids() { emulate -L zsh; local common root d n; common=$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0; root=\${common%/*}; [[ -d $root/tasks ]] || return 0; for d in $root/tasks/*(/N); do n=\${d:t}; [[ $n == _* || $n == .* ]] && continue; print -r -- $n; done }
 _canon_candidates() {
-  emulate -L zsh; local cur=$1; shift; local -a w=("$@") positionals=(); local cmd sub cmdpath word val=none pending=0 n=0 items
+  emulate -L zsh; local cur=$1; shift; local -a w=("$@") positionals=(); local cmd sub cmdpath word val=none pending=0 n=0 items equalsAllowed=0
   cmd=\${w[1]-}; sub=\${w[2]-}; cmdpath=$cmd
   if [[ -z $cmd ]]; then if [[ $cur == -* ]]; then items=${q(model.globalFlags.join(' '))}; else items=${commands}; fi; print -l -- \${(s: :)items}; return; fi
   if [[ $cmd == task && -n $sub && $sub != -* ]]; then cmdpath="task $sub"; fi
@@ -182,13 +194,13 @@ _canon_candidates() {
   if [[ $cmd == task && -z $sub ]]; then items=${subs}; print -l -- \${(s: :)items}; return; fi
   if [[ $cmd == task && -n $sub && $sub != -* ]]; then shift; shift; else shift; fi
   for word in "$@"; do
-    if (( pending )); then if [[ $word == = ]]; then continue; fi; pending=0; val=none; continue; fi
+    if (( pending )); then if [[ $word == = && $equalsAllowed == 1 ]]; then continue; fi; pending=0; val=none; equalsAllowed=0; if [[ $word == = ]]; then continue; fi; continue; fi
     case "$cmdpath:$word" in ${valueFlags} esac
     case "$cmdpath:$word" in ${equalsFlags} esac
     case $word in = ) continue;; -* ) continue;; esac
     positionals+=("$word")
   done
-  if (( pending )); then case $val in ${valueKinds} esac; return; fi
+  if (( pending )); then if [[ $cur == \\=* && $equalsAllowed != 1 ]]; then return; fi; case $val in ${valueKinds} esac; return; fi
   n=\${#positionals[@]}
   case "$cmdpath:$n" in ${positionals} *) : ;; esac
 }
@@ -238,7 +250,7 @@ function __canon_candidates
   set -l sub ''
   set -l cmdpath $cmd
   set -l wantsSubcommands 0
-  if test $cmd = task
+  if test "$cmd" = task
     if test $countWords -le 2
       set wantsSubcommands 1
     else if string match -q -- '-*' $words[3]
@@ -264,13 +276,16 @@ function __canon_candidates
     return
   end
   set -l pending 0
+  set -l equalsAllowed 0
   set -l valKind none
   set -l positionals
   for word in $words
     if test $pending -eq 1
-      if test "$word" = '='; continue; end
+      if test "$word" = '='; and test $equalsAllowed -eq 1; continue; end
       set pending 0
       set valKind none
+      set equalsAllowed 0
+      if test "$word" = '='; continue; end
       continue
     end
     switch "$cmdpath:$word"
@@ -284,6 +299,7 @@ function __canon_candidates
     set positionals $positionals $word
   end
   if test $pending -eq 1
+    if string match -q -- '=*' $cur; and test $equalsAllowed -ne 1; return; end
     switch $valKind
         ${valueKinds}
       case '*'
@@ -303,7 +319,7 @@ complete -c canon -f -a '(__canon_candidates)'
 }
 export function tcshFlagProgram(model: CompletionModel): string {
     const rows = records(model).map(c=>`${c.path.join(' ')}\\t${c.flags.join(' ')}`).join('\\n').replace(/'/g, "'\\''");
-    return `BEGIN { split("${rows.replace(/"/g,'\\"')}", lines, "\\n"); split(ENVIRON["COMMAND_LINE"], w, " "); cmd=w[2]; subcmd=w[3]; path=cmd; if (cmd == "task" && subcmd != "") path=cmd " " subcmd; for (i in lines) { split(lines[i], row, "\\t"); if (row[1] == path) { print row[2]; exit } } if (cmd == "task" && subcmd == "") { print "${taskCmd(model)?.flags.join(' ')}"; exit } print "${model.globalFlags.join(' ')}" }`;
+    return `BEGIN { split("${rows.replace(/"/g,'\\"')}", lines, "\\n"); split(ENVIRON["COMMAND_LINE"], w, " "); cmd=w[2]; subcmd=w[3]; path=cmd; if (cmd == "task" && subcmd ~ /^-/) subcmd=""; if (cmd == "task" && subcmd != "") path=cmd " " subcmd; for (i in lines) { split(lines[i], row, "\\t"); if (row[1] == path) { print row[2]; exit } } if (cmd == "task" && subcmd == "") { print "${taskCmd(model)?.flags.join(' ')}"; exit } print "${model.globalFlags.join(' ')}" }`;
 }
 function renderTcsh(model: CompletionModel): string {
     const cmdNames = model.commands.map(c=>c.path[0]).join(' ');

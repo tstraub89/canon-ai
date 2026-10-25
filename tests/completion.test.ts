@@ -61,14 +61,20 @@ void test('each renderer follows declaration growth and emits no undeclared long
         ? { ...command, subcommands: { ...command.subcommands, 'zz-sub': { command: 'task zz-sub', usage: 'Usage: canon task zz-sub', booleanFlags: [], valueFlags: [] } } }
         : command);
     synthetic.push({ name: 'zz-cmd', decl: {
-        command: 'zz-cmd', usage: 'Usage: canon zz-cmd', booleanFlags: ['--zz-bool'], valueFlags: ['--zz-value'], equalsValueFlags: ['--zz-eq'],
-        completion: { positionals: [{ kind: 'taskId' }, { kind: 'phase' }], valueFlags: { '--zz-value': 'none' } },
+        command: 'zz-cmd', usage: 'Usage: canon zz-cmd', booleanFlags: ['--zz-bool'], valueFlags: ['--zz-value', '--zz-id'], equalsValueFlags: ['--zz-eq'],
+        completion: { positionals: [{ kind: 'taskId' }, { kind: 'phase' }], valueFlags: { '--zz-value': 'none', '--zz-id': 'taskId' } },
     } });
     const syntheticModel = buildCompletionModel(synthetic, GLOBAL_FLAGS);
     for (const shell of COMPLETION_SHELLS) {
         const script = renderCompletion(shell, syntheticModel);
-        for (const token of ['zz-cmd', 'zz-sub', '--zz-bool', '--zz-value', '--zz-eq']) assert.ok(script.includes(token), `${shell}: ${token}`);
+        for (const token of ['zz-cmd', 'zz-sub', '--zz-bool', '--zz-value', '--zz-id', '--zz-eq']) assert.ok(script.includes(token), `${shell}: ${token}`);
+        if (shell !== 'tcsh') assert.ok(script.includes('taskId'), `${shell}: taskId value kind`);
     }
+    const invalidVariadic = [...COMMAND_REGISTRY, { name: 'zz-many', decl: {
+        command: 'zz-many', usage: 'Usage: canon zz-many', booleanFlags: [], valueFlags: [],
+        completion: { positionals: [{ kind: 'taskId' as const, variadic: true }, { kind: 'phase' as const }, { kind: 'phaseStatus' as const }] },
+    } }];
+    assert.throws(() => buildCompletionModel(invalidVariadic, GLOBAL_FLAGS), /more than one fixed positional slot after a variadic slot/);
     const modelFlags = new Set([...model.globalFlags, ...model.commands.flatMap(c => [c, ...(c.subcommands ?? [])].flatMap(command => command.flags))]);
     for (const [shell, script] of Object.entries(rendered)) {
         const allowed = new Set(shell === 'tcsh' ? [] : ['--path-format', '--git-common-dir']);
@@ -79,7 +85,7 @@ void test('each renderer follows declaration growth and emits no undeclared long
 void test('synthetic value flags do not shift later positional slots', t => {
     const synthetic = [...COMMAND_REGISTRY, { name: 'zz-cmd', decl: {
         command: 'zz-cmd', usage: 'Usage: canon zz-cmd', booleanFlags: [], valueFlags: ['--zz-value', '--zz-eq'], equalsValueFlags: ['--zz-eq'],
-        completion: { positionals: [{ kind: 'taskId' as const }, { kind: 'phase' as const }], valueFlags: { '--zz-value': 'none' as const, '--zz-eq': 'none' as const } },
+        completion: { positionals: [{ kind: 'taskId' as const }, { kind: 'phase' as const }], valueFlags: { '--zz-value': 'none' as const, '--zz-eq': 'phase' as const } },
     } }];
     const syntheticModel = buildCompletionModel(synthetic, GLOBAL_FLAGS);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-model-'));
@@ -91,6 +97,11 @@ void test('synthetic value flags do not shift later positional slots', t => {
             assert.equal(bash.status, 0, bash.stderr);
             assert.deepEqual(bash.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...model.values.phase].sort());
         }
+        for (const [flag, expected] of [['--zz-value', []], ['--zz-eq', model.values.phase]] as const) {
+            const bash = spawnSync('bash', ['--norc', '--noprofile', '-c', '. "$1"; shift; _canon_candidates "=" "$@"', '_', bashFile, 'zz-cmd', 'alpha', flag], { encoding: 'utf8' });
+            assert.equal(bash.status, 0, bash.stderr);
+            assert.deepEqual(bash.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...expected].sort());
+        }
         if (spawnSync('which', ['zsh'], { encoding: 'utf8' }).status === 0) {
             const zshFile = path.join(dir, 'completion.zsh');
             fs.writeFileSync(zshFile, renderCompletion('zsh', syntheticModel));
@@ -99,8 +110,23 @@ void test('synthetic value flags do not shift later positional slots', t => {
                 assert.equal(zsh.status, 0, zsh.stderr);
                 assert.deepEqual(zsh.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...model.values.phase].sort());
             }
+            for (const [flag, expected] of [['--zz-value', []], ['--zz-eq', model.values.phase]] as const) {
+                const zsh = spawnSync('zsh', ['-f', '-c', '. "$1"; shift; _canon_candidates "=" "$@"', '_', zshFile, 'zz-cmd', 'alpha', flag], { encoding: 'utf8' });
+                assert.equal(zsh.status, 0, zsh.stderr);
+                assert.deepEqual(zsh.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...expected].sort());
+            }
         } else if (process.env.CI) assert.fail('zsh is required in CI');
         else t.diagnostic('zsh not installed; synthetic positional-shift smoke skipped');
+        if (spawnSync('which', ['fish'], { encoding: 'utf8' }).status === 0) {
+            const fishFile = path.join(dir, 'completion.fish');
+            fs.writeFileSync(fishFile, renderCompletion('fish', syntheticModel));
+            for (const [flag, expected] of [['--zz-value', []], ['--zz-eq', model.values.phase]] as const) {
+                const fish = spawnSync('fish', ['-c', 'source $argv[1]; __canon_candidates "=" $argv[2..-1]', fishFile, 'zz-cmd', 'alpha', flag], { encoding: 'utf8' });
+                assert.equal(fish.status, 0, fish.stderr);
+                assert.deepEqual(fish.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...expected].sort());
+            }
+        } else if (process.env.CI) assert.fail('fish is required in CI');
+        else t.diagnostic('fish not installed; synthetic equals-separator smoke skipped');
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -148,6 +174,7 @@ void test('bash completion smoke cases handle positional and value-flag contexts
             [['canon', 'run', '--'], ['--pr', '--allow-divergent-base']],
             [['canon', 'run', '--expect', ''], [...model.values.phase]],
             [['canon', 'run', ''], ['alpha', 'beta']],
+            [['canon', 'run', 'alpha', ''], ['alpha', 'beta']],
             [['canon', 'watch', '--until', ''], [...model.values.phase]],
             [['canon', 'watch', '--until', 'plan', ''], ['alpha', 'beta']],
             [['canon', 'stop', 'alpha', ''], []],
@@ -193,6 +220,20 @@ void test('bash completion smoke cases handle positional and value-flag contexts
             assert.deepEqual(runIds(binary, path.join(dir, 'sub', 'dir')), ['alpha', 'beta']);
             assert.deepEqual(runIds(binary, worktree), ['alpha', 'beta']);
         }
+        const evilRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-untrusted-task-'));
+        try {
+            const evilName = '$(touch${IFS}PWNED)';
+            const git = (args: string[]) => { const result = spawnSync('git', args, { cwd: evilRepo, encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr); };
+            git(['init', '-q']); git(['config', 'user.email', 'test@example.com']); git(['config', 'user.name', 'Test']);
+            fs.writeFileSync(path.join(evilRepo, 'seed.txt'), 'seed'); git(['add', 'seed.txt']); git(['commit', '-qm', 'seed']);
+            fs.mkdirSync(path.join(evilRepo, 'tasks', evilName), { recursive: true });
+            const result = spawnSync('/bin/bash', ['--norc', '--noprofile', '-c', code, '_', file, 'canon', 'run', ''], {
+                cwd: evilRepo, env: { PATH: process.env.PATH, HOME: evilRepo }, encoding: 'utf8',
+            });
+            assert.equal(result.status, 0, result.stderr);
+            assert.deepEqual(result.stdout.trim().split(/\r?\n/).filter(Boolean), [evilName]);
+            assert.equal(fs.existsSync(path.join(evilRepo, 'PWNED')), false);
+        } finally { fs.rmSync(evilRepo, { recursive: true, force: true }); }
         const noRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-no-repo-'));
         const noTasks = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-no-tasks-'));
         try {
@@ -227,6 +268,7 @@ void test('zsh completion smoke cases preserve contextual values and task ids', 
             [['task', '-'], ['--help', '-h']],
             [['unknown', '-'], ['--help', '-h', '--version', '-v']],
             [['run', ''], ['alpha', 'beta']],
+            [['run', 'alpha', ''], ['alpha', 'beta']],
             [['watch', '--until', 'plan', ''], ['alpha', 'beta']],
             [['watch', '--until', ''], [...model.values.phase]],
             [['stop', 'alpha', ''], []],
@@ -236,7 +278,7 @@ void test('zsh completion smoke cases preserve contextual values and task ids', 
             [['task', 'reset-code-review', 'alpha', ''], []],
             [['task', 'phase', 'alpha', ''], ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review']],
             [['task', 'phase', 'alpha', 'spec', ''], ['pending', 'in_progress', 'done', 'changes_requested', 'blocked']],
-            [['task', 'phase', 'alpha', 'code_review', 'done', ''], ['spec_gap']],
+            [['task', 'phase', 'alpha', 'code_review', 'done', ''], model.verdictsByPhase.code_review],
             [['task', 'phase', 'alpha', 'spec_review', 'done', ''], ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review']],
             [['task', 'phase', 'alpha', 'plan', 'done', ''], []],
             [['task', 'accept', 'alpha', '--reason', 'x', ''], ['beta', 'implement']],
@@ -290,30 +332,37 @@ void test('fish completion smoke cases cover command, verdict, and field context
         const git = (args: string[]) => { const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr); };
         git(['init', '-q']); git(['config', 'user.email', 'test@example.com']); git(['config', 'user.name', 'Test']);
         fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed'); git(['add', 'seed.txt']); git(['commit', '-qm', 'seed']);
-        fs.mkdirSync(path.join(dir, 'tasks', 'alpha'), { recursive: true });
+        for (const name of ['alpha', 'beta', '_archive', '.hidden']) fs.mkdirSync(path.join(dir, 'tasks', name), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'tasks', 'plain-file'), 'file');
         fs.writeFileSync(file, rendered.fish);
         const rows: Array<[string[], string[]]> = [
-            [['run'], ['alpha']],
+            [['run'], ['alpha', 'beta']],
+            [['run', 'alpha'], ['alpha', 'beta']],
             [['run', '--expect'], [...model.values.phase]],
-            [['task', 'phase', 'alpha', 'code_review', 'done'], ['spec_gap']],
+            [['task', 'phase', 'alpha', 'code_review', 'done'], model.verdictsByPhase.code_review],
             [['task', 'set', 'alpha', 'delicate'], ['true', 'false']],
             [['task', 'set', 'alpha', 'task_size'], ['XS', 'S', 'M', 'L', 'XL']],
             [['task', 'set', 'alpha', 'unknown'], []],
+            [['task', 'accept', 'alpha'], ['alpha', 'beta', 'implement', 'spec_review', 'code_review']],
         ];
         for (const [words, expected] of rows) {
             const result = spawnSync('fish', ['-c', 'source $argv[1]; __canon_candidates "" $argv[2..-1]', file, ...words], { cwd: dir, env: { PATH: process.env.PATH, HOME: dir }, encoding: 'utf8' });
             assert.equal(result.status, 0, `${words.join(' ')}: ${result.stderr}`);
             assert.deepEqual(result.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...expected].sort(), `${words.join(' ')}`);
         }
+        const dashFlags = spawnSync('fish', ['-c', 'source $argv[1]; __canon_candidates "-" task', file], { cwd: dir, env: { PATH: process.env.PATH, HOME: dir }, encoding: 'utf8' });
+        assert.equal(dashFlags.status, 0, dashFlags.stderr);
+        assert.deepEqual(dashFlags.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), ['--help', '-h'].sort());
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 void test('tcsh flag program selects flags for the active command path', () => {
     const program = tcshFlagProgram(model);
-    for (const line of ['canon run --', 'canon task accept a --']) {
+    for (const line of ['canon run --', 'canon task accept a --', 'canon task -']) {
         const result = spawnSync('awk', [program], { env: { ...process.env, COMMAND_LINE: line }, encoding: 'utf8' });
         assert.equal(result.status, 0, result.stderr);
-        if (line.includes('task accept')) assert.match(result.stdout, /--reason/);
+        if (line === 'canon task -') { assert.match(result.stdout, /--help/); assert.doesNotMatch(result.stdout, /--version|--pr/); }
+        else if (line.includes('task accept')) assert.match(result.stdout, /--reason/);
         else { assert.match(result.stdout, /--pr/); assert.doesNotMatch(result.stdout, /--channel/); }
     }
 });
