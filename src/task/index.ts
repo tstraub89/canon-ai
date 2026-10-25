@@ -1551,7 +1551,7 @@ function specGateDoneNote(id: string, status: StatusJson): string {
     if (isRerouteAdmitted(status)) {
         return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
     }
-    return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop.`;
+    return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop (a review round or a pre-flight rejection).`;
 }
 
 function taskHasStarted(status: StatusJson): boolean {

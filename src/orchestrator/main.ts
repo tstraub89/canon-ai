@@ -2790,8 +2790,8 @@ function describeRerouteEntryPhase(status: StatusJson): string {
     if (phase === 'implement') {
         const implementStatus = status.phases.implement?.status ?? 'pending';
         const codeReview = status.phases.code_review;
-        const details = [`code_review ${codeReview?.status ?? 'pending'}`];
-        const rounds = splitState.currentLoopCount(codeReview?.iterations_current_loop);
+        const details = [`code_review ${codeReview?.status ?? 'missing'}`];
+        const rounds = splitState.currentLoopReviewRounds(codeReview);
         const preflight = splitState.currentLoopCount(codeReview?.preflight_rejections_current_loop);
         if (rounds > 0) details.push(`${rounds} review round${rounds === 1 ? '' : 's'} this loop`);
         if (preflight > 0) details.push(`${preflight} pre-flight rejection${preflight === 1 ? '' : 's'} this loop`);

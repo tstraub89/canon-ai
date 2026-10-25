@@ -116,7 +116,8 @@ var RUN_USAGE = [
   "  --dry-run           Print each planned phase and exit without spawning any LLM",
   "  --reroute           Reset a task once implementation has begun: current phase code_review,",
   "                      qa, or human_review, or implement when it is in progress or blocked,",
-  "                      its code review is blocked, or a code review already ran in the current loop.",
+  "                      its code review is blocked, or a code review already ran in the current loop",
+  "                      (a review round or a pre-flight rejection).",
   "                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier",
   "                      tasks (XS) re-enter at implement.",
   "                      Feedback channel: append a new section to tasks/<id>/spec.md describing",
@@ -511,13 +512,16 @@ function deriveTopLevelStatus(status) {
 function currentLoopCount(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
+function currentLoopReviewRounds(codeReview) {
+  return currentLoopCount(codeReview?.iterations_current_loop ?? codeReview?.iterations);
+}
 function isRerouteAdmitted(status) {
   const phase = deriveTopLevelStatus(status);
   if (phase === "code_review" || phase === "qa" || phase === "human_review") return true;
   if (phase !== "implement") return false;
   const implementStatus = status.phases.implement?.status;
   const codeReview = status.phases.code_review;
-  return implementStatus === "in_progress" || implementStatus === "blocked" || codeReview?.status === "blocked" || currentLoopCount(codeReview?.iterations_current_loop) > 0 || currentLoopCount(codeReview?.preflight_rejections_current_loop) > 0;
+  return implementStatus === "in_progress" || implementStatus === "blocked" || codeReview?.status === "blocked" || currentLoopReviewRounds(codeReview) > 0 || currentLoopCount(codeReview?.preflight_rejections_current_loop) > 0;
 }
 
 // src/orchestrator/git.ts
@@ -5104,7 +5108,7 @@ function specGateDoneNote(id, status) {
   if (isRerouteAdmitted(status)) {
     return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
   }
-  return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop.`;
+  return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop (a review round or a pre-flight rejection).`;
 }
 function taskHasStarted(status) {
   return Object.values(status.phases).some((entry) => (entry?.status ?? "pending") !== "pending");

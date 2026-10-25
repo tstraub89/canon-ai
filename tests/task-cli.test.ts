@@ -672,7 +672,7 @@ void test('spec-gate done note distinguishes implement-entry activity from unsta
             const note = captureStdout(() => taskSet([id, 'human_spec_gate', 'true']));
             if (entry === 'unstarted') {
                 assert.match(note, /will not fire on this pass/);
-                assert.match(note, /code_review, qa, or human_review.*implement in progress or blocked, a blocked code review, or a code review already run in the current loop/);
+                assert.match(note, /code_review, qa, or human_review.*implement in progress or blocked, a blocked code review, or a code review already run in the current loop \(a review round or a pre-flight rejection\)/);
                 assert.doesNotMatch(note, /then run `canon run --reroute/);
             } else {
                 assert.match(note, new RegExp(`add an amendment to the spec, then run .canon run --reroute ${id}`));
@@ -721,7 +721,7 @@ void test('task set manages human_spec_gate values, full-send side effects, deli
         const doneId = 'gate-done';
         writeTask(tasksRoot, doneId, makeStatus(doneId, { phases: { ...makeStatus(doneId).phases, spec_review: { status: 'done', agent: 'codex' } } }));
         const doneNote = captureStdout(() => taskSet([doneId, 'human_spec_gate', 'true']));
-        assert.match(doneNote, /will not fire on this pass.*full-tier.*once implementation has begun.*code_review, qa, or human_review.*implement in progress or blocked, a blocked code review, or a code review already run in the current loop/);
+        assert.match(doneNote, /will not fire on this pass.*full-tier.*once implementation has begun.*code_review, qa, or human_review.*implement in progress or blocked, a blocked code review, or a code review already run in the current loop \(a review round or a pre-flight rejection\)/);
         assert.doesNotMatch(doneNote, /canon run --reroute|reset-spec-review|takes effect on the next canon run/);
 
         const rerouteableId = 'gate-done-rerouteable';

@@ -14,3 +14,7 @@
 | 2026-10-25T13:49:14.236Z | reroute-from-implement | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 289.7s | 4965870 | ok |
 | 2026-10-25T13:49:14.242Z | reroute-from-implement | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 544.1s | 6657333 | ok |
 | 2026-10-25T13:50:18.727Z | reroute-from-implement | qa | claude | claude-haiku-5-5 | 0 | 64.5s | 601650 | ok |
+| 2026-10-25T13:57:22.516Z | reroute-from-implement | spec_review | codex | gpt-6.1-sol | 0 | 199.7s | 821684 | ok |
+| 2026-10-25T13:59:46.579Z | reroute-from-implement | spec_review | codex | gpt-6.1-sol | 1 | 108.5s | 1757954 | ok |
+| 2026-10-25T14:03:08.044Z | reroute-from-implement | plan | claude | opus | 0 | 201.5s | 2972186 | ok |
+| 2026-10-25T14:12:14.255Z | reroute-from-implement | implement | codex | gpt-6.1-sol | 0 | 546.2s | 13662169 | ok |

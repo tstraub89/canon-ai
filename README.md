@@ -275,7 +275,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | `canon run <id> --step --expect <phase>` | Run one phase then stop, with a phase-mismatch guard |
 | `canon run <id> --pr` | Push branch and open a draft PR (at `human_review`) |
 | `canon run <id> --push` | Push branch only, no PR |
-| `canon run <id> --reroute` | Reset a task once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection) after appending an `## Amendment` section to `spec.md` (full-tier re-enters at `spec_review`, fast-tier at `implement`) |
+| `canon run <id> --reroute` | Reset a task once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection). Requires an `## Amendment` section appended to `spec.md` first; full-tier re-enters at `spec_review`, fast-tier at `implement`. |
 | `canon run <id> --full-send` | Skip the spec gate and auto-open a draft PR after clean QA |
 | `canon run <id> --ship` | After PR approval: squash-merge, delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |

@@ -25,7 +25,7 @@ When done, run:
 
 <!-- per-round append shape:
 ## Reroute Plan [Round N]
-### Delta
+### Round Scope
 - Feasibility: ...
 - ...ordered steps for this round's scope (amendment plus unfinished earlier work)...
 -->

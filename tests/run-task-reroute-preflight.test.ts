@@ -939,16 +939,16 @@ void test('rerouteFromHumanReview rejects an off-phase sibling in an otherwise-a
     });
 });
 
-const implementEntryRows: Array<{ name: string; options: RerouteStatusOptions }> = [
-    { name: 'implement in_progress', options: { implement: { status: 'in_progress' } } },
-    { name: 'implement blocked', options: { implement: { status: 'blocked' } } },
-    { name: 'implement-entry loop-cap auto-block (implement pending, code_review blocked, verdict empty)', options: {
+const implementEntryRows: Array<{ name: string; expectedPhase: string; options: RerouteStatusOptions; bannerDetail?: RegExp }> = [
+    { name: 'implement in_progress', expectedPhase: 'implement', options: { implement: { status: 'in_progress' } } },
+    { name: 'implement blocked', expectedPhase: 'implement', options: { implement: { status: 'blocked' } } },
+    { name: 'implement-entry loop-cap auto-block (implement pending, code_review blocked, verdict empty)', expectedPhase: 'implement', bannerDetail: /\(code_review blocked\) →/, options: {
         implement: { status: 'pending' }, codeReview: { status: 'blocked', verdict: '' },
     } },
-    { name: 'route-back after changes_requested', options: {
+    { name: 'route-back after changes_requested', expectedPhase: 'implement', bannerDetail: /\(code_review pending, 1 review round this loop\) →/, options: {
         implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '', iterations_current_loop: 1 },
     } },
-    { name: 'implement pending after pre-flight rejection', options: {
+    { name: 'implement pending after pre-flight rejection', expectedPhase: 'implement', bannerDetail: /\(code_review pending, 1 pre-flight rejection this loop\) →/, options: {
         implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '', iterations_current_loop: 0, preflight_rejections_current_loop: 1 },
     } },
 ].map(row => ({ ...row, options: {
@@ -959,12 +959,35 @@ const implementEntryRows: Array<{ name: string; options: RerouteStatusOptions }>
 
 const admittedStateRows: Array<{
     name: string;
+    expectedPhase: string;
+    bannerDetail?: RegExp;
     options: RerouteStatusOptions;
 }> = [
     ...implementEntryRows,
-    { name: 'human_review pending', options: {} },
+    {
+        name: 'legacy iterations alias without current-loop field (implement pending, code_review pending)',
+        expectedPhase: 'implement',
+        bannerDetail: /\(code_review pending, 1 review round this loop\) →/,
+        options: {
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '', iterations: 1 },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'implement pending after multiple review rounds and pre-flight rejections',
+        expectedPhase: 'implement',
+        bannerDetail: /\(code_review pending, 2 review rounds this loop, 3 pre-flight rejections this loop\) →/,
+        options: {
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '', iterations_current_loop: 2, preflight_rejections_current_loop: 3 },
+            qa: { status: 'pending' },
+        },
+    },
+    { name: 'human_review pending', expectedPhase: 'human_review', options: {} },
     {
         name: 'code_review-phase auto-block (blocked changes_requested)',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'blocked', verdict: 'changes_requested' },
             qa: { status: 'pending' },
@@ -972,6 +995,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'code_review changes_requested',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'changes_requested', verdict: 'changes_requested' },
             qa: { status: 'pending' },
@@ -979,6 +1003,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'code_review in_progress',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'in_progress', verdict: '' },
             qa: { status: 'pending' },
@@ -986,6 +1011,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'code_review pending',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'pending', verdict: '' },
             qa: { status: 'pending' },
@@ -993,6 +1019,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'qa pending after approved code_review',
+        expectedPhase: 'qa',
         options: {
             codeReview: { status: 'done', verdict: 'approved' },
             qa: { status: 'pending' },
@@ -1000,11 +1027,12 @@ const admittedStateRows: Array<{
     },
     {
         name: 'qa in_progress',
+        expectedPhase: 'qa',
         options: { qa: { status: 'in_progress' } },
     },
 ];
 
-for (const { name, options } of admittedStateRows) {
+for (const { name, expectedPhase, bannerDetail, options } of admittedStateRows) {
     for (const taskSize of ['M', 'XS'] as const) {
         void test(`rerouteFromHumanReview admits ${name} (${taskSize})`, () => {
             withTempDir('reroute-preflight-admitted-state-', dir => {
@@ -1013,8 +1041,7 @@ for (const { name, options } of admittedStateRows) {
                 const worktreesRoot = path.join(dir, 'worktrees');
                 const taskId = 'task-a';
                 const status = makeRerouteStatus(taskId, `task/${taskId}`, 2, { ...options, taskSize });
-                const entryPhase = derivePhase(status);
-                assert.equal(entryPhase, name.startsWith('implement') || name.startsWith('route-back') ? 'implement' : name.startsWith('qa') ? 'qa' : name.startsWith('human_review') ? 'human_review' : 'code_review');
+                assert.equal(derivePhase(status), expectedPhase);
                 writeTaskStatus(tasksRoot, taskId, status);
                 writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
                 writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment Round 3\n\nAllowed.\n');
@@ -1033,7 +1060,8 @@ for (const { name, options } of admittedStateRows) {
                 assert.equal(updated.phases?.code_review?.iterations_current_loop, 0);
                 assert.equal(updated.phases?.code_review?.preflight_rejections_current_loop, 0);
                 assert.equal(derivePhase(updated), taskSize === 'M' ? 'spec_review' : 'implement');
-                if (entryPhase === 'implement') {
+                if (bannerDetail) assert.match(result.stdout, bannerDetail);
+                if (expectedPhase === 'implement') {
                     assert.ok(result.stdout.includes(`Rerouting: implement ${String(options.implement?.status)} (code_review ${String(options.codeReview?.status)}`), result.stdout);
                     assert.doesNotMatch(result.stdout, /Rerouting: implement pending \(code_review pending\) →/);
                 }
@@ -1154,6 +1182,46 @@ for (const value of [undefined, null, '1', -1, 0, NaN, Infinity]) {
 void test('isRerouteAdmitted rejects earlier phases despite stale activity or a blocked review', () => {
     for (const phase of ['spec', 'spec_review', 'plan'] as const) {
         const status = makeRerouteStatus('predicate', '', 0, { [phase === 'spec_review' ? 'specReview' : phase]: { status: 'pending' }, implement: { status: 'blocked' }, codeReview: { status: 'blocked', iterations_current_loop: 2 } });
+        assert.equal(isRerouteAdmitted(status as unknown as StatusJson), false);
+    }
+});
+
+for (const implementStatus of ['pending', 'in_progress'] as const) {
+    void test(`reroute missing code_review renders missing from implement ${implementStatus}`, () => {
+        withTempDir('reroute-missing-review-', dir => {
+            initGitRepo(dir);
+            const taskId = 'task-a';
+            const tasksRoot = path.join(dir, 'tasks');
+            const worktreesRoot = path.join(dir, 'worktrees');
+            const status = makeRerouteStatus(taskId, `task/${taskId}`, 2, {
+                implement: { status: implementStatus }, qa: { status: 'pending' },
+            });
+            delete (status.phases as Record<string, unknown>).code_review;
+            assert.equal(derivePhase(status), 'implement');
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment Round 3\n\nRequirements.\n');
+            const statusPath = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json');
+            const before = fs.readFileSync(statusPath);
+            const result = runReroute(dir, [taskId], false);
+            if (implementStatus === 'pending') {
+                assert.notEqual(result.status, 0);
+                assert.match(result.stderr, /'task-a': implement pending \(code_review missing\)/);
+                assert.deepEqual(fs.readFileSync(statusPath), before);
+            } else {
+                assert.equal(result.status, 0, result.stderr);
+                assert.match(result.stdout, /Rerouting: implement in_progress \(code_review missing\) →/);
+            }
+        });
+    });
+}
+
+void test('legacy iterations does not override a present non-positive or invalid current-loop count', () => {
+    for (const value of [0, -1, '1', NaN, Infinity]) {
+        const status = makeRerouteStatus('legacy', '', 0, {
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '', iterations: 3, iterations_current_loop: value },
+        });
         assert.equal(isRerouteAdmitted(status as unknown as StatusJson), false);
     }
 });

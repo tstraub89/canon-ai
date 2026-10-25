@@ -12,13 +12,11 @@ type HintSite =
 const HINT_PATTERN = /--reroute|reset-code-review|reset-spec-review|canon task accept/;
 const HINT_SITES: readonly HintSite[] = [
   {
-    file: 'src/orchestrator/review-loop.ts',
-    snippet: "`If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md and run canon run ${taskIds.join(' ')} --reroute instead (the reroute pre-flight names the exact heading it expects). ` +",
-    kind: 'actionable',
-    covers: [{ state: 'implement-entry loop cap', test: 'code loop cap at implement entry: the printed reroute is accepted' }],
+    "file": "src/orchestrator/review-loop.ts",
+    "snippet": "`If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md and run canon run ${taskIds.join(' ')} --reroute instead (the reroute pre-flight names the exact heading it expects). ` +",
+    "kind": "actionable",
+    "covers": [{ "state": "implement-entry loop cap", "test": "code loop cap at implement entry: the printed reroute is accepted" }],
   },
-
-
   {
     file: 'src/orchestrator/cli.ts',
     snippet: "    booleanFlags: ['--interactive', '-I', '--step', '-1', '--pr', '--push', '--full-send', '--force', '--allow-divergent-base', '--ship', '--dry-run', '--reroute'],",

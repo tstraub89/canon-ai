@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { die } from './cli.js';
 import { REPO_ROOT, TASKS_DIR, WORKTREES_ROOT } from './env.js';
-import { PHASE_ORDER, type CurrentPhase, type Phase, type SessionSlot, type StatusJson } from './types.js';
+import { PHASE_ORDER, type CurrentPhase, type Phase, type PhaseEntry, type SessionSlot, type StatusJson } from './types.js';
 
 export function effectiveWorktreesRoot(): string {
     // Anchor a relative CANON_WORKTREES_ROOT on the supervising checkout
@@ -443,6 +443,11 @@ export function currentLoopCount(value: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+// Legacy statuses record review rounds in iterations until the current-loop field exists.
+export function currentLoopReviewRounds(codeReview: PhaseEntry | undefined): number {
+    return currentLoopCount(codeReview?.iterations_current_loop ?? codeReview?.iterations);
+}
+
 export function isRerouteAdmitted(status: StatusJson): boolean {
     const phase = deriveTopLevelStatus(status);
     if (phase === 'code_review' || phase === 'qa' || phase === 'human_review') return true;
@@ -452,7 +457,7 @@ export function isRerouteAdmitted(status: StatusJson): boolean {
     return implementStatus === 'in_progress'
         || implementStatus === 'blocked'
         || codeReview?.status === 'blocked'
-        || currentLoopCount(codeReview?.iterations_current_loop) > 0
+        || currentLoopReviewRounds(codeReview) > 0
         || currentLoopCount(codeReview?.preflight_rejections_current_loop) > 0;
 }
 

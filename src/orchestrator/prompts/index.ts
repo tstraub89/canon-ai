@@ -294,7 +294,7 @@ export function promptPlan(state: PipelineState): string {
             taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
             roundBanner,
             verdictLines,
-            feasibilityCheck: planFeasibilityCheck('at the top of the appended `### Delta` section', '   '),
+            feasibilityCheck: planFeasibilityCheck('at the top of the appended `### Round Scope` section', '   '),
             phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'plan', 'done'),
         });
     }
@@ -469,7 +469,7 @@ export function promptImplementReroute(
 
     const preamble = isResumedSession
         ? 'Your session is being continued with spec amendments. The spec has been updated since your last turn — new ACs, new sections, or revised requirements have been added. The prior implementation round may be complete or partial, so confirm the current state from the worktree rather than from memory: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.'
-        : 'A human decided this task needed a spec amendment after implementation began, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is **not** a resume of an interrupted session. The prior implementation round may be complete or partial: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.';
+        : 'A human decided this task needed a spec amendment after implementation began, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is a fresh agent session, **not** a resume of your interrupted one — that refers to the session, not to whether the prior implementation round finished. The prior implementation round may be complete or partial: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.';
     const startup = isResumedSession ? '' : CODEX_STARTUP;
     const groundingRule = isResumedSession
         ? 'Grounding rule: re-read the amended spec.md, and handoff.md if it has been filled in, before changing anything. The spec has new requirements — do not assume your prior memory of the spec is complete.'

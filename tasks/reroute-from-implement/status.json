@@ -1,7 +1,7 @@
 {
   "id": "reroute-from-implement",
   "title": "Allow --reroute once implementation has begun",
-  "status": "human_review",
+  "status": "code_review",
   "created": "2026-10-25",
   "updated": "2026-10-25",
   "branch": "task/reroute-from-implement",
@@ -9,7 +9,7 @@
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "46e995638dc9e55613f0b2034305e586e3dd46f4",
+    "orchestrator_commit": "d6c00c31540646ac4d0d36b0595e0ca5a798759c",
     "canon_version": "3.13.0",
     "codex_cli": "codex-cli 0.163.0",
     "claude_code": "2.1.310 (Claude Code)"
@@ -31,8 +31,8 @@
       "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 1,
-      "changes_requested_total": 0,
+      "iterations_total": 3,
+      "changes_requested_total": 1,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
     },
@@ -42,12 +42,14 @@
     },
     "implement": {
       "status": "done",
-      "agent": "codex"
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "done",
+      "status": "pending",
       "agent": "claude",
-      "verdict": "approved_with_nits",
+      "verdict": "",
       "iterations": 0,
       "iterations_current_loop": 0,
       "iterations_total": 1,
@@ -56,7 +58,7 @@
       "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "done",
+      "status": "pending",
       "agent": "claude"
     },
     "human_review": {
@@ -66,9 +68,8 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a17333-1d29-7222-a911-82ac752ce187",
     "codex": "01a1733d-f58b-75c3-bbd2-4b9ab11b6546",
-    "claude_review": "a7379385-7feb-4770-96ea-8b139c925d72"
+    "codex_spec_review": "01a17356-fcb0-7c61-b2a3-d9f60ee24380"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

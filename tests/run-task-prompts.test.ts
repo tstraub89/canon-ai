@@ -350,7 +350,8 @@ void test('reroute prompts mark reroute_exempt siblings exempt instead of direct
     assert.match(planOutput, /EXCEPT tasks whose line above marks them EXEMPT/);
     assert.ok(planOutput.indexOf('Feasibility check') > planOutput.indexOf('EXCEPT tasks whose line above marks them EXEMPT'));
     assert.ok(planOutput.indexOf('Feasibility check') < planOutput.indexOf('Do **not** rewrite'));
-    assert.match(planOutput, /### Delta/);
+    assert.match(planOutput, /### Round Scope/);
+    assert.doesNotMatch(planOutput, /### Delta/);
     assert.doesNotMatch(outputLineFor(planOutput, exemptId), /Feasibility|Real path/);
 
     const implementOutput = normalize(promptImplementReroute(state, false, [], 'main'));
@@ -404,7 +405,7 @@ void test('implement prompts state red-first evidence and pre-fix commit', () =>
     const fresh = promptImplement(baseState, 'fresh', [], 'main');
     const revisions = promptImplementRevisions(iterState, [], 'main');
     const reroute = promptImplementReroute(rerouteState);
-    for (const [prompt, phrase] of [[fresh, /base commit/], [revisions, /HEAD before this round’s edits/], [reroute, /HEAD before this round’s edits/]] as const) {
+    for (const [prompt, phrase] of [[fresh, /base commit/], [revisions, /HEAD before this round’s edits/], [reroute, /committed HEAD/]] as const) {
         assert.match(prompt, /Red-First Evidence/);
         assert.match(prompt, phrase);
         assert.doesNotMatch(prompt, /Report the red run/);
@@ -725,7 +726,7 @@ void test('plan feasibility reaches ordinary, bundle, reroute, and fast-tier com
     const peer = makeTask({ taskId: 'test-pf-bundle', title: 'Bundle peer' });
     const bundle: PipelineState = { tasks: [planState.tasks[0], peer], tier: 'full', isBundle: true };
     assert.match(promptPlan(bundle), /Feasibility check[\s\S]*Approach section/);
-    assert.match(promptPlan(makeState(makeReroutedTask())), /Feasibility check[\s\S]*### Delta/);
+    assert.match(promptPlan(makeState(makeReroutedTask())), /Feasibility check[\s\S]*### Round Scope/);
     for (const state of [
         { ...baseState, tier: 'fast' as const },
         { ...bundle, tier: 'fast' as const },
