@@ -403,3 +403,200 @@ The section is headed `### Delta` because the running engine's plan-reroute prom
 2. Re-run the base plan's Step 9 AC-8 greps. The first must still be empty. Classify the second grep's new hits from the N4 qualifier edits.
 3. Then run `npm run lint`, `npm run type-check`, `npm test`, `npm run sync-templates:check`, and `npm run docs-refs-check`.
 4. Rewrite `handoff.md` in full. Carry the two AC-1 Red-First Evidence rows forward and add the AC-A6 row. Add an AC-A1–A9 coverage table. List every changed file, including both mirrors and both dist bundles.
+
+## Reroute Plan Round 2
+
+### Delta
+
+This round's scope is Amendment Round 2 (AC-B1–AC-B9). The original ACs and the round-1 amendment (AC-A1–AC-A9) were fully implemented and committed in `80b7023`. The round-1 post-reroute code review (archived as `review-prior-2.md`) found no failing AC: it returned one spec gap (now AC-B1) and eleven nits (now AC-B2–B8). The worktree holds no aborted-round source edits; the only dirty files are under `tasks/reroute-from-implement/`. Base Steps 0–9 and round-1 Steps R0–R8 are therefore done and are not re-planned. Committed HEAD `80b7023` is the isolated pre-fix state for this round's red runs. The amendment review approved with no findings. Its two `[ambiguity]` readings are adopted below: B1 supersedes the blanket zero-counter bundle exclusion only for matching-branch siblings (Step R2-5), and full-rule restatements must carry the bundle exception (Step R2-6).
+
+This section is headed `### Delta` because the running engine's plan-reroute prompt still uses that name; the dev template's `### Round Scope` rename (AC-A4/N3) is unaffected.
+
+**Feasibility check**
+- **Exists:** confirmed by search:
+  - `isRerouteAdmitted()`, `currentLoopCount()`, and `currentLoopReviewRounds()` are at `src/orchestrator/state.ts:441-462`. `validateStatus()` (`:410-420`) rejects any present counter that is not a non-negative integer, `null` included, on every `readStatus` path.
+  - In `src/orchestrator/main.ts`:
+    - `getIterations()` is at `:158-161` and applies the raw `iterations_current_loop ?? iterations ?? 0` chain.
+    - `buildPipelineState()` repeats the chain at `:223`.
+    - `phaseIterationCount()` is at `:3551-3556`. It is generic and out of scope per B6.
+    - `describeRerouteEntryPhase()` is at `:2788-2805`; its implement branch uses `?? 'pending'` at `:2791`.
+    - `rerouteFromHumanReview()` is at `:2808`. Its gate is `allAdmitted = entryStatuses.every(isRerouteAdmitted)` at `:2816`, and its rejection is at `:2817-2832`.
+  - The rejection's first line is pinned as an exempt snippet at `tests/recovery-hints.test.ts:108`, and its rule wording at `tests/run-task-reroute-preflight.test.ts:1151-1152`.
+  - In `src/orchestrator/prompts/index.ts`:
+    - The non-exempt task lines are at `:290` (`promptPlan`) and `:467` (`promptImplementReroute`).
+    - `priorReviewReference()` is at `:499-504` and is reached only from the exempt branches (`:228`, `:462`).
+    - The non-resumed preamble is at `:472`.
+  - `findNewestReviewArchive()` (`src/orchestrator/review-archive.ts:89`) selects archives numerically. It calls `fs.readdirSync` unguarded, so it **throws ENOENT on a missing task dir**.
+  - The red-first set-aside sentence is at `src/orchestrator/prompts/templates/implement-reroute.md:28`.
+  - Downstream gates: `verifyHandoffAgainstDiffFromData()` (`src/orchestrator/validation.ts:1504`), `buildAffectedFilesAllowlist()` (`:1581`), and `verifyBaseDriftFromData()` (`:1606`). `src/orchestrator/phases/code-review.ts:321,368-373` uses the last two.
+  - `ensureBranch()` writes the shared branch, per the amendment and its review probe.
+  - `validateBranchField()` (`src/orchestrator/state.ts:385-399`) accepts `''` and whitespace-only branches.
+  - Test fixtures: `makeRerouteStatus(taskId, branch, …)` (`tests/run-task-reroute-preflight.test.ts:57`) takes an explicit branch. The bundle scenarios at `:1229-1257` give each task its own `task/<id>`, so the AC-2(a) reject row keeps rejecting under B1.
+  - Docs, skill, and help surfaces:
+    - SKILL.md §6 heading is at `.claude/skills/canon-pipeline/SKILL.md:148` and its rule at `:150`. No file links to the heading text.
+    - recovery.md Path B is at `:27`.
+    - `docs/pipeline-orchestrator.md` §Human Reroute rule is at `:487`; "Archived findings remain binding; exempt-sibling prompts point …" is at `:497`.
+    - The decision entry is at `docs/decisions.md:493-499`.
+    - Help is at `src/orchestrator/cli.ts:52-58`, the spec-gate note at `src/task/index.ts:1555`, and the README rule at `README.md:97,278`. No surface advises rerouting a subset of a bundle today (grep `subset|split|separately`).
+- **Real path:** `canon run <ids> --reroute` → `guardConcurrentRun()` → `rerouteFromHumanReview()`:
+  1. It reads every status once into `entryStatuses`.
+  2. Then: admission gate → amendment pre-flight (all non-exempt tasks, so a shared-branch sibling needs its own Amendment) → banner → archive → reset loop.
+  3. The reset loop already zeroes every named task's counters and sets `rerouted`, so B1 needs no reset change.
+  - Prompts: `buildPipelineState()` → `promptPlan()` / `promptImplementReroute()` → per-task lines.
+  - Loop-cap checks read `getIterations()` (`main.ts:3588,3673,3800,3859`).
+- **Callers:**
+  - `isRerouteAdmitted()`'s contract is unchanged. It is still called by the gate and by `specGateDoneNote()`, and B1 is layered on top in `main.ts` only.
+  - `getIterations()` has four loop-cap callers, and `buildPipelineState()` is called throughout. Their outputs are unchanged for every `readStatus`-validated status: for non-negative integers the helper returns the same value. `null` and invalid values never reach them, because validation throws first.
+  - `src/task/index.ts:412,560` (`entry.iterations_current_loop ??= entry.iterations ?? 0`) are seeding **writers** that normalize the persisted field before incrementing. They are not count consumers, so they stay as they are and get classified in the handoff.
+  - `priorReviewReference()` has two exempt callers. Their output is unchanged, except that a missing task dir now falls back to `review.md` instead of throwing.
+  - `describeRerouteEntryPhase()` is called only within `main.ts`, at the three sites listed under Exists.
+- **Tests that can fail:**
+  - **B4 (mandatory red-first).** A non-exempt rerouted task, rendered from its own dir holding `review-prior-2.md` and `review-prior-10.md`. Today both builders' lines omit any archive name, so `assert.match(line, /review-prior-10\.md/)` fails. The amendment review reproduced this with a probe.
+  - **B1 admitted row.** Today `every(isRerouteAdmitted)` rejects A, so the test exits 1 with "requires implementation to have begun". The red run is recommended but not mandated.
+  - **B2.** Today's rejection has no next-step text.
+  - **B7(6).** The updated rule regex fails against the repeated "once implementation has begun" wording.
+  - **B7(8).** `implement` deleted → today renders `implement pending`.
+  - **B6.** The `null` helper row is a pin: it passes before and after the change. The `getIterations` swap is a refactor with no red run.
+  - **B8.** Pins only.
+- **Predicates:**
+  - **Sibling clause (B1).** A task qualifies through it only when all of these hold:
+    - `getCurrentPhase(status) === 'implement'`.
+    - `status.phases.implement?.status === 'pending'` **and** `status.phases.code_review?.status === 'pending'`. Both entries must be present; a missing entry never qualifies.
+    - `isRerouteAdmitted(status)` is false, which implies zero counters and no blocked review.
+    - `branch?.trim()` is non-empty.
+    - Some **other** named task j passes `isRerouteAdmitted` and has an equal trimmed branch.
+  - **Sibling boundaries:**
+    - Branch `undefined`, `''`, or whitespace-only → not eligible.
+    - A different branch → not eligible.
+    - Two zero-activity tasks on one branch → neither has an anchor → rejected.
+    - A single task → no j → rejected.
+    - The anchor may be at any single-admitted phase (`code_review`/`qa`/`human_review` or implement-entry).
+  - **Review-round helper (B6):** `iterations_current_loop ?? iterations`, then finite-positive.
+    - Absent or `null` current-loop → falls back.
+    - Present `0`, `-1`, `'1'`, `NaN`, or `Infinity` → no fallback, yields 0.
+    - Legacy `iterations: '3'` → 0.
+    - Both absent or `undefined` entry → 0.
+  - **Archive lookup (B4):** a missing dir or zero archives → no pointer. `review-prior-10` beats `review-prior-2` (numeric).
+- **Scope:** every file below is in the union of the three Affected Files tables.
+  - `src/orchestrator/cli.ts`, `README.md`, and `tests/task-cli.test.ts` are in the original table only. Under the reviewer's adopted reading, they get the bundle-exception clause.
+  - `src/orchestrator/review-archive.ts` is in no table and is **not** edited. The ENOENT guard lives in `prompts/index.ts`.
+  - `plan-reroute.md` is in the round-2 table, but its archive pointer goes in the per-task line, which `index.ts` renders. The template needs no edit, because any unconditional template text would violate B4's "say nothing when no archive exists".
+- **Async/stateful:**
+  - The gate decides from the single `entryStatuses` snapshot before any write, so every rejected row stays byte-unchanged.
+  - Live-run exclusion is still `guardConcurrentRun()`.
+  - The archive lookup runs at render time. That is intended: a later plain `canon run` still finds the durable archive.
+  - No new persisted state.
+
+**Step R2-0 — Red-first (test-only edits on `80b7023`, before any `src/` edit).**
+1. Add the B4 tests in `tests/run-task-prompts.test.ts`, following the exempt-archive test at `:365-397`:
+   - **With archive:** create `tmpRoot/test-pf-archive` with a `status.json` from `makeReroutedTask('test-pf-archive', 2)`, plus `review-prior-2.md` and `review-prior-10.md`. For both `promptPlan(state)` and `promptImplementReroute(state, false, [], 'main')`, take `outputLineFor(…, 'test-pf-archive')` and assert:
+     - it matches `/tasks\/test-pf-archive\/review-prior-10\.md/`;
+     - it does not match `/review-prior-2\.md/`;
+     - it matches `/remain binding unless/`.
+   - **No archive (negative):** a second dir `test-pf-no-archive` with no archive. Assert the line does not match `/review-prior/` or `/archived/i`.
+   - Use new task ids so the existing golden fixture (`TASK_ID`, no archive) stays untouched.
+2. Run `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='archive' tests/run-task-prompts.test.ts`. Expected: four with-archive assertions fail with the pointer absent, and the no-archive cases pass. Record this as the AC-B4 Red-First Evidence row.
+3. Recommended: add the B1 admitted row (Step R2-5) now as well. Run `--test-name-pattern='shared-branch'` and record the exit-1 rejection as a supplementary evidence row.
+
+**Step R2-1 — Single review-round source (B6; `src/orchestrator/state.ts`, `src/orchestrator/main.ts`).**
+- Keep `currentLoopReviewRounds()` as the one exported helper. Update its comment: "absent or null current-loop field falls back to legacy `iterations`".
+- `getIterations()` becomes `return splitState.currentLoopReviewRounds(status.phases.code_review);`.
+- `buildPipelineState()` `:223` becomes `const codeReviewCurrentLoop = splitState.currentLoopReviewRounds(codeReview);`. Leave `codeReviewTotal` alone (different field).
+- Leave `phaseIterationCount()` alone, and also the `src/task/index.ts:412,560` seeding writers.
+- **Verify:** `grep -nE 'iterations_current_loop \?\? ' src/orchestrator/main.ts src/orchestrator/state.ts src/task/index.ts`. Expected hits: the `state.ts` helper and `main.ts` `phaseIterationCount()` only. Record the output and the classification of the `??=` writers in the handoff.
+- **Tests** (`tests/run-task-reroute-preflight.test.ts`): a direct table for `currentLoopReviewRounds`:
+  - `{iterations_current_loop: null, iterations: 2}` → 2
+  - `{iterations_current_loop: 0, iterations: 2}` → 0
+  - `{iterations_current_loop: '1'}` → 0
+  - `-1`, `NaN`, `Infinity` → 0
+  - `{iterations: '3'}` → 0
+  - `{}` → 0
+  - `undefined` → 0
+- **`docs/decisions.md:495`:** "falling back to legacy `iterations` when the current-loop field is absent or null".
+
+**Step R2-2 — Shared-branch sibling admission and rejection text (B1, B2, B3, B7(6), B7(8); `src/orchestrator/main.ts`).**
+- Add a module-local (or exported, for direct tests) `rerouteAdmissions(entryStatuses)` returning one `'qualifies' | 'sibling' | 'rejected'` per task. It computes the single-task results first, then applies the R2 predicate above. The gate becomes `allAdmitted = admissions.every(a => a !== 'rejected')`.
+- Don't touch `isRerouteAdmitted` or `specGateDoneNote()`'s use of it.
+- **Rejection message:**
+  - **First line (B7(6)):** `--reroute requires implementation to have begun on every named task: current phase code_review, qa, or human_review; or implement in progress or blocked, a blocked code review, or a code review already run in the current loop (a review round or a pre-flight rejection).` Update the snippet at `tests/recovery-hints.test.ts:108` to the new first source line, still exempt.
+  - **Multi-task (B3):** add the sibling clause in operator terms: "In a bundle, an approved sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both record the same task branch." Then list the tasks that qualify and those that do not, e.g. `Qualifying: task-b. Not qualifying: task-a.`, followed by the existing `Current state:` summary. Do not suggest splitting or rerouting a subset.
+  - **Single task at implement, not admitted (B2):** append a next step:
+    - If `phases.implement.rerouted === true`: "This task is mid-reroute: revise the current amendment in spec.md and run plain `canon run <id>`."
+    - Otherwise: "Revise the spec or plan and run plain `canon run <id>`."
+    - Judgment call (logged in notes): also add "If it was implemented in a bundle on a shared task branch, name every bundle task in one reroute instead." That covers a secondary member rerouted alone. Keep the literal `--reroute` out of new lines; otherwise register them in `HINT_SITES` (the HINT_PATTERN check fails on any unregistered `src/` line matching `--reroute`).
+- **B7(8):** `describeRerouteEntryPhase` `:2791` changes `?? 'pending'` to `?? 'missing'`.
+- The banner is otherwise unchanged. A sibling renders `implement pending (code_review pending)`.
+
+**Step R2-3 — Archive pointer (B4; `src/orchestrator/prompts/index.ts`).**
+- Add `newestArchivedReview(taskId): string | null`. It wraps `findNewestReviewArchive(taskDirFor(taskId))` in try/catch (ENOENT → `null`) and returns `tasks/<id>/review-prior-<n>.md`.
+- Rewrite `priorReviewReference()` as `newestArchivedReview(taskId) ?? \`tasks/${taskId}/review.md\``.
+- In both non-exempt lines (`:290` `promptPlan`, `:467` `promptImplementReroute`), when the pointer is non-null, append: ` Prior review findings are archived at <path>; its unresolved findings remain binding unless the amendment supersedes them.` When it is null, append nothing.
+- No template edit.
+- Re-run the R2-0 command and record the passing post-fix result. The full prompt test file must leave every existing golden for the B4 change byte-identical.
+
+**Step R2-4 — Template wording (B5, B7(1); `src/orchestrator/prompts/templates/implement-reroute.md`, `src/orchestrator/prompts/index.ts:472`).**
+- **B5:** in the `:28` set-aside sentence, replace "copy them out to a temporary directory and temporarily restore those paths to their committed contents" with wording that does three things:
+  1. Copy tracked non-test leftovers out and restore those paths to their committed contents, and **move** untracked non-test leftovers out of the worktree.
+  2. Confirm the set-aside copies exist before the red run.
+  3. Restore every set-aside file (tracked and untracked) after the run, before applying the fix.
+
+  Keep "never a bare `git stash`" and the rest of the paragraph verbatim (AC-A3 contract).
+- **B7(1):** in the `:472` non-resumed preamble, replace "This is a fresh agent session, **not** a resume of your interrupted one — that refers to the session, not to whether the prior implementation round finished." with "This is a fresh agent session, **not** a resume of a prior session — that refers to the session, not to whether the prior implementation round finished."
+- **Existing assertions:** check `tests/run-task-prompts.test.ts` for any that pin "interrupted one" or "committed contents" and update them to the new text.
+
+**Step R2-5 — Reroute tests (B1, B2, B3, B7(6), B7(8), B8; `tests/run-task-reroute-preflight.test.ts`).**
+- **B1 rows** go in a new `for` loop named `reroute shared-branch sibling <case>`. They reuse the bundle scenario's fixture pattern: each task's status sits under `worktrees/<id>/tasks/<id>`, and both specs carry `## Amendment`. Fixtures:
+  - A: implement `pending`, code_review `{status:'pending', verdict:'', iterations:0, iterations_current_loop:0, preflight_rejections_current_loop:0}`.
+  - B: the route-back row options (`iterations_current_loop: 1`).
+
+  Cases:
+  1. `admit`: both `branch: 'task/task-a'` → exit 0. Assert both tasks' written status follows the AC-5 reset (implement `pending`, `rerouted: true`, `reroute_count` 1, code_review `pending`, verdict `''`, both counters 0), and the banner names both tasks.
+  2. `empty-branch`: A `branch: ''` → rejected.
+  3. `whitespace-branch`: A `branch: '  '` → rejected.
+  4. `different-branch`: A `task/other` → rejected.
+  5. `both-unstarted`: two zero-activity tasks on `task/task-a` → rejected.
+  6. `single`: A alone with `task/task-a` → rejected.
+
+  Each rejected case asserts `status.json` byte-unchanged. Case 5 asserts both tasks are listed as not qualifying. Cases 2–4 assert B listed as qualifying and A as not (B3 rejection-text test), and assert stderr doesNotMatch `/split|separately|subset/i`.
+- **B1 downstream gates** (same file, in-process): with `CANON_TASKS_DIR_OVERRIDE` pointing at a temp root holding `task-a`/`task-b` specs whose `### Affected Files` list `src/task-a.ts` and `src/task-b.ts` respectively:
+  - **Covers both files:** `verifyHandoffAgainstDiffFromData(['task-a','task-b'], { diffFiles: ['src/task-a.ts','src/task-b.ts'], handoffFilesByTask: new Map([['task-a',['src/task-a.ts']],['task-b',['src/task-b.ts']]]) })` → `[]`. Also `verifyBaseDriftFromData(diff, allowlist.paths, ids, allowlist.prefixes)` with `buildAffectedFilesAllowlist(ids, { admittedDocs: [] })` → `[]`.
+  - **Opposite outcome:** the same calls with `['task-b']` alone report `src/task-a.ts`. This pins why the bundle must stay whole.
+  - Restore the env var in `finally`.
+- **B2:** two single-task rejections at implement `pending` / code_review `pending` / zero counters:
+  - one with `implement.rerouted: true` → stderr matches `/revise the current amendment.*plain `canon run task-a`/` and does not match `/Revise the spec or plan/`;
+  - one without → the reverse.
+- **B7(6):** update `:1151-1152` to the new rule sentence and add `assert.doesNotMatch(stderr, /or implement once implementation has begun/)`.
+- **B7(8):** take `makeRerouteStatus` with code_review `pending` and `delete phases.implement`. Assert `derivePhase === 'implement'`, the rejection stderr matches `/'task-a': implement missing \(code_review pending\)/`, and status is byte-unchanged.
+- **B8:** in the `admit-started` branch at `:1246`, read both written statuses and assert the AC-5 reset fields and `reroute_count` 1 for task-a and task-b. Assert stdout matches `/Rerouting: task-a: implement in_progress \(code_review pending\), task-b: human_review →/`; take the exact form from the banner code at `main.ts:2885-2894`.
+
+**Step R2-6 — Docs, skill, help, README, note (B3, B7(2), B7(7), B4 doc line; reviewer-adopted full-rule reading).**
+- **`docs/pipeline-orchestrator.md`:**
+  - `:487`: after the rule sentence, add the sibling clause in operator terms. Also add: "Name every task of a shared-branch bundle in one reroute; rerouting part of it fails the downstream handoff and Affected Files checks."
+  - `:497`: replace "exempt-sibling prompts point at the archived file instead of the now-absent `review.md`" with: rerouted tasks' prompts point at the newest archive when one exists (exempt siblings still fall back to `review.md` when none does).
+- **`.claude/skills/canon-pipeline/SKILL.md`:**
+  - `:148`: change the heading to `### 6. Reroute once implementation has begun`, keeping the ordinal.
+  - `:150`: add the sibling sentence and the whole-bundle note.
+- **`.claude/skills/canon-pipeline/recovery.md:27` (B7(2)):** change the Path B trigger to: "use when the latest review flagged stale context — for a `spec_review` block, phrases that no longer exist in the spec; for a `code_review` block, code or handoff content the review no longer matches — a session-resume staleness artifact".
+- **`docs/decisions.md` reroute-from-implement entry:**
+  - Decision paragraph: append the sibling clause.
+  - Rule paragraph: replace "Keep the all-task bundle gate" with "Every named task must qualify, or be a same-branch sibling of one that does".
+  - Add one or two sentences on the declined alternatives: a route-back marker on the approved sibling would change loop-counter semantics, and admitting a sibling without shared-branch evidence would let an unstarted task ride along.
+  - Also apply the B6 null wording from R2-1.
+- **Bundle-exception clause on the remaining full-rule restatements** (operator terms, no source paths), per the reviewer's adopted reading:
+  - `src/orchestrator/cli.ts:55-56`: add a continuation line without the literal `--reroute`, so the HINT registry is unaffected.
+  - `README.md:97,278`.
+  - `src/task/index.ts:1555`: the "will not fire" note gets a trailing clause such as ", or, in a bundle, alongside such a task on the same task branch". The `tests/task-cli.test.ts:724` regex still matches; extend it to pin the clause.
+- **`src/task/index.ts:15` (B7(9)):** sort the import list so `isOrphanedWorktreeState` precedes `isRerouteAdmitted`.
+- Run `npm run sync-templates`, then `npm run sync-templates:check`. Declare all three mirrors in the handoff.
+
+**Step R2-7 — Golden, build, validate (AC-B9).**
+1. Regenerate goldens: `UPDATE_GOLDENS=1 node --test --import ./tests/md-loader-register.mjs --import tsx tests/run-task-prompts.test.ts`, then re-run without the env var.
+2. Run the key compare against `git show 80b7023:tests/run-task-prompts.golden.json`. Expected: changed `promptImplementReroute` (B5 and B7(1)) and `promptImplementReroute_resumed` (B5); nothing added or removed; every other key byte-identical. A changed plan or spec-review key means B4 leaked into the shared fixture, so investigate it. Record the output.
+3. Run `npm run build`; only the two dist bundles may change.
+4. Run `npm run lint`, `npm run type-check`, `npm test`, `npm run docs-refs-check`, and `npm run sync-templates:check`.
+5. Re-run the round-1 AC-8 greps and the R2-1 B6 grep.
+6. Rewrite `handoff.md` cumulatively:
+   - Carry forward the three existing Red-First Evidence rows, and add AC-B4 (plus the optional B1 row).
+   - Add an AC-B1–B9 coverage table.
+   - Include the `??=` writer classification.
+   - List every changed file, including the mirrors and both dist bundles.

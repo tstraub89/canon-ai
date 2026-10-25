@@ -396,6 +396,33 @@ for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
     });
 }
 
+for (const builder of ['plan', 'implement'] as const) {
+    for (const withArchive of [true, false]) {
+        void test(`non-exempt ${builder} reroute archive pointer (${withArchive ? 'with archive' : 'no archive'})`, () => {
+            const taskId = `test-pf-archive-${builder}-${String(withArchive)}`;
+            const task = makeReroutedTask(taskId, 2);
+            const taskDir = path.join(tmpRoot, taskId);
+            fs.mkdirSync(taskDir, { recursive: true });
+            fs.writeFileSync(path.join(taskDir, 'status.json'), JSON.stringify(task.status));
+            if (withArchive) {
+                fs.writeFileSync(path.join(taskDir, 'review-prior-2.md'), reviewTemplate);
+                fs.writeFileSync(path.join(taskDir, 'review-prior-10.md'), reviewTemplate);
+            }
+            const output = builder === 'plan'
+                ? promptPlan(makeState(task))
+                : promptImplementReroute(makeState(task), false, [], 'main');
+            const line = outputLineFor(normalize(output), taskId);
+            if (withArchive) {
+                assert.ok(line.includes(`tasks/${taskId}/review-prior-10.md`), line);
+                assert.doesNotMatch(line, /review-prior-2\.md/);
+                assert.match(line, /unresolved findings remain binding unless the amendment supersedes them/);
+            } else {
+                assert.doesNotMatch(line, /review-prior|archived/i);
+            }
+        });
+    }
+}
+
 void test('promptImplement_fresh', () => {
     const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));
     recordOrAssert('promptImplement_fresh', actual);

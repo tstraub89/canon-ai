@@ -285,7 +285,7 @@ export function promptPlan(state: PipelineState): string {
             const planHeading = t.rerouteCount <= 1
                 ? '`## Reroute Plan`'
                 : `\`## Reroute Plan Round ${t.rerouteCount}\``;
-            return `- \`${t.taskId}\`: amendment review verdict = ${t.specReviewVerdict}; reroute round ${t.rerouteCount}; append ${planHeading}`;
+            return `- \`${t.taskId}\`: amendment review verdict = ${t.specReviewVerdict}; reroute round ${t.rerouteCount}; append ${planHeading}${archivedReviewGuidance(t.taskId)}`;
         }).join('\n');
 
         return render('plan-reroute.md', {
@@ -464,12 +464,12 @@ export function promptImplementReroute(
         const expectedHeading = t.rerouteCount <= 1
             ? '`## Amendment`'
             : `\`## Amendment Round ${t.rerouteCount}\``;
-        return `- \`${t.taskId}\`: "${t.title}" (entering reroute round ${t.rerouteCount}) — a human amended the spec and rerouted this task after implementation began. Locate ${expectedHeading} in tasks/${t.taskId}/spec.md: it holds the newest requirements and wins where it conflicts with an earlier section; earlier sections (the original ACs and prior amendment rounds) stay binding wherever their work is not yet implemented. Your previous handoff is at tasks/${t.taskId}/handoff.md (use it only if it has been filled in).`;
+        return `- \`${t.taskId}\`: "${t.title}" (entering reroute round ${t.rerouteCount}) — a human amended the spec and rerouted this task after implementation began. Locate ${expectedHeading} in tasks/${t.taskId}/spec.md: it holds the newest requirements and wins where it conflicts with an earlier section; earlier sections (the original ACs and prior amendment rounds) stay binding wherever their work is not yet implemented. Your previous handoff is at tasks/${t.taskId}/handoff.md (use it only if it has been filled in).${archivedReviewGuidance(t.taskId)}`;
     }).join('\n');
 
     const preamble = isResumedSession
         ? 'Your session is being continued with spec amendments. The spec has been updated since your last turn — new ACs, new sections, or revised requirements have been added. The prior implementation round may be complete or partial, so confirm the current state from the worktree rather than from memory: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.'
-        : 'A human decided this task needed a spec amendment after implementation began, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is a fresh agent session, **not** a resume of your interrupted one — that refers to the session, not to whether the prior implementation round finished. The prior implementation round may be complete or partial: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.';
+        : 'A human decided this task needed a spec amendment after implementation began, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is a fresh agent session, **not** a resume of a prior session — that refers to the session, not to whether the prior implementation round finished. The prior implementation round may be complete or partial: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.';
     const startup = isResumedSession ? '' : CODEX_STARTUP;
     const groundingRule = isResumedSession
         ? 'Grounding rule: re-read the amended spec.md, and handoff.md if it has been filled in, before changing anything. The spec has new requirements — do not assume your prior memory of the spec is complete.'
@@ -497,10 +497,24 @@ export function promptImplementReroute(
 // prior findings. A stub-only or incomplete reset has no archive, so retain
 // the binding-findings wording without inventing a filename that does not exist.
 function priorReviewReference(taskId: string): string {
-    const archivedReview = findNewestReviewArchive(taskDirFor(taskId));
+    return newestArchivedReview(taskId) ?? `tasks/${taskId}/review.md`;
+}
+
+function newestArchivedReview(taskId: string): string | null {
+    try {
+        const archive = findNewestReviewArchive(taskDirFor(taskId));
+        return archive ? `tasks/${taskId}/${archive}` : null;
+    } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+        throw error;
+    }
+}
+
+function archivedReviewGuidance(taskId: string): string {
+    const archivedReview = newestArchivedReview(taskId);
     return archivedReview
-        ? `tasks/${taskId}/${archivedReview}`
-        : `tasks/${taskId}/review.md`;
+        ? ` Prior review findings are archived at ${archivedReview}; its unresolved findings remain binding unless the amendment supersedes them.`
+        : '';
 }
 
 /**

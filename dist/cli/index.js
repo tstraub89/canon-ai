@@ -118,6 +118,8 @@ var RUN_USAGE = [
   "                      qa, or human_review, or implement when it is in progress or blocked,",
   "                      its code review is blocked, or a code review already ran in the current loop",
   "                      (a review round or a pre-flight rejection).",
+  "                      Bundles also admit an approved implement-pending sibling with no current-loop",
+  "                      activity alongside a qualifying task on the same non-empty task branch.",
   "                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier",
   "                      tasks (XS) re-enter at implement.",
   "                      Feedback channel: append a new section to tasks/<id>/spec.md describing",
@@ -5108,7 +5110,7 @@ function specGateDoneNote(id, status) {
   if (isRerouteAdmitted(status)) {
     return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
   }
-  return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop (a review round or a pre-flight rejection).`;
+  return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop (a review round or a pre-flight rejection), or, in a bundle, alongside such a task on the same non-empty task branch.`;
 }
 function taskHasStarted(status) {
   return Object.values(status.phases).some((entry) => (entry?.status ?? "pending") !== "pending");

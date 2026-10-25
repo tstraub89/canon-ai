@@ -12,7 +12,7 @@ import {
     verifyHandoffAgainstDiffFromData,
 } from '../orchestrator/validation.js';
 import { filterGitIgnoredPaths } from '../orchestrator/git.js';
-import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRoot, isRerouteAdmitted, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
+import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, isRerouteAdmitted, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { isPlanCombined, type TaskSize } from '../lib/pipeline-policy.js';
@@ -1551,7 +1551,7 @@ function specGateDoneNote(id: string, status: StatusJson): string {
     if (isRerouteAdmitted(status)) {
         return `Note: spec_review is already done on task ${id}. The armed gate fires after the next spec_review, which a full-tier reroute runs: add an amendment to the spec, then run \`canon run --reroute ${id}\`.`;
     }
-    return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop (a review round or a pre-flight rejection).`;
+    return `Note: spec_review is already done on task ${id}, so the armed gate will not fire on this pass. On a full-tier task it can fire again only if an amendment is rerouted once implementation has begun: the task reaches code_review, qa, or human_review, or is at implement with implement in progress or blocked, a blocked code review, or a code review already run in the current loop (a review round or a pre-flight rejection), or, in a bundle, alongside such a task on the same non-empty task branch.`;
 }
 
 function taskHasStarted(status: StatusJson): boolean {

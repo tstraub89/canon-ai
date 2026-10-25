@@ -53,6 +53,8 @@ export const RUN_USAGE = [
     '                      qa, or human_review, or implement when it is in progress or blocked,',
     '                      its code review is blocked, or a code review already ran in the current loop',
     '                      (a review round or a pre-flight rejection).',
+    '                      Bundles also admit an approved implement-pending sibling with no current-loop',
+    '                      activity alongside a qualifying task on the same non-empty task branch.',
     '                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier',
     '                      tasks (XS) re-enter at implement.',
     '                      Feedback channel: append a new section to tasks/<id>/spec.md describing',

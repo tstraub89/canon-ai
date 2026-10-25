@@ -24,7 +24,7 @@ When the loop cap is hit, the pipeline writes an `escalations[]` entry and stops
 MAX_REVIEW_LOOPS=6 canon run <task-id>
 ```
 
-**Path B — stale-context reset** (use when the latest review flagged phrases that no longer exist in the spec — a session-resume staleness artifact):
+**Path B — stale-context reset** (use when the latest review flagged stale context — for a `spec_review` block, phrases that no longer exist in the spec; for a `code_review` block, code or handoff content the review no longer matches — a session-resume staleness artifact):
 ```bash
 # Choose the command matching the blocked review:
 canon task reset-spec-review <task-id>

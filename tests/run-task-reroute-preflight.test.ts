@@ -5,10 +5,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { isRerouteAdmitted } from '../src/orchestrator/state.js';
+import { currentLoopReviewRounds, isRerouteAdmitted } from '../src/orchestrator/state.js';
 import type { StatusJson } from '../src/orchestrator/types.js';
 import { archivePriorReview, findNewestReviewArchive } from '../src/orchestrator/review-archive.js';
-import { checkPhaseGate, checkRerouteEvidence, sliceRerouteRoundSection } from '../src/orchestrator/validation.js';
+import { buildAffectedFilesAllowlist, checkPhaseGate, checkRerouteEvidence, sliceRerouteRoundSection, verifyBaseDriftFromData, verifyHandoffAgainstDiffFromData } from '../src/orchestrator/validation.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -1149,7 +1149,8 @@ for (const { name, expectedPhase, options } of rejectedStateRows) {
 
             assert.notEqual(result.status, 0);
             assert.match(result.stderr, /requires implementation to have begun on every named task/);
-            assert.match(result.stderr, /code_review, qa, or human_review; or implement once implementation has begun — implement in progress or blocked, a blocked code review, or a code review already run in the current loop/);
+            assert.doesNotMatch(result.stderr, /or implement once implementation has begun/);
+            assert.match(result.stderr, /code_review, qa, or human_review; or implement in progress or blocked, a blocked code review, or a code review already run in the current loop/);
             if (expectedPhase === 'implement') {
                 assert.match(result.stderr, /'task-a': implement pending \(code_review pending\)/);
                 assert.doesNotMatch(result.stdout, /Rerouting:/);
@@ -1226,6 +1227,69 @@ void test('legacy iterations does not override a present non-positive or invalid
     }
 });
 
+for (const rerouted of [false, true]) {
+    void test(`unstarted single-task reroute recovery (rerouted=${String(rerouted)})`, () => withTempDir('reroute-single-recovery-', dir => {
+        initGitRepo(dir);
+        const status = makeRerouteStatus('task-a', 'task/task-a', 0, {
+            worktree: false, implement: { status: 'pending', rerouted },
+            codeReview: { status: 'pending', verdict: '', iterations_current_loop: 0, preflight_rejections_current_loop: 0 },
+        });
+        assert.equal(derivePhase(status), 'implement');
+        writeTaskStatus(path.join(dir, 'tasks'), 'task-a', status);
+        const statusPath = path.join(dir, 'tasks/task-a/status.json');
+        const before = fs.readFileSync(statusPath);
+        const result = runReroute(dir, ['task-a'], false);
+        assert.notEqual(result.status, 0);
+        assert.deepEqual(fs.readFileSync(statusPath), before);
+        if (rerouted) {
+            assert.match(result.stderr, /mid-reroute: revise the current amendment.*plain `canon run task-a`/);
+            assert.doesNotMatch(result.stderr, /Revise the spec or plan/);
+        } else {
+            assert.match(result.stderr, /Revise the spec or plan.*plain `canon run task-a`/);
+            assert.doesNotMatch(result.stderr, /revise the current amendment/);
+        }
+    }));
+}
+
+void test('missing implement entry renders missing and cannot ride a shared branch', () => withTempDir('reroute-missing-implement-', dir => {
+    initGitRepo(dir);
+    const status = makeRerouteStatus('task-a', 'task/task-a', 0, {
+        worktree: false, codeReview: { status: 'pending', verdict: '' },
+    });
+    delete (status.phases as Record<string, unknown>).implement;
+    assert.equal(derivePhase(status), 'implement');
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-a', status);
+    const statusPath = path.join(dir, 'tasks/task-a/status.json');
+    const before = fs.readFileSync(statusPath);
+    const result = runReroute(dir, ['task-a'], false);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /'task-a': implement missing \(code_review pending\)/);
+    assert.deepEqual(fs.readFileSync(statusPath), before);
+    const anchor = makeRerouteStatus('task-b', 'task/task-a', 0, { worktree: false });
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-b', anchor);
+    const bundled = runReroute(dir, ['task-a', 'task-b'], false);
+    assert.notEqual(bundled.status, 0);
+    assert.match(bundled.stderr, /Qualifying: task-b\. Not qualifying: task-a/);
+    assert.deepEqual(fs.readFileSync(statusPath), before);
+}));
+
+for (const { name, input, expected } of [
+    { name: 'null falls back', input: { iterations_current_loop: null, iterations: 2 }, expected: 2 },
+    { name: 'absent falls back', input: { iterations: 2 }, expected: 2 },
+    { name: 'zero wins', input: { iterations_current_loop: 0, iterations: 2 }, expected: 0 },
+    { name: 'string', input: { iterations_current_loop: '1', iterations: 2 }, expected: 0 },
+    { name: 'negative', input: { iterations_current_loop: -1, iterations: 2 }, expected: 0 },
+    { name: 'NaN', input: { iterations_current_loop: NaN }, expected: 0 },
+    { name: 'Infinity', input: { iterations_current_loop: Infinity }, expected: 0 },
+    { name: 'legacy string', input: { iterations: '3' }, expected: 0 },
+    { name: 'empty', input: {}, expected: 0 },
+    { name: 'missing entry', input: undefined, expected: 0 },
+]) {
+    void test(`shared review-round reader ${name}`, () => {
+        assert.equal(currentLoopReviewRounds(input as unknown as StatusJson['phases']['code_review']), expected);
+    });
+}
+
 for (const scenario of ['reject-unstarted', 'admit-started', 'mixed-spec-gap'] as const) {
     void test(`reroute implement-entry bundle ${scenario}`, () => withTempDir('reroute-entry-bundle-', dir => {
         initGitRepo(dir);
@@ -1245,6 +1309,18 @@ for (const scenario of ['reject-unstarted', 'admit-started', 'mixed-spec-gap'] a
         const result = runReroute(dir, ['task-a', 'task-b'], false);
         if (scenario === 'admit-started') {
             assert.equal(result.status, 0, result.stderr);
+            assert.match(result.stdout, /Rerouting: task-a: implement in_progress \(code_review pending\), task-b: human_review →/);
+            for (const id of ['task-a', 'task-b']) {
+                const updated = readStatus(worktreeTasksRoot(worktreesRoot, id), id) as unknown as StatusJson;
+                assert.equal(updated.phases.implement?.status, 'pending');
+                assert.equal(updated.phases.implement?.rerouted, true);
+                assert.equal(updated.phases.implement?.reroute_count, 1);
+                assert.equal(updated.phases.code_review?.status, 'pending');
+                assert.equal(updated.phases.code_review?.verdict, '');
+                assert.equal(updated.phases.code_review?.iterations_current_loop, 0);
+                assert.equal(updated.phases.code_review?.preflight_rejections_current_loop, 0);
+                assert.equal(derivePhase(updated as unknown as Record<string, unknown>), 'spec_review');
+            }
         } else {
             assert.notEqual(result.status, 0);
             assert.match(result.stderr, scenario === 'mixed-spec-gap' ? /amendment required before reroute/ : /requires implementation to have begun/);
@@ -1252,6 +1328,75 @@ for (const scenario of ['reject-unstarted', 'admit-started', 'mixed-spec-gap'] a
                 assert.match(result.stderr, new RegExp(id));
                 assert.deepEqual(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, id), id, 'status.json')), before[index]);
                 if (scenario === 'mixed-spec-gap') assert.match(result.stderr, new RegExp(`${id}:[\\s\\S]*expected heading: ## Amendment`));
+            }
+        }
+    }));
+}
+
+for (const scenario of ['admit', 'empty-branch', 'whitespace-branch', 'missing-branch', 'different-branch', 'missing-review', 'both-unstarted', 'single'] as const) {
+    void test(`reroute shared-branch sibling ${scenario}`, () => withTempDir('reroute-shared-branch-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const ids = scenario === 'single' ? ['task-a'] : ['task-a', 'task-b'];
+        const branchA = scenario === 'empty-branch' ? '' : scenario === 'whitespace-branch' ? '  ' : scenario === 'different-branch' ? 'task/other' : 'task/task-a';
+        const before = new Map<string, Buffer>();
+        for (const id of ids) {
+            const status = makeRerouteStatus(id, id === 'task-a' ? branchA : 'task/task-a', scenario === 'both-unstarted' ? 1 : 0, {
+                implement: { status: 'pending', rerouted: scenario === 'both-unstarted' },
+                codeReview: { status: 'pending', verdict: '', iterations: 0, iterations_current_loop: id === 'task-b' && scenario !== 'both-unstarted' ? 1 : 0, preflight_rejections_current_loop: 0 },
+                qa: { status: 'pending' },
+            });
+            assert.equal(derivePhase(status), 'implement');
+            if (id === 'task-a' && scenario === 'missing-branch') delete status.branch;
+            if (id === 'task-a' && scenario === 'missing-review') delete (status.phases as Record<string, unknown>).code_review;
+            assert.equal(isRerouteAdmitted(status as unknown as StatusJson), id === 'task-b' && scenario !== 'both-unstarted');
+            for (const root of [tasksRoot, worktreeTasksRoot(worktreesRoot, id)]) {
+                writeTaskStatus(root, id, status);
+                const statusPath = path.join(root, id, 'status.json');
+                before.set(statusPath, fs.readFileSync(statusPath));
+            }
+            const spec = `# Spec\n\n## Design\n\n### Affected Files\n\n| File | Change |\n|---|---|\n| \`src/${id}.ts\` | distinct source |\n\n## Amendment\n\nNew requirements.\n`;
+            writeSpec(dir, id, spec);
+            writeSpec(path.join(worktreesRoot, id), id, spec);
+        }
+        const result = runReroute(dir, ids, false);
+        if (scenario === 'admit') {
+            assert.equal(result.status, 0, result.stderr);
+            for (const id of ids) {
+                const updated = readStatus(worktreeTasksRoot(worktreesRoot, id), id) as unknown as StatusJson;
+                assert.equal(derivePhase(updated as unknown as Record<string, unknown>), 'spec_review');
+                assert.equal(updated.phases.implement?.status, 'pending');
+                assert.equal(updated.phases.implement?.rerouted, true);
+                assert.equal(updated.phases.implement?.reroute_count, 1);
+                assert.equal(updated.phases.code_review?.status, 'pending');
+                assert.equal(updated.phases.code_review?.verdict, '');
+                assert.equal(updated.phases.code_review?.iterations_current_loop, 0);
+                assert.equal(updated.phases.code_review?.preflight_rejections_current_loop, 0);
+                assert.ok(result.stdout.includes(`${id}: implement pending (code_review pending`), result.stdout);
+            }
+            const diffFiles = ['src/task-a.ts', 'src/task-b.ts'];
+            const inputs = { diffFiles, handoffFilesByTask: new Map([['task-a', ['src/task-a.ts']], ['task-b', ['src/task-b.ts']]]) };
+            assert.deepEqual(verifyHandoffAgainstDiffFromData(ids, inputs), []);
+            assert.match(verifyHandoffAgainstDiffFromData(['task-b'], inputs).join('\n'), /src\/task-a\.ts/);
+            const previousOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+            process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+            try {
+                const whole = buildAffectedFilesAllowlist(ids, { admittedDocs: [] });
+                assert.deepEqual(verifyBaseDriftFromData(diffFiles, whole.paths, ids, whole.prefixes), []);
+                const partial = buildAffectedFilesAllowlist(['task-b'], { admittedDocs: [] });
+                assert.deepEqual(verifyBaseDriftFromData(diffFiles, partial.paths, ['task-b'], partial.prefixes), ['src/task-a.ts']);
+            } finally {
+                if (previousOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+                else process.env.CANON_TASKS_DIR_OVERRIDE = previousOverride;
+            }
+        } else {
+            assert.notEqual(result.status, 0);
+            for (const [statusPath, bytes] of before) assert.deepEqual(fs.readFileSync(statusPath), bytes);
+            if (scenario !== 'single') {
+                assert.doesNotMatch(result.stderr, /split|separately|subset/i);
+                if (scenario === 'both-unstarted') assert.match(result.stderr, /Qualifying: none\. Not qualifying: task-a, task-b/);
+                else assert.match(result.stderr, /Qualifying: task-b\. Not qualifying: task-a/);
             }
         }
     }));

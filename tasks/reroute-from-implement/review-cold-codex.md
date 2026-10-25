@@ -1,1 +1,1 @@
-No actionable defects found in the reviewed changes. The reroute admission checks, reset behavior, and updated recovery guidance appear consistent; targeted reroute tests passed, though the full test suite had not finished during review.
+The reroute admission changes are consistent with the documented implement-entry cases, and the added tests cover admission, rejection, and reset behavior. No actionable regressions were identified.

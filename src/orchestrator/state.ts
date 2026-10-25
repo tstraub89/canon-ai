@@ -443,7 +443,7 @@ export function currentLoopCount(value: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-// Legacy statuses record review rounds in iterations until the current-loop field exists.
+// An absent or null current-loop field falls back to legacy iterations.
 export function currentLoopReviewRounds(codeReview: PhaseEntry | undefined): number {
     return currentLoopCount(codeReview?.iterations_current_loop ?? codeReview?.iterations);
 }
