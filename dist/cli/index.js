@@ -4085,6 +4085,7 @@ function validateTaskId(id) {
   if (id.includes("..")) {
     throw new Error(`Error: invalid task ID '${id}'. Must not contain '..'.`);
   }
+  throw new Error(`Error: invalid task ID '${id}'. Must be a valid lowercase task ID.`);
 }
 function taskDirFromRoot(taskId, root = tasksRoot()) {
   return path17.join(root, taskId);
@@ -5225,7 +5226,7 @@ function taskCmd(args2) {
     const decl = subcommand && Object.hasOwn(TASK_SUBCOMMAND_ARGS, subcommand) ? TASK_SUBCOMMAND_ARGS[subcommand] : void 0;
     if (decl) handlePreScan(decl, rest, io);
     else handlePreScan(TASK_ARGS, args2, io);
-    if (!isInsideGitRepository()) throw new Error("canon task requires a git repository; run it inside one (git init)");
+    if (!isInsideGitRepository()) throw new Error("Error: canon task requires a git repository; run it inside one (git init)");
     assertManagedInvocationRoot();
     switch (subcommand) {
       case "new":

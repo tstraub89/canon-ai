@@ -103,6 +103,9 @@ void test('resolveProjectRoot follows process cwd on each call', () => {
 
 void test('tasks and templates dirs honor project root and task entry uses valid ids plus directories', () => {
     temp(root => {
+        const previousOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+        delete process.env.CANON_TASKS_DIR_OVERRIDE;
+        try {
         const tasks = path.join(root, 'tasks');
         fs.mkdirSync(path.join(tasks, 'valid-id'), { recursive: true });
         for (const name of ['_archive', '_templates', '_anything', '.DS_Store', 'Upper']) fs.mkdirSync(path.join(tasks, name));
@@ -118,6 +121,10 @@ void test('tasks and templates dirs honor project root and task entry uses valid
         assert.equal(isValidTaskId('.x'), false);
         assert.equal(tasksDir(root), tasks);
         assert.equal(templatesDir(root), path.join(root, '.canon', 'templates'));
+        } finally {
+            if (previousOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+            else process.env.CANON_TASKS_DIR_OVERRIDE = previousOverride;
+        }
     });
 });
 

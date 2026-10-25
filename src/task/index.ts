@@ -84,6 +84,7 @@ export function validateTaskId(id: string): void {
     if (id.includes('..')) {
         throw new Error(`Error: invalid task ID '${id}'. Must not contain '..'.`);
     }
+    throw new Error(`Error: invalid task ID '${id}'. Must be a valid lowercase task ID.`);
 }
 
 function taskDirFromRoot(taskId: string, root: string = tasksRoot()): string {
@@ -1260,19 +1261,6 @@ function resolveRepoRootForAccept(gitCwd: string): string {
  * if the leaf doesn't exist yet (e.g., an untracked file's parent dir exists
  * but the file does not at check time on some platforms).
  */
-/**
- * Returns the main checkout's working-tree root, regardless of whether the
- * shell is currently inside the main checkout, a linked worktree, or a
- * subdirectory. Used by `taskAccept` for non-worktree tasks so the diff
- * baseline and HEAD pin target the same checkout the task's files live in,
- * not whatever happens to be the operator's cwd.
- *
- * The shared project-root resolver chooses the main checkout root independently
- * of whether the operator launched canon from a linked worktree.
- *
- * Falls back to `process.cwd()` if git fails (e.g., test fixture without git).
- */
-
 function safeRealpath(target: string): string {
     try {
         return fs.realpathSync(target);
@@ -1652,7 +1640,7 @@ export function taskCmd(args: string[]): void {
             : undefined;
         if (decl) handlePreScan(decl, rest, io);
         else handlePreScan(TASK_ARGS, args, io);
-        if (!isInsideGitRepository()) throw new Error('canon task requires a git repository; run it inside one (git init)');
+        if (!isInsideGitRepository()) throw new Error('Error: canon task requires a git repository; run it inside one (git init)');
         assertManagedInvocationRoot();
         switch (subcommand) {
             case 'new':

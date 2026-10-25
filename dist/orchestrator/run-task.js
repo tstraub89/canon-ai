@@ -6272,6 +6272,7 @@ function validateTaskId2(id) {
   if (id.includes("..")) {
     throw new Error(`Error: invalid task ID '${id}'. Must not contain '..'.`);
   }
+  throw new Error(`Error: invalid task ID '${id}'. Must be a valid lowercase task ID.`);
 }
 function taskDirForCwd(_cwd, taskId) {
   const override = tasksDirOverride();

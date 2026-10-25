@@ -358,6 +358,24 @@ void test('task list from a repository subdirectory lists its tasks', () => {
     });
 });
 
+void test('task new from a repository subdirectory creates under the root tasks directory', () => {
+    withTempDir('task-new-subdir-redfirst-', root => {
+        git(root, ['init', '-q', '-b', 'main']);
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon/templates'), path.join(root, '.canon/templates'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+        const env = { ...process.env };
+        for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+        const cli = path.join(WORKSPACE_ROOT, 'src/cli/index.ts');
+        const result = spawnSync(process.execPath, ['--import', TSX_LOADER, cli, 'task', 'new', 'sub-made', 'Sub made'], {
+            cwd: path.join(root, 'sub'), env, encoding: 'utf8',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.ok(fs.existsSync(path.join(root, 'tasks/sub-made/spec.md')));
+        assert.equal(fs.existsSync(path.join(root, 'sub/tasks')), false);
+    });
+});
+
 void test('task list and task new from a managed worktree use the main checkout task set', () => {
     withTempDir('task-root-worktree-', root => {
         git(root, ['init', '-q', '-b', 'main']);
@@ -434,6 +452,12 @@ void test('task mutations and phase gate from a managed worktree use only its ta
         assert.equal(accepted.status, 0, accepted.stderr);
         assert.equal(readStatusFile(worktreeTaskDir).phases.spec?.status, 'done');
         assert.equal(readStatusFile(mainTaskDir).phases.spec?.status, 'in_progress');
+
+        const mainCopyBeforePhase = fs.readFileSync(path.join(mainTaskDir, 'status.json'));
+        const phaseFromMain = invoke(root, ['task', 'phase', 'rt', 'spec', 'pending']);
+        assert.equal(phaseFromMain.status, 0, phaseFromMain.stderr);
+        assert.equal(readStatusFile(worktreeTaskDir).phases.spec?.status, 'pending');
+        assert.deepEqual(fs.readFileSync(path.join(mainTaskDir, 'status.json')), mainCopyBeforePhase);
 
         fs.writeFileSync(path.join(mainTaskDir, 'spec.md'), '# Filled spec on main\n');
         fs.writeFileSync(path.join(worktreeTaskDir, 'spec.md'), fs.readFileSync(path.join(root, '.canon/templates/spec.md'), 'utf8'));
