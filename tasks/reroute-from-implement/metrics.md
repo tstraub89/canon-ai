@@ -25,3 +25,8 @@
 | 2026-10-25T15:07:01.600Z | reroute-from-implement | spec_review | codex | gpt-6.1-sol | 0 | 388.5s | 1974845 | ok |
 | 2026-10-25T15:20:26.418Z | reroute-from-implement | spec_review | codex | gpt-6.1-sol | 1 | 294.4s | 3438981 | ok |
 | 2026-10-25T17:54:53.754Z | reroute-from-implement | implement | codex | gpt-6.1-sol | 0 | 929.6s | 25299052 | ok |
+| 2026-10-25T17:56:10.505Z | reroute-from-implement | code_review | codex | gpt-6-luna | 0 | 75.7s | - | ok |
+| 2026-10-25T18:05:21.388Z | reroute-from-implement | code_review | claude | opus | 0 | 550.8s | 1689515 | ok |
+| 2026-10-25T18:05:21.398Z | reroute-from-implement | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 315.0s | 4659864 | ok |
+| 2026-10-25T18:05:21.403Z | reroute-from-implement | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 327.6s | 3804702 | ok |
+| 2026-10-25T18:08:45.163Z | reroute-from-implement | implement | codex | gpt-6.1-sol | 1 | 203.7s | 26826246 | ok |

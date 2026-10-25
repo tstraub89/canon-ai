@@ -1,1 +1,1 @@
-The reroute admission changes are consistent with the documented implement-entry cases, and the added tests cover admission, rejection, and reset behavior. No actionable regressions were identified.
+No actionable defects were identified in the diff. Type-checking and template synchronization passed; the test run passed 1,341 tests but was interrupted, leaving two tests cancelled and unverified.

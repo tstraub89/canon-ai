@@ -6,9 +6,9 @@
 
 Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+Reviewed HEAD: `531de25`. This is the first review of a fresh loop after the second human reroute (Amendment Round 2). Earlier loops are archived in `tasks/reroute-from-implement/review-prior-1.md` and `tasks/reroute-from-implement/review-prior-2.md`.
 
 ## Stage 1 — Spec Compliance (gate)
 
@@ -16,77 +16,126 @@ The anchored review runs in two stages on the first round. **Stage 1 is a gate.*
 
 Did Codex's `handoff.md` pass all applicable checks?
 
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification (E2E is N/A per the spec)
+- [x] Red-first evidence recorded for each red-first AC: AC-1 loop-cap and route-back at `d6c00c3`, AC-A6 at `f17a1d5`, and AC-B4 at `80b7023`, each run with test-only edits and with a failure excerpt matching the reason the spec gives.
+
+Re-runs by the anchored lens: `npm run build` (dist/ stayed byte-clean), `npm run type-check`, `npm run lint`, `npm run sync-templates:check`, `npm run docs-refs-check`, and the targeted suites (`run-task-reroute-preflight`, `run-task-prompts`, `task-cli`, `recovery-hints`, `run-task-code-review`). All passed; the targeted suites ran 349/349.
+
+**Not re-verified by any reviewer: the full `npm test`.** The anchored lens did not run it. Cold-Codex's run was interrupted: 1,341 tests passed and 2 were cancelled, so those 2 are unverified. The handoff reports 1,720 tests: 1,719 pass, 1 skipped, 0 fail.
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: Admission matrix | Pass | Every implement-entry admit row plus code_review/qa/human_review, for both tiers. Reject rows assert `status.json` is byte-unchanged. Red-first rows are recorded. |
+| AC-2: Bundle rule | Pass | The reject fixture uses different branches, so AC-B1 doesn't admit it. Started-bundle admit and mixed spec_gap non-exempt rows are present. |
+| AC-3: Single predicate | Pass | `isRerouteAdmitted` in `src/orchestrator/state.ts:451` is called from `main.ts` and `src/task/index.ts`. `REROUTE_ADMITTED_PHASES` has 0 hits. |
+| AC-4: Real loop-cap fixture | Pass | Implement-entry loop-cap row added. The code_review-phase row is relabelled. |
+| AC-5: Reset from implement entry | Pass | Reset assertions per admit row, both tiers. |
+| AC-6: Operator text names sub-state | Pass | Banner and rejection summary show the sub-state. Full rule sentence. `buildCodeReviewReason` names `--reroute` (`src/orchestrator/review-loop.ts:109`). |
+| AC-7: Spec-gate note | Pass | Opposite-outcome cases are in `tests/task-cli.test.ts`. |
+| AC-8: Wording sweep | Pass | The anchored lens re-ran the four greps: 0 non-exempt hits. |
+| AC-9: Prompt scope / partial round | Pass | Fresh and resumed implement-reroute and plan-reroute meet (a)–(d). |
+| AC-10: Golden scoped | Pass | Against `main`: one key added (`promptImplementReroute_resumed`); only the 6 permitted keys changed. |
+| AC-11: Docs and help | Pass | All listed surfaces updated. The recovery-hints test passes. |
+| AC-12: Decision recorded | Pass | `docs/decisions.md` entry present. |
+| AC-13: Mirrors and dist | Pass | `sync-templates:check` passes. A rebuild leaves `dist/` clean. |
+| AC-A1: Auto-commit wording | Pass | Tracked and untracked omissions are distinguished, and obsolete leftovers are to be deleted. See nit N3 for an edge case. |
+| AC-A2: Loop-cap recovery restatements | Pass | `--reroute` is offered only for a code_review block (recovery.md Path C, `docs/pipeline-orchestrator.md`). |
+| AC-A3: Red-first partial rounds | Pass | Literal requirements met. Finding F1 concerns the order of the set-aside steps. |
+| AC-A4: Prompt nits N1–N3 | Pass | Step 7 wording, session-scoped "not a resume", `### Round Scope`. Parsed headings unchanged. |
+| AC-A5: Operator-text consistency | Pass | Qualifiers aligned, README clauses split, `code_review missing` tested. |
+| AC-A6: Legacy counter fallback | Pass | Red-first row at `f17a1d5`. The all-absent reject row is kept. |
+| AC-A7: Test robustness | Pass | Explicit `expectedPhase`; banner detail clauses asserted. |
+| AC-A8: Whitespace | Pass | Verified. |
+| AC-A9: Regression gates | Pass | Gates re-run (the full suite is the exception above). |
+| AC-B1: Shared-branch sibling admission | Pass | `rerouteAdmissions` (`src/orchestrator/main.ts:2807`) requires a single-predicate anchor on the same non-blank branch, and siblings can't vouch for each other. The admit row and all reject rows are present, and the rejects assert unchanged status. The downstream test calls the real `verifyHandoffAgainstDiffFromData` / `buildAffectedFilesAllowlist` / `verifyBaseDriftFromData` with distinct A and B files. |
+| AC-B2: Single-task next step | Pass | Branches on `implement.rerouted`. Tested both ways. |
+| AC-B3: Rule documented | Pass | Docs, SKILL, and decisions updated. The rejection lists Qualifying / Not qualifying and is tested to contain no split advice. |
+| AC-B4: Archived findings pointer | Pass | `archivedReviewGuidance` is on every non-exempt line in both builders, picks the highest-numbered archive, and adds nothing when there is no archive. Red-first recorded. |
+| AC-B5: Untracked set-aside | Pass (literal) | Untracked leftovers are moved out, copies confirmed before the red run, everything restored after. Finding F1 concerns the order. |
+| AC-B6: Single review-round source | Pass | The grep finds only the helper and the out-of-scope generic `phaseIterationCount`. Null and invalid inputs are tested. |
+| AC-B7: Wording / cosmetic nits | Pass | Items (1), (2), (6), (7), (8) and (9) verified, and (8) is tested. `assert.doesNotMatch(... /or implement once implementation has begun/)` guards the old wording, which `80b7023` contained at `main.ts:2829`. |
+| AC-B8: Bundle admit asserts state | Pass | Post-reroute fields and banners asserted for both tasks. |
+| AC-B9: Regression gates | Pass | Against `80b7023`, only `promptImplementReroute` and `promptImplementReroute_resumed` changed. Other gates pass (full suite: see above). |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work): no reset-*, accept, autoCommit or schema changes, and no git operations added to `--reroute`.
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The Amendment Round 2 work is well built:
+- The sibling clause is tightly bounded: an individually admitted anchor, exact non-blank branch match, and no mutual vouching.
+- The shared review-round helper is used consistently.
+- Tests exercise the real downstream gate functions rather than mocks.
+
+All three lenses agree the routing logic is correct. One finding survives as a code bug. It is a safety-ordering defect in the new red-first set-aside instruction: the agent is told to overwrite the aborted round's uncommitted edits before confirming the backup exists. Everything else is either a nit, or a pre-existing or spec-literal observation to triage as a follow-up.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+- **F1 (`code-bug`; cold-Claude; verified) — The red-first set-aside step confirms the backup only after the destructive restore.** At `src/orchestrator/prompts/templates/implement-reroute.md:28` the instruction says to "copy tracked leftovers to a temporary directory and restore their paths to committed contents, … Confirm every set-aside copy exists before the red run."
+  - **The problem:** in that order the agent copies, then restores the paths (discarding the working-tree edits), and only then checks the copies. If a copy failed or went to the wrong place, the aborted round's uncommitted edits are already gone; they exist nowhere else. `docs/patterns.md` Safe-First rule 1 applies to data-affecting flows.
+  - **Fix within AC-B5:** confirm each copy (tracked) and each moved file (untracked) exists before restoring or removing its worktree path. "Before the restore" is also before the red run, so AC-B5's wording is still met.
+  - **Then:** regenerate the affected golden keys (`UPDATE_GOLDENS=1`) and rebuild `dist/`.
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+- **R1 (`risk/guardrail`, non-blocking, pre-existing class; cold-Claude; verified) — Rerouting a subset of a shared-branch bundle is not prevented.** `rerouteAdmissions` only looks at the named tasks. `canon run A --reroute` therefore admits A at implement `in_progress` or `blocked` even when unnamed bundle member B shares A's task branch. The reroute archives review.md, bumps `reroute_count` and resets status, and the run then fails later at the handoff-coverage and Affected Files checks.
+  - **Not a bug in this diff:** the same gap exists on `main` for bundle members at code_review/qa/human_review. Amendment Round 2 deliberately chose to document this ("name every task of a shared-branch bundle in one reroute") rather than enforce it.
+  - **What changed:** admitting implement-entry states makes it more reachable, because an interrupted bundle implement is exactly the shared-branch case.
+  - **Recommendation:** open a follow-up issue for a pre-flight that rejects a reroute naming only part of a set of tasks sharing a branch. Enforcement is a new gate, and adding one is a design decision rather than a fix for this round.
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- **N1 (anchored + cold-Claude) — The "approved sibling" wording is narrower than the code.** Help, README, SKILL, docs and the rejection text all say "approved sibling". `rerouteAdmissions` (`src/orchestrator/main.ts:2809-2818`) checks no verdict, which matches AC-B1's criteria, so any implement-pending, zero-activity task on the anchor's branch qualifies. The rejection also lists sibling-clause tasks under "Qualifying:", right after a sentence that separates siblings from "a task that qualifies". Consider rendering them as "Admitted as sibling:" and dropping "approved", or saying "an implement-pending sibling".
+- **N2 (anchored) — `some()` without a justifying comment.** The anchor check uses `entries.some(...)` (`src/orchestrator/main.ts:2816`). `docs/patterns.md` (bundle gates use `every()`, not `some()`) asks that any `some()` be justified. `some()` is correct here per AC-B1; add a one-line comment.
+- **N3 (cold-Claude; verified; spec-literal per AC-A1) — "Blocks auto-commit" is not true in every case.** In `autoCommitCode`, the early returns when no handoff-listed file is dirty skip `findUncoveredTrackedChanges` (`src/orchestrator/main.ts:671-675` and the `toStage.length === 0` return). An omitted dirty tracked leftover therefore stays uncommitted until the QA-end check instead of blocking. Consider qualifying the sentence ("blocks the auto-commit when there are changes to commit").
+- **N4 (anchored + cold-Claude) — The archive pointer can carry stale or optional findings.** `archivedReviewGuidance` (`src/orchestrator/prompts/index.ts:513`) always names the newest archive. On a first-pass implement-entry reroute, review.md is still the unfilled template and is not archived, so the pointer can name an earlier loop's archive. An archived `approved_with_nits` review's nits also read as "binding". This matches AC-B4's wording, and "unresolved" softens it. Consider "unresolved blocking findings" in a later pass.
+- **N5 (anchored) — Malformed status: no `implement` entry but code_review `blocked`.** This state is now admitted, but the reset loop skips the missing entry, so `rerouted` and `reroute_count` are never written. It can only be reached by hand-editing `status.json`. Consider requiring an `implement` entry when the predicate admits via `code_review.status === 'blocked'`.
+- **N6 (anchored + cold-Claude) — Other counter readers still use raw `?? 0`.** `shouldUseImplementRevision` (`src/orchestrator/phases/implement.ts:29`), `review-loop.ts`, `code-review.ts`, and `codeReviewTotal` don't go through the normalizing `currentLoopCount`. This is harmless today because `validateStatus` rejects non-integer counters, and AC-B6 scopes these readers out. The same `validateStatus` guard makes the helper's null and NaN branches, and the matching `docs/decisions.md` sentence, defensive-only.
+- **N7 (anchored) — `docs/architecture.md` doesn't list the new loop-cap recovery path.** Its "Auto-block / reroute" bullet lists only raising the cap and reset-*, not the code_review `--reroute` path. `docs/codebase-map.md` still places reroute only in `main.ts`. Neither file is in Affected Files; the spec's Docs Impact hands codebase-map to QA. Flagged for QA's docs pass.
+- **N8 (cold-Claude) — Small text gaps:**
+  - The loop-cap reason (`src/orchestrator/review-loop.ts:109`) doesn't say to amend the active task directory's (worktree) copy of `spec.md`.
+  - The README row says "an `## Amendment` section", which omits `## Amendment Round N` and spec_gap-exempt siblings. This is pre-existing wording.
+  - The spec-gate note offers `--reroute` for implement `in_progress`, which `guardConcurrentRun` refuses while the run is live. AC-7 requires the note.
+  - The AC-B2 mid-reroute hint resumes implement, so a revised amendment skips spec_review. This is spec-literal.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
+(none blocking)
 
-(none / list items)
+Low-severity observation, not verdict-driving: a task admitted through the sibling clause is a non-exempt reroute, so it needs its own Amendment section. Neither the sibling-clause docs nor the rejection message say so; the operator first learns it from the amendment pre-flight abort, which is loud and recoverable. Consider one sentence in §"Human Reroute" in a follow-up.
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): Red-first against committed HEAD gives a spurious `[wrong-premise]` after route-back rounds have already committed the fix — the trigger in the prompt is a red-first AC "unfinished because the prior round was partial". A fix that is already committed is not unfinished work, and carried-forward rows that satisfy their AC are kept without a re-run. Low confidence, and it doesn't hold against the prompt text.
+- Dismissed (cold-Claude): `assert.doesNotMatch(result.stderr, /or implement once implementation has begun/)` can never fail — wrong. That text was in the rejection message at `80b7023` (`src/orchestrator/main.ts:2829`), and AC-B7(6) removed it, so the assertion is a valid regression guard.
+- Dismissed (cold-Claude): The shared-branch sibling test "records the gap instead of testing a guard" — AC-B1 asks this test to confirm that the whole-bundle recovery passes the downstream gates, and it does so by calling the real gate functions. The partial-bundle gap it shows is tracked as R1.
+- Dismissed (cold-Claude): The sibling predicate rejects a sibling with a missing `implement` or `code_review` entry even though its derived phase is implement — it only affects malformed status, and failing closed is the safe direction for an admission gate.
+- Cold-Codex: no actionable defects reported, so nothing to dismiss. Its interrupted test run (2 tests cancelled) is recorded in the Validation Gate above as unverified, not as a pass.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
 - [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
+- [x] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
+
+Blocking: **F1** only. R1 and N1–N8 are non-blocking. R1 should become a follow-up issue rather than more scope in this round.
 
 ---
 

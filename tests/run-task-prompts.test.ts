@@ -444,6 +444,23 @@ void test('implement prompts state red-first evidence and pre-fix commit', () =>
     assert.doesNotMatch(reroute, /this round’s Iteration subsection/);
 });
 
+for (const resumed of [false, true]) {
+    void test(`reroute red-first verifies backups before clearing leftovers (resumed=${resumed})`, () => {
+        const prompt = promptImplementReroute(rerouteState, resumed, [], 'main');
+        const checkpoint = prompt.slice(prompt.indexOf('**Bug/flake-fix red-first checkpoint**'));
+        const verification = checkpoint.indexOf('Confirm every set-aside copy exists');
+        assert.ok(verification >= 0, 'the checkpoint must require backup verification');
+        for (const action of [
+            'restore their paths to committed contents',
+            'move untracked non-test leftovers out of the worktree',
+        ]) {
+            const actionIndex = checkpoint.indexOf(action);
+            assert.ok(actionIndex >= 0, `the checkpoint must direct agents to ${action}`);
+            assert.ok(verification < actionIndex, `verify backups before directing agents to ${action}`);
+        }
+    });
+}
+
 void test('round-N foreman reads red-first evidence across the whole handoff', () => {
     assert.doesNotMatch(promptCodeReview(baseState), /red-first evidence is read across the whole handoff/);
     assert.match(promptCodeReview(codeReviewRoundNState), /red-first evidence is read across the whole handoff \(baseline section and every Iteration subsection\)/);

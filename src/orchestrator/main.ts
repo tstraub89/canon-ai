@@ -2813,6 +2813,7 @@ function rerouteAdmissions(entries: readonly { taskId: string; status: StatusJso
             && status.phases.implement?.status === 'pending'
             && status.phases.code_review?.status === 'pending'
             && typeof branch === 'string' && branch.trim() !== '';
+        // One independently admitted anchor suffices for a sibling; the caller still requires every task to be admitted.
         const hasAnchor = pendingSibling && entries.some((entry, anchorIndex) =>
             anchorIndex !== index && individuallyAdmitted[anchorIndex] && entry.status.branch === branch);
         return hasAnchor ? 'sibling' : 'rejected';

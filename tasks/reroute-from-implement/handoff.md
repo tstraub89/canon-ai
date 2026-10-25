@@ -219,3 +219,56 @@ The `??=` occurrences at `src/task/index.ts`:412 and :560 are unchanged seeding 
 - [x] All spec ACs met (see AC Coverage).
 - [x] All applicable validation checks pass.
 - [x] All deviations from plan documented with rationale.
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/orchestrator/prompts/templates/implement-reroute.md` | F1: require copies of all tracked and untracked non-test leftovers, verify existence and matching content before changing any worktree path, then restore tracked paths and move untracked files. Verify moved destinations before the red run and restore every file afterwards. |
+| `tests/run-task-prompts.test.ts` | Two ordering regressions cover fresh and resumed reroute prompts; backup verification must precede both tracked restoration and untracked removal. |
+| `tests/run-task-prompts.golden.json` | Regenerated only promptImplementReroute and promptImplementReroute_resumed; all other keys remain byte-identical to revision entry. |
+| `src/orchestrator/main.ts` | N2: comment explains why one independently admitted anchor suffices for a sibling while all named tasks still must be admitted. |
+| `dist/orchestrator/run-task.js` | Rebuilt bundled prompt with guarded backup ordering. |
+| `tasks/reroute-from-implement/handoff.md`, `tasks/reroute-from-implement/notes.md` | Appended revision findings, red-first evidence, verification, and follow-up risk. |
+| `tasks/reroute-from-implement/review-cold-codex-run-3.md` | Preserved incoming pipeline review artifact. |
+| `tasks/reroute-from-implement/done.md`, `tasks/reroute-from-implement/lessons.md`, `tasks/reroute-from-implement/pr-body.md`, `tasks/reroute-from-implement/quality-log.md`, `tasks/reroute-from-implement/review-cold-codex-run-1.md` | Preserved earlier pipeline artifacts; declared here to complete cumulative Changes-table coverage. |
+
+### Findings addressed
+
+- **F1 — correctness bug:** fixed in `src/orchestrator/prompts/templates/implement-reroute.md`:28. Every leftover now has a verified copy before the first tracked restore or untracked move. The rendered instructions still require confirmation before the red run and restoration of tracked and untracked files afterwards.
+- **N2 — optional nit:** addressed at `src/orchestrator/main.ts`:2816 with the requested justification for the anchor's `some()` predicate. Routing behavior is unchanged.
+- **R1 — non-blocking follow-up:** retain the review's proposed pre-flight for rejecting partial shared-branch reroutes as follow-up work. The current invocation only examines named tasks, so rerouting a subset can reset those tasks before downstream coverage/scope checks reject the run. The spec deliberately documents naming the entire bundle instead of adding this gate; enforcing it needs a separate design. Recorded in this handoff and notes for operator triage.
+- **N1 and N3–N8:** deferred as optional, spec-literal, malformed-state, or outside-scope observations, following the review's classifications. No blocking spec gap remains.
+
+### AC deltas
+
+- AC-A3 and AC-B5 remain Met, with F1's stronger verification-before-clearing order now tested in both prompt variants.
+- AC-B9 golden scope remains Met: exactly the two implement-reroute values changed relative to revision-entry HEAD; no keys added or removed. Other AC implementations remain unchanged.
+- No deviation from the authorized review fix; earlier Red-First Evidence rows remain intact above.
+
+### Red-First Evidence
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| F1 / AC-B5: verification precedes clearing leftovers | `node --test --test-name-pattern='reroute red-first verifies backups' --import ./tests/md-loader-register.mjs --import tsx tests/run-task-prompts.test.ts` | 531de25ab1489752caab662c58021a4fc38181e6, test-only edits | Both fresh and resumed cases failed: "verify backups before directing agents to restore their paths to committed contents". No source fix had been applied. | Both pass after reordering; the full prompt suite passes 62/62 with regenerated and then ordinary golden verification. |
+
+### Re-run validation
+
+This revision changes prompt text and one source comment. Per the revision instructions, checks were scoped to those changes; the earlier full-suite result above is historical and was not re-run in this revision.
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | ESLint passed after the source and test changes. |
+| `npm run type-check` | Pass | TypeScript no-emit check passed. |
+| Prompt golden regeneration and verification | Pass | UPDATE_GOLDENS=1 and ordinary direct-runner invocations of `tests/run-task-prompts.test.ts` each passed 62 tests, with zero failures or cancellations. |
+| Golden key comparison | Pass | Compared with 531de25ab1489752caab662c58021a4fc38181e6: only promptImplementReroute and promptImplementReroute_resumed changed; no additions or removals. |
+| `npm run build` | Pass | Rebuilt both entry points; only the orchestrator bundle changed. Confirmed the built bundle contains the guarded backup instruction. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm run docs-refs-check` | Pass | References checked before and after appending revision artifacts. |
+| Scope and whitespace checks | Pass | Cumulative product paths remain within the 27-file cap; every cumulative or dirty path is covered across Changes tables. git diff --check passed. |
+
+### Blockers
+
+None. R1 remains a non-blocking follow-up as explicitly classified by the review.
