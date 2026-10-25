@@ -106,21 +106,21 @@ void test('tasks and templates dirs honor project root and task entry uses valid
         const previousOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
         delete process.env.CANON_TASKS_DIR_OVERRIDE;
         try {
-        const tasks = path.join(root, 'tasks');
-        fs.mkdirSync(path.join(tasks, 'valid-id'), { recursive: true });
-        for (const name of ['_archive', '_templates', '_anything', '.DS_Store', 'Upper']) fs.mkdirSync(path.join(tasks, name));
-        fs.writeFileSync(path.join(tasks, '.DS_Store-file'), 'x');
-        fs.writeFileSync(path.join(tasks, 'file-id'), 'x');
-        assert.equal(isTaskEntry(tasks, 'valid-id'), true);
-        for (const name of ['_archive', '_templates', '_anything', '.DS_Store', 'Upper', 'missing', 'file-id']) assert.equal(isTaskEntry(tasks, name), false, name);
-        fs.rmSync(path.join(tasks, '.DS_Store'), { recursive: true });
-        fs.writeFileSync(path.join(tasks, '.DS_Store'), 'x');
-        assert.equal(isTaskEntry(tasks, '.DS_Store'), false);
-        assert.equal(isValidTaskId('a.b-c_d'), true);
-        assert.equal(isValidTaskId('_x'), false);
-        assert.equal(isValidTaskId('.x'), false);
-        assert.equal(tasksDir(root), tasks);
-        assert.equal(templatesDir(root), path.join(root, '.canon', 'templates'));
+            const tasks = path.join(root, 'tasks');
+            fs.mkdirSync(path.join(tasks, 'valid-id'), { recursive: true });
+            for (const name of ['_archive', '_templates', '_anything', '.DS_Store', 'Upper']) fs.mkdirSync(path.join(tasks, name));
+            fs.writeFileSync(path.join(tasks, '.DS_Store-file'), 'x');
+            fs.writeFileSync(path.join(tasks, 'file-id'), 'x');
+            assert.equal(isTaskEntry(tasks, 'valid-id'), true);
+            for (const name of ['_archive', '_templates', '_anything', '.DS_Store', 'Upper', 'missing', 'file-id']) assert.equal(isTaskEntry(tasks, name), false, name);
+            fs.rmSync(path.join(tasks, '.DS_Store'), { recursive: true });
+            fs.writeFileSync(path.join(tasks, '.DS_Store'), 'x');
+            assert.equal(isTaskEntry(tasks, '.DS_Store'), false);
+            assert.equal(isValidTaskId('a.b-c_d'), true);
+            assert.equal(isValidTaskId('_x'), false);
+            assert.equal(isValidTaskId('.x'), false);
+            assert.equal(tasksDir(root), tasks);
+            assert.equal(templatesDir(root), path.join(root, '.canon', 'templates'));
         } finally {
             if (previousOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
             else process.env.CANON_TASKS_DIR_OVERRIDE = previousOverride;
