@@ -227,7 +227,8 @@ var RUN_ARGS = {
   command: "run",
   usage: RUN_USAGE,
   booleanFlags: ["--interactive", "-I", "--step", "-1", "--pr", "--push", "--full-send", "--force", "--allow-divergent-base", "--ship", "--dry-run", "--reroute"],
-  valueFlags: ["--expect"]
+  valueFlags: ["--expect"],
+  completion: { positionals: [{ kind: "taskId", variadic: true }], valueFlags: { "--expect": "phase" } }
 };
 var exitReason = null;
 var exitHandlersRegistered = false;
@@ -6215,20 +6216,20 @@ var noTaskFlags = { booleanFlags: [], valueFlags: [] };
 var TASK_SUBCOMMAND_ARGS = {
   new: { command: "task new", usage: "Usage: canon task new <TASK-ID> <title> [--base <branch>]\n\nCreate a task directory from .canon/templates/. The base branch is auto-detected from the current checkout; --base overrides it.", booleanFlags: [], valueFlags: ["--base"], equalsValueFlags: ["--base"], freeTextSlots: [1] },
   list: { command: "task list", usage: "Usage: canon task list\n\nShow all tasks and their current phase.", ...noTaskFlags },
-  status: { command: "task status", usage: "Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.", ...noTaskFlags },
+  status: { command: "task status", usage: "Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   phase: { command: "task phase", usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]
 
 Phases: ${PHASE_ORDER.join(" | ")}
 Pipeline phases (in order): ${PHASE_ORDER.join(" \u2192 ")}
 Statuses: ${[...VALID_STATUSES].join(" | ")}
 Verdicts: ${[...VALID_VERDICTS].join(" | ")}
-(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags },
-  accept: { command: "task accept", usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ["--force"], valueFlags: ["--reason"] },
+(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }, { kind: "phase" }, { kind: "phaseStatus" }, { kind: "reviewVerdict" }] } },
+  accept: { command: "task accept", usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ["--force"], valueFlags: ["--reason"], completion: { positionals: [{ kind: "taskId", variadic: true }, { kind: "acceptPhase" }] } },
   set: { command: "task set", usage: `Usage: canon task set <TASK-ID> <field> <value>
 
-Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2] },
-  "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags },
-  "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags },
+Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2], completion: { positionals: [{ kind: "taskId" }, { kind: "settableField" }, { kind: "fieldValue" }] } },
+  "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
+  "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
 };
 function validateTaskId2(id) {

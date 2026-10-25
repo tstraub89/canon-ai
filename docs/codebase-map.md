@@ -44,6 +44,8 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, task-quality-log header, and canon discovery nudge (warns when neither file exists or neither mentions canon) |
 | Canon runtime `.gitignore` block | `src/lib/canon-block.ts`, `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts`, `src/cli/commands/doctor.ts` | canon manages a `# canon:start`/`# canon:end` block in `.gitignore`; `canon upgrade` refreshes it. |
 | CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()` (command summary only; each command's usage lives with its declaration), top-level `switch` dispatch for all `canon` commands |
+| Shell completion | `src/cli/commands/completion.ts` | `canon completion`, completion model builder, and bash/zsh/fish/tcsh renderers |
+| CLI command registry | `src/cli/registry.ts` | Side-effect-free command declarations and global flags |
 | CLI argument declarations | `src/lib/cli-args.ts` | Argument declarations, help/unknown pre-scan, and shared message builders |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `src/lib/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
@@ -129,6 +131,7 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Docs refs config | `scripts/docs-refs-config.mjs` | Adopter-owned tuning surface loaded by `scripts/docs-refs-check.mjs`; canon-ai-dev re-adds `templates/` here so its own gate still scans templates. |
 | Canon-managed template sync | `tests/sync-canon-templates.test.ts` | Sync direction, delimiter preservation, CLI check, hook regression |
 | CLI argument tests | `tests/cli-args.test.ts` | Pre-scan behavior and declaration/usage/parser agreement |
+| Shell completion tests | `tests/completion.test.ts` | Completion metadata, scripts, shell syntax and smoke coverage |
 | CLI integration tests | `tests/cli.test.ts` | `canon upgrade`, `canon init`, canon-block extraction and upsert |
 | Orchestrator harness tests | `tests/run-task-harness.test.ts` | Affected-files extraction, AC summary, validation checks extraction |
 | Task CLI tests | `tests/task-cli.test.ts` | `canon task` subcommand dispatch and argument validation |

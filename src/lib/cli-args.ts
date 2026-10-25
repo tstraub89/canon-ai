@@ -6,6 +6,16 @@ export interface ArgDeclaration {
     equalsValueFlags?: readonly string[];
     freeTextSlots?: readonly number[];
     rejectPositionals?: boolean;
+    completion?: ArgCompletion;
+}
+
+export type CompletionValueKind =
+    | 'taskId' | 'phase' | 'phaseStatus' | 'reviewVerdict' | 'acceptPhase'
+    | 'settableField' | 'fieldValue' | 'taskSize' | 'updateChannel' | 'shell' | 'none';
+export interface CompletionSlot { kind: CompletionValueKind; variadic?: boolean }
+export interface ArgCompletion {
+    positionals?: readonly CompletionSlot[];
+    valueFlags?: Readonly<Record<string, CompletionValueKind>>;
 }
 
 export type PreScanResult =

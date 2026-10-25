@@ -6,6 +6,8 @@ import { stopCmd } from './commands/stop.js';
 import { taskCmd } from './commands/task.js';
 import { updateCmd } from './commands/update.js';
 import { upgradeCmd } from './commands/upgrade.js';
+import { completionCmd } from './commands/completion.js';
+import { COMMAND_REGISTRY, GLOBAL_FLAGS } from './registry.js';
 
 const [,, command, ...args] = process.argv;
 
@@ -23,6 +25,7 @@ Commands:
   stop <id>           Stop a detached canon run
   update              Update the canon-ai package itself
   upgrade             Sync vendored files to match the installed version
+  completion <shell>  Print a shell completion script
 
 Typical workflow:
   canon task new <id> "Title"   Create the task dir, then write spec.md with Claude Code
@@ -66,6 +69,9 @@ switch (command) {
         break;
     case 'upgrade':
         upgradeCmd(args);
+        break;
+    case 'completion':
+        completionCmd(args, COMMAND_REGISTRY, GLOBAL_FLAGS);
         break;
     case '--version':
     case '-v':
