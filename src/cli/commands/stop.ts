@@ -48,6 +48,14 @@ import {
 } from '../../orchestrator/heartbeat.js';
 import { probePidAlive, tolerantTaskDir } from '../../orchestrator/run-context.js';
 import { formatAge } from './doctor.js';
+import { handlePreScan, type ArgDeclaration } from '../../lib/cli-args.js';
+
+export const STOP_USAGE = [
+    'Usage: canon stop <task-id>',
+    '',
+    'Stop a detached canon run (SIGTERM, then SIGKILL after 10s). During the launch window before the child writes its first heartbeat, canon waits up to CANON_STOP_WAIT_MS for proof of life (default 30000) before deciding whether to signal.',
+].join('\n');
+export const STOP_ARGS: ArgDeclaration = { command: 'stop', usage: STOP_USAGE, booleanFlags: [], valueFlags: [] };
 
 const SIGTERM_GRACE_MS = 10_000;
 const SIGTERM_POLL_INTERVAL_MS = 200;
@@ -410,12 +418,13 @@ export function stopCmd(args: string[], deps: StopCmdDeps = {}): void {
     const readCanonPidFn = deps.readCanonPidImpl ?? readCanonPid;
     const readHeartbeatStatusFn = deps.readHeartbeatStatusImpl ?? readHeartbeatStatus;
     const waitTimeoutMs = readWaitTimeoutMs(deps);
+    handlePreScan(STOP_ARGS, args, { out: stdout, err: stderr, exit });
 
     const probeAlive = (pid: number): boolean => probePidAlive(pid, (value: number): void => { kill(value, 0); });
 
     const taskId = args[0];
     if (!taskId) {
-        stderr('Usage: canon stop <task-id>');
+        stderr(STOP_USAGE);
         return exit(1);
     }
 

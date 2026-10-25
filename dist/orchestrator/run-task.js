@@ -104,6 +104,131 @@ import path6 from "path";
 
 // src/orchestrator/cli.ts
 import fs from "fs";
+
+// src/lib/cli-args.ts
+function preScanArgs(decl, args) {
+  const booleans = new Set(decl.booleanFlags);
+  const values = new Set(decl.valueFlags);
+  const equalsValues = new Set(decl.equalsValueFlags ?? []);
+  let position = 0;
+  let help = false;
+  let firstError = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") {
+      const freeText2 = decl.freeTextSlots?.includes(position) ?? false;
+      help = true;
+      if (freeText2) {
+        position += 1;
+      }
+      continue;
+    }
+    const equalsFlag = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : "";
+    if (booleans.has(arg)) continue;
+    if (values.has(arg)) {
+      if (i + 1 < args.length) {
+        i += 1;
+      }
+      continue;
+    }
+    if (equalsValues.has(equalsFlag)) continue;
+    const freeText = decl.freeTextSlots?.includes(position) ?? false;
+    if (arg.startsWith("-") && !freeText) {
+      if (firstError == null) firstError = { kind: "unknown", argument: arg };
+      continue;
+    }
+    if (decl.rejectPositionals && !freeText && firstError == null) {
+      firstError = { kind: "unexpected", argument: arg };
+    }
+    position += 1;
+  }
+  return help ? { kind: "help" } : firstError ?? { kind: "proceed" };
+}
+function unknownOptionMessage(command, argument) {
+  return `Unknown option: ${argument}
+Run 'canon ${command} --help' for usage.`;
+}
+function unexpectedArgumentMessage(command, argument) {
+  return `Unexpected argument: ${argument}
+Run 'canon ${command} --help' for usage.`;
+}
+function handlePreScan(decl, args, io) {
+  const result = preScanArgs(decl, args);
+  if (result.kind === "help") {
+    io.out(decl.usage);
+    io.exit(0);
+  }
+  if (result.kind === "unknown" || result.kind === "unexpected") {
+    io.err(result.kind === "unknown" ? unknownOptionMessage(decl.command, result.argument) : unexpectedArgumentMessage(decl.command, result.argument));
+    io.exit(decl.command === "watch" ? 2 : 1);
+  }
+  return "proceed";
+}
+
+// src/orchestrator/cli.ts
+var RUN_USAGE = [
+  "Usage: canon run <TASK-ID...> [options]",
+  "",
+  "  Single task:  canon run fix-hover-state",
+  "  Bundle:       canon run fix-hover-state dark-tokens empty-cta",
+  "",
+  "  Bundle mode runs all tasks together per phase (one agent session each).",
+  "  Fast tier (XS, non-delicate only) skips Codex spec review. Full tier (any S/M/L/XL",
+  "  or delicate task) runs the complete pipeline \u2014 any such task pulls the entire",
+  "  bundle to full tier.",
+  "",
+  "Options:",
+  "  --interactive, -I   Open interactive agent sessions",
+  "  --step, -1          Run one phase then stop",
+  "  --expect <phase>    Assert current phase before running",
+  "  --pr                At human_review: push branch and open a draft PR (requires gh).",
+  "                      First pushes canon's own unpushed scaffold/telemetry commits on <base> to origin",
+  "                      (creating origin/<base> if missing); any other unpushed <base> commit blocks.",
+  "                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and",
+  `                      protected/configured docs listed in spec.md's "### Affected Files"`,
+  "                      table (all admitted docs once QA is done). Dirty files outside",
+  "                      that set die with a remediation message.",
+  "                      Aborts if merging origin/<base> conflicts, or branch changes files",
+  "                      outside spec's Affected Files (bypass with --force).",
+  "  --push              At human_review: push branch only, no PR (requires gh). Same",
+  "                      allow-list and scaffold base push as --pr. Aborts if merging origin/<base> conflicts, or",
+  "                      branch changes files outside spec's Affected Files (bypass with --force).",
+  "  --full-send         Skip the spec gate and auto-open a draft PR after clean QA;",
+  "                      pushes canon scaffold commits to base like --pr.",
+  "  --force             Acknowledge high-commitment combinations and bypass",
+  "                      explicit safety gates where documented (currently:",
+  "                      --full-send on delicate tasks, reroute amendment gate,",
+  "                      base-drift gate, and dirty REPO_ROOT worktree-start gate).",
+  "  --allow-divergent-base",
+  "                      At --push, --pr, and --ship: bypass only the commit-divergence",
+  "                      block when local <base> has commits not yet on origin/<base>.",
+  "                      If canon's scaffold base push is rejected, warns and continues.",
+  "                      At --pr/--push, does not apply when origin has no <base> branch.",
+  "                      Does NOT bypass the base-drift gate; use --force for that.",
+  "                      Independent of --force \u2014 both may be needed to pass both gates.",
+  "  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear",
+  "                      down the worktree, archive the task dir, and pull the base branch. Run",
+  "                      after the PR is approved \u2014 do NOT merge the PR manually first. If you",
+  "                      already merged externally, --ship detects the merged state and resumes",
+  "                      at cleanup.",
+  "  --dry-run           Print each planned phase and exit without spawning any LLM",
+  "  --reroute           Reset a task from any phase reached after a completed implement round",
+  "                      (code_review, qa, or human_review) back into the post-review fix path.",
+  "                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier",
+  "                      tasks (XS) re-enter at implement.",
+  "                      Feedback channel: append a new section to tasks/<id>/spec.md describing",
+  "                      what to address. Codex re-reads spec.md only \u2014 additions to review.md",
+  "                      or PR comments are NOT consulted on reroute.",
+  "                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`",
+  "                      on round 2+. Bypass with --force. See docs/pipeline-orchestrator.md",
+  '                      \xA7"Human Reroute."'
+].join("\n");
+var RUN_ARGS = {
+  command: "run",
+  usage: RUN_USAGE,
+  booleanFlags: ["--interactive", "-I", "--step", "-1", "--pr", "--push", "--full-send", "--force", "--allow-divergent-base", "--ship", "--dry-run", "--reroute"],
+  valueFlags: ["--expect"]
+};
 var exitReason = null;
 var exitHandlersRegistered = false;
 var markerWritten = false;
@@ -190,72 +315,14 @@ function warn(message) {
   console.error(`\u26A0\uFE0F  ${message}`);
 }
 function printUsage() {
-  console.log("Usage: canon run <TASK-ID...> [options]");
-  console.log("");
-  console.log("  Single task:  canon run fix-hover-state");
-  console.log("  Bundle:       canon run fix-hover-state dark-tokens empty-cta");
-  console.log("");
-  console.log("  Bundle mode runs all tasks together per phase (one agent session each).");
-  console.log("  Fast tier (XS, non-delicate only) skips Codex spec review. Full tier (any S/M/L/XL");
-  console.log("  or delicate task) runs the complete pipeline \u2014 any such task pulls the entire");
-  console.log("  bundle to full tier.");
-  console.log("");
-  console.log("Options:");
-  console.log("  --interactive, -I   Open interactive agent sessions");
-  console.log("  --step, -1          Run one phase then stop");
-  console.log("  --expect <phase>    Assert current phase before running");
-  console.log("  --pr                At human_review: push branch and open a draft PR (requires gh).");
-  console.log("                      First pushes canon's own unpushed scaffold/telemetry commits on <base> to origin");
-  console.log("                      (creating origin/<base> if missing); any other unpushed <base> commit blocks.");
-  console.log("                      Auto-commit allow-list: tasks/<id>/**, PIPELINE_TELEMETRY_FILES, and");
-  console.log(`                      protected/configured docs listed in spec.md's "### Affected Files"`);
-  console.log("                      table (all admitted docs once QA is done). Dirty files outside");
-  console.log("                      that set die with a remediation message.");
-  console.log("                      Aborts if merging origin/<base> conflicts, or branch changes files");
-  console.log("                      outside spec's Affected Files (bypass with --force).");
-  console.log("  --push              At human_review: push branch only, no PR (requires gh). Same");
-  console.log("                      allow-list and scaffold base push as --pr. Aborts if merging origin/<base> conflicts, or");
-  console.log("                      branch changes files outside spec's Affected Files (bypass with --force).");
-  console.log("  --full-send         Skip the spec gate and auto-open a draft PR after clean QA;");
-  console.log("                      pushes canon scaffold commits to base like --pr.");
-  console.log("  --force             Acknowledge high-commitment combinations and bypass");
-  console.log("                      explicit safety gates where documented (currently:");
-  console.log("                      --full-send on delicate tasks, reroute amendment gate,");
-  console.log("                      base-drift gate, and dirty REPO_ROOT worktree-start gate).");
-  console.log("  --allow-divergent-base");
-  console.log("                      At --push, --pr, and --ship: bypass only the commit-divergence");
-  console.log("                      block when local <base> has commits not yet on origin/<base>.");
-  console.log("                      If canon's scaffold base push is rejected, warns and continues.");
-  console.log("                      At --pr/--push, does not apply when origin has no <base> branch.");
-  console.log("                      Does NOT bypass the base-drift gate; use --force for that.");
-  console.log("                      Independent of --force \u2014 both may be needed to pass both gates.");
-  console.log("  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear");
-  console.log("                      down the worktree, archive the task dir, and pull the base branch. Run");
-  console.log("                      after the PR is approved \u2014 do NOT merge the PR manually first. If you");
-  console.log("                      already merged externally, --ship detects the merged state and resumes");
-  console.log("                      at cleanup.");
-  console.log("  --dry-run           Print each planned phase and exit without spawning any LLM");
-  console.log("  --reroute           Reset a task from any phase reached after a completed implement round");
-  console.log("                      (code_review, qa, or human_review) back into the post-review fix path.");
-  console.log("                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier");
-  console.log("                      tasks (XS) re-enter at implement.");
-  console.log("                      Feedback channel: append a new section to tasks/<id>/spec.md describing");
-  console.log("                      what to address. Codex re-reads spec.md only \u2014 additions to review.md");
-  console.log("                      or PR comments are NOT consulted on reroute.");
-  console.log("                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`");
-  console.log("                      on round 2+. Bypass with --force. See docs/pipeline-orchestrator.md");
-  console.log('                      \xA7"Human Reroute."');
+  console.log(RUN_USAGE);
 }
 function parseArgs(argv) {
+  handlePreScan(RUN_ARGS, argv, { out: printUsage, err: console.error, exit: (code) => process.exit(code) });
   if (argv.length === 0) {
     printUsage();
     setExitReason("usage requested: no TASK-ID provided");
     process.exit(1);
-  }
-  if (argv[0] === "--help") {
-    printUsage();
-    setExitReason("help requested");
-    process.exit(0);
   }
   const taskIds = [];
   let interactive = false;
@@ -310,7 +377,8 @@ function parseArgs(argv) {
         dryRun = true;
         break;
       default:
-        if (arg.startsWith("--")) die(`Unknown option: ${arg}`);
+        if (arg.startsWith("-")) die(`Unknown option: ${arg}
+Run 'canon run --help' for usage.`);
         taskIds.push(arg);
     }
   }
@@ -6127,6 +6195,42 @@ var SETTABLE_FIELD_SET = new Set(SETTABLE_FIELDS);
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 }
+var TASK_USAGE = [
+  "Usage: canon task <subcommand> [args]",
+  "",
+  "Subcommands:",
+  "  new <TASK-ID> <title> [--base <branch>]   Create tasks/<id>/ from .canon/templates/",
+  "  list                                      Show all tasks and their current phase",
+  "  status <TASK-ID>                          Show full status.json detail",
+  "  phase <TASK-ID> <phase> <status> [verdict] Update a phase and its derived status",
+  '  accept <TASK-ID...> <phase> [--reason "<text>"] [--force]  Accept implementation or sanction a review',
+  "  set <TASK-ID> <field> <value>              Set task metadata",
+  "  reset-spec-review <TASK-ID>                Reset an auto-blocked spec review",
+  "  reset-code-review <TASK-ID>                Reset an auto-blocked code review",
+  "  post-merge-sync [<branch>]                 Reconcile local branch after squash merge",
+  "",
+  "Run 'canon task <subcommand> --help' for details."
+].join("\n");
+var noTaskFlags = { booleanFlags: [], valueFlags: [] };
+var TASK_SUBCOMMAND_ARGS = {
+  new: { command: "task new", usage: "Usage: canon task new <TASK-ID> <title> [--base <branch>]\n\nCreate a task directory from .canon/templates/. The base branch is auto-detected from the current checkout; --base overrides it.", booleanFlags: [], valueFlags: ["--base"], equalsValueFlags: ["--base"], freeTextSlots: [1] },
+  list: { command: "task list", usage: "Usage: canon task list\n\nShow all tasks and their current phase.", ...noTaskFlags },
+  status: { command: "task status", usage: "Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.", ...noTaskFlags },
+  phase: { command: "task phase", usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]
+
+Phases: ${PHASE_ORDER.join(" | ")}
+Pipeline phases (in order): ${PHASE_ORDER.join(" \u2192 ")}
+Statuses: ${[...VALID_STATUSES].join(" | ")}
+Verdicts: ${[...VALID_VERDICTS].join(" | ")}
+(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags },
+  accept: { command: "task accept", usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ["--force"], valueFlags: ["--reason"] },
+  set: { command: "task set", usage: `Usage: canon task set <TASK-ID> <field> <value>
+
+Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2] },
+  "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags },
+  "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags },
+  "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
+};
 function validateTaskId2(id) {
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
     throw new Error(`Error: invalid task ID '${id}'. Must be lowercase alphanumeric, hyphens, dots, or underscores. No slashes, spaces, or leading special characters.`);

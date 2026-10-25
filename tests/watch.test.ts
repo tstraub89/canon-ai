@@ -1738,3 +1738,22 @@ void test('watch --follow streams the main-checkout primary log when context is 
         assert.match(result.stderr.join(''), /streamed from primary/);
     });
 });
+
+void test('watch help is successful without a summary, and unknown flags include the help pointer', () => {
+    const help = runWatchCommand(['t1', '--help'], {});
+    assert.equal(help.exitCode, 0);
+    assert.match(help.stdout.join(''), /Usage: canon watch/);
+    assert.doesNotMatch(help.stdout.join(''), /^state=/m);
+    assert.equal(help.stderr.join(''), '');
+
+    const unknown = runWatchCommand(['t1', '--bogus'], {});
+    assert.equal(unknown.exitCode, 2);
+    assert.match(unknown.stderr.join(''), /Unknown option: --bogus/);
+    assert.match(unknown.stderr.join(''), /usage_error\.\n/, 'usage block must end with a newline before the error line');
+    assert.match(unknown.stderr.join(''), /Run 'canon watch --help' for usage\./);
+    assert.match(unknown.stdout.join(''), /state=usage reason=usage_error/);
+
+    const value = runWatchCommand(['t1', '--until', '--help'], {});
+    assert.equal(value.exitCode, 2);
+    assert.match(value.stderr.join(''), /Invalid phase for --until: --help/);
+});

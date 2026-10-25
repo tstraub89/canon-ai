@@ -63,9 +63,11 @@ function runCanonCli(args: string[]): { status: number | null; stdout: string; s
     return runCanonCliIn(WORKTREE_ROOT, args);
 }
 
-function runCanonCliIn(cwd: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
-    const result = spawnSync(process.execPath, ['--import', 'tsx', CLI_ENTRYPOINT, ...args], {
+function runCanonCliIn(cwd: string, args: string[], env?: NodeJS.ProcessEnv): { status: number | null; stdout: string; stderr: string } {
+    const loader = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
+    const result = spawnSync(process.execPath, ['--import', loader, CLI_ENTRYPOINT, ...args], {
         cwd,
+        env,
         encoding: 'utf8',
     });
     return {
@@ -73,6 +75,13 @@ function runCanonCliIn(cwd: string, args: string[]): { status: number | null; st
         stdout: result.stdout ?? '',
         stderr: result.stderr ?? '',
     };
+}
+
+function runDistCli(args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): { status: number | null; stdout: string; stderr: string } {
+    const entry = path.join(WORKTREE_ROOT, 'dist', 'cli', 'index.js');
+    assert.ok(fs.existsSync(entry), `Missing ${entry}; run npm run build first.`);
+    const result = spawnSync(process.execPath, [entry, ...args], { cwd: opts.cwd ?? WORKTREE_ROOT, env: opts.env, encoding: 'utf8' });
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
 function writeExecutable(scriptDir: string, name: string, body: string[]): void {
@@ -515,8 +524,32 @@ void test('parseUpdateArgs: rejects invalid or conflicting flags', () => {
     assert.throws(() => parseUpdateArgs(['--channel', 'next']), /--channel only supports 'main'/);
     assert.throws(() => parseUpdateArgs(['--ref']), /--ref requires a value/);
     assert.throws(() => parseUpdateArgs(['--ref', '--upload-pack']), /must not start/);
-    assert.throws(() => parseUpdateArgs(['--unknown']), /Supported: --channel main, --ref <ref\|sha>/);
+    assert.throws(() => parseUpdateArgs(['--unknown']), /Unknown option: --unknown/);
+    assert.throws(() => parseUpdateArgs(['foo']), /Unexpected argument: foo/);
     assert.throws(() => parseUpdateArgs(['--channel', 'main', '--ref', 'feature']), /mutually exclusive/);
+});
+
+void test('update --help exits before install inspection or injected runners', () => {
+    let spawnCalls = 0;
+    let gitCalls = 0;
+    let exitCode: number | null = null;
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    try {
+        updateCmd(['--help'], {
+            packageDir: '/missing-package-dir',
+            spawnRunner: () => { spawnCalls += 1; return { status: 0 }; },
+            gitRunner: () => { gitCalls += 1; return { ok: true, stdout: '', stderr: '' }; },
+            stdout: message => stdout.push(message),
+            stderr: message => stderr.push(message),
+            exit: code => { exitCode = code; throw new Error('update exit'); },
+        });
+    } catch (error) { assert.match(String(error), /update exit/); }
+    assert.equal(exitCode, 0);
+    assert.match(stdout.join('\n'), /Usage: canon update/);
+    assert.equal(stderr.length, 0);
+    assert.equal(spawnCalls, 0);
+    assert.equal(gitCalls, 0);
 });
 
 void test('layoutGate: missing package.json is a distinct install-root refusal', () => {
@@ -1028,11 +1061,90 @@ void test('canon update: global provenance uses an existing invoking-repo .canon
 void test('canon CLI help mentions watch', () => {
     const result = runCanonCli(['--help']);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /canon watch <id>/);
-    assert.match(result.stdout, /set <id> <field> <value>/);
-    assert.match(result.stdout, /Exit codes: 0 healthy stop\/until/);
-    assert.match(result.stdout, /--channel main/);
-    assert.match(result.stdout, /--ref <40-hex-sha>/);
+    for (const command of ['init', 'doctor', 'task', 'run', 'watch', 'stop', 'update', 'upgrade']) assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
+    assert.match(result.stdout, /canon <command> --help/);
+    for (const detail of ['--allow-divergent-base', 'Exit codes:', '--channel main', 'set <id> <field> <value>', 'spec → spec_review']) assert.equal(result.stdout.includes(detail), false, detail);
+    const watch = runCanonCli(['watch', '--help']);
+    assert.equal(watch.status, 0, watch.stderr);
+    assert.match(watch.stdout, /Exit codes: 0 healthy stop\/until/);
+    const update = runCanonCli(['update', '--help']);
+    assert.equal(update.status, 0, update.stderr);
+    assert.match(update.stdout, /--channel main/);
+    assert.match(update.stdout, /--ref <40-hex-sha>/);
+    const taskSet = runCanonCli(['task', 'set', '--help']);
+    assert.equal(taskSet.status, 0, taskSet.stderr);
+    assert.match(taskSet.stdout, /Usage: canon task set <TASK-ID> <field> <value>/);
+});
+
+void test('per-command help short-circuits command work and unknown flags are rejected', () => {
+    withTempDir(empty => withTempDir(bin => {
+        const env = { ...process.env, PATH: bin };
+        const initHelp = runCanonCliIn(empty, ['init', '--help'], env);
+        assert.equal(initHelp.status, 0, initHelp.stderr);
+        assert.match(initHelp.stdout, /Usage: canon init/);
+        assert.deepEqual(fs.readdirSync(empty), []);
+        const initControl = runCanonCliIn(empty, ['init'], env);
+        assert.equal(initControl.status, 1);
+
+        const upgradeFixture = path.join(empty, 'upgrade-fixture');
+        fs.mkdirSync(upgradeFixture);
+        fs.writeFileSync(path.join(upgradeFixture, 'keep.txt'), 'fixture');
+        const before = fs.readdirSync(upgradeFixture);
+        const upgradeHelp = runCanonCliIn(upgradeFixture, ['upgrade', '--help']);
+        assert.equal(upgradeHelp.status, 0, upgradeHelp.stderr);
+        assert.deepEqual(fs.readdirSync(upgradeFixture), before);
+
+        const runHelp = runDistCli(['run', '--pr', '--help'], { cwd: empty, env });
+        assert.equal(runHelp.status, 0, runHelp.stderr);
+        assert.match(runHelp.stdout, /Usage: canon run/);
+        const runControl = runDistCli(['run', '--pr', 'foo'], { cwd: empty, env });
+        assert.equal(runControl.status, 1);
+        assert.match(runControl.stderr, /requires the GitHub CLI/);
+    }));
+
+    for (const args of [['watch', 'foo', '--help'], ['watch', 'foo', '--bogus', '--help'], ['stop', '--help'], ['update', '--channel', 'main', '--help'], ['--help']]) {
+        const result = runCanonCli(args);
+        assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
+        if (args[0] !== '--help') assert.match(result.stdout, /Usage: canon (watch|stop|update)/);
+        else assert.match(result.stdout, /canon-ai — spec-first multi-agent coding pipeline/);
+    }
+    const runHelp = runDistCli(['run', 'foo', '--help']);
+    assert.equal(runHelp.status, 0, runHelp.stderr);
+    assert.match(runHelp.stdout, /Usage: canon run/);
+    const runShortHelp = runDistCli(['run', '-h']);
+    assert.equal(runShortHelp.status, 0, runShortHelp.stderr);
+    assert.match(runShortHelp.stdout, /Usage: canon run/);
+
+    for (const command of ['init', 'doctor', 'watch', 'stop', 'update', 'upgrade']) {
+        if (command === 'init') {
+            withTempDir(empty => {
+                const before = fs.readdirSync(empty);
+                const rejected = runCanonCliIn(empty, ['init', '--bogus']);
+                assert.equal(rejected.status, 1, rejected.stderr);
+                assert.match(rejected.stderr, /Unknown option: --bogus/);
+                assert.deepEqual(fs.readdirSync(empty), before);
+            });
+            continue;
+        }
+        const result = runCanonCli([command, '--bogus']);
+        assert.equal(result.status, command === 'watch' ? 2 : 1, result.stderr);
+        assert.match(result.stderr, /Unknown option: --bogus/);
+        assert.match(result.stderr, new RegExp(`Run 'canon ${command} --help' for usage\\.`));
+        if (command === 'doctor') assert.doesNotMatch(result.stdout, /node v/);
+        if (command === 'upgrade') assert.doesNotMatch(result.stderr, /^\\s+at /m);
+    }
+    for (const command of ['update', 'upgrade']) {
+        const result = runCanonCli([command, 'foo']);
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /Unexpected argument: foo/);
+        assert.match(result.stderr, new RegExp(`Run 'canon ${command} --help' for usage\\.`));
+    }
+    for (const args of [['run', '--bogus', 'foo'], ['run', '-z', 'foo']]) {
+        const result = runDistCli(args);
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /Unknown option: -(?:-bogus|z)/);
+        assert.match(result.stderr, /Run 'canon run --help' for usage\./);
+    }
 });
 
 void test('canon watch dispatches with usage when no task id is provided', () => {
@@ -3035,7 +3147,7 @@ void test('parseUpgradeArgs: accepts --check, --dry-run, --force, --no-stage', (
 });
 
 void test('parseUpgradeArgs: rejects unknown flag', () => {
-    assert.throws(() => parseUpgradeArgs(['--what']), /unknown flag '--what'/);
+    assert.throws(() => parseUpgradeArgs(['--what']), /Unknown option: --what/);
 });
 
 void test('runUpgrade --check: reports wouldUpgrade without writing', () => {

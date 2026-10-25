@@ -119,6 +119,23 @@ void test('parseArgs recognizes --allow-divergent-base', () => {
     });
 });
 
+void test('parseArgs help wins at any position, preserves flag values, and rejects single-dash flags', () => {
+    for (const args of [['foo', '--help'], ['-h'], ['-z', 'foo', '--help']]) {
+        const result = runParseArgs(args);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Usage: canon run/);
+    }
+    const unknown = runParseArgs(['-z', 'foo']);
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /Unknown option: -z/);
+    assert.match(unknown.stderr, /Run 'canon run --help' for usage\./);
+    const value = runParseArgs(['foo', '--expect', '--help']);
+    assert.equal(value.status, 0);
+    const parsedValue = JSON.parse(value.stdout) as { expectPhase: string };
+    assert.equal(parsedValue.expectPhase, '--help');
+    assert.doesNotMatch(value.stdout, /Usage: canon run/);
+});
+
 void test('parseArgs rejects --reroute with --full-send', () => {
     const result = runParseArgs(['--reroute', '--full-send', 'task-id']);
     assert.equal(result.status, 1);

@@ -13,6 +13,10 @@ import { dirname, join, relative } from 'path';
 import { checkDeps } from '../deps.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
 import { assertNoSymlinkDestinations } from '../../lib/scaffold-paths.js';
+import { handlePreScan, type ArgDeclaration } from '../../lib/cli-args.js';
+
+export const INIT_USAGE = 'Usage: canon init\n\nSet up canon in the current repo.';
+export const INIT_ARGS: ArgDeclaration = { command: 'init', usage: INIT_USAGE, booleanFlags: [], valueFlags: [] };
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const templatesDir = join(packageDir, 'templates');
@@ -67,7 +71,8 @@ export function scaffoldTemplates(
     return { scaffolded, skipped };
 }
 
-export function initCmd(_args: string[]): void {
+export function initCmd(args: string[]): void {
+    handlePreScan(INIT_ARGS, args, { out: console.log, err: console.error, exit: code => process.exit(code) });
     checkDeps();
 
     const cwd = process.cwd();

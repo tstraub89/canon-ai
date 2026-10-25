@@ -6,6 +6,7 @@ import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
 import { taskTemplateOverrideRoot } from '../../task/index.js';
 import { assertNoSymlinkDestinations } from '../../lib/scaffold-paths.js';
+import { handlePreScan, type ArgDeclaration, unknownOptionMessage, unexpectedArgumentMessage } from '../../lib/cli-args.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -17,6 +18,16 @@ export interface UpgradeOptions {
     /** Skip the post-write `git add`. Teams that prefer to stage manually. */
     noStage?: boolean;
 }
+
+export const UPGRADE_USAGE = [
+    'Usage: canon upgrade [--check|--dry-run] [--force] [--no-stage]',
+    '',
+    'Sync canon-managed files to match the installed version.',
+    '  --check, --dry-run   Print the planned changes without writing files',
+    '  --force              Overwrite destinations that would otherwise be refused',
+    '  --no-stage           Skip the post-write git add',
+].join('\n');
+export const UPGRADE_ARGS: ArgDeclaration = { command: 'upgrade', usage: UPGRADE_USAGE, booleanFlags: ['--check', '--dry-run', '--force', '--no-stage'], valueFlags: [], rejectPositionals: true };
 
 export const CANON_END = '<!-- canon:end -->';
 export const CANON_START_RE = /<!-- canon:start[^>]* -->/;
@@ -537,15 +548,24 @@ export function parseUpgradeArgs(args: string[]): UpgradeOptions {
         if (arg === '--check' || arg === '--dry-run') options.check = true;
         else if (arg === '--force') options.force = true;
         else if (arg === '--no-stage') options.noStage = true;
-        else {
-            throw new Error(`canon upgrade: unknown flag '${arg}'. Supported: --check (--dry-run), --force, --no-stage.`);
+        else if (arg.startsWith('-')) {
+            throw new Error(unknownOptionMessage('upgrade', arg));
+        } else {
+            throw new Error(unexpectedArgumentMessage('upgrade', arg));
         }
     }
     return options;
 }
 
 export function upgradeCmd(args: string[]): void {
-    const options = parseUpgradeArgs(args);
+    handlePreScan(UPGRADE_ARGS, args, { out: console.log, err: console.error, exit: code => process.exit(code) });
+    let options: UpgradeOptions;
+    try {
+        options = parseUpgradeArgs(args);
+    } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+    }
     const result = runUpgrade(process.cwd(), packageDir, options);
     const { upgraded, unchanged, skipped, wouldUpgrade, dirtyRefused, refusals, malformed, cutoverWarnings, staleOverrides } = result;
 

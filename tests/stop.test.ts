@@ -719,3 +719,22 @@ function withTempDirForStop(fn: (dir: string) => void): void {
     try { fn(dir); }
     finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
+
+void test('stop help and unknown options exit before task lookup or signaling', () => {
+    let kills = 0;
+    let exitCode: number | null = null;
+    const output: string[] = [];
+    const errors: string[] = [];
+    const exit = (code: number): never => { exitCode = code; throw new HaltExit(); };
+    try { stopCmd(['foo', '--help'], { kill: () => { kills += 1; }, exit, stdout: s => output.push(s), stderr: s => errors.push(s) }); } catch (error) { if (!(error instanceof HaltExit)) throw error; }
+    assert.equal(exitCode, 0);
+    assert.match(output.join('\n'), /Usage: canon stop/);
+    assert.equal(kills, 0);
+
+    exitCode = null;
+    try { stopCmd(['foo', '--bogus'], { kill: () => { kills += 1; }, exit, stdout: s => output.push(s), stderr: s => errors.push(s) }); } catch (error) { if (!(error instanceof HaltExit)) throw error; }
+    assert.equal(exitCode, 1);
+    assert.match(errors.join('\n'), /Unknown option: --bogus/);
+    assert.match(errors.join('\n'), /Run 'canon stop --help' for usage\./);
+    assert.equal(kills, 0);
+});

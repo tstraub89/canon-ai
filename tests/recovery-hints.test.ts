@@ -11,33 +11,48 @@ type HintSite =
   | { file: string; snippet: string; kind: 'exempt'; reason: string };
 const HINT_PATTERN = /--reroute|reset-code-review|reset-spec-review|canon task accept/;
 const HINT_SITES: readonly HintSite[] = [
+
   {
-    "file": "src/cli/index.ts",
-    "snippet": "(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)",
-    "kind": "exempt",
-    "reason": "Not an actionable recovery hint: descriptive state, audit, or pointer text"
+    file: 'src/orchestrator/cli.ts',
+    snippet: "    booleanFlags: ['--interactive', '-I', '--step', '-1', '--pr', '--push', '--full-send', '--force', '--allow-divergent-base', '--ship', '--dry-run', '--reroute'],",
+    kind: 'exempt',
+    reason: 'Not an actionable recovery hint: usage, help, or argv handling',
+  },
+
+
+  {
+    file: 'src/task/index.ts',
+    snippet: "    phase: { command: 'task phase', usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]\\n\\nPhases: ${PHASE_ORDER.join(' | ')}\\nPipeline phases (in order): ${PHASE_ORDER.join(' → ')}\\nStatuses: ${[...VALID_STATUSES].join(' | ')}\\nVerdicts: ${[...VALID_VERDICTS].join(' | ')}\\n(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags },",
+    kind: 'exempt',
+    reason: 'Not an actionable recovery hint: usage, help, or argv handling',
   },
   {
-    "file": "src/cli/index.ts",
-    "snippet": "reset-spec-review <id>  Clear state for a fresh spec-review pass after an auto-block.",
-    "kind": "exempt",
-    "reason": "Not an actionable recovery hint: usage, help, or argv handling"
+    file: 'src/task/index.ts',
+    snippet: "    accept: { command: 'task accept', usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason \"<text>\"] [--force]\\n\\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ['--force'], valueFlags: ['--reason'] },",
+    kind: 'exempt',
+    reason: 'Not an actionable recovery hint: usage, help, or argv handling',
   },
   {
-    "file": "src/cli/index.ts",
-    "snippet": "reset-code-review <id>  Clear state for a fresh code-review pass after an auto-block.",
-    "kind": "exempt",
-    "reason": "Not an actionable recovery hint: usage, help, or argv handling"
+    file: 'src/task/index.ts',
+    snippet: "    'reset-spec-review': { command: 'task reset-spec-review', usage: 'Usage: canon task reset-spec-review <TASK-ID>\\n\\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.', ...noTaskFlags },",
+    kind: 'exempt',
+    reason: 'Not an actionable recovery hint: usage, help, or argv handling',
   },
   {
-    "file": "src/cli/index.ts",
-    "snippet": "--reroute               Reset a task from any phase reached after a completed implement round",
-    "kind": "exempt",
-    "reason": "Not an actionable recovery hint: descriptive state, audit, or pointer text"
+    file: 'src/task/index.ts',
+    snippet: "    'reset-code-review': { command: 'task reset-code-review', usage: 'Usage: canon task reset-code-review <TASK-ID>\\n\\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.', ...noTaskFlags },",
+    kind: 'exempt',
+    reason: 'Not an actionable recovery hint: usage, help, or argv handling',
+  },
+  {
+    file: 'src/task/index.ts',
+    snippet: "    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason \"<text>\"] [--force]');",
+    kind: 'exempt',
+    reason: 'Not an actionable recovery hint: usage, help, or argv handling',
   },
   {
     "file": "src/orchestrator/cli.ts",
-    "snippet": "console.log('  --reroute           Reset a task from any phase reached after a completed implement round');",
+    "snippet": "    '  --reroute           Reset a task from any phase reached after a completed implement round',",
     "kind": "exempt",
     "reason": "Not an actionable recovery hint: usage, help, or argv handling"
   },
@@ -316,13 +331,13 @@ const HINT_SITES: readonly HintSite[] = [
   },
   {
     "file": "src/task/index.ts",
-    "snippet": "'  reset-spec-review <TASK-ID>',",
+    "snippet": "    '  reset-spec-review <TASK-ID>                Reset an auto-blocked spec review',",
     "kind": "exempt",
     "reason": "Not an actionable recovery hint: usage, help, or argv handling"
   },
   {
     "file": "src/task/index.ts",
-    "snippet": "'  reset-code-review <TASK-ID>',",
+    "snippet": "    '  reset-code-review <TASK-ID>                Reset an auto-blocked code review',",
     "kind": "exempt",
     "reason": "Not an actionable recovery hint: usage, help, or argv handling"
   },
@@ -410,7 +425,7 @@ const HINT_SITES: readonly HintSite[] = [
   },
   {
     "file": "src/task/index.ts",
-    "snippet": "                    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason \"<text>\"] [--force]');",
+    "snippet": "    throw new Error('Error: usage: canon task accept <TASK-ID...> <phase> [--reason \"<text>\"] [--force]');",
     "kind": "exempt",
     "reason": "Not an actionable recovery hint: usage, help, or argv handling"
   },
