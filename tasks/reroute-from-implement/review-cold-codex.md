@@ -1,0 +1,1 @@
+No actionable defects found in the reviewed changes. The reroute admission checks, reset behavior, and updated recovery guidance appear consistent; targeted reroute tests passed, though the full test suite had not finished during review.

@@ -8,3 +8,9 @@
 |---|---|---|---|---|---|---|---|---|
 | 2026-10-25T13:17:54.620Z | reroute-from-implement | spec_review | codex | gpt-6.1-sol | 0 | 182.8s | 1424501 | ok |
 | 2026-10-25T13:26:41.473Z | reroute-from-implement | plan | claude | opus | 0 | 430.0s | 6865188 | ok |
+| 2026-10-25T13:36:35.059Z | reroute-from-implement | implement | codex | gpt-6.1-sol | 0 | 592.6s | 6688080 | ok |
+| 2026-10-25T13:37:33.210Z | reroute-from-implement | code_review | codex | gpt-6-luna | 0 | 57.2s | - | ok |
+| 2026-10-25T13:49:14.230Z | reroute-from-implement | code_review | claude | opus | 0 | 701.0s | 1828884 | ok |
+| 2026-10-25T13:49:14.236Z | reroute-from-implement | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 289.7s | 4965870 | ok |
+| 2026-10-25T13:49:14.242Z | reroute-from-implement | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 544.1s | 6657333 | ok |
+| 2026-10-25T13:50:18.727Z | reroute-from-implement | qa | claude | claude-haiku-5-5 | 0 | 64.5s | 601650 | ok |
