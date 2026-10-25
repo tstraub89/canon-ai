@@ -124,7 +124,7 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 
 ## Roadmap (Brief)
 
-- **Current state**: canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Development is trunk-based on `main`; releases are cut from `main` (see `docs/release-process.md`). Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
+- **Current state**: canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop, completion), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Development is trunk-based on `main`; releases are cut from `main` (see `docs/release-process.md`). Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
 - **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Multi-agent cold review now includes a cold-Codex third lens: `code_review` runs an orchestrator-owned `codex review` step followed by a Claude foreman over anchored-Claude, cold-Claude, and cold-Codex inputs.
 - **Future**: Additional agent-CLI adapters (Gemini, Aider). Public release decision.
 

@@ -55,7 +55,7 @@ export const STOP_USAGE = [
     '',
     'Stop a detached canon run (SIGTERM, then SIGKILL after 10s). During the launch window before the child writes its first heartbeat, canon waits up to CANON_STOP_WAIT_MS for proof of life (default 30000) before deciding whether to signal.',
 ].join('\n');
-export const STOP_ARGS: ArgDeclaration = { command: 'stop', usage: STOP_USAGE, booleanFlags: [], valueFlags: [] };
+export const STOP_ARGS: ArgDeclaration = { command: 'stop', usage: STOP_USAGE, booleanFlags: [], valueFlags: [], completion: { positionals: [{ kind: 'taskId' }] } };
 
 const SIGTERM_GRACE_MS = 10_000;
 const SIGTERM_POLL_INTERVAL_MS = 200;

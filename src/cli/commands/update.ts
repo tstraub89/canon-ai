@@ -42,6 +42,7 @@ export interface UpdateOptions {
     channel?: 'main';
     ref?: string;
 }
+export const UPDATE_CHANNELS = ['main'] as const;
 
 export const UPDATE_USAGE = [
     'Usage: canon update [--channel main | --ref <ref|sha>]',
@@ -53,7 +54,7 @@ export const UPDATE_USAGE = [
     '  --ref <40-hex-sha>    Pin directly and skip resolution',
     '  --channel and --ref are mutually exclusive.',
 ].join('\n');
-export const UPDATE_ARGS: ArgDeclaration = { command: 'update', usage: UPDATE_USAGE, booleanFlags: [], valueFlags: ['--channel', '--ref'], rejectPositionals: true };
+export const UPDATE_ARGS: ArgDeclaration = { command: 'update', usage: UPDATE_USAGE, booleanFlags: [], valueFlags: ['--channel', '--ref'], rejectPositionals: true, completion: { valueFlags: { '--channel': 'updateChannel' } } };
 
 export function parseUpdateArgs(args: string[]): UpdateOptions {
     const options: UpdateOptions = {};
@@ -61,7 +62,7 @@ export function parseUpdateArgs(args: string[]): UpdateOptions {
         const arg = args[i];
         if (arg === '--channel') {
             const value = args[++i];
-            if (value !== 'main') {
+            if (value === undefined || !(UPDATE_CHANNELS as readonly string[]).includes(value)) {
                 throw new Error(`canon update: --channel only supports 'main'. Got '${value ?? '(missing)'}'.`);
             }
             options.channel = 'main';

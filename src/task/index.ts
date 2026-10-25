@@ -15,7 +15,7 @@ import { filterGitIgnoredPaths } from '../orchestrator/git.js';
 import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
-import { isPlanCombined, type TaskSize } from '../lib/pipeline-policy.js';
+import { isPlanCombined, SIZE_ORDER, type TaskSize } from '../lib/pipeline-policy.js';
 import { renderTaskTemplate, resolveTaskTemplateSource, tasksRoot, templatesRoot } from './templates.js';
 import { handlePreScan, type ArgDeclaration } from '../lib/cli-args.js';
 
@@ -37,7 +37,11 @@ const REDIRECT_MESSAGES: Record<string, string> = {
     canon: 'nested orchestrator-owned state. `status.json.canon` is stamped by canon snapshot; use `CANON_UPSTREAM_REPO` to override the upstream slug, not `canon task set`.',
     escalations: 'nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.',
 };
-const TASK_SIZE_VALUES = new Set<TaskSize>(['XS', 'S', 'M', 'L', 'XL']);
+export const ACCEPT_PHASES = ['implement', 'spec_review', 'code_review'] as const;
+const BOOLEAN_VALUES = ['true', 'false'] as const;
+export const TASK_SET_FIELD_VALUES: Readonly<Partial<Record<(typeof SETTABLE_FIELDS)[number], readonly string[]>>> = {
+    task_size: SIZE_ORDER, delicate: BOOLEAN_VALUES, worktree: BOOLEAN_VALUES, human_spec_gate: BOOLEAN_VALUES,
+};
 
 type GitResult = SpawnSyncReturns<string>;
 
@@ -63,12 +67,12 @@ const noTaskFlags = { booleanFlags: [] as readonly string[], valueFlags: [] as r
 export const TASK_SUBCOMMAND_ARGS: Readonly<Record<string, ArgDeclaration>> = {
     new: { command: 'task new', usage: 'Usage: canon task new <TASK-ID> <title> [--base <branch>]\n\nCreate a task directory from .canon/templates/. The base branch is auto-detected from the current checkout; --base overrides it.', booleanFlags: [], valueFlags: ['--base'], equalsValueFlags: ['--base'], freeTextSlots: [1] },
     list: { command: 'task list', usage: 'Usage: canon task list\n\nShow all tasks and their current phase.', ...noTaskFlags },
-    status: { command: 'task status', usage: 'Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.', ...noTaskFlags },
-    phase: { command: 'task phase', usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]\n\nPhases: ${PHASE_ORDER.join(' | ')}\nPipeline phases (in order): ${PHASE_ORDER.join(' → ')}\nStatuses: ${[...VALID_STATUSES].join(' | ')}\nVerdicts: ${[...VALID_VERDICTS].join(' | ')}\n(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags },
-    accept: { command: 'task accept', usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ['--force'], valueFlags: ['--reason'] },
-    set: { command: 'task set', usage: `Usage: canon task set <TASK-ID> <field> <value>\n\nSettable fields: ${SETTABLE_FIELDS.join(', ')}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2] },
-    'reset-spec-review': { command: 'task reset-spec-review', usage: 'Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.', ...noTaskFlags },
-    'reset-code-review': { command: 'task reset-code-review', usage: 'Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.', ...noTaskFlags },
+    status: { command: 'task status', usage: 'Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.', ...noTaskFlags, completion: { positionals: [{ kind: 'taskId' }] } },
+    phase: { command: 'task phase', usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]\n\nPhases: ${PHASE_ORDER.join(' | ')}\nPipeline phases (in order): ${PHASE_ORDER.join(' → ')}\nStatuses: ${[...VALID_STATUSES].join(' | ')}\nVerdicts: ${[...VALID_VERDICTS].join(' | ')}\n(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags, completion: { positionals: [{ kind: 'taskId' }, { kind: 'phase' }, { kind: 'phaseStatus' }, { kind: 'reviewVerdict' }] } },
+    accept: { command: 'task accept', usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ['--force'], valueFlags: ['--reason'], completion: { positionals: [{ kind: 'taskId', variadic: true }, { kind: 'acceptPhase' }] } },
+    set: { command: 'task set', usage: `Usage: canon task set <TASK-ID> <field> <value>\n\nSettable fields: ${SETTABLE_FIELDS.join(', ')}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2], completion: { positionals: [{ kind: 'taskId' }, { kind: 'settableField' }, { kind: 'fieldValue' }] } },
+    'reset-spec-review': { command: 'task reset-spec-review', usage: 'Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.', ...noTaskFlags, completion: { positionals: [{ kind: 'taskId' }] } },
+    'reset-code-review': { command: 'task reset-code-review', usage: 'Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.', ...noTaskFlags, completion: { positionals: [{ kind: 'taskId' }] } },
     'post-merge-sync': { command: 'task post-merge-sync', usage: 'Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.', ...noTaskFlags },
 };
 function usage(): string { return TASK_USAGE; }
@@ -357,19 +361,19 @@ export function taskStatus(id: string): void {
     console.log(JSON.stringify(status, null, 2));
 }
 
-function assertValidPhase(phase: string): asserts phase is Phase {
+export function assertValidPhase(phase: string): asserts phase is Phase {
     if (!VALID_PHASES.has(phase)) {
         throw new Error(`Error: invalid phase '${phase}'. Must be one of: ${PHASE_ORDER.join(', ')}`);
     }
 }
 
-function assertValidStatus(status: string): asserts status is PhaseStatus {
+export function assertValidStatus(status: string): asserts status is PhaseStatus {
     if (!VALID_STATUSES.has(status)) {
         throw new Error(`Error: invalid status '${status}'. Must be one of: pending, in_progress, done, changes_requested, blocked`);
     }
 }
 
-function assertValidVerdict(phase: Phase, verdict: string | undefined): asserts verdict is Verdict | undefined {
+export function assertValidVerdict(phase: Phase, verdict: string | undefined): asserts verdict is Verdict | undefined {
     if (!verdict) return;
     if (!REVIEW_PHASES.has(phase)) {
         throw new Error('Error: verdict is only valid for spec_review and code_review phases');
@@ -604,7 +608,7 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
     for (const id of ids) validateTaskId(id);
     assertValidPhase(phaseArg);
 
-    if (phaseArg !== 'implement' && phaseArg !== 'spec_review' && phaseArg !== 'code_review') {
+    if (!(ACCEPT_PHASES as readonly string[]).includes(phaseArg)) {
         throw new Error(
             `Error: 'canon task accept' supports implement, spec_review, and code_review phases. ` +
             `Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
@@ -1493,7 +1497,7 @@ function taskSetValue(taskId: string, field: string, value: string, status: Stat
             status.title = value;
             return [];
         case 'task_size':
-            if (!TASK_SIZE_VALUES.has(value as TaskSize)) {
+            if (!TASK_SET_FIELD_VALUES.task_size?.includes(value)) {
                 throw new Error(`Error: invalid task_size '${value}'. Must be one of: XS, S, M, L, XL.`);
             }
             status.task_size = value as TaskSize;
@@ -1501,7 +1505,7 @@ function taskSetValue(taskId: string, field: string, value: string, status: Stat
         case 'delicate':
         case 'worktree': {
             const normalized = value.toLowerCase();
-            if (normalized !== 'true' && normalized !== 'false') {
+            if (!TASK_SET_FIELD_VALUES[field]?.includes(normalized)) {
                 throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
             }
             status[field] = normalized === 'true';
@@ -1509,7 +1513,7 @@ function taskSetValue(taskId: string, field: string, value: string, status: Stat
         }
         case 'human_spec_gate': {
             const normalized = value.toLowerCase();
-            if (normalized !== 'true' && normalized !== 'false') {
+            if (!TASK_SET_FIELD_VALUES[field]?.includes(normalized)) {
                 throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
             }
             if (normalized === 'false') {

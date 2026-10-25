@@ -49,6 +49,7 @@ import {
 import { CANON_OWNED } from '../src/lib/canon-owned.js';
 import { HEARTBEAT_STALE_AFTER_MS } from '../src/orchestrator/heartbeat.js';
 import { REPO_ROOT } from '../src/orchestrator/env.js';
+import { COMMAND_REGISTRY } from '../src/cli/registry.js';
 
 const WORKTREE_ROOT = process.cwd();
 const CLI_ENTRYPOINT = path.join(WORKTREE_ROOT, 'src', 'cli', 'index.ts');
@@ -1061,7 +1062,7 @@ void test('canon update: global provenance uses an existing invoking-repo .canon
 void test('canon CLI help mentions watch', () => {
     const result = runCanonCli(['--help']);
     assert.equal(result.status, 0, result.stderr);
-    for (const command of ['init', 'doctor', 'task', 'run', 'watch', 'stop', 'update', 'upgrade']) assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
+    for (const command of ['init', 'doctor', 'task', 'run', 'watch', 'stop', 'update', 'upgrade', 'completion']) assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
     assert.match(result.stdout, /canon <command> --help/);
     for (const detail of ['--allow-divergent-base', 'Exit codes:', '--channel main', 'set <id> <field> <value>', 'spec → spec_review']) assert.equal(result.stdout.includes(detail), false, detail);
     const watch = runCanonCli(['watch', '--help']);
@@ -1074,6 +1075,16 @@ void test('canon CLI help mentions watch', () => {
     const taskSet = runCanonCli(['task', 'set', '--help']);
     assert.equal(taskSet.status, 0, taskSet.stderr);
     assert.match(taskSet.stdout, /Usage: canon task set <TASK-ID> <field> <value>/);
+});
+
+void test('top-level help command list matches the command registry', () => {
+    const result = runCanonCli(['--help']);
+    assert.equal(result.status, 0, result.stderr);
+    const lines = result.stdout.split(/\r?\n/);
+    const start = lines.indexOf('Commands:') + 1;
+    const helpNames: string[] = [];
+    for (const line of lines.slice(start)) { if (line.trim() === '') break; helpNames.push(line.trim().split(/\s+/)[0]); }
+    assert.deepEqual(new Set(helpNames), new Set(COMMAND_REGISTRY.map(command => command.name)));
 });
 
 void test('per-command help short-circuits command work and unknown flags are rejected', () => {

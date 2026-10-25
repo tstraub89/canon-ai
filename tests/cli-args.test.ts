@@ -7,6 +7,7 @@ import { STOP_ARGS } from '../src/cli/commands/stop.ts';
 import { WATCH_ARGS, parseWatchArgs } from '../src/cli/commands/watch.ts';
 import { UPDATE_ARGS, parseUpdateArgs } from '../src/cli/commands/update.ts';
 import { UPGRADE_ARGS, parseUpgradeArgs } from '../src/cli/commands/upgrade.ts';
+import { COMPLETION_ARGS } from '../src/cli/commands/completion.ts';
 import { RUN_ARGS, parseArgs } from '../src/orchestrator/cli.ts';
 import { TASK_ARGS, TASK_SUBCOMMAND_ARGS, parseTaskAcceptArgs, parseTaskNewArgs } from '../src/task/index.ts';
 
@@ -46,7 +47,7 @@ void test('preScanArgs honors help precedence and positional value rules', () =>
 });
 
 void test('all command declarations list parser-supported flags in their usage', () => {
-    const declarations = [INIT_ARGS, DOCTOR_ARGS, RUN_ARGS, WATCH_ARGS, STOP_ARGS, UPDATE_ARGS, UPGRADE_ARGS, TASK_ARGS, ...Object.values(TASK_SUBCOMMAND_ARGS)];
+    const declarations = [INIT_ARGS, DOCTOR_ARGS, RUN_ARGS, WATCH_ARGS, STOP_ARGS, UPDATE_ARGS, UPGRADE_ARGS, COMPLETION_ARGS, TASK_ARGS, ...Object.values(TASK_SUBCOMMAND_ARGS)];
     assert.equal(Object.keys(TASK_SUBCOMMAND_ARGS).length, 9);
     assert.deepEqual(Object.keys(TASK_SUBCOMMAND_ARGS).sort(), ['new', 'list', 'status', 'phase', 'accept', 'set', 'reset-spec-review', 'reset-code-review', 'post-merge-sync'].sort());
     for (const decl of declarations) {

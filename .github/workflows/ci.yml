@@ -79,6 +79,8 @@ jobs:
       - run: npm run sync-templates:check
       - run: npm run docs-refs-check
       - run: npm run build
+      - name: Install shells for completion tests
+        run: sudo apt-get update && sudo apt-get install -y zsh fish tcsh
       - run: npm test
       - name: Verify committed dist/ matches a fresh build
         # We commit dist/ because `npm install -g <git-url>` cannot reliably

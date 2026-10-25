@@ -124,6 +124,15 @@ npm install -g --install-links github:tstraub89/canon-ai
 
 > **Updating.** Once installed, use `canon update` rather than re-running `npm install` by hand — it resolves the exact install this binary is running from and installs the latest release from the npm registry by default. Use `--channel main` or `--ref <ref|sha>` for a GitHub development commit; each update records what it installed in `provenance.json` under `.canon` for future tooling to read. A project-local update pins the exact version (`--save-exact`); a global update has no manifest to pin.
 
+### Shell completion
+
+Add the line for your shell to its startup file. For zsh, put the line after `compinit`.
+
+- bash (`~/.bashrc`): `eval "$(canon completion bash)"`
+- zsh (`~/.zshrc`, after `compinit`): `eval "$(canon completion zsh)"`
+- fish (`~/.config/fish/config.fish`): `canon completion fish | source`
+- tcsh: run `canon completion tcsh > ~/.canon-completion.tcsh` once, then add `source ~/.canon-completion.tcsh` to `~/.tcshrc`. A multi-line script does not survive backtick `eval`.
+
 ### Set up in a repo
 
 ```bash
@@ -267,6 +276,7 @@ Run canon on repositories where you would be comfortable running your test suite
 |---|---|
 | `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
 | `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72) and Codex CLI presence, codex project trust, recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
+| `canon completion <shell>` | Print a completion script for bash, zsh, fish, or tcsh; see Shell completion. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
 | `canon task phase <id> <phase> <status>` | Advance a task phase manually |

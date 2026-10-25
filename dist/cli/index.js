@@ -129,7 +129,8 @@ var RUN_ARGS = {
   command: "run",
   usage: RUN_USAGE,
   booleanFlags: ["--interactive", "-I", "--step", "-1", "--pr", "--push", "--full-send", "--force", "--allow-divergent-base", "--ship", "--dry-run", "--reroute"],
-  valueFlags: ["--expect"]
+  valueFlags: ["--expect"],
+  completion: { positionals: [{ kind: "taskId", variadic: true }], valueFlags: { "--expect": "phase" } }
 };
 var exitReason = null;
 var originalProcessExit = process.exit.bind(process);
@@ -2212,7 +2213,7 @@ var STOP_USAGE = [
   "",
   "Stop a detached canon run (SIGTERM, then SIGKILL after 10s). During the launch window before the child writes its first heartbeat, canon waits up to CANON_STOP_WAIT_MS for proof of life (default 30000) before deciding whether to signal."
 ].join("\n");
-var STOP_ARGS = { command: "stop", usage: STOP_USAGE, booleanFlags: [], valueFlags: [] };
+var STOP_ARGS = { command: "stop", usage: STOP_USAGE, booleanFlags: [], valueFlags: [], completion: { positionals: [{ kind: "taskId" }] } };
 var SIGTERM_GRACE_MS = 1e4;
 var SIGTERM_POLL_INTERVAL_MS = 200;
 var STOP_WAIT_DEFAULT_MS = 3e4;
@@ -2510,7 +2511,8 @@ var WATCH_ARGS = {
   usage: WATCH_USAGE,
   booleanFlags: ["--follow", "-f"],
   valueFlags: ["--until", "--timeout"],
-  equalsValueFlags: ["--timeout"]
+  equalsValueFlags: ["--timeout"],
+  completion: { positionals: [{ kind: "taskId" }], valueFlags: { "--until": "phase" } }
 };
 var WATCH_POLL_INTERVAL_MS = 3e3;
 function blockedPhaseLivenessTrusted(_ctx, orchestratorLive, _now) {
@@ -3959,6 +3961,7 @@ function rescaffoldReview(taskDir, identity) {
 }
 
 // src/lib/pipeline-policy.ts
+var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
 function isPlanCombined(task) {
   return task.task_size === "XS" && !(task.delicate ?? false);
 }
@@ -3980,7 +3983,14 @@ var REDIRECT_MESSAGES = {
   canon: "nested orchestrator-owned state. `status.json.canon` is stamped by canon snapshot; use `CANON_UPSTREAM_REPO` to override the upstream slug, not `canon task set`.",
   escalations: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead."
 };
-var TASK_SIZE_VALUES = /* @__PURE__ */ new Set(["XS", "S", "M", "L", "XL"]);
+var ACCEPT_PHASES = ["implement", "spec_review", "code_review"];
+var BOOLEAN_VALUES = ["true", "false"];
+var TASK_SET_FIELD_VALUES = {
+  task_size: SIZE_ORDER,
+  delicate: BOOLEAN_VALUES,
+  worktree: BOOLEAN_VALUES,
+  human_spec_gate: BOOLEAN_VALUES
+};
 function today() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 }
@@ -4005,20 +4015,20 @@ var noTaskFlags = { booleanFlags: [], valueFlags: [] };
 var TASK_SUBCOMMAND_ARGS = {
   new: { command: "task new", usage: "Usage: canon task new <TASK-ID> <title> [--base <branch>]\n\nCreate a task directory from .canon/templates/. The base branch is auto-detected from the current checkout; --base overrides it.", booleanFlags: [], valueFlags: ["--base"], equalsValueFlags: ["--base"], freeTextSlots: [1] },
   list: { command: "task list", usage: "Usage: canon task list\n\nShow all tasks and their current phase.", ...noTaskFlags },
-  status: { command: "task status", usage: "Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.", ...noTaskFlags },
+  status: { command: "task status", usage: "Usage: canon task status <TASK-ID>\n\nShow full status.json detail for a task.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   phase: { command: "task phase", usage: `Usage: canon task phase <TASK-ID> <phase> <status> [verdict]
 
 Phases: ${PHASE_ORDER.join(" | ")}
 Pipeline phases (in order): ${PHASE_ORDER.join(" \u2192 ")}
 Statuses: ${[...VALID_STATUSES].join(" | ")}
 Verdicts: ${[...VALID_VERDICTS].join(" | ")}
-(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags },
-  accept: { command: "task accept", usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ["--force"], valueFlags: ["--reason"] },
+(verdict applies to spec_review and code_review only; sanctioned is written via canon task accept --reason)`, ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }, { kind: "phase" }, { kind: "phaseStatus" }, { kind: "reviewVerdict" }] } },
+  accept: { command: "task accept", usage: 'Usage: canon task accept <TASK-ID...> <phase> [--reason "<text>"] [--force]\n\nAccept implement, or sanction spec_review/code_review with an audit reason. --reason is required for spec_review and code_review. --force bypasses the missing-verdict and dirty-tree guards.', booleanFlags: ["--force"], valueFlags: ["--reason"], completion: { positionals: [{ kind: "taskId", variadic: true }, { kind: "acceptPhase" }] } },
   set: { command: "task set", usage: `Usage: canon task set <TASK-ID> <field> <value>
 
-Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2] },
-  "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags },
-  "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags },
+Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2], completion: { positionals: [{ kind: "taskId" }, { kind: "settableField" }, { kind: "fieldValue" }] } },
+  "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
+  "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
 };
 function usage() {
@@ -4389,7 +4399,7 @@ function taskAccept(ids, phaseArg, options = {}) {
   if (!phaseArg) throw new Error("Error: phase required (implement, spec_review, or code_review)");
   for (const id of ids) validateTaskId(id);
   assertValidPhase(phaseArg);
-  if (phaseArg !== "implement" && phaseArg !== "spec_review" && phaseArg !== "code_review") {
+  if (!ACCEPT_PHASES.includes(phaseArg)) {
     throw new Error(
       `Error: 'canon task accept' supports implement, spec_review, and code_review phases. Got '${phaseArg}'. For other phases use \`canon task phase <id> ${phaseArg} done [verdict]\`.`
     );
@@ -5036,7 +5046,7 @@ function taskSetValue(taskId, field, value, status) {
       status.title = value;
       return [];
     case "task_size":
-      if (!TASK_SIZE_VALUES.has(value)) {
+      if (!TASK_SET_FIELD_VALUES.task_size?.includes(value)) {
         throw new Error(`Error: invalid task_size '${value}'. Must be one of: XS, S, M, L, XL.`);
       }
       status.task_size = value;
@@ -5044,7 +5054,7 @@ function taskSetValue(taskId, field, value, status) {
     case "delicate":
     case "worktree": {
       const normalized = value.toLowerCase();
-      if (normalized !== "true" && normalized !== "false") {
+      if (!TASK_SET_FIELD_VALUES[field]?.includes(normalized)) {
         throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
       }
       status[field] = normalized === "true";
@@ -5052,7 +5062,7 @@ function taskSetValue(taskId, field, value, status) {
     }
     case "human_spec_gate": {
       const normalized = value.toLowerCase();
-      if (normalized !== "true" && normalized !== "false") {
+      if (!TASK_SET_FIELD_VALUES[field]?.includes(normalized)) {
         throw new Error(`Error: invalid ${field} '${value}'. Must be true or false.`);
       }
       if (normalized === "false") {
@@ -5249,6 +5259,7 @@ function detectInstallType(pkgDirOverride) {
   }
   return { type: "global", installRoot: null };
 }
+var UPDATE_CHANNELS = ["main"];
 var UPDATE_USAGE = [
   "Usage: canon update [--channel main | --ref <ref|sha>]",
   "",
@@ -5259,14 +5270,14 @@ var UPDATE_USAGE = [
   "  --ref <40-hex-sha>    Pin directly and skip resolution",
   "  --channel and --ref are mutually exclusive."
 ].join("\n");
-var UPDATE_ARGS = { command: "update", usage: UPDATE_USAGE, booleanFlags: [], valueFlags: ["--channel", "--ref"], rejectPositionals: true };
+var UPDATE_ARGS = { command: "update", usage: UPDATE_USAGE, booleanFlags: [], valueFlags: ["--channel", "--ref"], rejectPositionals: true, completion: { valueFlags: { "--channel": "updateChannel" } } };
 function parseUpdateArgs(args2) {
   const options = {};
   for (let i = 0; i < args2.length; i++) {
     const arg = args2[i];
     if (arg === "--channel") {
       const value = args2[++i];
-      if (value !== "main") {
+      if (value === void 0 || !UPDATE_CHANNELS.includes(value)) {
         throw new Error(`canon update: --channel only supports 'main'. Got '${value ?? "(missing)"}'.`);
       }
       options.channel = "main";
@@ -6177,6 +6188,383 @@ function upgradeCmd(args2) {
   }
 }
 
+// src/cli/commands/completion.ts
+var COMPLETION_SHELLS = ["bash", "zsh", "fish", "tcsh"];
+var COMPLETION_USAGE = [
+  "Usage: canon completion <bash|zsh|fish|tcsh>",
+  "",
+  "Print a shell completion script for canon.",
+  "Install in bash by adding this line to ~/.bashrc:",
+  '  eval "$(canon completion bash)"',
+  "Install in zsh by adding this line to ~/.zshrc after compinit:",
+  '  eval "$(canon completion zsh)"',
+  "Install in fish by adding this line to ~/.config/fish/config.fish:",
+  "  canon completion fish | source",
+  "For tcsh, write the script once with `canon completion tcsh > ~/.canon-completion.tcsh`, then add `source ~/.canon-completion.tcsh` to ~/.tcshrc. A multi-line script does not survive backtick eval."
+].join("\n");
+var COMPLETION_ARGS = { command: "completion", usage: COMPLETION_USAGE, booleanFlags: [], valueFlags: [], rejectPositionals: true, freeTextSlots: [0], completion: { positionals: [{ kind: "shell" }] } };
+function modelCommand(name, decl, path17, subcommands) {
+  const slots = [...decl.completion?.positionals ?? []];
+  const phase = slots.findIndex((s) => s.kind === "phase");
+  const field = slots.findIndex((s) => s.kind === "settableField");
+  const variadicIndex = slots.findIndex((s) => s.variadic);
+  if (variadicIndex >= 0 && slots.length - variadicIndex > 2) {
+    throw new Error(`Completion declaration ${path17.join(" ")} has more than one fixed positional slot after a variadic slot`);
+  }
+  const dependsOn = {};
+  slots.forEach((slot, i) => {
+    if (slot.kind === "reviewVerdict" && phase >= 0) dependsOn[i] = phase;
+    if (slot.kind === "fieldValue" && field >= 0) dependsOn[i] = field;
+  });
+  return {
+    path: path17,
+    flags: [.../* @__PURE__ */ new Set([...decl.booleanFlags, ...decl.valueFlags, ...decl.equalsValueFlags ?? [], "--help", "-h"])],
+    booleanFlags: [...decl.booleanFlags],
+    valueFlags: [...decl.valueFlags],
+    equalsValueFlags: [...decl.equalsValueFlags ?? []],
+    valueFlagKinds: Object.fromEntries([.../* @__PURE__ */ new Set([...decl.valueFlags, ...decl.equalsValueFlags ?? []])].map((f) => [f, decl.completion?.valueFlags?.[f] ?? "none"])),
+    positionals: slots,
+    dependsOn,
+    ...subcommands ? { subcommands: Object.entries(subcommands).map(([sub, d]) => modelCommand(sub, d, [...path17, sub])) } : {}
+  };
+}
+function buildCompletionModel(registry, globalFlags) {
+  const verdictsByPhase = {
+    spec_review: [...VALID_VERDICTS].filter((v) => v !== "sanctioned" && v !== "spec_gap"),
+    code_review: [...VALID_VERDICTS].filter((v) => v !== "sanctioned")
+  };
+  return {
+    commands: registry.map((c) => modelCommand(c.name, c.decl, [c.name], c.subcommands)),
+    globalFlags: [...globalFlags],
+    values: {
+      phase: [...PHASE_ORDER],
+      phaseStatus: [...VALID_STATUSES],
+      acceptPhase: [...ACCEPT_PHASES],
+      settableField: [...SETTABLE_FIELDS],
+      taskSize: [...SIZE_ORDER],
+      updateChannel: [...UPDATE_CHANNELS],
+      shell: [...COMPLETION_SHELLS]
+    },
+    verdictsByPhase,
+    valuesByField: Object.fromEntries(Object.entries(TASK_SET_FIELD_VALUES).map(([k, v]) => [k, [...v ?? []]]))
+  };
+}
+function q(value) {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+function taskCmd3(model) {
+  return model.commands.find((c) => c.path[0] === "task");
+}
+function records(model) {
+  return model.commands.flatMap((c) => [c, ...c.subcommands ?? []]);
+}
+function positionalAction(kind, record, slotIndex, shell, model) {
+  const print = (values2) => shell === "fish" ? `string split ' ' -- ${q(values2.join(" "))}` : shell === "zsh" ? `items=${q(values2.join(" "))}; print -l -- \${(s: :)items}` : `printf '%s\\n' ${values2.map(q).join(" ")}`;
+  if (kind === "taskId") return shell === "fish" ? "__canon_task_ids" : "_canon_task_ids";
+  if (kind === "reviewVerdict") {
+    const dependency = record.dependsOn[slotIndex];
+    const phaseRef = shell === "bash" ? `\${positionals[${dependency}]}` : shell === "zsh" ? `\${positionals[${dependency + 1}]}` : `$positionals[${dependency + 1}]`;
+    const entries = Object.entries(model.verdictsByPhase).map(([phase, values2]) => shell === "fish" ? `case ${q(phase)}
+          ${print(values2)}` : `${q(phase)}) ${print(values2)} ;;`).join(shell === "fish" ? "\n" : " ");
+    return shell === "fish" ? `switch ${phaseRef}
+          ${entries}
+        end` : `case ${phaseRef} in ${entries} esac`;
+  }
+  if (kind === "fieldValue") {
+    const dependency = record.dependsOn[slotIndex];
+    const fieldRef = shell === "bash" ? `\${positionals[${dependency}]}` : shell === "zsh" ? `\${positionals[${dependency + 1}]}` : `$positionals[${dependency + 1}]`;
+    const entries = Object.entries(model.valuesByField).map(([field, values2]) => shell === "fish" ? `case ${q(field)}
+          ${print(values2)}` : `${q(field)}) ${print(values2)} ;;`).join(shell === "fish" ? "\n" : " ");
+    return shell === "fish" ? `switch ${fieldRef}
+          ${entries}
+        end` : `case ${fieldRef} in ${entries} esac`;
+  }
+  const values = model.values[kind];
+  return values ? print(values) : ":";
+}
+function valueFlagCaseEntries(model, shell) {
+  return records(model).flatMap((record) => Object.entries(record.valueFlagKinds).map(([flag, kind]) => {
+    const key = q(`${record.path.join(" ")}:${flag}`);
+    return shell === "fish" ? `case ${key}
+          set pending 1
+          set valKind ${kind}
+          set equalsAllowed ${record.equalsValueFlags.includes(flag) ? 1 : 0}
+          continue` : `${key}) pending=1; val=${kind}; equalsAllowed=${record.equalsValueFlags.includes(flag) ? 1 : 0}; continue ;;`;
+  })).join(shell === "fish" ? "\n        " : " ");
+}
+function equalsFlagCaseEntries(model, shell) {
+  return records(model).flatMap((record) => record.equalsValueFlags.map((flag) => {
+    const prefix = q(`${record.path.join(" ")}:${flag}=`);
+    return shell === "fish" ? `case ${q(`${record.path.join(" ")}:${flag}=*`)}
+          continue` : `${prefix}*) continue ;;`;
+  })).join(shell === "fish" ? "\n        " : " ");
+}
+function valueKindCaseEntries(model, shell) {
+  const entries = [...Object.entries(model.values), ["taskId", []]];
+  return entries.map(([kind, values]) => {
+    const taskIds = shell === "fish" ? "__canon_task_ids" : "_canon_task_ids";
+    if (kind === "taskId") return shell === "fish" ? `case ${kind}
+          ${taskIds}` : `${kind}) ${taskIds} ;;`;
+    const action = shell === "fish" ? `string split ' ' -- ${q(values.join(" "))}` : shell === "zsh" ? `items=${q(values.join(" "))}; print -l -- \${(s: :)items}` : `printf '%s\\n' ${values.map(q).join(" ")}`;
+    return shell === "fish" ? `case ${kind}
+          ${action}` : `${kind}) ${action} ;;`;
+  }).join(shell === "fish" ? "\n        " : " ");
+}
+function positionalCaseEntries(model, shell) {
+  return records(model).flatMap((record) => {
+    const slots = record.positionals;
+    const variadicIndex = slots.findIndex((slot) => slot.variadic);
+    if (variadicIndex >= 0 && variadicIndex === slots.length - 1) {
+      const action = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
+      const path17 = q(record.path.join(" "));
+      return [shell === "fish" ? `case ${q(`${record.path.join(" ")}:*`)}
+      if test $n -ge ${variadicIndex}
+        ${action}
+      end` : `${path17}:*) if [ "$n" -ge ${variadicIndex} ]; then ${action}; fi ;;`];
+    }
+    if (variadicIndex >= 0 && variadicIndex < slots.length - 1) {
+      const taskIds = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
+      const trailing = slots.slice(variadicIndex + 1).map((slot, offset) => positionalAction(slot.kind, record, variadicIndex + offset + 1, shell, model));
+      const path17 = q(record.path.join(" "));
+      if (shell === "fish") return [`case ${q(`${record.path.join(" ")}:*`)}
+      if test $n -le ${variadicIndex}
+        ${taskIds}
+      else
+        ${taskIds}
+        ${trailing.join("\n        ")}
+      end`];
+      return [`${path17}:*) if [ "$n" -le ${variadicIndex} ]; then ${taskIds}; else ${taskIds}; ${trailing.join("; ")}; fi ;;`];
+    }
+    return slots.map((slot, index) => {
+      const action = positionalAction(slot.kind, record, index, shell, model);
+      return shell === "fish" ? `case ${q(`${record.path.join(" ")}:${index}`)}
+      ${action}` : `${q(`${record.path.join(" ")}:${index}`)}) ${action} ;;`;
+    });
+  }).join(shell === "fish" ? "\n    " : " ");
+}
+function renderBash(model) {
+  const task = taskCmd3(model);
+  const flags = records(model).map((c) => `${q(c.path.join(" "))}) printf '%s\\n' ${c.flags.map(q).join(" ")} ;;`).join(" ");
+  const valueFlags = valueFlagCaseEntries(model, "bash");
+  const equalsFlags = equalsFlagCaseEntries(model, "bash");
+  const valueKinds = valueKindCaseEntries(model, "bash");
+  const positionals = positionalCaseEntries(model, "bash");
+  return `# Generated by canon's completion command.
+_canon_task_ids() { ( common=$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0; root=\${common%/*}; [ -d "$root/tasks" ] || exit 0; shopt -s nullglob; shopt -u failglob 2>/dev/null; for d in "$root"/tasks/*/; do d=\${d%/}; n=\${d##*/}; case $n in _*|.*) continue;; esac; printf '%s\\n' "$n"; done ); }
+_canon_candidates() {
+  local cur="$1"; shift; local -a w=("$@") positionals=(); local cmd= sub= path= pending=0 val=none word n=0 equalsAllowed=0
+  cmd=\${w[0]-}; sub=\${w[1]-}; path="$cmd"
+  if [ "$cmd" = task ] && [ -n "$sub" ] && [[ "$sub" != -* ]]; then path="task $sub"; fi
+  if [ -z "$cmd" ]; then if [[ "$cur" == -* ]]; then printf '%s\\n' ${model.globalFlags.map(q).join(" ")}; else printf '%s\\n' ${model.commands.map((c) => q(c.path[0])).join(" ")}; fi; return; fi
+  if [[ "$cur" == -* ]]; then case "$path" in ${flags} *) printf '%s\\n' ${model.globalFlags.map(q).join(" ")} ;; esac; return; fi
+  if [ "$cmd" = task ] && [ -z "$sub" ]; then printf '%s\\n' ${(task.subcommands ?? []).map((c) => q(c.path[1])).join(" ")}; return; fi
+  shift; if [ "$cmd" = task ] && [ -n "$sub" ] && [[ "$sub" != -* ]]; then shift; fi
+  for word in "$@"; do
+    if [ "$pending" -eq 1 ]; then if [ "$word" = '=' ] && [ "$equalsAllowed" -eq 1 ]; then continue; fi; pending=0; val=none; equalsAllowed=0; if [ "$word" = '=' ]; then continue; fi; continue; fi
+    case "$path:$word" in ${valueFlags} esac
+    case "$path:$word" in ${equalsFlags} esac
+    case "$word" in '=') continue;; -*) continue;; esac
+    positionals+=("$word")
+  done
+  if [ "$pending" -eq 1 ]; then if [[ "$cur" == =* ]] && [ "$equalsAllowed" -ne 1 ]; then return; fi; case "$val" in ${valueKinds} esac; return; fi
+  n=\${#positionals[@]}
+  case "$path:$n" in ${positionals} *) : ;; esac
+}
+_canon() { local cur=\${COMP_WORDS[COMP_CWORD]} candidate; local -a words=(); COMPREPLY=(); local i; for ((i=1;i<COMP_CWORD;i++)); do words+=("\${COMP_WORDS[i]}"); done; while IFS= read -r candidate; do [[ $candidate == "$cur"* ]] && COMPREPLY+=("$candidate"); done < <(_canon_candidates "$cur" "\${words[@]}"); }
+complete -F _canon canon
+`;
+}
+function renderZsh(model) {
+  const commands = q(model.commands.map((c) => c.path[0]).join(" "));
+  const task = taskCmd3(model);
+  const subs = q((task.subcommands ?? []).map((c) => c.path[1]).join(" "));
+  const flags = records(model).map((c) => `${q(c.path.join(" "))}) items=${q(c.flags.join(" "))}; print -l -- \${(s: :)items} ;;`).join(" ");
+  const valueFlags = valueFlagCaseEntries(model, "zsh");
+  const equalsFlags = equalsFlagCaseEntries(model, "zsh");
+  const valueKinds = valueKindCaseEntries(model, "zsh");
+  const positionals = positionalCaseEntries(model, "zsh");
+  return `# Generated by canon's completion command.
+_canon_task_ids() { emulate -L zsh; local common root d n; common=$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0; root=\${common%/*}; [[ -d $root/tasks ]] || return 0; for d in $root/tasks/*(/N); do n=\${d:t}; [[ $n == _* || $n == .* ]] && continue; print -r -- $n; done }
+_canon_candidates() {
+  emulate -L zsh; local cur=$1; shift; local -a w=("$@") positionals=(); local cmd sub cmdpath word val=none pending=0 n=0 items equalsAllowed=0
+  cmd=\${w[1]-}; sub=\${w[2]-}; cmdpath=$cmd
+  if [[ -z $cmd ]]; then if [[ $cur == -* ]]; then items=${q(model.globalFlags.join(" "))}; else items=${commands}; fi; print -l -- \${(s: :)items}; return; fi
+  if [[ $cmd == task && -n $sub && $sub != -* ]]; then cmdpath="task $sub"; fi
+  if [[ $cur == -* ]]; then case "$cmdpath" in ${flags} *) items=${q(model.globalFlags.join(" "))}; print -l -- \${(s: :)items};; esac; return; fi
+  if [[ $cmd == task && -z $sub ]]; then items=${subs}; print -l -- \${(s: :)items}; return; fi
+  if [[ $cmd == task && -n $sub && $sub != -* ]]; then shift; shift; else shift; fi
+  for word in "$@"; do
+    if (( pending )); then if [[ $word == = && $equalsAllowed == 1 ]]; then continue; fi; pending=0; val=none; equalsAllowed=0; if [[ $word == = ]]; then continue; fi; continue; fi
+    case "$cmdpath:$word" in ${valueFlags} esac
+    case "$cmdpath:$word" in ${equalsFlags} esac
+    case $word in = ) continue;; -* ) continue;; esac
+    positionals+=("$word")
+  done
+  if (( pending )); then if [[ $cur == \\=* && $equalsAllowed != 1 ]]; then return; fi; case $val in ${valueKinds} esac; return; fi
+  n=\${#positionals[@]}
+  case "$cmdpath:$n" in ${positionals} *) : ;; esac
+}
+_canon() { local -a c; c=("\${(@f)$(_canon_candidates "\${words[CURRENT]}" "\${(@)words[2,CURRENT-1]}")}"); c=(\${c:#}); compadd -a c }
+if (( $+functions[compdef] )); then compdef _canon canon; else print -u2 'canon completion: compdef not found; load compinit before this line'; fi
+`;
+}
+function renderFish(model) {
+  const commands = q(model.commands.map((c) => c.path[0]).join(" "));
+  const globalFlags = q(model.globalFlags.join(" "));
+  const task = taskCmd3(model);
+  const subcommands = q((task.subcommands ?? []).map((c) => c.path[1]).join(" "));
+  const flags = records(model).map((c) => `case ${q(c.path.join(" "))}
+      string split ' ' -- ${q(c.flags.join(" "))}`).join("\n    ");
+  const valueFlags = valueFlagCaseEntries(model, "fish");
+  const equalsFlags = equalsFlagCaseEntries(model, "fish");
+  const valueKinds = valueKindCaseEntries(model, "fish");
+  const positionals = positionalCaseEntries(model, "fish");
+  return `# Generated by canon's completion command.
+function __canon_task_ids
+  set -l common (command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); or return 0
+  set -l root (string replace -r '/[^/]*$' '' -- $common)
+  test -d "$root/tasks"; or return 0
+  for d in $root/tasks/*/
+    set -l n (string replace -r '.*/' '' -- (string replace -r '/$' '' -- $d))
+    string match -q -- '_*' $n; and continue
+    string match -q -- '.*' $n; and continue
+    printf '%s\\n' $n
+  end
+end
+function __canon_candidates
+  set -l cur
+  set -l words
+  if test (count $argv) -gt 0
+    set cur $argv[1]
+    set -e argv[1]
+    set words canon $argv
+  else
+    set words (commandline -opc)
+    set cur (commandline -ct)
+  end
+  set -l countWords (count $words)
+  if test $countWords -le 1
+    if string match -q -- '-*' $cur; string split ' ' -- ${globalFlags}; else string split ' ' -- ${commands}; end
+    return
+  end
+  set -l cmd $words[2]
+  set -l sub ''
+  set -l cmdpath $cmd
+  set -l wantsSubcommands 0
+  if test "$cmd" = task
+    if test $countWords -le 2
+      set wantsSubcommands 1
+    else if string match -q -- '-*' $words[3]
+      set wantsSubcommands 1
+    else
+      set sub $words[3]
+      set cmdpath "task $sub"
+      set -e words[1..3]
+    end
+  else
+    set -e words[1..2]
+  end
+  if string match -q -- '-*' $cur
+    switch "$cmdpath"
+      ${flags}
+      case '*'
+        string split ' ' -- ${globalFlags}
+    end
+    return
+  end
+  if test $wantsSubcommands -eq 1
+    string split ' ' -- ${subcommands}
+    return
+  end
+  set -l pending 0
+  set -l equalsAllowed 0
+  set -l valKind none
+  set -l positionals
+  for word in $words
+    if test $pending -eq 1
+      if test "$word" = '='; and test $equalsAllowed -eq 1; continue; end
+      set pending 0
+      set valKind none
+      set equalsAllowed 0
+      if test "$word" = '='; continue; end
+      continue
+    end
+    switch "$cmdpath:$word"
+        ${valueFlags}
+    end
+    switch "$cmdpath:$word"
+        ${equalsFlags}
+    end
+    if test "$word" = '='; continue; end
+    if string match -q -- '-*' $word; continue; end
+    set positionals $positionals $word
+  end
+  if test $pending -eq 1
+    if string match -q -- '=*' $cur; and test $equalsAllowed -ne 1; return; end
+    switch $valKind
+        ${valueKinds}
+      case '*'
+        true
+    end
+    return
+  end
+  set -l n (count $positionals)
+  switch "$cmdpath:$n"
+    ${positionals}
+    case '*'
+      true
+  end
+end
+complete -c canon -f -a '(__canon_candidates)'
+`;
+}
+function tcshFlagProgram(model) {
+  const rows = records(model).map((c) => `${c.path.join(" ")}\\t${c.flags.join(" ")}`).join("\\n").replace(/'/g, "'\\''");
+  return `BEGIN { split("${rows.replace(/"/g, '\\"')}", lines, "\\n"); split(ENVIRON["COMMAND_LINE"], w, " "); cmd=w[2]; subcmd=w[3]; path=cmd; if (cmd == "task" && substr(subcmd,1,1) == "-") subcmd=""; if (cmd == "task" && subcmd != "") path=cmd " " subcmd; for (i in lines) { split(lines[i], row, "\\t"); if (row[1] == path) { print row[2]; exit } } if (cmd == "task" && subcmd == "") { print "${taskCmd3(model)?.flags.join(" ")}"; exit } print "${model.globalFlags.join(" ")}" }`;
+}
+function renderTcsh(model) {
+  const cmdNames = model.commands.map((c) => c.path[0]).join(" ");
+  const task = taskCmd3(model);
+  const awk = tcshFlagProgram(model).replace(/[\r\n]/g, " ").replace(/'/g, "'\\''");
+  return `# Generated by canon's completion command.
+complete canon 'p/1/(${cmdNames} ${model.globalFlags.join(" ")})/' 'C/-/\`awk '\\''${awk}'\\''\`/' 'n/task/(${(task.subcommands ?? []).map((c) => c.path[1]).join(" ")})/'
+`;
+}
+function renderCompletion(shell, model) {
+  const script = shell === "bash" ? renderBash(model) : shell === "zsh" ? renderZsh(model) : shell === "fish" ? renderFish(model) : renderTcsh(model);
+  return `${script.trimEnd()}
+`;
+}
+function completionCmd(args2, registry, globalFlags, deps = {}) {
+  const io = { out: deps.stdout ?? console.log, err: deps.stderr ?? console.error, exit: deps.exit ?? ((code) => process.exit(code)) };
+  handlePreScan(COMPLETION_ARGS, args2, io);
+  const shell = args2[0];
+  const fail = (message) => {
+    io.err(message);
+    return io.exit(1);
+  };
+  if (shell === void 0) return fail(`Missing shell. Expected one of: ${COMPLETION_SHELLS.join(", ")}.
+Run 'canon completion --help' for usage.`);
+  if (shell.startsWith("-")) return fail(unknownOptionMessage("completion", shell));
+  if (!COMPLETION_SHELLS.includes(shell)) return fail(`Unknown shell: ${shell}. Expected one of: ${COMPLETION_SHELLS.join(", ")}.
+Run 'canon completion --help' for usage.`);
+  io.out(renderCompletion(shell, buildCompletionModel(registry, globalFlags)).trimEnd());
+}
+
+// src/cli/registry.ts
+var COMMAND_REGISTRY = [
+  { name: "init", decl: INIT_ARGS },
+  { name: "doctor", decl: DOCTOR_ARGS },
+  { name: "task", decl: TASK_ARGS, subcommands: TASK_SUBCOMMAND_ARGS },
+  { name: "run", decl: RUN_ARGS },
+  { name: "watch", decl: WATCH_ARGS },
+  { name: "stop", decl: STOP_ARGS },
+  { name: "update", decl: UPDATE_ARGS },
+  { name: "upgrade", decl: UPGRADE_ARGS },
+  { name: "completion", decl: COMPLETION_ARGS }
+];
+var GLOBAL_FLAGS = ["--help", "-h", "--version", "-v"];
+
 // src/cli/index.ts
 var [, , command, ...args] = process.argv;
 function printHelp() {
@@ -6193,6 +6581,7 @@ Commands:
   stop <id>           Stop a detached canon run
   update              Update the canon-ai package itself
   upgrade             Sync vendored files to match the installed version
+  completion <shell>  Print a shell completion script
 
 Typical workflow:
   canon task new <id> "Title"   Create the task dir, then write spec.md with Claude Code
@@ -6233,6 +6622,9 @@ switch (command) {
     break;
   case "upgrade":
     upgradeCmd(args);
+    break;
+  case "completion":
+    completionCmd(args, COMMAND_REGISTRY, GLOBAL_FLAGS);
     break;
   case "--version":
   case "-v":

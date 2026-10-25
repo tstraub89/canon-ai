@@ -64,6 +64,7 @@ export const RUN_ARGS: ArgDeclaration = {
     command: 'run', usage: RUN_USAGE,
     booleanFlags: ['--interactive', '-I', '--step', '-1', '--pr', '--push', '--full-send', '--force', '--allow-divergent-base', '--ship', '--dry-run', '--reroute'],
     valueFlags: ['--expect'],
+    completion: { positionals: [{ kind: 'taskId', variadic: true }], valueFlags: { '--expect': 'phase' } },
 };
 
 let exitReason: string | null = null;

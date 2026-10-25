@@ -118,7 +118,7 @@ export type PipelinePolicy = {
     claude: (phase: ClaudePhase) => ClaudeModelConfig;
 };
 
-const SIZE_ORDER: readonly TaskSize[] = ['XS', 'S', 'M', 'L', 'XL'];
+export const SIZE_ORDER: readonly TaskSize[] = ['XS', 'S', 'M', 'L', 'XL'];
 
 /** Sort comparator for task sizes in canonical XS→XL order. */
 export function compareTaskSize(a: TaskSize, b: TaskSize): number {

@@ -25,6 +25,7 @@ export const WATCH_USAGE = [
 export const WATCH_ARGS: ArgDeclaration = {
     command: 'watch', usage: WATCH_USAGE,
     booleanFlags: ['--follow', '-f'], valueFlags: ['--until', '--timeout'], equalsValueFlags: ['--timeout'],
+    completion: { positionals: [{ kind: 'taskId' }], valueFlags: { '--until': 'phase' } },
 };
 
 const WATCH_POLL_INTERVAL_MS = 3_000;
