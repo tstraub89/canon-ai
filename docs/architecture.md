@@ -29,7 +29,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests, runs on Node 24.x with `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, installs `zsh fish tcsh` via apt, runs `npm test`, and `npm run build`.
+- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests, runs on Node 24.x with `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, installs `zsh fish tcsh` via apt, then runs `npm test`.
 
 ## High-Level Architecture
 

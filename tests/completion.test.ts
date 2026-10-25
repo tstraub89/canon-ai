@@ -60,7 +60,10 @@ void test('each renderer follows declaration growth and emits no undeclared long
     const synthetic = COMMAND_REGISTRY.map(command => command.name === 'task'
         ? { ...command, subcommands: { ...command.subcommands, 'zz-sub': { command: 'task zz-sub', usage: 'Usage: canon task zz-sub', booleanFlags: [], valueFlags: [] } } }
         : command);
-    synthetic.push({ name: 'zz-cmd', decl: { command: 'zz-cmd', usage: 'Usage: canon zz-cmd', booleanFlags: ['--zz-bool'], valueFlags: ['--zz-value'], equalsValueFlags: ['--zz-eq'] } });
+    synthetic.push({ name: 'zz-cmd', decl: {
+        command: 'zz-cmd', usage: 'Usage: canon zz-cmd', booleanFlags: ['--zz-bool'], valueFlags: ['--zz-value'], equalsValueFlags: ['--zz-eq'],
+        completion: { positionals: [{ kind: 'taskId' }, { kind: 'phase' }], valueFlags: { '--zz-value': 'none' } },
+    } });
     const syntheticModel = buildCompletionModel(synthetic, GLOBAL_FLAGS);
     for (const shell of COMPLETION_SHELLS) {
         const script = renderCompletion(shell, syntheticModel);
@@ -71,6 +74,34 @@ void test('each renderer follows declaration growth and emits no undeclared long
         const allowed = new Set(shell === 'tcsh' ? [] : ['--path-format', '--git-common-dir']);
         for (const token of script.match(/--[A-Za-z][\w-]*/g) ?? []) assert.ok(modelFlags.has(token) || allowed.has(token), `${shell}: undeclared ${token}`);
     }
+});
+
+void test('synthetic value flags do not shift later positional slots', t => {
+    const synthetic = [...COMMAND_REGISTRY, { name: 'zz-cmd', decl: {
+        command: 'zz-cmd', usage: 'Usage: canon zz-cmd', booleanFlags: [], valueFlags: ['--zz-value', '--zz-eq'], equalsValueFlags: ['--zz-eq'],
+        completion: { positionals: [{ kind: 'taskId' as const }, { kind: 'phase' as const }], valueFlags: { '--zz-value': 'none' as const, '--zz-eq': 'none' as const } },
+    } }];
+    const syntheticModel = buildCompletionModel(synthetic, GLOBAL_FLAGS);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-model-'));
+    try {
+        const bashFile = path.join(dir, 'completion.bash');
+        fs.writeFileSync(bashFile, renderCompletion('bash', syntheticModel));
+        for (const flagArgs of [['--zz-value', 'x'], ['--zz-eq=x'], ['--zz-eq', '=', 'x']]) {
+            const bash = spawnSync('bash', ['--norc', '--noprofile', '-c', '. "$1"; shift; COMP_WORDS=("$@"); COMP_CWORD=$(($# - 1)); _canon; printf "%s\\n" "${COMPREPLY[@]}"', '_', bashFile, 'canon', 'zz-cmd', 'alpha', ...flagArgs, ''], { encoding: 'utf8' });
+            assert.equal(bash.status, 0, bash.stderr);
+            assert.deepEqual(bash.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...model.values.phase].sort());
+        }
+        if (spawnSync('which', ['zsh'], { encoding: 'utf8' }).status === 0) {
+            const zshFile = path.join(dir, 'completion.zsh');
+            fs.writeFileSync(zshFile, renderCompletion('zsh', syntheticModel));
+            for (const flagArgs of [['--zz-value', 'x'], ['--zz-eq=x'], ['--zz-eq', '=', 'x']]) {
+                const zsh = spawnSync('zsh', ['-f', '-c', '. "$1"; shift; _canon_candidates "" "$@"', '_', zshFile, 'zz-cmd', 'alpha', ...flagArgs], { encoding: 'utf8' });
+                assert.equal(zsh.status, 0, zsh.stderr);
+                assert.deepEqual(zsh.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...model.values.phase].sort());
+            }
+        } else if (process.env.CI) assert.fail('zsh is required in CI');
+        else t.diagnostic('zsh not installed; synthetic positional-shift smoke skipped');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 void test('completion shell scripts pass available syntax checks', t => {
@@ -115,15 +146,28 @@ void test('bash completion smoke cases handle positional and value-flag contexts
         const rows: Array<[string[], string[]]> = [
             [['canon', 'ta'], ['task']],
             [['canon', 'run', '--'], ['--pr', '--allow-divergent-base']],
+            [['canon', 'run', '--expect', ''], [...model.values.phase]],
             [['canon', 'run', ''], ['alpha', 'beta']],
+            [['canon', 'watch', '--until', ''], [...model.values.phase]],
             [['canon', 'watch', '--until', 'plan', ''], ['alpha', 'beta']],
+            [['canon', 'stop', 'alpha', ''], []],
+            [['canon', 'watch', 'alpha', ''], []],
+            [['canon', 'task', 'status', 'alpha', ''], []],
+            [['canon', 'task', 'reset-spec-review', 'alpha', ''], []],
+            [['canon', 'task', 'reset-code-review', 'alpha', ''], []],
+            [['canon', 'task', '-'], ['--help', '-h']],
+            [['canon', 'unknown', '-'], ['--help', '-h', '--version', '-v']],
             [['canon', 'task', 'phase', 'alpha', ''], ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review']],
             [['canon', 'task', 'phase', 'alpha', 'spec', ''], ['pending', 'in_progress', 'done', 'changes_requested', 'blocked']],
             [['canon', 'task', 'phase', 'alpha', 'code_review', 'done', ''], ['spec_gap']],
             [['canon', 'task', 'phase', 'alpha', 'spec_review', 'done', ''], ['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review']],
             [['canon', 'task', 'phase', 'alpha', 'plan', 'done', ''], []],
             [['canon', 'task', 'accept', 'alpha', '--reason', 'x', ''], ['beta', 'implement']],
+            [['canon', 'task', 'accept', 'alpha', 'imp'], ['implement']],
             [['canon', 'task', 'set', 'alpha', 'task_size', ''], ['XS', 'S', 'M', 'L', 'XL']],
+            [['canon', 'task', 'set', 'alpha', 'delicate', ''], ['true', 'false']],
+            [['canon', 'task', 'set', 'alpha', 'title', ''], []],
+            [['canon', 'task', 'set', 'alpha', 'unknown', ''], []],
             [['canon', 'completion', ''], ['bash', 'zsh', 'fish', 'tcsh']],
         ];
         const binaries = [...new Set(['bash', '/bin/bash'].filter(binary => spawnSync(binary, ['--version'], { encoding: 'utf8' }).status === 0))];
@@ -133,7 +177,7 @@ void test('bash completion smoke cases handle positional and value-flag contexts
             });
             assert.equal(result.status, 0, `${binary} ${words.join(' ')}: ${result.stderr}`);
             const actual = result.stdout.trim().split(/\r?\n/).filter(Boolean).sort();
-            if (words[words.length - 1] === '--' || expected.includes('spec_gap') || words.includes('accept')) for (const candidate of expected) assert.ok(actual.includes(candidate), `${binary} ${words.join(' ')}: missing ${candidate}`);
+            if (words[words.length - 1] === '--' || expected.includes('spec_gap') || (words.includes('accept') && words[words.length - 1] === '')) for (const candidate of expected) assert.ok(actual.includes(candidate), `${binary} ${words.join(' ')}: missing ${candidate}`);
             else assert.deepEqual(actual, [...expected].sort(), `${binary} ${words.join(' ')}`);
         }
         const runIds = (binary: string, cwd: string) => {
@@ -179,8 +223,17 @@ void test('zsh completion smoke cases preserve contextual values and task ids', 
         const rows: Array<[string[], string[]]> = [
             [[''], ['init', 'doctor', 'task', 'run', 'watch', 'stop', 'update', 'upgrade', 'completion']],
             [['run', '--'], ['--pr', '--allow-divergent-base']],
+            [['run', '--expect', ''], [...model.values.phase]],
+            [['task', '-'], ['--help', '-h']],
+            [['unknown', '-'], ['--help', '-h', '--version', '-v']],
             [['run', ''], ['alpha', 'beta']],
             [['watch', '--until', 'plan', ''], ['alpha', 'beta']],
+            [['watch', '--until', ''], [...model.values.phase]],
+            [['stop', 'alpha', ''], []],
+            [['watch', 'alpha', ''], []],
+            [['task', 'status', 'alpha', ''], []],
+            [['task', 'reset-spec-review', 'alpha', ''], []],
+            [['task', 'reset-code-review', 'alpha', ''], []],
             [['task', 'phase', 'alpha', ''], ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review']],
             [['task', 'phase', 'alpha', 'spec', ''], ['pending', 'in_progress', 'done', 'changes_requested', 'blocked']],
             [['task', 'phase', 'alpha', 'code_review', 'done', ''], ['spec_gap']],
@@ -188,6 +241,9 @@ void test('zsh completion smoke cases preserve contextual values and task ids', 
             [['task', 'phase', 'alpha', 'plan', 'done', ''], []],
             [['task', 'accept', 'alpha', '--reason', 'x', ''], ['beta', 'implement']],
             [['task', 'set', 'alpha', 'task_size', ''], ['XS', 'S', 'M', 'L', 'XL']],
+            [['task', 'set', 'alpha', 'delicate', ''], ['true', 'false']],
+            [['task', 'set', 'alpha', 'title', ''], []],
+            [['task', 'set', 'alpha', 'unknown', ''], []],
             [['completion', ''], ['bash', 'zsh', 'fish', 'tcsh']],
         ];
         for (const [words, expected] of rows) {
@@ -205,9 +261,50 @@ void test('zsh completion smoke cases preserve contextual values and task ids', 
             assert.equal(result.status, 0, result.stderr);
             assert.deepEqual(result.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), ['alpha', 'beta']);
         }
+        const noRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-zsh-no-repo-'));
+        const noTasks = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-zsh-no-tasks-'));
+        try {
+            const empty = spawnSync('zsh', ['-f', '-c', 'compdef() { :; }; . "$1"; shift; _canon_candidates "" "$@"', '_', file, 'run'], { cwd: noRepo, env: { PATH: process.env.PATH, HOME: noRepo }, encoding: 'utf8' });
+            assert.equal(empty.status, 0, empty.stderr); assert.equal(empty.stdout, ''); assert.equal(empty.stderr, '');
+            const init = spawnSync('git', ['init', '-q'], { cwd: noTasks, encoding: 'utf8' }); assert.equal(init.status, 0);
+            spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: noTasks }); spawnSync('git', ['config', 'user.name', 'Test'], { cwd: noTasks });
+            fs.writeFileSync(path.join(noTasks, 'seed.txt'), 'seed'); spawnSync('git', ['add', 'seed.txt'], { cwd: noTasks }); spawnSync('git', ['commit', '-qm', 'seed'], { cwd: noTasks });
+            const absent = spawnSync('zsh', ['-f', '-c', 'compdef() { :; }; . "$1"; shift; _canon_candidates "" "$@"', '_', file, 'run'], { cwd: noTasks, env: { PATH: process.env.PATH, HOME: noTasks }, encoding: 'utf8' });
+            assert.equal(absent.status, 0, absent.stderr); assert.equal(absent.stdout, ''); assert.equal(absent.stderr, '');
+        } finally { fs.rmSync(noRepo, { recursive: true, force: true }); fs.rmSync(noTasks, { recursive: true, force: true }); }
         const noCompdef = spawnSync('zsh', ['-f', '-c', '. "$1"', '_', file], { encoding: 'utf8' });
         assert.equal(noCompdef.status, 0);
         assert.equal(noCompdef.stderr, 'canon completion: compdef not found; load compinit before this line\n');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+void test('fish completion smoke cases cover command, verdict, and field contexts', t => {
+    if (spawnSync('which', ['fish'], { encoding: 'utf8' }).status !== 0) {
+        if (process.env.CI) assert.fail('fish is required in CI');
+        t.diagnostic('fish not installed; runtime smoke skipped');
+        return;
+    }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-completion-fish-'));
+    const file = path.join(dir, 'completion.fish');
+    try {
+        const git = (args: string[]) => { const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr); };
+        git(['init', '-q']); git(['config', 'user.email', 'test@example.com']); git(['config', 'user.name', 'Test']);
+        fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed'); git(['add', 'seed.txt']); git(['commit', '-qm', 'seed']);
+        fs.mkdirSync(path.join(dir, 'tasks', 'alpha'), { recursive: true });
+        fs.writeFileSync(file, rendered.fish);
+        const rows: Array<[string[], string[]]> = [
+            [['run'], ['alpha']],
+            [['run', '--expect'], [...model.values.phase]],
+            [['task', 'phase', 'alpha', 'code_review', 'done'], ['spec_gap']],
+            [['task', 'set', 'alpha', 'delicate'], ['true', 'false']],
+            [['task', 'set', 'alpha', 'task_size'], ['XS', 'S', 'M', 'L', 'XL']],
+            [['task', 'set', 'alpha', 'unknown'], []],
+        ];
+        for (const [words, expected] of rows) {
+            const result = spawnSync('fish', ['-c', 'source $argv[1]; __canon_candidates "" $argv[2..-1]', file, ...words], { cwd: dir, env: { PATH: process.env.PATH, HOME: dir }, encoding: 'utf8' });
+            assert.equal(result.status, 0, `${words.join(' ')}: ${result.stderr}`);
+            assert.deepEqual(result.stdout.trim().split(/\r?\n/).filter(Boolean).sort(), [...expected].sort(), `${words.join(' ')}`);
+        }
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
