@@ -4,7 +4,6 @@ import { basename, dirname, join, relative, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
-import { taskTemplateOverrideRoot } from '../../task/index.js';
 import { assertNoSymlinkDestinations } from '../../lib/scaffold-paths.js';
 import { handlePreScan, type ArgDeclaration, unknownOptionMessage, unexpectedArgumentMessage } from '../../lib/cli-args.js';
 
@@ -141,7 +140,7 @@ function getStaleOverrides(cwd: string, changedOps: ReadonlyArray<WriteOp>): str
     if (changedByRel.size === 0) return [];
 
     const templateBasenames = getTaskTemplateBasenames();
-    const overrideRootAbs = resolve(cwd, taskTemplateOverrideRoot());
+    const overrideRootAbs = resolve(cwd, process.env.CANON_TASKS_DIR_OVERRIDE ?? 'tasks', '_templates');
     const staleOverrides: string[] = [];
 
     for (const name of templateBasenames) {

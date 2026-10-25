@@ -49,6 +49,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | CLI argument declarations | `src/lib/cli-args.ts` | Argument declarations, help/unknown pre-scan, and shared message builders |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
 | Pure routing policy (tier, sizing, model/effort, loop caps) | `src/lib/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
+| Project root / tasks dir resolution | `src/lib/project-root.ts` | `resolveProjectRoot()`, `tasksDir()`, `templatesDir()`, `isValidTaskId()`, `isTaskEntry()`; side-effect-free, no task/orchestrator imports |
 | Task management helper (status.json updates, phase transitions) | `src/task/index.ts` | `taskCmd()` implementation; `src/cli/commands/task.ts` is the thin CLI wrapper |
 | `canon run` CLI dispatch wrapper | `src/cli/commands/run-task.ts` | Spawns the compiled `dist/orchestrator/run-task.js` via `spawnSync`; the installed-package entry point for `canon run` |
 | `canon update` command | `src/cli/commands/update.ts` | Resolves the running install's root (`local`/`global`/`npx`, realpath-canonicalized); gates on manifest presence + `canon-ai` dependency listing; installs the latest final release from npm after resolving and verifying its tag, or installs a labeled `main`/ref/SHA development build from GitHub; writes `provenance.json` in `.canon` (write-only — no reader yet) |
@@ -66,7 +67,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | What | Where | Notes |
 |---|---|---|
 | Type definitions | `src/orchestrator/types.ts` | `Phase`, `PhaseStatus`, `Verdict`, `PHASE_ORDER`, `StatusJson`, `CliArgs` |
-| Environment constants | `src/orchestrator/env.ts` | `REPO_ROOT`, `WORKTREES_ROOT`, shared environment helpers, and legacy warnings |
+| Environment constants | `src/orchestrator/env.ts` | `REPO_ROOT` from `src/lib/project-root.ts`, `WORKTREES_ROOT`, shared environment helpers, and legacy warnings |
 | Policy config wrappers | `src/orchestrator/policy.ts` | Sole policy env resolver; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
 | Task context extractors | `src/orchestrator/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
 | Signal handlers | `src/orchestrator/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |

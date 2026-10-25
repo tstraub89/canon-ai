@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveProjectRoot, tasksDir, templatesDir } from '../lib/project-root.js';
 
 // Task-artifact template resolution, shared by `canon task new` (initial
 // scaffold) and the review re-scaffold that runs after `--reroute` and
@@ -7,17 +8,17 @@ import path from 'node:path';
 // on one resolver guarantees a re-scaffolded artifact is byte-identical to
 // what `canon task new` would have produced for the same task.
 
-export function tasksRoot(): string {
-    return process.env.CANON_TASKS_DIR_OVERRIDE ?? 'tasks';
+export function tasksRoot(projectRoot?: string): string {
+    return tasksDir(projectRoot);
 }
 
-export function templatesRoot(): string {
-    return path.join(process.cwd(), '.canon', 'templates');
+export function templatesRoot(projectRoot?: string): string {
+    return templatesDir(projectRoot);
 }
 
 /** Adopter-owned per-artifact overrides, checked before `.canon/templates/`. */
-export function taskTemplateOverrideRoot(): string {
-    return path.join(tasksRoot(), '_templates');
+export function taskTemplateOverrideRoot(projectRoot?: string): string {
+    return path.join(tasksRoot(projectRoot), '_templates');
 }
 
 /**
@@ -25,10 +26,10 @@ export function taskTemplateOverrideRoot(): string {
  * adopter override when one exists, otherwise the canon-managed template.
  * Returns null when neither is present.
  */
-export function resolveTaskTemplateSource(basename: string): string | null {
-    const override = path.join(taskTemplateOverrideRoot(), basename);
+export function resolveTaskTemplateSource(basename: string, projectRoot: string = resolveProjectRoot()): string | null {
+    const override = path.join(taskTemplateOverrideRoot(projectRoot), basename);
     if (fs.existsSync(override)) return override;
-    const managed = path.join(templatesRoot(), basename);
+    const managed = path.join(templatesRoot(projectRoot), basename);
     return fs.existsSync(managed) ? managed : null;
 }
 
