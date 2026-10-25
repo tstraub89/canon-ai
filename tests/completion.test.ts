@@ -358,6 +358,9 @@ void test('fish completion smoke cases cover command, verdict, and field context
 
 void test('tcsh flag program selects flags for the active command path', () => {
     const program = tcshFlagProgram(model);
+    const embedded = renderCompletion('tcsh', model).match(/`([^`]*)`/)?.[1];
+    assert.ok(embedded, 'tcsh completion must embed its awk flag program');
+    assert.doesNotMatch(embedded, /\//, 'slashes inside the C/-/ spec are tcsh field separators');
     for (const line of ['canon run --', 'canon task accept a --', 'canon task -']) {
         const result = spawnSync('awk', [program], { env: { ...process.env, COMMAND_LINE: line }, encoding: 'utf8' });
         assert.equal(result.status, 0, result.stderr);

@@ -6520,7 +6520,7 @@ complete -c canon -f -a '(__canon_candidates)'
 }
 function tcshFlagProgram(model) {
   const rows = records(model).map((c) => `${c.path.join(" ")}\\t${c.flags.join(" ")}`).join("\\n").replace(/'/g, "'\\''");
-  return `BEGIN { split("${rows.replace(/"/g, '\\"')}", lines, "\\n"); split(ENVIRON["COMMAND_LINE"], w, " "); cmd=w[2]; subcmd=w[3]; path=cmd; if (cmd == "task" && subcmd ~ /^-/) subcmd=""; if (cmd == "task" && subcmd != "") path=cmd " " subcmd; for (i in lines) { split(lines[i], row, "\\t"); if (row[1] == path) { print row[2]; exit } } if (cmd == "task" && subcmd == "") { print "${taskCmd3(model)?.flags.join(" ")}"; exit } print "${model.globalFlags.join(" ")}" }`;
+  return `BEGIN { split("${rows.replace(/"/g, '\\"')}", lines, "\\n"); split(ENVIRON["COMMAND_LINE"], w, " "); cmd=w[2]; subcmd=w[3]; path=cmd; if (cmd == "task" && substr(subcmd,1,1) == "-") subcmd=""; if (cmd == "task" && subcmd != "") path=cmd " " subcmd; for (i in lines) { split(lines[i], row, "\\t"); if (row[1] == path) { print row[2]; exit } } if (cmd == "task" && subcmd == "") { print "${taskCmd3(model)?.flags.join(" ")}"; exit } print "${model.globalFlags.join(" ")}" }`;
 }
 function renderTcsh(model) {
   const cmdNames = model.commands.map((c) => c.path[0]).join(" ");
