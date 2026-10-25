@@ -415,7 +415,8 @@ for (const builder of ['plan', 'implement'] as const) {
             if (withArchive) {
                 assert.ok(line.includes(`tasks/${taskId}/review-prior-10.md`), line);
                 assert.doesNotMatch(line, /review-prior-2\.md/);
-                assert.match(line, /unresolved findings remain binding unless the amendment supersedes them/);
+                assert.match(line, /read it; its unresolved findings remain binding unless the amendment supersedes them/);
+                assert.match(line, /optional nits are not/);
             } else {
                 assert.doesNotMatch(line, /review-prior|archived/i);
             }
@@ -452,12 +453,18 @@ for (const resumed of [false, true]) {
         assert.ok(verification >= 0, 'the checkpoint must require backup verification');
         for (const action of [
             'restore their paths to committed contents',
-            'move untracked non-test leftovers out of the worktree',
+            'remove untracked non-test leftovers from the worktree',
         ]) {
             const actionIndex = checkpoint.indexOf(action);
             assert.ok(actionIndex >= 0, `the checkpoint must direct agents to ${action}`);
             assert.ok(verification < actionIndex, `verify backups before directing agents to ${action}`);
         }
+        const redRun = checkpoint.indexOf('Run the red test against that isolated state');
+        const restore = checkpoint.indexOf('restore every set-aside file');
+        const fix = checkpoint.indexOf('before applying the fix');
+        assert.ok(checkpoint.indexOf('remove untracked non-test leftovers from the worktree') < redRun, 'isolate before the red run');
+        assert.ok(redRun < restore && restore < fix, 'restore every set-aside file after the red run and before the fix');
+        assert.match(checkpoint, /re-apply each noted deletion or rename/);
     });
 }
 

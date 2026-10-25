@@ -513,7 +513,7 @@ function newestArchivedReview(taskId: string): string | null {
 function archivedReviewGuidance(taskId: string): string {
     const archivedReview = newestArchivedReview(taskId);
     return archivedReview
-        ? ` Prior review findings are archived at ${archivedReview}; its unresolved findings remain binding unless the amendment supersedes them.`
+        ? ` Prior review findings are archived at ${archivedReview}: read it; its unresolved findings remain binding unless the amendment supersedes them. Blocking findings (correctness bugs, risks, spec gaps) are in this round's scope; optional nits are not, and findings the worktree already resolves need no further work.`
         : '';
 }
 

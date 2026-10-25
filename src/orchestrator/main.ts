@@ -2820,6 +2820,40 @@ function rerouteAdmissions(entries: readonly { taskId: string; status: StatusJso
     });
 }
 
+// Tasks implemented as a bundle share one branch and worktree, so rerouting part of the bundle fails the downstream handoff and Affected Files checks.
+function unnamedBranchMates(entries: readonly { taskId: string; status: StatusJson }[]): Array<{ taskId: string; branch: string; with: string }> {
+    const named = new Set(entries.map(entry => entry.taskId));
+    const branchOwners = new Map<string, string>();
+    for (const { taskId, status } of entries) {
+        const branch = typeof status.branch === 'string' ? status.branch : '';
+        if (branch.trim() !== '' && !branchOwners.has(branch)) branchOwners.set(branch, taskId);
+    }
+    if (branchOwners.size === 0) return [];
+    const root = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR;
+    let candidates: string[];
+    try {
+        candidates = fs.readdirSync(root).sort();
+    } catch {
+        return [];
+    }
+    const mates: Array<{ taskId: string; branch: string; with: string }> = [];
+    for (const taskId of candidates) {
+        if (named.has(taskId) || taskId === '_archive' || taskId === '_templates') continue;
+        let status: StatusJson;
+        try {
+            // An orphaned worktree still leaves the repo-root status; readStatus would die resolving the missing worktree.
+            status = splitState.isOrphanedWorktreeState(taskId)
+                ? splitState.readStatusFromPath(path.join(splitState.taskDirForRepoRoot(taskId), 'status.json'), taskId)
+                : splitState.readStatus(taskId);
+        } catch {
+            continue;
+        }
+        const owner = typeof status.branch === 'string' ? branchOwners.get(status.branch) : undefined;
+        if (owner && getCurrentPhase(status) !== 'complete') mates.push({ taskId, branch: status.branch as string, with: owner });
+    }
+    return mates;
+}
+
 export function rerouteFromHumanReview(taskIds: string[]): void {
     const entryStatuses = taskIds.map(taskId => ({ taskId, status: splitState.readStatus(taskId) }));
     const allCodeReviewBlocked = entryStatuses.every(({ status }) => {
@@ -2841,14 +2875,17 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             })
             .join(', ');
         const bundleDetails = taskIds.length > 1
-            ? `In a bundle, an approved sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both record the same non-empty task branch. ` +
-                `Qualifying: ${entryStatuses.filter((_, index) => admissions[index] !== 'rejected').map(entry => entry.taskId).join(', ') || 'none'}. ` +
+            ? `In a bundle, a sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both record the same non-empty task branch. ` +
+                `Qualifying: ${entryStatuses.filter((_, index) => admissions[index] === 'qualifies').map(entry => entry.taskId).join(', ') || 'none'}. ` +
+                (admissions.includes('sibling')
+                    ? `Admitted as sibling: ${entryStatuses.filter((_, index) => admissions[index] === 'sibling').map(entry => entry.taskId).join(', ')}. `
+                    : '') +
                 `Not qualifying: ${entryStatuses.filter((_, index) => admissions[index] === 'rejected').map(entry => entry.taskId).join(', ') || 'none'}. `
             : '';
         const singleEntry = entryStatuses.length === 1 ? entryStatuses[0] : undefined;
         const nextStep = singleEntry && getCurrentPhase(singleEntry.status) === 'implement'
             ? (singleEntry.status.phases.implement?.rerouted === true
-                ? ` This task is mid-reroute: revise the current amendment in spec.md and run plain \`canon run ${singleEntry.taskId}\`.`
+                ? ` If this task is mid-reroute, revise the current amendment in spec.md and run plain \`canon run ${singleEntry.taskId}\`.`
                 : ` Revise the spec or plan and run plain \`canon run ${singleEntry.taskId}\`.`)
                 + ` If it was implemented in a bundle on a shared task branch, name every bundle task in one reroute instead.`
             : '';
@@ -2858,6 +2895,12 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             `or a code review already run in the current loop (a review round or a pre-flight rejection). ` +
             bundleDetails + `Current state: ${summary}${nextStep}`
         );
+    }
+    const branchMates = unnamedBranchMates(entryStatuses);
+    if (branchMates.length > 0) {
+        const allIds = [...taskIds, ...new Set(branchMates.map(mate => mate.taskId))];
+        const shared = branchMates.map(mate => `'${mate.taskId}' shares branch '${mate.branch}' with '${mate.with}'`).join(', ');
+        splitCli.die(`Reroute must name every task of a shared-branch bundle: ${shared}. Nothing was changed. Name every bundle task in one reroute: canon run ${allIds.join(' ')} --reroute`);
     }
     const amendmentFailures: Array<{
         taskId: string;

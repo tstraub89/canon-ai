@@ -15,7 +15,7 @@ For each task — EXCEPT tasks whose line above marks them EXEMPT (those have no
 5. Append a new section to `tasks/<id>/plan.md`:
    - Round 1: `## Reroute Plan`
    - Round N >= 2: `## Reroute Plan Round N`
-6. Plan this round's scope: the amendment, plus any unfinished work from the original ACs and earlier amendment rounds (those sections stay binding wherever not yet implemented; the newest amendment wins on conflict). Reference specific files, functions, and existing patterns. Acknowledge prior plan steps that are already implemented without re-planning them.
+6. Plan this round's scope: the amendment, plus any unfinished work from the original ACs and earlier amendment rounds, plus unresolved blocking findings in the archived review named in the task's entry, if any (those sections stay binding wherever not yet implemented; the newest amendment wins on conflict). Reference specific files, functions, and existing patterns. Acknowledge prior plan steps that are already implemented without re-planning them.
 7. {{{feasibilityCheck}}}
 
 Do **not** rewrite or remove existing sections from `plan.md`. The appended reroute plan is what implement-reroute reads as its guide for this round.

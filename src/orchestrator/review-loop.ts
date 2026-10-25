@@ -106,7 +106,7 @@ function buildCodeReviewReason(
         `(${worst.real} reviewer rounds + ${worst.preflight} pre-flight rejections; limit: ${cap}). ` +
         `${timingClause} Read tasks/<id>/review.md — if the same finding keeps recurring, ` +
         `the spec or approach may need revisiting rather than another implementation pass. ` +
-        `If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md and run canon run ${taskIds.join(' ')} --reroute instead (the reroute pre-flight names the exact heading it expects). ` +
+        `If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md (the task worktree's copy when the task has one) and run canon run ${taskIds.join(' ')} --reroute instead (the reroute pre-flight names the exact heading it expects). ` +
         `If review is still converging, ` +
         `raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run ${taskIds.join(' ')}. ` +
         `If repeated failures were all pre-flight, the handoff format itself may be wrong ` +

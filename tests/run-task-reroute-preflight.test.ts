@@ -1172,6 +1172,57 @@ for (const [admitted, rows] of [[true, admittedStateRows], [false, rejectedState
     }
 }
 
+void test('isRerouteAdmitted rejects a blocked code review when the implement entry is missing', () => {
+    const status = makeRerouteStatus('predicate', '', 0, { codeReview: { status: 'blocked', verdict: '' } });
+    delete (status.phases as Record<string, unknown>).implement;
+    assert.equal(isRerouteAdmitted(status as unknown as StatusJson), false);
+});
+
+void test('reroute refuses a partial shared-branch bundle and accepts the printed whole-bundle command', () => withTempDir('reroute-partial-bundle-', dir => {
+    initGitRepo(dir);
+    const tasksRoot = path.join(dir, 'tasks');
+    const interrupted = { implement: { status: 'in_progress' }, codeReview: { status: 'pending', verdict: '' }, qa: { status: 'pending' } };
+    for (const id of ['task-a', 'task-b']) {
+        writeTaskStatus(tasksRoot, id, makeRerouteStatus(id, 'task/task-a', 0, { worktree: false, ...interrupted }));
+        writeSpec(dir, id, '# Spec\n\n## Amendment\n\nNew requirements.\n');
+    }
+    writeTaskStatus(tasksRoot, 'task-c', makeRerouteStatus('task-c', 'task/task-c', 0, { worktree: false, ...interrupted }));
+    const before = fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'));
+    const partial = runReroute(dir, ['task-a'], false);
+    assert.notEqual(partial.status, 0);
+    assert.match(partial.stderr, /Reroute must name every task of a shared-branch bundle: 'task-b' shares branch 'task\/task-a' with 'task-a'\. Nothing was changed\. Name every bundle task in one reroute: canon run task-a task-b --reroute/);
+    assert.doesNotMatch(partial.stderr, /task-c/);
+    assert.deepEqual(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json')), before);
+    const whole = runReroute(dir, ['task-a', 'task-b'], false);
+    assert.equal(whole.status, 0, whole.stderr);
+}));
+
+void test('reroute counts a shared-branch task with an orphaned worktree as part of the bundle', () => withTempDir('reroute-orphan-bundle-', dir => {
+    initGitRepo(dir);
+    const tasksRoot = path.join(dir, 'tasks');
+    const interrupted = { implement: { status: 'in_progress' }, codeReview: { status: 'pending', verdict: '' }, qa: { status: 'pending' } };
+    writeTaskStatus(tasksRoot, 'task-a', makeRerouteStatus('task-a', 'task/task-a', 0, { worktree: false, ...interrupted }));
+    writeTaskStatus(tasksRoot, 'task-b', makeRerouteStatus('task-b', 'task/task-a', 0, { worktree: true, ...interrupted }));
+    writeSpec(dir, 'task-a', '# Spec\n\n## Amendment\n\nNew requirements.\n');
+    const before = fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'));
+    const partial = runReroute(dir, ['task-a'], false);
+    assert.notEqual(partial.status, 0);
+    assert.match(partial.stderr, /Reroute must name every task of a shared-branch bundle: 'task-b' shares branch 'task\/task-a' with 'task-a'/);
+    assert.deepEqual(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json')), before);
+}));
+
+void test('bundle rejection lists sibling-clause tasks separately from qualifying tasks', () => withTempDir('reroute-sibling-listing-', dir => {
+    initGitRepo(dir);
+    const pending = { implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '' } };
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-a', makeRerouteStatus('task-a', 'task/task-a', 0, { worktree: false, ...pending }));
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-b', makeRerouteStatus('task-b', 'task/task-b', 0, { worktree: false }));
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-c', makeRerouteStatus('task-c', 'task/task-b', 0, { worktree: false, ...pending }));
+    const result = runReroute(dir, ['task-a', 'task-b', 'task-c'], false);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Qualifying: task-b\. Admitted as sibling: task-c\. Not qualifying: task-a/);
+    assert.doesNotMatch(result.stderr, /approved sibling/);
+}));
+
 for (const value of [undefined, null, '1', -1, 0, NaN, Infinity]) {
     void test(`isRerouteAdmitted ignores invalid counter ${String(value)}`, () => {
         for (const field of ['iterations_current_loop', 'preflight_rejections_current_loop']) {
@@ -1242,7 +1293,7 @@ for (const rerouted of [false, true]) {
         assert.notEqual(result.status, 0);
         assert.deepEqual(fs.readFileSync(statusPath), before);
         if (rerouted) {
-            assert.match(result.stderr, /mid-reroute: revise the current amendment.*plain `canon run task-a`/);
+            assert.match(result.stderr, /If this task is mid-reroute, revise the current amendment.*plain `canon run task-a`/);
             assert.doesNotMatch(result.stderr, /Revise the spec or plan/);
         } else {
             assert.match(result.stderr, /Revise the spec or plan.*plain `canon run task-a`/);

@@ -12,8 +12,14 @@ type HintSite =
 const HINT_PATTERN = /--reroute|reset-code-review|reset-spec-review|canon task accept/;
 const HINT_SITES: readonly HintSite[] = [
   {
+    file: 'src/orchestrator/main.ts',
+    snippet: "        splitCli.die(`Reroute must name every task of a shared-branch bundle: ${shared}. Nothing was changed. Name every bundle task in one reroute: canon run ${allIds.join(' ')} --reroute`);",
+    kind: 'actionable',
+    covers: [{ state: 'partial shared-branch bundle reroute', test: 'reroute refuses a partial shared-branch bundle and accepts the printed whole-bundle command' }],
+  },
+  {
     "file": "src/orchestrator/review-loop.ts",
-    "snippet": "`If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md and run canon run ${taskIds.join(' ')} --reroute instead (the reroute pre-flight names the exact heading it expects). ` +",
+    "snippet": "`If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md (the task worktree's copy when the task has one) and run canon run ${taskIds.join(' ')} --reroute instead (the reroute pre-flight names the exact heading it expects). ` +",
     "kind": "actionable",
     "covers": [{ "state": "implement-entry loop cap", "test": "code loop cap at implement entry: the printed reroute is accepted" }],
   },

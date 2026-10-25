@@ -451,8 +451,8 @@ export function currentLoopReviewRounds(codeReview: PhaseEntry | undefined): num
 export function isRerouteAdmitted(status: StatusJson): boolean {
     const phase = deriveTopLevelStatus(status);
     if (phase === 'code_review' || phase === 'qa' || phase === 'human_review') return true;
-    if (phase !== 'implement') return false;
-    const implementStatus = status.phases.implement?.status;
+    if (phase !== 'implement' || !status.phases.implement) return false;
+    const implementStatus = status.phases.implement.status;
     const codeReview = status.phases.code_review;
     return implementStatus === 'in_progress'
         || implementStatus === 'blocked'

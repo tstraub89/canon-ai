@@ -38,3 +38,5 @@ Raw observations from any phase. Prefix with phase name. Distilled into the task
 [implement-revision] Review F1 exposed an ordering gap in the red-first prompt: confirming backups before the red run still allowed tracked restoration to precede confirmation. Require verified matching copies of all leftovers before changing any worktree path, then verify moved untracked destinations. Fresh and resumed prompt tests reproduced the original ordering failure at 531de25 and pass after the fix.
 
 [implement-revision] Follow-up from review R1: reroute admission inspects only named tasks, so a partial shared-branch invocation can reset named members before downstream handoff/scope gates reject it. Current spec intentionally documents whole-bundle invocation; detecting unnamed branch peers requires a separately designed pre-flight gate.
+
+- [human_review-inline] Inline fixes after QA: R1 partial shared-branch reroute pre-flight added; N13 QA "Human reroute?" definition widened to any-phase --reroute (spec Non-Goal dropped with human approval).
