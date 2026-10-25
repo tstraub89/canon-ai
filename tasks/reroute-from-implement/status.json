@@ -9,7 +9,7 @@
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "4d31ffa2a0887563ea9f58ca8544191e8b5ec2f3",
+    "orchestrator_commit": "f863241bdbe8297efbc5680428ceedc3e8742499",
     "canon_version": "3.13.0",
     "codex_cli": "codex-cli 0.163.0",
     "claude_code": "2.1.310 (Claude Code)"
