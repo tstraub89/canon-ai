@@ -1,0 +1,1 @@
+The code changes add a fallback rejection for task IDs that fail validation, update the outside-git error prefix, and add regression coverage for the previously identified cases. I found no actionable regression in the diff.

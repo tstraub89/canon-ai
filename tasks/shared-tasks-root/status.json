@@ -1,7 +1,7 @@
 {
   "id": "shared-tasks-root",
   "title": "Resolve tasks/ and templates from the repo root in every command",
-  "status": "code_review",
+  "status": "human_review",
   "created": "2026-10-25",
   "updated": "2026-10-25",
   "branch": "task/shared-tasks-root",
@@ -47,18 +47,18 @@
       "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
-      "iterations": 1,
-      "iterations_current_loop": 1,
-      "iterations_total": 1,
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
       "changes_requested_total": 1,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {

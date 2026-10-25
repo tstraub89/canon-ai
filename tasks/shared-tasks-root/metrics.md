@@ -22,3 +22,8 @@
 | 2026-10-25T21:44:34.199Z | shared-tasks-root | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 173.1s | 1806665 | ok |
 | 2026-10-25T21:44:34.204Z | shared-tasks-root | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 345.1s | 1608138 | ok |
 | 2026-10-25T21:49:52.689Z | shared-tasks-root | implement | codex | gpt-6-luna | 1 | 318.4s | 23533342 | ok |
+| 2026-10-25T21:50:14.074Z | shared-tasks-root | code_review | codex | gpt-6-luna | 1 | 20.4s | - | ok |
+| 2026-10-25T21:56:06.006Z | shared-tasks-root | code_review | claude | opus | 1 | 351.9s | 845308 | ok |
+| 2026-10-25T21:56:06.011Z | shared-tasks-root | code_review | claude:code-review-cold | claude-opus-5-5 | 1 | 265.4s | 851403 | ok |
+| 2026-10-25T21:56:06.015Z | shared-tasks-root | code_review | claude:code-review-anchored | claude-opus-5-5 | 1 | 298.0s | 1381591 | ok |
+| 2026-10-25T21:57:25.846Z | shared-tasks-root | qa | claude | claude-haiku-5-5 | 0 | 79.8s | 1046374 | ok |
