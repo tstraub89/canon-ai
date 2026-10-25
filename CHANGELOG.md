@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`canon completion` prints a shell completion script for bash, zsh, fish, and tcsh.** Add the line shown by `canon completion --help` to your shell startup file, and Tab completes commands, `task` subcommands, flags, phase names, review verdicts, task sizes, and task ids. Task ids complete from any directory in the repo, including a linked worktree, and completion never offers a flag canon would reject.
+- **Every canon command answers `--help` in any position.** `canon run foo --help`, `canon task phase --help`, and the rest print that command's own usage to stdout and exit 0 without running anything; `canon task --help` lists all nine subcommands. Help wins over other argument errors.
+
+### Changed
+
+- **`canon run --reroute` works once implementation has begun.** A task can now be rerouted while implement is in progress or blocked, while code review is blocked at the loop limit, or after a review round or pre-flight rejection in the current loop. A task at implement with no review activity is still refused. In a bundle, a task at implement with no review activity is admitted alongside a qualifying task on the same branch, and a reroute that names only part of a shared-branch bundle is refused before anything changes, with the full command to run. The reroute prompts treat the prior round as possibly partial and pick up unfinished work along with the amendment, and the loop-limit message names the amend-and-reroute path.
+- **`--pr` and `--push` push canon's own scaffold commits to the base branch.** A PR no longer stops at the base-divergence check until you push the base by hand. canon pushes only commits made of task scaffolds and pipeline telemetry, all or nothing; any other unpushed base commit still blocks. A base branch that exists only locally is created on origin only when every commit on it is canon's own.
+- **`canon --help` is a short summary, and unknown flags are rejected on every command.** The summary lists one line per command and points to `canon <command> --help`. An unknown flag names itself and points to that command's help; `init`, `doctor`, and `stop` used to ignore unknown flags and now exit 1. `canon update` and `canon upgrade` reject stray words.
+- **QA's "Human reroute?" quality-log column counts a human reroute at any phase**, not only a rejection at human review. Existing projects keep their old column description in `docs/task-quality-log.md`; edit that line if you want it to match.
+
+### Fixed
+
+- **A rejected base push names the cause.** When origin's base has moved ahead, the message tells you to rebase the local base instead of suggesting branch protection. `--full-send` warns and skips the base push on a fetch failure instead of stopping.
+- **`canon upgrade` with a bad argument prints a one-line error** instead of a stack trace, and `canon watch --help` prints its usage on separate lines.
+
 ## [3.13.0] — 2026-10-23
 
 ### Added
