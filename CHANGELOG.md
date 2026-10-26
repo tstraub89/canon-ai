@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.14.0] — 2026-10-25
+
 ### Added
 
 - **`canon completion` prints a shell completion script for bash, zsh, fish, and tcsh.** Add the line shown by `canon completion --help` to your shell startup file, and Tab completes commands, `task` subcommands, flags, phase names, review verdicts, task sizes, and task ids. Task ids complete from any directory in the repo, including a linked worktree, and completion never offers a flag canon would reject.
