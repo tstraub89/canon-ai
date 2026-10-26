@@ -10,6 +10,7 @@ import { findUntrackedClobberPaths, parseTaskAcceptArgs, parseTaskNewArgs, taskA
 import { parseTable } from '../src/orchestrator/markdown-table.js';
 import type { StatusJson } from '../src/orchestrator/types.js';
 import { extractDoneMdFromStdout, isDoneMdTemplate } from '../src/orchestrator/validation.js';
+import { renderTaskTemplate } from '../src/task/templates.js';
 
 const WORKSPACE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKSPACE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -318,6 +319,7 @@ function withTasksRoot<T>(fn: (root: string) => T): T {
 
 void test('task new creates a task from templates and rejects existing tasks', () => {
     withTempDir('task-new-', root => {
+        git(root, ['init', '-q', '-b', 'main']);
         fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
         fs.cpSync(path.join(WORKSPACE_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
 
@@ -336,6 +338,148 @@ void test('task new creates a task from templates and rejects existing tasks', (
 
             assert.throws(() => taskNew(['new-task', 'Again']), /Task directory tasks\/new-task already exists/);
         });
+    });
+});
+
+void test('task list from a repository subdirectory lists its tasks', () => {
+    withTempDir('task-list-subdir-', root => {
+        fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+        git(root, ['init', '-q', '-b', 'main']);
+        fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'tasks', 'subdir-task'), { recursive: true });
+        const status = makeStatus('subdir-task');
+        fs.writeFileSync(path.join(root, 'tasks', 'subdir-task', 'status.json'), `${JSON.stringify(status)}\n`);
+        const env = { ...process.env };
+        for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+        const cli = path.join(WORKSPACE_ROOT, 'src', 'cli', 'index.ts');
+        const result = spawnSync(process.execPath, ['--import', TSX_LOADER, cli, 'task', 'list'], { cwd: path.join(root, 'sub'), env, encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /subdir-task/);
+    });
+});
+
+void test('task new from a repository subdirectory creates under the root tasks directory', () => {
+    withTempDir('task-new-subdir-redfirst-', root => {
+        git(root, ['init', '-q', '-b', 'main']);
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon/templates'), path.join(root, '.canon/templates'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+        const env = { ...process.env };
+        for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+        const cli = path.join(WORKSPACE_ROOT, 'src/cli/index.ts');
+        const result = spawnSync(process.execPath, ['--import', TSX_LOADER, cli, 'task', 'new', 'sub-made', 'Sub made'], {
+            cwd: path.join(root, 'sub'), env, encoding: 'utf8',
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.ok(fs.existsSync(path.join(root, 'tasks/sub-made/spec.md')));
+        assert.equal(fs.existsSync(path.join(root, 'sub/tasks')), false);
+    });
+});
+
+void test('task list and task new from a managed worktree use the main checkout task set', () => {
+    withTempDir('task-root-worktree-', root => {
+        git(root, ['init', '-q', '-b', 'main']);
+        git(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init']);
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon/templates'), path.join(root, '.canon/templates'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'tasks', 'rt'), { recursive: true });
+        const rt = makeStatus('rt', { worktree: true, branch: 'task/rt' });
+        rt.phases.implement!.status = 'in_progress';
+        fs.writeFileSync(path.join(root, 'tasks/rt/status.json'), `${JSON.stringify(rt, null, 2)}\n`);
+        git(root, ['add', '.canon/templates', 'tasks/rt/status.json']);
+        git(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'fixture']);
+        const worktrees = path.join(root, '.canon/worktrees');
+        fs.mkdirSync(worktrees, { recursive: true });
+        fs.appendFileSync(path.join(root, '.git/info/exclude'), '\n.canon/worktrees/\n');
+        const worktree = path.join(worktrees, 'rt');
+        git(root, ['worktree', 'add', '-q', '-b', 'task/rt', worktree]);
+        const worktreeStatus = readStatusFile(path.join(worktree, 'tasks/rt'));
+        worktreeStatus.phases.spec!.status = 'done';
+        worktreeStatus.phases.spec_review!.status = 'done';
+        worktreeStatus.phases.plan!.status = 'done';
+        worktreeStatus.phases.implement!.status = 'in_progress';
+        fs.writeFileSync(path.join(worktree, 'tasks/rt/status.json'), `${JSON.stringify(worktreeStatus, null, 2)}\n`);
+        fs.mkdirSync(path.join(root, 'tasks', 'late-task'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'tasks/late-task/status.json'), `${JSON.stringify(makeStatus('late-task'))}\n`);
+
+        const env = { ...process.env };
+        for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+        const cli = path.join(WORKSPACE_ROOT, 'src', 'cli', 'index.ts');
+        const invoke = (args: string[]) => spawnSync(process.execPath, ['--import', TSX_LOADER, cli, ...args], { cwd: worktree, env, encoding: 'utf8' });
+        const listed = invoke(['task', 'list']);
+        assert.equal(listed.status, 0, listed.stderr);
+        assert.match(listed.stdout, /late-task/);
+        assert.match(listed.stdout, /rt\s+Task rt\s+implement/);
+        const created = invoke(['task', 'new', 'from-wt', 'From wt']);
+        assert.equal(created.status, 0, created.stderr);
+        const status = readStatusFile(path.join(root, 'tasks/from-wt'));
+        assert.equal(status.base_branch, 'main');
+        assert.equal(fs.existsSync(path.join(worktree, 'tasks/from-wt')), false);
+        assert.equal(invoke(['task', 'status', 'from-wt']).status, 0);
+    });
+});
+
+void test('task mutations and phase gate from a managed worktree use only its task copy without overrides', () => {
+    withTempDir('task-root-gate-worktree-', root => {
+        git(root, ['init', '-q', '-b', 'main']);
+        git(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init']);
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon/templates'), path.join(root, '.canon/templates'), { recursive: true });
+        const mainTaskDir = writeTask(path.join(root, 'tasks'), 'rt', makeStatus('rt', { worktree: true, branch: 'task/rt' }));
+        const mainStatus = readStatusFile(mainTaskDir);
+        mainStatus.phases.spec!.status = 'in_progress';
+        fs.writeFileSync(path.join(mainTaskDir, 'status.json'), `${JSON.stringify(mainStatus, null, 2)}\n`);
+        fs.writeFileSync(path.join(mainTaskDir, 'spec.md'), fs.readFileSync(path.join(root, '.canon/templates/spec.md'), 'utf8'));
+        git(root, ['add', '.canon/templates', 'tasks/rt']);
+        git(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'task']);
+        fs.appendFileSync(path.join(root, '.git/info/exclude'), '\n.canon/worktrees/\n');
+        const worktree = path.join(root, '.canon/worktrees/rt');
+        git(root, ['worktree', 'add', '-q', '-b', 'task/rt', worktree]);
+        const worktreeTaskDir = path.join(worktree, 'tasks/rt');
+        const worktreeStatus = readStatusFile(worktreeTaskDir);
+        worktreeStatus.phases.spec!.status = 'in_progress';
+        fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(worktreeStatus, null, 2)}\n`);
+        fs.writeFileSync(path.join(worktreeTaskDir, 'spec.md'), '# Filled spec\n');
+        const env = { ...process.env };
+        for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+        const cli = path.join(WORKSPACE_ROOT, 'src/cli/index.ts');
+        const invoke = (cwd: string, args: string[]) => spawnSync(process.execPath, ['--import', TSX_LOADER, cli, ...args], { cwd, env, encoding: 'utf8' });
+        assert.equal(invoke(worktree, ['task', 'set', 'rt', 'task_size', 'L']).status, 0);
+        assert.equal(invoke(root, ['task', 'set', 'rt', 'task_size', 'XL']).status, 0);
+        assert.equal(readStatusFile(worktreeTaskDir).task_size, 'XL');
+        assert.equal(readStatusFile(mainTaskDir).task_size, 'S');
+        const accepted = invoke(worktree, ['task', 'phase', 'rt', 'spec', 'done']);
+        assert.equal(accepted.status, 0, accepted.stderr);
+        assert.equal(readStatusFile(worktreeTaskDir).phases.spec?.status, 'done');
+        assert.equal(readStatusFile(mainTaskDir).phases.spec?.status, 'in_progress');
+
+        const mainCopyBeforePhase = fs.readFileSync(path.join(mainTaskDir, 'status.json'));
+        const phaseFromMain = invoke(root, ['task', 'phase', 'rt', 'spec', 'pending']);
+        assert.equal(phaseFromMain.status, 0, phaseFromMain.stderr);
+        assert.equal(readStatusFile(worktreeTaskDir).phases.spec?.status, 'pending');
+        assert.deepEqual(fs.readFileSync(path.join(mainTaskDir, 'status.json')), mainCopyBeforePhase);
+
+        fs.writeFileSync(path.join(mainTaskDir, 'spec.md'), '# Filled spec on main\n');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'spec.md'), fs.readFileSync(path.join(root, '.canon/templates/spec.md'), 'utf8'));
+        const rejected = invoke(worktree, ['task', 'phase', 'rt', 'spec', 'done']);
+        assert.notEqual(rejected.status, 0);
+        assert.match(rejected.stderr, /spec\.md is still the unfilled template for phase 'spec'/);
+    });
+});
+
+void test('task reset-code-review from a subdirectory re-scaffolds from root templates', () => {
+    withTempDir('task-reset-code-review-root-template-', root => {
+        git(root, ['init', '-q', '-b', 'main']);
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon/templates'), path.join(root, '.canon/templates'), { recursive: true });
+        const taskDir = writeTask(path.join(root, 'tasks'), 'rr', codeReviewBlockedStatus('rr'));
+        fs.writeFileSync(path.join(taskDir, 'review.md'), '# Existing review\n', 'utf8');
+        fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+        const result = runTaskCmd(path.join(root, 'sub'), ['reset-code-review', 'rr']);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /Re-scaffolded review\.md from \.\.\/\.canon\/templates\/review\.md/);
+        const sourcePath = path.join(root, '.canon/templates/review.md');
+        assert.equal(fs.readFileSync(path.join(taskDir, 'review.md'), 'utf8'), renderTaskTemplate(sourcePath, 'rr', 'Task rr'));
     });
 });
 
@@ -373,6 +517,7 @@ void test('task new warns when the implicit base branch is not the remote defaul
 
 void test('task new rejects invalid task IDs', () => {
     withTempDir('task-new-invalid-', root => {
+        git(root, ['init', '-q', '-b', 'main']);
         fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
         fs.cpSync(path.join(WORKSPACE_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
         withCwd(root, () => {
@@ -3018,5 +3163,23 @@ void test('qa completion upserts its fragment on rerun and leaves shared quality
         assert.equal(rows[0].Notes, 'rerun');
         assert.equal(fs.readFileSync(shared, 'utf8'), sharedBefore);
         assert.equal(fs.statSync(shared).mtimeMs, sharedMtime);
+    });
+});
+
+
+void test('task subcommands outside git refuse before creating tasks', () => {
+    withTempDir('task-outside-git-refusal-', root => {
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
+        const env = { ...process.env };
+        for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+        const cli = path.join(WORKSPACE_ROOT, 'src', 'cli', 'index.ts');
+        const commands = [['task', 'new', 'demo', 'Demo'], ['task', 'status', 'demo'], ['task', 'set', 'demo', 'title', 'X'], ['task', 'list']];
+        for (const args of commands) {
+            const result = spawnSync(process.execPath, ['--import', TSX_LOADER, cli, ...args], { cwd: root, env, encoding: 'utf8' });
+            assert.equal(result.status, 1, `${args.join(' ')}: ${result.stderr}`);
+            assert.match(result.stderr, /canon task requires a git repository/);
+            assert.equal(fs.existsSync(path.join(root, 'tasks')), false);
+        }
     });
 });

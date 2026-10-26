@@ -3945,6 +3945,25 @@ void test('checkActiveOrchestrators: empty when tasks/ does not exist', () => {
     });
 });
 
+void test('doctor from a subdirectory reports project checks for the repository root', () => {
+    withTempDir(root => {
+        fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKTREE_ROOT, '.canon/templates'), path.join(root, '.canon/templates'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'tasks/live'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'tasks/live/status.json'), `${JSON.stringify(statusWithInProgressPhase())}\n`);
+        execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+        const env = { ...process.env };
+        for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
+        const fromRoot = runCanonCliIn(root, ['doctor'], env);
+        const fromSubdir = runCanonCliIn(path.join(root, 'sub'), ['doctor'], env);
+        const projectChecks = (output: string) => output.slice(output.indexOf('Canon setup'));
+        assert.equal(projectChecks(fromSubdir.stdout), projectChecks(fromRoot.stdout));
+        assert.match(projectChecks(fromSubdir.stdout), /✓ \.canon\/templates\//);
+        assert.match(projectChecks(fromSubdir.stdout), /! orchestrator live/);
+    });
+});
+
 void test('checkActiveOrchestrators: empty when no phase is in_progress', () => {
     withTempDir((dir) => {
         // 'complete' top-level + no in_progress phase → task is done.

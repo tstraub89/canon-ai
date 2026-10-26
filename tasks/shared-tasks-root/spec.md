@@ -65,7 +65,7 @@ Add one shared project-root resolver and one task-entry predicate, and route eve
 - [ ] AC-1 (red-first): `canon task list` run from a subdirectory of a git repository lists that repository's tasks. Regression test: a temp git repo with one task, the CLI run as a subprocess with cwd = a subdirectory and no override, asserting the task id appears. The test fails on pre-fix code (prints `No tasks found.`) and passes after.
 - [ ] AC-2 (red-first): `canon task new` run from a subdirectory creates the task under the repository's `tasks/`, scaffolded from the repository's `.canon/templates`, and creates nothing under the subdirectory. Regression test asserts both the created path and the absence of `<subdir>/tasks`. It fails on pre-fix code.
 - [ ] AC-3: When no templates directory is found, `canon task new` fails with its existing "templates directory not found" error and leaves no task directory behind. Verify with a test that asserts the error and the absence of `tasks/<id>`.
-- [ ] AC-4 (red-first): Outside any git repository (a temp dir under `os.tmpdir()`), `canon task new <id>` followed by `canon task status <id>`, `canon task set <id> title …` and `canon task list` all operate on `./tasks`. A subprocess test asserts that `status` succeeds, that `set` changes `./tasks/<id>/status.json`, and that `list` shows the id. It fails on pre-fix code. After the change, `resolveRepoRoot()`'s `path.resolve(__dirname, '../..')` fallback no longer exists. The exported `__dirname`, which `canon-snapshot.ts` uses as the canon install path, stays. A unit test in `tests/project-root.test.ts` shows the resolver is evaluated per call: two calls after `process.chdir` into two different temp repos return the two roots.
+- [ ] AC-4 (red-first; amended, see the Amendment): Outside any git repository (a temp dir under `os.tmpdir()`), every `canon task` subcommand, `new` included, refuses before touching the filesystem. It prints one clear error naming the requirement (for example `canon task requires a git repository; run it inside one (git init)`) and exits 1, without creating `./tasks`. A subprocess test asserts the error, the exit code and the absence of `./tasks` for `new`, `status`, `set` and `list`. It fails on pre-fix code, where `new` succeeds and `status` fails with a misleading message. After the change, `resolveRepoRoot()`'s `path.resolve(__dirname, '../..')` fallback no longer exists. The exported `__dirname`, which `canon-snapshot.ts` uses as the canon install path, stays. A unit test in `tests/project-root.test.ts` shows the resolver is evaluated per call: two calls after `process.chdir` into two different temp repos return the two roots.
 - [ ] AC-5 (worktree routing preserved): subprocess tests with a fixture task that has both a main-checkout copy and a worktree copy of its artifacts, and no `CANON_TASKS_DIR_OVERRIDE`:
   - `canon task set` and `canon task phase`, run with cwd = the task worktree and with cwd = the main checkout, change only the worktree copy.
   - With `CANON_SKIP_PHASE_GATE` unset, `canon task phase <id> <phase> done` from the worktree passes or fails the phase gate according to the worktree's artifact. In the fixture the worktree artifact is filled and the main copy is not, so the command succeeds and the gate is shown to read the worktree.
@@ -98,6 +98,7 @@ Add one shared project-root resolver and one task-entry predicate, and route eve
 | `tests/task-cli.test.ts` | Subprocess regression tests for AC-1 to AC-7, AC-9, AC-11 and the AC-15 separate-git-dir `task list` case. |
 | `tests/cli.test.ts` | AC-10 doctor subprocess test. |
 | `tests/completion.test.ts` | AC-8 pin of the id rule against the `_`/`.` shell filter. |
+| `tests/run-task-signals.test.ts` | Refresh the comment explaining where `REPO_ROOT` comes from (now `resolveProjectRoot()`); comment only. |
 | `docs/patterns.md` | AC-14 edits. |
 | `docs/codebase-map.md` | AC-14 entry. |
 | `dist/cli/index.js` | Rebuilt. |
@@ -148,7 +149,7 @@ None.
 
 1. In this repository, change into the docs folder and run `canon task list`. Expected: the in-progress tasks are listed, same as from the top of the repo.
 2. From the docs folder, create a throwaway task with `canon task new`. Expected: it appears in the repo's task list, and no new tasks folder appears inside docs. Delete the throwaway task afterwards.
-3. In an empty folder outside any git repository, scaffold canon with `canon init`, create a task, then ask for its status and list tasks. Expected: the task is found both times.
+3. In an empty folder outside any git repository, try to create a task. Expected: canon refuses with a message saying it needs a git repository, and creates nothing.
 4. Run `canon doctor` from the docs folder. Expected: the same results as from the top of the repo.
 5. While a task's pipeline has its own working copy (after implementation has started), go into that working copy and list tasks, then create a throwaway task. Expected: the list matches the one from the top of the repo, and the new task appears there too. Delete it afterwards.
 
@@ -164,3 +165,42 @@ None.
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes) *Problem* states the confirmed mechanism and how it was confirmed; *Acceptance Criteria* includes red-first regression-test ACs (AC-1, AC-2, AC-4)
 - [x] (Refactors) N/A, bug fix
+
+## Amendment (implement round 1: outside-git scope and the legacy git fallback)
+
+Implement round 1 surfaced two problems.
+
+**Outside-git support was unreachable as scoped, and it is not wanted.** Outside git, `canon task status` and `canon task set` still failed after `canon task new` succeeded.
+
+Confirmed by execution on 2026-10-25, using the implement-round-1 build in the task worktree (`dist/cli/index.js`), in a non-git scratch directory with copied `.canon/templates`:
+- `canon task new demo Demo` exited 0 and wrote `./tasks/demo/status.json` with `"worktree": true` and `"branch": ""`, the scaffolded defaults.
+- `canon task status demo` then failed with `❌ Could not enumerate git worktrees while resolving task 'demo' ('git worktree list --porcelain' failed).`
+- `git worktree list` there exits 128 with `fatal: not a git repository`.
+
+The no-branch, `worktree: true` path in `resolveTaskCwd()` (`src/orchestrator/state.ts`) dies on that failure.
+
+Making this work would mean a non-git shortcut inside worktree resolution, which three review rounds showed is hard to keep apart from the in-repository fail-closed paths. The product owner decided `canon task` does not support running outside a git repository at all. AC-4 is amended in place to a clear up-front refusal, Human Test Plan step 3 is amended to match, and `resolveTaskCwd()` stays untouched (the original Non-Goal stands).
+
+**A production fallback was bent to fit a test stub.** `src/lib/project-root.ts` gained a "legacy query" branch: when the combined `rev-parse` call fails, it re-runs plain `git rev-parse --git-common-dir` and returns its parent. Its only purpose is to satisfy the fake git in `tests/run-task-safety.test.ts`, which does not recognize the new arguments. It also bypasses AC-15's main-working-tree rule. Replace that branch with a stub update.
+
+### Amendment Acceptance Criteria
+
+- [ ] AC-16: The outside-git refusal (AC-4) is a single check in the `canon task` dispatch path (`src/task/index.ts`), run before any subcommand logic. It is driven by the shared resolver's git probe, which `src/lib/project-root.ts` exposes (for example an `isInsideGitRepository(cwd)` helper, or a resolution result that carries the probe outcome), not by comparing paths.
+  - `src/orchestrator/state.ts` is unchanged (grep: no diff to that file on the task branch).
+  - Inside a git repository, every existing `canon task` behavior and the existing `entry worktree enumeration failure refuses closed with git stderr` test in `tests/run-task-safety.test.ts` are unaffected.
+  - `canon init` and `canon doctor` are out of scope and keep their current behavior outside git.
+  - Existing tests that ran `canon task new` in a non-git temp dir (in `tests/task-cli.test.ts` and `tests/run-task-canon-snapshot.test.ts`) move into a temp git repo (`git init`). Their other assertions stay unchanged.
+- [ ] AC-17: `src/lib/project-root.ts` has no fallback that re-runs `git rev-parse --git-common-dir` alone. When git cannot answer the resolver's query, the resolver takes its non-git path, which resolves to the current directory and reports no repository. The fake git in `tests/run-task-safety.test.ts` answers the resolver's actual `rev-parse` invocation(s), and the tests that relied on the old argv pass. A grep of `src/lib/project-root.ts` for spawns that pass `--git-common-dir` without `--git-dir` finds none.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/lib/project-root.ts` | Remove the legacy single-field `--git-common-dir` fallback (AC-17); expose whether the git probe found a repository (AC-16). |
+| `src/task/index.ts` | Outside-git refusal before any `canon task` subcommand runs (AC-4, AC-16). |
+| `tests/run-task-safety.test.ts` | Teach the fake git the resolver's `rev-parse` argv (AC-17). |
+| `tests/project-root.test.ts` | Probe outcome inside and outside git; git failure takes the non-git path (AC-16, AC-17). |
+| `tests/task-cli.test.ts` | AC-4 refusal subprocess test; move non-git `task new` fixtures into temp git repos (AC-16). |
+| `tests/run-task-canon-snapshot.test.ts` | Move the non-git `taskNew` fixture into a temp git repo (AC-16). |
+| `dist/cli/index.js` | Rebuilt. |
+| `dist/orchestrator/run-task.js` | Rebuilt. |

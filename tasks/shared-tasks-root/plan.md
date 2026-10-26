@@ -225,3 +225,117 @@ Every remaining hit must be a comment.
 ## Rollback Plan
 
 Revert the commit. No data or format migration is involved: task dirs, `status.json` and templates keep their location and shape. The only user-visible differences are task-dir paths printed relative to the shell directory and invalid-name dirs no longer listed. Both disappear on revert.
+
+## Reroute Plan
+
+### Round Scope
+
+This round covers the implement-round-1 amendment (AC-16, AC-17, and the amended AC-4), plus the original ACs the handoff left Partial: AC-5 (the no-override, gate-on worktree fixture) and AC-9 (a `reset-code-review` subprocess run from a subdirectory). The amendment review is `approved` with no nits. There is no archived code review for this round.
+
+Everything else from the original plan is implemented in the worktree and is **not** re-planned. That covers Steps 1–3, Step 4 (all items), Steps 5, 6 and 8, and the AC-1/2/3/6/7/8/10/11/12/14/15 tests, which the handoff marks Met.
+
+**Feasibility check**
+
+- **Exists:** confirmed by reading the code.
+  - `resolveProjectRoot()` in `src/lib/project-root.ts` contains the legacy branch to remove: the `const legacy = spawnSync('git', ['rev-parse', '--git-common-dir'], …)` block.
+  - `taskCmd()` is at `src/task/index.ts:1646`. Its order is `handlePreScan` → `assertManagedInvocationRoot()` (:1655) → `switch`, and its `catch` prints `error.message` and calls `exit(1)`.
+  - `setupFakeGit()` is at `tests/run-task-safety.test.ts:87`. Its `--git-common-dir` branch is at :93 and its `--show-toplevel` branch at :97. An unknown argv hits the trailing `unexpected git args` → `exit 1`.
+  - `runFakeMain()` is at :599. It sets `FAKE_GIT_COMMON_DIR=<localDir>/.git` and `FAKE_GIT_ACTIVE_TOPLEVEL=cwd`. `runHumanReviewMain()` is at :1852 and sets `FAKE_GIT_COMMON_DIR='.git'` (relative), with cwd = `harness.dir` and no `FAKE_GIT_ACTIVE_TOPLEVEL`.
+  - These non-git `task new` fixtures exist: `tests/task-cli.test.ts:319` (`task new creates a task from templates…`) and :434 (`task new rejects invalid task IDs`); `tests/run-task-canon-snapshot.test.ts:432` (`taskNew stamps canon provenance…`); and the outside-git success test `task commands outside git share the current directory tasks root` in `tests/project-root.test.ts`, which now contradicts amended AC-4.
+- **Real path:** `src/cli/index.ts` → `taskCmd` → (new) git probe → `assertManagedInvocationRoot()` → handler. `env.ts` evaluates `REPO_ROOT = resolveProjectRoot()` at import for every command, including the orchestrator `main()` that the fake-git harnesses run. So the fake git must answer the combined call `rev-parse --path-format=absolute --git-dir --git-common-dir`. Today it doesn't. That is why the legacy fallback kept the `invocation-root refusal runs before missing-worktree detection` test (:5017) green: that test needs REPO_ROOT=`localDir` while cwd=`old-worktree`.
+- **Callers:**
+  - `resolveProjectRoot()` keeps its signature and its return value for every real-git case. Its callers are `env.ts`, `templates.ts`, `index.ts` (`taskNew`, `resolveExpectedTreeForCtx`) and `doctor.ts`.
+  - For a git wrapper that does not implement the combined form, the resolver now returns `path.resolve(cwd)` instead of the common dir's parent. The only such wrapper in the suite is `setupFakeGit` (`tests/run-task-signals.test.ts` mentions `--git-common-dir` only in a comment, at :20). The fake is updated in Step 2.
+  - `taskCmd`'s new refusal affects every in-process and subprocess caller whose cwd is non-git. I read `tests/recovery-hints.test.ts` (`makeRepo`, a git repo), the task-cli help and flag tests (cwd `WORKSPACE_ROOT`), and run-task-safety :10406/:10439 (real git fixtures), and all of these are inside git. Direct `taskNew()` calls bypass `taskCmd`, so they are not refused.
+- **Tests that can fail:**
+  - The AC-4 refusal test fails on the current worktree code, where `task new` exits 0 and creates `./tasks`.
+  - The AC-16 probe unit test fails until the probe export exists.
+  - AC-17: once the legacy branch is removed, the :5017 invocation-order test fails until the fake answers the combined argv. That is the red/green pair for Step 2.
+  - AC-5 fails if any of the three override sites uses the absolute tasks dir. The inverse fixture, with the main copy filled and the worktree copy unfilled, fails if the gate reads the main copy.
+  - AC-9 fails pre-fix (templates missing from the subdir → `no-template` warning).
+- **Predicates:** the probe sets `inGit = true` only when the combined `rev-parse` exits 0 **and** returns two non-empty lines. Everything else gives `inGit = false` and `root = path.resolve(cwd)`: a spawn error, a non-zero status, empty stdout, or only one line. Other states:
+  - Inside `.git`, the two-flag call succeeds, so `inGit = true`. `--show-toplevel` fails there and the root falls back to `dirname(commonDir)`. This is unchanged.
+  - In a bare repo, `inGit = true`. That is out of scope and unchanged.
+  - An empty-string `CANON_TASKS_DIR_OVERRIDE` is already treated as unset.
+- **Scope:** every file below is in the original or amendment Affected Files: `src/lib/project-root.ts`, `src/task/index.ts`, `tests/run-task-safety.test.ts`, `tests/project-root.test.ts`, `tests/task-cli.test.ts`, `tests/run-task-canon-snapshot.test.ts`, and `dist/*`. `src/orchestrator/state.ts` stays untouched (AC-16). The stale comment in `tests/run-task-signals.test.ts:20` is outside scope, so leave it.
+- **Async/stateful:** N/A. The probe is synchronous, runs per call, and holds no state.
+
+**Decisions recorded (unattended session):**
+
+1. **Refusal placement.** The refusal runs after `handlePreScan` and before `assertManagedInvocationRoot()`. `--help`, `-h` and unknown-option errors have no filesystem effects, so they keep working outside git. Every subcommand path, including unknown subcommands, hits the refusal before any task logic. This satisfies AC-16's "before any subcommand logic", because pre-scan is argument parsing rather than subcommand logic.
+2. **No override exemption.** The refusal fires outside git even when `CANON_TASKS_DIR_OVERRIDE` is set, because AC-4 says "every `canon task` subcommand" and gives no exemption.
+3. **Error text.** `canon task requires a git repository; run it inside one (git init)`, which is the spec's example verbatim. It goes through the existing `catch` (thrown `Error`) → stderr, exit 1.
+4. **Probe API.** Add `probeProjectRoot(cwd)` returning `{ root, inGitRepository }`. `resolveProjectRoot(cwd)` becomes `probeProjectRoot(cwd).root`, and `isInsideGitRepository(cwd)` becomes `probeProjectRoot(cwd).inGitRepository`. Both forms are allowed by AC-16. `taskCmd` uses `isInsideGitRepository()`.
+
+### Step R1: Resolver probe, and remove the legacy fallback (AC-16, AC-17)
+
+Files: `src/lib/project-root.ts`
+
+- Delete the `legacy` block. When the combined call fails or returns fewer than two non-empty lines, return `{ root: path.resolve(cwd), inGitRepository: false }`.
+- Move the body into `export function probeProjectRoot(cwd: string = process.cwd()): { root: string; inGitRepository: boolean }`. Keep the main-tree vs linked-tree logic unchanged, with `inGitRepository: true` on both git branches.
+- Add `export function resolveProjectRoot(cwd = process.cwd()): string { return probeProjectRoot(cwd).root; }` and `export function isInsideGitRepository(cwd = process.cwd()): boolean { return probeProjectRoot(cwd).inGitRepository; }`.
+- Update the header comment: outside git, or when git cannot answer the combined query, the root is cwd and the probe reports no repository.
+- Check: `grep -n -- "--git-common-dir" src/lib/project-root.ts` shows only the combined argv, which also passes `--git-dir`, plus comments (AC-17).
+
+### Step R2: Teach the fake git the combined argv (AC-17)
+
+Files: `tests/run-task-safety.test.ts`
+
+- In `setupFakeGit`, before the existing `--git-common-dir` branch, add a branch for `rev-parse --path-format=absolute --git-dir --git-common-dir` (match `$2`, `$3` and `$4`) that runs when `FAKE_GIT_COMMON_DIR` is non-empty. Make the common dir absolute against `$PWD` (`case "$FAKE_GIT_COMMON_DIR" in /*) c="$FAKE_GIT_COMMON_DIR";; *) c="$PWD/$FAKE_GIT_COMMON_DIR";; esac`), then print `${FAKE_GIT_DIR:-$c}` and `$c`, one per line, and `exit 0`. Keep the old single-field branch, because nothing in `src/` calls it any more but it is harmless. Removing it is optional.
+- In `runFakeMain`, set `FAKE_GIT_DIR` only when `cwd !== harness.localDir`, to `path.join(harness.localDir, '.git', 'worktrees', path.basename(cwd))`. That makes git-dir differ from the common dir, so the resolver takes the linked-tree branch and returns `localDir`, the same result the legacy path gave. With cwd = `localDir`, git-dir equals the common dir, so the resolver takes the main-tree branch, and `--show-toplevel` → `FAKE_GIT_ACTIVE_TOPLEVEL` = `localDir`.
+- `runHumanReviewMain` needs no change. With relative `.git` the fake prints `<harness.dir>/.git` twice. `--show-toplevel` is unanswered (exit 1), so the resolver falls back to `dirname` → `harness.dir`, as before.
+- Verify: `invocation-root refusal runs before missing-worktree detection` (:5017) and `entry worktree enumeration failure refuses closed with git stderr` (:5031) pass, and the whole file passes.
+
+### Step R3: Outside-git refusal in `taskCmd` (AC-4, AC-16)
+
+Files: `src/task/index.ts`
+
+- Import `isInsideGitRepository` from `../lib/project-root.js`.
+- In `taskCmd`, between the `handlePreScan` branch and `assertManagedInvocationRoot()`, add:
+  `if (!isInsideGitRepository()) throw new Error('canon task requires a git repository; run it inside one (git init)');`
+  The existing `catch` prints the message and exits 1. This is the only refusal site: no per-subcommand checks, and no changes to `taskNew` or `resolveTaskCwd()`.
+- `src/orchestrator/state.ts` must show no diff (`git diff <base> -- src/orchestrator/state.ts` empty).
+
+### Step R4: Tests for the amendment
+
+Files: `tests/project-root.test.ts`, `tests/task-cli.test.ts`, `tests/run-task-canon-snapshot.test.ts`
+
+- `tests/project-root.test.ts`:
+  - **Delete** `task commands outside git share the current directory tasks root`. Amended AC-4 inverts its contract, and the replacement is in task-cli below.
+  - Add a probe test (AC-16/17). In a non-git temp dir, `probeProjectRoot(dir)` returns `{ root: path.resolve(dir), inGitRepository: false }` and `isInsideGitRepository(dir) === false`. At a git repo root and in its `sub/`, `isInsideGitRepository` is `true` and the root is the repo. Cover the git-failure case too: point `PATH` at a temp dir whose `git` script exits 1 (wrap in a try/finally restoring `process.env.PATH`), and assert that `probeProjectRoot(<a real repo>)` gives `inGitRepository: false` and `root === path.resolve(<repo>)`, so a failing git takes the non-git path and does not fall back to a legacy query.
+  - Add the AC-4 per-call test with `process.chdir`. chdir into repo A and call `resolveProjectRoot()`, then chdir into repo B and call it again. Each result equals its repo's realpath. Restore cwd in `finally`. The existing explicit-argument case does not cover the chdir wording.
+  - Move `task new reports missing templates without leaving a task directory` (AC-3) into a temp git repo: `git init -q -b main` in `root` before the `chdir`. The assertions stay unchanged.
+- `tests/task-cli.test.ts`:
+  - Add an **AC-4 refusal** subprocess test. Use a non-git `fs.mkdtempSync(os.tmpdir())` dir with `.canon/templates` copied, so that only the git requirement can cause a refusal, and the stripped env (the same delete-list the existing new tests use). For each of `['task','new','demo','Demo']`, `['task','status','demo']`, `['task','set','demo','title','X']` and `['task','list']`, assert `status === 1`, that stderr matches `/canon task requires a git repository/`, and that `fs.existsSync(<dir>/tasks) === false`.
+  - Add `git init -q -b main` to the fixtures of `task new creates a task from templates and rejects existing tasks` (:319) and `task new rejects invalid task IDs` (:434). The other assertions stay unchanged, including `/Task directory tasks\/new-task already exists/`. `--base dev` is explicit, so the base-branch logic is unaffected.
+- `tests/run-task-canon-snapshot.test.ts`: in `taskNew stamps canon provenance into the seeded status.json` (:432), run `spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root })` after `mkdtemp`. Use the file's existing git helper if it has one. The assertions stay unchanged.
+
+### Step R5: Unfinished original ACs
+
+Files: `tests/task-cli.test.ts`
+
+- **AC-5:** implement exactly the original plan's Step 7 AC-5 bullet. The handoff marks it Partial and the fixture was never added.
+  - The fixture worktree sits at the default `<repo>/.canon/worktrees/rt` (excluded via `.git/info/exclude`). Both copies of `status.json` have `phases.spec.status = 'in_progress'` and `human_spec_gate: false`.
+  - `task set rt task_size L` from the worktree, then `task set rt task_size XL` from the repo. The worktree copy ends at `XL` and the main copy stays at its seed.
+  - With `CANON_SKIP_PHASE_GATE` deleted from env, `task phase rt spec done` from the worktree exits 0. The main `spec.md` is the raw unrendered `.canon/templates/spec.md` and the worktree `spec.md` is filled text. Afterwards the worktree copy is `done` and the main copy is still `in_progress`.
+  - The inverse fixture (main filled, worktree unfilled) exits non-zero, with stderr matching the gate's unfilled-template message. Take the exact text from the gate's error in `src/task/index.ts` rather than assuming it.
+  - Reuse the stripped-env `invoke` pattern from the existing `task list and task new from a managed worktree…` test.
+- **AC-9:** implement the original plan's Step 7 AC-9 bullet. Use a git repo with `.canon/templates`, task `rr` seeded with `codeReviewBlockedStatus('rr')`, and a non-pristine `review.md`. Run `task reset-code-review rr` as a subprocess with cwd `<repo>/sub`. Assert:
+  - exit 0;
+  - stdout matches `Re-scaffolded review.md from ../.canon/templates/review.md`;
+  - the new `review.md` equals `renderTaskTemplate(<repo>/.canon/templates/review.md, 'rr', <title>)`.
+
+### Step R6: Build and validate
+
+Files: `dist/cli/index.js`, `dist/orchestrator/run-task.js`
+
+Run `npm run build && npm run type-check && npm run lint && npm test`, then `npm run docs-refs-check`, `npm run sync-templates:check` and `git diff --exit-code tests/completion.golden.json`.
+
+Grep checks:
+- AC-12: `grep -rn -- '--git-common-dir' src | grep -v '^src/lib/project-root.ts' | grep -v '^src/cli/commands/completion.ts'`. Comments only.
+- AC-17: `grep -n -- "'--git-common-dir'" src/lib/project-root.ts`. The only hit is in the combined argv, alongside `'--git-dir'`.
+- AC-16: `git diff <base> --stat -- src/orchestrator/state.ts`. Must be empty.
+
+If the full suite surfaces another non-git `canon task` fixture in a file outside Affected Files, don't widen scope. Record it as a `[scope]` blocker in the handoff.
+
+Update `handoff.md` AC rows for AC-4, AC-5, AC-9, AC-16 and AC-17. Remove the AC-4 `[scope]` blocker (resolved by the amendment), and drop the legacy-fallback deviation row (reverted by AC-17).

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/orchestrator/docs-freshness.ts
-import fs7 from "fs";
-import path6 from "path";
+import fs8 from "fs";
+import path7 from "path";
 
 // src/orchestrator/cli.ts
 import fs from "fs";
@@ -151,40 +151,83 @@ function warn(message) {
 }
 
 // src/orchestrator/worktree.ts
-import fs6 from "fs";
-import path5 from "path";
+import fs7 from "fs";
+import path6 from "path";
 
 // src/orchestrator/env.ts
+import fs3 from "fs";
+import path2 from "path";
+import { fileURLToPath } from "url";
+
+// src/lib/project-root.ts
 import { spawnSync } from "child_process";
 import fs2 from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-var __filename = fileURLToPath(import.meta.url);
-var __dirname = path.dirname(__filename);
-function resolveRepoRoot() {
+function probeProjectRoot(cwd = process.cwd()) {
+  const result = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  const [gitDir, commonDir] = result.error || result.status !== 0 ? [] : (result.stdout ?? "").trim().split("\n").map((value) => value.trim());
+  if (!gitDir || !commonDir) return { root: path.resolve(cwd), inGitRepository: false };
+  if (safeRealpath(gitDir) !== safeRealpath(commonDir)) return { root: path.dirname(commonDir), inGitRepository: true };
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  const toplevel = top.error || top.status !== 0 ? "" : (top.stdout ?? "").trim();
+  return { root: toplevel || path.dirname(commonDir), inGitRepository: true };
+}
+function resolveProjectRoot(cwd = process.cwd()) {
+  return probeProjectRoot(cwd).root;
+}
+function isInsideGitRepository(cwd = process.cwd()) {
+  return probeProjectRoot(cwd).inGitRepository;
+}
+function safeRealpath(value) {
   try {
-    const result = spawnSync("git", ["rev-parse", "--git-common-dir"], { encoding: "utf8" });
-    if (result.error || result.status !== 0) {
-      throw result.error ?? new Error(result.stderr || "git rev-parse --git-common-dir failed");
-    }
-    const gitCommonDir = result.stdout.trim();
-    if (!gitCommonDir) throw new Error("git rev-parse --git-common-dir returned no path");
-    const resolvedGitCommonDir = path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(process.cwd(), gitCommonDir);
-    return path.dirname(resolvedGitCommonDir);
+    return fs2.realpathSync(value);
   } catch {
-    return path.resolve(__dirname, "../..");
+    return value;
   }
 }
-var REPO_ROOT = resolveRepoRoot();
-var TASKS_DIR = path.join(REPO_ROOT, "tasks");
-var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path.resolve(REPO_ROOT, ".canon/worktrees");
+function tasksDirOverride() {
+  const override = process.env.CANON_TASKS_DIR_OVERRIDE;
+  return override ? path.resolve(override) : null;
+}
+function tasksDir(projectRoot = resolveProjectRoot()) {
+  return tasksDirOverride() ?? path.join(projectRoot, "tasks");
+}
+function templatesDir(projectRoot = resolveProjectRoot()) {
+  return path.join(projectRoot, ".canon", "templates");
+}
+function isValidTaskId(id) {
+  return /^[a-z0-9][a-z0-9._-]*$/.test(id) && !id.includes("..");
+}
+function isTaskEntry(tasksDirPath, name) {
+  if (!isValidTaskId(name)) return false;
+  try {
+    return fs2.lstatSync(path.join(tasksDirPath, name)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// src/orchestrator/env.ts
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = path2.dirname(__filename);
+var REPO_ROOT = resolveProjectRoot();
+var TASKS_DIR = path2.join(REPO_ROOT, "tasks");
+var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path2.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path2.resolve(REPO_ROOT, ".canon/worktrees");
 var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
 function resolveProjectName() {
   if (process.env.CANON_PROJECT_NAME) return process.env.CANON_PROJECT_NAME;
   try {
-    const pkgPath = path.join(REPO_ROOT, "package.json");
-    if (fs2.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs2.readFileSync(pkgPath, "utf8"));
+    const pkgPath = path2.join(REPO_ROOT, "package.json");
+    if (fs3.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf8"));
       if (pkg.name) return pkg.name;
     }
   } catch {
@@ -198,26 +241,26 @@ var config = {
 
 // src/orchestrator/git.ts
 import { spawnSync as spawnSync3 } from "child_process";
-import fs5 from "fs";
-import path4 from "path";
+import fs6 from "fs";
+import path5 from "path";
 
 // src/orchestrator/heartbeat.ts
-import fs3 from "fs";
-import path2 from "path";
+import fs4 from "fs";
+import path3 from "path";
 var HEARTBEAT_FILENAME = ".heartbeat.json";
 var HEARTBEAT_INTERVAL_MS = 3e4;
 var HEARTBEAT_STALE_AFTER_MS = HEARTBEAT_INTERVAL_MS * 2;
 function removeHeartbeat(taskDir) {
   try {
-    fs3.unlinkSync(path2.join(taskDir, ".heartbeat.json"));
+    fs4.unlinkSync(path3.join(taskDir, ".heartbeat.json"));
   } catch {
   }
 }
 function readHeartbeatStatus(taskDir) {
-  const file = path2.join(taskDir, HEARTBEAT_FILENAME);
+  const file = path3.join(taskDir, HEARTBEAT_FILENAME);
   let raw;
   try {
-    raw = fs3.readFileSync(file, "utf8");
+    raw = fs4.readFileSync(file, "utf8");
   } catch (error) {
     const err = error;
     if (err.code === "ENOENT") return { kind: "missing" };
@@ -241,21 +284,21 @@ function isHeartbeatStale(record, now = Date.now()) {
 }
 
 // src/orchestrator/state.ts
-import fs4 from "fs";
+import fs5 from "fs";
 import { spawnSync as spawnSync2 } from "child_process";
-import path3 from "path";
+import path4 from "path";
 
 // src/orchestrator/types.ts
 var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
 
 // src/orchestrator/state.ts
 function effectiveWorktreesRoot() {
-  return process.env.CANON_WORKTREES_ROOT ? path3.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
+  return process.env.CANON_WORKTREES_ROOT ? path4.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : WORKTREES_ROOT;
 }
 function isPathInside(child, parent) {
   if (child === parent) return true;
-  const rel = path3.relative(parent, child);
-  return rel !== "" && !rel.startsWith("..") && !path3.isAbsolute(rel);
+  const rel = path4.relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !path4.isAbsolute(rel);
 }
 function classifyInvocationRoot(params) {
   const { activeToplevel, mainRoot, worktreesRoot } = params;
@@ -268,7 +311,7 @@ function classifyInvocationRoot(params) {
 }
 function canonicalizePath(p) {
   try {
-    return fs4.realpathSync(p);
+    return fs5.realpathSync(p);
   } catch {
     return p;
   }
@@ -350,8 +393,8 @@ function scanWorktreesForSecondaryOwnership(taskId) {
   if (!enumeration.ok) return { outcome: "enumeration-failed" };
   const matches = [];
   for (const { path: worktreePath, branch: checkedOutBranch } of enumeration.worktrees) {
-    const candidateStatusPath = path3.join(worktreePath, "tasks", taskId, "status.json");
-    if (!fs4.existsSync(candidateStatusPath)) continue;
+    const candidateStatusPath = path4.join(worktreePath, "tasks", taskId, "status.json");
+    if (!fs5.existsSync(candidateStatusPath)) continue;
     let candidate;
     try {
       candidate = readStatusFromPath(candidateStatusPath, taskId);
@@ -392,22 +435,22 @@ function findExistingWorktreeForBranch(branch) {
   return null;
 }
 function taskDirForRepoRoot(taskId) {
-  return path3.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
+  return path4.join(process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR, taskId);
 }
 function taskDirFor(taskId) {
   if (process.env.CANON_TASKS_DIR_OVERRIDE) {
-    return path3.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
+    return path4.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId);
   }
-  return path3.join(resolveTaskCwd(taskId), "tasks", taskId);
+  return path4.join(resolveTaskCwd(taskId), "tasks", taskId);
 }
 function isOrphanedWorktreeState(taskId) {
   const worktreesRoot = effectiveWorktreesRoot();
-  const directWorktree = path3.join(worktreesRoot, taskId);
-  const directStatus = path3.join(directWorktree, "tasks", taskId, "status.json");
-  if (fs4.existsSync(directStatus)) return false;
-  const statusPath = path3.join(taskDirForRepoRoot(taskId), "status.json");
+  const directWorktree = path4.join(worktreesRoot, taskId);
+  const directStatus = path4.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs5.existsSync(directStatus)) return false;
+  const statusPath = path4.join(taskDirForRepoRoot(taskId), "status.json");
   try {
-    const parsed = JSON.parse(fs4.readFileSync(statusPath, "utf8"));
+    const parsed = JSON.parse(fs5.readFileSync(statusPath, "utf8"));
     if (parsed.worktree !== true) return false;
     const branch = parsed.branch?.trim() ?? "";
     if (!branch) return false;
@@ -418,12 +461,12 @@ function isOrphanedWorktreeState(taskId) {
 }
 function resolveTaskCwd(taskId) {
   const worktreesRoot = effectiveWorktreesRoot();
-  const directWorktree = path3.join(worktreesRoot, taskId);
-  const directStatus = path3.join(directWorktree, "tasks", taskId, "status.json");
-  if (fs4.existsSync(directStatus)) return directWorktree;
-  const statusPath = path3.join(taskDirForRepoRoot(taskId), "status.json");
+  const directWorktree = path4.join(worktreesRoot, taskId);
+  const directStatus = path4.join(directWorktree, "tasks", taskId, "status.json");
+  if (fs5.existsSync(directStatus)) return directWorktree;
+  const statusPath = path4.join(taskDirForRepoRoot(taskId), "status.json");
   try {
-    const parsed = JSON.parse(fs4.readFileSync(statusPath, "utf8"));
+    const parsed = JSON.parse(fs5.readFileSync(statusPath, "utf8"));
     if (parsed.worktree === true) {
       const branch = parsed.branch?.trim() ?? "";
       if (branch) {
@@ -465,9 +508,9 @@ function resolveTaskCwd(taskId) {
 }
 function statusFileFor(taskId) {
   if (process.env.CANON_TASKS_DIR_OVERRIDE) {
-    return path3.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, "status.json");
+    return path4.join(process.env.CANON_TASKS_DIR_OVERRIDE, taskId, "status.json");
   }
-  return path3.join(resolveTaskCwd(taskId), "tasks", taskId, "status.json");
+  return path4.join(resolveTaskCwd(taskId), "tasks", taskId, "status.json");
 }
 function validateBranchField(value, taskId, fieldName) {
   if (value === void 0) return;
@@ -501,7 +544,7 @@ function validateStatus(taskId, parsed) {
   }
 }
 function readStatusFromPath(statusFile, taskIdForErrors = "<unknown>") {
-  const parsed = JSON.parse(fs4.readFileSync(statusFile, "utf8"));
+  const parsed = JSON.parse(fs5.readFileSync(statusFile, "utf8"));
   validateStatus(taskIdForErrors, parsed);
   return parsed;
 }
@@ -582,7 +625,7 @@ function isPipelinePath(value) {
   return value === "tasks" || value.startsWith("tasks/") || PIPELINE_TELEMETRY_FILES.includes(value);
 }
 function docProblem(doc, key) {
-  if (path6.posix.isAbsolute(doc) || path6.win32.isAbsolute(doc) || doc.split(/[\\/]/).includes("..")) {
+  if (path7.posix.isAbsolute(doc) || path7.win32.isAbsolute(doc) || doc.split(/[\\/]/).includes("..")) {
     return `doc path "${doc}" in ${key} must be repo-relative with no ".." segment.`;
   }
   if (/[*?[\]{}]/.test(doc)) return `doc path "${doc}" in ${key} must not contain glob characters.`;
@@ -590,7 +633,7 @@ function docProblem(doc, key) {
   if (["", "."].includes(doc.split(/[\\/]/).at(-1) ?? "")) {
     return `doc path "${doc}" in ${key} must name a file, not a directory.`;
   }
-  if (isPipelinePath(path6.posix.normalize(doc.replaceAll("\\", "/")))) {
+  if (isPipelinePath(path7.posix.normalize(doc.replaceAll("\\", "/")))) {
     return `doc path "${doc}" in ${key} is a pipeline telemetry file or task artifact; telemetry files and tasks/ paths can't be configured.`;
   }
   return null;
@@ -617,13 +660,13 @@ function parseDocsFreshnessConfig(raw) {
       const problem = docProblem(doc, `docs_freshness.${key}`);
       if (problem) return invalid(problem);
     }
-    config2[key === "protected" ? "protected" : "flagOnly"] = list.map((doc) => path6.posix.normalize(doc.replaceAll("\\", "/")));
+    config2[key === "protected" ? "protected" : "flagOnly"] = list.map((doc) => path7.posix.normalize(doc.replaceAll("\\", "/")));
   }
   if (Object.hasOwn(docs, "paths")) {
     if (!isObject(docs.paths)) return invalid('"docs_freshness.paths" must be an object mapping globs to arrays of doc paths.');
     const mappings = /* @__PURE__ */ Object.create(null);
     for (const [glob, list] of Object.entries(docs.paths)) {
-      if (!glob.trim() || path6.win32.isAbsolute(glob) || glob.startsWith("/") || glob.startsWith("./") || glob.split(/[\\/]/).includes("..")) {
+      if (!glob.trim() || path7.win32.isAbsolute(glob) || glob.startsWith("/") || glob.startsWith("./") || glob.split(/[\\/]/).includes("..")) {
         return invalid(`paths key "${glob}" must be a non-empty repo-relative glob that does not start with "/" or "./" and has no ".." segment.`);
       }
       if (!isStrings(list)) return invalid(`docs_freshness.paths["${glob}"] must be an array of non-empty strings.`);
@@ -631,7 +674,7 @@ function parseDocsFreshnessConfig(raw) {
         const problem = docProblem(doc, `docs_freshness.paths["${glob}"]`);
         if (problem) return invalid(problem);
       }
-      mappings[glob] = list.map((doc) => path6.posix.normalize(doc.replaceAll("\\", "/")));
+      mappings[glob] = list.map((doc) => path7.posix.normalize(doc.replaceAll("\\", "/")));
     }
     config2.paths = mappings;
   }
@@ -639,7 +682,7 @@ function parseDocsFreshnessConfig(raw) {
 }
 function loadDocsFreshnessConfig(root) {
   try {
-    return parseDocsFreshnessConfig(fs7.readFileSync(path6.join(root, DOCS_FRESHNESS_CONFIG_PATH), "utf8"));
+    return parseDocsFreshnessConfig(fs8.readFileSync(path7.join(root, DOCS_FRESHNESS_CONFIG_PATH), "utf8"));
   } catch (error) {
     if (isObject(error) && error.code === "ENOENT") return { ok: true, source: "defaults", config: null, unknownKeys: [] };
     return invalid(`could not be read (${error instanceof Error ? error.message : String(error)}).`);
@@ -740,8 +783,8 @@ import { homedir } from "os";
 import { dirname, join, relative, sep as pathSep } from "path";
 
 // src/orchestrator/quality-log.ts
-import fs8 from "fs";
-import path7 from "path";
+import fs9 from "fs";
+import path8 from "path";
 
 // src/orchestrator/markdown-table.ts
 function splitTableLine(line) {
@@ -947,7 +990,7 @@ var JUDGMENT_LABELS = {
   "notes": "Notes"
 };
 function getQualityLogFile(activeCwd) {
-  return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path7.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path7.join(activeCwd, "docs/task-quality-log.md");
+  return process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path8.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path8.join(activeCwd, "docs/task-quality-log.md");
 }
 function normalizeCellValue(value) {
   return value.replace(/\r\n|\n/g, " ");
@@ -1100,11 +1143,11 @@ function renderRowLine(headerCells, row) {
 function writeFileAtomic(filePath, content) {
   const tempPath = `${filePath}.tmp`;
   try {
-    fs8.writeFileSync(tempPath, content, "utf8");
-    fs8.renameSync(tempPath, filePath);
+    fs9.writeFileSync(tempPath, content, "utf8");
+    fs9.renameSync(tempPath, filePath);
   } finally {
     try {
-      fs8.unlinkSync(tempPath);
+      fs9.unlinkSync(tempPath);
     } catch {
     }
   }
@@ -1133,7 +1176,7 @@ function upsertQualityLogRow(logFilePath, derived, qaSupplied) {
   try {
     let content;
     try {
-      content = fs8.readFileSync(logFilePath, "utf8");
+      content = fs9.readFileSync(logFilePath, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") {
         content = STANDARD_QUALITY_LOG_SKELETON;
@@ -1175,11 +1218,11 @@ function writeQualityLogForTask(taskId, _activeCwd, donePath, status) {
   try {
     let doneContent = "";
     try {
-      doneContent = fs8.readFileSync(donePath, "utf8");
+      doneContent = fs9.readFileSync(donePath, "utf8");
     } catch {
     }
-    const target = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path7.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path7.join(path7.dirname(donePath), "quality-log.md");
-    if (!process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) fs8.mkdirSync(path7.dirname(target), { recursive: true });
+    const target = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE ? path8.resolve(process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) : path8.join(path8.dirname(donePath), "quality-log.md");
+    if (!process.env.CANON_QUALITY_LOG_FILE_OVERRIDE) fs9.mkdirSync(path8.dirname(target), { recursive: true });
     upsertQualityLogRow(
       target,
       {
@@ -1198,19 +1241,19 @@ function writeQualityLogForTask(taskId, _activeCwd, donePath, status) {
 }
 
 // src/orchestrator/run-context.ts
-import path9 from "path";
-import fs10 from "fs";
+import path10 from "path";
+import fs11 from "fs";
 
 // src/orchestrator/detach.ts
 import { spawn } from "child_process";
-import fs9 from "fs";
-import path8 from "path";
+import fs10 from "fs";
+import path9 from "path";
 var PID_FILENAME = ".canon-pid";
 var LOG_FILENAME = ".canon-run.log";
 function readCanonPid(taskDir) {
-  const file = path8.join(taskDir, PID_FILENAME);
+  const file = path9.join(taskDir, PID_FILENAME);
   try {
-    const raw = fs9.readFileSync(file, "utf8").trim();
+    const raw = fs10.readFileSync(file, "utf8").trim();
     const pid = Number.parseInt(raw, 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -1219,12 +1262,12 @@ function readCanonPid(taskDir) {
 }
 function removeCanonPid(taskDir) {
   try {
-    fs9.unlinkSync(path8.join(taskDir, PID_FILENAME));
+    fs10.unlinkSync(path9.join(taskDir, PID_FILENAME));
   } catch {
   }
 }
 function runLogPathFor(taskDir) {
-  return path8.join(taskDir, LOG_FILENAME);
+  return path9.join(taskDir, LOG_FILENAME);
 }
 
 // src/orchestrator/run-context.ts
@@ -1233,11 +1276,11 @@ var EXIT_MARKER_RE = /■ orchestrator exit code=(\S+) \[reason=(.*)\] at (\S+)\
 function readLastExitMarker(taskDir) {
   let fd;
   try {
-    fd = fs10.openSync(runLogPathFor(taskDir), "r");
-    const { size } = fs10.fstatSync(fd);
+    fd = fs11.openSync(runLogPathFor(taskDir), "r");
+    const { size } = fs11.fstatSync(fd);
     const length = Math.min(EXIT_MARKER_TAIL_BYTES, size);
     const buffer = Buffer.allocUnsafe(length);
-    if (length > 0) fs10.readSync(fd, buffer, 0, length, size - length);
+    if (length > 0) fs11.readSync(fd, buffer, 0, length, size - length);
     const lines = buffer.toString("utf8").split(/\r?\n/);
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const match = lines[index].match(EXIT_MARKER_RE);
@@ -1250,7 +1293,7 @@ function readLastExitMarker(taskDir) {
   } catch {
     return null;
   } finally {
-    if (fd !== void 0) fs10.closeSync(fd);
+    if (fd !== void 0) fs11.closeSync(fd);
   }
 }
 function readNewestExitMarker(taskDirs) {
@@ -1280,7 +1323,7 @@ function statusReadResult(taskId, statusFile, readImpl) {
 }
 function tolerantTaskDir(taskId) {
   if (isOrphanedWorktreeState(taskId)) return taskDirForRepoRoot(taskId);
-  return path9.dirname(statusFileFor(taskId));
+  return path10.dirname(statusFileFor(taskId));
 }
 function runLogCandidateDirs(ctxTaskDir, taskId, primaryTaskId = taskId) {
   const candidates = [];
@@ -1331,8 +1374,8 @@ function probePidAlive(pid, probeImpl = defaultProbeAlive) {
 }
 function gatherRunContext(taskId, deps = {}) {
   const taskDir = (deps.resolveTaskDirImpl ?? tolerantTaskDir)(taskId);
-  const statusFile = path9.join(taskDir, "status.json");
-  const heartbeatFile = path9.join(taskDir, ".heartbeat.json");
+  const statusFile = path10.join(taskDir, "status.json");
+  const heartbeatFile = path10.join(taskDir, ".heartbeat.json");
   const statusResult = statusReadResult(taskId, statusFile, deps.readStatusImpl);
   const heartbeatResult = (deps.readHeartbeatImpl ?? readHeartbeatStatus)(taskDir);
   const canonPid = (deps.readCanonPidImpl ?? readCanonPid)(taskDir);
@@ -1613,8 +1656,8 @@ ${RECOMMENDED_NUDGE}`
     };
   }
   const mentionsCanon = existingFiles.some((filename) => {
-    const path17 = join(cwd, filename);
-    return /canon/i.test(readFileSync(path17, "utf8"));
+    const path18 = join(cwd, filename);
+    return /canon/i.test(readFileSync(path18, "utf8"));
   });
   if (mentionsCanon) {
     return { label: "canon discovery nudge", status: "pass" };
@@ -1825,10 +1868,10 @@ function checkCodexProjectTrust(cwd) {
         trust_level = "trusted"`
   };
 }
-function readAllowFromSettings(path17) {
-  if (!existsSync(path17)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
+function readAllowFromSettings(path18) {
+  if (!existsSync(path18)) return { allow: /* @__PURE__ */ new Set(), status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync(path17, "utf8"));
+    const parsed = JSON.parse(readFileSync(path18, "utf8"));
     const raw = parsed?.permissions?.allow;
     const allow = new Set(
       Array.isArray(raw) ? raw.filter((x) => typeof x === "string") : []
@@ -1934,17 +1977,17 @@ function formatAge(ms) {
   return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`;
 }
 function checkActiveOrchestrators(cwd, now = Date.now()) {
-  const tasksDir = join(cwd, "tasks");
-  if (!existsSync(tasksDir)) return [];
+  const tasksDirPath = tasksDir(cwd);
+  if (!existsSync(tasksDirPath)) return [];
   const checks = [];
   let entries;
   try {
-    entries = readdirSync(tasksDir).sort();
+    entries = readdirSync(tasksDirPath).sort();
   } catch {
     return [];
   }
   for (const id of entries) {
-    if (id === "_archive") continue;
+    if (!isTaskEntry(tasksDirPath, id)) continue;
     const ctx = gatherRunContext(id);
     const status = ctx.statusResult.kind === "ok" && isStatusJson(ctx.statusResult.status) ? ctx.statusResult.status : null;
     if (status == null) continue;
@@ -2007,7 +2050,7 @@ function checkDocsFreshness(cwd) {
 }
 function doctorCmd(args2) {
   handlePreScan(DOCTOR_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
-  const cwd = process.cwd();
+  const cwd = resolveProjectRoot();
   const envChecks = [
     checkPlatform(),
     checkNodeVersion(),
@@ -2077,12 +2120,12 @@ import { dirname as dirname2, join as join2, relative as relative2 } from "path"
 
 // src/lib/scaffold-paths.ts
 import { lstatSync } from "fs";
-import path10 from "path";
+import path11 from "path";
 function assertNoSymlinkDestinations(root, relativePaths) {
   for (const relativePath of relativePaths) {
     let current = root;
     for (const segment of relativePath.split(/[\\/]/)) {
-      current = path10.join(current, segment);
+      current = path11.join(current, segment);
       let entry;
       try {
         entry = lstatSync(current);
@@ -2102,7 +2145,7 @@ function assertNoSymlinkDestinations(root, relativePaths) {
 var INIT_USAGE = "Usage: canon init\n\nSet up canon in the current repo.";
 var INIT_ARGS = { command: "init", usage: INIT_USAGE, booleanFlags: [], valueFlags: [] };
 var packageDir = join2(dirname2(fileURLToPath2(import.meta.url)), "../..");
-var templatesDir = join2(packageDir, "templates");
+var templatesDir2 = join2(packageDir, "templates");
 var AGENT_FILES = /* @__PURE__ */ new Set(["AGENTS.md", "CLAUDE.md"]);
 function hasExistingAgentFiles(cwd) {
   return [...AGENT_FILES].some((f) => existsSync2(join2(cwd, f)));
@@ -2147,7 +2190,7 @@ function initCmd(args2) {
   checkDeps();
   const cwd = process.cwd();
   assertNoSymlinkDestinations(cwd, [".gitignore", ".canon/version"]);
-  const { scaffolded, skipped } = scaffoldTemplates(cwd, templatesDir);
+  const { scaffolded, skipped } = scaffoldTemplates(cwd, templatesDir2);
   const gitignorePath = join2(cwd, ".gitignore");
   const existingGitignore = existsSync2(gitignorePath) ? readFileSync2(gitignorePath, "utf8") : "";
   const gitignoreResult = upsertCanonBlock(existingGitignore, CANON_GITIGNORE_BLOCK);
@@ -2220,8 +2263,8 @@ function runCmd(args2) {
 }
 
 // src/cli/commands/watch.ts
-import fs11 from "fs";
-import path11 from "path";
+import fs12 from "fs";
+import path12 from "path";
 import { StringDecoder } from "string_decoder";
 
 // src/cli/commands/stop.ts
@@ -2793,7 +2836,7 @@ function findCrashEvidence(ctx, taskId, probeAlive, primaryTaskId, resolvedPidAl
   if (marker && marker.code !== "0") {
     let statusMtimeMs = null;
     try {
-      statusMtimeMs = fs11.statSync(ctx.statusFile).mtimeMs;
+      statusMtimeMs = fs12.statSync(ctx.statusFile).mtimeMs;
     } catch {
     }
     if (statusMtimeMs == null || marker.timestampMs >= statusMtimeMs - 1e3) {
@@ -2901,7 +2944,7 @@ function newestRunLogDir(candidateDirs) {
   for (const dir of candidateDirs) {
     let mtimeMs;
     try {
-      mtimeMs = fs11.statSync(runLogPathFor(dir)).mtimeMs;
+      mtimeMs = fs12.statSync(runLogPathFor(dir)).mtimeMs;
     } catch {
       continue;
     }
@@ -2912,12 +2955,12 @@ function newestRunLogDir(candidateDirs) {
 function tailRunLog(ctx, taskId, deps, tailState, primaryTaskId) {
   const logOwnerId = primaryTaskId ?? primaryLogTaskId(ctx, taskId);
   const candidateDirs = runLogCandidateDirs(ctx.taskDir, taskId, logOwnerId);
-  const logTaskDir = newestRunLogDir(candidateDirs.filter((dir) => path11.basename(dir) === logOwnerId)) ?? candidateDirs.find((dir) => fs11.existsSync(runLogPathFor(dir))) ?? candidateDirs[0];
+  const logTaskDir = newestRunLogDir(candidateDirs.filter((dir) => path12.basename(dir) === logOwnerId)) ?? candidateDirs.find((dir) => fs12.existsSync(runLogPathFor(dir))) ?? candidateDirs[0];
   const logPath = runLogPathFor(logTaskDir);
   let fd;
   try {
-    fd = fs11.openSync(logPath, "r");
-    const stat = fs11.fstatSync(fd);
+    fd = fs12.openSync(logPath, "r");
+    const stat = fs12.fstatSync(fd);
     const identity = `${logPath}:${stat.dev}:${stat.ino}`;
     if (tailState.position == null || tailState.path !== logPath) {
       const resumedLog = tailState.path != null && tailState.owner === logOwnerId;
@@ -2936,7 +2979,7 @@ function tailRunLog(ctx, taskId, deps, tailState, primaryTaskId) {
     if (stat.size === tailState.position) return;
     const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, stat.size - tailState.position));
     while (tailState.position < stat.size) {
-      const bytes = fs11.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - tailState.position), tailState.position);
+      const bytes = fs12.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - tailState.position), tailState.position);
       if (bytes === 0) break;
       tailState.position += bytes;
       const chunk = tailState.decoder.write(buffer.subarray(0, bytes));
@@ -2948,7 +2991,7 @@ function tailRunLog(ctx, taskId, deps, tailState, primaryTaskId) {
     deps.stderr?.(`canon watch: failed to tail ${logPath}: ${errorMessage2(error)}
 `);
   } finally {
-    if (fd !== void 0) fs11.closeSync(fd);
+    if (fd !== void 0) fs12.closeSync(fd);
   }
 }
 function gatherContext(taskId, deps) {
@@ -3248,13 +3291,13 @@ ${unknownOptionMessage("watch", preScan.argument).split("\n")[1]}` : "";
 
 // src/task/index.ts
 import { spawnSync as spawnSync9 } from "child_process";
-import fs16 from "fs";
-import path16 from "path";
+import fs17 from "fs";
+import path17 from "path";
 
 // src/orchestrator/canon-snapshot.ts
 import { spawnSync as spawnSync7 } from "child_process";
-import fs12 from "fs";
-import path12 from "path";
+import fs13 from "fs";
+import path13 from "path";
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
 function isInstalledSourcePath(sourcePath) {
   return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
@@ -3265,13 +3308,13 @@ function resolveCanonVersion(explicit) {
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!ownToplevel) return upstreamCommit;
-  const parentDir = path12.dirname(repoRoot);
+  const parentDir = path13.dirname(repoRoot);
   const parentToplevel = captureGitOutput(parentDir, ["rev-parse", "--show-toplevel"], runGitAt);
   if (!parentToplevel) return upstreamCommit;
-  if (path12.resolve(parentToplevel) === path12.resolve(ownToplevel)) {
+  if (path13.resolve(parentToplevel) === path13.resolve(ownToplevel)) {
     return upstreamCommit;
   }
-  return captureGitOutput(path12.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
+  return captureGitOutput(path13.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
 }
 function defaultRunCommand(command2, args2) {
   const result = spawnSync7(command2, args2, {
@@ -3305,7 +3348,7 @@ function captureCanonSnapshot(repoRoot = REPO_ROOT, options = {}) {
   const isInstalled = isInstalledSourcePath(canonSourcePath);
   const superprojectWorkingTree = captureGitOutput(repoRoot, ["rev-parse", "--show-superproject-working-tree"], runGitAt);
   const drivingCommit = captureGitOutput(repoRoot, ["rev-parse", "HEAD"], runGitAt) || "<unavailable>";
-  const hostCommit = superprojectWorkingTree ? captureGitOutput(path12.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
+  const hostCommit = superprojectWorkingTree ? captureGitOutput(path13.resolve(superprojectWorkingTree), ["rev-parse", "HEAD"], runGitAt) || "<unavailable>" : null;
   let upstreamCommit;
   let orchestratorCommit;
   if (isInstalled) {
@@ -3339,47 +3382,47 @@ function applyCanonSnapshot(status, canon) {
   return next;
 }
 function refreshCanonSnapshotAtPath(statusFilePath, options = {}) {
-  const status = JSON.parse(fs12.readFileSync(statusFilePath, "utf8"));
+  const status = JSON.parse(fs13.readFileSync(statusFilePath, "utf8"));
   const canon = captureCanonSnapshot(REPO_ROOT, options);
   const next = applyCanonSnapshot(status, canon);
   const serialized = `${JSON.stringify(next, null, 2)}
 `;
-  const current = fs12.readFileSync(statusFilePath, "utf8");
+  const current = fs13.readFileSync(statusFilePath, "utf8");
   if (current !== serialized) {
-    fs12.writeFileSync(statusFilePath, serialized, "utf8");
+    fs13.writeFileSync(statusFilePath, serialized, "utf8");
   }
   return canon;
 }
 
 // src/orchestrator/review-archive.ts
-import fs15 from "fs";
-import path15 from "path";
+import fs16 from "fs";
+import path16 from "path";
 
 // src/task/templates.ts
-import fs13 from "fs";
-import path13 from "path";
-function tasksRoot() {
-  return process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks";
+import fs14 from "fs";
+import path14 from "path";
+function tasksRoot(projectRoot) {
+  return tasksDir(projectRoot);
 }
-function templatesRoot() {
-  return path13.join(process.cwd(), ".canon", "templates");
+function templatesRoot(projectRoot) {
+  return templatesDir(projectRoot);
 }
-function taskTemplateOverrideRoot() {
-  return path13.join(tasksRoot(), "_templates");
+function taskTemplateOverrideRoot(projectRoot) {
+  return path14.join(tasksRoot(projectRoot), "_templates");
 }
-function resolveTaskTemplateSource(basename2) {
-  const override = path13.join(taskTemplateOverrideRoot(), basename2);
-  if (fs13.existsSync(override)) return override;
-  const managed = path13.join(templatesRoot(), basename2);
-  return fs13.existsSync(managed) ? managed : null;
+function resolveTaskTemplateSource(basename2, projectRoot = resolveProjectRoot()) {
+  const override = path14.join(taskTemplateOverrideRoot(projectRoot), basename2);
+  if (fs14.existsSync(override)) return override;
+  const managed = path14.join(templatesRoot(projectRoot), basename2);
+  return fs14.existsSync(managed) ? managed : null;
 }
 function renderTaskTemplate(source, taskId, title) {
-  return fs13.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
+  return fs14.readFileSync(source, "utf8").replaceAll("[TASK-ID]", taskId).replaceAll("[Title]", title);
 }
 function scaffoldTaskArtifact(taskDir, basename2, taskId, title) {
   const source = resolveTaskTemplateSource(basename2);
   if (!source) return null;
-  fs13.writeFileSync(path13.join(taskDir, basename2), renderTaskTemplate(source, taskId, title), "utf8");
+  fs14.writeFileSync(path14.join(taskDir, basename2), renderTaskTemplate(source, taskId, title), "utf8");
   return source;
 }
 function isPristineTaskArtifact(content, basename2, taskId, title) {
@@ -3395,8 +3438,8 @@ function isPristineTaskArtifact(content, basename2, taskId, title) {
 
 // src/orchestrator/validation.ts
 import { spawnSync as spawnSync8 } from "child_process";
-import fs14 from "fs";
-import path14 from "path";
+import fs15 from "fs";
+import path15 from "path";
 function computeLatestValidationResults(handoffContent) {
   const latest = /* @__PURE__ */ new Map();
   const baseline = parseTable(handoffContent, "Validation Outcomes");
@@ -3527,7 +3570,7 @@ function isTemplateUnfilled(content) {
 function isDoneMdTemplate(donePath) {
   let content;
   try {
-    content = fs14.readFileSync(donePath, "utf8");
+    content = fs15.readFileSync(donePath, "utf8");
   } catch {
     return true;
   }
@@ -3557,16 +3600,16 @@ var PHASE_GATE_CONFIG = {
   human_review: {}
 };
 function resolveTaskDirForValidation(taskId, taskDirOverride) {
-  return taskDirOverride ? path14.join(taskDirOverride, taskId) : taskDirFor(taskId);
+  return taskDirOverride ? path15.join(taskDirOverride, taskId) : taskDirFor(taskId);
 }
 function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
   const config2 = PHASE_GATE_CONFIG[phase];
   const taskDir = resolveTaskDirForValidation(taskId, taskDirOverride);
   if (config2.artifactName) {
-    const artifactPath = path14.join(taskDir, config2.artifactName);
+    const artifactPath = path15.join(taskDir, config2.artifactName);
     let content;
     try {
-      content = fs14.readFileSync(artifactPath, "utf8");
+      content = fs15.readFileSync(artifactPath, "utf8");
     } catch {
       return { ok: false, reason: `${config2.artifactName} is missing for phase '${phase}'` };
     }
@@ -3578,7 +3621,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     if (phase === "spec_review" || phase === "plan") {
       let statusRaw;
       try {
-        statusRaw = fs14.readFileSync(path14.join(taskDir, "status.json"), "utf8");
+        statusRaw = fs15.readFileSync(path15.join(taskDir, "status.json"), "utf8");
       } catch {
         return { ok: false, reason: `cannot determine reroute state for '${phase}': status.json in ${taskDir} is missing or unreadable` };
       }
@@ -3613,19 +3656,19 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     }
   }
   if (phase === "human_review") {
-    const handoffPath = path14.join(taskDir, "handoff.md");
+    const handoffPath = path15.join(taskDir, "handoff.md");
     let handoffContent;
     try {
-      handoffContent = fs14.readFileSync(handoffPath, "utf8");
+      handoffContent = fs15.readFileSync(handoffPath, "utf8");
     } catch {
       return { ok: false, reason: `closing human_review requires a handoff.md \u2014 none found in ${taskDir}` };
     }
     const pending = countHumanPendingChecks(handoffContent);
     if (pending.length === 0) return { ok: true };
-    const donePath = path14.join(taskDir, "done.md");
+    const donePath = path15.join(taskDir, "done.md");
     let doneContent = "";
     try {
-      doneContent = fs14.readFileSync(donePath, "utf8");
+      doneContent = fs15.readFileSync(donePath, "utf8");
     } catch {
     }
     if (hasHumanPendingWaiver(doneContent)) return { ok: true };
@@ -3640,10 +3683,10 @@ ${list}
   return { ok: true };
 }
 function parseHandoffChangesRows(taskId) {
-  const handoffPath = path14.join(taskDirFor(taskId), "handoff.md");
+  const handoffPath = path15.join(taskDirFor(taskId), "handoff.md");
   let content;
   try {
-    content = fs14.readFileSync(handoffPath, "utf8");
+    content = fs15.readFileSync(handoffPath, "utf8");
   } catch {
     return { files: [], malformed: [] };
   }
@@ -3948,29 +3991,29 @@ var REVIEW_ARCHIVE_PREFIX = "review-prior-";
 var REVIEW_ARCHIVE_RE = new RegExp(`^${REVIEW_ARCHIVE_PREFIX}(\\d+)\\.md$`);
 function newestReviewArchiveNumber(taskDir) {
   let newest = 0;
-  for (const name of fs15.readdirSync(taskDir)) {
+  for (const name of fs16.readdirSync(taskDir)) {
     const match = REVIEW_ARCHIVE_RE.exec(name);
     if (match) newest = Math.max(newest, Number(match[1]));
   }
   return newest;
 }
 function archivePriorReview(taskDir, options = {}) {
-  const reviewPath = path15.join(taskDir, "review.md");
-  if (!fs15.existsSync(reviewPath)) return null;
+  const reviewPath = path16.join(taskDir, "review.md");
+  if (!fs16.existsSync(reviewPath)) return null;
   if (options.skipUnfilledTemplate) {
-    const content = fs15.readFileSync(reviewPath, "utf8");
+    const content = fs16.readFileSync(reviewPath, "utf8");
     if (isTemplateUnfilled(content)) return null;
     if (options.scaffold && isPristineTaskArtifact(content, "review.md", options.scaffold.taskId, options.scaffold.title)) {
       return null;
     }
   }
   const archiveName = `${REVIEW_ARCHIVE_PREFIX}${newestReviewArchiveNumber(taskDir) + 1}.md`;
-  fs15.renameSync(reviewPath, path15.join(taskDir, archiveName));
+  fs16.renameSync(reviewPath, path16.join(taskDir, archiveName));
   return archiveName;
 }
 function rescaffoldReview(taskDir, identity) {
   try {
-    if (fs15.existsSync(path15.join(taskDir, "review.md"))) return { outcome: "exists" };
+    if (fs16.existsSync(path16.join(taskDir, "review.md"))) return { outcome: "exists" };
     const source = scaffoldTaskArtifact(taskDir, "review.md", identity.taskId, identity.title);
     return source ? { outcome: "written", source } : { outcome: "no-template" };
   } catch (error) {
@@ -4053,33 +4096,31 @@ function usage() {
   return TASK_USAGE;
 }
 function validateTaskId(id) {
+  if (isValidTaskId(id)) return;
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
     throw new Error(`Error: invalid task ID '${id}'. Must be lowercase alphanumeric, hyphens, dots, or underscores. No slashes, spaces, or leading special characters.`);
   }
   if (id.includes("..")) {
     throw new Error(`Error: invalid task ID '${id}'. Must not contain '..'.`);
   }
+  throw new Error(`Error: invalid task ID '${id}'. Must be a valid lowercase task ID.`);
 }
-function taskDirFromRoot(taskId) {
-  return path16.join(tasksRoot(), taskId);
+function taskDirFromRoot(taskId, root = tasksRoot()) {
+  return path17.join(root, taskId);
 }
 function taskDirForCwd(_cwd, taskId) {
-  const root = tasksRoot();
-  if (path16.isAbsolute(root)) {
-    return path16.join(root, taskId);
-  }
-  return path16.join(resolveTaskCwd(taskId), root, taskId);
+  const override = tasksDirOverride();
+  return override ? path17.join(override, taskId) : path17.join(resolveTaskCwd(taskId), "tasks", taskId);
 }
 function taskStatusFileForCwd(cwd, taskId) {
-  return path16.join(taskDirForCwd(cwd, taskId), "status.json");
+  return path17.join(taskDirForCwd(cwd, taskId), "status.json");
 }
 function taskRootForGate(cwd) {
-  const root = tasksRoot();
-  return path16.isAbsolute(root) ? root : path16.join(cwd, root);
+  return tasksDirOverride() ?? path17.join(cwd, "tasks");
 }
 function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs16.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs17.readFileSync(filePath, "utf8"));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Error: failed to read ${filePath}: ${message}`);
@@ -4087,9 +4128,9 @@ function readJsonFile(filePath) {
 }
 function writeJsonAtomic(filePath, data) {
   const tmpFile = `${filePath}.tmp`;
-  fs16.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
+  fs17.writeFileSync(tmpFile, `${JSON.stringify(data, null, 2)}
 `, "utf8");
-  fs16.renameSync(tmpFile, filePath);
+  fs17.renameSync(tmpFile, filePath);
 }
 function writeStatusAtomic(filePath, status) {
   status.status = deriveTopLevelStatus(status);
@@ -4123,31 +4164,30 @@ function gitOk(args2, options = {}) {
   const result = runGit(args2, options);
   return !result.error && result.status === 0;
 }
-function currentBranchOrEmpty() {
-  const result = runGit(["branch", "--show-current"]);
+function currentBranchOrEmpty(cwd) {
+  const result = runGit(["branch", "--show-current"], { cwd });
   if (result.error || result.status !== 0) return "";
   return (result.stdout ?? "").trim();
 }
-function remoteDefaultBranchOrEmpty() {
-  const result = runGit(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+function remoteDefaultBranchOrEmpty(cwd) {
+  const result = runGit(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], { cwd });
   if (result.error || result.status !== 0) return "";
   return (result.stdout ?? "").trim().replace(/^origin\//, "");
 }
-function listTemplateFiles() {
-  const root = templatesRoot();
-  if (!fs16.existsSync(root)) {
+function listTemplateFiles(root = templatesRoot()) {
+  if (!fs17.existsSync(root)) {
     throw new Error(`Error: templates directory not found at ${root}`);
   }
-  return fs16.readdirSync(root).filter((name) => name.endsWith(".md") || name.endsWith(".json")).sort();
+  return fs17.readdirSync(root).filter((name) => name.endsWith(".md") || name.endsWith(".json")).sort();
 }
-function printCreatedTask(taskId, taskDir, baseBranch) {
-  console.log(`Created task: ${taskDir}`);
+function printCreatedTask(taskId, taskDir, displayTaskDir, baseBranch) {
+  console.log(`Created task: ${displayTaskDir}`);
   console.log("Files:");
-  for (const file of fs16.readdirSync(taskDir).sort()) {
+  for (const file of fs17.readdirSync(taskDir).sort()) {
     console.log(file);
   }
   console.log("");
-  console.log(`Next: Write the spec in ${taskDir}/spec.md`);
+  console.log(`Next: Write the spec in ${displayTaskDir}/spec.md`);
   console.log("");
   console.log(`  Defaults: task_size=M, delicate=false, human_spec_gate=true, base_branch=${baseBranch}`);
   console.log(`  Adjust with: canon task set ${taskId} <field> <value>`);
@@ -4185,25 +4225,30 @@ function taskNew(args2) {
   if (title.includes("\n")) {
     throw new Error("Error: title must be single-line (no embedded newlines).");
   }
-  const taskDir = taskDirFromRoot(id);
-  if (fs16.existsSync(taskDir)) {
-    throw new Error(`Error: Task directory ${taskDir} already exists.`);
+  const projectRoot = resolveProjectRoot();
+  const root = tasksRoot(projectRoot);
+  const taskDir = taskDirFromRoot(id, root);
+  const displayTaskDir = path17.relative(safeRealpath2(process.cwd()), safeRealpath2(taskDir)) || ".";
+  if (fs17.existsSync(taskDir)) {
+    throw new Error(`Error: Task directory ${displayTaskDir} already exists.`);
   }
+  const templateRoot = templatesRoot(projectRoot);
+  const templateFiles = listTemplateFiles(templateRoot);
   let implicitBaseWarning = "";
   if (!baseBranch) {
-    baseBranch = currentBranchOrEmpty() || "main";
-    const defaultBranch = remoteDefaultBranchOrEmpty();
+    baseBranch = currentBranchOrEmpty(projectRoot) || "main";
+    const defaultBranch = remoteDefaultBranchOrEmpty(projectRoot);
     if (defaultBranch && defaultBranch !== baseBranch) {
       implicitBaseWarning = `Warning: base_branch=${baseBranch} was taken from the current branch, not the default branch (${defaultBranch}).
   If that's unintended: canon task set ${id} base_branch ${defaultBranch}  (or pass --base <branch> to canon task new)`;
     }
   }
-  fs16.mkdirSync(taskDir, { recursive: true });
-  for (const basename2 of listTemplateFiles()) {
-    const source = resolveTaskTemplateSource(basename2) ?? path16.join(templatesRoot(), basename2);
-    fs16.writeFileSync(path16.join(taskDir, basename2), renderTaskTemplate(source, id, title), "utf8");
+  fs17.mkdirSync(taskDir, { recursive: true });
+  for (const basename2 of templateFiles) {
+    const source = resolveTaskTemplateSource(basename2, projectRoot) ?? path17.join(templateRoot, basename2);
+    fs17.writeFileSync(path17.join(taskDir, basename2), renderTaskTemplate(source, id, title), "utf8");
   }
-  const statusPath = path16.join(taskDir, "status.json");
+  const statusPath = path17.join(taskDir, "status.json");
   const status = readJsonFile(statusPath);
   status.id = id;
   status.title = title;
@@ -4217,7 +4262,7 @@ function taskNew(args2) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Warning: created task without canon snapshot refresh: ${message}`);
   }
-  printCreatedTask(id, taskDir, baseBranch);
+  printCreatedTask(id, taskDir, displayTaskDir, baseBranch);
   if (implicitBaseWarning) console.error(`
 ${implicitBaseWarning}`);
 }
@@ -4226,31 +4271,31 @@ function derivePhase(status) {
 }
 function taskList() {
   const root = tasksRoot();
-  if (!fs16.existsSync(root)) {
+  if (!fs17.existsSync(root)) {
     console.log("No tasks found.");
     return;
   }
   const rows = [];
   let invalidCount = 0;
-  for (const entry of fs16.readdirSync(root).sort()) {
-    if (entry === "_archive" || entry === "_templates") continue;
+  for (const entry of fs17.readdirSync(root).sort()) {
+    if (!isTaskEntry(root, entry)) continue;
     if (isOrphanedWorktreeState(entry)) {
       invalidCount += 1;
       let title = "(untitled)";
       try {
-        const frozen = readJsonFile(path16.join(taskDirForRepoRoot(entry), "status.json"));
+        const frozen = readJsonFile(path17.join(taskDirForRepoRoot(entry), "status.json"));
         title = frozen.title ?? title;
       } catch {
       }
       rows.push({
         id: entry,
         title,
-        phase: `INVALID: worktree missing \u2014 restore ${path16.join(effectiveWorktreesRoot(), entry)} or archive the task`
+        phase: `INVALID: worktree missing \u2014 restore ${path17.join(effectiveWorktreesRoot(), entry)} or archive the task`
       });
       continue;
     }
-    const statusPath = path16.join(taskDirForCwd(process.cwd(), entry), "status.json");
-    if (!fs16.existsSync(statusPath)) continue;
+    const statusPath = path17.join(taskDirForCwd(process.cwd(), entry), "status.json");
+    if (!fs17.existsSync(statusPath)) continue;
     try {
       const status = readJsonFile(statusPath);
       const phase = derivePhase(status);
@@ -4287,7 +4332,7 @@ function taskStatus(id) {
   validateTaskId(id);
   const cwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(cwd, id);
-  if (!fs16.existsSync(statusPath)) {
+  if (!fs17.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id}`);
   }
   const status = readJsonFile(statusPath);
@@ -4360,7 +4405,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
   assertValidVerdict(phaseArg, verdictArg);
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs16.existsSync(statusPath)) {
+  if (!fs17.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
   }
   const status = readJsonFile(statusPath);
@@ -4402,7 +4447,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     writeQualityLogForTask(
       id,
       taskCwd,
-      path16.join(taskDirForCwd(taskCwd, id), "done.md"),
+      path17.join(taskDirForCwd(taskCwd, id), "done.md"),
       status
     );
   }
@@ -4426,7 +4471,7 @@ function taskAccept(ids, phaseArg, options = {}) {
   for (const id of ids) {
     const taskCwd = resolveTaskCwd(id);
     const statusPath = taskStatusFileForCwd(taskCwd, id);
-    if (!fs16.existsSync(statusPath)) {
+    if (!fs17.existsSync(statusPath)) {
       throw new Error(`Error: No status.json found for task ${id} (looked in ${taskDirForCwd(taskCwd, id)}/)`);
     }
     const status = readJsonFile(statusPath);
@@ -4448,14 +4493,14 @@ function taskAccept(ids, phaseArg, options = {}) {
   }
   function resolveExpectedTreeForCtx(ctx) {
     if (ctx.status.worktree === true) return ctx.taskCwd;
-    return resolveMainCheckoutRoot();
+    return resolveProjectRoot();
   }
   const primary = ctxByTask.get(ids[0]);
   const gitCwdRaw = resolveExpectedTreeForCtx(primary);
-  const gitCwd = safeRealpath(gitCwdRaw);
+  const gitCwd = safeRealpath2(gitCwdRaw);
   for (const ctx of ctxByTask.values()) {
     const expectedRaw = resolveExpectedTreeForCtx(ctx);
-    const expected = safeRealpath(expectedRaw);
+    const expected = safeRealpath2(expectedRaw);
     if (expected !== gitCwd) {
       throw new Error(
         `Error: bundled accept requires all tasks to share a working tree. Task '${ids[0]}' resolves to ${gitCwdRaw} but task '${ctx.id}' resolves to ${expectedRaw}. Run accept once per worktree.`
@@ -4528,7 +4573,7 @@ function taskAccept(ids, phaseArg, options = {}) {
     const originalSnapshots2 = /* @__PURE__ */ new Map();
     for (const ctx of ctxByTask.values()) {
       try {
-        originalSnapshots2.set(ctx.statusPath, fs16.readFileSync(ctx.statusPath, "utf8"));
+        originalSnapshots2.set(ctx.statusPath, fs17.readFileSync(ctx.statusPath, "utf8"));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
@@ -4565,8 +4610,8 @@ function taskAccept(ids, phaseArg, options = {}) {
         if (original === void 0) continue;
         try {
           const tmpFile = `${filePath}.rollback.tmp`;
-          fs16.writeFileSync(tmpFile, original, "utf8");
-          fs16.renameSync(tmpFile, filePath);
+          fs17.writeFileSync(tmpFile, original, "utf8");
+          fs17.renameSync(tmpFile, filePath);
         } catch (rollbackErr) {
           const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
           rollbackErrors.push(`    ${filePath}: ${message}`);
@@ -4584,18 +4629,18 @@ ${rollbackErrors.join("\n")}`
       throw new Error(`Error: bundled review accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
     }
     for (const ctx of ctxByTask.values()) {
-      const notesPath = path16.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+      const notesPath = path17.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
       const entry = ctx.status.phases[phaseArg];
       const sanctioned = entry?.verdict === "sanctioned";
       const bundleNote = ids.length > 1 ? ` Bundle: ${ids.join(", ")}.` : "";
       const noteLine = `[${today()}] Operator accepted ${phaseArg} via \`canon task accept\` \u2014 ${sanctioned ? "sanctioned (agent verdict overridden)" : "unblocked (advancing verdict preserved)"}. Reason: ${reason}.${bundleNote}`;
       try {
-        if (fs16.existsSync(notesPath)) {
-          fs16.appendFileSync(notesPath, `
+        if (fs17.existsSync(notesPath)) {
+          fs17.appendFileSync(notesPath, `
 ${noteLine}
 `, "utf8");
         } else {
-          fs16.writeFileSync(notesPath, `${noteLine}
+          fs17.writeFileSync(notesPath, `${noteLine}
 `, "utf8");
         }
       } catch (error) {
@@ -4718,7 +4763,7 @@ ${noteLine}
   const originalSnapshots = /* @__PURE__ */ new Map();
   for (const ctx of ctxByTask.values()) {
     try {
-      originalSnapshots.set(ctx.statusPath, fs16.readFileSync(ctx.statusPath, "utf8"));
+      originalSnapshots.set(ctx.statusPath, fs17.readFileSync(ctx.statusPath, "utf8"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Error: failed to read ${ctx.statusPath} for rollback snapshot: ${message}`);
@@ -4743,8 +4788,8 @@ ${noteLine}
       if (original === void 0) continue;
       try {
         const tmpFile = `${filePath}.rollback.tmp`;
-        fs16.writeFileSync(tmpFile, original, "utf8");
-        fs16.renameSync(tmpFile, filePath);
+        fs17.writeFileSync(tmpFile, original, "utf8");
+        fs17.renameSync(tmpFile, filePath);
       } catch (rollbackErr) {
         const message = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         rollbackErrors.push(`    ${filePath}: ${message}`);
@@ -4763,15 +4808,15 @@ ${noteLine}
     throw new Error(`Error: bundled accept failed; rolled back to pre-accept state. Original error: ${originalMessage}`);
   }
   for (const ctx of ctxByTask.values()) {
-    const notesPath = path16.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
+    const notesPath = path17.join(taskDirForCwd(ctx.taskCwd, ctx.id), "notes.md");
     const noteLine = `[${today()}] Operator accepted implement phase via \`canon task accept\` \u2014 auto-commit will be skipped.${options.force ? " (--force)" : ""}`;
     try {
-      if (fs16.existsSync(notesPath)) {
-        fs16.appendFileSync(notesPath, `
+      if (fs17.existsSync(notesPath)) {
+        fs17.appendFileSync(notesPath, `
 ${noteLine}
 `, "utf8");
       } else {
-        fs16.writeFileSync(notesPath, `${noteLine}
+        fs17.writeFileSync(notesPath, `${noteLine}
 `, "utf8");
       }
     } catch (error) {
@@ -4790,15 +4835,15 @@ function taskResetSpecReview(id) {
   validateTaskId(id);
   const taskCwd = resolveTaskCwd(id);
   const taskDir = taskDirForCwd(taskCwd, id);
-  const statusPath = path16.join(taskDir, "status.json");
-  if (!fs16.existsSync(statusPath)) {
+  const statusPath = path17.join(taskDir, "status.json");
+  if (!fs17.existsSync(statusPath)) {
     throw new Error(`Error: no status.json at ${statusPath}`);
   }
-  const reviewPath = path16.join(taskDir, "spec-review.md");
-  if (fs16.existsSync(reviewPath)) {
+  const reviewPath = path17.join(taskDir, "spec-review.md");
+  if (fs17.existsSync(reviewPath)) {
     let n = 1;
-    while (fs16.existsSync(path16.join(taskDir, `spec-review-prior-${n}.md`))) n += 1;
-    fs16.renameSync(reviewPath, path16.join(taskDir, `spec-review-prior-${n}.md`));
+    while (fs17.existsSync(path17.join(taskDir, `spec-review-prior-${n}.md`))) n += 1;
+    fs17.renameSync(reviewPath, path17.join(taskDir, `spec-review-prior-${n}.md`));
     console.log(`Archived prior spec-review.md \u2192 spec-review-prior-${n}.md`);
   }
   const status = readJsonFile(statusPath);
@@ -4828,8 +4873,8 @@ function taskResetCodeReview(id) {
   validateTaskId(id);
   const taskCwd = resolveTaskCwd(id);
   const taskDir = taskDirForCwd(taskCwd, id);
-  const statusPath = path16.join(taskDir, "status.json");
-  if (!fs16.existsSync(statusPath)) {
+  const statusPath = path17.join(taskDir, "status.json");
+  if (!fs17.existsSync(statusPath)) {
     throw new Error(`Error: no status.json at ${statusPath}`);
   }
   const status = readJsonFile(statusPath);
@@ -4844,7 +4889,7 @@ function taskResetCodeReview(id) {
   }
   const rescaffold = rescaffoldReview(taskDir, { taskId: id, title: status.title ?? "" });
   if (rescaffold.outcome === "written") {
-    console.log(`Re-scaffolded review.md from ${path16.relative(process.cwd(), rescaffold.source)}`);
+    console.log(`Re-scaffolded review.md from ${path17.relative(process.cwd(), rescaffold.source)}`);
   } else if (rescaffold.outcome === "no-template") {
     console.warn(
       "Warning: review.md is missing and no template was found to re-scaffold it (looked for a review.md override under tasks/_templates/ and .canon/templates/review.md); the next code review will write it from scratch."
@@ -4887,17 +4932,16 @@ function parsePorcelainPath(line) {
 }
 function isPipelineOwnedAcceptPath(filePath, taskId, gitCwd) {
   const repoRootForPaths = resolveRepoRootForAccept(gitCwd);
-  const dirtyAbsolute = path16.isAbsolute(filePath) ? filePath : path16.resolve(repoRootForPaths, filePath);
-  const canonicalDirty = safeRealpath(dirtyAbsolute);
-  const root = tasksRoot();
-  const rootAbsolute = path16.isAbsolute(root) ? root : path16.resolve(repoRootForPaths, root);
-  const canonicalRoot = safeRealpath(rootAbsolute);
-  const taskCanonical = path16.join(canonicalRoot, taskId);
+  const dirtyAbsolute = path17.isAbsolute(filePath) ? filePath : path17.resolve(repoRootForPaths, filePath);
+  const canonicalDirty = safeRealpath2(dirtyAbsolute);
+  const rootAbsolute = tasksDirOverride() ?? path17.resolve(repoRootForPaths, "tasks");
+  const canonicalRoot = safeRealpath2(rootAbsolute);
+  const taskCanonical = path17.join(canonicalRoot, taskId);
   if (canonicalDirty === taskCanonical) return true;
-  if (canonicalDirty.startsWith(`${taskCanonical}${path16.sep}`)) return true;
+  if (canonicalDirty.startsWith(`${taskCanonical}${path17.sep}`)) return true;
   for (const telemetry of PIPELINE_TELEMETRY_FILES) {
-    const telemetryAbsolute = path16.resolve(repoRootForPaths, telemetry);
-    if (safeRealpath(telemetryAbsolute) === canonicalDirty) return true;
+    const telemetryAbsolute = path17.resolve(repoRootForPaths, telemetry);
+    if (safeRealpath2(telemetryAbsolute) === canonicalDirty) return true;
   }
   return false;
 }
@@ -4906,21 +4950,14 @@ function resolveRepoRootForAccept(gitCwd) {
   if (result.error || result.status !== 0) return gitCwd;
   return (result.stdout ?? "").trim() || gitCwd;
 }
-function resolveMainCheckoutRoot() {
-  const out = runGit(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: process.cwd() });
-  if (out.error || out.status !== 0) return process.cwd();
-  const gitCommonDir = (out.stdout ?? "").trim();
-  if (!gitCommonDir) return process.cwd();
-  return path16.dirname(gitCommonDir);
-}
-function safeRealpath(target) {
+function safeRealpath2(target) {
   try {
-    return fs16.realpathSync(target);
+    return fs17.realpathSync(target);
   } catch {
-    const parent = path16.dirname(target);
+    const parent = path17.dirname(target);
     if (parent === target) return target;
     try {
-      return path16.join(fs16.realpathSync(parent), path16.basename(target));
+      return path17.join(fs17.realpathSync(parent), path17.basename(target));
     } catch {
       return target;
     }
@@ -5028,12 +5065,12 @@ function taskPostMergeSync(branchArg) {
 }
 function nudgeShippableTasks() {
   const root = tasksRoot();
-  if (!fs16.existsSync(root)) return;
+  if (!fs17.existsSync(root)) return;
   const shippable = [];
-  for (const entry of fs16.readdirSync(root).sort()) {
-    if (entry === "_archive" || entry.startsWith("_")) continue;
-    const statusPath = path16.join(root, entry, "status.json");
-    if (!fs16.existsSync(statusPath)) continue;
+  for (const entry of fs17.readdirSync(root).sort()) {
+    if (!isTaskEntry(root, entry)) continue;
+    const statusPath = path17.join(root, entry, "status.json");
+    if (!fs17.existsSync(statusPath)) continue;
     let status;
     try {
       status = readJsonFile(statusPath);
@@ -5136,7 +5173,7 @@ function taskSet(args2) {
   validateTaskId(id);
   const taskCwd = resolveTaskCwd(id);
   const statusPath = taskStatusFileForCwd(taskCwd, id);
-  if (!fs16.existsSync(statusPath)) {
+  if (!fs17.existsSync(statusPath)) {
     throw new Error(`Error: No status.json found for task ${id}`);
   }
   const status = readJsonFile(statusPath);
@@ -5206,6 +5243,7 @@ function taskCmd(args2) {
     const decl = subcommand && Object.hasOwn(TASK_SUBCOMMAND_ARGS, subcommand) ? TASK_SUBCOMMAND_ARGS[subcommand] : void 0;
     if (decl) handlePreScan(decl, rest, io);
     else handlePreScan(TASK_ARGS, args2, io);
+    if (!isInsideGitRepository()) throw new Error("Error: canon task requires a git repository; run it inside one (git init)");
     assertManagedInvocationRoot();
     switch (subcommand) {
       case "new":
@@ -5810,7 +5848,7 @@ function getStaleOverrides(cwd, changedOps) {
   const changedByRel = new Map(changedOps.map((op) => [op.rel, op.content]));
   if (changedByRel.size === 0) return [];
   const templateBasenames = getTaskTemplateBasenames();
-  const overrideRootAbs = resolve(cwd, taskTemplateOverrideRoot());
+  const overrideRootAbs = resolve(cwd, process.env.CANON_TASKS_DIR_OVERRIDE ?? "tasks", "_templates");
   const staleOverrides = [];
   for (const name of templateBasenames) {
     const canonRel = `.canon/templates/${name}`;
@@ -6220,13 +6258,13 @@ var COMPLETION_USAGE = [
   "For tcsh, write the script once with `canon completion tcsh > ~/.canon-completion.tcsh`, then add `source ~/.canon-completion.tcsh` to ~/.tcshrc. A multi-line script does not survive backtick eval."
 ].join("\n");
 var COMPLETION_ARGS = { command: "completion", usage: COMPLETION_USAGE, booleanFlags: [], valueFlags: [], rejectPositionals: true, freeTextSlots: [0], completion: { positionals: [{ kind: "shell" }] } };
-function modelCommand(name, decl, path17, subcommands) {
+function modelCommand(name, decl, path18, subcommands) {
   const slots = [...decl.completion?.positionals ?? []];
   const phase = slots.findIndex((s) => s.kind === "phase");
   const field = slots.findIndex((s) => s.kind === "settableField");
   const variadicIndex = slots.findIndex((s) => s.variadic);
   if (variadicIndex >= 0 && slots.length - variadicIndex > 2) {
-    throw new Error(`Completion declaration ${path17.join(" ")} has more than one fixed positional slot after a variadic slot`);
+    throw new Error(`Completion declaration ${path18.join(" ")} has more than one fixed positional slot after a variadic slot`);
   }
   const dependsOn = {};
   slots.forEach((slot, i) => {
@@ -6234,7 +6272,7 @@ function modelCommand(name, decl, path17, subcommands) {
     if (slot.kind === "fieldValue" && field >= 0) dependsOn[i] = field;
   });
   return {
-    path: path17,
+    path: path18,
     flags: [.../* @__PURE__ */ new Set([...decl.booleanFlags, ...decl.valueFlags, ...decl.equalsValueFlags ?? [], "--help", "-h"])],
     booleanFlags: [...decl.booleanFlags],
     valueFlags: [...decl.valueFlags],
@@ -6242,7 +6280,7 @@ function modelCommand(name, decl, path17, subcommands) {
     valueFlagKinds: Object.fromEntries([.../* @__PURE__ */ new Set([...decl.valueFlags, ...decl.equalsValueFlags ?? []])].map((f) => [f, decl.completion?.valueFlags?.[f] ?? "none"])),
     positionals: slots,
     dependsOn,
-    ...subcommands ? { subcommands: Object.entries(subcommands).map(([sub, d]) => modelCommand(sub, d, [...path17, sub])) } : {}
+    ...subcommands ? { subcommands: Object.entries(subcommands).map(([sub, d]) => modelCommand(sub, d, [...path18, sub])) } : {}
   };
 }
 function buildCompletionModel(registry, globalFlags) {
@@ -6333,16 +6371,16 @@ function positionalCaseEntries(model, shell) {
     const variadicIndex = slots.findIndex((slot) => slot.variadic);
     if (variadicIndex >= 0 && variadicIndex === slots.length - 1) {
       const action = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
-      const path17 = q(record.path.join(" "));
+      const path18 = q(record.path.join(" "));
       return [shell === "fish" ? `case ${q(`${record.path.join(" ")}:*`)}
       if test $n -ge ${variadicIndex}
         ${action}
-      end` : `${path17}:*) if [ "$n" -ge ${variadicIndex} ]; then ${action}; fi ;;`];
+      end` : `${path18}:*) if [ "$n" -ge ${variadicIndex} ]; then ${action}; fi ;;`];
     }
     if (variadicIndex >= 0 && variadicIndex < slots.length - 1) {
       const taskIds = positionalAction(slots[variadicIndex].kind, record, variadicIndex, shell, model);
       const trailing = slots.slice(variadicIndex + 1).map((slot, offset) => positionalAction(slot.kind, record, variadicIndex + offset + 1, shell, model));
-      const path17 = q(record.path.join(" "));
+      const path18 = q(record.path.join(" "));
       if (shell === "fish") return [`case ${q(`${record.path.join(" ")}:*`)}
       if test $n -le ${variadicIndex}
         ${taskIds}
@@ -6350,7 +6388,7 @@ function positionalCaseEntries(model, shell) {
         ${taskIds}
         ${trailing.join("\n        ")}
       end`];
-      return [`${path17}:*) if [ "$n" -le ${variadicIndex} ]; then ${taskIds}; else ${taskIds}; ${trailing.join("; ")}; fi ;;`];
+      return [`${path18}:*) if [ "$n" -le ${variadicIndex} ]; then ${taskIds}; else ${taskIds}; ${trailing.join("; ")}; fi ;;`];
     }
     return slots.map((slot, index) => {
       const action = positionalAction(slot.kind, record, index, shell, model);

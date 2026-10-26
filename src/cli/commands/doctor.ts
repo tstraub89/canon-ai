@@ -8,6 +8,7 @@ import { CANON_LOG_HEADERS, getQualityLogFile, locateLogTable } from '../../orch
 import { gatherRunContext, isStatusJson } from '../../orchestrator/run-context.js';
 import { type StatusJson } from '../../orchestrator/types.js';
 import { CANON_RUNTIME_GITIGNORE_PATTERNS } from '../../lib/canon-block.js';
+import { isTaskEntry, resolveProjectRoot, tasksDir } from '../../lib/project-root.js';
 import { isAvailable } from '../deps.js';
 import { handlePreScan, type ArgDeclaration } from '../../lib/cli-args.js';
 
@@ -630,17 +631,17 @@ export function formatAge(ms: number): string {
  * tasks we can read are reported.
  */
 export function checkActiveOrchestrators(cwd: string, now: number = Date.now()): Check[] {
-    const tasksDir = join(cwd, 'tasks');
-    if (!existsSync(tasksDir)) return [];
+    const tasksDirPath = tasksDir(cwd);
+    if (!existsSync(tasksDirPath)) return [];
     const checks: Check[] = [];
     let entries: string[];
     try {
-        entries = readdirSync(tasksDir).sort();
+        entries = readdirSync(tasksDirPath).sort();
     } catch {
         return [];
     }
     for (const id of entries) {
-        if (id === '_archive') continue;
+        if (!isTaskEntry(tasksDirPath, id)) continue;
         const ctx = gatherRunContext(id);
         const status: StatusJson | null = ctx.statusResult.kind === 'ok' && isStatusJson(ctx.statusResult.status)
             ? ctx.statusResult.status
@@ -722,7 +723,7 @@ export function checkDocsFreshness(cwd: string): Check {
 
 export function doctorCmd(args: string[]): void {
     handlePreScan(DOCTOR_ARGS, args, { out: console.log, err: console.error, exit: code => process.exit(code) });
-    const cwd = process.cwd();
+    const cwd = resolveProjectRoot();
 
     const envChecks: Check[] = [
         checkPlatform(),

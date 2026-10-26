@@ -16,10 +16,9 @@ import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRo
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { isPlanCombined, SIZE_ORDER, type TaskSize } from '../lib/pipeline-policy.js';
+import { isInsideGitRepository, isTaskEntry, isValidTaskId, resolveProjectRoot, tasksDirOverride } from '../lib/project-root.js';
 import { renderTaskTemplate, resolveTaskTemplateSource, tasksRoot, templatesRoot } from './templates.js';
 import { handlePreScan, type ArgDeclaration } from '../lib/cli-args.js';
-
-export { taskTemplateOverrideRoot } from './templates.js';
 
 const VALID_PHASES = new Set<string>(PHASE_ORDER);
 export const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
@@ -78,24 +77,24 @@ export const TASK_SUBCOMMAND_ARGS: Readonly<Record<string, ArgDeclaration>> = {
 function usage(): string { return TASK_USAGE; }
 
 export function validateTaskId(id: string): void {
+    if (isValidTaskId(id)) return;
     if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
         throw new Error(`Error: invalid task ID '${id}'. Must be lowercase alphanumeric, hyphens, dots, or underscores. No slashes, spaces, or leading special characters.`);
     }
     if (id.includes('..')) {
         throw new Error(`Error: invalid task ID '${id}'. Must not contain '..'.`);
     }
+    throw new Error(`Error: invalid task ID '${id}'. Must be a valid lowercase task ID.`);
 }
 
-function taskDirFromRoot(taskId: string): string {
-    return path.join(tasksRoot(), taskId);
+function taskDirFromRoot(taskId: string, root: string = tasksRoot()): string {
+    return path.join(root, taskId);
 }
 
 function taskDirForCwd(_cwd: string, taskId: string): string {
-    const root = tasksRoot();
-    if (path.isAbsolute(root)) {
-        return path.join(root, taskId);
-    }
-    return path.join(resolveTaskCwd(taskId), root, taskId);
+    const override = tasksDirOverride();
+    // Explicit override check: the shared tasks dir must not replace worktree routing.
+    return override ? path.join(override, taskId) : path.join(resolveTaskCwd(taskId), 'tasks', taskId);
 }
 
 function taskStatusFileForCwd(cwd: string, taskId: string): string {
@@ -103,8 +102,8 @@ function taskStatusFileForCwd(cwd: string, taskId: string): string {
 }
 
 function taskRootForGate(cwd: string): string {
-    const root = tasksRoot();
-    return path.isAbsolute(root) ? root : path.join(cwd, root);
+    // Explicit override check: the shared tasks dir must not replace worktree routing.
+    return tasksDirOverride() ?? path.join(cwd, 'tasks');
 }
 
 function readJsonFile<T>(filePath: string): T {
@@ -158,21 +157,20 @@ function gitOk(args: string[], options: { cwd?: string } = {}): boolean {
     return !result.error && result.status === 0;
 }
 
-function currentBranchOrEmpty(): string {
-    const result = runGit(['branch', '--show-current']);
+function currentBranchOrEmpty(cwd?: string): string {
+    const result = runGit(['branch', '--show-current'], { cwd });
     if (result.error || result.status !== 0) return '';
     return (result.stdout ?? '').trim();
 }
 
 /** The remote default branch (`origin/HEAD` → `main`), or '' when it can't be resolved. */
-function remoteDefaultBranchOrEmpty(): string {
-    const result = runGit(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+function remoteDefaultBranchOrEmpty(cwd?: string): string {
+    const result = runGit(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { cwd });
     if (result.error || result.status !== 0) return '';
     return (result.stdout ?? '').trim().replace(/^origin\//, '');
 }
 
-function listTemplateFiles(): string[] {
-    const root = templatesRoot();
+function listTemplateFiles(root: string = templatesRoot()): string[] {
     if (!fs.existsSync(root)) {
         throw new Error(`Error: templates directory not found at ${root}`);
     }
@@ -181,14 +179,14 @@ function listTemplateFiles(): string[] {
         .sort();
 }
 
-function printCreatedTask(taskId: string, taskDir: string, baseBranch: string): void {
-    console.log(`Created task: ${taskDir}`);
+function printCreatedTask(taskId: string, taskDir: string, displayTaskDir: string, baseBranch: string): void {
+    console.log(`Created task: ${displayTaskDir}`);
     console.log('Files:');
     for (const file of fs.readdirSync(taskDir).sort()) {
         console.log(file);
     }
     console.log('');
-    console.log(`Next: Write the spec in ${taskDir}/spec.md`);
+    console.log(`Next: Write the spec in ${displayTaskDir}/spec.md`);
     console.log('');
     console.log(`  Defaults: task_size=M, delicate=false, human_spec_gate=true, base_branch=${baseBranch}`);
     console.log(`  Adjust with: canon task set ${taskId} <field> <value>`);
@@ -231,15 +229,21 @@ export function taskNew(args: string[]): void {
         throw new Error('Error: title must be single-line (no embedded newlines).');
     }
 
-    const taskDir = taskDirFromRoot(id);
+    const projectRoot = resolveProjectRoot();
+    const root = tasksRoot(projectRoot);
+    const taskDir = taskDirFromRoot(id, root);
+    const displayTaskDir = path.relative(safeRealpath(process.cwd()), safeRealpath(taskDir)) || '.';
     if (fs.existsSync(taskDir)) {
-        throw new Error(`Error: Task directory ${taskDir} already exists.`);
+        throw new Error(`Error: Task directory ${displayTaskDir} already exists.`);
     }
+
+    const templateRoot = templatesRoot(projectRoot);
+    const templateFiles = listTemplateFiles(templateRoot);
 
     let implicitBaseWarning = '';
     if (!baseBranch) {
-        baseBranch = currentBranchOrEmpty() || 'main';
-        const defaultBranch = remoteDefaultBranchOrEmpty();
+        baseBranch = currentBranchOrEmpty(projectRoot) || 'main';
+        const defaultBranch = remoteDefaultBranchOrEmpty(projectRoot);
         if (defaultBranch && defaultBranch !== baseBranch) {
             implicitBaseWarning = `Warning: base_branch=${baseBranch} was taken from the current branch, not the default branch (${defaultBranch}).\n`
                 + `  If that's unintended: canon task set ${id} base_branch ${defaultBranch}  (or pass --base <branch> to canon task new)`;
@@ -247,10 +251,10 @@ export function taskNew(args: string[]): void {
     }
 
     fs.mkdirSync(taskDir, { recursive: true });
-    for (const basename of listTemplateFiles()) {
+    for (const basename of templateFiles) {
         // listTemplateFiles guarantees the managed template exists, so the
         // resolver only ever returns null for a race with a concurrent delete.
-        const source = resolveTaskTemplateSource(basename) ?? path.join(templatesRoot(), basename);
+        const source = resolveTaskTemplateSource(basename, projectRoot) ?? path.join(templateRoot, basename);
         fs.writeFileSync(path.join(taskDir, basename), renderTaskTemplate(source, id, title), 'utf8');
     }
 
@@ -270,7 +274,7 @@ export function taskNew(args: string[]): void {
         console.error(`Warning: created task without canon snapshot refresh: ${message}`);
     }
 
-    printCreatedTask(id, taskDir, baseBranch);
+    printCreatedTask(id, taskDir, displayTaskDir, baseBranch);
     if (implicitBaseWarning) console.error(`\n${implicitBaseWarning}`);
 }
 
@@ -290,7 +294,7 @@ export function taskList(): void {
     // shouldn't be left thinking everything is fine either.
     let invalidCount = 0;
     for (const entry of fs.readdirSync(root).sort()) {
-        if (entry === '_archive' || entry === '_templates') continue;
+        if (!isTaskEntry(root, entry)) continue;
         // Detect orphan-worktree state BEFORE taskDirForCwd → resolveTaskCwd,
         // which die()s on this state and aborts the entire listing —
         // regressing the issue #83 graceful-degradation contract.
@@ -670,14 +674,13 @@ export function taskAccept(ids: readonly string[], phaseArg: string, options: { 
     // where the operator invoked canon from. If the shell is inside a linked
     // worktree, `--show-toplevel` returns the worktree path even though the
     // non-worktree task's files live in the main checkout (codex P1, round 11).
-    // Resolve through `--git-common-dir` instead: its parent is the main
-    // checkout regardless of which worktree the operator launched from.
+    // Resolve the supervising checkout through the shared project-root resolver.
     // Canonicalize via realpath before comparing — macOS aliases `/var` and
     // `/private/var`, and resolveTaskCwd() vs. the derived root can return
     // equivalent directories with different string spellings.
     function resolveExpectedTreeForCtx(ctx: TaskCtx): string {
         if (ctx.status.worktree === true) return ctx.taskCwd;
-        return resolveMainCheckoutRoot();
+        return resolveProjectRoot();
     }
     const primary = ctxByTask.get(ids[0])!;
     const gitCwdRaw = resolveExpectedTreeForCtx(primary);
@@ -1232,8 +1235,8 @@ function isPipelineOwnedAcceptPath(filePath: string, taskId: string, gitCwd: str
     const dirtyAbsolute = path.isAbsolute(filePath) ? filePath : path.resolve(repoRootForPaths, filePath);
     const canonicalDirty = safeRealpath(dirtyAbsolute);
 
-    const root = tasksRoot();
-    const rootAbsolute = path.isAbsolute(root) ? root : path.resolve(repoRootForPaths, root);
+    // Explicit override check: the shared tasks dir must not replace worktree routing.
+    const rootAbsolute = tasksDirOverride() ?? path.resolve(repoRootForPaths, 'tasks');
     const canonicalRoot = safeRealpath(rootAbsolute);
     const taskCanonical = path.join(canonicalRoot, taskId);
     if (canonicalDirty === taskCanonical) return true;
@@ -1258,28 +1261,6 @@ function resolveRepoRootForAccept(gitCwd: string): string {
  * if the leaf doesn't exist yet (e.g., an untracked file's parent dir exists
  * but the file does not at check time on some platforms).
  */
-/**
- * Returns the main checkout's working-tree root, regardless of whether the
- * shell is currently inside the main checkout, a linked worktree, or a
- * subdirectory. Used by `taskAccept` for non-worktree tasks so the diff
- * baseline and HEAD pin target the same checkout the task's files live in,
- * not whatever happens to be the operator's cwd.
- *
- * Mechanism: `git rev-parse --git-common-dir` returns the shared `.git`
- * directory's path; its parent directory is the main checkout. From a linked
- * worktree, `--show-toplevel` would return the worktree root instead — that
- * was the cwd-sensitive bug codex flagged on round 11 of PR #86.
- *
- * Falls back to `process.cwd()` if git fails (e.g., test fixture without git).
- */
-function resolveMainCheckoutRoot(): string {
-    const out = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: process.cwd() });
-    if (out.error || out.status !== 0) return process.cwd();
-    const gitCommonDir = (out.stdout ?? '').trim();
-    if (!gitCommonDir) return process.cwd();
-    return path.dirname(gitCommonDir);
-}
-
 function safeRealpath(target: string): string {
     try {
         return fs.realpathSync(target);
@@ -1453,7 +1434,7 @@ function nudgeShippableTasks(): void {
     if (!fs.existsSync(root)) return;
     const shippable: string[] = [];
     for (const entry of fs.readdirSync(root).sort()) {
-        if (entry === '_archive' || entry.startsWith('_')) continue;
+        if (!isTaskEntry(root, entry)) continue;
         const statusPath = path.join(root, entry, 'status.json');
         if (!fs.existsSync(statusPath)) continue;
         let status: StatusJson;
@@ -1655,6 +1636,7 @@ export function taskCmd(args: string[]): void {
             : undefined;
         if (decl) handlePreScan(decl, rest, io);
         else handlePreScan(TASK_ARGS, args, io);
+        if (!isInsideGitRepository()) throw new Error('Error: canon task requires a git repository; run it inside one (git init)');
         assertManagedInvocationRoot();
         switch (subcommand) {
             case 'new':

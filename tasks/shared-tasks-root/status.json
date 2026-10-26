@@ -1,15 +1,15 @@
 {
   "id": "shared-tasks-root",
   "title": "Resolve tasks/ and templates from the repo root in every command",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-25",
   "updated": "2026-10-25",
-  "branch": "",
+  "branch": "task/shared-tasks-root",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "4d31ffa2a0887563ea9f58ca8544191e8b5ec2f3",
-    "orchestrator_commit": "4d31ffa2a0887563ea9f58ca8544191e8b5ec2f3",
+    "upstream_commit": "cf0a994e1d7cb0c9d64bbe4b95d3514f7ce114d4",
+    "orchestrator_commit": "cf0a994e1d7cb0c9d64bbe4b95d3514f7ce114d4",
     "canon_version": "3.13.0",
     "codex_cli": "codex-cli 0.163.0",
     "claude_code": "2.1.310 (Claude Code)"
@@ -31,9 +31,9 @@
       "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 2,
-      "changes_requested_total": 1,
-      "auto_block_count": 0,
+      "iterations_total": 6,
+      "changes_requested_total": 4,
+      "auto_block_count": 1,
       "preflight_rejections_current_loop": 0
     },
     "plan": {
@@ -41,21 +41,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -63,10 +66,19 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-10-25",
+      "phase": "spec_review",
+      "iteration_count": 3,
+      "reason": "Spec review hit 3 changes_requested iterations in a row (limit: 3). Pipeline auto-blocked at the `spec_review` entry backstop after `spec` already completed its revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run shared-tasks-root. Only rescope if prior iterations no longer apply — run canon task reset-spec-review shared-tasks-root to archive the prior review, clear the loop counters, and drop the stored Claude session. Resetting accepts the current spec as-is, so the next run enters `spec_review` without another spec revision. Resuming after raising the cap runs `spec_review` directly; `spec` already completed its revision."
+    }
+  ],
   "sessions": {
-    "codex_spec_review": "01a17453-2ee6-7220-b2e0-e8ee864178c2",
-    "claude_spec": "5eea7cbb-fec8-4fde-921e-bd5a14c3ac85"
+    "claude_spec": "5eea7cbb-fec8-4fde-921e-bd5a14c3ac85",
+    "codex": "01a174c9-82d1-7ff1-a633-a00ff15c6d17",
+    "codex_spec_review": "01a174e9-e1cb-70c3-ad58-7ac9174c77a1",
+    "claude_review": "da235780-1144-4d2c-bbec-35df3c0396a8"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

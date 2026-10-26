@@ -1,9 +1,9 @@
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { warn } from './cli.js';
+import { resolveProjectRoot } from '../lib/project-root.js';
 
 export const __filename = fileURLToPath(import.meta.url);
 export const __dirname = path.dirname(__filename);
@@ -23,40 +23,8 @@ export function parseMaxReviewLoops(raw: string | undefined): number | null {
     return parsed;
 }
 
-function resolveRepoRoot(): string {
-    try {
-        // Use `--git-common-dir` rather than `--show-toplevel` so that REPO_ROOT
-        // stays anchored at the supervising main checkout even when the
-        // orchestrator (or a unit test) is invoked from inside a linked
-        // worktree. `--show-toplevel` returns the active worktree path, which
-        // makes the default in-repo `WORKTREES_ROOT` resolve from the supervising
-        // checkout and otherwise inverts the supervisor-vs-worktree
-        // contract. Worktree-aware task-state reads/writes go through
-        // `resolveTaskCwd(taskId)` (state.ts) — that's the canonical seam for
-        // "where does the task's code currently live"; REPO_ROOT is for
-        // "where does the supervising orchestrator pipe its files." Codex
-        // P2 on PR #42 caught the regression introduced by an earlier flip
-        // to `--show-toplevel`.
-        const result = spawnSync('git', ['rev-parse', '--git-common-dir'], { encoding: 'utf8' });
-        if (result.error || result.status !== 0) {
-            throw result.error ?? new Error(result.stderr || 'git rev-parse --git-common-dir failed');
-        }
-        const gitCommonDir = result.stdout.trim();
-        if (!gitCommonDir) throw new Error('git rev-parse --git-common-dir returned no path');
-        // `git rev-parse --git-common-dir` returns a relative `.git` path in the
-        // main checkout and an absolute path from a worktree. Resolving first and
-        // then taking the parent directory yields the canonical repo root in both.
-        const resolvedGitCommonDir = path.isAbsolute(gitCommonDir)
-            ? gitCommonDir
-            : path.resolve(process.cwd(), gitCommonDir);
-        return path.dirname(resolvedGitCommonDir);
-    } catch {
-        // Fallback for non-git environments (for example some unit-test runners).
-        return path.resolve(__dirname, '../..');
-    }
-}
-
-export const REPO_ROOT = resolveRepoRoot();
+// Supervising main checkout, frozen at import; per-task routing stays in resolveTaskCwd().
+export const REPO_ROOT = resolveProjectRoot();
 export const TASKS_DIR = path.join(REPO_ROOT, 'tasks');
 
 // A relative CANON_WORKTREES_ROOT anchors on REPO_ROOT (the supervising

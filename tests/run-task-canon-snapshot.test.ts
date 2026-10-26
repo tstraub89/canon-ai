@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -432,6 +433,8 @@ function withCwd<T>(cwd: string, fn: () => T): T {
 void test('taskNew stamps canon provenance into the seeded status.json', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-snapshot-task-new-'));
     try {
+        const gitInit = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root, encoding: 'utf8' });
+        assert.equal(gitInit.status, 0, gitInit.stderr);
         fs.mkdirSync(path.join(root, '.canon', 'templates'), { recursive: true });
         fs.cpSync(path.join(REPO_ROOT, '.canon', 'templates'), path.join(root, '.canon', 'templates'), { recursive: true });
 

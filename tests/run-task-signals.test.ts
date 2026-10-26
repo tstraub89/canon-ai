@@ -16,8 +16,8 @@ const MD_LOADER = path.join(REPO_ROOT, 'tests', 'md-loader-register.mjs');
 const ENTRY_URL = new URL('../src/orchestrator/run-task.ts', import.meta.url).href;
 
 // Resolve source paths from THIS file's location rather than REPO_ROOT. In a
-// linked-worktree run, REPO_ROOT resolves to the main checkout (env.ts uses
-// `git rev-parse --git-common-dir` by design — see env.ts:12-22) while the
+// linked-worktree run, REPO_ROOT resolves to the main checkout (env.ts takes
+// it from resolveProjectRoot() in src/lib/project-root.ts, by design) while the
 // test files we want to inspect live in the worktree. `import.meta.url` gives
 // us the right checkout regardless of worktree state.
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));

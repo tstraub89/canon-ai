@@ -10,7 +10,7 @@ import { RUN_ARGS } from '../src/orchestrator/cli.ts';
 import { WATCH_ARGS } from '../src/cli/commands/watch.ts';
 import { STOP_ARGS } from '../src/cli/commands/stop.ts';
 import { UPDATE_ARGS } from '../src/cli/commands/update.ts';
-import { TASK_SUBCOMMAND_ARGS, ACCEPT_PHASES, SETTABLE_FIELDS, TASK_SET_FIELD_VALUES, assertValidPhase, assertValidStatus, assertValidVerdict, taskAccept, taskSet } from '../src/task/index.ts';
+import { TASK_SUBCOMMAND_ARGS, ACCEPT_PHASES, SETTABLE_FIELDS, TASK_SET_FIELD_VALUES, assertValidPhase, assertValidStatus, assertValidVerdict, taskAccept, taskSet, validateTaskId } from '../src/task/index.ts';
 import { SIZE_ORDER } from '../src/lib/pipeline-policy.ts';
 import { parseWatchArgs } from '../src/cli/commands/watch.ts';
 import { parseUpdateArgs } from '../src/cli/commands/update.ts';
@@ -37,6 +37,13 @@ void test('completion metadata and shared value sets are attached to declaration
     for (const status of model.values.phaseStatus) assert.doesNotThrow(() => assertValidStatus(status));
     for (const [phase, verdicts] of Object.entries(model.verdictsByPhase)) for (const verdict of verdicts) assert.doesNotThrow(() => assertValidVerdict(phase as 'spec_review' | 'code_review', verdict));
     assert.deepEqual([...SETTABLE_FIELDS].sort(), [...Object.keys(TASK_SET_FIELD_VALUES), 'title', 'base_branch'].sort());
+});
+
+void test('validateTaskId rejects reserved shell-completion prefixes', () => {
+    // Keeps the shell scripts' `_*` and `.*` filters aligned with the task id rule.
+    for (const id of ['_x', '_archive', '_templates', '.x', '.DS_Store']) {
+        assert.throws(() => validateTaskId(id));
+    }
 });
 
 void test('completion scripts are deterministic, adopter-safe, and derived from declarations', () => {
