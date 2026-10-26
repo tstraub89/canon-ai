@@ -1,9 +1,9 @@
 {
   "id": "shared-tasks-root",
   "title": "Resolve tasks/ and templates from the repo root in every command",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-25",
-  "updated": "2026-10-25",
+  "updated": "2026-10-26",
   "branch": "task/shared-tasks-root",
   "base_branch": "main",
   "canon": {
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
