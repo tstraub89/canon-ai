@@ -9399,7 +9399,7 @@ function unnamedBranchMates(entries) {
   const root = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR2;
   let candidates;
   try {
-    candidates = fs24.readdirSync(root).sort();
+    candidates = fs25.readdirSync(root).sort();
   } catch {
     return [];
   }
@@ -9408,7 +9408,7 @@ function unnamedBranchMates(entries) {
     if (named.has(taskId) || taskId === "_archive" || taskId === "_templates") continue;
     let status;
     try {
-      status = isOrphanedWorktreeState(taskId) ? readStatusFromPath(path22.join(taskDirForRepoRoot(taskId), "status.json"), taskId) : readStatus(taskId);
+      status = isOrphanedWorktreeState(taskId) ? readStatusFromPath(path23.join(taskDirForRepoRoot(taskId), "status.json"), taskId) : readStatus(taskId);
     } catch {
       continue;
     }
