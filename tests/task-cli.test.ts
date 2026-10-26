@@ -803,6 +803,30 @@ void test('task set rejects guarded, redirected, immutable, and unknown fields w
     });
 });
 
+void test('spec-gate done note distinguishes implement-entry activity from unstarted implementation', () => {
+    withTasksRoot(tasksRoot => {
+        for (const entry of ['in_progress', 'blocked', 'loop-cap', 'route-back', 'preflight', 'unstarted'] as const) {
+            const id = `gate-entry-${entry}`;
+            const status = makeStatus(id);
+            for (const phase of ['spec', 'spec_review', 'plan'] as const) status.phases[phase]!.status = 'done';
+            status.phases.implement!.status = entry === 'in_progress' || entry === 'blocked' ? entry : 'pending';
+            status.phases.code_review!.status = entry === 'loop-cap' ? 'blocked' : 'pending';
+            status.phases.code_review!.iterations_current_loop = entry === 'route-back' ? 1 : 0;
+            status.phases.code_review!.preflight_rejections_current_loop = entry === 'preflight' ? 1 : 0;
+            writeTask(tasksRoot, id, status);
+            const note = captureStdout(() => taskSet([id, 'human_spec_gate', 'true']));
+            if (entry === 'unstarted') {
+                assert.match(note, /will not fire on this pass/);
+                assert.match(note, /code_review, qa, or human_review.*implement in progress or blocked, a blocked code review, or a code review already run in the current loop \(a review round or a pre-flight rejection\), or, in a bundle, alongside such a task on the same non-empty task branch/);
+                assert.doesNotMatch(note, /then run `canon run --reroute/);
+            } else {
+                assert.match(note, new RegExp(`add an amendment to the spec, then run .canon run --reroute ${id}`));
+                assert.doesNotMatch(note, /will not fire on this pass/);
+            }
+        }
+    });
+});
+
 void test('task set manages human_spec_gate values, full-send side effects, delicate guard, and warning states', () => {
     withTasksRoot(tasksRoot => {
         const id = 'gate-task';
@@ -842,7 +866,7 @@ void test('task set manages human_spec_gate values, full-send side effects, deli
         const doneId = 'gate-done';
         writeTask(tasksRoot, doneId, makeStatus(doneId, { phases: { ...makeStatus(doneId).phases, spec_review: { status: 'done', agent: 'codex' } } }));
         const doneNote = captureStdout(() => taskSet([doneId, 'human_spec_gate', 'true']));
-        assert.match(doneNote, /will not fire on this pass.*full-tier.*code_review, qa, or human_review/);
+        assert.match(doneNote, /will not fire on this pass.*full-tier.*once implementation has begun.*code_review, qa, or human_review.*implement in progress or blocked, a blocked code review, or a code review already run in the current loop \(a review round or a pre-flight rejection\), or, in a bundle, alongside such a task on the same non-empty task branch/);
         assert.doesNotMatch(doneNote, /canon run --reroute|reset-spec-review|takes effect on the next canon run/);
 
         const rerouteableId = 'gate-done-rerouteable';

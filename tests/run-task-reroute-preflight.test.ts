@@ -5,8 +5,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { currentLoopReviewRounds, isRerouteAdmitted } from '../src/orchestrator/state.js';
+import type { StatusJson } from '../src/orchestrator/types.js';
 import { archivePriorReview, findNewestReviewArchive } from '../src/orchestrator/review-archive.js';
-import { checkPhaseGate, checkRerouteEvidence, sliceRerouteRoundSection } from '../src/orchestrator/validation.js';
+import { buildAffectedFilesAllowlist, checkPhaseGate, checkRerouteEvidence, sliceRerouteRoundSection, verifyBaseDriftFromData, verifyHandoffAgainstDiffFromData } from '../src/orchestrator/validation.js';
 
 const WORKTREE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKTREE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -937,12 +939,55 @@ void test('rerouteFromHumanReview rejects an off-phase sibling in an otherwise-a
     });
 });
 
+const implementEntryRows: Array<{ name: string; expectedPhase: string; options: RerouteStatusOptions; bannerDetail?: RegExp }> = [
+    { name: 'implement in_progress', expectedPhase: 'implement', options: { implement: { status: 'in_progress' } } },
+    { name: 'implement blocked', expectedPhase: 'implement', options: { implement: { status: 'blocked' } } },
+    { name: 'implement-entry loop-cap auto-block (implement pending, code_review blocked, verdict empty)', expectedPhase: 'implement', bannerDetail: /\(code_review blocked\) →/, options: {
+        implement: { status: 'pending' }, codeReview: { status: 'blocked', verdict: '' },
+    } },
+    { name: 'route-back after changes_requested', expectedPhase: 'implement', bannerDetail: /\(code_review pending, 1 review round this loop\) →/, options: {
+        implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '', iterations_current_loop: 1 },
+    } },
+    { name: 'implement pending after pre-flight rejection', expectedPhase: 'implement', bannerDetail: /\(code_review pending, 1 pre-flight rejection this loop\) →/, options: {
+        implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '', iterations_current_loop: 0, preflight_rejections_current_loop: 1 },
+    } },
+].map(row => ({ ...row, options: {
+    ...row.options,
+    codeReview: { status: 'pending', verdict: '', iterations_current_loop: 0, preflight_rejections_current_loop: 0, ...row.options.codeReview },
+    qa: { status: 'pending' },
+} }));
+
 const admittedStateRows: Array<{
     name: string;
+    expectedPhase: string;
+    bannerDetail?: RegExp;
     options: RerouteStatusOptions;
 }> = [
+    ...implementEntryRows,
     {
-        name: 'code_review blocked changes_requested',
+        name: 'legacy iterations alias without current-loop field (implement pending, code_review pending)',
+        expectedPhase: 'implement',
+        bannerDetail: /\(code_review pending, 1 review round this loop\) →/,
+        options: {
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '', iterations: 1 },
+            qa: { status: 'pending' },
+        },
+    },
+    {
+        name: 'implement pending after multiple review rounds and pre-flight rejections',
+        expectedPhase: 'implement',
+        bannerDetail: /\(code_review pending, 2 review rounds this loop, 3 pre-flight rejections this loop\) →/,
+        options: {
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '', iterations_current_loop: 2, preflight_rejections_current_loop: 3 },
+            qa: { status: 'pending' },
+        },
+    },
+    { name: 'human_review pending', expectedPhase: 'human_review', options: {} },
+    {
+        name: 'code_review-phase auto-block (blocked changes_requested)',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'blocked', verdict: 'changes_requested' },
             qa: { status: 'pending' },
@@ -950,6 +995,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'code_review changes_requested',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'changes_requested', verdict: 'changes_requested' },
             qa: { status: 'pending' },
@@ -957,6 +1003,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'code_review in_progress',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'in_progress', verdict: '' },
             qa: { status: 'pending' },
@@ -964,6 +1011,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'code_review pending',
+        expectedPhase: 'code_review',
         options: {
             codeReview: { status: 'pending', verdict: '' },
             qa: { status: 'pending' },
@@ -971,6 +1019,7 @@ const admittedStateRows: Array<{
     },
     {
         name: 'qa pending after approved code_review',
+        expectedPhase: 'qa',
         options: {
             codeReview: { status: 'done', verdict: 'approved' },
             qa: { status: 'pending' },
@@ -978,33 +1027,47 @@ const admittedStateRows: Array<{
     },
     {
         name: 'qa in_progress',
+        expectedPhase: 'qa',
         options: { qa: { status: 'in_progress' } },
     },
 ];
 
-for (const { name, options } of admittedStateRows) {
-    void test(`rerouteFromHumanReview admits ${name}`, () => {
-        withTempDir('reroute-preflight-admitted-state-', dir => {
-            initGitRepo(dir);
-            const tasksRoot = path.join(dir, 'tasks');
-            const worktreesRoot = path.join(dir, 'worktrees');
-            const taskId = 'task-a';
-            const status = makeRerouteStatus(taskId, `task/${taskId}`, 2, options);
-            writeTaskStatus(tasksRoot, taskId, status);
-            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
-            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment Round 3\n\nAllowed.\n');
+for (const { name, expectedPhase, bannerDetail, options } of admittedStateRows) {
+    for (const taskSize of ['M', 'XS'] as const) {
+        void test(`rerouteFromHumanReview admits ${name} (${taskSize})`, () => {
+            withTempDir('reroute-preflight-admitted-state-', dir => {
+                initGitRepo(dir);
+                const tasksRoot = path.join(dir, 'tasks');
+                const worktreesRoot = path.join(dir, 'worktrees');
+                const taskId = 'task-a';
+                const status = makeRerouteStatus(taskId, `task/${taskId}`, 2, { ...options, taskSize });
+                assert.equal(derivePhase(status), expectedPhase);
+                writeTaskStatus(tasksRoot, taskId, status);
+                writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+                writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment Round 3\n\nAllowed.\n');
 
-            const result = runReroute(dir, [taskId], false);
+                const result = runReroute(dir, [taskId], false);
 
-            assert.equal(result.status, 0, result.stderr);
-            const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
-                phases?: { implement?: { status?: string; rerouted?: boolean; reroute_count?: number } };
-            };
-            assert.equal(updated.phases?.implement?.status, 'pending');
-            assert.equal(updated.phases?.implement?.rerouted, true);
-            assert.equal(updated.phases?.implement?.reroute_count, 3);
+                assert.equal(result.status, 0, result.stderr);
+                const updated = readStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId) as {
+                    phases?: { implement?: { status?: string; rerouted?: boolean; reroute_count?: number }; code_review?: { status?: string; verdict?: string; iterations_current_loop?: number; preflight_rejections_current_loop?: number } };
+                };
+                assert.equal(updated.phases?.implement?.status, 'pending');
+                assert.equal(updated.phases?.implement?.rerouted, true);
+                assert.equal(updated.phases?.implement?.reroute_count, 3);
+                assert.equal(updated.phases?.code_review?.status, 'pending');
+                assert.equal(updated.phases?.code_review?.verdict, '');
+                assert.equal(updated.phases?.code_review?.iterations_current_loop, 0);
+                assert.equal(updated.phases?.code_review?.preflight_rejections_current_loop, 0);
+                assert.equal(derivePhase(updated), taskSize === 'M' ? 'spec_review' : 'implement');
+                if (bannerDetail) assert.match(result.stdout, bannerDetail);
+                if (expectedPhase === 'implement') {
+                    assert.ok(result.stdout.includes(`Rerouting: implement ${String(options.implement?.status)} (code_review ${String(options.codeReview?.status)}`), result.stdout);
+                    assert.doesNotMatch(result.stdout, /Rerouting: implement pending \(code_review pending\) →/);
+                }
+            });
         });
-    });
+    }
 }
 
 const rejectedStateRows: Array<{
@@ -1046,13 +1109,17 @@ const rejectedStateRows: Array<{
         },
     },
     {
-        name: 'implement pending',
+        name: 'implement pending with absent counters',
         expectedPhase: 'implement',
         options: {
             implement: { status: 'pending' },
             codeReview: { status: 'pending', verdict: '' },
             qa: { status: 'pending' },
         },
+    },
+    {
+        name: 'implement pending with zero counters', expectedPhase: 'implement',
+        options: { implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '', iterations_current_loop: 0, preflight_rejections_current_loop: 0 }, qa: { status: 'pending' } },
     },
     {
         name: 'complete',
@@ -1073,16 +1140,317 @@ for (const { name, expectedPhase, options } of rejectedStateRows) {
             writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
             writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment\n\nShould not be reached.\n');
             const statusPath = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json');
+            writeReview(path.join(worktreesRoot, taskId), taskId, '# Filled review\n\nPrior findings.\n');
+            const reviewPath = path.join(path.dirname(statusPath), 'review.md');
+            const reviewBefore = fs.readFileSync(reviewPath);
             const before = fs.readFileSync(statusPath, 'utf8');
 
             const result = runReroute(dir, [taskId], false);
 
             assert.notEqual(result.status, 0);
+            assert.match(result.stderr, /requires implementation to have begun on every named task/);
+            assert.doesNotMatch(result.stderr, /or implement once implementation has begun/);
+            assert.match(result.stderr, /code_review, qa, or human_review; or implement in progress or blocked, a blocked code review, or a code review already run in the current loop/);
+            if (expectedPhase === 'implement') {
+                assert.match(result.stderr, /'task-a': implement pending \(code_review pending\)/);
+                assert.doesNotMatch(result.stdout, /Rerouting:/);
+            }
             assert.match(result.stderr, /Current state:/);
+            assert.deepEqual(fs.readFileSync(reviewPath), reviewBefore);
+            assert.equal(fs.existsSync(path.join(path.dirname(statusPath), 'review-prior-1.md')), false);
             assert.match(result.stderr, new RegExp(`'${taskId}': ${expectedPhase}`));
             assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
         });
     });
+}
+
+for (const [admitted, rows] of [[true, admittedStateRows], [false, rejectedStateRows]] as const) {
+    for (const { name, options } of rows) {
+        void test(`isRerouteAdmitted ${name}: ${admitted}`, () => {
+            assert.equal(isRerouteAdmitted(makeRerouteStatus('predicate', '', 0, options) as unknown as StatusJson), admitted);
+        });
+    }
+}
+
+void test('isRerouteAdmitted rejects a blocked code review when the implement entry is missing', () => {
+    const status = makeRerouteStatus('predicate', '', 0, { codeReview: { status: 'blocked', verdict: '' } });
+    delete (status.phases as Record<string, unknown>).implement;
+    assert.equal(isRerouteAdmitted(status as unknown as StatusJson), false);
+});
+
+void test('reroute refuses a partial shared-branch bundle and accepts the printed whole-bundle command', () => withTempDir('reroute-partial-bundle-', dir => {
+    initGitRepo(dir);
+    const tasksRoot = path.join(dir, 'tasks');
+    const interrupted = { implement: { status: 'in_progress' }, codeReview: { status: 'pending', verdict: '' }, qa: { status: 'pending' } };
+    for (const id of ['task-a', 'task-b']) {
+        writeTaskStatus(tasksRoot, id, makeRerouteStatus(id, 'task/task-a', 0, { worktree: false, ...interrupted }));
+        writeSpec(dir, id, '# Spec\n\n## Amendment\n\nNew requirements.\n');
+    }
+    writeTaskStatus(tasksRoot, 'task-c', makeRerouteStatus('task-c', 'task/task-c', 0, { worktree: false, ...interrupted }));
+    const before = fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'));
+    const partial = runReroute(dir, ['task-a'], false);
+    assert.notEqual(partial.status, 0);
+    assert.match(partial.stderr, /Reroute must name every task of a shared-branch bundle: 'task-b' shares branch 'task\/task-a' with 'task-a'\. Nothing was changed\. Name every bundle task in one reroute: canon run task-a task-b --reroute/);
+    assert.doesNotMatch(partial.stderr, /task-c/);
+    assert.deepEqual(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json')), before);
+    const whole = runReroute(dir, ['task-a', 'task-b'], false);
+    assert.equal(whole.status, 0, whole.stderr);
+}));
+
+void test('reroute counts a shared-branch task with an orphaned worktree as part of the bundle', () => withTempDir('reroute-orphan-bundle-', dir => {
+    initGitRepo(dir);
+    const tasksRoot = path.join(dir, 'tasks');
+    const interrupted = { implement: { status: 'in_progress' }, codeReview: { status: 'pending', verdict: '' }, qa: { status: 'pending' } };
+    writeTaskStatus(tasksRoot, 'task-a', makeRerouteStatus('task-a', 'task/task-a', 0, { worktree: false, ...interrupted }));
+    writeTaskStatus(tasksRoot, 'task-b', makeRerouteStatus('task-b', 'task/task-a', 0, { worktree: true, ...interrupted }));
+    writeSpec(dir, 'task-a', '# Spec\n\n## Amendment\n\nNew requirements.\n');
+    const before = fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json'));
+    const partial = runReroute(dir, ['task-a'], false);
+    assert.notEqual(partial.status, 0);
+    assert.match(partial.stderr, /Reroute must name every task of a shared-branch bundle: 'task-b' shares branch 'task\/task-a' with 'task-a'/);
+    assert.deepEqual(fs.readFileSync(path.join(tasksRoot, 'task-a', 'status.json')), before);
+}));
+
+void test('bundle rejection lists sibling-clause tasks separately from qualifying tasks', () => withTempDir('reroute-sibling-listing-', dir => {
+    initGitRepo(dir);
+    const pending = { implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '' } };
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-a', makeRerouteStatus('task-a', 'task/task-a', 0, { worktree: false, ...pending }));
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-b', makeRerouteStatus('task-b', 'task/task-b', 0, { worktree: false }));
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-c', makeRerouteStatus('task-c', 'task/task-b', 0, { worktree: false, ...pending }));
+    const result = runReroute(dir, ['task-a', 'task-b', 'task-c'], false);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Qualifying: task-b\. Admitted as sibling: task-c\. Not qualifying: task-a/);
+    assert.doesNotMatch(result.stderr, /approved sibling/);
+}));
+
+for (const value of [undefined, null, '1', -1, 0, NaN, Infinity]) {
+    void test(`isRerouteAdmitted ignores invalid counter ${String(value)}`, () => {
+        for (const field of ['iterations_current_loop', 'preflight_rejections_current_loop']) {
+            const status = makeRerouteStatus('predicate', '', 0, { implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '', [field]: value } });
+            assert.equal(isRerouteAdmitted(status as unknown as StatusJson), false);
+        }
+    });
+}
+void test('isRerouteAdmitted rejects earlier phases despite stale activity or a blocked review', () => {
+    for (const phase of ['spec', 'spec_review', 'plan'] as const) {
+        const status = makeRerouteStatus('predicate', '', 0, { [phase === 'spec_review' ? 'specReview' : phase]: { status: 'pending' }, implement: { status: 'blocked' }, codeReview: { status: 'blocked', iterations_current_loop: 2 } });
+        assert.equal(isRerouteAdmitted(status as unknown as StatusJson), false);
+    }
+});
+
+for (const implementStatus of ['pending', 'in_progress'] as const) {
+    void test(`reroute missing code_review renders missing from implement ${implementStatus}`, () => {
+        withTempDir('reroute-missing-review-', dir => {
+            initGitRepo(dir);
+            const taskId = 'task-a';
+            const tasksRoot = path.join(dir, 'tasks');
+            const worktreesRoot = path.join(dir, 'worktrees');
+            const status = makeRerouteStatus(taskId, `task/${taskId}`, 2, {
+                implement: { status: implementStatus }, qa: { status: 'pending' },
+            });
+            delete (status.phases as Record<string, unknown>).code_review;
+            assert.equal(derivePhase(status), 'implement');
+            writeTaskStatus(tasksRoot, taskId, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
+            writeSpec(path.join(worktreesRoot, taskId), taskId, '# Spec\n\n## Amendment Round 3\n\nRequirements.\n');
+            const statusPath = path.join(worktreeTasksRoot(worktreesRoot, taskId), taskId, 'status.json');
+            const before = fs.readFileSync(statusPath);
+            const result = runReroute(dir, [taskId], false);
+            if (implementStatus === 'pending') {
+                assert.notEqual(result.status, 0);
+                assert.match(result.stderr, /'task-a': implement pending \(code_review missing\)/);
+                assert.deepEqual(fs.readFileSync(statusPath), before);
+            } else {
+                assert.equal(result.status, 0, result.stderr);
+                assert.match(result.stdout, /Rerouting: implement in_progress \(code_review missing\) →/);
+            }
+        });
+    });
+}
+
+void test('legacy iterations does not override a present non-positive or invalid current-loop count', () => {
+    for (const value of [0, -1, '1', NaN, Infinity]) {
+        const status = makeRerouteStatus('legacy', '', 0, {
+            implement: { status: 'pending' },
+            codeReview: { status: 'pending', verdict: '', iterations: 3, iterations_current_loop: value },
+        });
+        assert.equal(isRerouteAdmitted(status as unknown as StatusJson), false);
+    }
+});
+
+for (const rerouted of [false, true]) {
+    void test(`unstarted single-task reroute recovery (rerouted=${String(rerouted)})`, () => withTempDir('reroute-single-recovery-', dir => {
+        initGitRepo(dir);
+        const status = makeRerouteStatus('task-a', 'task/task-a', 0, {
+            worktree: false, implement: { status: 'pending', rerouted },
+            codeReview: { status: 'pending', verdict: '', iterations_current_loop: 0, preflight_rejections_current_loop: 0 },
+        });
+        assert.equal(derivePhase(status), 'implement');
+        writeTaskStatus(path.join(dir, 'tasks'), 'task-a', status);
+        const statusPath = path.join(dir, 'tasks/task-a/status.json');
+        const before = fs.readFileSync(statusPath);
+        const result = runReroute(dir, ['task-a'], false);
+        assert.notEqual(result.status, 0);
+        assert.deepEqual(fs.readFileSync(statusPath), before);
+        if (rerouted) {
+            assert.match(result.stderr, /If this task is mid-reroute, revise the current amendment.*plain `canon run task-a`/);
+            assert.doesNotMatch(result.stderr, /Revise the spec or plan/);
+        } else {
+            assert.match(result.stderr, /Revise the spec or plan.*plain `canon run task-a`/);
+            assert.doesNotMatch(result.stderr, /revise the current amendment/);
+        }
+    }));
+}
+
+void test('missing implement entry renders missing and cannot ride a shared branch', () => withTempDir('reroute-missing-implement-', dir => {
+    initGitRepo(dir);
+    const status = makeRerouteStatus('task-a', 'task/task-a', 0, {
+        worktree: false, codeReview: { status: 'pending', verdict: '' },
+    });
+    delete (status.phases as Record<string, unknown>).implement;
+    assert.equal(derivePhase(status), 'implement');
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-a', status);
+    const statusPath = path.join(dir, 'tasks/task-a/status.json');
+    const before = fs.readFileSync(statusPath);
+    const result = runReroute(dir, ['task-a'], false);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /'task-a': implement missing \(code_review pending\)/);
+    assert.deepEqual(fs.readFileSync(statusPath), before);
+    const anchor = makeRerouteStatus('task-b', 'task/task-a', 0, { worktree: false });
+    writeTaskStatus(path.join(dir, 'tasks'), 'task-b', anchor);
+    const bundled = runReroute(dir, ['task-a', 'task-b'], false);
+    assert.notEqual(bundled.status, 0);
+    assert.match(bundled.stderr, /Qualifying: task-b\. Not qualifying: task-a/);
+    assert.deepEqual(fs.readFileSync(statusPath), before);
+}));
+
+for (const { name, input, expected } of [
+    { name: 'null falls back', input: { iterations_current_loop: null, iterations: 2 }, expected: 2 },
+    { name: 'absent falls back', input: { iterations: 2 }, expected: 2 },
+    { name: 'zero wins', input: { iterations_current_loop: 0, iterations: 2 }, expected: 0 },
+    { name: 'string', input: { iterations_current_loop: '1', iterations: 2 }, expected: 0 },
+    { name: 'negative', input: { iterations_current_loop: -1, iterations: 2 }, expected: 0 },
+    { name: 'NaN', input: { iterations_current_loop: NaN }, expected: 0 },
+    { name: 'Infinity', input: { iterations_current_loop: Infinity }, expected: 0 },
+    { name: 'legacy string', input: { iterations: '3' }, expected: 0 },
+    { name: 'empty', input: {}, expected: 0 },
+    { name: 'missing entry', input: undefined, expected: 0 },
+]) {
+    void test(`shared review-round reader ${name}`, () => {
+        assert.equal(currentLoopReviewRounds(input as unknown as StatusJson['phases']['code_review']), expected);
+    });
+}
+
+for (const scenario of ['reject-unstarted', 'admit-started', 'mixed-spec-gap'] as const) {
+    void test(`reroute implement-entry bundle ${scenario}`, () => withTempDir('reroute-entry-bundle-', dir => {
+        initGitRepo(dir);
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const options: RerouteStatusOptions[] = scenario === 'mixed-spec-gap'
+            ? [{ codeReview: { status: 'blocked', verdict: 'spec_gap' } }, implementEntryRows[2].options]
+            : [implementEntryRows[scenario === 'admit-started' ? 0 : 1].options,
+                scenario === 'admit-started' ? {} : { implement: { status: 'pending' }, codeReview: { status: 'pending', verdict: '', iterations_current_loop: 0, preflight_rejections_current_loop: 0 } }];
+        const before = ['task-a', 'task-b'].map((id, index) => {
+            const status = makeRerouteStatus(id, `task/${id}`, 0, options[index]);
+            assert.equal(derivePhase(status), scenario === 'mixed-spec-gap' && index === 0 ? 'code_review' : scenario === 'admit-started' && index === 1 ? 'human_review' : 'implement');
+            writeTaskStatus(path.join(dir, 'tasks'), id, status);
+            writeTaskStatus(worktreeTasksRoot(worktreesRoot, id), id, status);
+            writeSpec(path.join(worktreesRoot, id), id, scenario === 'mixed-spec-gap' ? '# Spec\n' : '# Spec\n\n## Amendment\n\nNew requirements.\n');
+            return fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, id), id, 'status.json'));
+        });
+        const result = runReroute(dir, ['task-a', 'task-b'], false);
+        if (scenario === 'admit-started') {
+            assert.equal(result.status, 0, result.stderr);
+            assert.match(result.stdout, /Rerouting: task-a: implement in_progress \(code_review pending\), task-b: human_review →/);
+            for (const id of ['task-a', 'task-b']) {
+                const updated = readStatus(worktreeTasksRoot(worktreesRoot, id), id) as unknown as StatusJson;
+                assert.equal(updated.phases.implement?.status, 'pending');
+                assert.equal(updated.phases.implement?.rerouted, true);
+                assert.equal(updated.phases.implement?.reroute_count, 1);
+                assert.equal(updated.phases.code_review?.status, 'pending');
+                assert.equal(updated.phases.code_review?.verdict, '');
+                assert.equal(updated.phases.code_review?.iterations_current_loop, 0);
+                assert.equal(updated.phases.code_review?.preflight_rejections_current_loop, 0);
+                assert.equal(derivePhase(updated as unknown as Record<string, unknown>), 'spec_review');
+            }
+        } else {
+            assert.notEqual(result.status, 0);
+            assert.match(result.stderr, scenario === 'mixed-spec-gap' ? /amendment required before reroute/ : /requires implementation to have begun/);
+            for (const [index, id] of ['task-a', 'task-b'].entries()) {
+                assert.match(result.stderr, new RegExp(id));
+                assert.deepEqual(fs.readFileSync(path.join(worktreeTasksRoot(worktreesRoot, id), id, 'status.json')), before[index]);
+                if (scenario === 'mixed-spec-gap') assert.match(result.stderr, new RegExp(`${id}:[\\s\\S]*expected heading: ## Amendment`));
+            }
+        }
+    }));
+}
+
+for (const scenario of ['admit', 'empty-branch', 'whitespace-branch', 'missing-branch', 'different-branch', 'missing-review', 'both-unstarted', 'single'] as const) {
+    void test(`reroute shared-branch sibling ${scenario}`, () => withTempDir('reroute-shared-branch-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const ids = scenario === 'single' ? ['task-a'] : ['task-a', 'task-b'];
+        const branchA = scenario === 'empty-branch' ? '' : scenario === 'whitespace-branch' ? '  ' : scenario === 'different-branch' ? 'task/other' : 'task/task-a';
+        const before = new Map<string, Buffer>();
+        for (const id of ids) {
+            const status = makeRerouteStatus(id, id === 'task-a' ? branchA : 'task/task-a', scenario === 'both-unstarted' ? 1 : 0, {
+                implement: { status: 'pending', rerouted: scenario === 'both-unstarted' },
+                codeReview: { status: 'pending', verdict: '', iterations: 0, iterations_current_loop: id === 'task-b' && scenario !== 'both-unstarted' ? 1 : 0, preflight_rejections_current_loop: 0 },
+                qa: { status: 'pending' },
+            });
+            assert.equal(derivePhase(status), 'implement');
+            if (id === 'task-a' && scenario === 'missing-branch') delete status.branch;
+            if (id === 'task-a' && scenario === 'missing-review') delete (status.phases as Record<string, unknown>).code_review;
+            assert.equal(isRerouteAdmitted(status as unknown as StatusJson), id === 'task-b' && scenario !== 'both-unstarted');
+            for (const root of [tasksRoot, worktreeTasksRoot(worktreesRoot, id)]) {
+                writeTaskStatus(root, id, status);
+                const statusPath = path.join(root, id, 'status.json');
+                before.set(statusPath, fs.readFileSync(statusPath));
+            }
+            const spec = `# Spec\n\n## Design\n\n### Affected Files\n\n| File | Change |\n|---|---|\n| \`src/${id}.ts\` | distinct source |\n\n## Amendment\n\nNew requirements.\n`;
+            writeSpec(dir, id, spec);
+            writeSpec(path.join(worktreesRoot, id), id, spec);
+        }
+        const result = runReroute(dir, ids, false);
+        if (scenario === 'admit') {
+            assert.equal(result.status, 0, result.stderr);
+            for (const id of ids) {
+                const updated = readStatus(worktreeTasksRoot(worktreesRoot, id), id) as unknown as StatusJson;
+                assert.equal(derivePhase(updated as unknown as Record<string, unknown>), 'spec_review');
+                assert.equal(updated.phases.implement?.status, 'pending');
+                assert.equal(updated.phases.implement?.rerouted, true);
+                assert.equal(updated.phases.implement?.reroute_count, 1);
+                assert.equal(updated.phases.code_review?.status, 'pending');
+                assert.equal(updated.phases.code_review?.verdict, '');
+                assert.equal(updated.phases.code_review?.iterations_current_loop, 0);
+                assert.equal(updated.phases.code_review?.preflight_rejections_current_loop, 0);
+                assert.ok(result.stdout.includes(`${id}: implement pending (code_review pending`), result.stdout);
+            }
+            const diffFiles = ['src/task-a.ts', 'src/task-b.ts'];
+            const inputs = { diffFiles, handoffFilesByTask: new Map([['task-a', ['src/task-a.ts']], ['task-b', ['src/task-b.ts']]]) };
+            assert.deepEqual(verifyHandoffAgainstDiffFromData(ids, inputs), []);
+            assert.match(verifyHandoffAgainstDiffFromData(['task-b'], inputs).join('\n'), /src\/task-a\.ts/);
+            const previousOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
+            process.env.CANON_TASKS_DIR_OVERRIDE = tasksRoot;
+            try {
+                const whole = buildAffectedFilesAllowlist(ids, { admittedDocs: [] });
+                assert.deepEqual(verifyBaseDriftFromData(diffFiles, whole.paths, ids, whole.prefixes), []);
+                const partial = buildAffectedFilesAllowlist(['task-b'], { admittedDocs: [] });
+                assert.deepEqual(verifyBaseDriftFromData(diffFiles, partial.paths, ['task-b'], partial.prefixes), ['src/task-a.ts']);
+            } finally {
+                if (previousOverride === undefined) delete process.env.CANON_TASKS_DIR_OVERRIDE;
+                else process.env.CANON_TASKS_DIR_OVERRIDE = previousOverride;
+            }
+        } else {
+            assert.notEqual(result.status, 0);
+            for (const [statusPath, bytes] of before) assert.deepEqual(fs.readFileSync(statusPath), bytes);
+            if (scenario !== 'single') {
+                assert.doesNotMatch(result.stderr, /split|separately|subset/i);
+                if (scenario === 'both-unstarted') assert.match(result.stderr, /Qualifying: none\. Not qualifying: task-a, task-b/);
+                else assert.match(result.stderr, /Qualifying: task-b\. Not qualifying: task-a/);
+            }
+        }
+    }));
 }
 
 void test('rerouteFromHumanReview accepts and normalizes a mixed admitted-phase bundle', () => {

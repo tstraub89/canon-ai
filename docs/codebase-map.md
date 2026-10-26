@@ -33,7 +33,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Agent runners | `src/orchestrator/agents/*.ts` | Shared subprocess wrappers for Claude and Codex |
 | Prompt builders and templates | `src/orchestrator/prompts/index.ts`, `src/orchestrator/prompts/templates/*.md` | Data prep + Mustache rendering; phase templates carry JIT operating rules for their consumers |
 | CLI parsing and logging | `src/orchestrator/cli.ts` | Args, usage, `die` / `info` / `warn` |
-| State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, derived status, task/worktree path helpers; exports `validateStatus` and `readStatusFromPath` |
+| State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, derived status, task/worktree path helpers; exports `validateStatus`, `readStatusFromPath`, and the `--reroute` admission predicate `isRerouteAdmitted` |
 | Shared run-context resolver | `src/orchestrator/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
 | Git plumbing and porcelain parsing | `src/orchestrator/git.ts` | Branch helpers, commits, porcelain parsers |
 | Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator, pure set resolver, dot-aware glob matcher |

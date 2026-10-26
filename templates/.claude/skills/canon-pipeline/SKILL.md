@@ -145,9 +145,9 @@ Tasks land on the default branch; no version numbers, no CHANGELOG, no tags.
 2. Run the pipeline. `--ship` merges to the default branch.
 3. Skip all versioning, changelog, and tagging steps. Use `/canon-changelog` only if and when your project adopts a CHANGELOG.
 
-### 6. Reroute after review feedback
+### 6. Reroute once implementation has begun
 
-`--reroute` is allowed from any phase reached after a completed `implement` round: `code_review`, `qa`, or `human_review` — for any status or verdict on that phase.
+`--reroute` is allowed once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection). In a bundle, a sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both belong to the same non-empty task branch. Name every task of a shared-branch bundle in one reroute; a reroute that names only part of it is refused before any state changes, and the message lists the missing tasks. A task admitted as a sibling still needs its own Amendment section.
 
 **Deciding to reroute a task is a human decision, not something an agent driving canon infers on its own** — even under `--full-send` or another autonomous mode, get an explicit human decision before invoking `--reroute`.
 

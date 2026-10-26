@@ -17,20 +17,32 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 
 ## Auto-block on `spec_review` or `code_review` (loop cap hit)
 
-When the loop cap is hit, the pipeline writes an `escalations[]` entry and stops. Two paths:
+When the loop cap is hit, the pipeline writes an `escalations[]` entry and stops. Three paths for a `code_review` block; a `spec_review` block has only A and B:
 
 **Path A — authorize more loops (simple cap bump):**
 ```bash
 MAX_REVIEW_LOOPS=6 canon run <task-id>
 ```
 
-**Path B — stale-context reset** (use when the latest review flagged phrases that no longer exist in the spec — a session-resume staleness artifact):
+**Path B — stale-context reset** (use when the latest review flagged stale context — for a `spec_review` block, phrases that no longer exist in the spec; for a `code_review` block, code or handoff content the review no longer matches — a session-resume staleness artifact):
 ```bash
+# Choose the command matching the blocked review:
 canon task reset-spec-review <task-id>
+# or:
+canon task reset-code-review <task-id>
 MAX_REVIEW_LOOPS=6 canon run <task-id>
 ```
 
 `reset-spec-review` marks `spec` done — accepting the current spec as-is — archives the existing review file as `*-prior-<N>.md` (so the next pass doesn't re-emit the same complaints), resets the review phase to pending, clears verdict and iteration counter, drops the session ID, and re-arms the spec gate unless the task is full-send (the gate disarms itself when it halts, so without this a reset after a halt would run straight through). The next run re-reviews without another spec revision; raise the cap instead when the deferred spec revision should run before review.
+
+`reset-code-review` similarly marks `implement` done, accepting the current implementation as-is, archives the prior review, clears the loop-local counters and verdict, and starts a fresh code review without another implementation pass. Raise the cap instead when the deferred implementation pass should run before review.
+
+**Path C — spec change after a `code_review` loop-cap block:** implementation has begun, so reroute is admitted. Append the next `## Amendment` (round 1) or `## Amendment Round N` (round 2+) section to `tasks/<id>/spec.md` in the active task directory, then run:
+```bash
+canon run <task-id> --reroute
+```
+
+A `spec_review` loop-cap block is not admitted by `--reroute`. Revise the spec normally and resume through A or B instead.
 
 Stop the reviewer loop once findings turn wording-only. Self-grep for flagged phrases in the current spec/code before running another expensive review pass.
 
