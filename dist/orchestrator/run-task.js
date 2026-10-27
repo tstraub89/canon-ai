@@ -2832,6 +2832,7 @@ ${renderedPrompt}`;
   let status = "ok";
   let tokens;
   let sessionId = null;
+  const effortFlag = ["-c", `model_reasoning_effort=${effort}`];
   try {
     if (interactive) {
       console.log("");
@@ -2839,7 +2840,7 @@ ${renderedPrompt}`;
       console.log("Prompt loaded. You're in the driver's seat.");
       console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
       console.log("");
-      runCommandOrDie("codex", ["-m", model, "-C", cwd, effectivePrompt], { cwd });
+      runCommandOrDie("codex", ["-m", model, ...effortFlag, "-C", cwd, effectivePrompt], { cwd });
       return {
         exitCode: 0,
         signal: null,
@@ -2850,7 +2851,6 @@ ${renderedPrompt}`;
         sessionId: null
       };
     }
-    const effortFlag = ["-c", `model_reasoning_effort=${effort}`];
     const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
     const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
     const displayChunks = [];

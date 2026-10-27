@@ -50,6 +50,8 @@ export async function runCodex(
     let tokens: number | undefined;
     let sessionId: string | null = null;
 
+    const effortFlag = ['-c', `model_reasoning_effort=${effort}`];
+
     try {
         if (interactive) {
             console.log('');
@@ -57,7 +59,7 @@ export async function runCodex(
             console.log("Prompt loaded. You're in the driver's seat.");
             console.log('───────────────────────────────────────────');
             console.log('');
-            runCommandOrDie('codex', ['-m', model, '-C', cwd, effectivePrompt], { cwd });
+            runCommandOrDie('codex', ['-m', model, ...effortFlag, '-C', cwd, effectivePrompt], { cwd });
             return {
                 exitCode: 0,
                 signal: null,
@@ -69,7 +71,6 @@ export async function runCodex(
             };
         }
 
-        const effortFlag = ['-c', `model_reasoning_effort=${effort}`];
         const sandboxFlags = resumeId ? [] : ['--sandbox', 'workspace-write'];
         const args = resumeId
             ? ['exec', 'resume', resumeId, '--json', ...effortFlag, effectivePrompt, '-m', model]

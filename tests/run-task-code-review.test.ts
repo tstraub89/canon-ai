@@ -1073,6 +1073,29 @@ void test('runCodex adds headless guidance to fresh and resumed non-interactive 
     }
 });
 
+void test('runCodex passes the matrix effort to interactive sessions', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-interactive-effort-'));
+    const previousPath = process.env.PATH;
+    try {
+        const argsFile = path.join(dir, 'args.jsonl');
+        const binary = path.join(dir, 'codex');
+        fs.writeFileSync(binary, [
+            '#!/usr/bin/env node',
+            `require('node:fs').appendFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+        ].join('\n'), { mode: 0o755 });
+        process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ''}`;
+
+        await runCodex('interactive prompt', true, null, 'gpt-mini', 'max', undefined, dir);
+
+        const args = JSON.parse(fs.readFileSync(argsFile, 'utf8').trim()) as string[];
+        assert.deepEqual(args, ['-m', 'gpt-mini', '-c', 'model_reasoning_effort=max', '-C', dir, 'interactive prompt']);
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 void test('reviewer-set code_review blocked stops before evidence recovery', { concurrency: false }, async () => {
     await withTempTasksAsync((tasksRoot, activeCwd) => {
         writeTask(tasksRoot, 'reviewer-stop');
