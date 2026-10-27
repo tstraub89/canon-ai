@@ -158,3 +158,11 @@ A fallback query added to production code so a fake git stub would pass hid a re
 *(2026-10-25, source: shared-tasks-root)*
 
 The parent of `--git-common-dir` is only the project root when the git directory sits inside the working tree. With `git init --separate-git-dir`, or in a submodule, that parent is outside the project. In the main working tree, `--git-dir` equals `--git-common-dir` and `--show-toplevel` is correct; only linked worktrees need the parent-of-common-dir branch. Canonicalize with `realpath` before comparing, because macOS temp paths are symlinked. See `resolveProjectRoot()` in `src/lib/project-root.ts`.
+
+---
+
+### Check `git ls-files` before planning around a path's tracked state
+
+*(2026-10-27, source: codex-implement-effort-xhigh)*
+
+A commit titled "stop committing dist/" existed on the base branch, but `git ls-files dist` still listed `dist/cli/index.js` and `dist/orchestrator/run-task.js`. A plan written from the commit title would have treated `dist/` as untracked and skipped the rebuild-and-commit step, so the committed bundle would have gone stale. Before a plan assumes a path is or isn't tracked, run `git ls-files <path>` and read the result, not the commit message. For `dist/`, a source change means `npm run build` and committing the rebuilt declared bundles.

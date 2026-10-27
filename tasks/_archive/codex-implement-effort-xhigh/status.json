@@ -1,7 +1,7 @@
 {
   "id": "codex-implement-effort-xhigh",
   "title": "Raise mini implement effort and default the full model to GPT-6.1 Sol",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-27",
   "updated": "2026-10-27",
   "branch": "task/codex-implement-effort-xhigh",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
