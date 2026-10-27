@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 
 import { AgentSessionError } from '../src/orchestrator/agents/errors.js';
 import { CODEX_HEADLESS } from '../src/orchestrator/prompts/helpers.js';
-import { runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
+import { invalidCodexEffortMessage, runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
 import { recordMetric } from '../src/orchestrator/metrics.js';
 import { findUnjudgedFullSendFilesFromData, runCodeReviewPhase, type CodeReviewPhaseDeps } from '../src/orchestrator/phases/code-review.js';
 import { writeColdCodexArchive, findColdCodexArchiveForRound, hasMalformedColdCodexArchive } from '../src/orchestrator/review-archive.js';
@@ -233,7 +233,7 @@ async function captureDie(fn: () => Promise<unknown>): Promise<string> {
 
 function assertInvalidEffortMessage(message: string): void {
     assert.match(message, /ultra/);
-    assert.match(message, /none\|minimal\|low\|medium\|high\|xhigh/);
+    assert.match(message, /none\|minimal\|low\|medium\|high\|xhigh\|max/);
     // The actionable negative: editing the user's own Codex config cannot fix
     // this, because canon's `-c model_reasoning_effort=` supersedes it.
     assert.match(message, /per-invocation override supersedes it/);
@@ -243,6 +243,11 @@ function assertInvalidEffortMessage(message: string): void {
     // canon-ai source path they don't have when installed from npm.
     assert.doesNotMatch(message, /\bsrc\//);
 }
+
+void test('Codex max effort is accepted while unknown effort remains rejected', () => {
+    assert.equal(invalidCodexEffortMessage('max'), null);
+    assert.notEqual(invalidCodexEffortMessage('ultra'), null);
+});
 
 function makeDeps(options: {
     activeCwd: string;

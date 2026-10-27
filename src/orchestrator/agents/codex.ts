@@ -13,7 +13,7 @@ export type ColdCodexReviewResult = {
     durationMs: number;
 };
 
-export const VALID_CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+export const VALID_CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export function invalidCodexEffortMessage(effort: string): string | null {
     if ((VALID_CODEX_EFFORTS as readonly string[]).includes(effort)) return null;

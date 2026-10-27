@@ -209,23 +209,23 @@ Set in `status.json` at task creation:
 
 Canon's recommended starting policy for when to scope a task as `delicate: true`: *require evidence of real production impact, not theoretical correctness.*
 
-A `delicate` task carries meaningful regression risk on a security-sensitive surface and runs at the most expensive model+effort tier. "It's technically wrong" is not sufficient justification on its own — a hardening pass on auth/payments/storage that no user has ever hit can take significant pipeline time, introduce regression risk, and produce zero customer-visible value. Before scoping any task as `delicate: true`, require at least one confirmed production incident or a concrete upcoming flow that depends on the fix. Note the incident in the spec's *Problem* section.
+A `delicate` task carries meaningful regression risk on a security-sensitive surface and promotes Codex spec review and implementation to the full model, alongside stronger Claude review. "It's technically wrong" is not sufficient justification on its own — a hardening pass on auth/payments/storage that no user has ever hit can take significant pipeline time, introduce regression risk, and produce zero customer-visible value. Before scoping any task as `delicate: true`, require at least one confirmed production incident or a concrete upcoming flow that depends on the fix. Note the incident in the spec's *Problem* section.
 
 This is a default — your project can adopt a stricter or looser bar in `docs/decisions.md` if it has different risk tolerance (e.g., a medical-data project with regulatory exposure may want proactive hardening).
 
 ## Codex Model/Effort Matrix
 
-Codex model and effort scale with task size:
+Codex model and effort come from a fixed phase × size matrix:
 
 | Phase | XS | S | M | L | XL / delicate |
 |---|---|---|---|---|---|
 | `spec_review` | — (skipped) | mini / medium | mini / high | mini / high | full / high |
-| `implement`   | mini / medium | mini / medium | mini / high | mini / high | full / high |
+| `implement`   | mini / xhigh | mini / xhigh | mini / max | mini / max | full / high |
 | `code_review` (cold lens) | mini / high | mini / high | mini / high | mini / high | mini / high |
 
-Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. XL/delicate implement runs at `high`, not `xhigh`: reasoning models have shown overthinking at `xhigh` with open-ended tool access — cost and latency without a quality gain. Raise via env only if your own evaluation shows under-reasoning.
+Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. Effort comes only from this matrix; there is no Codex effort environment override. M/L implement runs use Luna at `max`, while XL/delicate runs use Sol at `high`: delicate work already gets the stronger model, and Sol at `xhigh` costs about 1.5–2× Sol at `high`. Re-evaluating the full model's effort curve remains a separate follow-up.
 
-The cold-Codex `code_review` lens is the exception to size scaling: as a mandatory hard-fail gate, it runs at flat `high` effort and stays on the mini model at every size, including XL/delicate.
+The cold-Codex `code_review` lens is deliberately flat: as a mandatory hard-fail gate, it runs at `high` effort and stays on the mini model at every size, including XL/delicate.
 
 `spec_review` runs at `high` from M upward. Task-history analysis found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts) but a reroute-severity gap, with M's lighter spec_review effort the leading hypothesis. M and L also differ on loop cap and budget, so this isn't a proven sole cause; if you retune the matrix, re-measure your own M vs. L reroute rate.
 
@@ -279,8 +279,14 @@ Codex model overrides:
 | Variable | Default | Purpose |
 |---|---|---|
 | `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for XS/S/M/L non-delicate phases. |
-| `CODEX_MODEL_FULL` | `gpt-6-sol` | Codex model for XL or delicate phases. |
+| `CODEX_MODEL_FULL` | `gpt-6.1-sol` | Codex model for XL or delicate phases. |
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for XS/S/M, 5 for L/XL. |
+
+M/L implementation uses `max`, which requires a Codex CLI and mini model
+that accept that effort. This was verified only with Codex CLI 0.164.0 and
+`gpt-6-luna`. If an M/L implement call fails on `max`, upgrade the Codex CLI,
+point `CODEX_MODEL_MINI` at a model that accepts `max` (or unset it), or
+install the previous canon release. There is no effort environment override.
 
 These are canon's shipped defaults at the time of release and may lag
 behind what your local `codex` CLI accepts. **Verify they resolve on your

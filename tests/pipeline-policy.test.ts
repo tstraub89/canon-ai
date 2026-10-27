@@ -238,11 +238,11 @@ const CODEX_MATRIX: CodexRow[] = [
     { phase: 'spec_review', size: 'L',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'spec_review', size: 'XL', expected: { model: 'full', effort: 'high' } },
     // implement
-    { phase: 'implement',   size: 'XS', expected: { model: 'mini', effort: 'medium' } },
-    { phase: 'implement',   size: 'S',  expected: { model: 'mini', effort: 'medium' } },
-    { phase: 'implement',   size: 'M',  expected: { model: 'mini', effort: 'high' } },
-    { phase: 'implement',   size: 'L',  expected: { model: 'mini', effort: 'high' } },
-    { phase: 'implement',   size: 'XL', expected: { model: 'full', effort: 'high' } },  // re-baselined 2026-06: was xhigh (GPT-5.5 overthinks at xhigh w/ open-ended tools)
+    { phase: 'implement',   size: 'XS', expected: { model: 'mini', effort: 'xhigh' } },
+    { phase: 'implement',   size: 'S',  expected: { model: 'mini', effort: 'xhigh' } },
+    { phase: 'implement',   size: 'M',  expected: { model: 'mini', effort: 'max' } },
+    { phase: 'implement',   size: 'L',  expected: { model: 'mini', effort: 'max' } },
+    { phase: 'implement',   size: 'XL', expected: { model: 'full', effort: 'high' } },
     // code_review (cold-Codex review lens)
     { phase: 'code_review', size: 'XS', expected: { model: 'mini', effort: 'high' } },
     { phase: 'code_review', size: 'S',  expected: { model: 'mini', effort: 'high' } },
