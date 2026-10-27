@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Codex implementation runs at higher reasoning effort, and the full Codex model defaults to GPT-6.1 Sol.** Extra-small and small tasks now implement with the mini model at `xhigh` effort (was `medium`), and medium and large tasks at `max` (was `high`). Extra-large and delicate tasks stay on the full model at `high`, so `delicate` now means a stronger model rather than more effort. The full-model default moves from `gpt-6-sol` to `gpt-6.1-sol`; set `CODEX_MODEL_FULL=gpt-6-sol` to keep the old one. Effort has no environment override, so restoring the old effort settings means installing the previous release. `max` needs a Codex CLI and mini model that accept it; the pipeline guide names the verified pair and what to do if Codex rejects it.
+
+### Fixed
+
+- **`canon run --interactive` applies the selected reasoning effort.** Interactive Codex sessions used to ignore it and run at your Codex config's or the model's default effort, even though canon logged the selected value.
+
 ## [3.14.0] — 2026-10-25
 
 ### Added
