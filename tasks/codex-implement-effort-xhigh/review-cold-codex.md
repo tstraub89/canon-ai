@@ -1,0 +1,1 @@
+The changed routing, effort validation, defaults, generated output, and mirrored documentation are consistent. Type-checking and tests completed without a reported failure; the remaining risk is compatibility with Codex CLI/model combinations that do not accept `max`, which the updated docs explicitly call out.

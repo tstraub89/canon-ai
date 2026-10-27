@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 
 import { AgentSessionError } from '../src/orchestrator/agents/errors.js';
 import { CODEX_HEADLESS } from '../src/orchestrator/prompts/helpers.js';
-import { runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
+import { invalidCodexEffortMessage, runCodex, runColdCodexReview } from '../src/orchestrator/agents/codex.js';
 import { recordMetric } from '../src/orchestrator/metrics.js';
 import { findUnjudgedFullSendFilesFromData, runCodeReviewPhase, type CodeReviewPhaseDeps } from '../src/orchestrator/phases/code-review.js';
 import { writeColdCodexArchive, findColdCodexArchiveForRound, hasMalformedColdCodexArchive } from '../src/orchestrator/review-archive.js';
@@ -233,7 +233,7 @@ async function captureDie(fn: () => Promise<unknown>): Promise<string> {
 
 function assertInvalidEffortMessage(message: string): void {
     assert.match(message, /ultra/);
-    assert.match(message, /none\|minimal\|low\|medium\|high\|xhigh/);
+    assert.match(message, /none\|minimal\|low\|medium\|high\|xhigh\|max/);
     // The actionable negative: editing the user's own Codex config cannot fix
     // this, because canon's `-c model_reasoning_effort=` supersedes it.
     assert.match(message, /per-invocation override supersedes it/);
@@ -243,6 +243,11 @@ function assertInvalidEffortMessage(message: string): void {
     // canon-ai source path they don't have when installed from npm.
     assert.doesNotMatch(message, /\bsrc\//);
 }
+
+void test('Codex max effort is accepted while unknown effort remains rejected', () => {
+    assert.equal(invalidCodexEffortMessage('max'), null);
+    assert.notEqual(invalidCodexEffortMessage('ultra'), null);
+});
 
 function makeDeps(options: {
     activeCwd: string;
@@ -1061,6 +1066,29 @@ void test('runCodex adds headless guidance to fresh and resumed non-interactive 
         assert.ok(resumedPrompt.endsWith('resumed prompt'));
         assert.doesNotMatch(interactivePrompt, /Headless session: this runs non-interactively/);
         assert.equal(interactivePrompt, 'interactive prompt');
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+void test('runCodex passes the matrix effort to interactive sessions', { concurrency: false }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-interactive-effort-'));
+    const previousPath = process.env.PATH;
+    try {
+        const argsFile = path.join(dir, 'args.jsonl');
+        const binary = path.join(dir, 'codex');
+        fs.writeFileSync(binary, [
+            '#!/usr/bin/env node',
+            `require('node:fs').appendFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+        ].join('\n'), { mode: 0o755 });
+        process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ''}`;
+
+        await runCodex('interactive prompt', true, null, 'gpt-mini', 'max', undefined, dir);
+
+        const args = JSON.parse(fs.readFileSync(argsFile, 'utf8').trim()) as string[];
+        assert.deepEqual(args, ['-m', 'gpt-mini', '-c', 'model_reasoning_effort=max', '-C', dir, 'interactive prompt']);
     } finally {
         if (previousPath === undefined) delete process.env.PATH;
         else process.env.PATH = previousPath;

@@ -1,133 +1,80 @@
 # Code Review: codex-implement-effort-xhigh
 
 > Reviewer: Claude | Spec: `tasks/codex-implement-effort-xhigh/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
 
-Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
+Synthesized by the foreman from three lenses: anchored Claude, cold-Claude, and pre-obtained cold-Codex.
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did Codex's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence: none required (no red-first ACs)
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: implement effort cells | Pass | `src/lib/pipeline-policy.ts` XS/S mini/xhigh, M/L mini/max, XL full/high; other rows unchanged; table rows in `tests/pipeline-policy.test.ts` match. |
+| AC-2: `max` valid effort | Pass | `max` after `xhigh` in `VALID_CODEX_EFFORTS`; new accept/reject test; regex ends `\|xhigh\|max`. |
+| AC-3: full-model default | Pass | `policy.ts` fallback `gpt-6.1-sol`; no `'gpt-6-sol'` in `src`; env-table row and `max` caveat with recovery path in the guide. |
+| AC-4: stale env/overthinking claims | Pass | Zero-match greps clean; comment rewritten; 2026-06 entry kept with inline note. |
+| AC-5: delicate = model upgrade | Pass | README and guide wording corrected; matrix table and prose match AC-1. |
+| AC-6: product-context summary | Pass | XS mini/xhigh; no "scales with size"; cross-references new entry. |
+| AC-7: decisions entry | Pass | All of (a)–(f) present; four inline supersede notes present. |
+| AC-8: mirror/build in sync | Pass | Template mirror matches root; `dist/orchestrator/run-task.js` rebuilt and carries both source changes; `dist/cli/index.js` unchanged. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
+- [x] **Pass** — proceed to Stage 2
+- [ ] **Fail**
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Small, tightly scoped change: matrix cells, one validator entry, one default string, docs, mirror, and dist all agree. No correctness bugs survived adjudication; the cold-Claude findings concern the deliberately unenforced CLI/model compatibility, which the spec records as a Non-Goal and Known Risk.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `tests/run-task-code-review.test.ts:247` (anchored, cold-Claude — flagged by 2 lenses): the new test only checks the validator and uses `assert.notEqual(..., null)` for `ultra`. No test pins the `gpt-6.1-sol` default string (policy tests use `mini`/`full` placeholders) or that matrix efforts pass `invalidCodexEffortMessage`. Optional follow-up.
+- `src/lib/pipeline-policy.ts:205`: the spec_review comment says "effort scales with size", which is true for spec_review; not a stale claim, no action.
 
 #### Spec Gaps
 
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): `codex.ts:16-24` — `invalidCodexEffortMessage` gives no hint that `max` may be rejected by an older CLI/model — that message is canon's own pre-spawn validation for values outside its list; a CLI rejection surfaces Codex's own error. Spec Non-Goal "No Codex CLI version gate" and Known Risks (first bullet) accept this, with the caveat and recovery path documented in the guide per AC-3.
+- Dismissed (cold-Claude): `pipeline-policy.ts:235-238` — no preflight/`canon doctor` check that CLI and model accept `max` — explicit spec Non-Goal ("No `canon doctor` check and no runtime version gate"); Known Risk accepted by the spec; not a code-bug or spec-gap (decision made deliberately, mitigated by documentation).
+- Dismissed (cold-Claude): `policy.ts:28` — `gpt-6.1-sol` resolvability unchecked and XL spec_review also moves — the spec's Decision changes the shared full-model fallback (both full-model phases) and cites the operator running `CODEX_MODEL_FULL=gpt-6.1-sol` since 2026-10-04; rollback via `CODEX_MODEL_FULL` is documented.
+- Dismissed (cold-Claude): `decisions.md:220` — cost-ratio rationale conflicts with the older "overthinks" rationale — the old text is explicitly marked superseded per AC-7, and the new entry addresses the 2026-07 evidence in its Why (item b); docs-only.
+- Dismissed (cold-Codex): no findings; it noted only the documented `max` CLI/model compatibility risk, already accepted in Known Risks.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->

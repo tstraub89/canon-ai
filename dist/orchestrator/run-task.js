@@ -2178,10 +2178,10 @@ function codexMatrix(config3) {
       XL: { model: config3.codexModelFull, effort: "high" }
     },
     implement: {
-      XS: { model: config3.codexModelMini, effort: "medium" },
-      S: { model: config3.codexModelMini, effort: "medium" },
-      M: { model: config3.codexModelMini, effort: "high" },
-      L: { model: config3.codexModelMini, effort: "high" },
+      XS: { model: config3.codexModelMini, effort: "xhigh" },
+      S: { model: config3.codexModelMini, effort: "xhigh" },
+      M: { model: config3.codexModelMini, effort: "max" },
+      L: { model: config3.codexModelMini, effort: "max" },
       XL: { model: config3.codexModelFull, effort: "high" }
     },
     code_review: {
@@ -2295,7 +2295,7 @@ var config2 = {
   claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
   claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6-sol",
+  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6.1-sol",
   maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   claudeBudget: process.env.CLAUDE_BUDGET ?? null
 };
@@ -2814,7 +2814,7 @@ ${renderedPrompt}`;
 }
 
 // src/orchestrator/agents/codex.ts
-var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
+var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 function invalidCodexEffortMessage(effort) {
   if (VALID_CODEX_EFFORTS.includes(effort)) return null;
   return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. Effort is not configurable \u2014 canon resolves it from a fixed phase/size matrix, so this is a bug in canon rather than in your setup. Editing model_reasoning_effort in ~/.codex/config.toml will not help: the per-invocation override supersedes it. Please report this along with the task size and phase.`;
@@ -2832,6 +2832,7 @@ ${renderedPrompt}`;
   let status = "ok";
   let tokens;
   let sessionId = null;
+  const effortFlag = ["-c", `model_reasoning_effort=${effort}`];
   try {
     if (interactive) {
       console.log("");
@@ -2839,7 +2840,7 @@ ${renderedPrompt}`;
       console.log("Prompt loaded. You're in the driver's seat.");
       console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
       console.log("");
-      runCommandOrDie("codex", ["-m", model, "-C", cwd, effectivePrompt], { cwd });
+      runCommandOrDie("codex", ["-m", model, ...effortFlag, "-C", cwd, effectivePrompt], { cwd });
       return {
         exitCode: 0,
         signal: null,
@@ -2850,7 +2851,6 @@ ${renderedPrompt}`;
         sessionId: null
       };
     }
-    const effortFlag = ["-c", `model_reasoning_effort=${effort}`];
     const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
     const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
     const displayChunks = [];

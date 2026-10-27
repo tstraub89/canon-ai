@@ -62,7 +62,7 @@ Canon is what happens when you treat those failure modes as engineering problems
 | Agent forgets a past mistake | **`docs/lessons-learned.md`** — distilled cross-task wisdom that promotes into permanent rules over time |
 | Reviews loop forever on the same disagreement | **Auto-block on runaway review loops** — per-size caps (see `pipeline-policy.ts`), escalation to human after the cap |
 | Spec drift between conversation and pipeline | **File-based handoff protocol** — every artifact lives in `tasks/<id>/`, no copy-pasting |
-| Sensitive surfaces (auth, payments) get refactored on theoretical grounds | **`delicate: true` flag** that promotes the task to highest-effort tier and triggers extra review discipline |
+| Sensitive surfaces (auth, payments) get refactored on theoretical grounds | **`delicate: true` flag** that moves Codex spec review and implementation to the full model and triggers extra review discipline |
 
 ## How it works
 
@@ -79,14 +79,14 @@ The orchestrator drives this. For each task:
 spec → spec_review → plan → implement → code_review → qa → human_review
 ```
 
-The human gates between `spec_review` and `plan` — they approve the spec before the pipeline advances to implementation. Within the chain: automatic loops on `changes_requested` verdicts, model/effort scaling by task size, optional git-worktree isolation, session resumption across phases, and auto-block on runaway loops. See `docs/pipeline-orchestrator.md` for the full mechanics.
+The human gates between `spec_review` and `plan` — they approve the spec before the pipeline advances to implementation. Within the chain: automatic loops on `changes_requested` verdicts, model selection by task size, optional git-worktree isolation, session resumption across phases, and auto-block on runaway loops. See `docs/pipeline-orchestrator.md` for the full mechanics.
 
 The pipeline supports two tiers:
 
 - **Fast tier** (XS tasks): spec + plan in one Claude session, skip Codex spec review, human gate replaces it.
 - **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, Codex reviews specs before they reach the human.
 
-`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus Codex spec review and implementation; QA and the cold-Codex review lens stay on their regular cells. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
+`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves Codex spec review and implementation to the full model; QA and the cold-Codex review lens stay on their regular cells. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
 
 A single command runs a task end-to-end:
 

@@ -212,13 +212,11 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                but M's rerouted tasks averaged worse than L's (5.15 vs
     //                4.83). M's lighter spec_review effort is the leading
     //                hypothesis (not a proven sole cause — see decisions.md).
-    //   implement:   mini through L. XS/S get medium effort (token savings on
-    //                the smallest changes). XL/delicate: full model at high. Not
-    //                xhigh — the prior generation overthought at xhigh with
-    //                open-ended tool access (cost without quality gain); tier
-    //                inherited pending GPT-6-generation re-eval, and canon's thesis
-    //                is token discipline over reflexive max-effort. Raise via
-    //                env only if eval shows under-reasoning on delicate work.
+    //   implement:   mini at xhigh for XS/S and max for M/L; XL/delicate uses
+    //                the full model at high. The full model is already the
+    //                stronger choice for delicate work, and its xhigh effort
+    //                costs about 1.5–2× high; re-evaluating its effort curve
+    //                remains a separate follow-up.
     //   code_review: the mandatory cold-Codex lens stays on mini at every
     //                size and uses flat high effort, including XL/delicate.
     //
@@ -234,10 +232,10 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
             XL: { model: config.codexModelFull, effort: 'high' },
         },
         implement: {
-            XS: { model: config.codexModelMini, effort: 'medium' },
-            S:  { model: config.codexModelMini, effort: 'medium' },
-            M:  { model: config.codexModelMini, effort: 'high' },
-            L:  { model: config.codexModelMini, effort: 'high' },
+            XS: { model: config.codexModelMini, effort: 'xhigh' },
+            S:  { model: config.codexModelMini, effort: 'xhigh' },
+            M:  { model: config.codexModelMini, effort: 'max' },
+            L:  { model: config.codexModelMini, effort: 'max' },
             XL: { model: config.codexModelFull, effort: 'high' },
         },
         code_review: {

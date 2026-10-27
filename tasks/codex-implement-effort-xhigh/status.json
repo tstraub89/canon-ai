@@ -1,15 +1,15 @@
 {
   "id": "codex-implement-effort-xhigh",
   "title": "Raise mini implement effort and default the full model to GPT-6.1 Sol",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-27",
   "updated": "2026-10-27",
-  "branch": "",
+  "branch": "task/codex-implement-effort-xhigh",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "ceff8abdddfb867898228ad1c2c10eb8199722d3",
+    "orchestrator_commit": "20adf0ae5f7d196d2953a6c1e2c0266031652ec3",
     "canon_version": "3.14.0",
     "codex_cli": "codex-cli 0.164.0",
     "claude_code": "2.1.310 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a17ecf-3cae-7511-b557-38a1ab913b5b"
+    "codex_spec_review": "01a17ecf-3cae-7511-b557-38a1ab913b5b",
+    "codex": "01a17ed0-f174-7d42-b07c-f14d12d070f9",
+    "claude_review": "988a687e-5369-457f-9fcb-9d01766b5ff6"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
