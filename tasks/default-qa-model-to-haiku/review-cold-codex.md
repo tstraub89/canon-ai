@@ -1,0 +1,1 @@
+The QA model default and override precedence are implemented consistently in the policy, tests, generated output, and adopter-facing documentation. No actionable regressions were found.
