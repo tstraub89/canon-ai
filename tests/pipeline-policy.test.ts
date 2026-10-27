@@ -21,6 +21,7 @@ import {
     type CodeReviewScopeFacts,
 } from '../src/lib/pipeline-policy.ts';
 import { LEGACY_FALLBACK_ENV_VARS } from '../src/orchestrator/env.ts';
+import { invalidCodexEffortMessage } from '../src/orchestrator/agents/codex.ts';
 
 const reviewFacts: CodeReviewScopeFacts = {
     isRound1: false, effectiveSize: 'M', delicate: false, baseBranch: 'main',
@@ -314,10 +315,14 @@ const CLAUDE_MODEL_ENV_VARS = [
     'CLAUDE_MODEL_REVIEW_LARGE', 'CLAUDE_MODEL_QA', 'CLAUDE_MODEL_LIGHT', 'CLAUDE_MODEL_STRONG',
 ];
 
+const CODEX_MODEL_ENV_VARS = [
+    'CODEX_MODEL_MINI', 'CODEX_MODEL_DEFAULT', 'CODEX_MODEL_FULL', 'CODEX_MODEL_DELICATE',
+];
+
 function loadPolicyConfigForEnv(overrides: Record<string, string>): PolicyConfig {
     const policyUrl = pathToFileURL(path.join(process.cwd(), 'src/orchestrator/policy.ts')).href;
     const env = { ...process.env };
-    for (const key of CLAUDE_MODEL_ENV_VARS) delete env[key];
+    for (const key of [...CLAUDE_MODEL_ENV_VARS, ...CODEX_MODEL_ENV_VARS]) delete env[key];
     Object.assign(env, overrides);
     const result = spawnSync(process.execPath, ['--import', 'tsx', '--eval', [
         `import(${JSON.stringify(policyUrl)})`,
@@ -332,6 +337,28 @@ function loadPolicyConfigForEnv(overrides: Record<string, string>): PolicyConfig
     }
     return config;
 }
+
+void test('shipped Codex model defaults apply when no Codex model variables are set', () => {
+    const config = loadPolicyConfigForEnv({});
+    assert.equal(config.codexModelMini, 'gpt-6-luna');
+    assert.equal(config.codexModelFull, 'gpt-6.1-sol');
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_DELICATE: 'legacy-full' }).codexModelFull, 'legacy-full');
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_FULL: 'pinned-full', CODEX_MODEL_DELICATE: 'legacy-full' }).codexModelFull, 'pinned-full');
+});
+
+void test('every Codex matrix effort is one the Codex effort validator accepts', () => {
+    const phases: CodexPhase[] = ['spec_review', 'implement', 'code_review'];
+    const sizes: TaskSize[] = ['XS', 'S', 'M', 'L', 'XL'];
+    for (const delicate of [false, true]) {
+        for (const size of sizes) {
+            const policy = getPipelinePolicy([s(size, delicate)], TEST_CONFIG);
+            for (const phase of phases) {
+                const { effort } = policy.codex(phase);
+                assert.equal(invalidCodexEffortMessage(effort), null, `${phase}/${size}${delicate ? '/delicate' : ''}: ${effort}`);
+            }
+        }
+    }
+});
 
 void test('override precedence: no Claude model variables uses defaults', () => {
     const config = loadPolicyConfigForEnv({});
