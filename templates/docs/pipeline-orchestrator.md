@@ -231,16 +231,16 @@ The cold-Codex `code_review` lens is deliberately flat: as a mandatory hard-fail
 
 ## Claude Model/Effort Matrix
 
-Claude model and effort scale with effective task size. The light tier defaults to `sonnet`, and the strong tier defaults to `opus`:
+Claude model and effort scale with effective task size. The light tier defaults to `sonnet`, the strong tier defaults to `opus`, and `qa` uses its own default model, `claude-haiku-5-5`:
 
 | Phase | XS | S | M | L | XL / delicate |
 |---|---|---|---|---|---|
 | `spec` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
 | `plan` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
 | `code_review` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
-| `qa` | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium |
+| `qa` | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium |
 
-`spec`, `plan`, and `code_review` move to the strong tier at M, where sustained judgment matters; only XL/delicate raises effort to `high`. `qa` writes completion artifacts and cannot block or reroute a task, so it stays light/medium at every size. No Claude cell runs above `high`.
+`spec`, `plan`, and `code_review` move to the strong tier at M, where sustained judgment matters; only XL/delicate raises effort to `high`. QA writes completion artifacts and cannot block or reroute a task, so it uses its own default model rather than the light tier. The operator reports an uncontrolled field sample of about 37 tasks across canon-ai and an adopter with no QA failures, budget-cap hits, or retries; the 20 canon-ai `claude-haiku-5-5` QA invocation rows are all `ok` and took 44–214 seconds. Set `CLAUDE_MODEL_QA=sonnet` to restore the previous QA model. No Claude cell runs above `high`.
 
 ## Claude Budget Matrix
 
@@ -255,18 +255,18 @@ Claude phase budgets scale with task size. `spec`/`plan`/`qa` are single-pass Cl
 
 ## Environment Variables
 
-Claude uses the light tier for XS/S spec, plan, and code review and for QA at every size. M and above use the strong tier for spec, plan, and code review. A phase pin changes only the model; effort comes from the matrix.
+Claude uses the light tier for XS/S spec, plan, and code review only. QA uses its own default model. M and above use the strong tier for spec, plan, and code review. A phase pin changes only the model; effort comes from the matrix.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLAUDE_MODEL_LIGHT` | `sonnet` | Model for light-tier cells: XS/S `spec`/`plan`/`code_review`, and `qa` at every size, unless a phase pin applies. |
+| `CLAUDE_MODEL_LIGHT` | `sonnet` | Model for light-tier cells: XS/S `spec`/`plan`/`code_review`, unless a phase pin applies. |
 | `CLAUDE_MODEL_STRONG` | `opus` | Model for strong-tier cells: M and above `spec`/`plan`/`code_review`, unless a phase pin applies. |
 | `CLAUDE_MODEL_SPEC` | _(unset)_ | Pins the `spec` model at every size, replacing the model only; effort still comes from the matrix. |
 | `CLAUDE_MODEL_PLAN` | _(unset)_ | Pins the `plan` model at every size where a separate plan phase runs (XS fast tier combines spec and plan under the `spec` cell), replacing the model only; effort still comes from the matrix. |
 | `CLAUDE_MODEL_REVIEW` | _(unset)_ | Pins the `code_review` model for XS/S/M/L only, replacing the model only; effort still comes from the matrix. Does not reach XL/delicate. |
 | `CLAUDE_MODEL_REVIEW_LARGE` | _(unset)_ | Pins the `code_review` model for XL/delicate only, replacing the model only; effort still comes from the matrix. `_LARGE` means task size, not model tier. Does not reach XS–L. |
-| `CLAUDE_MODEL_QA` | _(unset)_ | Pins the `qa` model at every size, replacing the model only; effort still comes from the matrix. |
-| `CLAUDE_MODEL` | _(unset; deprecated)_ | Legacy catch-all model for every Claude phase, including `qa`, only where no phase pin or light/strong tier variable is set. Phase pin → tier variable → this fallback → tier default. |
+| `CLAUDE_MODEL_QA` | _(unset; QA default is `claude-haiku-5-5`)_ | Pins the `qa` model at every size, replacing the model only; effort still comes from the matrix. This is QA's only override besides legacy `CLAUDE_MODEL`. Set it to `sonnet` (or the previous light-tier model) to restore the pre-change QA model. |
+| `CLAUDE_MODEL` | _(unset; deprecated)_ | Legacy catch-all model for every Claude phase, including `qa`, only where no phase pin or tier variable applies. Phase pin → tier variable (tiered cells only) → this fallback → default (`sonnet` light, `opus` strong, `claude-haiku-5-5` for `qa`). For QA, this fallback applies when `CLAUDE_MODEL_QA` is unset. |
 | `CLAUDE_BUDGET` | _(phase- and size-aware)_ | Max spend per Claude phase (USD). Unset → resolved from the Claude Budget Matrix above (phase × size). Set → flat cap applied uniformly across every phase and size (e.g. `CLAUDE_BUDGET=15.00` overrides every phase to $15). |
 | `CANON_PROJECT_NAME` | _(reads `package.json` "name" or "your project")_ | Name injected into agent prompts. |
 | `CANON_WORKTREES_ROOT` | .canon/worktrees | Where task worktrees are created. When overridden, the orchestrator warns if the path isn't in `.claude/settings*.json` `additionalDirectories`. |

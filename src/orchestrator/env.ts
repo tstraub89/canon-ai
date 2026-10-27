@@ -39,7 +39,7 @@ export const STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) ||
 export const STALL_KILL_GRACE_MS = 3000;
 
 export const LEGACY_FALLBACK_ENV_VARS: Array<{ old: string; replacement: string }> = [
-    { old: 'CLAUDE_MODEL', replacement: 'CLAUDE_MODEL_LIGHT / CLAUDE_MODEL_STRONG (still honored as a fallback for every Claude phase, including qa)' },
+    { old: 'CLAUDE_MODEL', replacement: 'CLAUDE_MODEL_LIGHT / CLAUDE_MODEL_STRONG, and CLAUDE_MODEL_QA to keep a legacy model on qa (still honored as a fallback for every Claude phase, including qa)' },
     { old: 'CODEX_MODEL_DEFAULT', replacement: 'CODEX_MODEL_MINI (still honored as fallback)' },
     { old: 'CODEX_MODEL_DELICATE', replacement: 'CODEX_MODEL_FULL (still honored as fallback)' },
 ];
