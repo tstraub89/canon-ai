@@ -49,7 +49,7 @@ Constraints: don't audit factual claims (Agent B's job); don't audit completenes
 
 #### Agent B — Factual / ground-truth
 
-Scope: verify every factual claim in the spec against the actual codebase. For each named symbol, file path, function, or behavior: does it exist, is the description correct, and are Affected Files entries real paths? For symbols in ACs, verify signatures, return shapes, and call sites.
+Scope: verify every factual claim in the spec against the actual codebase. For each named symbol, file path, function, or behavior: does it exist, is the description correct, and are Affected Files entries real paths? For symbols in ACs, verify signatures, return shapes, and call sites. Then search for other implementations of the behavior the spec changes (a parallel listener, entry path, or component, or a test or doc that asserts the current behavior) that Affected Files doesn't name; one the change must also reach is BLOCKING.
 
 Read whole functions and call sites, not excerpts, when verifying return shapes. Cite `file:line` for every claim. Don't audit shape (Agent A) or stylistic completeness (Agent C).
 
