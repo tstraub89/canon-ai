@@ -213,6 +213,9 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                but M's rerouted tasks averaged worse than L's (5.15 vs
     //                4.83). M's lighter spec_review effort is the leading
     //                hypothesis (not a proven sole cause — see decisions.md).
+    //                S raised from medium 2026-10: a replay of approved specs
+    //                with known gaps caught more at high than medium with no
+    //                extra false blocks on clean specs (see decisions.md).
     //   implement:   mini at xhigh for XS/S and max for M/L; XL/delicate uses
     //                the full model at high. The full model is already the
     //                stronger choice for delicate work, and its xhigh effort
@@ -227,7 +230,7 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     return {
         spec_review: {
             XS: { model: config.codexModelMini, effort: 'medium' },
-            S:  { model: config.codexModelMini, effort: 'medium' },
+            S:  { model: config.codexModelMini, effort: 'high' },
             M:  { model: config.codexModelMini, effort: 'high' },
             L:  { model: config.codexModelMini, effort: 'high' },
             XL: { model: config.codexModelFull, effort: 'high' },

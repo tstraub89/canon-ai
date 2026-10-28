@@ -219,7 +219,7 @@ Codex model and effort come from a fixed phase × size matrix:
 
 | Phase | XS | S | M | L | XL / delicate |
 |---|---|---|---|---|---|
-| `spec_review` | — (skipped) | mini / medium | mini / high | mini / high | full / high |
+| `spec_review` | — (skipped) | mini / high | mini / high | mini / high | full / high |
 | `implement`   | mini / xhigh | mini / xhigh | mini / max | mini / max | full / high |
 | `code_review` (cold lens) | mini / high | mini / high | mini / high | mini / high | mini / high |
 
@@ -227,7 +227,7 @@ Codex is tuned for token efficiency — the mini model handles most phases; the 
 
 The cold-Codex `code_review` lens is deliberately flat: as a mandatory hard-fail gate, it runs at `high` effort and stays on the mini model at every size, including XL/delicate.
 
-`spec_review` runs at `high` from M upward. Task-history analysis found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts) but a reroute-severity gap, with M's lighter spec_review effort the leading hypothesis. M and L also differ on loop cap and budget, so this isn't a proven sole cause; if you retune the matrix, re-measure your own M vs. L reroute rate.
+`spec_review` runs at `high` at every size that runs it. S moved up from `medium` after a replay of approved specs whose tasks were later rerouted: `high` caught more of the known spec gaps than `medium` and blocked no more clean specs, for about twice the tokens of a short review. `xhigh` and `max` caught slightly more again but cost 3–5× `high`'s output tokens. M moved up earlier: task-history analysis found M's excess code_review iterations weren't an implement-quality gap (non-rerouted M and L tasks ran at nearly identical iteration counts) but a reroute-severity gap, with M's lighter spec_review effort the leading hypothesis. M and L also differ on loop cap and budget, so this isn't a proven sole cause; if you retune the matrix, re-measure your own M vs. L reroute rate.
 
 ## Claude Model/Effort Matrix
 
