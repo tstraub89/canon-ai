@@ -2,7 +2,7 @@
 
 Reference for driving canon's pipeline: CLI surface, flags, task-management subcommands, pipeline tiers, the model/effort matrix, environment variables, worktree mechanics, session resumption, auto-block thresholds, and recovery patterns. Read on demand when you need to know which flag to use, why canon picked a particular model, or how to recover from a stuck phase.
 
-For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`). For **adversarial pre-pipeline spec review** on S/M/L/XL or delicate tasks, see `/canon-spec-review`.
+For **command patterns and snag-recovery flows**, see the `/canon-pipeline` skill at `.claude/skills/canon-pipeline/SKILL.md` (installed by `canon init`). For **adversarial pre-pipeline spec review**, strongly recommended for any spec with logic to vet, see `/canon-spec-review`.
 
 Canon's phase prompts, skills, and templates deliver reusable roles, implementation rules, validation, git, and release guidance just in time. This file is the source of truth for *how to operate the pipeline*.
 
@@ -173,7 +173,7 @@ Claude writes QA summary → Human tests
 - Spec and plan are written in separate Claude sessions.
 - Codex runs a real spec review before the gate. Spec review starts with a **Shape Check** (is the problem real? is the framing right? is there a materially simpler solution? is the AC decomposition right?) before the implementability probe.
 - Effective size selects both the Codex and Claude model/effort cells in the matrices below.
-- **Optional pre-pipeline self-review**: before invoking `canon run`, the operator can run `/canon-spec-review` (task ID optional — it defaults to the task under discussion) to dispatch three parallel sub-agents (structural / factual / spec-quality) at the spec and surface BLOCKING / STRONG / NIT findings inline. Catches the class of issues Codex's spec_review would surface across 2-3 iterations in one ~15-min pass. Opt-in; most valuable when iteration cost is real.
+- **Recommended pre-pipeline self-review**: after the spec is written and before invoking `canon run`, run `/canon-spec-review` (task ID optional — it defaults to the task under discussion) to dispatch three parallel sub-agents (structural / factual / spec-quality) at the spec and surface BLOCKING / STRONG / NIT findings inline. Catches the class of issues Codex's spec_review would surface across 2-3 iterations in one ~15-min pass, and its factual lens also finds gaps Codex's spec_review tends to miss, such as a second implementation of the changed behavior that the spec does not name. Strongly recommended for every spec with logic to vet; on the fast tier it is the only automated spec review.
 
 **Where validation happens**: Project-specific checks (lint, type-check, unit tests, e2e, etc.) run inside agent phases — Codex runs them during `implement` and records outcomes in the handoff; Claude verifies the outcomes table in Stage 1 code review and re-runs selectively when anything looks off. There is no separate orchestrator-run validation phase.
 
@@ -555,4 +555,4 @@ Task templates are managed by canon — `canon upgrade` overwrites `.canon/templ
 - `docs/patterns.md` — implementation patterns and Known Pitfalls.
 - `docs/decisions.md` — settled architectural decisions.
 - `/canon-pipeline` — command patterns and snag-recovery flows for operating the pipeline.
-- `/canon-spec-review` — adversarial pre-pipeline spec review (multi-agent fan-out) for S/M/L/XL or delicate tasks.
+- `/canon-spec-review` — adversarial pre-pipeline spec review (multi-agent fan-out); strongly recommended after authoring any spec with logic to vet.

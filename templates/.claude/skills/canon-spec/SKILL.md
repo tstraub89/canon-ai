@@ -2,7 +2,7 @@
 name: canon-spec
 description: Use when the human describes a new feature, bug fix, or refactor that doesn't yet have a canon task — phrases like "let's add X", "I want to fix Y", "we should refactor Z", "start a task for...", or explicit `/canon-spec` invocation. Also triggers on "full send" / "full-send" / "yolo it" which carries through to pipeline launch without further interrupts. Don't use for existing in-progress tasks (use `/canon-pipeline`) or status checks (use `/canon-status`).
 argument-hint: "[task description or title]"
-allowed-tools: Read Glob Grep Write Edit Agent Bash(canon task *) Bash(canon run *) Bash(git branch *) Bash(git status *) Bash(git log *)
+allowed-tools: Read Glob Grep Write Edit Agent Skill Bash(canon task *) Bash(canon run *) Bash(git branch *) Bash(git status *) Bash(git log *)
 effort: high
 ---
 
@@ -66,7 +66,7 @@ Synthesize the sub-agent's findings before proceeding.
 
 Before grilling, detect full-send intent from `$ARGUMENTS`: if it contains an explicit `--full-send` flag or the phrase `full send` / `full-send` (case-insensitive), enter full-send mode, print the acknowledgment line below, and carry that mode through the rest of the workflow.
 
-`Full-send mode detected. I'll grill, write the spec, and run the pipeline through to a draft PR without further interrupts.`
+`Full-send mode detected. I'll grill, write and review the spec, and run the pipeline through to a draft PR without further interrupts unless the review raises a scope question.`
 
 Assess task size from the description and exploration findings:
 - **XS**: more than a trivial one-file inline change (>1 file, or real logic), but little-to-no spec premise worth reviewing. This is the smallest way into the pipeline: choosing it over inline buys the pipeline's cross-review direction (Codex implements against written ACs, Claude reviews), a plan, and a real `code_review`.
@@ -162,7 +162,7 @@ Self-check before presenting:
 - **Refactor specs need a correctness audit before "preserve behavior"**: For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. N/A for features and bug fixes.
 - **Codebase-wide term renames: gate per string family, not per enumerated hit.** Hand-enumerated grep lists cause round-over-round scope expansion — each review round surfaces a new label *family*, not a missed instance. Decompose the stale term into its distinct string families up front via a structural sweep, then express each family's post-change invariant as a zero-result grep AC with a word-bounded pattern that catches all separator variants and cannot match the new term. Where the old string is a substring of the new one, zero-result gating is structurally impossible — verify those surfaces with positive targeted ACs instead, and document the asymmetry in the spec so reviewers don't read it as a gap. Two checks before finalizing any zero-result grep AC: (1) on prose surfaces (`docs/`, templates, backlog), read every affected file for *paraphrases* of the retired claim — an exact-string grep proves only that the literal phrase is gone, not that the retired behavior is undocumented everywhere; (2) scan the spec's own other ACs, Docs Impact, and Non-Goals for hits they already tolerate (historical docs, a release-time step, incidental test fixtures) and fold those into an explicit permitted-to-remain bucket inside the same AC, so a later section doesn't quietly contradict the gate.
 
-**⛔ STOP — present the spec and wait for approval.**
+**⛔ STOP — present the spec, strongly recommend running `/canon-spec-review` on it before approving, and wait for approval.** The recommendation applies at every size except an XS change with no logic to vet (a typo fix or version bump), which `/canon-spec-review` itself skips: on full tier it catches what Codex `spec_review` tends to miss, such as an unnamed second implementation of the changed behavior, and on fast tier (XS, non-delicate) it is the only automated spec review. If the human runs it, fold the findings they accept into the spec and re-present it. In full-send mode there is no approval stop, so run `/canon-spec-review` on the spec yourself instead, under the same exception. Apply every BLOCKING finding. For each STRONG or NIT finding, use your judgment as the spec author: apply it if it improves the spec, otherwise leave it. If a fix would change the scope the human approved during grilling, such as adding a surface or dropping a Non-Goal, stop and ask the human before applying it; that is the only interrupt full-send keeps. Then continue to Phase 6.
 
 ---
 
@@ -179,7 +179,7 @@ Self-check before presenting:
    - **Async/stateful:** for async or stateful changes — re-entry, cancellation or unmount, stale state, and ownership.
 
    A finding that changes a step goes in that step. If the check contradicts the spec, don't work around it in the plan — on the fast tier no Codex `spec_review` will catch the mismatch. Amend the spec, re-present the change to the human, and wait for renewed approval. The earlier Phase 5 approval does not cover a spec changed after it, so don't record approval in step 2 until the human has approved the amended spec.
-2. Record the human's approval in `tasks/TASK-ID/spec-review.md`: check the **Approved** box and add a one-line note ("Fast tier — human conversational spec approval; Codex spec review skipped"). The phase gate reads this artifact before letting `spec_review` advance.
+2. Record the human's approval in `tasks/TASK-ID/spec-review.md`: check the **Approved** box and add a one-line note ("Fast tier — human conversational spec approval; Codex spec review skipped"). In full-send mode no human approved the spec, so the note says that instead ("Fast tier full-send — no human spec approval; `/canon-spec-review` run before launch; Codex spec review skipped"), or "review skipped" when the no-logic exception applied. The phase gate reads this artifact before letting `spec_review` advance.
 3. Advance the phases with the helpers (they rederive the top-level `status` pointer):
    ```bash
    canon task phase TASK-ID spec done
@@ -211,7 +211,7 @@ canon run --full-send [--force] TASK-ID
 
 ## Related
 
-- `/canon-spec-review` — adversarial pre-pipeline review of the spec. Recommended for S/M/L/XL or delicate tasks before invoking the pipeline.
+- `/canon-spec-review` — adversarial pre-pipeline review of the spec. Strongly recommended after authoring any spec with logic to vet, before approving it and invoking the pipeline.
 - `/canon-pipeline` — drive the pipeline after spec approval.
 - `/canon-status` — check what other canon tasks are in flight before committing to scope.
 - `docs/pipeline-orchestrator.md` — pipeline internals, sizing guide, model/effort matrix. The Validation Matrix is now inline in `.canon/templates/spec.md`.

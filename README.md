@@ -161,7 +161,7 @@ The other installed skills (auto-trigger on natural-language phrases — see eac
 | Skill | When it fires |
 |---|---|
 | `/canon-spec` | Authoring a new task — "let's add X", "start a task for…" |
-| `/canon-spec-review` | Pre-flighting a spec before invoking the pipeline |
+| `/canon-spec-review` | Pre-flighting a spec before invoking the pipeline; strongly recommended after authoring any spec with logic to vet |
 | `/canon-inline-review` | Independent cross-review of inline or below-pipeline changes before commit or PR |
 | `/canon-sweep` | Triaging `docs/lessons-learned.md` — promote, keep, or prune, human-approved |
 | `/canon-pipeline` | Driving an existing task forward (`canon run`, `--pr`, `--ship`, recovery) |
