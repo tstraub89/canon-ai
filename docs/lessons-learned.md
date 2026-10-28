@@ -166,3 +166,11 @@ The parent of `--git-common-dir` is only the project root when the git directory
 *(2026-10-27, source: codex-implement-effort-xhigh)*
 
 A commit titled "stop committing dist/" existed on the base branch, but `git ls-files dist` still listed `dist/cli/index.js` and `dist/orchestrator/run-task.js`. A plan written from the commit title would have treated `dist/` as untracked and skipped the rebuild-and-commit step, so the committed bundle would have gone stale. Before a plan assumes a path is or isn't tracked, run `git ls-files <path>` and read the result, not the commit message. For `dist/`, a source change means `npm run build` and committing the rebuilt declared bundles.
+
+---
+
+### Moving a cell out of a shared tier changes what the tier variable reaches
+
+*(2026-10-27, source: default-qa-model-to-haiku)*
+
+When a cell's default leaves a shared tier, every env var that pins that tier stops reaching the cell and the cell silently resolves to a different model. Here QA left the light tier, so an adopter who set `CLAUDE_MODEL_LIGHT` alone moved from that model to Haiku, and one who set `CLAUDE_MODEL_LIGHT` and `CLAUDE_MODEL` moved to the legacy value. The spec listed each env-var combination with its before and after value, plus a per-variable rollback, before implementation started. Prevention: before changing a cell's tier membership or its fallback chain, enumerate every env-var combination that reaches the cell today and what each resolves to after the change, and record that table in the spec. Canonical example: the pinned-adopter list in `tasks/_archive/default-qa-model-to-haiku/spec.md` and the resolution chain in `resolveClaudeModel()` in `src/lib/pipeline-policy.ts`.

@@ -1,7 +1,7 @@
 {
   "id": "default-qa-model-to-haiku",
   "title": "Make Claude Haiku 5.5 the default QA model",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-27",
   "updated": "2026-10-28",
   "branch": "task/default-qa-model-to-haiku",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
