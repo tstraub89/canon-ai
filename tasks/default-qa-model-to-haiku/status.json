@@ -3,13 +3,13 @@
   "title": "Make Claude Haiku 5.5 the default QA model",
   "status": "human_review",
   "created": "2026-10-27",
-  "updated": "2026-10-27",
+  "updated": "2026-10-28",
   "branch": "task/default-qa-model-to-haiku",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "e9c6e020657966067257fc2ba71dc481415e6bc5",
-    "orchestrator_commit": "e9c6e020657966067257fc2ba71dc481415e6bc5",
+    "upstream_commit": "acbe1e3bd35312267005269cf27266a93517391d",
+    "orchestrator_commit": "acbe1e3bd35312267005269cf27266a93517391d",
     "canon_version": "3.14.0",
     "codex_cli": "codex-cli 0.164.0",
     "claude_code": "2.1.310 (Claude Code)"
