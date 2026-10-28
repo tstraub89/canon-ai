@@ -486,6 +486,20 @@ QA gets its own default rather than a third tier or a changed light-tier fallbac
 
 ---
 
+## Codex `spec_review` S effort raised medium → high (2026-10)
+
+_Generation: gpt-6-luna (mini)._
+
+**Decision**: Raise Codex `spec_review` effort for S-sized tasks from `medium` to `high`, matching M and L. Every size that runs Codex `spec_review` now uses `high`. This is a canon-supplied default change and a **minor** release item.
+
+**Why**: An offline replay ran the current `spec_review` prompt with `gpt-6-luna` at `medium`, `high`, `xhigh`, and `max` against approved specs from canon-ai and one adopter, each in a checkout of its repository as of when the spec was written. Twenty specs were later amended after code review found a gap that a Claude Sonnet labeler judged visible from the spec alone, with high confidence. Fifteen were controls that shipped with no reroute and no requested code-review changes. A Sonnet judge, blind to effort, graded each review. Out of 20 known gaps, the reviewer caught 6 as blocking at `medium`, 8 at `high`, 8 at `xhigh`, and 10 at `max`. On the controls, 5 of 15 reviews were blocked only by invalid findings at both `medium` and `high`, 4 at `xhigh`, and 3 at `max`. Median output was about 2k tokens at `medium`, 4k at `high`, 14k at `xhigh`, and 21k at `max`; median wall time was 29, 50, 143, and 175 seconds. Higher effort did not increase false blocks. `high` is the cheapest step that improves recall, while `xhigh` and `max` cost 3–5× `high`'s output for a small gain.
+
+This is one sample per spec and effort, so differences of two catches are within run-to-run noise. Seven gaps were missed at every effort; most were a second implementation of the changed behavior (a parallel listener, entry path, or component) that the spec did not name. Neither effort nor a Codex prompt probe fixed that miss class: re-running those seven at `high` with a "search for other implementations" instruction caught none. The `/canon-spec-review` factual lens on Haiku caught two of the seven with its existing scope and three with the same instruction added (one sample each), so the sibling-implementation rule lives in that lens and in the spec author's guidance, not in the Codex `spec_review` prompt.
+
+**Rule**: `spec_review` S runs `mini/high`. Restoring `medium` requires installing the previous canon release because effort has no environment override. Do not raise `spec_review` above `high` on this evidence alone; re-run the replay with more samples first.
+
+---
+
 ## Model-generation re-baseline (2026-09): Claude defaults → 5.5 generation
 
 _Generation: Opus 5.5 / Sonnet 5.5._
