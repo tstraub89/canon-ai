@@ -1,15 +1,15 @@
 {
   "id": "default-qa-model-to-haiku",
   "title": "Make Claude Haiku 5.5 the default QA model",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-10-27",
-  "updated": "2026-10-27",
-  "branch": "",
+  "updated": "2026-10-28",
+  "branch": "task/default-qa-model-to-haiku",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "e9c6e020657966067257fc2ba71dc481415e6bc5",
-    "orchestrator_commit": "e9c6e020657966067257fc2ba71dc481415e6bc5",
+    "upstream_commit": "acbe1e3bd35312267005269cf27266a93517391d",
+    "orchestrator_commit": "acbe1e3bd35312267005269cf27266a93517391d",
     "canon_version": "3.14.0",
     "codex_cli": "codex-cli 0.164.0",
     "claude_code": "2.1.310 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a17faf-0842-7642-8afd-c319d6198ce2"
+    "codex_spec_review": "01a17faf-0842-7642-8afd-c319d6198ce2",
+    "codex": "01a17fb2-0d28-7371-81d6-f3c8701f110d",
+    "claude_review": "25dd9b4f-3d61-4653-90b2-0b9b325a3b95"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

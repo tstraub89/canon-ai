@@ -88,7 +88,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 (See `src/lib/pipeline-policy.ts` for the authoritative matrix; this is the human-readable summary.)
 
 - **Fast tier**: `XS` non-delicate. Spec+plan in one Claude session. Codex spec review skipped (human gate replaces it). Uses the XS model/effort cells (Claude light/medium; Codex implementation mini/xhigh).
-- **Full tier**: anything `S`, `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Codex implement uses mini/xhigh at S, mini/max at M/L, and full/high at XL/delicate; see `docs/decisions.md` §"Codex implement effort raised; full-model default → GPT-6.1 Sol (2026-10)". Claude moves to Opus for M and above on spec, plan, and code review, capping at `high` effort for XL/delicate; QA remains Sonnet/medium (see `docs/pipeline-orchestrator.md` §"Claude Model/Effort Matrix").
+- **Full tier**: anything `S`, `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Codex implement uses mini/xhigh at S, mini/max at M/L, and full/high at XL/delicate; see `docs/decisions.md` §"Codex implement effort raised; full-model default → GPT-6.1 Sol (2026-10)". Claude moves to Opus for M and above on spec, plan, and code review, capping at `high` effort for XL/delicate; QA runs Haiku 5.5/medium (see `docs/pipeline-orchestrator.md` §"Claude Model/Effort Matrix").
 
 ### `delicate` flag — project-specific domains
 

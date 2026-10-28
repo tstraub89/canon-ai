@@ -482,7 +482,7 @@ var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path2.resolve(REPO_ROOT,
 var STALL_TIMEOUT_MS = Number(process.env.PIPELINE_STALL_TIMEOUT_MS) || 10 * 60 * 1e3;
 var STALL_KILL_GRACE_MS = 3e3;
 var LEGACY_FALLBACK_ENV_VARS = [
-  { old: "CLAUDE_MODEL", replacement: "CLAUDE_MODEL_LIGHT / CLAUDE_MODEL_STRONG (still honored as a fallback for every Claude phase, including qa)" },
+  { old: "CLAUDE_MODEL", replacement: "CLAUDE_MODEL_LIGHT / CLAUDE_MODEL_STRONG, and CLAUDE_MODEL_QA to keep a legacy model on qa (still honored as a fallback for every Claude phase, including qa)" },
   { old: "CODEX_MODEL_DEFAULT", replacement: "CODEX_MODEL_MINI (still honored as fallback)" },
   { old: "CODEX_MODEL_DELICATE", replacement: "CODEX_MODEL_FULL (still honored as fallback)" }
 ];
@@ -2193,6 +2193,7 @@ function codexMatrix(config3) {
     }
   };
 }
+var QA_DEFAULT_MODEL = "claude-haiku-5-5";
 var CLAUDE_CELLS = {
   spec: {
     XS: { tier: "light", effort: "medium" },
@@ -2216,11 +2217,11 @@ var CLAUDE_CELLS = {
     XL: { tier: "strong", effort: "high" }
   },
   qa: {
-    XS: { tier: "light", effort: "medium" },
-    S: { tier: "light", effort: "medium" },
-    M: { tier: "light", effort: "medium" },
-    L: { tier: "light", effort: "medium" },
-    XL: { tier: "light", effort: "medium" }
+    XS: { tier: "qa", effort: "medium" },
+    S: { tier: "qa", effort: "medium" },
+    M: { tier: "qa", effort: "medium" },
+    L: { tier: "qa", effort: "medium" },
+    XL: { tier: "qa", effort: "medium" }
   }
 };
 function claudePinFor(phase, size, config3) {
@@ -2239,6 +2240,7 @@ function resolveClaudeModel(phase, size, config3) {
   const pin = claudePinFor(phase, size, config3);
   if (pin !== null) return pin;
   const tier = CLAUDE_CELLS[phase][size].tier;
+  if (tier === "qa") return config3.claudeModelLegacy ?? QA_DEFAULT_MODEL;
   const tierModel = tier === "light" ? config3.claudeModelLight : config3.claudeModelStrong;
   if (tierModel !== null) return tierModel;
   if (config3.claudeModelLegacy !== null) return config3.claudeModelLegacy;

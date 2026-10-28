@@ -1,25 +1,20 @@
 # Implementation Handoff: default-qa-model-to-haiku
 
 > Author: Codex | Spec: `tasks/default-qa-model-to-haiku/spec.md` | Plan: `tasks/default-qa-model-to-haiku/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/lib/pipeline-policy.ts`, `src/orchestrator/env.ts`, `dist/orchestrator/run-task.js` | Added the QA-specific model default and legacy warning; rebuilt the runtime bundle. |
+| `tests/pipeline-policy.test.ts` | Updated matrix assertions and added QA precedence coverage for every size and delicate M. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Updated the model matrix and environment-variable guidance; regenerated the managed mirror. |
+| `docs/product-context.md` | Updated the full-tier QA model summary. |
+| `docs/decisions.md` | Added the Haiku default decision and superseding notes on the 2026-09 QA rationale and precedence. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
+The provenance stamp is recorded in the `.canon` field of `tasks/default-qa-model-to-haiku/status.json`; this handoff does not duplicate those values.
 
 | Field | Source |
 |---|---|
@@ -31,107 +26,63 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+QA now uses a distinct policy tier with `CLAUDE_MODEL_QA` first, legacy `CLAUDE_MODEL` second, and `claude-haiku-5-5` as the default. QA remains at medium effort for XS through XL and delicate tasks. Light and strong tiers continue to govern their existing cells.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | Implemented the planned QA tier, precedence, tests, documentation, template sync, and build. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: matrix cells | Met | Matrix tests cover all sizes, and delicate M keeps QA at Haiku/medium while other Claude cells retain their prior model and effort. |
+| AC-2: QA precedence | Met | Tests cover QA pin, legacy fallback, light/strong isolation, all sizes, delicate M, and medium effort. Existing tier-cell assertions remain covered. |
+| AC-3: legacy warning | Met | Warning text names `CLAUDE_MODEL_QA` and retains the every-Claude-phase fallback wording; its test passes. |
+| AC-4: docs sweep | Met | Updated the matrix, environment-variable guide, product summary, and `effectiveSize` comment. Both specified stale-phrase greps return zero matches. |
+| AC-5: no new knob | Met | Source grep returns exactly the seven model variables named in the spec. |
+| AC-6: decisions entry | Met | Added the decision, matrix, evidence, alternatives, precedence, adopter changes and rollback, measurement rule, and three superseding notes. |
+| AC-7: mirror and build outputs | Met | Template sync and build pass; the rebuilt `dist/orchestrator/run-task.js` contains `claude-haiku-5-5` and is clean against the index after its implementation commit. |
 
 ## Edge Cases Considered
 
-- ...
+- QA behavior with each of XS, S, M, L, XL, and delicate M.
+- `CLAUDE_MODEL_QA` overriding legacy and tier variables.
+- Legacy `CLAUDE_MODEL` taking precedence over light and strong tier variables for QA.
+- Light and strong variables leaving QA on its own default when no legacy fallback or QA pin is set.
+- QA effort remaining medium for every model choice.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-1/AC-2 plan mutation check | `node --import tsx --test tests/pipeline-policy.test.ts` | `acbe1e3bd35312267005269cf27266a93517391d` with the QA dispatch branch temporarily removed | QA matrix and precedence tests failed; the QA cell followed the strong-tier fallback instead of returning Haiku. | Restored the branch; focused suite passes 109 tests and the full suite passes. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Re-run after the test assertion update. |
+| `npm run type-check` | Pass | Re-run after the test assertion update. |
+| `npm test` | Pass | 1,756 passed, 1 skipped, 0 failed. |
+| `node --import tsx --test tests/pipeline-policy.test.ts` | Pass | 109 passed, 0 failed. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js`; model-string grep count is 1. |
+| `git diff --exit-code -- dist/` | Pass | Re-run after committing the generated runtime bundle; no diff remains under `dist/`. |
+| `npm run sync-templates` | Pass | Regenerated the `docs/pipeline-orchestrator.md` mirror. |
+| `npm run sync-templates:check` | Pass | All canon-managed files are in sync. |
+| `npm run docs-refs-check` | Pass | All refs OK after the final docs update. |
+| AC-4 stale-phrase greps | Pass | Both specified greps returned zero matches. |
+| AC-5 model-variable grep | Pass | Exact expected set: LIGHT, PLAN, QA, REVIEW, REVIEW_LARGE, SPEC, STRONG. |
+| `git diff --check` | Pass | No whitespace errors. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met
+- [x] All applicable validation checks pass
+- [x] All deviations from plan documented

@@ -1,133 +1,43 @@
 # Code Review: default-qa-model-to-haiku
 
-> Reviewer: Claude | Spec: `tasks/default-qa-model-to-haiku/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — Codex reads only the latest round's section to know what to address.
+**Scope:** Full — base `main` — reason: Round 1 (initial review).
 
-Code review is synthesized by a foreman from three lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below, a cold-Claude lens that reads only the diff, and a cold-Codex lens pre-obtained by the orchestrator as an unanchored diff review from a different model family. The foreman writes this single consolidated artifact and verdict.
+Inputs: anchored Claude lens (approve), cold-Claude lens (approve), cold-Codex (no findings).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
+## Stage 1: Validation Gate
 
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+Result: pass.
 
-## Stage 1 — Spec Compliance (gate)
-
-### Validation Gate
-
-Did Codex's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-
-### Acceptance Criteria Check
-
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
-| AC | Status | Notes |
+| AC | Status | Note |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 matrix cells | Met | QA cells return `claude-haiku-5-5` / `medium` at every size and delicate M; other cells unchanged. |
+| AC-2 QA precedence | Met | New test covers pin, legacy, light/strong isolation, all sizes, medium effort. |
+| AC-3 legacy warning | Met | Names `CLAUDE_MODEL_QA`, keeps every-phase fallback wording; test asserts it. |
+| AC-4 docs sweep | Met | Orchestrator doc, product-context, `effectiveSize` comment updated; no stale restatements found by any lens. |
+| AC-5 no new knob | Met | No new `CLAUDE_MODEL_*` identifier; new tier value `'qa'` has no env var. |
+| AC-6 decisions entry | Met | Entry placed after the Codex implement entry, with all required parts and three supersede notes. |
+| AC-7 mirror/build | Met | Template mirror matches root; `dist/orchestrator/run-task.js` rebuilt and contains the model ID. |
 
-### Dropped Sections Check
+## Stage 2: Findings
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+No surviving blocking findings.
 
-### Stage 1 Verdict
+Nits (optional, not blocking):
+- `src/lib/pipeline-policy.ts:303` — the QA special-case branch precedes the tier lookup (anchored + cold-Claude, flagged by 2 lenses). Spec explicitly left the representation to the implementer, and the decisions entry records the revisit trigger. No action.
+- `docs/pipeline-orchestrator.md:268` — rollback hint mentions `sonnet` / previous light-tier model but not the prior-`CLAUDE_MODEL=Y` case; covered in the decisions entry and the `CLAUDE_MODEL` row. Optional wording.
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
+## Dismissed Cold Findings
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. Codex will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
-
-### Summary
-
-One paragraph: overall code quality of the implementation.
-
-### Findings
-
-#### Correctness Bugs
-
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
-
-#### Risk / Guardrails
-
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
-
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things Codex had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
-
-### Dismissed Cold Findings
-
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): CHANGELOG.md:156 stale "QA runs Sonnet" — that line is in the released 3.11.0 section (historical); the spec's Non-Goals exclude CHANGELOG edits (`/canon-changelog` drafts at release).
+- Dismissed (cold-Claude): no runtime warning for `CLAUDE_MODEL_LIGHT` adopters — spec scopes the change to docs/decisions with a recorded rollback (Known Risks "Pinned adopters change silently"); a new warning is not an AC.
+- Dismissed (cold-Claude): empty-string `CLAUDE_MODEL_QA` handling unverified — spec Non-Goals keep today's `??` behavior in `src/orchestrator/policy.ts`.
+- Dismissed (cold-Claude): phase-pin test QA assertion no longer exercises pin vs tier — spec AC-2 mandates that exact assertion change, and the new precedence test covers the QA pin explicitly.
+- Dismissed (cold-Claude): `docs/harness-audit-2026-06.md:138` "qa sonnet/med" — historical doc, excluded by spec Non-Goals.
+- Cold-Codex: no findings.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
 - [ ] Approved
-- [ ] Approved with nits
+- [x] Approved with nits
 - [ ] Changes requested
 - [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->

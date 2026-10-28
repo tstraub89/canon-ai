@@ -461,11 +461,36 @@ XL/delicate remains Sol at `high` because delicate work already gets the stronge
 
 ---
 
+## Claude QA default → Haiku 5.5 (2026-10)
+
+_Generation: Haiku 5.5 / Sonnet 5.5 / Opus 5.5._
+
+**Decision**: The `qa` cell at every size defaults to `claude-haiku-5-5` at `medium` effort. This is a canon-supplied default change and a **minor** release item.
+
+| Phase | XS | S | M | L | XL / delicate |
+|---|---|---|---|---|---|
+| `spec` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `plan` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `code_review` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
+| `qa` | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium | claude-haiku-5-5 / medium |
+
+**Why**: The operator reports an uncontrolled sample of about 37 Haiku-QA tasks, mostly S/M, across canon-ai and an adopter since about 2026-10-06: no QA phase failures, budget-cap hits, or retries; every completed task got a task-quality-log row; `done.md` summaries were about 75–115 lines, as long as or longer than the Sonnet-era summaries; and one spot-check was accurate and candid about what was unverified. In `docs/pipeline-invocations.md`, 20 canon-ai QA rows use `claude-haiku-5-5`; all are `ok`, took 44–214 seconds, and the first is dated 2026-10-16. This is operator-reported field evidence, not a controlled comparison.
+
+QA gets its own default rather than a third tier or a changed light-tier fallback. A third tier would add a second name for the existing `CLAUDE_MODEL_QA` knob, which already covers every size. Keeping QA in the light tier would let `CLAUDE_MODEL_LIGHT` continue overriding it, so adopters pinning a Sonnet light model would not receive the new default. Revisit the separate default if a second Claude cell needs a Haiku-class model. The default uses the full ID `claude-haiku-5-5`, which is the model covered by the field evidence; the floating `haiku` alias could drift to a generation without this entry's evidence.
+
+**Override precedence**: For each Claude cell, the first match wins: phase pin → tier variable (tiered cells only) → legacy `CLAUDE_MODEL` → default (`sonnet` light, `opus` strong, `claude-haiku-5-5` QA). Phase pins are `CLAUDE_MODEL_SPEC` and `CLAUDE_MODEL_PLAN` wherever those phases run, `CLAUDE_MODEL_REVIEW` at XS–L, `CLAUDE_MODEL_REVIEW_LARGE` at XL/delicate, and `CLAUDE_MODEL_QA` at every size. For QA, the pin is followed by legacy `CLAUDE_MODEL`, then the Haiku default; `CLAUDE_MODEL_LIGHT` and `CLAUDE_MODEL_STRONG` do not reach QA. Pins replace the model only; effort comes from the matrix and has no environment override.
+
+**Pinned-adopter changes and rollback**: Adopters with `CLAUDE_MODEL_QA` set see no change. With neither `CLAUDE_MODEL_LIGHT` nor `CLAUDE_MODEL` set, QA moves from `sonnet` to Haiku as intended. With only `CLAUDE_MODEL_LIGHT=X`, QA moves from `X` to Haiku so it receives the new default. With both `CLAUDE_MODEL_LIGHT=X` and `CLAUDE_MODEL=Y`, QA moves from `X` to `Y`, because the light variable no longer reaches QA and the legacy fallback precedes the default. With only `CLAUDE_MODEL=Y`, QA remains `Y`. To roll back, set `CLAUDE_MODEL_QA` to the model that adopter previously received on QA: `sonnet` when no model override was set, `X` for a prior `CLAUDE_MODEL_LIGHT=X` case, or `Y` when a prior `CLAUDE_MODEL=Y` determined QA.
+
+**Rule**: Measure this default by the Model column in `docs/pipeline-invocations.md`, not by the entry date, because canon-ai has used Haiku through an operator pin since before this decision. Compare `qa` rows on Sonnet with rows on `claude-haiku-5-5` for Status and Duration, and note whether `done.md` gaps surface at `human_review`. Adopter-side data exists only where an adopter keeps its own invocation log.
+
+---
+
 ## Model-generation re-baseline (2026-09): Claude defaults → 5.5 generation
 
 _Generation: Opus 5.5 / Sonnet 5.5._
 
-**Decision**: Use a light (`sonnet`) and strong (`opus`) Claude tier. Effective size selects the column, so `delicate` promotes to XL. The review foreman's lenses inherit its model and effort; budgets, loop caps, and Codex policy are unchanged. This is a minor change to canon-supplied defaults.
+**Decision**: Use a light (`sonnet`) and strong (`opus`) Claude tier. Effective size selects the column, so `delicate` promotes to XL. The review foreman's lenses inherit its model and effort; budgets, loop caps, and Codex policy are unchanged. This is a minor change to canon-supplied defaults. *(The QA row below is superseded by "Claude QA default → Haiku 5.5 (2026-10)".)*
 
 | Phase | XS | S | M | L | XL / delicate |
 |---|---|---|---|---|---|
@@ -474,9 +499,9 @@ _Generation: Opus 5.5 / Sonnet 5.5._
 | `code_review` | sonnet / medium | sonnet / medium | opus / medium | opus / medium | opus / high |
 | `qa` | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium | sonnet / medium |
 
-**Evidence** (vendor and third-party reports consulted 2026-09-28; full analysis in the rebaseline-claude-matrix-for-5-5 task's spec): Anthropic's Terminal-Bench 4.0 chart places Opus 5.5 high around 64% at $3.88 per attempt versus xhigh around 66% at $7.30, with max lower still. Sonnet 5.5 above medium is a poor cost/quality trade relative to Opus, and its launch guidance recommends lower effort when complementing Opus. CodeRabbit's 13-case hard-bug evaluation found 8/13 bugs with Opus 5.5 at 67% actionable precision versus 6/13 with Sonnet 5.5 at 41%; that supports Sonnet for small tasks and Opus for larger reviews. Artificial Analysis places Opus medium on its cost/intelligence frontier, while low trails medium; Anthropic warns that low effort can skip verification. An analysis of 422 archived canon tasks (tstraub89/canon-ai#68) found that implementation changes the plan's approach only 6% of the time, while plan errors account for roughly 40% of sampled non-hygiene blocking code-review findings. QA writes completion artifacts but cannot block or reroute, so it stays light/medium. These early-generation data are not a controlled canon evaluation.
+**Evidence** (vendor and third-party reports consulted 2026-09-28; full analysis in the rebaseline-claude-matrix-for-5-5 task's spec): Anthropic's Terminal-Bench 4.0 chart places Opus 5.5 high around 64% at $3.88 per attempt versus xhigh around 66% at $7.30, with max lower still. Sonnet 5.5 above medium is a poor cost/quality trade relative to Opus, and its launch guidance recommends lower effort when complementing Opus. CodeRabbit's 13-case hard-bug evaluation found 8/13 bugs with Opus 5.5 at 67% actionable precision versus 6/13 with Sonnet 5.5 at 41%; that supports Sonnet for small tasks and Opus for larger reviews. Artificial Analysis places Opus medium on its cost/intelligence frontier, while low trails medium; Anthropic warns that low effort can skip verification. An analysis of 422 archived canon tasks (tstraub89/canon-ai#68) found that implementation changes the plan's approach only 6% of the time, while plan errors account for roughly 40% of sampled non-hygiene blocking code-review findings. QA writes completion artifacts but cannot block or reroute, so it stays light/medium. *(The QA rationale is superseded by "Claude QA default → Haiku 5.5 (2026-10)".)* These early-generation data are not a controlled canon evaluation.
 
-**Override precedence**: For each cell, first match wins: (1) its phase pin — `CLAUDE_MODEL_SPEC`, `_PLAN`, and `_QA` at every size; `CLAUDE_MODEL_REVIEW` at XS–L; `CLAUDE_MODEL_REVIEW_LARGE` at XL only, where `_LARGE` refers to task size; (2) the cell's `CLAUDE_MODEL_LIGHT` or `CLAUDE_MODEL_STRONG` tier variable; (3) legacy `CLAUDE_MODEL`, honored as a fallback for every Claude phase including QA; (4) the `sonnet` or `opus` tier default. Pins replace the model only. Effort always comes from the matrix and has no environment override.
+**Override precedence**: For each cell, first match wins: (1) its phase pin — `CLAUDE_MODEL_SPEC`, `_PLAN`, and `_QA` at every size; `CLAUDE_MODEL_REVIEW` at XS–L; `CLAUDE_MODEL_REVIEW_LARGE` at XL only, where `_LARGE` refers to task size; (2) the cell's `CLAUDE_MODEL_LIGHT` or `CLAUDE_MODEL_STRONG` tier variable; (3) legacy `CLAUDE_MODEL`, honored as a fallback for every Claude phase including QA; (4) the `sonnet` or `opus` tier default. Pins replace the model only. Effort always comes from the matrix and has no environment override. *(QA precedence is superseded by "Claude QA default → Haiku 5.5 (2026-10)".)*
 
 **Supersedes**: The Claude model/effort cells in §"Model-generation re-baseline (2026-06)" and the historical M/L QA-effort comparison in §"`spec_review` M effort raised". Those entries remain as historical records; the table above is current.
 

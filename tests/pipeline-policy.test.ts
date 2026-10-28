@@ -277,7 +277,7 @@ const CLAUDE_MATRIX_TABLE: Array<{ phase: ClaudePhase; size: TaskSize; model: st
         { phase, size: 'XL', model: 'opus', effort: 'high' },
     ]),
     ...(['XS', 'S', 'M', 'L', 'XL'] as TaskSize[]).map((size): { phase: ClaudePhase; size: TaskSize; model: string; effort: string } =>
-        ({ phase: 'qa', size, model: 'sonnet', effort: 'medium' })),
+        ({ phase: 'qa', size, model: 'claude-haiku-5-5', effort: 'medium' })),
 ];
 
 for (const row of CLAUDE_MATRIX_TABLE) {
@@ -294,7 +294,7 @@ void test('claude matrix: delicate M promotes spec, plan, and review, but not qa
         assert.deepEqual({ model, effort }, { model: 'opus', effort: 'high' }, phase);
     }
     const { model, effort } = policy.claude('qa');
-    assert.deepEqual({ model, effort }, { model: 'sonnet', effort: 'medium' });
+    assert.deepEqual({ model, effort }, { model: 'claude-haiku-5-5', effort: 'medium' });
 });
 
 void test('claude matrix: every effort is medium or high', () => {
@@ -365,7 +365,32 @@ void test('override precedence: no Claude model variables uses defaults', () => 
     assert.equal(getPipelinePolicy([s('XS')], config).claude('spec').model, 'sonnet');
     assert.equal(getPipelinePolicy([s('M')], config).claude('spec').model, 'opus');
     assert.equal(getPipelinePolicy([s('XL')], config).claude('spec').effort, 'high');
-    assert.equal(getPipelinePolicy([s('M')], config).claude('qa').model, 'sonnet');
+    assert.equal(getPipelinePolicy([s('M')], config).claude('qa').model, 'claude-haiku-5-5');
+});
+
+void test('override precedence: QA pin, then legacy, then Haiku default at every size', () => {
+    const sizes: Array<{ size: TaskSize; delicate?: boolean }> = [
+        { size: 'XS' }, { size: 'S' }, { size: 'M' }, { size: 'L' }, { size: 'XL' }, { size: 'M', delicate: true },
+    ];
+    const cases: Array<{ overrides: Record<string, string>; expected: string }> = [
+        { overrides: {}, expected: 'claude-haiku-5-5' },
+        { overrides: { CLAUDE_MODEL_LIGHT: 'custom-light' }, expected: 'claude-haiku-5-5' },
+        { overrides: { CLAUDE_MODEL_STRONG: 'custom-strong' }, expected: 'claude-haiku-5-5' },
+        { overrides: { CLAUDE_MODEL: 'legacy' }, expected: 'legacy' },
+        { overrides: { CLAUDE_MODEL: 'legacy', CLAUDE_MODEL_LIGHT: 'light' }, expected: 'legacy' },
+        { overrides: { CLAUDE_MODEL_QA: 'pinned', CLAUDE_MODEL: 'legacy', CLAUDE_MODEL_LIGHT: 'light' }, expected: 'pinned' },
+    ];
+    for (const { overrides, expected } of cases) {
+        const config = loadPolicyConfigForEnv(overrides);
+        for (const { size, delicate } of sizes) {
+            const { model, effort } = getPipelinePolicy([s(size, delicate)], config).claude('qa');
+            assert.deepEqual(
+                { model, effort },
+                { model: expected, effort: 'medium' },
+                `${JSON.stringify(overrides)} at ${size}${delicate ? '/delicate' : ''}`,
+            );
+        }
+    }
 });
 
 void test('override precedence: empty tier model values are treated as unset', () => {
@@ -392,7 +417,7 @@ void test('override precedence: strong tier variable only changes strong cells',
     for (const phase of ['spec', 'plan', 'code_review'] as ClaudePhase[]) {
         assert.equal(getPipelinePolicy([s('M', true)], config).claude(phase).model, 'custom-strong', `delicate/${phase}`);
     }
-    assert.equal(getPipelinePolicy([s('M', true)], config).claude('qa').model, 'sonnet');
+    assert.equal(getPipelinePolicy([s('M', true)], config).claude('qa').model, 'claude-haiku-5-5');
 });
 
 for (const [variable, phase] of [
@@ -457,7 +482,7 @@ void test('override precedence: strong tier variable beats legacy only for its c
 void test('override precedence: phase pin beats tier variable', () => {
     const config = loadPolicyConfigForEnv({ CLAUDE_MODEL_LIGHT: 'light', CLAUDE_MODEL_SPEC: 'pinned-spec' });
     assert.equal(getPipelinePolicy([s('XS')], config).claude('spec').model, 'pinned-spec');
-    assert.equal(getPipelinePolicy([s('XS')], config).claude('qa').model, 'light');
+    assert.equal(getPipelinePolicy([s('XS')], config).claude('qa').model, 'claude-haiku-5-5');
 });
 
 void test('override precedence: custom model string passes through verbatim', () => {
@@ -471,6 +496,7 @@ void test('legacy warning names tier variables and every-phase fallback', () => 
     assert.ok(entry);
     assert.match(entry.replacement, /CLAUDE_MODEL_LIGHT/);
     assert.match(entry.replacement, /CLAUDE_MODEL_STRONG/);
+    assert.match(entry.replacement, /CLAUDE_MODEL_QA/);
     assert.match(entry.replacement, /fallback for every Claude phase/);
     assert.doesNotMatch(entry.replacement, /not applied to qa/);
 });

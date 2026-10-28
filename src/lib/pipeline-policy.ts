@@ -108,7 +108,8 @@ export type PipelinePolicy = {
     // auto-block.
     nominalSize: TaskSize;
     // Nominal size with `delicate` promoting to XL. Selects the strong Claude
-    // model at high effort for spec, plan, and review; QA remains light/medium.
+    // model at high effort for spec, plan, and review; QA keeps its own default
+    // model at medium effort regardless of size.
     effectiveSize: TaskSize;
     // True when the whole bundle runs the fast tier (XS, non-delicate): spec
     // and plan collapse into one Claude session.
@@ -248,8 +249,11 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     };
 }
 
-type ClaudeTier = 'light' | 'strong';
+type ClaudeTier = 'light' | 'strong' | 'qa';
 type ClaudeCell = { tier: ClaudeTier; effort: 'medium' | 'high' };
+
+// Keep the model ID covered by field evidence; the decision entry explains why it is not the moving `haiku` alias.
+const QA_DEFAULT_MODEL = 'claude-haiku-5-5';
 
 // Every phase/size cell is explicit so a retune changes one table entry.
 const CLAUDE_CELLS: Record<ClaudePhase, Record<TaskSize, ClaudeCell>> = {
@@ -275,11 +279,11 @@ const CLAUDE_CELLS: Record<ClaudePhase, Record<TaskSize, ClaudeCell>> = {
         XL: { tier: 'strong', effort: 'high' },
     },
     qa: {
-        XS: { tier: 'light', effort: 'medium' },
-        S: { tier: 'light', effort: 'medium' },
-        M: { tier: 'light', effort: 'medium' },
-        L: { tier: 'light', effort: 'medium' },
-        XL: { tier: 'light', effort: 'medium' },
+        XS: { tier: 'qa', effort: 'medium' },
+        S: { tier: 'qa', effort: 'medium' },
+        M: { tier: 'qa', effort: 'medium' },
+        L: { tier: 'qa', effort: 'medium' },
+        XL: { tier: 'qa', effort: 'medium' },
     },
 };
 
@@ -296,6 +300,7 @@ function resolveClaudeModel(phase: ClaudePhase, size: TaskSize, config: PolicyCo
     const pin = claudePinFor(phase, size, config);
     if (pin !== null) return pin;
     const tier = CLAUDE_CELLS[phase][size].tier;
+    if (tier === 'qa') return config.claudeModelLegacy ?? QA_DEFAULT_MODEL;
     const tierModel = tier === 'light' ? config.claudeModelLight : config.claudeModelStrong;
     if (tierModel !== null) return tierModel;
     if (config.claudeModelLegacy !== null) return config.claudeModelLegacy;

@@ -8,3 +8,10 @@
 |---|---|---|---|---|---|---|---|---|
 | 2026-10-27T23:25:59.880Z | default-qa-model-to-haiku | spec_review | codex | gpt-6-luna | 0 | 20.6s | 266337 | ok |
 | 2026-10-27T23:28:56.502Z | default-qa-model-to-haiku | plan | claude | sonnet | 0 | 69.7s | 1141821 | ok |
+| 2026-10-27T23:40:35.205Z | default-qa-model-to-haiku | implement | codex | gpt-6-luna | 0 | 697.9s | 4978054 | ok |
+| 2026-10-27T23:42:18.322Z | default-qa-model-to-haiku | code_review | codex | gpt-6-luna | 0 | 46.6s | - | ok |
+| 2026-10-27T23:43:12.811Z | default-qa-model-to-haiku | code_review | claude | sonnet | 0 | 54.5s | 731892 | ok |
+| 2026-10-27T23:43:12.815Z | default-qa-model-to-haiku | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 15.7s | 343307 | ok |
+| 2026-10-27T23:43:12.820Z | default-qa-model-to-haiku | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 25.7s | 492245 | ok |
+| 2026-10-27T23:44:11.960Z | default-qa-model-to-haiku | qa | claude | claude-haiku-5-5 | 0 | 59.1s | 726693 | ok |
+| 2026-10-27T23:44:26.609Z | default-qa-model-to-haiku | qa_fixup | claude | claude-haiku-5-5 | - | 14.3s | 350326 | ok |
