@@ -7,6 +7,7 @@
 ### Changed
 
 - **Codex implementation runs at higher reasoning effort, and the full Codex model defaults to GPT-6.1 Sol.** Extra-small and small tasks now implement with the mini model at `xhigh` effort (was `medium`), and medium and large tasks at `max` (was `high`). Extra-large and delicate tasks stay on the full model at `high`, so `delicate` now means a stronger model rather than more effort. The full-model default moves from `gpt-6-sol` to `gpt-6.1-sol`; set `CODEX_MODEL_FULL=gpt-6-sol` to keep the old one. Effort has no environment override, so restoring the old effort settings means installing the previous release. `max` needs a Codex CLI and mini model that accept it; the pipeline guide names the verified pair and what to do if Codex rejects it.
+- **QA defaults to Claude Haiku 5.5 instead of Sonnet.** The QA step runs `claude-haiku-5-5` at medium effort at every task size, including delicate tasks; spec, plan, and code review keep their models. QA no longer follows the light-tier model, so `CLAUDE_MODEL_LIGHT` stops reaching it: if you set only `CLAUDE_MODEL_LIGHT`, QA moves to Haiku, and if you also set `CLAUDE_MODEL`, QA uses that value. `CLAUDE_MODEL_QA` still wins over both. To keep your previous QA model, set `CLAUDE_MODEL_QA` to it (`sonnet` if you set nothing).
 
 ### Fixed
 
