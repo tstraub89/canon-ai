@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.16.0] — 2026-10-28
+
 ### Changed
 
 - **Codex spec review for small tasks runs at `high` effort instead of `medium`.** Small (`S`) tasks now get the same spec-review effort as medium and large ones. In a replay of past specs, `high` caught more spec gaps that later forced a reroute and did not block more clean specs; a review takes about 20 seconds longer. Effort has no environment override, so restoring `medium` means installing the previous release.
