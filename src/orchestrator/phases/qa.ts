@@ -49,7 +49,7 @@ export async function runQaPhase(
         // Use the active cwd so the salvage write lands in the same tree Claude wrote to.
         const donePath = path.join(activeCwd, 'tasks', taskId, 'done.md');
         if (isDoneMdTemplate(donePath)) {
-            const salvaged = extractDoneMdFromStdout(result.text) ?? extractDoneMdFromStdout(result.capturedStdout);
+            const salvaged = extractDoneMdFromStdout(result.text) || extractDoneMdFromStdout(result.capturedStdout);
             if (salvaged) {
                 fs.writeFileSync(donePath, salvaged);
                 warn(`Salvaged tasks/${taskId}/done.md from captured stdout — QA sub-agent streamed content instead of using the Write tool.`);

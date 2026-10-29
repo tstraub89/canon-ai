@@ -11067,3 +11067,62 @@ for (const [phase, backend, slot] of [
         });
     });
 }
+
+for (const agent of ['', 'codex']) {
+    void test(`legacy retry isolates empty agent: ${agent || 'empty'}`, () => {
+        withTempDir('role-legacy-retry-', dir => {
+            const { localDir } = makeGitFixture(dir);
+            const taskId = 'legacy-empty-agent';
+            const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+            const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+            status.phases.implement!.agent = agent;
+            status.sessions = { codex: 'legacy-implement-session' };
+            writeTaskStatus(tasksRoot, taskId, status);
+            const bins = path.join(dir, 'bins');
+            fs.mkdirSync(bins);
+            setupInvocationLoggingCliTools(bins);
+            const log = path.join(dir, 'argv.jsonl');
+            const result = runNodeInline([
+                `import { retryAgentForPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+                `console.log('RETRY=' + await retryAgentForPhase('${taskId}', 'implement', 'fixture'));`,
+            ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+                FAKE_AGENT_LOG: path.join(dir, 'agents.log'), FAKE_AGENT_ARGV_LOG: log }, localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+            assert.match(result.stdout, /RETRY=drift/);
+            const invocations = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+            assert.equal(invocations.length, 1);
+            assert.equal(invocations[0].agent, 'codex');
+            assert.deepEqual(invocations[0].argv.slice(0, 3), ['exec', 'resume', 'legacy-implement-session']);
+        });
+    });
+}
+
+for (const text of ['No summary heading in the normalized text.', '', '# QA Summary\n\nPrefer normalized text.\n']) {
+    const hasSummary = text.startsWith('# QA Summary');
+    void test(`QA salvage output selection: ${hasSummary ? 'text wins' : text ? 'stdout fallback' : 'empty text fallback'}`, () => {
+        withTempDir('role-qa-fallback-', dir => {
+            const { localDir } = makeGitFixture(dir);
+            const taskId = 'qa-fallback';
+            const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+            const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+            status.phases.code_review!.status = 'done';
+            writeTaskStatus(tasksRoot, taskId, status);
+            const bins = path.join(dir, 'bins');
+            fs.mkdirSync(bins);
+            const stdoutSummary = '# QA Summary\n\nRecover the raw stdout summary.\n';
+            const transcript = JSON.stringify({ type: 'result', result: text, session_id: 'qa-fallback-session' }) + '\n' + stdoutSummary;
+            writeExecutable(bins, 'claude', [`printf '%s' '${transcript}'`]);
+            const result = runNodeInline([
+                `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+                `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+                `await runQaPhase(buildPipelineState(['${taskId}']), false, null);`,
+            ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+            const donePath = path.join(tasksRoot, taskId, 'done.md');
+            assert.equal(fs.existsSync(donePath), true, 'QA must salvage a summary from one of the two output sources');
+            assert.equal(fs.readFileSync(donePath, 'utf8').trim(), (hasSummary ? text : transcript).trim());
+            const after = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+            assert.equal(after.phases.qa?.status, 'done');
+        });
+    });
+}

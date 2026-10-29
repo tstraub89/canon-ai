@@ -22,3 +22,9 @@ spec_review: folded both Codex nits into spec (phase-aware config resolution in 
 
 [implement] Docs-refs subprocess fixtures need fs.realpathSync on the checker script path on macOS; the /var alias otherwise misses the script's ESM direct-run guard and falsely returns a clean check. This behavior is already documented by the existing installDocsRefsChecker helper.
 code_review preflight: fixed fused Affected Files row (dist/cli/index.js) introduced by conversational spec edit; re-running.
+
+[implement-revision] Round 1: extractDoneMdFromStdout returns an empty string on no match, so nullish coalescing skipped raw-stdout salvage. New fake-Claude cases for non-summary text and empty text both failed against c6c3e4f0b10c0a8bef1b7b290d706610884e0506 before the fix; the competing-summary text-priority control passed. Truthy fallback fixes both cases.
+
+[implement-revision] Isolated AC-6(a) in an archive of 9675e2f2713e31e7c41445eee607e2d5b39c03b8 with only the new test applied: both cases seed the legacy codex slot; empty agent returns no_session (red), agent codex resumes the same id (green). Both variants pass on the current implementation. This removes the new-role-key confound from the original red-first test.
+
+[implement-revision] The incoming working tree already separates dist/cli/index.js into its own spec Affected Files row. Preserved that edit; the old handoff scope-parser blocker is resolved by the current spec, without changing its parser.

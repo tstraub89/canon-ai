@@ -144,3 +144,60 @@ All three tests ran before non-test edits. The command below selected only these
 - [x] All deviations documented.
 
 The scope-parser blocker above needs spec-owner attention before downstream scope reconciliation.
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/orchestrator/phases/qa.ts` | Uses truthy fallback because the summary extractor returns an empty string on no match. |
+| `tests/run-task-safety.test.ts` | Adds stdout fallback, empty-text fallback and competing-summary priority cases; adds a legacy-slot empty-agent retry case and a populated-agent control. |
+| `tests/agent-backend.test.ts` | Describes the adapter contract and current-config expectations accurately; removes the misleading provenance comment and all-call-sites title. |
+| `tests/run-task-code-review.test.ts` | Corrects optional nit 5's indentation. |
+| `dist/orchestrator/run-task.js` | Rebuilt QA fallback change. |
+| `tasks/agent-backend-role-routing/notes.md` | Records the empty-string extractor contract, isolated historical retry evidence and incoming spec-row repair. |
+| `tasks/agent-backend-role-routing/handoff.md` | Appends this revision's findings, evidence and validation. |
+
+### Findings addressed
+
+- Correctness bug 1: `src/orchestrator/phases/qa.ts` now uses `||`, so a failed text extraction tries captured stdout. New real phase/fake-Claude tests cover both non-summary and empty normalized text, and verify that normalized text still wins when both sources contain a summary.
+- Risk 2: new fixtures in `tests/run-task-safety.test.ts` seed only the legacy implement session. On the original base, the empty-agent case fails while the otherwise identical Codex-agent control resumes that session. Both pass with current routing. This supplies isolated AC-6(a) evidence without relying on the role-key rename. The original role-slot and AC-6(b) storage tests remain, as permitted by the review.
+- Risk 3: `tests/agent-backend.test.ts` now states that it exercises backend adapter scenarios and constructs expectations with current config getters/shared prompt helpers under a scrubbed environment. It no longer claims to exercise every call site or be a runnable fixture at the pre-backend commit. The earlier baseline experiment recorded above used the pre-refactor test form; the checked-in test is not itself that historical form. Actual call-site comparisons remain in `tests/run-task-safety.test.ts` and `tests/run-task-code-review.test.ts`.
+- Optional nit 5: aligned the detached cold-review binding with its enclosing block. Other optional API/type refactors were left unchanged.
+
+### AC deltas
+
+| AC | Status | Evidence |
+|---|---|---|
+| AC-8 | Met — restored from Round 1's Partial | Both stdout fallbacks now execute; text-priority control remains green. |
+| AC-6 | Met — evidence strengthened | Legacy-only retry fixture isolates the empty-agent failure on the original base, with a passing populated-agent control. |
+| AC-3 | Met — unchanged behavior | Only the adapter test's description changed; per-site invocation parity still passes in the full suite. |
+
+### Red-First Evidence
+
+No production code changed before the QA red run. For the historical retry check, an archive of the recorded base was extracted into a scratch directory, linked to the installed test dependencies, and given only the new legacy retry test cases; no original production files were patched.
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| AC-8 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='QA salvage output selection' tests/run-task-safety.test.ts` | c6c3e4f0b10c0a8bef1b7b290d706610884e0506 | Both fallback cases failed by assertion because done.md was absent. Text-priority control passed. | All three cases pass; included in the nine-check focused run and full suite. |
+| AC-6(a), Risk 2 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='legacy retry isolates empty agent' tests/run-task-safety.test.ts` | 9675e2f2713e31e7c41445eee607e2d5b39c03b8, scratch archive with only these tests added | Empty-agent case returned RETRY=no_session instead of resuming the legacy id. Codex-agent control passed with the same legacy slot and id. | Both variants pass and assert exec resume with the stored legacy id; included in the full suite. |
+
+### Blockers
+
+None open for this iteration. The incoming edit to `tasks/agent-backend-role-routing/spec.md` separates the CLI bundle row. The real affected-files parser now includes `dist/cli/index.js` with no malformed cells, resolving both historical scope-row entries in the initial Blockers section. This revision preserved that incoming edit rather than modifying the spec.
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | Includes new fixture cases and corrected test wording. |
+| `npm run type-check` | Pass | Current source and tests. |
+| `npm test` | Pass | Full suite: 1793 tests, 1792 passed, zero failures, one skip. |
+| `npm run build` | Pass | Both bundles rebuilt; only the orchestrator bundle changed this iteration. |
+| `npm run sync-templates:check` | Pass | Managed files remain synchronized. |
+| `npm run docs-refs-check` | Pass | Passed before writing this section; rechecked with the appended artifact. |
+| Focused regression run | Pass | Nine checks: original red-first cases, QA invocation parity, legacy retry/control, and three output-selection cases. |
+| Cumulative handoff coverage | Pass | Every path in git diff main...HEAD --name-only is covered across the Changes tables; current source edits are also covered. |
+| `git diff --check` | Pass | No whitespace errors. |
+| E2E | not_configured | Spec Validation Required explicitly marks E2E N/A: no UI surface. |

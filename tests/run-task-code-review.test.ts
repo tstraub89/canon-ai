@@ -1641,7 +1641,7 @@ void test('failed delta facts force full scope before cold-Codex runs', { concur
             deps.getDeltaLineStats = () => failedProbe === 'lines'
                 ? null : [{ path: 'src/foo.ts', added: 1, deleted: 0 }];
             const coldBackend = deps.agentBackendFor('cold_reviewer');
-        const cold = coldBackend.coldReview.bind(coldBackend);
+            const cold = coldBackend.coldReview.bind(coldBackend);
             deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
             await runCodeReviewPhase(makeState([name]), false, null, deps);
             assert.deepEqual(bases, ['main']);

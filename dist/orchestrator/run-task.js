@@ -7116,7 +7116,7 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
     const taskId = taskIds[0];
     const donePath = path19.join(activeCwd, "tasks", taskId, "done.md");
     if (isDoneMdTemplate(donePath)) {
-      const salvaged = extractDoneMdFromStdout(result.text) ?? extractDoneMdFromStdout(result.capturedStdout);
+      const salvaged = extractDoneMdFromStdout(result.text) || extractDoneMdFromStdout(result.capturedStdout);
       if (salvaged) {
         fs21.writeFileSync(donePath, salvaged);
         warn(`Salvaged tasks/${taskId}/done.md from captured stdout \u2014 QA sub-agent streamed content instead of using the Write tool.`);

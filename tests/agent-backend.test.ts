@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-// Invocation values captured before the routing refactor (9675e2f).
+// Pins literal session flags and model/effort/budget defaults under a scrubbed env.
+// Expected argv uses current config getters and shared prompt helpers; actual
+// call-site parity is covered in run-task-safety and run-task-code-review tests.
 const parityRows = [
     ['spec fresh', 'author', 'spec', null, true],
     ['spec revision', 'author', 'spec', 'session', true],
@@ -24,7 +26,7 @@ const parityRows = [
     ['QA fixup', 'qa', 'qa', 'session', true],
 ] as const;
 
-void test('invocation baseline: all session call sites retain binary, argv, cwd and prompt', () => {
+void test('backend session contract: literal flags and policy defaults', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'backend-parity-'));
     try {
         for (const binary of ['claude', 'codex']) {
