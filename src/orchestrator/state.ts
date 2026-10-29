@@ -472,6 +472,28 @@ export function writeStatusToFile(statusFile: string, status: StatusJson): void 
     fs.renameSync(tmpFile, statusFile);
 }
 
+const LEGACY_SESSION_SLOTS = {
+    author: 'claude_spec', spec_reviewer: 'codex_spec_review',
+    implementer: 'codex', reviewer: 'claude_review',
+} as const satisfies Record<SessionSlot, keyof NonNullable<StatusJson['sessions']>>;
+
+/** Mutates the supplied status so callers can include the clear in their atomic write. */
+export function clearSessionPair(status: StatusJson, slot: SessionSlot): void {
+    if (!status.sessions) return;
+    delete status.sessions[slot];
+    delete status.sessions[LEGACY_SESSION_SLOTS[slot]];
+}
+
+export function recordPhaseAgent(taskIds: string[], phase: Phase, agent: import('../lib/pipeline-policy.js').AgentBackendId): void {
+    for (const taskId of taskIds) {
+        const status = readStatus(taskId);
+        const entry = status.phases[phase];
+        if (!entry || entry.agent === agent) continue;
+        entry.agent = agent;
+        writeStatus(taskId, status);
+    }
+}
+
 export function storeSessionId(taskIds: string[], agent: SessionSlot, sessionId: string): void {
     for (const taskId of taskIds) {
         const s = readStatus(taskId);
@@ -482,7 +504,8 @@ export function storeSessionId(taskIds: string[], agent: SessionSlot, sessionId:
 }
 
 export function getStoredSessionId(taskIds: string[], agent: SessionSlot): string | null {
-    return readStatus(taskIds[0]).sessions?.[agent] ?? null;
+    const sessions = readStatus(taskIds[0]).sessions;
+    return sessions?.[agent] ?? sessions?.[LEGACY_SESSION_SLOTS[agent]] ?? null;
 }
 
 export function autoBlockPhase(

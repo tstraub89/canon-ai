@@ -353,3 +353,32 @@ export function getPipelinePolicy(
         }),
     };
 }
+
+
+export type PipelinePhase = 'spec' | 'spec_review' | 'plan' | 'implement' | 'code_review' | 'qa' | 'human_review';
+export type AgentRole = 'author' | 'spec_reviewer' | 'implementer' | 'reviewer' | 'cold_reviewer' | 'qa';
+export type AgentBackendId = 'claude' | 'codex';
+export type SessionSlot = 'author' | 'spec_reviewer' | 'implementer' | 'reviewer';
+export type RoleAssignment = Readonly<Record<AgentRole, AgentBackendId>>;
+export const AGENT_ROLES: readonly AgentRole[] = ['author', 'spec_reviewer', 'implementer', 'reviewer', 'cold_reviewer', 'qa'];
+const DEFAULT_ROLE_ASSIGNMENT: RoleAssignment = {
+    author: 'claude', spec_reviewer: 'codex', implementer: 'codex',
+    reviewer: 'claude', cold_reviewer: 'codex', qa: 'claude',
+};
+const PHASE_PRIMARY_ROLE: Record<PipelinePhase, AgentRole | null> = {
+    spec: 'author', spec_review: 'spec_reviewer', plan: 'author', implement: 'implementer',
+    code_review: 'reviewer', qa: 'qa', human_review: null,
+};
+// Phase-specific: plan shares the author role but must not overwrite spec continuity.
+const PHASE_SESSION_SLOT: Record<PipelinePhase, SessionSlot | null> = {
+    spec: 'author', spec_review: 'spec_reviewer', plan: null, implement: 'implementer',
+    code_review: 'reviewer', qa: null, human_review: null,
+};
+export function roleBackendId(role: AgentRole, assignment: RoleAssignment = DEFAULT_ROLE_ASSIGNMENT): AgentBackendId {
+    return assignment[role];
+}
+export function phasePrimaryRole(phase: PipelinePhase): AgentRole | null { return PHASE_PRIMARY_ROLE[phase]; }
+export function phaseSessionSlot(phase: PipelinePhase): SessionSlot | null { return PHASE_SESSION_SLOT[phase]; }
+export function requiredAgentBackends(assignment: RoleAssignment = DEFAULT_ROLE_ASSIGNMENT): AgentBackendId[] {
+    return [...new Set(AGENT_ROLES.map(role => roleBackendId(role, assignment)))];
+}

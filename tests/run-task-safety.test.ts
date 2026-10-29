@@ -1,3 +1,6 @@
+import { CLAUDE_HEADLESS, CODEX_HEADLESS, toResumePrompt } from '../src/orchestrator/prompts/helpers.js';
+import { promptArtifactFixup } from '../src/orchestrator/prompts/index.js';
+import { getClaudeConfig, getCodexConfig } from '../src/orchestrator/policy.js';
 import { DEFAULT_PROTECTED_DOCS } from '../src/orchestrator/docs-freshness.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -420,7 +423,7 @@ function setupInvocationLoggingCliTools(scriptDir: string): void {
         writeExecutable(scriptDir, agent, [
             'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
             `printf "%s\\n" "${agent}" >> "$FAKE_AGENT_LOG"`,
-        'if [ -n "${FAKE_AGENT_ARGV_LOG:-}" ]; then node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:process.argv[1],argv:process.argv.slice(2)})+"\\n")\' "' + agent + '" "$@"; fi',
+        'if [ -n "${FAKE_AGENT_ARGV_LOG:-}" ]; then node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:process.argv[1],argv:process.argv.slice(2),cwd:process.cwd()})+"\\n")\' "' + agent + '" "$@"; fi',
         'is_resume=0; for arg in "$@"; do case "$arg" in resume|--resume) is_resume=1 ;; esac; done',
         'if [ -n "${FAKE_AGENT_EDIT_SCRIPT:-}" ]; then node "$FAKE_AGENT_EDIT_SCRIPT" "' + agent + '" "$@" || exit $?; fi',
         'if [ "' + agent + '" = "claude" ] && [ "${FAKE_AGENT_FAIL_RESUME:-0}" = "1" ] && [ "$is_resume" = "1" ]; then exit 7; fi',
@@ -2152,7 +2155,7 @@ void test('review-entry docs-refs fix-up resumes the stored implement session in
         const handoff = path.join(fixture.worktreeDir, 'tasks', taskId, 'handoff.md');
         fs.appendFileSync(handoff, '\nSee `src/removed-by-task.ts` for details.\n');
         const taskStatus = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as { sessions?: Record<string, string> };
-        taskStatus.sessions = { ...(taskStatus.sessions ?? {}), codex: 'stored-implement-session' };
+        taskStatus.sessions = { ...(taskStatus.sessions ?? {}), implementer: 'stored-implement-session', codex: 'stale-legacy-implement' };
         fs.writeFileSync(fixture.statusPath, `${JSON.stringify(taskStatus, null, 2)}\n`);
         const editScript = path.join(dir, 'fix-artifact.mjs');
         fs.writeFileSync(editScript, [
@@ -2164,18 +2167,30 @@ void test('review-entry docs-refs fix-up resumes the stored implement session in
             '#!/bin/sh',
             'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
             'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
-            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:"codex",argv:process.argv.slice(1)})+"\\n")\' "$@"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:"codex",argv:process.argv.slice(1),cwd:process.cwd()})+"\\n")\' "$@"',
             'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
             'if [ "$is_resume" = "1" ]; then node "$FAKE_AGENT_EDIT_SCRIPT"; exit 0; fi',
             'node -e \'console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"clean review"}})); console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}}))\'',
         ].join('\n'), { mode: 0o755 });
+        const check = runDocsRefsCheck(fixture.worktreeDir, fs.realpathSync(path.join(fixture.localDir, 'scripts/docs-refs-check.mjs')));
+        assert.equal(check.kind, 'findings');
+        const findings = check.kind === 'findings' ? filterArtifactFindings(check.findings, [`tasks/${taskId}/handoff.md`]).map(f => f.raw) : [];
+        assert.equal(findings.length, 1);
+        const expectedPrompt = promptArtifactFixup({ phase: 'implement', findings, artifacts: [`tasks/${taskId}/handoff.md`], attempt: 1, maxAttempts: 2 });
+        const beforeStatus = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        const cfg = getCodexConfig('implement', [parityTask(beforeStatus)]);
         const argvLog = path.join(dir, 'agent-argv.jsonl');
         const result = runReviewEntryMainFixture(fixture, taskId, { FAKE_AGENT_ARGV_LOG: argvLog, FAKE_AGENT_EDIT_SCRIPT: editScript });
         assert.equal(result.status, 0, combinedOutput(result));
         assert.match(result.stdout, /Artifact fix-up \(attempt 1\/2\)/);
         assert.match(fs.readFileSync(handoff, 'utf8'), /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
-        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[]; cwd: string });
         assert.equal(entries.filter(entry => entry.agent === 'codex' && entry.argv.includes('resume') && entry.argv.includes('stored-implement-session')).length, 1);
+        const fixup = entries.find(entry => entry.agent === 'codex' && entry.argv.includes('stored-implement-session'));
+        assert.deepEqual(fixup, { agent: 'codex', cwd: fs.realpathSync(fixture.worktreeDir), argv: [
+            'exec', 'resume', 'stored-implement-session', '--json', '-c', `model_reasoning_effort=${cfg.effort}`,
+            `${CODEX_HEADLESS}\n\n${expectedPrompt}`, '-m', cfg.model,
+        ] });
     });
 });
 
@@ -2235,6 +2250,13 @@ void test('QA docs-refs fix-up resumes its in-process Claude session before comm
             "if (process.argv.includes('--resume')) fs.writeFileSync(file, content.replace('`src/removed-by-task.ts`', '[src/removed-by-task.ts](src/removed-by-task.ts)'));",
             `else fs.writeFileSync(file, ${JSON.stringify('# Completed\n\nSee `src/removed-by-task.ts` for details.\n')});`,
         ].join('\n'));
+        fs.writeFileSync(donePath, '# Completed\n\nSee `src/removed-by-task.ts` for details.\n');
+        const check = runDocsRefsCheck(localDir, fs.realpathSync(path.join(localDir, 'scripts/docs-refs-check.mjs')));
+        assert.equal(check.kind, 'findings');
+        const findings = check.kind === 'findings' ? filterArtifactFindings(check.findings, [`tasks/${taskId}/done.md`]).map(f => f.raw) : [];
+        assert.equal(findings.length, 1);
+        const expectedPrompt = promptArtifactFixup({ phase: 'qa', findings, artifacts: [`tasks/${taskId}/done.md`, `tasks/${taskId}/pr-body.md`], attempt: 1, maxAttempts: 2 });
+        const cfg = getClaudeConfig('qa', [parityTask(JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson)]);
         const argvLog = path.join(dir, 'qa-agent-argv.jsonl');
         const agentLog = path.join(dir, 'qa-agent-invocations.log');
         const result = runReviewLoopMain(localDir, tasksRoot, fakeBins, taskId, 3, ['--expect', 'qa'], {
@@ -2251,8 +2273,15 @@ void test('QA docs-refs fix-up resumes its in-process Claude session before comm
         const committed = execFileSync('git', ['show', `HEAD:tasks/${taskId}/done.md`], { cwd: localDir, encoding: 'utf8' });
         assert.match(committed, /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
         assert.doesNotMatch(committed, /`src\/removed-by-task\.ts`/);
-        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+        const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[]; cwd: string });
         assert.equal(entries.filter(entry => entry.agent === 'claude' && entry.argv.includes('--resume') && entry.argv.includes('qa-session-for-fixup')).length, 1);
+
+        const fixup = entries.find(entry => entry.agent === 'claude' && entry.argv.includes('--resume'));
+        assert.deepEqual(fixup, { agent: 'claude', cwd: fs.realpathSync(localDir), argv: [
+            '-p', `${CLAUDE_HEADLESS}\n\n${toResumePrompt(expectedPrompt)}`, '--model', cfg.model, '--effort', cfg.effort,
+            '--add-dir', fs.realpathSync(localDir), '--max-budget-usd', cfg.budget,
+            '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose', '--resume', 'qa-session-for-fixup',
+        ] });
     });
 });
 
@@ -8668,7 +8697,7 @@ void test('implement docs-refs fix-up resumes Codex before the auto-commit hook'
             '#!/bin/sh',
             'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
             'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
-            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:"codex",argv:process.argv.slice(1)})+"\\n")\' "$@"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify({agent:"codex",argv:process.argv.slice(1),cwd:process.cwd()})+"\\n")\' "$@"',
             'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
             'if [ "$is_resume" = "1" ]; then node "$FAKE_AGENT_EDIT_SCRIPT"; exit 0; fi',
             'printf "fixture\\n" > initial-fixture.txt',
@@ -10761,3 +10790,398 @@ void test('agent failure park writes task status only in its active worktree', (
         assert.equal(parked.escalations?.at(-1)?.phase, 'implement');
     });
 });
+
+void test('role routing red-first: empty agent retries the implementer session', () => {
+    withTempDir('role-retry-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'empty-agent';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        status.phases.implement!.agent = '';
+        status.sessions = { implementer: 'stored-implementer' };
+        writeTaskStatus(tasksRoot, taskId, status);
+        const bins = path.join(dir, 'bins');
+        fs.mkdirSync(bins);
+        setupInvocationLoggingCliTools(bins);
+        const result = runNodeInline([
+            `import { retryAgentForPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `console.log('RETRY=' + await retryAgentForPhase('${taskId}', 'implement', 'fixture'));`,
+        ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            FAKE_AGENT_LOG: path.join(dir, 'agents.log') }, localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.match(result.stdout, /RETRY=drift/);
+        assert.equal(fs.readFileSync(path.join(dir, 'agents.log'), 'utf8').trim(), 'codex');
+    });
+});
+
+void test('role routing red-first: empty agent spec stores author and records backend', () => {
+    withTempDir('role-storage-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'empty-spec';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'spec_review', 0);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        status.phases.spec!.agent = '';
+        writeTaskStatus(tasksRoot, taskId, status);
+        const bins = path.join(dir, 'bins');
+        fs.mkdirSync(bins);
+        setupInvocationLoggingCliTools(bins);
+        const result = runReviewLoopMain(localDir, tasksRoot, bins, taskId, 3, [], {
+            FAKE_AGENT_COMPLETE_PHASE: 'spec', FAKE_CLAUDE_SESSION_ID: 'new-author-session',
+        });
+        assert.equal(result.status, 0, combinedOutput(result));
+        const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as { sessions?: Record<string, string>; phases: Record<string, { agent: string }> };
+        assert.equal(updated.sessions?.author, 'new-author-session');
+        assert.equal(updated.phases.spec.agent, 'claude');
+    });
+});
+
+void test('role routing red-first: QA salvages result-event text', () => {
+    withTempDir('role-qa-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'qa-text';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        status.phases.code_review!.status = 'done';
+        writeTaskStatus(tasksRoot, taskId, status);
+        const bins = path.join(dir, 'bins');
+        fs.mkdirSync(bins);
+        const body = '# QA Summary\n\nAll checks passed.\n';
+        writeExecutable(bins, 'claude', [`printf '%s\\n' '${JSON.stringify({ type: 'result', result: body, session_id: 'qa-session' })}'`]);
+        const result = runNodeInline([
+            `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+            `await runQaPhase(buildPipelineState(['${taskId}']), false, null);`,
+        ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.equal(fs.existsSync(path.join(tasksRoot, taskId, 'done.md')), true);
+        assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'done.md'), 'utf8').trim(), body.trim());
+    });
+});
+
+void test('QA salvage keeps a qa phase the session blocked', () => {
+    withTempDir('role-qa-blocked-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'qa-blocked';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        status.phases.code_review!.status = 'done';
+        writeTaskStatus(tasksRoot, taskId, status);
+        const bins = path.join(dir, 'bins');
+        fs.mkdirSync(bins);
+        const statusPath = path.join(tasksRoot, taskId, 'status.json');
+        const body = '# QA Summary\n\nBlocked on a missing fixture.\n';
+        // The fake QA session blocks its own phase, then replies with a summary but leaves done.md as the template.
+        writeExecutable(bins, 'claude', [
+            `node -e 'const fs=require("fs");const p=process.argv[1];const s=JSON.parse(fs.readFileSync(p,"utf8"));s.phases.qa.status="blocked";fs.writeFileSync(p,JSON.stringify(s,null,2))' '${statusPath}'`,
+            `printf '%s\\n' '${JSON.stringify({ type: 'result', result: body, session_id: 'qa-session' })}'`,
+        ]);
+        const result = runNodeInline([
+            `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+            `import { checkAndRoute } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `await runQaPhase(buildPipelineState(['${taskId}']), false, null);`,
+            `await checkAndRoute('qa', ['${taskId}']);`,
+        ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+        // Routing stops on the block instead of recovering the salvaged done.md into qa done.
+        assert.equal(result.status, 2, combinedOutput(result));
+        assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'done.md'), 'utf8').trim(), body.trim());
+        const updated = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        assert.equal(updated.phases.qa?.status, 'blocked');
+        assert.match(combinedOutput(result), /QA session marked qa blocked/);
+    });
+});
+
+void test('checkAndRoute parks the whole QA bundle when one member blocked qa', () => {
+    withTempDir('role-qa-bundle-blocked-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const ids = ['qa-done', 'qa-blocked'];
+        let tasksRoot = '';
+        for (const id of ids) {
+            tasksRoot = writeReviewLoopFixture(localDir, id, 'code_review', 0, 0, true);
+            const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
+            status.phases.code_review!.status = 'done';
+            status.phases.qa = { status: id === 'qa-done' ? 'done' : 'blocked', agent: 'claude' };
+            writeTaskStatus(tasksRoot, id, status);
+        }
+        const result = runNodeInline([
+            `import { checkAndRoute } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `await checkAndRoute('qa', ${JSON.stringify(ids)});`,
+        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+        assert.equal(result.status, 2, combinedOutput(result));
+        // Both members sit at qa blocked, so `canon run qa-done qa-blocked` passes the same-phase check.
+        for (const id of ids) {
+            const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
+            assert.equal(updated.phases.qa?.status, 'blocked', id);
+            assert.equal(updated.escalations?.at(-1)?.phase, 'qa', id);
+        }
+    });
+});
+
+for (const row of [
+    { phase: 'spec', mode: 'fresh' }, { phase: 'spec', mode: 'revision' },
+    { phase: 'spec_review', mode: 'fresh' }, { phase: 'spec_review', mode: 'resume' },
+    { phase: 'plan', mode: 'fresh' },
+    { phase: 'implement', mode: 'fresh' }, { phase: 'implement', mode: 'resume' }, { phase: 'implement', mode: 'reroute' },
+    { phase: 'qa', mode: 'fresh' },
+] as const) {
+    void test(`phase invocation parity: ${row.phase} ${row.mode}`, () => {
+        withTempDir('role-phase-parity-', dir => {
+            const taskId = 'parity';
+            const fixture = prepareReviewEntryMainFixture(dir, taskId, true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.task_size = 'L'; status.delicate = false;
+            status.phases.code_review!.status = row.phase === 'qa' ? 'done' : 'pending';
+            status.phases.spec_review!.verdict = row.mode === 'revision' ? 'changes_requested' : 'approved';
+            status.phases[row.phase]!.status = row.mode === 'resume' ? 'in_progress' : 'pending';
+            if (row.mode === 'reroute') status.phases.implement!.rerouted = true;
+            writeTaskStatus(fixture.tasksRoot, taskId, status);
+            setupInvocationLoggingCliTools(fixture.fakeBins);
+            const capture = path.join(dir, 'argv.jsonl');
+            const env = { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot,
+                CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+                PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+                FAKE_AGENT_LOG: path.join(dir, 'agents.log'), FAKE_AGENT_ARGV_LOG: capture,
+            };
+            for (const key of Object.keys(env)) if (/^(CLAUDE_MODEL|CLAUDE_BUDGET|CODEX_MODEL|MAX_REVIEW_LOOPS)/.test(key)) delete env[key as keyof typeof env];
+            const result = runNodeInline(String.raw`
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { buildPipelineState } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { runSpecPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/spec.ts')).href}';
+import { runPlanPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/plan.ts')).href}';
+import { runSpecReviewPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/spec-review.ts')).href}';
+import { runImplementPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/implement.ts')).href}';
+import { runQaPhase, resolveQaDocsFreshness } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href}';
+import * as prompts from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/prompts/index.ts')).href}';
+import { requireDocsFreshnessConfig } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/docs-freshness.ts')).href}';
+import { getAffectedFiles } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/git.ts')).href}';
+import { runClaude } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/agents/claude.ts')).href}';
+import { runCodex } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/agents/codex.ts')).href}';
+import { getClaudeConfig, getCodexConfig } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/policy.ts')).href}';
+const phase = '${row.phase}', mode = '${row.mode}';
+const state = buildPipelineState(['parity']);
+const cwd = ${JSON.stringify(fixture.worktreeDir)};
+const resume = ['resume','revision','reroute'].includes(mode) ? 'previous-session' : null;
+const affected = getAffectedFiles('main',cwd).files;
+let prompt;
+if (phase === 'spec') prompt = mode === 'revision' ? prompts.promptSpecRevision(state,requireDocsFreshnessConfig(cwd)?.paths) : prompts.promptSpec(state,requireDocsFreshnessConfig(cwd)?.paths);
+if (phase === 'plan') prompt = prompts.promptPlan(state);
+if (phase === 'spec_review') prompt = (resume ? 'The spec has been revised since your last review. Re-read the current spec.md file from disk and produce a completely fresh review — do not replay or summarise your previous output.\n\n' : '') + prompts.promptSpecReview(state);
+if (phase === 'implement') prompt = mode === 'reroute' ? prompts.promptImplementReroute(state,true,affected,'main') : mode === 'resume' ? prompts.promptImplementResume(state) : prompts.promptImplement(state,'fresh',affected,'main');
+if (phase === 'qa') prompt = prompts.promptQa(state,null,resolveQaDocsFreshness(['parity'],cwd));
+const handlers = {spec:runSpecPhase,plan:runPlanPhase,spec_review:runSpecReviewPhase,implement:runImplementPhase,qa:runQaPhase};
+const actualResult = await handlers[phase](state,false,phase === 'qa' ? null : resume);
+assert.equal(actualResult.agent, ['spec_review','implement'].includes(phase) ? 'codex' : 'claude');
+const captured = () => fs.readFileSync(process.env.FAKE_AGENT_ARGV_LOG,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+const actual = captured()[0];
+if (['spec_review','implement'].includes(phase)) {
+    const cfg = getCodexConfig(phase,state.tasks);
+    await runCodex(prompt,false,resume,cfg.model,cfg.effort,undefined,cwd,mode !== 'reroute');
+} else {
+    const cfg = getClaudeConfig(phase,state.tasks);
+    await runClaude(prompt,false,resume,cfg.model,cfg.effort,cfg.budget,undefined,phase === 'spec' ? undefined : cwd);
+}
+assert.deepEqual(actual,captured()[1]);
+`, env, fixture.localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+        });
+    });
+}
+
+void test('implement hallucination clears only implementer pair on every bundle member', () => {
+    withTempDir('role-hallucination-', dir => {
+        const fixture = prepareReviewEntryMainFixture(dir, 'leader', true, false);
+        const sessions = { author: 'a', claude_spec: 'la', spec_reviewer: 's', codex_spec_review: 'ls',
+            implementer: 'i', codex: 'li', reviewer: 'r', claude_review: 'lr' };
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        status.phases.code_review!.iterations_current_loop = 1;
+        status.phases.code_review!.iterations = 1;
+        status.phases.implement!.status = 'pending';
+        status.sessions = sessions;
+        for (const id of ['leader', 'secondary']) writeTaskStatus(fixture.tasksRoot, id, { ...status, id });
+        gitIn(fixture.worktreeDir, 'add', 'tasks');
+        gitIn(fixture.worktreeDir, 'commit', '-m', 'clean revision fixture');
+        const result = runNodeInline(String.raw`
+import { buildPipelineState } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { runImplementPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/implement.ts')).href}';
+await runImplementPhase(buildPipelineState(['leader','secondary']),false,'i');
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot,
+            CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+            PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }, fixture.localDir);
+        assert.equal(result.status, 2, combinedOutput(result));
+        assert.match(combinedOutput(result), /hallucination signature/);
+        const expected: Record<string, string> = { ...sessions };
+        delete expected.implementer; delete expected.codex;
+        for (const id of ['leader','secondary']) {
+            const after = JSON.parse(fs.readFileSync(path.join(fixture.tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
+            assert.deepEqual(after.sessions, expected);
+        }
+    });
+});
+
+void test('recordPhaseAgent writes only the canonical worktree status', () => {
+    withTempDir('role-record-worktree-', dir => {
+        const fixture = prepareReviewEntryMainFixture(dir, 'agent-record', true, false);
+        const mainStatus = path.join(fixture.localDir, 'tasks/agent-record/status.json');
+        const before = fs.readFileSync(mainStatus, 'utf8');
+        const env: NodeJS.ProcessEnv = { ...process.env, CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees') };
+        delete env.CANON_TASKS_DIR_OVERRIDE;
+        const result = runNodeInline(`
+import { recordPhaseAgent } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/state.ts')).href}';
+recordPhaseAgent(['agent-record'],'spec','codex');
+`, env, fixture.localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.equal(fs.readFileSync(mainStatus, 'utf8'), before);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        assert.equal(status.phases.spec?.agent, 'codex');
+    });
+});
+
+
+function parityTask(status: StatusJson): TaskContext {
+    return { taskId: status.id ?? 'parity', title: status.title ?? 'parity', status,
+        specReviewVerdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 0, rerouteCount: 0 };
+}
+
+for (const phase of ['implement', 'code_review'] as const) {
+    void test(`retry invocation parity: ${phase} ignores empty agent and uses retry cwd`, () => {
+        withTempDir('role-retry-parity-', dir => {
+            const fixture = prepareReviewEntryMainFixture(dir, 'retry-parity', true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.phases[phase]!.agent = '';
+            status.phases[phase]!.status = 'in_progress';
+            status.sessions = { implementer: 'implement-session', reviewer: 'review-session' };
+            writeTaskStatus(fixture.tasksRoot, 'retry-parity', status);
+            setupInvocationLoggingCliTools(fixture.fakeBins);
+            const log = path.join(dir, 'argv.jsonl');
+            const result = runNodeInline(String.raw`
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { retryAgentForPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { runClaude } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/agents/claude.ts')).href}';
+import { runCodex } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/agents/codex.ts')).href}';
+import { getClaudeConfig, getCodexConfig } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/policy.ts')).href}';
+const phase = '${phase}';
+assert.equal(await retryAgentForPhase('retry-parity',phase,'fixture evidence'),'drift');
+const prompt = [
+    "PIPELINE GUARDRAIL: phases."+phase+".status for task retry-parity is still 'in_progress'.",
+    'Evidence check: fixture evidence.', '',
+    'Your previous turn ended without completing the phase. Finish the work now (write the artifact if missing, commit if needed), then run:',
+    '  canon task phase retry-parity '+phase+' done'+(phase === 'code_review' ? ' <verdict>' : ''), '',
+    'Reply with tool calls only. No summary, no explanation.',
+].join('\n');
+const tasks = [{status: ${JSON.stringify(status)}}];
+const cwd = ${JSON.stringify(fixture.worktreeDir)};
+if (phase === 'implement') {
+    const cfg = getCodexConfig(phase,tasks);
+    await runCodex(prompt,false,'implement-session',cfg.model,cfg.effort,undefined,cwd);
+} else {
+    const cfg = getClaudeConfig(phase,tasks);
+    await runClaude(prompt,false,'review-session',cfg.model,cfg.effort,cfg.budget,undefined,cwd);
+}
+const entries = fs.readFileSync(process.env.FAKE_AGENT_ARGV_LOG,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+assert.equal(entries.length,2);
+assert.deepEqual(entries[0],entries[1]);
+assert.equal(fs.existsSync(${JSON.stringify(path.join(fixture.tasksRoot, 'retry-parity/metrics.md'))}),false);
+`, { ...process.env, PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+                CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot, CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+                FAKE_AGENT_LOG: path.join(dir, 'agents.log'), FAKE_AGENT_ARGV_LOG: log,
+            }, fixture.localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+        });
+    });
+}
+
+for (const [phase, backend, slot] of [
+    ['spec_review', 'codex', 'spec_reviewer'], ['plan', 'claude', null],
+    ['implement', 'codex', 'implementer'], ['code_review', 'claude', 'reviewer'], ['qa', 'claude', null],
+] as const) {
+    void test(`main role record and session storage: ${phase}`, () => {
+        withTempDir('role-main-storage-', dir => {
+            const fixture = prepareReviewEntryMainFixture(dir, 'storage', true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            const phases = ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa', 'human_review'] as const;
+            for (const entry of phases) {
+                status.phases[entry]!.status = phases.indexOf(entry) < phases.indexOf(phase) ? 'done' : 'pending';
+            }
+            status.phases[phase]!.agent = '';
+            status.sessions = { author: 'keep-author', claude_spec: 'legacy-author',
+                codex_spec_review: 'legacy-spec', codex: 'legacy-implement', claude_review: 'legacy-review' };
+            writeTaskStatus(fixture.tasksRoot, 'storage', status);
+            fs.writeFileSync(path.join(fixture.tasksRoot, 'storage/plan.md'), '# Implementation Plan\n\nImplement the fixture.\n');
+            setupInvocationLoggingCliTools(fixture.fakeBins);
+            const codexPath = path.join(fixture.fakeBins, 'codex');
+            const codexScript = fs.readFileSync(codexPath, 'utf8');
+            fs.writeFileSync(codexPath, codexScript.replace(/\nexit 0\n$/, `\nnode -e 'console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"clean review"}}));console.log(JSON.stringify({type:"turn.completed"}))'\nexit 0\n`));
+            const result = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, 'storage', 3, [], {
+                CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+                FAKE_AGENT_COMPLETE_PHASE: phase, FAKE_CODEX_THREAD_ID: 'new-session', FAKE_CLAUDE_SESSION_ID: 'new-session',
+            });
+            assert.equal(result.status, 0, combinedOutput(result));
+            const after = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            assert.equal(after.phases[phase]?.agent, backend);
+            const expected = { ...status.sessions, ...(slot ? { [slot]: 'new-session' } : {}) };
+            assert.deepEqual(after.sessions, expected);
+        });
+    });
+}
+
+for (const agent of ['', 'codex']) {
+    void test(`legacy retry isolates empty agent: ${agent || 'empty'}`, () => {
+        withTempDir('role-legacy-retry-', dir => {
+            const { localDir } = makeGitFixture(dir);
+            const taskId = 'legacy-empty-agent';
+            const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0);
+            const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+            status.phases.implement!.agent = agent;
+            status.sessions = { codex: 'legacy-implement-session' };
+            writeTaskStatus(tasksRoot, taskId, status);
+            const bins = path.join(dir, 'bins');
+            fs.mkdirSync(bins);
+            setupInvocationLoggingCliTools(bins);
+            const log = path.join(dir, 'argv.jsonl');
+            const result = runNodeInline([
+                `import { retryAgentForPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+                `console.log('RETRY=' + await retryAgentForPhase('${taskId}', 'implement', 'fixture'));`,
+            ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+                FAKE_AGENT_LOG: path.join(dir, 'agents.log'), FAKE_AGENT_ARGV_LOG: log }, localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+            assert.match(result.stdout, /RETRY=drift/);
+            const invocations = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+            assert.equal(invocations.length, 1);
+            assert.equal(invocations[0].agent, 'codex');
+            assert.deepEqual(invocations[0].argv.slice(0, 3), ['exec', 'resume', 'legacy-implement-session']);
+        });
+    });
+}
+
+for (const text of ['No summary heading in the normalized text.', '', '# QA Summary\n\nPrefer normalized text.\n']) {
+    const hasSummary = text.startsWith('# QA Summary');
+    void test(`QA salvage output selection: ${hasSummary ? 'text wins' : text ? 'stdout fallback' : 'empty text fallback'}`, () => {
+        withTempDir('role-qa-fallback-', dir => {
+            const { localDir } = makeGitFixture(dir);
+            const taskId = 'qa-fallback';
+            const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+            const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+            status.phases.code_review!.status = 'done';
+            writeTaskStatus(tasksRoot, taskId, status);
+            const bins = path.join(dir, 'bins');
+            fs.mkdirSync(bins);
+            const stdoutSummary = '# QA Summary\n\nRecover the raw stdout summary.\n';
+            const transcript = JSON.stringify({ type: 'result', result: text, session_id: 'qa-fallback-session' }) + '\n' + stdoutSummary;
+            writeExecutable(bins, 'claude', [`printf '%s' '${transcript}'`]);
+            const result = runNodeInline([
+                `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+                `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+                `await runQaPhase(buildPipelineState(['${taskId}']), false, null);`,
+            ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+            const donePath = path.join(tasksRoot, taskId, 'done.md');
+            assert.equal(fs.existsSync(donePath), true, 'QA must salvage a summary from one of the two output sources');
+            assert.equal(fs.readFileSync(donePath, 'utf8').trim(), (hasSummary ? text : transcript).trim());
+            const after = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+            assert.equal(after.phases.qa?.status, 'done');
+        });
+    });
+}

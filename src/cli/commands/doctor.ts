@@ -1,3 +1,4 @@
+import { requiredAgentBackends } from '../../lib/pipeline-policy.js';
 import { loadDocsFreshnessConfig, resolveDocsFreshness, matchesDocsGlob, formatUnknownKeysWarning } from '../../orchestrator/docs-freshness.js';
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'fs';
@@ -725,13 +726,14 @@ export function doctorCmd(args: string[]): void {
     handlePreScan(DOCTOR_ARGS, args, { out: console.log, err: console.error, exit: code => process.exit(code) });
     const cwd = resolveProjectRoot();
 
+    const requiredAgents = new Set(requiredAgentBackends());
     const envChecks: Check[] = [
         checkPlatform(),
         checkNodeVersion(),
         checkBinary('git', true, 'https://git-scm.com/downloads'),
-        checkBinary('claude', true, 'npm install -g @anthropic-ai/claude-code'),
-        ...(isAvailable('claude') ? [checkClaudeVersion()] : []),
-        checkBinary('codex', true, 'npm install -g @openai/codex'),
+        ...(requiredAgents.has('claude') ? [checkBinary('claude', true, 'npm install -g @anthropic-ai/claude-code')] : []),
+        ...(requiredAgents.has('claude') && isAvailable('claude') ? [checkClaudeVersion()] : []),
+        ...(requiredAgents.has('codex') ? [checkBinary('codex', true, 'npm install -g @openai/codex')] : []),
         checkBinary('gh', false, 'brew install gh && gh auth login  (required for --pr / --push)'),
     ];
 
@@ -746,7 +748,7 @@ export function doctorCmd(args: string[]): void {
     ];
 
     const configChecks: Check[] = [
-        checkCodexProjectTrust(cwd),
+        ...(requiredAgents.has('codex') ? [checkCodexProjectTrust(cwd)] : []),
         checkRecommendedPermissions(cwd),
         checkLocalSettingsGitignored(cwd),
         checkRuntimeFilesGitignored(cwd),

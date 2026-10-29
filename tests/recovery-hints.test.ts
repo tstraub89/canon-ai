@@ -996,16 +996,20 @@ void test('code_review pre-flight auto-block: the printed reset-code-review is a
       getMaxReviewLoops() { return 3; },
       resolveCommit() { return 'fixture-head'; },
       getEffectiveSize() { return 'M'; },
-      getCodexConfig() { return { model: 'fixture', effort: 'low' }; },
-      async runColdCodexReview() { return { success: true, findings: '' }; },
       writeColdCodexArchive() {},
       findColdCodexArchiveForRound() { return null; },
       hasMalformedColdCodexArchive() { return false; },
-      getClaudeConfig() { return { model: 'fixture', effort: 'low', budget: 1 }; },
       getScopedDiff() { return ''; },
-      async runClaude() {
-        fs.writeFileSync(path.join(process.cwd(), 'agent-called.txt'), 'yes');
-        return { sessionId: 'fixture', exitCode: 0 };
+      agentBackendFor(role) {
+        return {
+          id: role === 'cold_reviewer' ? 'codex' : 'claude',
+          resolveConfig() { return { model: 'fixture', effort: 'low', budget: '1' }; },
+          async coldReview() { return { success: true, findings: '' }; },
+          async run() {
+            fs.writeFileSync(path.join(process.cwd(), 'agent-called.txt'), 'yes');
+            return { backend: 'claude', sessionId: 'fixture', exitCode: 0 };
+          },
+        };
       },
     };
     await runCodeReviewPhase({ tasks: [task], tier: 'full', isBundle: false }, false, null, deps);

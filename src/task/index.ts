@@ -12,7 +12,7 @@ import {
     verifyHandoffAgainstDiffFromData,
 } from '../orchestrator/validation.js';
 import { filterGitIgnoredPaths } from '../orchestrator/git.js';
-import { assertManagedInvocationRoot, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, isRerouteAdmitted, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
+import { assertManagedInvocationRoot, clearSessionPair, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, isRerouteAdmitted, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { isPlanCombined, SIZE_ORDER, type TaskSize } from '../lib/pipeline-policy.js';
@@ -1112,16 +1112,14 @@ export function taskResetSpecReview(id: string): void {
     specReview.iterations = 0;
     specReview.iterations_current_loop = 0;
     specReview.verdict = '';
-    if (status.sessions && Object.hasOwn(status.sessions, 'claude_spec')) {
-        delete status.sessions.claude_spec;
-    }
+    clearSessionPair(status, 'author');
     // The spec gate disarms itself when it halts, so a reset after that halt
     // would otherwise let the next run continue straight past spec_review.
     const rearmGate = status.full_send !== true && status.human_spec_gate !== true;
     if (rearmGate) status.human_spec_gate = true;
     status.updated = today();
     writeStatusAtomic(statusPath, status);
-    console.log(`Reset ${id}: spec → done, spec_review → pending (iter=0, verdict cleared, claude_spec session dropped)`);
+    console.log(`Reset ${id}: spec → done, spec_review → pending (iter=0, verdict cleared, author session dropped)`);
     if (rearmGate) {
         console.log(
             `Re-armed the spec gate: the next \`canon run ${id}\` stops after spec_review approves. ` +
@@ -1185,13 +1183,11 @@ export function taskResetCodeReview(id: string): void {
     codeReview.iterations = 0;
     codeReview.preflight_rejections_current_loop = 0;
     codeReview.verdict = '';
-    if (status.sessions && Object.hasOwn(status.sessions, 'claude_review')) {
-        delete status.sessions.claude_review;
-    }
+    clearSessionPair(status, 'reviewer');
     status.updated = today();
     writeStatusAtomic(statusPath, status);
     console.log(
-        `Reset ${id}: implement → done, code_review → pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
+        `Reset ${id}: implement → done, code_review → pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, reviewer session dropped)`
     );
 }
 

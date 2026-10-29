@@ -4,9 +4,8 @@ import path from 'node:path';
 
 import { info, setExitReason, warn } from '../cli.js';
 import { getAffectedFiles, getBaseBranch, getScopedDiff, getScopedDiffInRange, getPathsInRange, getDeltaLineStats, resolveCommit, isAncestorCommit, verifyBranch } from '../git.js';
-import { getClaudeConfig, getCodexConfig, getEffectiveSize, getMaxReviewLoops } from '../policy.js';
-import { runClaude } from '../agents/claude.js';
-import { runColdCodexReview } from '../agents/codex.js';
+import { getEffectiveSize, getMaxReviewLoops } from '../policy.js';
+import { agentBackendFor } from '../agents/backend.js';
 import { getActiveCwd, PIPELINE_TELEMETRY_FILES } from '../worktree.js';
 import { autoBlockPhase, taskDirFor } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
@@ -67,6 +66,7 @@ export function fullSendScopeBlockReason(
 }
 
 export type CodeReviewPhaseDeps = {
+    agentBackendFor: typeof agentBackendFor;
     verifyBranch: typeof verifyBranch;
     getBaseBranch: typeof getBaseBranch;
     getActiveCwd: typeof getActiveCwd;
@@ -82,14 +82,11 @@ export type CodeReviewPhaseDeps = {
     findColdCodexArchiveForRound: typeof findColdCodexArchiveForRound;
     hasMalformedColdCodexArchive: typeof hasMalformedColdCodexArchive;
     writeColdCodexArchive: typeof writeColdCodexArchive;
-    getClaudeConfig: typeof getClaudeConfig;
     getMaxReviewLoops: typeof getMaxReviewLoops;
-    getCodexConfig: typeof getCodexConfig;
-    runColdCodexReview: typeof runColdCodexReview;
-    runClaude: typeof runClaude;
 };
 
 const defaultDeps: CodeReviewPhaseDeps = {
+    agentBackendFor,
     verifyBranch,
     getBaseBranch,
     getActiveCwd,
@@ -105,11 +102,7 @@ const defaultDeps: CodeReviewPhaseDeps = {
     findColdCodexArchiveForRound,
     hasMalformedColdCodexArchive,
     writeColdCodexArchive,
-    getClaudeConfig,
     getMaxReviewLoops,
-    getCodexConfig,
-    runColdCodexReview,
-    runClaude,
 };
 
 export function determinePreflightRoute(failures: readonly PreflightFailure[]): PreflightRoute {
@@ -362,7 +355,7 @@ export async function runCodeReviewPhase(
             // bundle pre-flight before Claude ran.
             taskPhasePreflightRejected(taskId, 'code_review');
         }
-        return { agent: 'claude', sessionId: null, exitCode: 0 };
+        return { agent: null, sessionId: null, exitCode: 0 };
     }
 
     const allowlist = buildAdmittedAllowlist(taskIds, activeCwd);
@@ -423,20 +416,20 @@ export async function runCodeReviewPhase(
         ? deps.getScopedDiffInRange(`${scope.base}..${headSha}`, activeCwd)
         : null;
 
-    const coldCfg = deps.getCodexConfig('code_review', tasks);
+    const coldBackend = deps.agentBackendFor('cold_reviewer');
     const coldReviewStartMs = Date.now();
-    const coldReview = await deps.runColdCodexReview(scope.base, coldCfg.model, coldCfg.effort, activeCwd, {
+    const coldReview = await coldBackend.coldReview({ role: 'cold_reviewer', phase: 'code_review', tasks, baseBranch: scope.base, cwd: activeCwd, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,
         activeCwd,
-    });
+    } });
     const coldReviewDurationMs = Date.now() - coldReviewStartMs;
 
     if (!coldReview.success) {
         // The cold review reports success only, without a specific failure kind.
         throw new AgentSessionError({
-            agent: 'codex',
+            agent: coldBackend.id,
             kind: 'exit_code',
             reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
                 `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
@@ -458,15 +451,15 @@ export async function runCodeReviewPhase(
     }
     info(`→ cold-codex review (${taskIds.join(', ')}): ${Math.round(coldReviewDurationMs / 1000)}s`);
 
-    const cfg = deps.getClaudeConfig('code_review', tasks);
+    const backend = deps.agentBackendFor('reviewer');
     const reviewResumeId = maxIter > 0 ? resumeId : null;
     const scopedDiff = scope.scope === 'delta' ? null : deps.getScopedDiff(baseBranch, activeCwd);
-    const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
+    const result = await backend.run({ role: 'reviewer', phase: 'code_review', tasks, prompt: promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, resumeId: reviewResumeId, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,
         activeCwd,
-    }, activeCwd);
+    }, cwd: activeCwd });
 
     for (const t of tasks) {
         // Read from the same active task directory that Claude just wrote.
@@ -479,5 +472,5 @@ export async function runCodeReviewPhase(
         }
     }
 
-    return { agent: 'claude', sessionId: result.sessionId, exitCode: result.exitCode };
+    return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }

@@ -1,3 +1,5 @@
+import type { AgentBackend } from './backend.js';
+import { getCodexConfig } from '../policy.js';
 import { AgentSessionError } from './errors.js';
 import { REPO_ROOT } from '../env.js';
 import { die, info, warn } from '../cli.js';
@@ -68,6 +70,7 @@ export async function runCodex(
                 capturedStdout: '',
                 capturedStderr: '',
                 sessionId: null,
+                text: '',
             };
         }
 
@@ -133,6 +136,7 @@ export async function runCodex(
         return {
             ...result,
             sessionId,
+            text: displayChunks.join('\n\n'),
         };
     } catch (err) {
         status = 'failed';
@@ -237,3 +241,26 @@ export async function runColdCodexReview(
         }
     }
 }
+
+
+export const codexBackend: AgentBackend = {
+    id: 'codex',
+    displayName: 'Codex',
+    resolveConfig(phase, tasks) {
+        if (phase !== 'spec_review' && phase !== 'implement' && phase !== 'code_review') {
+            throw new Error(`Codex has no config for phase ${phase}`);
+        }
+        return getCodexConfig(phase, tasks);
+    },
+    async run(request) {
+        const cfg = codexBackend.resolveConfig(request.phase, request.tasks);
+        const result = await runCodex(request.prompt, request.interactive, request.resumeId,
+            cfg.model, cfg.effort, request.metricsContext, request.cwd, request.wrapForResume);
+        return { backend: codexBackend.id, sessionId: result.sessionId, exitCode: result.exitCode,
+            capturedStdout: result.capturedStdout, text: result.text };
+    },
+    coldReview(request) {
+        const cfg = codexBackend.resolveConfig(request.phase, request.tasks);
+        return runColdCodexReview(request.baseBranch, cfg.model, cfg.effort, request.cwd, request.metricsContext);
+    },
+};

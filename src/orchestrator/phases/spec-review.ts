@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { info, warn } from '../cli.js';
-import { getCodexConfig, getMaxReviewLoops, isPlanCombined } from '../policy.js';
-import { runCodex } from '../agents/codex.js';
+import { getMaxReviewLoops, isPlanCombined } from '../policy.js';
+import { agentBackendFor } from '../agents/backend.js';
 import { autoBlockPhase, resolveTaskCwd, taskDirFor, writeStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptSpecReview } from '../prompts/index.js';
@@ -101,14 +101,14 @@ export async function runSpecReviewPhase(
     const specReviewPrompt = isReReview
         ? `The spec${state.isBundle ? 's have' : ' has'} been revised since your last review. Re-read the current spec.md ${state.isBundle ? 'files' : 'file'} from disk and produce a completely fresh review — do not replay or summarise your previous output.\n\n${promptSpecReview(state)}`
         : promptSpecReview(state);
-    const cfg = getCodexConfig('spec_review', tasks);
+    const backend = agentBackendFor('spec_reviewer');
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runCodex(specReviewPrompt, interactive, resumeId, cfg.model, cfg.effort, {
+    const result = await backend.run({ role: 'spec_reviewer', phase: 'spec_review', tasks, prompt: specReviewPrompt, interactive: interactive, resumeId: resumeId, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'spec_review',
         iteration: specReviewCheck.count,
         activeCwd,
-    }, activeCwd);
+    }, cwd: activeCwd });
 
     // Mirror the post-run template check that code-review.ts and plan.ts
     // already run for their artifacts. Catches the failure mode where Codex
@@ -126,5 +126,5 @@ export async function runSpecReviewPhase(
         }
     }
 
-    return { agent: 'codex', sessionId: result.sessionId, exitCode: result.exitCode };
+    return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }

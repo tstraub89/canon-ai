@@ -2,8 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { info, warn } from '../cli.js';
-import { getClaudeConfig } from '../policy.js';
-import { runClaude } from '../agents/claude.js';
+import { agentBackendFor } from '../agents/backend.js';
 import { taskDirFor } from '../state.js';
 import { getActiveCwd } from '../worktree.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
@@ -20,16 +19,16 @@ export async function runPlanPhase(
 
     info(`Phase: plan (Claude writes plan${state.isBundle ? 's' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'plan', 'in_progress');
-    const cfg = getClaudeConfig('plan', tasks);
+    const backend = agentBackendFor('author');
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+    const result = await backend.run({ role: 'author', phase: 'plan', tasks, prompt: promptPlan(state), interactive: interactive, resumeId: null, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'plan',
         iteration: tasks[0].status.phases.plan?.iterations_current_loop
             ?? tasks[0].status.phases.plan?.iterations
             ?? 0,
         activeCwd,
-    }, activeCwd);
+    }, cwd: activeCwd });
     for (const t of tasks) {
         const planPath = path.join(taskDirFor(t.taskId), 'plan.md');
         let planContent: string | null = null;
@@ -39,5 +38,5 @@ export async function runPlanPhase(
             taskPhase(t.taskId, 'plan', 'pending');
         }
     }
-    return { agent: 'claude', sessionId: result.sessionId, exitCode: result.exitCode };
+    return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }

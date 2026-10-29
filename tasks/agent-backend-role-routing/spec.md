@@ -213,7 +213,8 @@ The hazard above could be fixed by routing on phase while keeping `claude_spec`,
 | `tests/run-task-reroute-preflight.test.ts` | AC-5 reroute pair clears (existing slot-clear assertions move to role/legacy pairs). |
 | `tests/run-task-safety.test.ts` | AC-5 hallucination pair clear; AC-8 fake-CLI QA salvage test next to the existing fake-CLI harness; existing legacy-slot seeds still pass via fallback. |
 | `tests/task-cli.test.ts` | AC-5 reset-* pair clears. |
-| `tests/run-task-validation.test.ts` | AC-11 template row; AC-6(b)/(c) storage and record. || `dist/cli/index.js` | Rebuilt. |
+| `tests/run-task-validation.test.ts` | AC-11 template row; AC-6(b)/(c) storage and record. |
+| `dist/cli/index.js` | Rebuilt. |
 | `dist/orchestrator/run-task.js` | Rebuilt. |
 | `docs/pipeline-orchestrator.md` | Session-resumption section (role slots and legacy fallback); the reset-spec-review and reset-code-review rows and the reroute paragraph name role slots. |
 | `templates/docs/pipeline-orchestrator.md` | Mirror via `npm run sync-templates`. |

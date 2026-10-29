@@ -1,5 +1,26 @@
 #!/usr/bin/env node
 
+// src/lib/pipeline-policy.ts
+var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
+function isPlanCombined(task) {
+  return task.task_size === "XS" && !(task.delicate ?? false);
+}
+var AGENT_ROLES = ["author", "spec_reviewer", "implementer", "reviewer", "cold_reviewer", "qa"];
+var DEFAULT_ROLE_ASSIGNMENT = {
+  author: "claude",
+  spec_reviewer: "codex",
+  implementer: "codex",
+  reviewer: "claude",
+  cold_reviewer: "codex",
+  qa: "claude"
+};
+function roleBackendId(role, assignment = DEFAULT_ROLE_ASSIGNMENT) {
+  return assignment[role];
+}
+function requiredAgentBackends(assignment = DEFAULT_ROLE_ASSIGNMENT) {
+  return [...new Set(AGENT_ROLES.map((role) => roleBackendId(role, assignment)))];
+}
+
 // src/orchestrator/docs-freshness.ts
 import fs8 from "fs";
 import path7 from "path";
@@ -568,6 +589,17 @@ function isRerouteAdmitted(status) {
   const implementStatus = status.phases.implement.status;
   const codeReview = status.phases.code_review;
   return implementStatus === "in_progress" || implementStatus === "blocked" || codeReview?.status === "blocked" || currentLoopReviewRounds(codeReview) > 0 || currentLoopCount(codeReview?.preflight_rejections_current_loop) > 0;
+}
+var LEGACY_SESSION_SLOTS = {
+  author: "claude_spec",
+  spec_reviewer: "codex_spec_review",
+  implementer: "codex",
+  reviewer: "claude_review"
+};
+function clearSessionPair(status, slot) {
+  if (!status.sessions) return;
+  delete status.sessions[slot];
+  delete status.sessions[LEGACY_SESSION_SLOTS[slot]];
 }
 
 // src/orchestrator/git.ts
@@ -1463,8 +1495,7 @@ function upsertCanonBlock(content, block) {
 import { spawnSync as spawnSync4 } from "child_process";
 var HARD_DEPS = [
   { cmd: "git", installHint: "https://git-scm.com/downloads" },
-  { cmd: "claude", installHint: "npm install -g @anthropic-ai/claude-code" },
-  { cmd: "codex", installHint: "npm install -g @openai/codex" }
+  ...requiredAgentBackends().map((cmd) => ({ cmd, installHint: cmd === "claude" ? "npm install -g @anthropic-ai/claude-code" : "npm install -g @openai/codex" }))
 ];
 var SOFT_DEPS = [
   { cmd: "gh", installHint: "brew install gh && gh auth login  (required for --pr / --push)" }
@@ -1473,8 +1504,8 @@ function isAvailable(cmd) {
   const result = spawnSync4("which", [cmd], { stdio: "ignore" });
   return result.status === 0;
 }
-function checkDeps() {
-  const missing = HARD_DEPS.filter((d) => !isAvailable(d.cmd));
+function checkDeps(available = isAvailable) {
+  const missing = HARD_DEPS.filter((d) => !available(d.cmd));
   if (missing.length > 0) {
     console.error("canon init requires the following tools to be installed:\n");
     for (const dep of missing) {
@@ -1484,7 +1515,7 @@ function checkDeps() {
     console.error("");
     process.exit(1);
   }
-  const softMissing = SOFT_DEPS.filter((d) => !isAvailable(d.cmd));
+  const softMissing = SOFT_DEPS.filter((d) => !available(d.cmd));
   for (const dep of softMissing) {
     console.warn(`  \u26A0  ${dep.cmd} not found \u2014 needed later: ${dep.installHint}`);
   }
@@ -2051,13 +2082,14 @@ function checkDocsFreshness(cwd) {
 function doctorCmd(args2) {
   handlePreScan(DOCTOR_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
   const cwd = resolveProjectRoot();
+  const requiredAgents = new Set(requiredAgentBackends());
   const envChecks = [
     checkPlatform(),
     checkNodeVersion(),
     checkBinary("git", true, "https://git-scm.com/downloads"),
-    checkBinary("claude", true, "npm install -g @anthropic-ai/claude-code"),
-    ...isAvailable("claude") ? [checkClaudeVersion()] : [],
-    checkBinary("codex", true, "npm install -g @openai/codex"),
+    ...requiredAgents.has("claude") ? [checkBinary("claude", true, "npm install -g @anthropic-ai/claude-code")] : [],
+    ...requiredAgents.has("claude") && isAvailable("claude") ? [checkClaudeVersion()] : [],
+    ...requiredAgents.has("codex") ? [checkBinary("codex", true, "npm install -g @openai/codex")] : [],
     checkBinary("gh", false, "brew install gh && gh auth login  (required for --pr / --push)")
   ];
   const codexDeprecated = checkCodexMdDeprecated(cwd);
@@ -2070,7 +2102,7 @@ function doctorCmd(args2) {
     checkQualityLog(cwd)
   ];
   const configChecks = [
-    checkCodexProjectTrust(cwd),
+    ...requiredAgents.has("codex") ? [checkCodexProjectTrust(cwd)] : [],
     checkRecommendedPermissions(cwd),
     checkLocalSettingsGitignored(cwd),
     checkRuntimeFilesGitignored(cwd),
@@ -4021,12 +4053,6 @@ function rescaffoldReview(taskDir, identity) {
   }
 }
 
-// src/lib/pipeline-policy.ts
-var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
-function isPlanCombined(task) {
-  return task.task_size === "XS" && !(task.delicate ?? false);
-}
-
 // src/task/index.ts
 var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
@@ -4854,14 +4880,12 @@ function taskResetSpecReview(id) {
   specReview.iterations = 0;
   specReview.iterations_current_loop = 0;
   specReview.verdict = "";
-  if (status.sessions && Object.hasOwn(status.sessions, "claude_spec")) {
-    delete status.sessions.claude_spec;
-  }
+  clearSessionPair(status, "author");
   const rearmGate = status.full_send !== true && status.human_spec_gate !== true;
   if (rearmGate) status.human_spec_gate = true;
   status.updated = today();
   writeStatusAtomic(statusPath, status);
-  console.log(`Reset ${id}: spec \u2192 done, spec_review \u2192 pending (iter=0, verdict cleared, claude_spec session dropped)`);
+  console.log(`Reset ${id}: spec \u2192 done, spec_review \u2192 pending (iter=0, verdict cleared, author session dropped)`);
   if (rearmGate) {
     console.log(
       `Re-armed the spec gate: the next \`canon run ${id}\` stops after spec_review approves. To continue past it instead, run \`canon task set ${id} human_spec_gate false\` first.`
@@ -4907,13 +4931,11 @@ function taskResetCodeReview(id) {
   codeReview.iterations = 0;
   codeReview.preflight_rejections_current_loop = 0;
   codeReview.verdict = "";
-  if (status.sessions && Object.hasOwn(status.sessions, "claude_review")) {
-    delete status.sessions.claude_review;
-  }
+  clearSessionPair(status, "reviewer");
   status.updated = today();
   writeStatusAtomic(statusPath, status);
   console.log(
-    `Reset ${id}: implement \u2192 done, code_review \u2192 pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, claude_review session dropped)`
+    `Reset ${id}: implement \u2192 done, code_review \u2192 pending (iter_current_loop=0, iterations=0, preflight_rejections_current_loop=0, verdict cleared, reviewer session dropped)`
   );
 }
 function ensureGitAvailable() {

@@ -560,3 +560,22 @@ void test('compareTaskSize orders sizes XS→XL, not lexically', () => {
     assert.deepEqual((['XL', 'L', 'M', 'S', 'XS'] as const).slice().sort(compareTaskSize), ['XS', 'S', 'M', 'L', 'XL']);
     assert.deepEqual((['XL', 'S', 'L'] as const).slice().sort(compareTaskSize), ['S', 'L', 'XL']);
 });
+
+void test('role assignment and phase continuity maps cover every pipeline phase', async () => {
+    const { roleBackendId, phasePrimaryRole, phaseSessionSlot, requiredAgentBackends } = await import('../src/lib/pipeline-policy.js');
+    for (const [role, backend] of [
+        ['author', 'claude'], ['spec_reviewer', 'codex'], ['implementer', 'codex'],
+        ['reviewer', 'claude'], ['cold_reviewer', 'codex'], ['qa', 'claude'],
+    ] as const) assert.equal(roleBackendId(role), backend);
+    for (const [phase, role, slot] of [
+        ['spec', 'author', 'author'], ['spec_review', 'spec_reviewer', 'spec_reviewer'],
+        ['plan', 'author', null], ['implement', 'implementer', 'implementer'],
+        ['code_review', 'reviewer', 'reviewer'], ['qa', 'qa', null], ['human_review', null, null],
+    ] as const) {
+        assert.equal(phasePrimaryRole(phase), role, phase);
+        assert.equal(phaseSessionSlot(phase), slot, phase);
+    }
+    assert.deepEqual(new Set(requiredAgentBackends()), new Set(['claude', 'codex']));
+    assert.deepEqual(requiredAgentBackends({ author: 'claude', spec_reviewer: 'claude', implementer: 'claude',
+        reviewer: 'claude', cold_reviewer: 'claude', qa: 'claude' }), ['claude']);
+});
