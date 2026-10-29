@@ -10891,6 +10891,32 @@ void test('QA salvage keeps a qa phase the session blocked', () => {
     });
 });
 
+void test('checkAndRoute parks the whole QA bundle when one member blocked qa', () => {
+    withTempDir('role-qa-bundle-blocked-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const ids = ['qa-done', 'qa-blocked'];
+        let tasksRoot = '';
+        for (const id of ids) {
+            tasksRoot = writeReviewLoopFixture(localDir, id, 'code_review', 0, 0, true);
+            const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
+            status.phases.code_review!.status = 'done';
+            status.phases.qa = { status: id === 'qa-done' ? 'done' : 'blocked', agent: 'claude' };
+            writeTaskStatus(tasksRoot, id, status);
+        }
+        const result = runNodeInline([
+            `import { checkAndRoute } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `await checkAndRoute('qa', ${JSON.stringify(ids)});`,
+        ].join('\n'), { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+        assert.equal(result.status, 2, combinedOutput(result));
+        // Both members sit at qa blocked, so `canon run qa-done qa-blocked` passes the same-phase check.
+        for (const id of ids) {
+            const updated = JSON.parse(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
+            assert.equal(updated.phases.qa?.status, 'blocked', id);
+            assert.equal(updated.escalations?.at(-1)?.phase, 'qa', id);
+        }
+    });
+});
+
 for (const row of [
     { phase: 'spec', mode: 'fresh' }, { phase: 'spec', mode: 'revision' },
     { phase: 'spec_review', mode: 'fresh' }, { phase: 'spec_review', mode: 'resume' },

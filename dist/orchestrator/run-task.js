@@ -10110,6 +10110,7 @@ async function checkAndRoute(phase, taskIds) {
     const blockedIds = taskIds.filter((_, index) => getPhaseStatus(statuses[index], "qa") === "blocked");
     if (blockedIds.length > 0) {
       const reason = `The QA session marked qa blocked for task(s): ${blockedIds.join(", ")}. See ${blockedIds.map((id) => `tasks/${id}/done.md`).join(", ")}; resolve the block, then re-run \`canon run ${taskIds.join(" ")}\`.`;
+      autoBlockPhase(taskIds, "qa", phaseIterationCount(taskIds, "qa"), reason);
       warn2(reason);
       setExitReason(reason);
       process.exit(2);

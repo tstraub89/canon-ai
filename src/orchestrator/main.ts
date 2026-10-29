@@ -3648,6 +3648,8 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
         if (blockedIds.length > 0) {
             const reason = `The QA session marked qa blocked for task(s): ${blockedIds.join(', ')}. ` +
                 `See ${blockedIds.map(id => `tasks/${id}/done.md`).join(', ')}; resolve the block, then re-run \`canon run ${taskIds.join(' ')}\`.`;
+            // Park every member so the bundle re-enters qa together on the re-run.
+            splitState.autoBlockPhase(taskIds, 'qa', phaseIterationCount(taskIds, 'qa'), reason);
             warn(reason);
             splitCli.setExitReason(reason);
             process.exit(2);
