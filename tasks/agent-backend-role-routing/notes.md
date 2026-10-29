@@ -21,3 +21,4 @@ spec_review: folded both Codex nits into spec (phase-aware config resolution in 
 [implement] Confirmed the plan's malformed Affected Files observation with parseAffectedFilesFromSpec: dist/cli/index.js is omitted with no malformed-cell diagnostic because its literal row is fused onto the validation-test row. Both build bundles are explicitly named by the spec and were rebuilt; the spec/parser were left unchanged. Handoff records the downstream scope-gate concern.
 
 [implement] Docs-refs subprocess fixtures need fs.realpathSync on the checker script path on macOS; the /var alias otherwise misses the script's ESM direct-run guard and falsely returns a clean check. This behavior is already documented by the existing installDocsRefsChecker helper.
+code_review preflight: fixed fused Affected Files row (dist/cli/index.js) introduced by conversational spec edit; re-running.
