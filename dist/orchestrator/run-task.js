@@ -2884,7 +2884,7 @@ var claudeBackend = {
     return getClaudeConfig(phase, tasks);
   },
   async run(request) {
-    const cfg = this.resolveConfig(request.phase, request.tasks);
+    const cfg = claudeBackend.resolveConfig(request.phase, request.tasks);
     if (cfg.budget === void 0) throw new Error("Claude policy budget missing");
     const result = await runClaude(
       request.prompt,
@@ -2897,7 +2897,7 @@ var claudeBackend = {
       request.cwd
     );
     return {
-      backend: this.id,
+      backend: claudeBackend.id,
       sessionId: result.sessionId,
       exitCode: result.exitCode,
       capturedStdout: result.capturedStdout,
@@ -3089,7 +3089,7 @@ var codexBackend = {
     return getCodexConfig(phase, tasks);
   },
   async run(request) {
-    const cfg = this.resolveConfig(request.phase, request.tasks);
+    const cfg = codexBackend.resolveConfig(request.phase, request.tasks);
     const result = await runCodex(
       request.prompt,
       request.interactive,
@@ -3101,7 +3101,7 @@ var codexBackend = {
       request.wrapForResume
     );
     return {
-      backend: this.id,
+      backend: codexBackend.id,
       sessionId: result.sessionId,
       exitCode: result.exitCode,
       capturedStdout: result.capturedStdout,
@@ -3109,7 +3109,7 @@ var codexBackend = {
     };
   },
   coldReview(request) {
-    const cfg = this.resolveConfig(request.phase, request.tasks);
+    const cfg = codexBackend.resolveConfig(request.phase, request.tasks);
     return runColdCodexReview(request.baseBranch, cfg.model, cfg.effort, request.cwd, request.metricsContext);
   }
 };
@@ -7121,7 +7121,9 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
         fs21.writeFileSync(donePath, salvaged);
         warn(`Salvaged tasks/${taskId}/done.md from captured stdout \u2014 QA sub-agent streamed content instead of using the Write tool.`);
         const phaseStatus = readStatus(taskId).phases.qa?.status ?? "pending";
-        if (phaseStatus !== "done") {
+        if (phaseStatus === "blocked") {
+          warn(`Left qa blocked for ${taskId}; the QA session marked it blocked.`);
+        } else if (phaseStatus !== "done") {
           taskPhase(taskId, "qa", "done");
           warn(`Also advanced qa \u2192 done for ${taskId} (sub-agent skipped canon task).`);
         }

@@ -253,14 +253,14 @@ export const codexBackend: AgentBackend = {
         return getCodexConfig(phase, tasks);
     },
     async run(request) {
-        const cfg = this.resolveConfig(request.phase, request.tasks);
+        const cfg = codexBackend.resolveConfig(request.phase, request.tasks);
         const result = await runCodex(request.prompt, request.interactive, request.resumeId,
             cfg.model, cfg.effort, request.metricsContext, request.cwd, request.wrapForResume);
-        return { backend: this.id, sessionId: result.sessionId, exitCode: result.exitCode,
+        return { backend: codexBackend.id, sessionId: result.sessionId, exitCode: result.exitCode,
             capturedStdout: result.capturedStdout, text: result.text };
     },
     coldReview(request) {
-        const cfg = this.resolveConfig(request.phase, request.tasks);
+        const cfg = codexBackend.resolveConfig(request.phase, request.tasks);
         return runColdCodexReview(request.baseBranch, cfg.model, cfg.effort, request.cwd, request.metricsContext);
     },
 };

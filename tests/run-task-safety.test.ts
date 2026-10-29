@@ -10858,6 +10858,35 @@ void test('role routing red-first: QA salvages result-event text', () => {
     });
 });
 
+void test('QA salvage keeps a qa phase the session blocked', () => {
+    withTempDir('role-qa-blocked-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'qa-blocked';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        status.phases.code_review!.status = 'done';
+        writeTaskStatus(tasksRoot, taskId, status);
+        const bins = path.join(dir, 'bins');
+        fs.mkdirSync(bins);
+        const statusPath = path.join(tasksRoot, taskId, 'status.json');
+        const body = '# QA Summary\n\nBlocked on a missing fixture.\n';
+        // The fake QA session blocks its own phase, then replies with a summary but leaves done.md as the template.
+        writeExecutable(bins, 'claude', [
+            `node -e 'const fs=require("fs");const p=process.argv[1];const s=JSON.parse(fs.readFileSync(p,"utf8"));s.phases.qa.status="blocked";fs.writeFileSync(p,JSON.stringify(s,null,2))' '${statusPath}'`,
+            `printf '%s\\n' '${JSON.stringify({ type: 'result', result: body, session_id: 'qa-session' })}'`,
+        ]);
+        const result = runNodeInline([
+            `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+            `await runQaPhase(buildPipelineState(['${taskId}']), false, null);`,
+        ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'done.md'), 'utf8').trim(), body.trim());
+        const updated = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
+        assert.equal(updated.phases.qa?.status, 'blocked');
+    });
+});
+
 for (const row of [
     { phase: 'spec', mode: 'fresh' }, { phase: 'spec', mode: 'revision' },
     { phase: 'spec_review', mode: 'fresh' }, { phase: 'spec_review', mode: 'resume' },

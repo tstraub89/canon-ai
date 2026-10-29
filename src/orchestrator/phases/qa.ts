@@ -54,7 +54,10 @@ export async function runQaPhase(
                 fs.writeFileSync(donePath, salvaged);
                 warn(`Salvaged tasks/${taskId}/done.md from captured stdout — QA sub-agent streamed content instead of using the Write tool.`);
                 const phaseStatus = readStatus(taskId).phases.qa?.status ?? 'pending';
-                if (phaseStatus !== 'done') {
+                // A QA session that blocked itself keeps the block; salvage only restores done.md.
+                if (phaseStatus === 'blocked') {
+                    warn(`Left qa blocked for ${taskId}; the QA session marked it blocked.`);
+                } else if (phaseStatus !== 'done') {
                     taskPhase(taskId, 'qa', 'done');
                     warn(`Also advanced qa → done for ${taskId} (sub-agent skipped canon task).`);
                 }

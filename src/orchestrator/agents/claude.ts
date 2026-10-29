@@ -317,12 +317,12 @@ export const claudeBackend: AgentBackend = {
         return getClaudeConfig(phase, tasks);
     },
     async run(request) {
-        const cfg = this.resolveConfig(request.phase, request.tasks);
+        const cfg = claudeBackend.resolveConfig(request.phase, request.tasks);
         // resolveConfig always returns the Claude policy's budget.
         if (cfg.budget === undefined) throw new Error('Claude policy budget missing');
         const result = await runClaude(request.prompt, request.interactive, request.resumeId,
             cfg.model, cfg.effort, cfg.budget, request.metricsContext, request.cwd);
-        return { backend: this.id, sessionId: result.sessionId, exitCode: result.exitCode,
+        return { backend: claudeBackend.id, sessionId: result.sessionId, exitCode: result.exitCode,
             capturedStdout: result.capturedStdout, text: result.processedText };
     },
     coldReview() { return Promise.reject(new Error('Claude cold review is unsupported')); },

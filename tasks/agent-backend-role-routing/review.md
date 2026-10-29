@@ -151,7 +151,7 @@ Non-blocking note for the human (cold-Claude, verified): reviving QA salvage fro
 #### Optional Cleanup / Nit
 
 1. `src/lib/pipeline-policy.ts` `PipelinePhase` duplicates the `Phase` union in `src/orchestrator/types.ts` (carried from round 1 nit 4). Flagged again by cold-Claude.
-2. `AgentBackend.coldReview` in `src/orchestrator/agents/backend.ts` returns the Codex-named `ColdCodexReviewResult`. The interface is declared provisional in spec Decision 2; the provider-mode follow-up can reshape it.
+2. The `coldReview` member of `AgentBackend` in `src/orchestrator/agents/backend.ts` returns the Codex-named `ColdCodexReviewResult`. The interface is declared provisional in spec Decision 2; the provider-mode follow-up can reshape it.
 3. `recordPhaseAgent` and `storeSessionId` each do their own read-modify-write per task after a phase (`src/orchestrator/state.ts`, `main.ts` storage block); they could fold into one write.
 4. The "author config preserves distinct spec and plan model pins" test in `tests/agent-backend.test.ts` does not scrub other `CLAUDE_MODEL*` vars, unlike the parity test. It is low risk because the per-phase vars take precedence.
 5. `docs/decisions.md` has two blank lines before the new `## Phases route by role through agent backends (2026-10)` heading.

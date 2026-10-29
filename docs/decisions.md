@@ -555,7 +555,6 @@ The `/canon-spec-review` sub-agents now run under one read-only `spec-review-len
 
 Writing a route-back marker on an approved sibling was declined because it would change loop-counter semantics; admitting a sibling without shared-branch evidence was declined because an unstarted task could ride along.
 
-
 ## Phases route by role through agent backends (2026-10)
 
 **Decision**: Pipeline phases invoke roles through the backend interface. The only assignment remains author/reviewer/qa → Claude and spec_reviewer/implementer/cold_reviewer → Codex. Spec and plan share author but retain separate model pins. Cross-model review and each runner's argv, budgets and failure semantics are unchanged.
