@@ -30,6 +30,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Orchestrator entrypoint | `src/orchestrator/run-task.ts` | Thin wrapper that invokes `src/orchestrator/main.ts` |
 | Orchestrator loop, phase dispatch, auto-commit, reroute | `src/orchestrator/main.ts` | Core control flow and phase-aware switches |
 | Per-phase handlers | `src/orchestrator/phases/*.ts` | One file per phase (`spec`, `spec_review`, `plan`, `implement`, `code_review`, `qa`) |
+| Role-based agent interface | `src/orchestrator/agents/backend.ts` | Resolves roles to backends; normalizes sessions and cold reviews |
 | Agent runners | `src/orchestrator/agents/*.ts` | Shared subprocess wrappers for Claude and Codex |
 | Prompt builders and templates | `src/orchestrator/prompts/index.ts`, `src/orchestrator/prompts/templates/*.md` | Data prep + Mustache rendering; phase templates carry JIT operating rules for their consumers |
 | CLI parsing and logging | `src/orchestrator/cli.ts` | Args, usage, `die` / `info` / `warn` |

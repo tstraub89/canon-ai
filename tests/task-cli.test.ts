@@ -1117,7 +1117,7 @@ void test('task reset-spec-review archives prior review and resets loop-local fi
                     auto_block_count: 1,
                 },
             },
-            sessions: { claude_spec: 'old-session' },
+            sessions: { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' },
         }));
 
         captureStdout(() => taskResetSpecReview('reset-task'));
@@ -1128,6 +1128,9 @@ void test('task reset-spec-review archives prior review and resets loop-local fi
         assert.equal(updated.phases.spec_review?.iterations_current_loop, 0);
         assert.equal(updated.phases.spec_review?.iterations_total, 5);
         assert.equal(updated.sessions?.claude_spec, undefined);
+        const expectedSessions: Record<string, string> = { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' };
+        delete expectedSessions.author; delete expectedSessions.claude_spec;
+        assert.deepEqual(updated.sessions, expectedSessions);
         assert.equal(fs.existsSync(path.join(taskDir, 'spec-review-prior-1.md')), true);
         assert.throws(() => taskResetSpecReview('missing-reset'), /no status\.json/);
     });
@@ -1188,7 +1191,7 @@ void test('task reset-code-review archives prior review, resets loop-local field
                 qa: { status: 'pending', agent: 'claude' },
                 human_review: { status: 'pending', agent: 'human' },
             },
-            sessions: { claude_review: 'old-review-session' },
+            sessions: { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' },
         }));
         fs.writeFileSync(path.join(taskDir, 'review.md'), '# Review\nold content\n', 'utf8');
 
@@ -1202,6 +1205,9 @@ void test('task reset-code-review archives prior review, resets loop-local field
         assert.equal(updated.phases.code_review?.verdict, '');
         assert.equal(updated.status, 'code_review');
         assert.equal(updated.sessions?.claude_review, undefined);
+        const expectedSessions: Record<string, string> = { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' };
+        delete expectedSessions.reviewer; delete expectedSessions.claude_review;
+        assert.deepEqual(updated.sessions, expectedSessions);
         assert.equal(fs.existsSync(path.join(taskDir, 'review-prior-1.md')), true);
         // The archived review is replaced by a fresh scaffold rendered exactly
         // as `canon task new` would have written it (task id substituted).

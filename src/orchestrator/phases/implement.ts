@@ -1,10 +1,10 @@
 import { info, warn } from '../cli.js';
-import { getCodexConfig, getMaxReviewLoops } from '../policy.js';
-import { runCodex } from '../agents/codex.js';
+import { getMaxReviewLoops } from '../policy.js';
+import { agentBackendFor } from '../agents/backend.js';
 import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
 import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, hasUnpushedScaffoldCommits, parsePorcelain, ensureBranch } from '../git.js';
 import { getActiveCwd, TASK_ARTIFACT_FILES } from '../worktree.js';
-import { autoBlockPhase, readStatus, writeStatus } from '../state.js';
+import { autoBlockPhase, clearSessionPair, readStatus, writeStatus } from '../state.js';
 import { evaluateCodeReviewLoop } from '../review-loop.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { taskPhase } from '../../task/index.js';
@@ -88,7 +88,7 @@ export async function runImplementPhase(
     info(`Phase: implement (Codex${state.isBundle ? ' bundle' : ''}${phaseLabel})`);
     for (const t of tasks) taskPhase(t.taskId, 'implement', 'in_progress');
 
-    const codexCfg = getCodexConfig('implement', tasks);
+    const backend = agentBackendFor('implementer');
     const isResume = resumeId !== null && !isRevision && !isRerouted && wasImplementInProgress;
     // Only pass a resumeId when we're deliberately continuing an implement session.
     // A stored codex session from spec_review (full-tier tasks) must not bleed into
@@ -102,21 +102,12 @@ export async function runImplementPhase(
             : isResume
                 ? promptImplementResume(state)
                 : promptImplement(state, 'fresh', affectedFiles, baseBranch);
-    const result = await runCodex(
-        implementPrompt,
-        interactive,
-        shouldResume ? resumeId : null,
-        codexCfg.model,
-        codexCfg.effort,
-        {
+    const result = await backend.run({ role: 'implementer', phase: 'implement', tasks, prompt: implementPrompt, interactive: interactive, resumeId: shouldResume ? resumeId : null, metricsContext: {
             taskId: taskIds.join('+'),
             phase: 'implement',
             iteration: tasks[0].iterations_current_loop,
             activeCwd,
-        },
-        activeCwd,
-        /* wrapForResume */ !isRerouted,
-    );
+        }, cwd: activeCwd, wrapForResume: !isRerouted });
 
     if (isRevision) {
         const dirtyResult = gitSafeAtRaw(activeCwd, 'status', '--porcelain=v1', '-uall');
@@ -138,7 +129,7 @@ export async function runImplementPhase(
             for (const taskId of taskIds) {
                 const s = readStatus(taskId);
                 if (s.sessions) {
-                    delete s.sessions.codex;
+                    clearSessionPair(s, 'implementer');
                     writeStatus(taskId, s);
                 }
             }
@@ -148,5 +139,5 @@ export async function runImplementPhase(
         }
     }
 
-    return { agent: 'codex', sessionId: result.sessionId, exitCode: result.exitCode };
+    return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }

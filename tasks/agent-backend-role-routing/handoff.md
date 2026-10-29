@@ -1,25 +1,49 @@
 # Implementation Handoff: agent-backend-role-routing
 
 > Author: Codex | Spec: `tasks/agent-backend-role-routing/spec.md` | Plan: `tasks/agent-backend-role-routing/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/lib/pipeline-policy.ts` | Pure role assignment, phase/role/slot maps, required backend derivation. |
+| `src/orchestrator/agents/backend.ts` | Shared backend requests, normalized session results, role resolver and failure-semantics contract. |
+| `src/orchestrator/agents/claude.ts` | Claude backend adapter; preserves runner argv and stale-resume handling. |
+| `src/orchestrator/agents/codex.ts` | Codex backend adapter and plain agent-message text in session results. |
+| `src/orchestrator/types.ts` | Role session slots, optional legacy fields, normalized phase agent record and Codex text. |
+| `src/orchestrator/policy.ts` | Re-exports pure role routing policy. |
+| `src/orchestrator/state.ts` | Role-first legacy-fallback reads, role-only writes, pair clears and canonical phase-agent records. |
+| `src/orchestrator/phases/spec.ts` | Author backend for fresh and revision sessions. |
+| `src/orchestrator/phases/plan.ts` | Author backend with originating plan phase and unchanged cwd. |
+| `src/orchestrator/phases/spec-review.ts` | Spec reviewer backend with unchanged fresh/resume framing. |
+| `src/orchestrator/phases/implement.ts` | Implementer backend; pair clear for hallucinated revisions across bundle members. |
+| `src/orchestrator/phases/code-review.ts` | Injected reviewer/cold reviewer backends; no agent record on preflight rejection. |
+| `src/orchestrator/phases/qa.ts` | QA backend and text-first done-summary salvage with stdout fallback. |
+| `src/orchestrator/main.ts` | Role dispatch for retries/fix-ups/dry-run; phase-slot storage, agent records, reroute clears and derived binary requirements. |
+| `src/task/index.ts` | Reset commands clear both slot names and report role slots. |
+| `src/cli/deps.ts` | Derived required binaries with an injectable availability probe. |
+| `src/cli/commands/doctor.ts` | Derived agent checks while retaining Claude version and Codex trust checks. |
+| `tests/pipeline-policy.test.ts` | Role assignment, phase mapping, slot mapping and required binary fixtures. |
+| `tests/agent-backend.test.ts` | Captured session argv baseline, normalized text, fallback/store matrix, dependencies and separate author model pins. |
+| `tests/run-task-code-review.test.ts` | Backend injection, no-agent preflight record, foreman/cold-lens argv and prompt parity. |
+| `tests/recovery-hints.test.ts` | Adapts recovery fixtures to injected backends. |
+| `tests/run-task-reroute-preflight.test.ts` | Full/fast reroutes remove exactly their role/legacy pairs. |
+| `tests/run-task-safety.test.ts` | Three red-first regressions, phase/retry/fix-up parity, bundle hallucination clearing, worktree record routing and main storage for every agent phase. |
+| `tests/task-cli.test.ts` | Reset pair deletion preserves all other slot pairs. |
+| `tests/run-task-validation.test.ts` | Default status-template agents match the role assignment. |
+| `dist/cli/index.js` | Regenerated CLI bundle. |
+| `dist/orchestrator/run-task.js` | Regenerated orchestrator bundle. |
+| `docs/pipeline-orchestrator.md` | Role slots, legacy fallback and paired recovery clearing. |
+| `templates/docs/pipeline-orchestrator.md` | Generated mirror via template sync. |
+| `docs/patterns.md` | Worktree recovery advice clears both role and legacy slots. |
+| `docs/codebase-map.md` | Adds role backend entry point. |
+| `docs/decisions.md` | Records role routing and the future provider-pinning constraint. |
+| `tasks/agent-backend-role-routing/notes.md` | Records red-first observations, argv baseline and scope-parser issue. |
+| `tasks/agent-backend-role-routing/handoff.md` | Implementation evidence and review handoff. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
+The authoritative provenance is recorded in this task's status file.
 
 | Field | Source |
 |---|---|
@@ -31,107 +55,92 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Phases select roles and delegate configuration and execution to backend adapters. The existing runners retain their argument construction and failure behavior. Explicit phase slots prevent plan from overwriting spec continuity; role writes and paired legacy fallback/clears preserve in-flight tasks without a bulk migration. The agent field records returned primary-backend invocations rather than selecting them. QA salvage now examines normalized text before raw stdout.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Red-first and main-loop storage tests use the existing fixture helpers in `tests/run-task-safety.test.ts`, rather than splitting them among recovery/validation test files. | Keeps the real fake-CLI, branch and worktree setup shared. All edits remain in Affected Files. | AC-6 fully exercised; AC-11 template guard remains in `tests/run-task-validation.test.ts`. |
+| The argv baseline uses literal argv expectations and a pre-refactor runner run, then actual call-site comparisons against retained runners. | Avoids unstable on-disk prompt fixtures containing temporary paths. The cold-review argv is independently pinned, and prompts/goldens remain unchanged. | AC-3 covered across all fifteen invocation categories. |
+| Default assignment is private to the pure policy module. | Tests use public pure functions and fixture assignments; runtime resolution still exposes only the single assignment. | AC-1/7/10 unchanged. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Table rows cover six roles and every phase/slot, including human review; pure policy has zero environment reads. |
+| AC-2 | Met | All four prohibited invocation/configuration/vendor-literal searches return zero hits. |
+| AC-3 | Met | Captured pre-refactor session argv baseline; real phase, reviewer, cold-lens, retry and fix-up calls capture binary/argv/cwd/prompt through adapters. Distinct spec/plan model pins are asserted. See parity matrix below. |
+| AC-4 | Met | Four-slot legacy/role/both read matrix and subsequent stores preserve legacy ids. Bundle stores update both members. Main tests prove plan/QA store nothing. Implement fix-up prefers the role id over a seeded stale legacy id. |
+| AC-5 | Met | Reset, fast/full reroute and two-member hallucination fixtures seed all pairs and assert the exact surviving set. Legacy names in source occur only in state/types. |
+| AC-6 | Met | Both empty-agent failures reproduced on base and pass now. Main storage tests cover every agent phase; rejected preflight returns no backend and preserves the agent field. Canonical writer has a real worktree regression test. |
+| AC-7 | Met | Default and Claude-only fixture derivations tested; init availability and missing-binary rejection tested. Existing doctor tests pass unchanged in the full suite. |
+| AC-8 | Met | Fake Claude result-event-only summary fails on base and is salvaged now; implementation gates on either output and tries text before stdout. |
+| AC-9 | Met | Both committed-range and working-tree prompt/golden diffs are empty. |
+| AC-10 | Met | No provider-selection env, field or flag matches in source. |
+| AC-11 | Met | Default agent guard matches role routing; status templates are byte-identical and template sync passes. |
+
+### Invocation parity matrix
+
+| AC-3 site | Evidence |
+|---|---|
+| 1–2 spec fresh/revision | `tests/run-task-safety.test.ts` phase parity rows; revision resumes; spec retains omitted cwd. |
+| 3 spec review fresh/resume | `tests/run-task-safety.test.ts` phase rows and existing reroute cwd coverage. |
+| 4 plan | `tests/run-task-safety.test.ts` phase row; separate author config pins in `tests/agent-backend.test.ts`. |
+| 5–7 implement fresh/resume/reroute | `tests/run-task-safety.test.ts` phase rows; resume wrapper enabled normally and disabled after reroute. |
+| 8–9 review foreman rounds 1/2 | `tests/run-task-code-review.test.ts` real-backend parity rows; fresh first round, resumed later round. |
+| 10 cold lens | `tests/run-task-code-review.test.ts` captures cold-review argv and base ref in both rounds. |
+| 11 QA | `tests/run-task-safety.test.ts` phase parity row. |
+| 12 implement artifact fix-up | `tests/run-task-safety.test.ts` review-entry fixture asserts complete argv, worktree cwd and unwrapped fix-up prompt. |
+| 13–14 Codex/Claude retry | `tests/run-task-safety.test.ts` retry rows compare complete invocation with retained runners and assert no retry metrics. |
+| 15 QA fix-up | `tests/run-task-safety.test.ts` in-process QA fixture asserts complete resumed argv, budget and cwd. |
+
+`tests/agent-backend.test.ts` additionally pins literal session flags, model, effort and budget under a scrubbed environment across the session scenarios. Its original runner baseline passed before non-test edits at base commit 9675e2f2713e31e7c41445eee607e2d5b39c03b8.
 
 ## Edge Cases Considered
 
-- ...
+- Missing sessions and missing phase entries remain tolerated. Null/undefined role ids fall back; empty strings retain nullish-read semantics.
+- Plan shares author configuration but has no session slot; QA keeps only the immediate in-memory session needed by its fix-up.
+- Bundle writes/records target every member; reads use member zero; hallucination recovery clears every member.
+- Preflight rejection records no backend. Fast-tier skipped phases preserve their prior agent fields.
+- Claude stale-resume retry, interactive behavior, budgets and Codex non-zero-return behavior remain in the original runners.
+- New session fields are optional. Manual schema review confirms no template rewrite or migration runner is required by this additive compatibility change.
+- Live credentialed provider sessions were not run; subprocess fixtures cover invocation wiring. The spec's human smoke plan remains for QA/human review.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- [ambiguity] Does the fused Affected Files row in `tasks/agent-backend-role-routing/spec.md` authorize `dist/cli/index.js`? Interpreted the explicit literal path and required rebuild instruction as authorization to regenerate both bundles. The spec itself was left unchanged.
+- [pipeline] Confirmed with the real `parseAffectedFilesFromSpec` in `src/orchestrator/validation.ts`: the fused row silently omits `dist/cli/index.js` and reports no malformed cell. A downstream scope gate can reject this required generated bundle until the spec owner separates its row. Changing the parser or spec is outside the implementation cap; no git-state recovery was attempted.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
+All three tests ran before non-test edits. The command below selected only these regression tests, and all failed by assertion rather than compilation.
 
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-6(a) | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='role routing red-first' tests/run-task-safety.test.ts` | 9675e2f2713e31e7c41445eee607e2d5b39c03b8 | Empty implement agent returned RETRY=no_session instead of invoking the stored implementer session. | Pass in targeted rerun and final full suite. |
+| AC-6(b) | Same selected command as AC-6(a). | 9675e2f2713e31e7c41445eee607e2d5b39c03b8 | sessions.author was undefined after the completed empty-agent spec session. | Pass in targeted rerun and final full suite. |
+| AC-8 | Same selected command as AC-6(a). | 9675e2f2713e31e7c41445eee607e2d5b39c03b8 | Result-event text was emitted, but done.md did not exist (false versus true). | Pass in targeted rerun and final full suite. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Final source/test tree. |
+| `npm run type-check` | Pass | Node 24.21.0 / TypeScript project check. |
+| `npm test` | Pass | Final full suite: 1788 tests; 1787 passed, zero failures, one skip. Earlier full-suite checkpoint also passed. |
+| `npm run build` | Pass | Both committed bundles regenerated from the current source. |
+| `npm run sync-templates:check` | Pass | Managed mirror synchronized; status-template bytes unchanged. |
+| `npm run docs-refs-check` | Pass | Required pre-handoff run passed; also rechecked after this artifact was written. |
+| Structural AC checks | Pass | AC-1/2/5/9/10 searches and template byte comparison satisfy their specified zero-hit/allowlist conditions; working-tree prompts/goldens also unchanged. |
+| `git diff --check` | Pass | No whitespace errors. |
+| E2E | not_configured | Spec Validation Required explicitly marks E2E N/A: no UI surface. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage).
+- [x] All applicable validation checks pass.
+- [x] All deviations documented.
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+The scope-parser blocker above needs spec-owner attention before downstream scope reconciliation.

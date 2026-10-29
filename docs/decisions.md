@@ -554,3 +554,12 @@ The `/canon-spec-review` sub-agents now run under one read-only `spec-review-len
 **Rule**: One shared predicate governs admission and the spec-gate recovery note. Every named task must qualify, or be a same-branch pending sibling of one that does; keep the narrower spec_gap exemption unchanged; a mixed spec_gap/implement-entry bundle requires amendments for every task. A reroute must also name every unfinished task that records a named task's branch; a partial shared-branch reroute is refused before any state changes, because the downstream handoff and Affected Files checks would fail after a full round. Reroute adds no git operations or persisted entry-phase field.
 
 Writing a route-back marker on an approved sibling was declined because it would change loop-counter semantics; admitting a sibling without shared-branch evidence was declined because an unstarted task could ride along.
+
+
+## Phases route by role through agent backends (2026-10)
+
+**Decision**: Pipeline phases invoke roles through the backend interface. The only assignment remains author/reviewer/qa → Claude and spec_reviewer/implementer/cold_reviewer → Codex. Spec and plan share author but retain separate model pins. Cross-model review and each runner's argv, budgets and failure semantics are unchanged.
+
+**Sessions**: spec, spec_review, implement and code_review persist author, spec_reviewer, implementer and reviewer respectively. Plan and QA remain one-offs. Role keys take precedence over legacy read fallbacks; writes use only role keys, and clears remove both keys. Phase agent fields record the backend that ran rather than driving routing. In-flight task files need no bulk migration.
+
+**Constraint**: A session id is valid only for the backend that created it. A follow-up provider-mode task must pin the provider per task at creation before changing role assignments, so a task never resumes a session with another backend. This foundation adds no provider selection surface.

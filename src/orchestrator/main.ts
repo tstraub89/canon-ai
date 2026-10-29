@@ -20,8 +20,7 @@ import * as splitGit from './git.js';
 import * as splitWorktree from './worktree.js';
 import * as splitPolicy from './policy.js';
 import * as splitValidation from './validation.js';
-import * as splitClaude from './agents/claude.js';
-import * as splitCodex from './agents/codex.js';
+import { agentBackendFor } from './agents/backend.js';
 import { promptArtifactFixup } from './prompts/index.js';
 import { refreshCanonSnapshotsAtPaths } from './canon-snapshot.js';
 import { detachAndExit, readCanonPid, removeCanonPid, shouldAutoDetach } from './detach.js';
@@ -86,10 +85,9 @@ let cliArgs: CliArgs = {
     allowDivergentBase: false,
 };
 let ghAvailable = false;
-// Claude session ID captured after each Claude-run phase for session resumption.
-let lastClaudeSessionId: string | null = null;
-// Codex session ID captured from startup banner for session resumption
-let lastCodexSessionId: string | null = null;
+// Last phase session, including the one-off QA session used by its immediate fix-up.
+let lastSessionId: string | null = null;
+
 // Non-zero Codex exit (e.g. MCP warnings) doesn't necessarily mean failure.
 // checkAndRoute accepts completed phases, but parks an incomplete spec review
 // because its cumulative artifact may still contain a prior round's verdict.
@@ -135,7 +133,6 @@ const gitSafe = splitGit.gitSafe;
 const gitSafeAt = splitGit.gitSafeAt;
 const gitSafeAtRaw = splitGit.gitSafeAtRaw;
 const getBaseBranch = splitGit.getBaseBranch;
-type SessionSlot = splitTypes.SessionSlot;
 // ── Phase status helpers ───────────────────────────────────────────────────
 
 function getCurrentPhase(status: StatusJson): CurrentPhase {
@@ -561,12 +558,12 @@ async function fixUpOwnArtifactRefs(opts: {
 
 async function fixUpImplementArtifactRefs(taskIds: string[], cwd: string): Promise<void> {
     if (operatorAcceptedImplement(taskIds, cwd)) return;
-    const sessionId = splitState.readStatus(taskIds[0]).sessions?.codex ?? null;
+    const sessionId = splitState.getStoredSessionId(taskIds, 'implementer');
     await fixUpOwnArtifactRefs({ phase: 'implement', taskIds, cwd, sessionId, artifactNames: ['handoff.md'],
         runSession: async prompt => {
-            const cfg = splitPolicy.getCodexConfig('implement', fixupTaskContexts(taskIds));
-            const result = await splitCodex.runCodex(prompt, false, sessionId, cfg.model, cfg.effort,
-                { taskId: taskIds[0], phase: 'implement_fixup', activeCwd: cwd }, cwd, false);
+            const result = await agentBackendFor('implementer').run({ role: 'implementer', phase: 'implement',
+                tasks: fixupTaskContexts(taskIds), prompt, interactive: false, resumeId: sessionId,
+                metricsContext: { taskId: taskIds[0], phase: 'implement_fixup', activeCwd: cwd }, cwd, wrapForResume: false });
             return result.exitCode === 0;
         },
     });
@@ -1772,14 +1769,11 @@ function printDryRunPlan(state: PipelineState): void {
     for (const phase of PHASE_ORDER.slice(currentIdx)) {
         if (phase === 'human_review') continue;
         if (phase === 'spec_review' && state.tier === 'fast') continue;
-        if (phase === 'spec' || phase === 'plan' || phase === 'code_review' || phase === 'qa') {
-            const cfg = splitPolicy.getClaudeConfig(phase, tasks);
-            console.log(`  - ${phase}: Claude / ${cfg.model} / ${cfg.effort}`);
-            continue;
-        }
-        if (phase === 'spec_review' || phase === 'implement') {
-            const cfg = splitPolicy.getCodexConfig(phase, tasks);
-            console.log(`  - ${phase}: Codex / ${cfg.model} / ${cfg.effort}`);
+        const role = splitPolicy.phasePrimaryRole(phase);
+        if (role) {
+            const backend = agentBackendFor(role);
+            const cfg = backend.resolveConfig(phase, tasks);
+            console.log(`  - ${phase}: ${backend.displayName} / ${cfg.model} / ${cfg.effort}`);
         }
     }
     console.log('  - human_review: no LLM');
@@ -3068,9 +3062,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             codeReview.preflight_rejections_current_loop = 0;
             clearPhaseOperatorAcceptance(codeReview);
         }
-        if (status.sessions && Object.hasOwn(status.sessions, 'claude_review')) {
-            delete status.sessions.claude_review;
-        }
+        splitState.clearSessionPair(status, 'reviewer');
         const qa = status.phases.qa;
         if (qa) qa.status = 'pending';
         const humanReview = status.phases.human_review;
@@ -3088,9 +3080,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
             }
             const plan = status.phases.plan;
             if (plan) plan.status = 'pending';
-            if (status.sessions) {
-                delete status.sessions.codex_spec_review;
-            }
+            splitState.clearSessionPair(status, 'spec_reviewer');
         }
         if (status.full_send === true) {
             status.full_send = false;
@@ -3173,14 +3163,14 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
     // spec cluster: resumes across spec-revision rounds (always run in REPO_ROOT)
-    const specClaudeSession = splitState.getStoredSessionId(taskIds, 'claude_spec');
+    const specClaudeSession = splitState.getStoredSessionId(taskIds, 'author');
     // code_review cluster: round 1 is always fresh; round 2+ resumes (same worktree cwd)
-    const reviewClaudeSession = splitState.getStoredSessionId(taskIds, 'claude_review');
+    const reviewClaudeSession = splitState.getStoredSessionId(taskIds, 'reviewer');
     // spec_review and implement use separate Codex slots. First-pass spec_review
     // is REPO_ROOT-bound; reroute spec_review clears this slot and starts fresh
     // in the active worktree, so it must still never share implement context.
-    const codexSpecReviewSession = splitState.getStoredSessionId(taskIds, 'codex_spec_review');
-    const codexSession = splitState.getStoredSessionId(taskIds, 'codex');
+    const codexSpecReviewSession = splitState.getStoredSessionId(taskIds, 'spec_reviewer');
+    const codexSession = splitState.getStoredSessionId(taskIds, 'implementer');
 
     if ((phase as Phase) === 'spec') {
         return runSpecPhase(state, cliArgs.interactive, specClaudeSession);
@@ -3506,18 +3496,12 @@ export function shouldParkCrashedReview(phase: Phase, codexExitStatus: number): 
 // Single turn, terse — the agent has full conversational context already.
 export async function retryAgentForPhase(taskId: string, phase: Phase, evidenceNote: string): Promise<'done' | 'drift' | 'no_session'> {
     const status = splitState.readStatus(taskId);
-    const agent = status.phases[phase]?.agent;
-    if (!agent || (agent !== 'codex' && agent !== 'claude')) return 'no_session';
-    // Sessions live in per-phase slots, not a flat-by-agent slot. Map phase to
-    // slot the same way the post-phase storage block does (spec → claude_spec,
-    // spec_review → codex_spec_review, code_review → claude_review, implement → codex).
-    // plan and qa are one-offs with no stored session; retry returns 'no_session'.
-    const slot: SessionSlot | null = agent === 'codex'
-        ? (phase === 'spec_review' ? 'codex_spec_review' : 'codex')
-        : phase === 'spec' ? 'claude_spec'
-        : phase === 'code_review' ? 'claude_review'
-        : null;
-    const sessionId = slot ? (status.sessions?.[slot] ?? null) : null;
+    const role = splitPolicy.phasePrimaryRole(phase);
+    if (!role) return 'no_session';
+    const backend = agentBackendFor(role);
+    const agent = backend.id;
+    const slot = splitPolicy.phaseSessionSlot(phase);
+    const sessionId = slot ? splitState.getStoredSessionId([taskId], slot) : null;
     if (!sessionId) {
         warn(`Cannot retry ${phase} for ${taskId}: no ${agent} session ID stored.`);
         return 'no_session';
@@ -3544,39 +3528,11 @@ export async function retryAgentForPhase(taskId: string, phase: Phase, evidenceN
     const isWorktreePhase = phase === 'implement' || phase === 'code_review' ||
         (phase === 'spec_review' && status.phases.implement?.rerouted === true);
     const retryCwd = isWorktreePhase ? splitWorktree.getActiveCwd([taskId]) : REPO_ROOT;
-    if (agent === 'codex') {
-        // Retry phase must be a Codex-run phase. spec_review and implement are
-        // the only two; anything else indicates a stored agent mismatch.
-        if (phase !== 'spec_review' && phase !== 'implement') {
-            warn(`Cannot retry ${phase} with Codex — not a Codex-run phase.`);
-            return 'no_session';
-        }
-        const retryTasks: TaskContext[] = [{
-            taskId, title: status.title ?? taskId, specReviewVerdict: '',
-            iterations: 0,
-            iterations_current_loop: 0,
-            iterations_total: 0,
-            rerouteCount: 0,
-            status,
-        }];
-        const cfg = splitPolicy.getCodexConfig(phase, retryTasks);
-        await splitCodex.runCodex(prompt, false, sessionId, cfg.model, cfg.effort, undefined, retryCwd);
-    } else {
-        if (phase !== 'spec' && phase !== 'plan' && phase !== 'code_review' && phase !== 'qa') {
-            warn(`Cannot retry ${phase} with Claude — not a Claude-run phase.`);
-            return 'no_session';
-        }
-        const retryTasks: TaskContext[] = [{
-            taskId, title: status.title ?? taskId, specReviewVerdict: '',
-            iterations: 0,
-            iterations_current_loop: 0,
-            iterations_total: 0,
-            rerouteCount: 0,
-            status,
-        }];
-        const cfg = splitPolicy.getClaudeConfig(phase, retryTasks);
-        await splitClaude.runClaude(prompt, false, sessionId, cfg.model, cfg.effort, cfg.budget, undefined, retryCwd);
-    }
+    const retryTasks: TaskContext[] = [{
+        taskId, title: status.title ?? taskId, specReviewVerdict: '',
+        iterations: 0, iterations_current_loop: 0, iterations_total: 0, rerouteCount: 0, status,
+    }];
+    await backend.run({ role, phase, tasks: retryTasks, prompt, interactive: false, resumeId: sessionId, cwd: retryCwd });
 
     return getPhaseStatus(splitState.readStatus(taskId), phase) === 'done' ? 'done' : 'drift';
 }
@@ -3936,12 +3892,12 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
 
         case 'qa': {
             const cwd = splitWorktree.getActiveCwd(taskIds);
-            const sessionId = lastClaudeSessionId;
+            const sessionId = lastSessionId;
             await fixUpOwnArtifactRefs({ phase: 'qa', taskIds, cwd, sessionId, artifactNames: ['done.md', 'pr-body.md'],
                 runSession: async prompt => {
-                    const cfg = splitPolicy.getClaudeConfig('qa', fixupTaskContexts(taskIds));
-                    await splitClaude.runClaude(prompt, false, sessionId, cfg.model, cfg.effort, cfg.budget,
-                        { taskId: taskIds[0], phase: 'qa_fixup', activeCwd: cwd }, cwd);
+                    await agentBackendFor('qa').run({ role: 'qa', phase: 'qa', tasks: fixupTaskContexts(taskIds),
+                        prompt, interactive: false, resumeId: sessionId,
+                        metricsContext: { taskId: taskIds[0], phase: 'qa_fixup', activeCwd: cwd }, cwd });
                     return true;
                 },
             });
@@ -3958,7 +3914,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
 
 function checkDeps(taskIds: string[], skipAgentDeps = false): void {
     if (!skipAgentDeps) {
-        for (const dep of ['claude', 'codex']) {
+        for (const dep of splitPolicy.requiredAgentBackends()) {
             const result = spawnSync('which', [dep], { stdio: 'ignore' });
             if (result.error || result.status !== 0) {
                 const label = dep === 'claude' ? 'Claude Code CLI' : dep === 'codex' ? 'Codex CLI' : dep;
@@ -4232,32 +4188,21 @@ export async function main(): Promise<void> {
         const state = buildPipelineState(taskIds);
         await withAgentSessionPark(currentPhase, taskIds, async () => {
             const phaseResult = await runPhase(currentPhase, state);
-            lastClaudeSessionId = phaseResult?.agent === 'claude' ? phaseResult.sessionId : null;
-            lastCodexSessionId = phaseResult?.agent === 'codex' ? phaseResult.sessionId : null;
+            lastSessionId = phaseResult?.sessionId ?? null;
             lastCodexExitStatus = phaseResult?.agent === 'codex' ? (phaseResult.exitCode ?? 0) : 0;
 
-            // Store session IDs after each agent phase for resumption.
-            // Sessions are stored per-cluster, not per-phase:
-            //   spec/spec_revision  → claude_spec        (both run in REPO_ROOT, share continuity)
-            //   code_review         → claude_review       (same worktree cwd across rounds)
-            //   spec_review (Codex) → codex_spec_review   (REPO_ROOT; separate from implement)
-            //   implement (Codex)   → codex               (worktree cwd)
-            //   plan, qa            → not stored          (one-offs, always fresh)
+            // Only spec, spec_review, implement and code_review persist continuity.
+            // plan and qa are one-offs even when they share a role with a stored phase.
             if (currentPhase !== 'complete' && currentPhase !== 'human_review') {
-                const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
-                if (agentForPhase === 'claude') {
-                    const slot: SessionSlot | null =
-                        currentPhase === 'spec' ? 'claude_spec' :
-                        currentPhase === 'code_review' ? 'claude_review' :
-                        null; // plan, qa: one-offs, don't persist
-                    if (slot && lastClaudeSessionId) {
-                        splitState.storeSessionId(taskIds, slot, lastClaudeSessionId);
-                        splitCli.info(`Claude session stored (${slot}): ${lastClaudeSessionId.slice(0, 8)}...`);
+                if (phaseResult?.agent) {
+                    splitState.recordPhaseAgent(taskIds, currentPhase, phaseResult.agent);
+                    const slot = splitPolicy.phaseSessionSlot(currentPhase);
+                    if (slot && lastSessionId) {
+                        splitState.storeSessionId(taskIds, slot, lastSessionId);
+                        const role = splitPolicy.phasePrimaryRole(currentPhase);
+                        const label = role ? agentBackendFor(role).displayName : phaseResult.agent;
+                        splitCli.info(`${label} session stored (${slot}): ${lastSessionId.slice(0, 8)}...`);
                     }
-                } else if (agentForPhase === 'codex' && lastCodexSessionId) {
-                    const codexSlot: SessionSlot = currentPhase === 'spec_review' ? 'codex_spec_review' : 'codex';
-                    splitState.storeSessionId(taskIds, codexSlot, lastCodexSessionId);
-                    splitCli.info(`Codex session stored (${codexSlot}): ${lastCodexSessionId.slice(0, 8)}...`);
                 }
                 await checkAndRoute(currentPhase, taskIds);
             }

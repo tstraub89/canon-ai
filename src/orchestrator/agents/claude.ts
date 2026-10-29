@@ -1,3 +1,5 @@
+import type { AgentBackend } from './backend.js';
+import { getClaudeConfig } from '../policy.js';
 import { AgentSessionError } from './errors.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -303,3 +305,25 @@ export async function runClaude(
         }
     }
 }
+
+
+export const claudeBackend: AgentBackend = {
+    id: 'claude',
+    displayName: 'Claude',
+    resolveConfig(phase, tasks) {
+        if (phase !== 'spec' && phase !== 'plan' && phase !== 'code_review' && phase !== 'qa') {
+            throw new Error(`Claude has no config for phase ${phase}`);
+        }
+        return getClaudeConfig(phase, tasks);
+    },
+    async run(request) {
+        const cfg = this.resolveConfig(request.phase, request.tasks);
+        // resolveConfig always returns the Claude policy's budget.
+        if (cfg.budget === undefined) throw new Error('Claude policy budget missing');
+        const result = await runClaude(request.prompt, request.interactive, request.resumeId,
+            cfg.model, cfg.effort, cfg.budget, request.metricsContext, request.cwd);
+        return { backend: this.id, sessionId: result.sessionId, exitCode: result.exitCode,
+            capturedStdout: result.capturedStdout, text: result.processedText };
+    },
+    coldReview() { return Promise.reject(new Error('Claude cold review is unsupported')); },
+};

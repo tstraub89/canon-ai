@@ -1,7 +1,7 @@
 import { requireDocsFreshnessConfig } from '../docs-freshness.js';
 import { info, warn } from '../cli.js';
-import { getClaudeConfig, getMaxReviewLoops } from '../policy.js';
-import { runClaude } from '../agents/claude.js';
+import { getMaxReviewLoops } from '../policy.js';
+import { agentBackendFor } from '../agents/backend.js';
 import { taskPhase } from '../../task/index.js';
 import { promptSpec, promptSpecRevision } from '../prompts/index.js';
 import { getActiveCwd } from '../worktree.js';
@@ -36,31 +36,31 @@ export async function runSpecPhase(
     if (hasChangesRequested) {
         info('Phase: spec (Claude revises specs after review feedback)');
         for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
-        const cfg = getClaudeConfig('spec', tasks);
+        const backend = agentBackendFor('author');
         const activeCwd = getActiveCwd(taskIds);
-        const result = await runClaude(promptSpecRevision(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive, resumeId, cfg.model, cfg.effort, cfg.budget, {
+        const result = await backend.run({ role: 'author', phase: 'spec', tasks, prompt: promptSpecRevision(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive: interactive, resumeId: resumeId, metricsContext: {
             taskId: taskIds.join('+'),
             phase: 'spec',
             iteration: tasks[0].status.phases.spec?.iterations_current_loop
                 ?? tasks[0].status.phases.spec?.iterations
                 ?? 0,
             activeCwd,
-        });
-        return { agent: 'claude', sessionId: result.sessionId, exitCode: result.exitCode };
+        } });
+        return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
     }
 
     const label = state.tier === 'fast' ? 'spec+plan' : 'spec';
     info(`Phase: spec (Claude writes ${label}${state.isBundle ? ' for bundle' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
-    const cfg = getClaudeConfig('spec', tasks);
+    const backend = agentBackendFor('author');
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptSpec(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+    const result = await backend.run({ role: 'author', phase: 'spec', tasks, prompt: promptSpec(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive: interactive, resumeId: null, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'spec',
         iteration: tasks[0].status.phases.spec?.iterations_current_loop
             ?? tasks[0].status.phases.spec?.iterations
             ?? 0,
         activeCwd,
-    });
-    return { agent: 'claude', sessionId: result.sessionId, exitCode: result.exitCode };
+    } });
+    return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }

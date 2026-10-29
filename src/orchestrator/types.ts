@@ -109,6 +109,11 @@ export type StatusJson = {
     phases: Partial<Record<Phase, PhaseEntry>>;
     escalations?: Escalation[];
     sessions?: {
+        author?: string | null;
+        spec_reviewer?: string | null;
+        implementer?: string | null;
+        reviewer?: string | null;
+        /** Legacy keys: read-only fallback, cleared in pairs, never written. */
         claude_spec?: string | null;
         claude_review?: string | null;
         /** @deprecated use claude_spec or claude_review */
@@ -170,7 +175,7 @@ export type MetricEntry = {
 
 export type ImplementMode = 'fresh' | 'revision' | 'reroute' | 'resume';
 
-export type SessionSlot = 'claude_spec' | 'claude_review' | 'codex' | 'codex_spec_review';
+export type { SessionSlot } from '../lib/pipeline-policy.js';
 
 export type ClaudeRunResult = {
     exitCode: number | null;
@@ -184,6 +189,7 @@ export type ClaudeRunResult = {
 };
 
 export type CodexRunResult = {
+    text: string;
     exitCode: number | null;
     signal: NodeJS.Signals | null;
     spawnError: Error | null;
@@ -194,7 +200,7 @@ export type CodexRunResult = {
 };
 
 export type PhaseRunResult = {
-    agent: 'claude' | 'codex';
+    agent: import('../lib/pipeline-policy.js').AgentBackendId | null;
     sessionId: string | null;
     exitCode: number | null;
 } | null;

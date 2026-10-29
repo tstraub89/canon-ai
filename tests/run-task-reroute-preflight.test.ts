@@ -1761,11 +1761,7 @@ void test('rerouteFromHumanReview full-tier resets spec_review and plan, preserv
         const taskId = 'task-a';
         const status = makeRerouteStatus(taskId, 'task/task-a', 2, {
             taskSize: 'M',
-            sessions: {
-                codex_spec_review: 'old-spec-review-session',
-                claude_review: 'old-code-review-session',
-                codex: 'keep-implement-session',
-            },
+            sessions: { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' },
         });
         writeTaskStatus(tasksRoot, taskId, status);
         writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
@@ -1814,7 +1810,13 @@ void test('rerouteFromHumanReview full-tier resets spec_review and plan, preserv
         assert.equal(updated.phases?.implement?.reroute_count, 3);
         assert.equal(updated.sessions?.codex_spec_review, undefined);
         assert.equal(updated.sessions?.claude_review, undefined);
-        assert.equal(updated.sessions?.codex, 'keep-implement-session');
+        assert.equal(updated.sessions?.codex, 'legacy-implement');
+        const expectedSessions: Record<string, string> = { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' };
+        delete expectedSessions.reviewer;
+        delete expectedSessions.claude_review;
+        delete expectedSessions.spec_reviewer;
+        delete expectedSessions.codex_spec_review;
+        assert.deepEqual(updated.sessions, expectedSessions);
     });
 });
 
@@ -1827,11 +1829,7 @@ void test('rerouteFromHumanReview fast-tier leaves spec_review and plan untouche
         const status = makeRerouteStatus(taskId, 'task/task-a', 0, {
             taskSize: 'XS',
             delicate: false,
-            sessions: {
-                codex_spec_review: 'unchanged-session',
-                claude_review: 'old-code-review-session',
-                codex: 'keep-implement-session',
-            },
+            sessions: { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' },
         });
         writeTaskStatus(tasksRoot, taskId, status);
         writeTaskStatus(worktreeTasksRoot(worktreesRoot, taskId), taskId, status);
@@ -1866,8 +1864,12 @@ void test('rerouteFromHumanReview fast-tier leaves spec_review and plan untouche
         assert.equal(updated.phases?.implement?.status, 'pending');
         assert.equal(updated.phases?.implement?.rerouted, true);
         assert.equal(updated.phases?.implement?.reroute_count, 1);
-        assert.equal(updated.sessions?.codex_spec_review, 'unchanged-session');
+        assert.equal(updated.sessions?.codex_spec_review, 'legacy-spec');
         assert.equal(updated.sessions?.claude_review, undefined);
+        const expectedSessions: Record<string, string> = { author: 'author-id', claude_spec: 'legacy-author', spec_reviewer: 'spec-id', codex_spec_review: 'legacy-spec', implementer: 'implement-id', codex: 'legacy-implement', reviewer: 'review-id', claude_review: 'legacy-review' };
+        delete expectedSessions.reviewer;
+        delete expectedSessions.claude_review;
+        assert.deepEqual(updated.sessions, expectedSessions);
     });
 });
 

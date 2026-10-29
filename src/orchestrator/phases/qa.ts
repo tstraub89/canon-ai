@@ -3,8 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { info, warn } from '../cli.js';
-import { getClaudeConfig } from '../policy.js';
-import { runClaude } from '../agents/claude.js';
+import { agentBackendFor } from '../agents/backend.js';
 import { extractDoneMdFromStdout, isDoneMdTemplate } from '../validation.js';
 import { getActiveCwd } from '../worktree.js';
 import { getBaseBranch, getAffectedFiles, verifyBranch } from '../git.js';
@@ -34,23 +33,23 @@ export async function runQaPhase(
     verifyBranch(taskIds);
     info(`Phase: qa (Claude writes QA${state.isBundle ? ' for bundle' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'qa', 'in_progress');
-    const cfg = getClaudeConfig('qa', tasks);
+    const backend = agentBackendFor('qa');
     const activeCwd = getActiveCwd(taskIds);
-    const result = await runClaude(promptQa(state, resolvedPrTemplate, resolveQaDocsFreshness(taskIds, activeCwd)), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+    const result = await backend.run({ role: 'qa', phase: 'qa', tasks, prompt: promptQa(state, resolvedPrTemplate, resolveQaDocsFreshness(taskIds, activeCwd)), interactive: interactive, resumeId: null, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'qa',
         iteration: tasks[0].status.phases.qa?.iterations_current_loop
             ?? tasks[0].status.phases.qa?.iterations
             ?? 0,
         activeCwd,
-    }, activeCwd);
+    }, cwd: activeCwd });
 
-    if (!state.isBundle && result.capturedStdout) {
+    if (!state.isBundle && (result.text || result.capturedStdout)) {
         const taskId = taskIds[0];
         // Use the active cwd so the salvage write lands in the same tree Claude wrote to.
         const donePath = path.join(activeCwd, 'tasks', taskId, 'done.md');
         if (isDoneMdTemplate(donePath)) {
-            const salvaged = extractDoneMdFromStdout(result.capturedStdout);
+            const salvaged = extractDoneMdFromStdout(result.text) ?? extractDoneMdFromStdout(result.capturedStdout);
             if (salvaged) {
                 fs.writeFileSync(donePath, salvaged);
                 warn(`Salvaged tasks/${taskId}/done.md from captured stdout — QA sub-agent streamed content instead of using the Write tool.`);
@@ -63,5 +62,5 @@ export async function runQaPhase(
         }
     }
 
-    return { agent: 'claude', sessionId: result.sessionId, exitCode: result.exitCode };
+    return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }

@@ -1011,6 +1011,26 @@ function writeStatusToFile(statusFile, status) {
 `, "utf8");
   fs5.renameSync(tmpFile, statusFile);
 }
+var LEGACY_SESSION_SLOTS = {
+  author: "claude_spec",
+  spec_reviewer: "codex_spec_review",
+  implementer: "codex",
+  reviewer: "claude_review"
+};
+function clearSessionPair(status, slot) {
+  if (!status.sessions) return;
+  delete status.sessions[slot];
+  delete status.sessions[LEGACY_SESSION_SLOTS[slot]];
+}
+function recordPhaseAgent(taskIds, phase, agent) {
+  for (const taskId of taskIds) {
+    const status = readStatus(taskId);
+    const entry = status.phases[phase];
+    if (!entry || entry.agent === agent) continue;
+    entry.agent = agent;
+    writeStatus(taskId, status);
+  }
+}
 function storeSessionId(taskIds, agent, sessionId) {
   for (const taskId of taskIds) {
     const s = readStatus(taskId);
@@ -1020,7 +1040,8 @@ function storeSessionId(taskIds, agent, sessionId) {
   }
 }
 function getStoredSessionId(taskIds, agent) {
-  return readStatus(taskIds[0]).sessions?.[agent] ?? null;
+  const sessions = readStatus(taskIds[0]).sessions;
+  return sessions?.[agent] ?? sessions?.[LEGACY_SESSION_SLOTS[agent]] ?? null;
 }
 function autoBlockPhase(taskIds, phase, iterationCount, reason) {
   const today2 = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -2285,6 +2306,45 @@ function getPipelinePolicy(tasks, config3) {
     })
   };
 }
+var AGENT_ROLES = ["author", "spec_reviewer", "implementer", "reviewer", "cold_reviewer", "qa"];
+var DEFAULT_ROLE_ASSIGNMENT = {
+  author: "claude",
+  spec_reviewer: "codex",
+  implementer: "codex",
+  reviewer: "claude",
+  cold_reviewer: "codex",
+  qa: "claude"
+};
+var PHASE_PRIMARY_ROLE = {
+  spec: "author",
+  spec_review: "spec_reviewer",
+  plan: "author",
+  implement: "implementer",
+  code_review: "reviewer",
+  qa: "qa",
+  human_review: null
+};
+var PHASE_SESSION_SLOT = {
+  spec: "author",
+  spec_review: "spec_reviewer",
+  plan: null,
+  implement: "implementer",
+  code_review: "reviewer",
+  qa: null,
+  human_review: null
+};
+function roleBackendId(role, assignment = DEFAULT_ROLE_ASSIGNMENT) {
+  return assignment[role];
+}
+function phasePrimaryRole(phase) {
+  return PHASE_PRIMARY_ROLE[phase];
+}
+function phaseSessionSlot(phase) {
+  return PHASE_SESSION_SLOT[phase];
+}
+function requiredAgentBackends(assignment = DEFAULT_ROLE_ASSIGNMENT) {
+  return [...new Set(AGENT_ROLES.map((role) => roleBackendId(role, assignment)))];
+}
 
 // src/orchestrator/policy.ts
 var config2 = {
@@ -2814,6 +2874,40 @@ ${renderedPrompt}`;
     }
   }
 }
+var claudeBackend = {
+  id: "claude",
+  displayName: "Claude",
+  resolveConfig(phase, tasks) {
+    if (phase !== "spec" && phase !== "plan" && phase !== "code_review" && phase !== "qa") {
+      throw new Error(`Claude has no config for phase ${phase}`);
+    }
+    return getClaudeConfig(phase, tasks);
+  },
+  async run(request) {
+    const cfg = this.resolveConfig(request.phase, request.tasks);
+    if (cfg.budget === void 0) throw new Error("Claude policy budget missing");
+    const result = await runClaude(
+      request.prompt,
+      request.interactive,
+      request.resumeId,
+      cfg.model,
+      cfg.effort,
+      cfg.budget,
+      request.metricsContext,
+      request.cwd
+    );
+    return {
+      backend: this.id,
+      sessionId: result.sessionId,
+      exitCode: result.exitCode,
+      capturedStdout: result.capturedStdout,
+      text: result.processedText
+    };
+  },
+  coldReview() {
+    return Promise.reject(new Error("Claude cold review is unsupported"));
+  }
+};
 
 // src/orchestrator/agents/codex.ts
 var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -2850,7 +2944,8 @@ ${renderedPrompt}`;
         stalled: false,
         capturedStdout: "",
         capturedStderr: "",
-        sessionId: null
+        sessionId: null,
+        text: ""
       };
     }
     const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
@@ -2905,7 +3000,8 @@ ${renderedPrompt}`;
     }
     return {
       ...result,
-      sessionId
+      sessionId,
+      text: displayChunks.join("\n\n")
     };
   } catch (err) {
     status = "failed";
@@ -2982,6 +3078,45 @@ async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsC
       });
     }
   }
+}
+var codexBackend = {
+  id: "codex",
+  displayName: "Codex",
+  resolveConfig(phase, tasks) {
+    if (phase !== "spec_review" && phase !== "implement" && phase !== "code_review") {
+      throw new Error(`Codex has no config for phase ${phase}`);
+    }
+    return getCodexConfig(phase, tasks);
+  },
+  async run(request) {
+    const cfg = this.resolveConfig(request.phase, request.tasks);
+    const result = await runCodex(
+      request.prompt,
+      request.interactive,
+      request.resumeId,
+      cfg.model,
+      cfg.effort,
+      request.metricsContext,
+      request.cwd,
+      request.wrapForResume
+    );
+    return {
+      backend: this.id,
+      sessionId: result.sessionId,
+      exitCode: result.exitCode,
+      capturedStdout: result.capturedStdout,
+      text: result.text
+    };
+  },
+  coldReview(request) {
+    const cfg = this.resolveConfig(request.phase, request.tasks);
+    return runColdCodexReview(request.baseBranch, cfg.model, cfg.effort, request.cwd, request.metricsContext);
+  }
+};
+
+// src/orchestrator/agents/backend.ts
+function agentBackendFor(role) {
+  return roleBackendId(role) === "claude" ? claudeBackend : codexBackend;
 }
 
 // src/orchestrator/review-loop.ts
@@ -6504,6 +6639,7 @@ function fullSendScopeBlockReason(taskIds, files, recordedVerdicts) {
   return `Full-send code review left out-of-scope files unjudged: ${files.join(", ")}. Add them to a task spec's ### Affected Files table, then re-run \`canon run ${taskIds.join(" ")}\`; or reroute with a note telling the implementer to remove them.${verdictNote}`;
 }
 var defaultDeps = {
+  agentBackendFor,
   verifyBranch,
   getBaseBranch,
   getActiveCwd,
@@ -6519,11 +6655,7 @@ var defaultDeps = {
   findColdCodexArchiveForRound,
   hasMalformedColdCodexArchive,
   writeColdCodexArchive,
-  getClaudeConfig,
-  getMaxReviewLoops,
-  getCodexConfig,
-  runColdCodexReview,
-  runClaude
+  getMaxReviewLoops
 };
 function determinePreflightRoute(failures) {
   const allClassified = failures.flatMap((failure) => failure.classified);
@@ -6724,7 +6856,7 @@ async function runCodeReviewPhase(state, interactive, resumeId, deps = defaultDe
     for (const { taskId } of tasks) {
       taskPhasePreflightRejected(taskId, "code_review");
     }
-    return { agent: "claude", sessionId: null, exitCode: 0 };
+    return { agent: null, sessionId: null, exitCode: 0 };
   }
   const allowlist = buildAdmittedAllowlist(taskIds, activeCwd);
   const outOfScopeFiles = verifyBaseDriftFromData(
@@ -6780,18 +6912,18 @@ Add them to the affected task spec's ### Affected Files table in the active chec
     telemetryFiles: PIPELINE_TELEMETRY_FILES
   });
   const deltaDiff = scope.scope === "delta" ? deps.getScopedDiffInRange(`${scope.base}..${headSha}`, activeCwd) : null;
-  const coldCfg = deps.getCodexConfig("code_review", tasks);
+  const coldBackend = deps.agentBackendFor("cold_reviewer");
   const coldReviewStartMs = Date.now();
-  const coldReview = await deps.runColdCodexReview(scope.base, coldCfg.model, coldCfg.effort, activeCwd, {
+  const coldReview = await coldBackend.coldReview({ role: "cold_reviewer", phase: "code_review", tasks, baseBranch: scope.base, cwd: activeCwd, metricsContext: {
     taskId: taskIds.join("+"),
     phase: "code_review",
     iteration: maxIter,
     activeCwd
-  });
+  } });
   const coldReviewDurationMs = Date.now() - coldReviewStartMs;
   if (!coldReview.success) {
     throw new AgentSessionError({
-      agent: "codex",
+      agent: coldBackend.id,
       kind: "exit_code",
       reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(", ")} (no findings output / spawn error / stall / signal). Re-run when Codex is available \u2014 the code_review phase has not advanced.`
     });
@@ -6813,15 +6945,15 @@ Add them to the affected task spec's ### Affected Files table in the active chec
     }, coldReview.findings);
   }
   info(`\u2192 cold-codex review (${taskIds.join(", ")}): ${Math.round(coldReviewDurationMs / 1e3)}s`);
-  const cfg = deps.getClaudeConfig("code_review", tasks);
+  const backend = deps.agentBackendFor("reviewer");
   const reviewResumeId = maxIter > 0 ? resumeId : null;
   const scopedDiff = scope.scope === "delta" ? null : deps.getScopedDiff(baseBranch, activeCwd);
-  const result = await deps.runClaude(promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, reviewResumeId, cfg.model, cfg.effort, cfg.budget, {
+  const result = await backend.run({ role: "reviewer", phase: "code_review", tasks, prompt: promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, resumeId: reviewResumeId, metricsContext: {
     taskId: taskIds.join("+"),
     phase: "code_review",
     iteration: maxIter,
     activeCwd
-  }, activeCwd);
+  }, cwd: activeCwd });
   for (const t of tasks) {
     const reviewPath = path17.join(taskDirFor(t.taskId), "review.md");
     let reviewContent = null;
@@ -6834,7 +6966,7 @@ Add them to the affected task spec's ### Affected Files table in the active chec
       taskPhase(t.taskId, "code_review", "pending");
     }
   }
-  return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
+  return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
 // src/orchestrator/phases/implement.ts
@@ -6880,26 +7012,16 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
   const phaseLabel = isRevision ? ", revision" : isRerouted ? ", reroute (spec amended)" : "";
   info(`Phase: implement (Codex${state.isBundle ? " bundle" : ""}${phaseLabel})`);
   for (const t of tasks) taskPhase(t.taskId, "implement", "in_progress");
-  const codexCfg = getCodexConfig("implement", tasks);
+  const backend = agentBackendFor("implementer");
   const isResume = resumeId !== null && !isRevision && !isRerouted && wasImplementInProgress;
   const shouldResume = isRevision || isRerouted || isResume;
   const implementPrompt = isRevision ? promptImplementRevisions(state, affectedFiles, baseBranch) : isRerouted ? promptImplementReroute(state, resumeId !== null, affectedFiles, baseBranch) : isResume ? promptImplementResume(state) : promptImplement(state, "fresh", affectedFiles, baseBranch);
-  const result = await runCodex(
-    implementPrompt,
-    interactive,
-    shouldResume ? resumeId : null,
-    codexCfg.model,
-    codexCfg.effort,
-    {
-      taskId: taskIds.join("+"),
-      phase: "implement",
-      iteration: tasks[0].iterations_current_loop,
-      activeCwd
-    },
-    activeCwd,
-    /* wrapForResume */
-    !isRerouted
-  );
+  const result = await backend.run({ role: "implementer", phase: "implement", tasks, prompt: implementPrompt, interactive, resumeId: shouldResume ? resumeId : null, metricsContext: {
+    taskId: taskIds.join("+"),
+    phase: "implement",
+    iteration: tasks[0].iterations_current_loop,
+    activeCwd
+  }, cwd: activeCwd, wrapForResume: !isRerouted });
   if (isRevision) {
     const dirtyResult = gitSafeAtRaw(activeCwd, "status", "--porcelain=v1", "-uall");
     const meaningfulChanges = dirtyResult.ok ? [...parsePorcelain(dirtyResult.stdout)].filter((f) => {
@@ -6918,7 +7040,7 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
       for (const taskId of taskIds) {
         const s = readStatus(taskId);
         if (s.sessions) {
-          delete s.sessions.codex;
+          clearSessionPair(s, "implementer");
           writeStatus(taskId, s);
         }
       }
@@ -6931,7 +7053,7 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
       process.exit(2);
     }
   }
-  return { agent: "codex", sessionId: result.sessionId, exitCode: result.exitCode };
+  return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
 // src/orchestrator/phases/plan.ts
@@ -6942,14 +7064,14 @@ async function runPlanPhase(state, interactive) {
   const taskIds = tasks.map((t) => t.taskId);
   info(`Phase: plan (Claude writes plan${state.isBundle ? "s" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "plan", "in_progress");
-  const cfg = getClaudeConfig("plan", tasks);
+  const backend = agentBackendFor("author");
   const activeCwd = getActiveCwd(taskIds);
-  const result = await runClaude(promptPlan(state), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+  const result = await backend.run({ role: "author", phase: "plan", tasks, prompt: promptPlan(state), interactive, resumeId: null, metricsContext: {
     taskId: taskIds.join("+"),
     phase: "plan",
     iteration: tasks[0].status.phases.plan?.iterations_current_loop ?? tasks[0].status.phases.plan?.iterations ?? 0,
     activeCwd
-  }, activeCwd);
+  }, cwd: activeCwd });
   for (const t of tasks) {
     const planPath = path18.join(taskDirFor(t.taskId), "plan.md");
     let planContent = null;
@@ -6962,7 +7084,7 @@ async function runPlanPhase(state, interactive) {
       taskPhase(t.taskId, "plan", "pending");
     }
   }
-  return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
+  return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
 // src/orchestrator/phases/qa.ts
@@ -6982,19 +7104,19 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
   verifyBranch(taskIds);
   info(`Phase: qa (Claude writes QA${state.isBundle ? " for bundle" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "qa", "in_progress");
-  const cfg = getClaudeConfig("qa", tasks);
+  const backend = agentBackendFor("qa");
   const activeCwd = getActiveCwd(taskIds);
-  const result = await runClaude(promptQa(state, resolvedPrTemplate, resolveQaDocsFreshness(taskIds, activeCwd)), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+  const result = await backend.run({ role: "qa", phase: "qa", tasks, prompt: promptQa(state, resolvedPrTemplate, resolveQaDocsFreshness(taskIds, activeCwd)), interactive, resumeId: null, metricsContext: {
     taskId: taskIds.join("+"),
     phase: "qa",
     iteration: tasks[0].status.phases.qa?.iterations_current_loop ?? tasks[0].status.phases.qa?.iterations ?? 0,
     activeCwd
-  }, activeCwd);
-  if (!state.isBundle && result.capturedStdout) {
+  }, cwd: activeCwd });
+  if (!state.isBundle && (result.text || result.capturedStdout)) {
     const taskId = taskIds[0];
     const donePath = path19.join(activeCwd, "tasks", taskId, "done.md");
     if (isDoneMdTemplate(donePath)) {
-      const salvaged = extractDoneMdFromStdout(result.capturedStdout);
+      const salvaged = extractDoneMdFromStdout(result.text) ?? extractDoneMdFromStdout(result.capturedStdout);
       if (salvaged) {
         fs21.writeFileSync(donePath, salvaged);
         warn(`Salvaged tasks/${taskId}/done.md from captured stdout \u2014 QA sub-agent streamed content instead of using the Write tool.`);
@@ -7006,7 +7128,7 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
       }
     }
   }
-  return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
+  return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
 // src/orchestrator/phases/spec.ts
@@ -7023,28 +7145,28 @@ async function runSpecPhase(state, interactive, resumeId) {
   if (hasChangesRequested) {
     info("Phase: spec (Claude revises specs after review feedback)");
     for (const t of tasks) taskPhase(t.taskId, "spec", "in_progress");
-    const cfg2 = getClaudeConfig("spec", tasks);
+    const backend2 = agentBackendFor("author");
     const activeCwd2 = getActiveCwd(taskIds);
-    const result2 = await runClaude(promptSpecRevision(state, requireDocsFreshnessConfig(activeCwd2)?.paths), interactive, resumeId, cfg2.model, cfg2.effort, cfg2.budget, {
+    const result2 = await backend2.run({ role: "author", phase: "spec", tasks, prompt: promptSpecRevision(state, requireDocsFreshnessConfig(activeCwd2)?.paths), interactive, resumeId, metricsContext: {
       taskId: taskIds.join("+"),
       phase: "spec",
       iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0,
       activeCwd: activeCwd2
-    });
-    return { agent: "claude", sessionId: result2.sessionId, exitCode: result2.exitCode };
+    } });
+    return { agent: result2.backend, sessionId: result2.sessionId, exitCode: result2.exitCode };
   }
   const label = state.tier === "fast" ? "spec+plan" : "spec";
   info(`Phase: spec (Claude writes ${label}${state.isBundle ? " for bundle" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "spec", "in_progress");
-  const cfg = getClaudeConfig("spec", tasks);
+  const backend = agentBackendFor("author");
   const activeCwd = getActiveCwd(taskIds);
-  const result = await runClaude(promptSpec(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive, null, cfg.model, cfg.effort, cfg.budget, {
+  const result = await backend.run({ role: "author", phase: "spec", tasks, prompt: promptSpec(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive, resumeId: null, metricsContext: {
     taskId: taskIds.join("+"),
     phase: "spec",
     iteration: tasks[0].status.phases.spec?.iterations_current_loop ?? tasks[0].status.phases.spec?.iterations ?? 0,
     activeCwd
-  });
-  return { agent: "claude", sessionId: result.sessionId, exitCode: result.exitCode };
+  } });
+  return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
 // src/orchestrator/phases/spec-review.ts
@@ -7124,14 +7246,14 @@ async function runSpecReviewPhase(state, interactive, resumeId) {
   const specReviewPrompt = isReReview ? `The spec${state.isBundle ? "s have" : " has"} been revised since your last review. Re-read the current spec.md ${state.isBundle ? "files" : "file"} from disk and produce a completely fresh review \u2014 do not replay or summarise your previous output.
 
 ${promptSpecReview(state)}` : promptSpecReview(state);
-  const cfg = getCodexConfig("spec_review", tasks);
+  const backend = agentBackendFor("spec_reviewer");
   const activeCwd = getActiveCwd(taskIds);
-  const result = await runCodex(specReviewPrompt, interactive, resumeId, cfg.model, cfg.effort, {
+  const result = await backend.run({ role: "spec_reviewer", phase: "spec_review", tasks, prompt: specReviewPrompt, interactive, resumeId, metricsContext: {
     taskId: taskIds.join("+"),
     phase: "spec_review",
     iteration: specReviewCheck.count,
     activeCwd
-  }, activeCwd);
+  }, cwd: activeCwd });
   for (const t of tasks) {
     const reviewPath = path20.join(resolveTaskCwd(t.taskId), "tasks", t.taskId, "spec-review.md");
     let reviewContent = null;
@@ -7144,7 +7266,7 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
       taskPhase(t.taskId, "spec_review", "pending");
     }
   }
-  return { agent: "codex", sessionId: result.sessionId, exitCode: result.exitCode };
+  return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
 // src/orchestrator/detach.ts
@@ -7443,8 +7565,7 @@ var cliArgs = {
   allowDivergentBase: false
 };
 var ghAvailable = false;
-var lastClaudeSessionId = null;
-var lastCodexSessionId = null;
+var lastSessionId = null;
 var lastCodexExitStatus = 0;
 function classifyMergeOutcome(opts) {
   if (opts.exitOk) return "tolerate";
@@ -7798,7 +7919,7 @@ ${consequence}`);
 }
 async function fixUpImplementArtifactRefs(taskIds, cwd) {
   if (operatorAcceptedImplement(taskIds, cwd)) return;
-  const sessionId = readStatus(taskIds[0]).sessions?.codex ?? null;
+  const sessionId = getStoredSessionId(taskIds, "implementer");
   await fixUpOwnArtifactRefs({
     phase: "implement",
     taskIds,
@@ -7806,17 +7927,17 @@ async function fixUpImplementArtifactRefs(taskIds, cwd) {
     sessionId,
     artifactNames: ["handoff.md"],
     runSession: async (prompt) => {
-      const cfg = getCodexConfig("implement", fixupTaskContexts(taskIds));
-      const result = await runCodex(
+      const result = await agentBackendFor("implementer").run({
+        role: "implementer",
+        phase: "implement",
+        tasks: fixupTaskContexts(taskIds),
         prompt,
-        false,
-        sessionId,
-        cfg.model,
-        cfg.effort,
-        { taskId: taskIds[0], phase: "implement_fixup", activeCwd: cwd },
+        interactive: false,
+        resumeId: sessionId,
+        metricsContext: { taskId: taskIds[0], phase: "implement_fixup", activeCwd: cwd },
         cwd,
-        false
-      );
+        wrapForResume: false
+      });
       return result.exitCode === 0;
     }
   });
@@ -8716,14 +8837,11 @@ function printDryRunPlan(state) {
   for (const phase of PHASE_ORDER2.slice(currentIdx)) {
     if (phase === "human_review") continue;
     if (phase === "spec_review" && state.tier === "fast") continue;
-    if (phase === "spec" || phase === "plan" || phase === "code_review" || phase === "qa") {
-      const cfg = getClaudeConfig(phase, tasks);
-      console.log(`  - ${phase}: Claude / ${cfg.model} / ${cfg.effort}`);
-      continue;
-    }
-    if (phase === "spec_review" || phase === "implement") {
-      const cfg = getCodexConfig(phase, tasks);
-      console.log(`  - ${phase}: Codex / ${cfg.model} / ${cfg.effort}`);
+    const role = phasePrimaryRole(phase);
+    if (role) {
+      const backend = agentBackendFor(role);
+      const cfg = backend.resolveConfig(phase, tasks);
+      console.log(`  - ${phase}: ${backend.displayName} / ${cfg.model} / ${cfg.effort}`);
     }
   }
   console.log("  - human_review: no LLM");
@@ -9558,9 +9676,7 @@ function rerouteFromHumanReview(taskIds) {
       codeReview.preflight_rejections_current_loop = 0;
       clearPhaseOperatorAcceptance(codeReview);
     }
-    if (status.sessions && Object.hasOwn(status.sessions, "claude_review")) {
-      delete status.sessions.claude_review;
-    }
+    clearSessionPair(status, "reviewer");
     const qa = status.phases.qa;
     if (qa) qa.status = "pending";
     const humanReview = status.phases.human_review;
@@ -9576,9 +9692,7 @@ function rerouteFromHumanReview(taskIds) {
       }
       const plan = status.phases.plan;
       if (plan) plan.status = "pending";
-      if (status.sessions) {
-        delete status.sessions.codex_spec_review;
-      }
+      clearSessionPair(status, "spec_reviewer");
     }
     if (status.full_send === true) {
       status.full_send = false;
@@ -9630,10 +9744,10 @@ function routeBackTo(taskIds, targetPhase) {
 async function runPhase(phase, state) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
-  const specClaudeSession = getStoredSessionId(taskIds, "claude_spec");
-  const reviewClaudeSession = getStoredSessionId(taskIds, "claude_review");
-  const codexSpecReviewSession = getStoredSessionId(taskIds, "codex_spec_review");
-  const codexSession = getStoredSessionId(taskIds, "codex");
+  const specClaudeSession = getStoredSessionId(taskIds, "author");
+  const reviewClaudeSession = getStoredSessionId(taskIds, "reviewer");
+  const codexSpecReviewSession = getStoredSessionId(taskIds, "spec_reviewer");
+  const codexSession = getStoredSessionId(taskIds, "implementer");
   if (phase === "spec") {
     return runSpecPhase(state, cliArgs.interactive, specClaudeSession);
   }
@@ -9871,10 +9985,12 @@ function shouldParkCrashedReview(phase, codexExitStatus) {
 }
 async function retryAgentForPhase(taskId, phase, evidenceNote) {
   const status = readStatus(taskId);
-  const agent = status.phases[phase]?.agent;
-  if (!agent || agent !== "codex" && agent !== "claude") return "no_session";
-  const slot = agent === "codex" ? phase === "spec_review" ? "codex_spec_review" : "codex" : phase === "spec" ? "claude_spec" : phase === "code_review" ? "claude_review" : null;
-  const sessionId = slot ? status.sessions?.[slot] ?? null : null;
+  const role = phasePrimaryRole(phase);
+  if (!role) return "no_session";
+  const backend = agentBackendFor(role);
+  const agent = backend.id;
+  const slot = phaseSessionSlot(phase);
+  const sessionId = slot ? getStoredSessionId([taskId], slot) : null;
   if (!sessionId) {
     warn2(`Cannot retry ${phase} for ${taskId}: no ${agent} session ID stored.`);
     return "no_session";
@@ -9892,41 +10008,17 @@ async function retryAgentForPhase(taskId, phase, evidenceNote) {
   warn2(`Retrying ${agent} session ${sessionId.slice(0, 8)}... for ${taskId} ${phase}.`);
   const isWorktreePhase = phase === "implement" || phase === "code_review" || phase === "spec_review" && status.phases.implement?.rerouted === true;
   const retryCwd = isWorktreePhase ? getActiveCwd([taskId]) : REPO_ROOT2;
-  if (agent === "codex") {
-    if (phase !== "spec_review" && phase !== "implement") {
-      warn2(`Cannot retry ${phase} with Codex \u2014 not a Codex-run phase.`);
-      return "no_session";
-    }
-    const retryTasks = [{
-      taskId,
-      title: status.title ?? taskId,
-      specReviewVerdict: "",
-      iterations: 0,
-      iterations_current_loop: 0,
-      iterations_total: 0,
-      rerouteCount: 0,
-      status
-    }];
-    const cfg = getCodexConfig(phase, retryTasks);
-    await runCodex(prompt, false, sessionId, cfg.model, cfg.effort, void 0, retryCwd);
-  } else {
-    if (phase !== "spec" && phase !== "plan" && phase !== "code_review" && phase !== "qa") {
-      warn2(`Cannot retry ${phase} with Claude \u2014 not a Claude-run phase.`);
-      return "no_session";
-    }
-    const retryTasks = [{
-      taskId,
-      title: status.title ?? taskId,
-      specReviewVerdict: "",
-      iterations: 0,
-      iterations_current_loop: 0,
-      iterations_total: 0,
-      rerouteCount: 0,
-      status
-    }];
-    const cfg = getClaudeConfig(phase, retryTasks);
-    await runClaude(prompt, false, sessionId, cfg.model, cfg.effort, cfg.budget, void 0, retryCwd);
-  }
+  const retryTasks = [{
+    taskId,
+    title: status.title ?? taskId,
+    specReviewVerdict: "",
+    iterations: 0,
+    iterations_current_loop: 0,
+    iterations_total: 0,
+    rerouteCount: 0,
+    status
+  }];
+  await backend.run({ role, phase, tasks: retryTasks, prompt, interactive: false, resumeId: sessionId, cwd: retryCwd });
   return getPhaseStatus(readStatus(taskId), phase) === "done" ? "done" : "drift";
 }
 async function recoverPhaseForTask(taskId, phase, initialStatus) {
@@ -10228,7 +10320,7 @@ Scope was not checked. Fix the base branch or repository history before choosing
     }
     case "qa": {
       const cwd = getActiveCwd(taskIds);
-      const sessionId = lastClaudeSessionId;
+      const sessionId = lastSessionId;
       await fixUpOwnArtifactRefs({
         phase: "qa",
         taskIds,
@@ -10236,17 +10328,16 @@ Scope was not checked. Fix the base branch or repository history before choosing
         sessionId,
         artifactNames: ["done.md", "pr-body.md"],
         runSession: async (prompt) => {
-          const cfg = getClaudeConfig("qa", fixupTaskContexts(taskIds));
-          await runClaude(
+          await agentBackendFor("qa").run({
+            role: "qa",
+            phase: "qa",
+            tasks: fixupTaskContexts(taskIds),
             prompt,
-            false,
-            sessionId,
-            cfg.model,
-            cfg.effort,
-            cfg.budget,
-            { taskId: taskIds[0], phase: "qa_fixup", activeCwd: cwd },
+            interactive: false,
+            resumeId: sessionId,
+            metricsContext: { taskId: taskIds[0], phase: "qa_fixup", activeCwd: cwd },
             cwd
-          );
+          });
           return true;
         }
       });
@@ -10259,7 +10350,7 @@ Scope was not checked. Fix the base branch or repository history before choosing
 }
 function checkDeps(taskIds, skipAgentDeps = false) {
   if (!skipAgentDeps) {
-    for (const dep of ["claude", "codex"]) {
+    for (const dep of requiredAgentBackends()) {
       const result = spawnSync7("which", [dep], { stdio: "ignore" });
       if (result.error || result.status !== 0) {
         const label = dep === "claude" ? "Claude Code CLI" : dep === "codex" ? "Codex CLI" : dep;
@@ -10389,21 +10480,18 @@ async function main() {
     const state = buildPipelineState(taskIds);
     await withAgentSessionPark(currentPhase, taskIds, async () => {
       const phaseResult = await runPhase(currentPhase, state);
-      lastClaudeSessionId = phaseResult?.agent === "claude" ? phaseResult.sessionId : null;
-      lastCodexSessionId = phaseResult?.agent === "codex" ? phaseResult.sessionId : null;
+      lastSessionId = phaseResult?.sessionId ?? null;
       lastCodexExitStatus = phaseResult?.agent === "codex" ? phaseResult.exitCode ?? 0 : 0;
       if (currentPhase !== "complete" && currentPhase !== "human_review") {
-        const agentForPhase = state.tasks[0].status.phases[currentPhase]?.agent;
-        if (agentForPhase === "claude") {
-          const slot = currentPhase === "spec" ? "claude_spec" : currentPhase === "code_review" ? "claude_review" : null;
-          if (slot && lastClaudeSessionId) {
-            storeSessionId(taskIds, slot, lastClaudeSessionId);
-            info(`Claude session stored (${slot}): ${lastClaudeSessionId.slice(0, 8)}...`);
+        if (phaseResult?.agent) {
+          recordPhaseAgent(taskIds, currentPhase, phaseResult.agent);
+          const slot = phaseSessionSlot(currentPhase);
+          if (slot && lastSessionId) {
+            storeSessionId(taskIds, slot, lastSessionId);
+            const role = phasePrimaryRole(currentPhase);
+            const label = role ? agentBackendFor(role).displayName : phaseResult.agent;
+            info(`${label} session stored (${slot}): ${lastSessionId.slice(0, 8)}...`);
           }
-        } else if (agentForPhase === "codex" && lastCodexSessionId) {
-          const codexSlot = currentPhase === "spec_review" ? "codex_spec_review" : "codex";
-          storeSessionId(taskIds, codexSlot, lastCodexSessionId);
-          info(`Codex session stored (${codexSlot}): ${lastCodexSessionId.slice(0, 8)}...`);
         }
         await checkAndRoute(currentPhase, taskIds);
       }

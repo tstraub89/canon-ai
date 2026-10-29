@@ -89,3 +89,6 @@ export type {
     PolicyInput,
     TaskSize,
 };
+
+export { roleBackendId, phasePrimaryRole, phaseSessionSlot, requiredAgentBackends } from '../lib/pipeline-policy.js';
+export type { AgentRole, AgentBackendId, PipelinePhase, SessionSlot } from '../lib/pipeline-policy.js';

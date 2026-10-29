@@ -4345,3 +4345,15 @@ for (const [name, doc, config, qaDone, declared, admitted] of [
         } finally { fs.rmSync(dir, { recursive: true, force: true }); }
     });
 }
+
+void test('status template agent defaults agree with primary role assignment', async () => {
+    const { phasePrimaryRole, roleBackendId } = await import('../src/lib/pipeline-policy.js');
+    const { PHASE_ORDER } = await import('../src/orchestrator/types.js');
+    const template = JSON.parse(fs.readFileSync(path.join(process.cwd(), '.canon/templates/status.json'), 'utf8')) as {
+        phases: Record<string, { agent: string }>;
+    };
+    for (const phase of PHASE_ORDER) {
+        const role = phasePrimaryRole(phase);
+        assert.equal(template.phases[phase].agent, role ? roleBackendId(role) : 'human', phase);
+    }
+});

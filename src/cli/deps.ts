@@ -1,3 +1,4 @@
+import { requiredAgentBackends } from '../lib/pipeline-policy.js';
 import { spawnSync } from 'node:child_process';
 
 interface Dep {
@@ -7,8 +8,8 @@ interface Dep {
 
 const HARD_DEPS: Dep[] = [
     { cmd: 'git', installHint: 'https://git-scm.com/downloads' },
-    { cmd: 'claude', installHint: 'npm install -g @anthropic-ai/claude-code' },
-    { cmd: 'codex', installHint: 'npm install -g @openai/codex' },
+    ...requiredAgentBackends().map(cmd => ({ cmd, installHint: cmd === 'claude'
+        ? 'npm install -g @anthropic-ai/claude-code' : 'npm install -g @openai/codex' })),
 ];
 
 const SOFT_DEPS: Dep[] = [
@@ -20,8 +21,8 @@ export function isAvailable(cmd: string): boolean {
     return result.status === 0;
 }
 
-export function checkDeps(): void {
-    const missing = HARD_DEPS.filter(d => !isAvailable(d.cmd));
+export function checkDeps(available: (cmd: string) => boolean = isAvailable): void {
+    const missing = HARD_DEPS.filter(d => !available(d.cmd));
     if (missing.length > 0) {
         console.error('canon init requires the following tools to be installed:\n');
         for (const dep of missing) {
@@ -31,7 +32,7 @@ export function checkDeps(): void {
         process.exit(1);
     }
 
-    const softMissing = SOFT_DEPS.filter(d => !isAvailable(d.cmd));
+    const softMissing = SOFT_DEPS.filter(d => !available(d.cmd));
     for (const dep of softMissing) {
         console.warn(`  ⚠  ${dep.cmd} not found — needed later: ${dep.installHint}`);
     }

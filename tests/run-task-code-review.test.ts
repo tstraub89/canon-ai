@@ -1,3 +1,4 @@
+import type { AgentBackend } from '../src/orchestrator/agents/backend.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -256,6 +257,28 @@ function makeDeps(options: {
     findings?: string;
     onClaude?: (prompt: string) => void;
 }): CodeReviewPhaseDeps {
+    const coldBackend: AgentBackend = {
+        id: 'codex', displayName: 'Codex',
+        resolveConfig: () => ({ model: 'mini-from-policy', effort: 'high' }),
+        run: () => Promise.reject(new Error('unexpected cold session run')),
+        coldReview: request => {
+            const { model, effort } = coldBackend.resolveConfig(request.phase, request.tasks);
+            options.events.push(`cold:${model}:${effort}:${request.cwd}:${request.metricsContext?.taskId}:${request.metricsContext?.iteration}`);
+            return Promise.resolve({ success: options.coldSuccess ?? true,
+                findings: options.findings ?? '[P2] src/foo.ts:10 - null deref', durationMs: 1 });
+        },
+    };
+    const reviewerBackend: AgentBackend = {
+        id: 'claude', displayName: 'Claude',
+        resolveConfig: () => ({ model: 'sonnet', effort: 'high', budget: '20.00' }),
+        coldReview: () => Promise.reject(new Error('unexpected foreman cold review')),
+        run: request => {
+            options.events.push('foreman');
+            options.onClaude?.(request.prompt);
+            return Promise.resolve({ backend: 'claude', exitCode: 0, capturedStdout: '',
+                sessionId: 'claude-session', text: '' });
+        },
+    };
     return {
         verifyBranch: () => { options.events.push('verifyBranch'); },
         getBaseBranch: () => 'main',
@@ -272,31 +295,8 @@ function makeDeps(options: {
         findColdCodexArchiveForRound: () => null,
         hasMalformedColdCodexArchive: () => false,
         writeColdCodexArchive,
-        getClaudeConfig: () => ({ model: 'sonnet', effort: 'high', budget: '20.00' }),
         getMaxReviewLoops: () => 3,
-        getCodexConfig: () => ({ model: 'mini-from-policy', effort: 'high' }),
-        runColdCodexReview: (_baseBranch, model, effort, cwd, metricsContext) => {
-            options.events.push(`cold:${model}:${effort}:${cwd}:${metricsContext?.taskId}:${metricsContext?.iteration}`);
-            return Promise.resolve({
-                success: options.coldSuccess ?? true,
-                findings: options.findings ?? '[P2] src/foo.ts:10 - null deref',
-                durationMs: 1,
-            });
-        },
-        runClaude: (prompt: string) => {
-            options.events.push('foreman');
-            options.onClaude?.(prompt);
-            return Promise.resolve({
-                exitCode: 0,
-                signal: null,
-                spawnError: null,
-                stalled: false,
-                capturedStdout: '',
-                capturedStderr: '',
-                sessionId: 'claude-session',
-                processedText: '',
-            });
-        },
+        agentBackendFor: role => role === 'cold_reviewer' ? coldBackend : reviewerBackend,
     };
 }
 
@@ -1443,7 +1443,12 @@ void test('pre-flight rejection writes no cold-Codex archive', { concurrency: fa
         writeTask(tasksRoot, 'reject');
         const deps = makeDeps({ activeCwd, events: [] });
         deps.verifyHandoffAgainstDiff = () => ['[reject] handoff→diff: src/foo.ts missing from handoff'];
-        await runCodeReviewPhase(makeState(['reject']), false, null, deps);
+        const before = readStatus('reject');
+        before.phases.code_review!.agent = 'unchanged';
+        writeStatusToFile(path.join(tasksRoot, 'reject', 'status.json'), before);
+        const result = await runCodeReviewPhase(makeState(['reject']), false, null, deps);
+        assert.equal(result?.agent, null);
+        assert.equal(readStatus('reject').phases.code_review?.agent, 'unchanged');
         assert.equal(fs.readdirSync(path.join(tasksRoot, 'reject')).some(name => name.startsWith('review-cold-codex-run-')), false);
     });
 });
@@ -1474,8 +1479,9 @@ void test('rename-aware delta path set forces full when an untouched source move
         writeColdCodexArchive(dir, { round: 1, reviewedSha: prior, scope: 'full', base: 'main', reason: 'Round 1' }, 'prior');
         const bases: string[] = [];
         const deps = realGitDeps(activeCwd, []);
-        const cold = deps.runColdCodexReview;
-        deps.runColdCodexReview = (base, ...rest) => { bases.push(base); return cold(base, ...rest); };
+        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const cold = coldBackend.coldReview.bind(coldBackend);
+        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
         await runCodeReviewPhase(makeState(['rename']), false, null, deps);
         assert.deepEqual(bases, ['main']);
         assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-2.md'), 'utf8'), /X is outside the previous round's change set/);
@@ -1508,8 +1514,9 @@ void test('review scope follows prompt round, archives each invocation, and choo
             prompts.push(prompt);
             fs.writeFileSync(path.join(tasksRoot, taskId, 'review.md'), '# Review\n\n## Stage 1\n\nfilled\n');
         });
-        const cold = deps.runColdCodexReview;
-        deps.runColdCodexReview = (base, ...rest) => { bases.push(base); return cold(base, ...rest); };
+        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const cold = coldBackend.coldReview.bind(coldBackend);
+        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
 
         // A stale counter with no real Stage 1 still renders and archives Round 1.
         const statusPath = path.join(tasksRoot, taskId, 'status.json');
@@ -1560,8 +1567,9 @@ void test('review retry uses round N-1 archive; equal HEAD and non-ancestor forc
         writeColdCodexArchive(dir, { ...header, round: 2, reviewedSha: gitAt(activeCwd, 'rev-parse', 'HEAD') }, 'aborted attempt');
         const bases: string[] = [];
         const deps = realGitDeps(activeCwd, []);
-        const cold = deps.runColdCodexReview;
-        deps.runColdCodexReview = (base, ...rest) => { bases.push(base); return cold(base, ...rest); };
+        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const cold = coldBackend.coldReview.bind(coldBackend);
+        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
         await runCodeReviewPhase(makeState([id]), false, null, deps);
         assert.equal(bases.at(-1), prior);
         assert.equal(findColdCodexArchiveForRound(dir, 2)?.base, prior);
@@ -1596,8 +1604,9 @@ void test('missing, malformed, and unresolved previous records force full review
         writeStatusToFile(path.join(dir, 'status.json'), status);
         const deps = realGitDeps(activeCwd, []);
         const bases: string[] = [];
-        const cold = deps.runColdCodexReview;
-        deps.runColdCodexReview = (base, ...rest) => { bases.push(base); return cold(base, ...rest); };
+        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const cold = coldBackend.coldReview.bind(coldBackend);
+        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
         await runCodeReviewPhase(makeState([id]), false, null, deps);
         assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-1.md'), 'utf8'), /no cold-Codex archive record/);
         fs.writeFileSync(path.join(dir, 'review-cold-codex-run-2.md'), 'malformed header\n');
@@ -1631,8 +1640,9 @@ void test('failed delta facts force full scope before cold-Codex runs', { concur
             };
             deps.getDeltaLineStats = () => failedProbe === 'lines'
                 ? null : [{ path: 'src/foo.ts', added: 1, deleted: 0 }];
-            const cold = deps.runColdCodexReview;
-            deps.runColdCodexReview = (base, ...rest) => { bases.push(base); return cold(base, ...rest); };
+            const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const cold = coldBackend.coldReview.bind(coldBackend);
+            deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
             await runCodeReviewPhase(makeState([name]), false, null, deps);
             assert.deepEqual(bases, ['main']);
             assert.match(fs.readFileSync(path.join(tasksRoot, name, 'review-cold-codex-run-1.md'), 'utf8'), expectedReason);
@@ -1697,8 +1707,9 @@ void test('archive records the SHA captured before cold-Codex if HEAD moves duri
         writeTask(tasksRoot, 'moving-head');
         const pinnedSha = initReviewRepo(activeCwd);
         const deps = realGitDeps(activeCwd, []);
-        const cold = deps.runColdCodexReview;
-        deps.runColdCodexReview = (...args) => {
+        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const cold = coldBackend.coldReview.bind(coldBackend);
+        deps.agentBackendFor('cold_reviewer').coldReview = (...args) => {
             fs.appendFileSync(path.join(activeCwd, 'src/a.ts'), 'arrived during review\n');
             gitAt(activeCwd, 'add', '.');
             gitAt(activeCwd, 'commit', '-m', 'concurrent');
@@ -1710,3 +1721,58 @@ void test('archive records the SHA captured before cold-Codex if HEAD moves duri
         assert.notEqual(gitAt(activeCwd, 'rev-parse', 'HEAD'), pinnedSha);
     });
 });
+
+for (const iteration of [0, 1]) {
+    void test(`review invocation parity: foreman round ${iteration + 1} and cold lens`, { concurrency: false }, async () => {
+        await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+            const { agentBackendFor } = await import('../src/orchestrator/agents/backend.js');
+            const { runClaude } = await import('../src/orchestrator/agents/claude.js');
+            const { getClaudeConfig, getCodexConfig } = await import('../src/orchestrator/policy.js');
+            const { promptCodeReview } = await import('../src/orchestrator/prompts/index.js');
+            const previousPath = process.env.PATH;
+            const previousLog = process.env.REVIEW_PARITY_LOG;
+            const log = path.join(activeCwd, 'capture.jsonl');
+            for (const binary of ['claude', 'codex']) {
+                fs.writeFileSync(path.join(activeCwd, binary), `#!${process.execPath}
+const fs = require('fs');
+fs.appendFileSync(process.env.REVIEW_PARITY_LOG,JSON.stringify({binary:'${binary}',argv:process.argv.slice(2),cwd:process.cwd()})+'\\n');
+console.log(JSON.stringify({type:'result',result:'clean review',session_id:'foreman-session'}));
+console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'clean review'}}));
+console.log(JSON.stringify({type:'turn.completed'}));
+`, { mode: 0o755 });
+            }
+            try {
+                process.env.PATH = `${activeCwd}${path.delimiter}${previousPath ?? ''}`;
+                process.env.REVIEW_PARITY_LOG = log;
+                writeTask(tasksRoot, 'parity-review');
+                const status = readStatus('parity-review');
+                status.task_size = 'L';
+                status.phases.code_review!.iterations = iteration;
+                status.phases.code_review!.iterations_current_loop = iteration;
+                writeStatusToFile(path.join(tasksRoot, 'parity-review/status.json'), status);
+                fs.writeFileSync(path.join(tasksRoot, 'parity-review/review.md'), '# Review\n\n## Stage 1\n\nfilled\n');
+                const state = makeState(['parity-review']);
+                const deps = makeDeps({ activeCwd, events: [] });
+                deps.agentBackendFor = agentBackendFor;
+                const result = await runCodeReviewPhase(state, false, 'prior-review', deps);
+                assert.equal(result?.agent, 'claude');
+                const scope = { scope: 'full' as const, base: 'main', reason: iteration === 0
+                    ? 'Round 1 (initial review)' : 'no cold-Codex archive record for the previous round' };
+                const prompt = promptCodeReview(state, 'main', deps.getScopedDiff('main', activeCwd), 'clean review', { ...scope, deltaDiff: null }, []);
+                const claude = getClaudeConfig('code_review', state.tasks);
+                await runClaude(prompt, false, iteration > 0 ? 'prior-review' : null, claude.model, claude.effort, claude.budget, undefined, activeCwd);
+                const codex = getCodexConfig('code_review', state.tasks);
+                await runColdCodexReview('main', codex.model, codex.effort, activeCwd);
+                const captures = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as {binary:string;argv:string[];cwd:string});
+                assert.equal(captures.length, 4);
+                assert.deepEqual(captures[1], captures[2]);
+                assert.deepEqual(captures[0], captures[3]);
+                assert.deepEqual(captures[0].argv, ['exec','review','--json','-c','model_reasoning_effort=high','--base','main','-m',codex.model]);
+                assert.equal(fs.realpathSync(captures[0].cwd), fs.realpathSync(activeCwd));
+            } finally {
+                if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+                if (previousLog === undefined) delete process.env.REVIEW_PARITY_LOG; else process.env.REVIEW_PARITY_LOG = previousLog;
+            }
+        });
+    });
+}
