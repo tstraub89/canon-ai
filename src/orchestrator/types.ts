@@ -116,7 +116,7 @@ export type StatusJson = {
         /** Legacy keys: read-only fallback, cleared in pairs, never written. */
         claude_spec?: string | null;
         claude_review?: string | null;
-        /** @deprecated use claude_spec or claude_review */
+        /** @deprecated use author or reviewer */
         claude?: string | null;
         codex?: string | null;
         codex_spec_review?: string | null;
