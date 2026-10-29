@@ -3642,6 +3642,18 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
         if (blockedIds.length > 0) stopForReviewerBlock(taskIds, blockedIds, statuses);
     }
 
+    // A QA session that blocked itself stops here; evidence recovery would turn a salvaged done.md into qa done.
+    if (phase === 'qa') {
+        const blockedIds = taskIds.filter((_, index) => getPhaseStatus(statuses[index], 'qa') === 'blocked');
+        if (blockedIds.length > 0) {
+            const reason = `The QA session marked qa blocked for task(s): ${blockedIds.join(', ')}. ` +
+                `See ${blockedIds.map(id => `tasks/${id}/done.md`).join(', ')}; resolve the block, then re-run \`canon run ${taskIds.join(' ')}\`.`;
+            warn(reason);
+            splitCli.setExitReason(reason);
+            process.exit(2);
+        }
+    }
+
     // Verify all tasks completed this phase. If any didn't, attempt
     // evidence-based auto-advance, then a one-shot retry, before bailing.
     for (let i = 0; i < taskIds.length; i += 1) {

@@ -10106,6 +10106,15 @@ async function checkAndRoute(phase, taskIds) {
     const blockedIds = taskIds.filter((_, index) => getPhaseStatus(statuses[index], "code_review") === "blocked");
     if (blockedIds.length > 0) stopForReviewerBlock(taskIds, blockedIds, statuses);
   }
+  if (phase === "qa") {
+    const blockedIds = taskIds.filter((_, index) => getPhaseStatus(statuses[index], "qa") === "blocked");
+    if (blockedIds.length > 0) {
+      const reason = `The QA session marked qa blocked for task(s): ${blockedIds.join(", ")}. See ${blockedIds.map((id) => `tasks/${id}/done.md`).join(", ")}; resolve the block, then re-run \`canon run ${taskIds.join(" ")}\`.`;
+      warn2(reason);
+      setExitReason(reason);
+      process.exit(2);
+    }
+  }
   for (let i = 0; i < taskIds.length; i += 1) {
     const phaseStatus = getPhaseStatus(statuses[i], phase);
     if (phase === "implement" && phaseStatus === "done") {

@@ -10878,12 +10878,16 @@ void test('QA salvage keeps a qa phase the session blocked', () => {
         const result = runNodeInline([
             `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
             `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+            `import { checkAndRoute } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
             `await runQaPhase(buildPipelineState(['${taskId}']), false, null);`,
+            `await checkAndRoute('qa', ['${taskId}']);`,
         ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
-        assert.equal(result.status, 0, combinedOutput(result));
+        // Routing stops on the block instead of recovering the salvaged done.md into qa done.
+        assert.equal(result.status, 2, combinedOutput(result));
         assert.equal(fs.readFileSync(path.join(tasksRoot, taskId, 'done.md'), 'utf8').trim(), body.trim());
         const updated = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as StatusJson;
         assert.equal(updated.phases.qa?.status, 'blocked');
+        assert.match(combinedOutput(result), /QA session marked qa blocked/);
     });
 });
 
